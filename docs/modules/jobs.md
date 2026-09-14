@@ -122,12 +122,15 @@ missing, additional, coerced, padded, or noncanonical values and passes a typed
 
 ### Lease policy by kind
 
-Leases are sized to the worst-case wall-clock of one attempt. The generation
-kinds use these exact registry values: `enrich_metadata` and `synapse_scan`,
+The generation kinds use these exact renewable registry leases:
+`enrich_metadata` and `synapse_scan`,
 300s; `oracle_reading_generate` and `media_unit_build`, 450s;
-`dawn_write_job` and `dossier_build`, 900s; and `chat_run`, 1,200s. Each lease
-exceeds its bounded generation transport deadline, leaving a positive
-terminal-checkpoint margin ([llms.md](llms.md)).
+`dawn_write_job` and `dossier_build`, 900s; and `chat_run`, 1,200s. The worker
+renews its exact running claim before dispatch and throughout execution;
+publication requires a live claim. These leases are not attempt deadlines.
+A Codex MCP bearer expires at the earliest of the lease expiry observed when
+it was issued, the admitted transport deadline, and the maximum grant lifetime.
+Later queue heartbeats do not extend that bearer ([llms.md](llms.md)).
 
 ### Dead-lettering
 
@@ -187,9 +190,9 @@ kind; queue completion is not a claim that the answer published.
 `python/nexus/job_topology.py` declares one complete topology without importing
 the application runtime graph:
 
-- `INTERACTIVE_WORKER_JOB_KINDS`: chat, Dossier, subscription live sync, and
-  Oracle generation;
-- `BACKGROUND_WORKER_JOB_KINDS`: source ingest, content indexing, enrichment, derived units,
+- `INTERACTIVE_WORKER_JOB_KINDS`: chat, Dossier, metadata enrichment,
+  subscription live sync, and Oracle generation;
+- `BACKGROUND_WORKER_JOB_KINDS`: source ingest, content indexing, derived units,
   semantic indexing, subscription backfill, Podcast due admission and run
   retention, ambient generation, teardown, storage cleanup, and reconciliation;
 - `MAINTENANCE_JOB_KINDS`: Gutenberg catalog sync, queue pruning, and expired
@@ -203,11 +206,17 @@ Production deploys exactly `worker-interactive` and `worker-background`; there
 is no undifferentiated `worker` service.
 
 Every registry definition owns one closed `Light | Heavy` resource class, and
-that class is part of the task-contract digest. `ingest_media_source`,
-`media_content_reindex_job`, and `enrich_metadata` are Heavy; all other kinds
-are Light. Queue-owned capacity admission permits one Heavy running attempt
+that class is part of the task-contract digest. `ingest_media_source` and
+`media_content_reindex_job` are Heavy; all other kinds are Light. Queue-owned
+capacity admission permits one Heavy running attempt
 globally while leaving eligible Light work claimable. Domain handlers never
 touch capacity state.
+
+Metadata enrichment uses the interactive worker's live MCP registry and
+listener, alongside Chat and Dossier. Its remote generation and scoped reads
+do not occupy the parser capacity slot. It shares the interactive process's
+memory boundary and serial job execution: an admitted metadata run can delay
+Chat for its 300-second generation budget plus bounded setup and drain.
 
 Normal workers require `WORKER_LANE=interactive|background`; they never accept
 a raw allowlist. A bounded maintenance process requires
@@ -292,6 +301,9 @@ owner/step identity, lease-fenced row-validation callback, and semantic result
 decoder. Model, effort, capability, timeouts, and stream bounds come from
 `generation_policy.py`. `enrich_metadata` now uses this same command, client,
 journal, and `llm_calls` path.
+
+metadata research uses the scoped `MetadataRead` plan and an explicit requester;
+see [media metadata](media-metadata.md) for date ownership and maintenance.
 
 `dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
 Contributor, Page, Note, and internal Idea subjects. Its immutable registration

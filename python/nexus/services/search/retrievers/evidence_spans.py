@@ -52,7 +52,7 @@ def _search_evidence_spans(
                 es.citation_label,
                 m.kind,
                 m.title,
-                m.published_date,
+                m.original_published_date,
                 mcc.contributor_credits,
                 ts_rank_cd(
                     to_tsvector('english', es.span_text),
@@ -131,7 +131,7 @@ def resolve_evidence_span_search_result(
                 es.citation_label,
                 m.kind,
                 m.title,
-                m.published_date,
+                m.original_published_date,
                 mcc.contributor_credits,
                 nb.user_id AS note_user_id
             FROM evidence_spans es

@@ -26,7 +26,7 @@ Target-only candidate types never enter ``SEARCH_RESULT_TYPES``/``SearchKind``
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from typing import cast
 from uuid import UUID
 
@@ -426,7 +426,7 @@ def _reference_candidates(
                        jsonb_build_object(
                            'media_kind', m.kind,
                            'title', m.title,
-                           'published_date', m.published_date
+                           'original_published_date', m.original_published_date
                        ) AS payload
                 FROM media m
                 JOIN visible_media vm ON vm.media_id = m.id
@@ -523,7 +523,7 @@ def _reference_candidates(
                            'media_id', m.id,
                            'media_kind', m.kind,
                            'media_title', m.title,
-                           'published_date', m.published_date
+                           'original_published_date', m.original_published_date
                        ) AS payload
                 FROM highlights h
                 JOIN media m ON m.id = h.anchor_media_id
@@ -628,7 +628,7 @@ def _reference_candidate(
                 str(payload["media_kind"]),
                 title,
                 None,
-                payload.get("published_date"),
+                payload.get("original_published_date"),
             ),
             score=score,
         )
@@ -663,7 +663,7 @@ def _reference_candidate(
                 str(payload["media_kind"]),
                 str(payload.get("media_title") or ""),
                 None,
-                payload.get("published_date"),
+                payload.get("original_published_date"),
             ),
             score=score,
         )
@@ -743,7 +743,7 @@ def _search_type(
     roles: list[str],
     content_kinds: list[str],
     limit: int,
-) -> list[InternalSearchResult]:
+) -> Sequence[InternalSearchResult]:
     """Search a specific content type with visibility filtering.
 
     Returns raw-scored internal results (not yet normalized).

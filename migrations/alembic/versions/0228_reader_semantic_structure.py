@@ -7,8 +7,8 @@ from uuid import UUID
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.engine import Connection, RowMapping
-from sqlalchemy.orm import Session
 
+from nexus.ids import new_uuid7
 from nexus.schemas.presence import Present
 from nexus.services.canonicalize import canonicalize_structure
 from nexus.services.epub_structure import (
@@ -16,7 +16,6 @@ from nexus.services.epub_structure import (
     EpubStructureTocNode,
     build_epub_structure,
 )
-from nexus.services.reader_publication import replace_reader_publication
 from nexus.services.web_article_structure import build_web_article_index_blocks
 
 revision = "0228"
@@ -383,6 +382,37 @@ def _repair_references(
             )
 
 
+def _advance_publication_generation(
+    connection: Connection, media_id: UUID, expected_kind: str
+) -> None:
+    """Fence the repair in Alembic's transaction using only the fixed 0228 schema."""
+    kind = connection.scalar(
+        sa.text("SELECT kind FROM media WHERE id = :media FOR UPDATE"),
+        {"media": media_id},
+    )
+    if kind != expected_kind:
+        raise RuntimeError(
+            f"Reader structure repair requires {expected_kind} media: {media_id}"
+        )
+    generation = connection.scalar(
+        sa.text(
+            """
+            INSERT INTO reader_publications (id, media_id, generation, changed_at)
+            VALUES (:id, :media, 1, now())
+            ON CONFLICT (media_id) DO UPDATE
+            SET generation = reader_publications.generation + 1, changed_at = now()
+            WHERE reader_publications.generation > 0
+            RETURNING generation
+            """
+        ),
+        {"id": new_uuid7(), "media": media_id},
+    )
+    if generation is None:
+        raise RuntimeError(
+            f"Reader structure repair found a nonpositive publication generation: {media_id}"
+        )
+
+
 def upgrade() -> None:
     op.add_column(
         "epub_nav_locations", sa.Column("parent_section_id", sa.Text(), nullable=True)
@@ -429,333 +459,311 @@ def upgrade() -> None:
             )
         )
     )
-    # Alembic owns the transaction. This session never commits or opens a savepoint.
-    with Session(bind=connection, join_transaction_mode="rollback_only") as db:
-        for media_id in media_ids:
-            fragment_rows = list(
-                connection.execute(
-                    sa.text(
-                        "SELECT f.id, f.idx, f.canonical_text, f.html_sanitized, s.package_href "
-                        "FROM fragments f LEFT JOIN epub_fragment_sources s ON s.fragment_id = f.id "
-                        "AND s.media_id = f.media_id WHERE f.media_id = :media ORDER BY f.idx"
-                    ),
-                    {"media": media_id},
-                ).mappings()
-            )
-            toc_rows = list(
-                connection.execute(
-                    sa.text(
-                        "SELECT node_id, nav_type, parent_node_id, label, href, fragment_idx, depth, order_key "
-                        "FROM epub_toc_nodes WHERE media_id = :media ORDER BY nav_type, order_key"
-                    ),
-                    {"media": media_id},
-                ).mappings()
-            )
-            toc = [EpubStructureTocNode(**row) for row in toc_rows]
-            fragments = []
-            for row in fragment_rows:
-                if row["package_href"] is None:
-                    raise RuntimeError(
-                        f"Reader structure repair lacks EPUB source metadata: {row['id']}"
-                    )
-                canonical = canonicalize_structure(row["html_sanitized"])
-                if canonical.text != row["canonical_text"]:
-                    raise RuntimeError(
-                        f"Reader structure repair changed canonical text: {row['id']}"
-                    )
-                fragments.append(
-                    EpubStructureFragment(
-                        fragment_id=row["id"],
-                        fragment_idx=row["idx"],
-                        package_href=row["package_href"],
-                        canonical=canonical,
-                    )
-                )
-            old_sections = list(
-                connection.execute(
-                    sa.text(
-                        "SELECT location_id, source_node_id, fragment_idx, href_path, href_fragment, source "
-                        "FROM epub_nav_locations WHERE media_id = :media"
-                    ),
-                    {"media": media_id},
-                ).mappings()
-            )
-            by_section = {row["location_id"]: row for row in old_sections}
-            by_index = {row["idx"]: row for row in fragment_rows}
-            source_by_index = {
-                fragment.fragment_idx: fragment.canonical for fragment in fragments
-            }
-            surviving_ids = {
-                row["source_node_id"]: row["location_id"]
-                for row in old_sections
-                if row["source_node_id"] is not None and row["source"] == "toc"
-            }
-            for row in old_sections:
-                if row["source"] != "toc" or row["source_node_id"] is not None:
-                    continue
-                candidates = [
-                    node.node_id
-                    for node in toc
-                    if node.nav_type == "toc"
-                    and node.node_id not in surviving_ids
-                    and node.fragment_idx == row["fragment_idx"]
-                    and node.href is not None
-                    and unquote(node.href.split("#", 1)[1] if "#" in node.href else "")
-                    == (row["href_fragment"] or "")
-                ]
-                if len(candidates) != 1:
-                    raise RuntimeError(
-                        f"Reader structure repair cannot identify authored section: {media_id}/{row['location_id']}"
-                    )
-                surviving_ids[candidates[0]] = row["location_id"]
-            sections = build_epub_structure(
-                media_id=media_id,
-                fragments=fragments,
-                toc_nodes=toc,
-                existing_location_ids=surviving_ids,
-            )
-            if not set(surviving_ids.values()) <= {
-                section.location_id for section in sections
-            }:
-                raise RuntimeError(
-                    f"Reader structure repair lost authored section identity: {media_id}"
-                )
-            retired = {
-                row["location_id"] for row in old_sections if row["source"] == "spine"
-            }
-            cursors = connection.execute(
+    for media_id in media_ids:
+        _advance_publication_generation(connection, media_id, "epub")
+        fragment_rows = list(
+            connection.execute(
                 sa.text(
-                    "SELECT id, locator FROM reader_media_state WHERE media_id = :media AND locator IS NOT NULL"
+                    "SELECT f.id, f.idx, f.canonical_text, f.html_sanitized, s.package_href "
+                    "FROM fragments f LEFT JOIN epub_fragment_sources s ON s.fragment_id = f.id "
+                    "AND s.media_id = f.media_id WHERE f.media_id = :media ORDER BY f.idx"
                 ),
                 {"media": media_id},
             ).mappings()
-            for cursor in cursors:
-                locator = cursor["locator"]
-                target = locator["target"]
-                section = by_section.get(target.get("section_id"))
-                if (
-                    locator["kind"] != "epub"
-                    or section is None
-                    or section["fragment_idx"] not in by_index
-                ):
-                    raise RuntimeError(
-                        f"Reader structure repair cannot resolve accepted cursor: {cursor['id']}"
-                    )
-                fragment = by_index[section["fragment_idx"]]
-                if target["href_path"] != fragment["package_href"]:
-                    raise RuntimeError(
-                        f"Reader structure repair found contradictory cursor source: {cursor['id']}"
-                    )
-                anchor = target["anchor_id"]
-                offset = locator["locations"]["text_offset"]
-                if (
-                    anchor is None
-                    and all(value is None for value in locator["locations"].values())
-                    and all(value is None for value in locator["text"].values())
-                ):
-                    # The old manual, unanchored navigation opened the whole
-                    # fragment at scrollTop=0, regardless of its section label.
-                    locator["locations"] = {**locator["locations"], "text_offset": 0}
-                    offset = 0
-                if (
-                    offset is None
-                    and anchor not in source_by_index[section["fragment_idx"]].anchors
-                ) or (
-                    offset is not None
-                    and (
-                        type(offset) is not int
-                        or not 0 <= offset <= len(fragment["canonical_text"])
-                    )
-                ):
-                    raise RuntimeError(
-                        f"Reader structure repair cannot resolve accepted cursor locus: {cursor['id']}"
-                    )
-                locator["target"] = {
-                    "fragment_id": str(fragment["id"]),
-                    "href_path": target["href_path"],
-                    "anchor_id": {"kind": "Absent"}
-                    if anchor is None
-                    else {"kind": "Present", "value": anchor},
-                }
-                connection.execute(
-                    sa.text(
-                        "UPDATE reader_media_state SET locator = CAST(:locator AS jsonb), "
-                        "revision = revision + 1, updated_at = now() WHERE id = :id"
-                    ),
-                    {"id": cursor["id"], "locator": json.dumps(locator)},
-                )
-            _repair_references(
-                connection,
-                media_id,
-                retired,
-                {str(row["id"]): len(row["canonical_text"]) for row in fragment_rows},
-            )
-
-            def replace_structure(
-                _media: object, media_id: UUID = media_id, sections=sections, toc=toc
-            ) -> None:
-                connection.execute(
-                    sa.text("DELETE FROM epub_nav_locations WHERE media_id = :media"),
-                    {"media": media_id},
-                )
-                for ordinal, section in enumerate(sections):
-                    connection.execute(
-                        sa.text(
-                            "INSERT INTO epub_nav_locations (media_id, location_id, ordinal, source_node_id, "
-                            "parent_section_id, label, fragment_idx, href_path, href_fragment, start_offset, "
-                            "end_fragment_idx, end_offset, source) VALUES (:media, :id, :ordinal, :source_node, "
-                            ":parent, :label, :fragment, :href, :anchor, :start, :end_fragment, :end, :source)"
-                        ),
-                        {
-                            "media": media_id,
-                            "id": section.location_id,
-                            "ordinal": ordinal,
-                            "source_node": section.source_node_id.value
-                            if isinstance(section.source_node_id, Present)
-                            else None,
-                            "parent": section.parent_section_id.value
-                            if isinstance(section.parent_section_id, Present)
-                            else None,
-                            "label": section.label,
-                            "fragment": section.fragment_idx,
-                            "href": section.href_path,
-                            "anchor": section.href_fragment.value
-                            if isinstance(section.href_fragment, Present)
-                            else None,
-                            "start": section.start_offset,
-                            "end_fragment": section.end.value.fragment_idx
-                            if isinstance(section.end, Present)
-                            else None,
-                            "end": section.end.value.offset
-                            if isinstance(section.end, Present)
-                            else None,
-                            "source": section.source,
-                        },
-                    )
-                for node in toc:
-                    connection.execute(
-                        sa.text(
-                            "UPDATE epub_toc_nodes SET target_offset = :offset WHERE media_id = :media AND node_id = :id"
-                        ),
-                        {
-                            "media": media_id,
-                            "id": node.node_id,
-                            "offset": node.target_offset,
-                        },
-                    )
-
-            replace_reader_publication(
-                db,
-                media_id=media_id,
-                expected_kind="epub",
-                replace_projection=replace_structure,
-            )
-
-        web_media = (
+        )
+        toc_rows = list(
             connection.execute(
                 sa.text(
-                    "SELECT id, title FROM media WHERE kind = 'web_article' AND ("
-                    "EXISTS (SELECT 1 FROM fragments WHERE media_id = media.id) OR "
-                    "EXISTS (SELECT 1 FROM reader_media_state WHERE media_id = media.id "
-                    "AND locator IS NOT NULL)) ORDER BY id"
+                    "SELECT node_id, nav_type, parent_node_id, label, href, fragment_idx, depth, order_key "
+                    "FROM epub_toc_nodes WHERE media_id = :media ORDER BY nav_type, order_key"
+                ),
+                {"media": media_id},
+            ).mappings()
+        )
+        toc = [EpubStructureTocNode(**row) for row in toc_rows]
+        fragments = []
+        for row in fragment_rows:
+            if row["package_href"] is None:
+                raise RuntimeError(
+                    f"Reader structure repair lacks EPUB source metadata: {row['id']}"
+                )
+            canonical = canonicalize_structure(row["html_sanitized"])
+            if canonical.text != row["canonical_text"]:
+                raise RuntimeError(
+                    f"Reader structure repair changed canonical text: {row['id']}"
+                )
+            fragments.append(
+                EpubStructureFragment(
+                    fragment_id=row["id"],
+                    fragment_idx=row["idx"],
+                    package_href=row["package_href"],
+                    canonical=canonical,
                 )
             )
-            .mappings()
-            .all()
+        old_sections = list(
+            connection.execute(
+                sa.text(
+                    "SELECT location_id, source_node_id, fragment_idx, href_path, href_fragment, source "
+                    "FROM epub_nav_locations WHERE media_id = :media"
+                ),
+                {"media": media_id},
+            ).mappings()
         )
-        for media in web_media:
-            fragments = list(
-                connection.execute(
-                    sa.text(
-                        "SELECT id, idx, canonical_text, html_sanitized FROM fragments "
-                        "WHERE media_id = :media ORDER BY idx"
-                    ),
-                    {"media": media["id"]},
-                ).mappings()
+        by_section = {row["location_id"]: row for row in old_sections}
+        by_index = {row["idx"]: row for row in fragment_rows}
+        source_by_index = {
+            fragment.fragment_idx: fragment.canonical for fragment in fragments
+        }
+        surviving_ids = {
+            row["source_node_id"]: row["location_id"]
+            for row in old_sections
+            if row["source_node_id"] is not None and row["source"] == "toc"
+        }
+        for row in old_sections:
+            if row["source"] != "toc" or row["source_node_id"] is not None:
+                continue
+            candidates = [
+                node.node_id
+                for node in toc
+                if node.nav_type == "toc"
+                and node.node_id not in surviving_ids
+                and node.fragment_idx == row["fragment_idx"]
+                and node.href is not None
+                and unquote(node.href.split("#", 1)[1] if "#" in node.href else "")
+                == (row["href_fragment"] or "")
+            ]
+            if len(candidates) != 1:
+                raise RuntimeError(
+                    f"Reader structure repair cannot identify authored section: {media_id}/{row['location_id']}"
+                )
+            surviving_ids[candidates[0]] = row["location_id"]
+        sections = build_epub_structure(
+            media_id=media_id,
+            fragments=fragments,
+            toc_nodes=toc,
+            existing_location_ids=surviving_ids,
+        )
+        if not set(surviving_ids.values()) <= {
+            section.location_id for section in sections
+        }:
+            raise RuntimeError(
+                f"Reader structure repair lost authored section identity: {media_id}"
             )
-            _repair_web_cursors(connection, media["id"], fragments)
-            specs = {}
-            for fragment in fragments:
-                for spec in build_web_article_index_blocks(
-                    html_sanitized=fragment["html_sanitized"],
-                    canonical_text=fragment["canonical_text"],
-                    fragment_idx=fragment["idx"],
+        retired = {
+            row["location_id"] for row in old_sections if row["source"] == "spine"
+        }
+        cursors = connection.execute(
+            sa.text(
+                "SELECT id, locator FROM reader_media_state WHERE media_id = :media AND locator IS NOT NULL"
+            ),
+            {"media": media_id},
+        ).mappings()
+        for cursor in cursors:
+            locator = cursor["locator"]
+            target = locator["target"]
+            section = by_section.get(target.get("section_id"))
+            if (
+                locator["kind"] != "epub"
+                or section is None
+                or section["fragment_idx"] not in by_index
+            ):
+                raise RuntimeError(
+                    f"Reader structure repair cannot resolve accepted cursor: {cursor['id']}"
+                )
+            fragment = by_index[section["fragment_idx"]]
+            if target["href_path"] != fragment["package_href"]:
+                raise RuntimeError(
+                    f"Reader structure repair found contradictory cursor source: {cursor['id']}"
+                )
+            anchor = target["anchor_id"]
+            offset = locator["locations"]["text_offset"]
+            if (
+                anchor is None
+                and all(value is None for value in locator["locations"].values())
+                and all(value is None for value in locator["text"].values())
+            ):
+                # The old manual, unanchored navigation opened the whole
+                # fragment at scrollTop=0, regardless of its section label.
+                locator["locations"] = {**locator["locations"], "text_offset": 0}
+                offset = 0
+            if (
+                offset is None
+                and anchor not in source_by_index[section["fragment_idx"]].anchors
+            ) or (
+                offset is not None
+                and (
+                    type(offset) is not int
+                    or not 0 <= offset <= len(fragment["canonical_text"])
+                )
+            ):
+                raise RuntimeError(
+                    f"Reader structure repair cannot resolve accepted cursor locus: {cursor['id']}"
+                )
+            locator["target"] = {
+                "fragment_id": str(fragment["id"]),
+                "href_path": target["href_path"],
+                "anchor_id": {"kind": "Absent"}
+                if anchor is None
+                else {"kind": "Present", "value": anchor},
+            }
+            connection.execute(
+                sa.text(
+                    "UPDATE reader_media_state SET locator = CAST(:locator AS jsonb), "
+                    "revision = revision + 1, updated_at = now() WHERE id = :id"
+                ),
+                {"id": cursor["id"], "locator": json.dumps(locator)},
+            )
+        _repair_references(
+            connection,
+            media_id,
+            retired,
+            {str(row["id"]): len(row["canonical_text"]) for row in fragment_rows},
+        )
+
+        connection.execute(
+            sa.text("DELETE FROM epub_nav_locations WHERE media_id = :media"),
+            {"media": media_id},
+        )
+        for ordinal, section in enumerate(sections):
+            connection.execute(
+                sa.text(
+                    "INSERT INTO epub_nav_locations (media_id, location_id, ordinal, source_node_id, "
+                    "parent_section_id, label, fragment_idx, href_path, href_fragment, start_offset, "
+                    "end_fragment_idx, end_offset, source) VALUES (:media, :id, :ordinal, :source_node, "
+                    ":parent, :label, :fragment, :href, :anchor, :start, :end_fragment, :end, :source)"
+                ),
+                {
+                    "media": media_id,
+                    "id": section.location_id,
+                    "ordinal": ordinal,
+                    "source_node": section.source_node_id.value
+                    if isinstance(section.source_node_id, Present)
+                    else None,
+                    "parent": section.parent_section_id.value
+                    if isinstance(section.parent_section_id, Present)
+                    else None,
+                    "label": section.label,
+                    "fragment": section.fragment_idx,
+                    "href": section.href_path,
+                    "anchor": section.href_fragment.value
+                    if isinstance(section.href_fragment, Present)
+                    else None,
+                    "start": section.start_offset,
+                    "end_fragment": section.end.value.fragment_idx
+                    if isinstance(section.end, Present)
+                    else None,
+                    "end": section.end.value.offset
+                    if isinstance(section.end, Present)
+                    else None,
+                    "source": section.source,
+                },
+            )
+        for node in toc:
+            connection.execute(
+                sa.text(
+                    "UPDATE epub_toc_nodes SET target_offset = :offset WHERE media_id = :media AND node_id = :id"
+                ),
+                {
+                    "media": media_id,
+                    "id": node.node_id,
+                    "offset": node.target_offset,
+                },
+            )
+
+    web_media = (
+        connection.execute(
+            sa.text(
+                "SELECT id, title FROM media WHERE kind = 'web_article' AND ("
+                "EXISTS (SELECT 1 FROM fragments WHERE media_id = media.id) OR "
+                "EXISTS (SELECT 1 FROM reader_media_state WHERE media_id = media.id "
+                "AND locator IS NOT NULL)) ORDER BY id"
+            )
+        )
+        .mappings()
+        .all()
+    )
+    for media in web_media:
+        _advance_publication_generation(connection, media["id"], "web_article")
+        fragments = list(
+            connection.execute(
+                sa.text(
+                    "SELECT id, idx, canonical_text, html_sanitized FROM fragments "
+                    "WHERE media_id = :media ORDER BY idx"
+                ),
+                {"media": media["id"]},
+            ).mappings()
+        )
+        _repair_web_cursors(connection, media["id"], fragments)
+        specs = {}
+        for fragment in fragments:
+            for spec in build_web_article_index_blocks(
+                html_sanitized=fragment["html_sanitized"],
+                canonical_text=fragment["canonical_text"],
+                fragment_idx=fragment["idx"],
+            ):
+                specs[(str(fragment["id"]), spec.start_offset, spec.end_offset)] = spec
+
+        for block in connection.execute(
+            sa.text(
+                "SELECT id, locator, selector, metadata FROM content_blocks WHERE owner_kind = 'media' AND owner_id = :media ORDER BY block_idx"
+            ),
+            {"media": media["id"]},
+        ).mappings():
+            locator = block["locator"]
+            key = (
+                locator.get("fragment_id"),
+                locator.get("start_offset"),
+                locator.get("end_offset"),
+            )
+            if key not in specs:
+                raise RuntimeError(
+                    f"Reader structure repair cannot locate web block: {block['id']}"
+                )
+            spec = specs[key]
+            updates = {}
+            for column in ("locator", "selector", "metadata"):
+                value = dict(block[column])
+                for field in (
+                    "section_id",
+                    "anchor_id",
+                    "heading_level",
+                    "depth",
+                    "ordinal",
+                    "parent_section_id",
+                    "owns_container",
+                    "container_end_offset",
                 ):
-                    specs[(str(fragment["id"]), spec.start_offset, spec.end_offset)] = (
-                        spec
-                    )
-
-            def replace_web_metadata(_media: object, media=media, specs=specs) -> None:
-                for block in connection.execute(
-                    sa.text(
-                        "SELECT id, locator, selector, metadata FROM content_blocks WHERE owner_kind = 'media' AND owner_id = :media ORDER BY block_idx"
-                    ),
-                    {"media": media["id"]},
-                ).mappings():
-                    locator = block["locator"]
-                    key = (
-                        locator.get("fragment_id"),
-                        locator.get("start_offset"),
-                        locator.get("end_offset"),
-                    )
-                    if key not in specs:
-                        raise RuntimeError(
-                            f"Reader structure repair cannot locate web block: {block['id']}"
+                    value.pop(field, None)
+                if spec.section_id is not None:
+                    value["section_id"] = spec.section_id
+                if spec.anchor_id is not None:
+                    value["anchor_id"] = spec.anchor_id
+                if spec.heading_level is not None:
+                    value["heading_level"] = spec.heading_level
+                if column == "metadata":
+                    if spec.depth is not None:
+                        value["depth"] = spec.depth
+                    if spec.ordinal is not None:
+                        value["ordinal"] = spec.ordinal
+                else:
+                    if spec.section_id is not None:
+                        value["parent_section_id"] = spec.parent_section_id.model_dump(
+                            mode="json"
                         )
-                    spec = specs[key]
-                    updates = {}
-                    for column in ("locator", "selector", "metadata"):
-                        value = dict(block[column])
-                        for field in (
-                            "section_id",
-                            "anchor_id",
-                            "heading_level",
-                            "depth",
-                            "ordinal",
-                            "parent_section_id",
-                            "owns_container",
-                            "container_end_offset",
-                        ):
-                            value.pop(field, None)
-                        if spec.section_id is not None:
-                            value["section_id"] = spec.section_id
-                        if spec.anchor_id is not None:
-                            value["anchor_id"] = spec.anchor_id
-                        if spec.heading_level is not None:
-                            value["heading_level"] = spec.heading_level
-                        if column == "metadata":
-                            if spec.depth is not None:
-                                value["depth"] = spec.depth
-                            if spec.ordinal is not None:
-                                value["ordinal"] = spec.ordinal
-                        else:
-                            if spec.section_id is not None:
-                                value["parent_section_id"] = (
-                                    spec.parent_section_id.model_dump(mode="json")
-                                )
-                                value["owns_container"] = spec.owns_container
-                            if isinstance(spec.container_end_offset, Present):
-                                value["container_end_offset"] = (
-                                    spec.container_end_offset.value
-                                )
-                        updates[column] = json.dumps(value)
-                    connection.execute(
-                        sa.text(
-                            "UPDATE content_blocks SET block_kind = :kind, heading_path = CAST(:path AS jsonb), locator = CAST(:locator AS jsonb), selector = CAST(:selector AS jsonb), metadata = CAST(:metadata AS jsonb) WHERE id = :id"
-                        ),
-                        {
-                            "id": block["id"],
-                            "kind": spec.block_kind,
-                            "path": json.dumps(spec.heading_path),
-                            **updates,
-                        },
-                    )
-
-            replace_reader_publication(
-                db,
-                media_id=media["id"],
-                expected_kind="web_article",
-                replace_projection=replace_web_metadata,
+                        value["owns_container"] = spec.owns_container
+                    if isinstance(spec.container_end_offset, Present):
+                        value["container_end_offset"] = spec.container_end_offset.value
+                updates[column] = json.dumps(value)
+            connection.execute(
+                sa.text(
+                    "UPDATE content_blocks SET block_kind = :kind, heading_path = CAST(:path AS jsonb), locator = CAST(:locator AS jsonb), selector = CAST(:selector AS jsonb), metadata = CAST(:metadata AS jsonb) WHERE id = :id"
+                ),
+                {
+                    "id": block["id"],
+                    "kind": spec.block_kind,
+                    "path": json.dumps(spec.heading_path),
+                    **updates,
+                },
             )
 
 

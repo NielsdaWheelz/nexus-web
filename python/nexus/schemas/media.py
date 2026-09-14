@@ -15,6 +15,7 @@ from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import Presence
+from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.upload_failures import (
     UploadTransportFailure,
     UploadVerificationFailureCode,
@@ -309,7 +310,8 @@ class MediaOut(BaseModel):
     # media.authors_manually_managed; the five camel author endpoints expose the
     # camel `authorMode` separately.
     author_mode: Literal["automatic", "manual"] = "automatic"
-    published_date: str | None = None
+    original_published_date: Presence[PublicationDate]
+    edition_published_date: Presence[PublicationDate]
     publisher: str | None = None
     language: str | None = None
     description: str | None = None

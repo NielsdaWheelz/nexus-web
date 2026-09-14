@@ -23,13 +23,13 @@ shorter prefix sorts first under every candidate collation.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -182,12 +182,12 @@ def _file_media(
     viewer_id: UUID,
     media_id: UUID,
     title: str,
-    published_date: str | None,
+    original_published_date: str | None,
     created_at: datetime | None = None,
 ) -> None:
     """One Media filed in ``viewer_id``'s Default Library through the filing owner.
 
-    ``published_date`` is TEXT because sources supply partial ISO dates, and
+    ``original_published_date`` preserves the resolved work's partial ISO date, and
     ``created_at`` is written directly because the insert stamps the transaction
     instant, so exact and colliding membership instants are unreachable through
     the owner.
@@ -196,7 +196,8 @@ def _file_media(
         id=media_id,
         kind=MediaKind.web_article.value,
         title=title,
-        published_date=published_date,
+        original_published_date=original_published_date,
+        edition_published_date="2026-09-01",
         processing_status=ProcessingStatus.ready_for_reading,
         created_by_user_id=viewer_id,
     )
@@ -215,7 +216,7 @@ def _credit_work(
     viewer_id: UUID,
     media_id: UUID,
     title: str,
-    published_date: str | None,
+    original_published_date: str | None,
     author_name: str,
 ) -> None:
     """One visible Media work credited to ``author_name`` through the author
@@ -225,7 +226,7 @@ def _credit_work(
         viewer_id=viewer_id,
         media_id=media_id,
         title=title,
-        published_date=published_date,
+        original_published_date=original_published_date,
     )
     observation, _truncated = build_observation(
         {"author": (RawCreditEntry(credited_name=author_name),)}
@@ -252,7 +253,7 @@ def _seed_author_works(db: Session, *, viewer_id: UUID) -> ContributorHandle:
     `date_key`, two works sharing a title AND a missing date (so only the outward
     href separates them), a non-ASCII title, and a partial-ISO `date_key` beside
     a full one."""
-    for media_id, title, published_date in (
+    for media_id, title, original_published_date in (
         (_WORK_ATLAS, "atlas of tides", "2001-03-04"),
         (_WORK_BEACON, "beacon notes", "1899-05-02"),
         (_WORK_CAIRN, "cairn survey", "1899"),
@@ -266,7 +267,7 @@ def _seed_author_works(db: Session, *, viewer_id: UUID) -> ContributorHandle:
             viewer_id=viewer_id,
             media_id=media_id,
             title=title,
-            published_date=published_date,
+            original_published_date=original_published_date,
             author_name=_AUTHOR_NAME,
         )
     return _contributor_handle(db, _AUTHOR_NAME)
@@ -284,7 +285,7 @@ def _seed_second_author_works(db: Session, *, viewer_id: UUID) -> ContributorHan
             viewer_id=viewer_id,
             media_id=media_id,
             title=title,
-            published_date="2018",
+            original_published_date="2018",
             author_name=_OTHER_AUTHOR_NAME,
         )
     return _contributor_handle(db, _OTHER_AUTHOR_NAME)
@@ -294,7 +295,7 @@ def _seed_default_library_entries(db: Session, *, viewer_id: UUID) -> None:
     """Six Media filed in the viewer's Default Library: three with no publication
     date (so a NULL-unsafe keyset equality strands the missing bucket), two
     sharing a title, and two sharing the membership instant Default orders by."""
-    for media_id, title, published_date, created_at in (
+    for media_id, title, original_published_date, created_at in (
         (_ENTRY_ALMANAC, "almanac of rivers", "2019-04-02", datetime(2026, 2, 5, tzinfo=UTC)),
         (_ENTRY_BULLETIN, "bulletin of tides", None, datetime(2026, 2, 4, tzinfo=UTC)),
         (_ENTRY_CANTO_DATED, "canto", "2019-04-02", datetime(2026, 2, 3, tzinfo=UTC)),
@@ -307,7 +308,7 @@ def _seed_default_library_entries(db: Session, *, viewer_id: UUID) -> None:
             viewer_id=viewer_id,
             media_id=media_id,
             title=title,
-            published_date=published_date,
+            original_published_date=original_published_date,
             created_at=created_at,
         )
     db.flush()
@@ -727,6 +728,21 @@ def test_library_entry_views_drain_exactly_their_unpaged_snapshot_over_missing_a
             f"Library entries view {label!r} ({view}) on {path} did not serve the seeded entry set"
             f" in one unpaged page; expected {sorted(seeded)}, got {snapshot}"
         )
+        if view.get("sort") == "published":
+            assert snapshot == [
+                str(media_id)
+                for media_id in (
+                    _ENTRY_ALMANAC,
+                    _ENTRY_CANTO_DATED,
+                    _ENTRY_MOTIF,
+                    _ENTRY_BULLETIN,
+                    _ENTRY_CANTO_UNDATED,
+                    _ENTRY_PODCAST,
+                    _ENTRY_ZODIAC,
+                )
+            ], (
+                "original dates must determine chronology; edition-only media stay in the missing bucket"
+            )
         assert _drained_keys(authenticated_client, path, view, key=_entry_target) == snapshot, (
             f"Library entries view {label!r} ({view}) on {path} drained one row per page does not"
             " equal its unpaged snapshot; a target was duplicated or skipped across the keyset"
@@ -803,7 +819,7 @@ def test_author_works_cursor_is_refused_outside_the_binding_that_minted_it(
         viewer_id=test_user.id,
         media_id=_WORK_REVISION_BUMP,
         title="quill addendum",
-        published_date="2010",
+        original_published_date="2010",
         author_name=_AUTHOR_NAME,
     )
     bumped = authenticated_client.get(path, params={"limit": "1"})
@@ -982,7 +998,7 @@ def _stranger_works_cursor(
             viewer_id=stranger_id,
             media_id=media_id,
             title=title,
-            published_date="2020",
+            original_published_date="2020",
             author_name=_AUTHOR_NAME,
         )
     page = contributors_service.list_contributor_works(
@@ -1109,3 +1125,41 @@ def test_index_view_state_outside_the_advertised_inventory_is_refused_by_its_end
     assert response.json()["error"]["code"] == "E_INVALID_REQUEST", (
         f"GET {path}?{query} was refused with the wrong code: {response.text}"
     )
+
+
+def test_publication_arrivals_require_a_recent_exact_original_not_a_recent_edition(
+    authenticated_client: TestClient,
+    db_session: Session,
+    test_user: UserRecord,
+) -> None:
+    """A fresh edition cannot make an old, partial, or unknown original a new work."""
+    as_of = db_session.execute(text("SELECT CURRENT_TIMESTAMP")).scalar_one()
+    today = as_of.date().isoformat()
+    recent_work_id = uuid4()
+    for media_id, title, original in (
+        (recent_work_id, "A new work", today),
+        (uuid4(), "An old work reprinted today", "1899"),
+        (uuid4(), "A work known only to this month", today[:7]),
+        (uuid4(), "An undated original reprinted today", None),
+    ):
+        db_session.add(
+            Media(
+                id=media_id,
+                kind=MediaKind.web_article.value,
+                title=title,
+                original_published_date=original,
+                edition_published_date=today,
+                created_at=as_of - timedelta(days=180),
+                processing_status=ProcessingStatus.ready_for_reading,
+                created_by_user_id=test_user.id,
+            )
+        )
+        db_session.flush()
+        ensure_media_in_default_library(db_session, test_user.id, media_id)
+
+    response = authenticated_client.get("/lectern/slate")
+
+    assert response.status_code == 200, response.text
+    items = response.json()["data"]["items"]
+    assert [item["target"]["ref"] for item in items] == [f"media:{recent_work_id}"]
+    assert items[0]["reason"] == {"kind": "Published", "publishedOn": today}

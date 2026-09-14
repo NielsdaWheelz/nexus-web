@@ -3,6 +3,10 @@
 Libraries organize access to content; they do not own media ingestion or asset
 delivery.
 
+media publication labels and ordering use the original work's publication date.
+unknown originals never borrow edition dates. podcast-container release ordering
+keeps its provider timestamp. date ownership lives in [media metadata](media-metadata.md).
+
 The domain is split into three owned modules, each owning its own tables:
 
 - **`services/library_governance.py`** owns the `libraries` and `memberships`

@@ -14,6 +14,8 @@ from nexus.config import Environment, get_settings
 from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.schemas.presence import Present
+from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_all_collection_families,
@@ -343,8 +345,9 @@ def _persist_web_metadata(db: Session, media: Media, ingest_result: IngestResult
         media.publisher = ingest_result.site_name[:255]
         changed = True
 
-    if ingest_result.published_time and not media.published_date:
-        media.published_date = ingest_result.published_time[:64]
+    edition_date = normalize_source_publication_date(ingest_result.published_time)
+    if isinstance(edition_date, Present):
+        media.edition_published_date = edition_date.value
         changed = True
     if ingest_result.title:
         changed = True

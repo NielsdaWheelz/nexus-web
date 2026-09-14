@@ -588,6 +588,9 @@ checkout without committed lineage falls back to its common Git directory.
 This conservative lease prevents a local run and the self-hosted Actions runner
 from producing nominally green but resource-contended evidence on the same
 devbox.
+Production worker-process proof requires Linux cgroups: interactive workers use
+the deployed 256 MiB limit and background workers use 448 MiB, both without swap.
+An uncapped worker is not equivalent evidence.
 Before `full` or a higher local workflow, `scripts/agency_setup.sh` hydrates the
 exact pinned `provider-runtime` and `llm-tools` commits and all of their locked
 artifacts. It requires adjacent `llm-calling` and `llm-tools` Git checkouts,

@@ -167,7 +167,7 @@
       "proofs": [
         "pytest:python/tests/migrations/test_supported_upgrade.py::test_empty_owned_database_upgrades_to_the_single_head",
         "pytest:python/tests/migrations/test_note_body_substring_search_index_migration.py::test_0210_restarts_an_invalid_exact_index_and_plans_substring_search_at_head",
-        "pytest:python/tests/migrations/test_podcast_publication_migration.py::test_0207_canonicalizes_only_legacy_podcast_publication_instants_and_reaches_head",
+        "pytest:python/tests/migrations/test_original_publication_dates.py::test_publication_dates_require_drained_work_and_invalidate_chronology",
         "pytest:python/tests/migrations/test_epub_navigation_offsets_migration.py::test_0208_backfills_exact_offsets_and_0209_rejects_unrepaired_projection",
         "pytest:python/tests/migrations/test_generation_backends_cutover.py::test_0223_aggregate_reset_preserves_domain_data",
         "pytest:python/tests/migrations/test_generation_backends_cutover_admission.py::test_0224_refuses_the_only_undrained_generation_job_before_history_reset",
@@ -396,9 +396,12 @@
       "id": "citation-provenance-identity",
       "source_globs": [
         "python/nexus/schemas/media.py",
+        "python/nexus/schemas/publication_dates.py",
         "python/nexus/services/canonicalize.py",
         "python/nexus/services/epub_ingest.py",
+        "python/nexus/services/epub_metadata.py",
         "python/nexus/services/epub_read.py",
+        "python/nexus/services/metadata_enrichment.py",
         "python/nexus/services/reader_document_map.py",
         "python/nexus/services/reader_evidence_markers.py",
         "python/nexus/services/reader_locations.py",
@@ -442,6 +445,8 @@
         "python/nexus/services/search/retrievers/fragments.py"
       ],
       "proofs": [
+        "pytest:python/tests/kernel/test_publication_dates.py::test_publication_dates_reject_impossible_or_unsupported_generated_values",
+        "pytest:python/tests/service/test_media_publication_metadata.py::test_epub_reprint_date_never_replaces_original_and_null_research_clears",
         "pytest:python/tests/service/test_citation_provenance.py::test_published_citation_reconstructs_locator_from_canonical_evidence",
         "pytest:python/tests/service/test_chat_search_query_budget.py::test_hybrid_search_projects_only_finalists_with_identical_visible_ranking",
         "pytest:python/tests/service/test_notes_search_result_resolution.py::test_note_search_unions_lexical_and_semantic_hits_into_owned_citable_results",
@@ -458,6 +463,7 @@
         "vitest:apps/web/src/app/(authenticated)/media/[id]/mediaEvidenceResolution.unit.test.ts"
       ],
       "capabilities": [
+        "kernel-python",
         "service",
         "component",
         "kernel-web",

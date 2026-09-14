@@ -47,7 +47,8 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiErrorCode, ResourceFailureDimension
 from nexus.ids import new_uuid7
-from nexus.schemas.presence import Present, nullable_from_presence
+from nexus.schemas.presence import Presence, Present, absent, nullable_from_presence, present
+from nexus.schemas.publication_dates import PublicationDate, normalize_source_publication_date
 from nexus.services.canonicalize import canonicalize_structure
 from nexus.services.epub_structure import (
     EpubStructureFragment,
@@ -142,7 +143,8 @@ class EpubExtractionResult:
     publisher: str | None = None
     language: str | None = None
     description: str | None = None
-    published_date: str | None = None
+    edition_published_date: Presence[PublicationDate] = field(default_factory=absent)
+    edition_isbn: Presence[str] = field(default_factory=absent)
 
 
 @dataclass(frozen=True)
@@ -571,6 +573,46 @@ def build_epub_extraction_plan(
         )
 
 
+def extract_epub_metadata(epub_path: Path) -> EpubExtractionResult | EpubExtractionError:
+    """Read OPF metadata only, retaining archive/XML bounds without publishing content."""
+    settings = get_settings()
+    structural_budget = _XmlStructuralBudget()
+    try:
+        with zipfile.ZipFile(epub_path) as zf:
+            safety_error = _check_archive_safety(
+                zf,
+                _ArchiveSafetyConfig(
+                    max_entries=settings.max_epub_archive_entries,
+                    max_total_uncompressed_bytes=settings.max_epub_archive_total_uncompressed_bytes,
+                    max_single_entry_uncompressed_bytes=settings.max_epub_archive_single_entry_uncompressed_bytes,
+                    max_compression_ratio=settings.max_epub_archive_compression_ratio,
+                    max_parse_time_ms=settings.max_epub_archive_parse_time_ms,
+                ),
+            )
+            if safety_error is not None:
+                return safety_error
+            opf_path = _find_opf_path(zf, structural_budget)
+            if opf_path is None:
+                return EpubExtractionError(
+                    error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
+                    error_message="Cannot locate OPF rootfile",
+                )
+            opf = _parse_xml_entry(zf, opf_path, structural_budget, decoded_bytes_limit=None)
+            if opf is None:
+                return EpubExtractionError(
+                    error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
+                    error_message="Failed to parse OPF",
+                )
+            return _extract_opf_metadata(opf)
+    except zipfile.BadZipFile as exc:
+        return EpubExtractionError(
+            error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
+            error_message=f"Invalid ZIP: {exc}",
+        )
+    except _EpubResourceLimitExceeded as exc:
+        return _epub_resource_limit_error(str(exc), dimension=exc.dimension)
+
+
 def _build_epub_extraction_plan_from_file(
     *,
     session_factory: sessionmaker[Session],
@@ -863,11 +905,12 @@ def _build_epub_extraction_plan_from_file(
             toc_node_count=len(toc_nodes),
             asset_count=len(asset_entries),
             title=title,
-            creators=opf_meta.get("creators", []),
-            publisher=opf_meta.get("publisher"),
-            language=opf_meta.get("language"),
-            description=opf_meta.get("description"),
-            published_date=opf_meta.get("published_date"),
+            creators=opf_meta.creators,
+            publisher=opf_meta.publisher,
+            language=opf_meta.language,
+            description=opf_meta.description,
+            edition_published_date=opf_meta.edition_published_date,
+            edition_isbn=opf_meta.edition_isbn,
         )
         return EpubExtractionPlan(
             result=result,
@@ -1471,39 +1514,73 @@ def _normalize_title(raw: str) -> str:
     return t[:255]
 
 
-def _extract_opf_metadata(opf: ET.Element) -> dict:
+def _extract_opf_metadata(opf: ET.Element) -> EpubExtractionResult:
     """Extract Dublin Core metadata from OPF document."""
-    meta: dict = {}
-
-    # dc:creator (multiple allowed)
-    creators = []
-    for el in opf.findall(".//opf:metadata/dc:creator", _NS):
-        if el.text and el.text.strip():
-            creators.append(el.text.strip())
-    if creators:
-        meta["creators"] = creators
-
-    # dc:publisher
-    pub_el = opf.find(".//opf:metadata/dc:publisher", _NS)
-    if pub_el is not None and pub_el.text and pub_el.text.strip():
-        meta["publisher"] = pub_el.text.strip()
-
-    # dc:language
-    lang_el = opf.find(".//opf:metadata/dc:language", _NS)
-    if lang_el is not None and lang_el.text and lang_el.text.strip():
-        meta["language"] = lang_el.text.strip()
-
-    # dc:description
-    desc_el = opf.find(".//opf:metadata/dc:description", _NS)
-    if desc_el is not None and desc_el.text and desc_el.text.strip():
-        meta["description"] = desc_el.text.strip()
-
-    # dc:date
-    date_el = opf.find(".//opf:metadata/dc:date", _NS)
-    if date_el is not None and date_el.text and date_el.text.strip():
-        meta["published_date"] = date_el.text.strip()
-
-    return meta
+    creators = [
+        el.text.strip()
+        for el in opf.findall(".//opf:metadata/dc:creator", _NS)
+        if el.text and el.text.strip()
+    ]
+    publisher = opf.findtext(".//opf:metadata/dc:publisher", namespaces=_NS)
+    language = opf.findtext(".//opf:metadata/dc:language", namespaces=_NS)
+    description = opf.findtext(".//opf:metadata/dc:description", namespaces=_NS)
+    date_elements = opf.findall(".//opf:metadata/dc:date", _NS)
+    publication_elements = [
+        element
+        for element in date_elements
+        if element.get(f"{{{_NS['opf']}}}event") == "publication"
+    ]
+    if not publication_elements:
+        publication_elements = [
+            element for element in date_elements if element.get(f"{{{_NS['opf']}}}event") is None
+        ]
+    publication_dates: set[str] = set()
+    for element in publication_elements:
+        normalized = normalize_source_publication_date(element.text)
+        if isinstance(normalized, Present):
+            publication_dates.add(normalized.value)
+    isbns: set[str] = set()
+    primary_isbns: set[str] = set()
+    primary_id = opf.get("unique-identifier")
+    for identifier in opf.findall(".//opf:metadata/dc:identifier", _NS):
+        raw = re.sub(
+            r"^(?:urn:isbn:|isbn(?:-1[03])?:?)[ \t]*",
+            "",
+            (identifier.text or "").strip(),
+            flags=re.IGNORECASE,
+        )
+        value = re.sub(r"[\s-]", "", raw).upper()
+        if re.fullmatch(r"[0-9]{9}[0-9X]", value):
+            digits = [10 if char == "X" else int(char) for char in value]
+            if sum((10 - index) * digit for index, digit in enumerate(digits)) % 11:
+                continue
+            body = "978" + value[:9]
+            checksum = sum(
+                int(char) * (1 if index % 2 == 0 else 3) for index, char in enumerate(body)
+            )
+            value = body + str((-checksum) % 10)
+        elif re.fullmatch(r"97[89][0-9]{10}", value):
+            checksum = sum(
+                int(char) * (1 if index % 2 == 0 else 3) for index, char in enumerate(value)
+            )
+            if checksum % 10:
+                continue
+        else:
+            continue
+        isbns.add(value)
+        if primary_id is not None and identifier.get("id") == primary_id:
+            primary_isbns.add(value)
+    selected = primary_isbns if primary_isbns else isbns
+    return EpubExtractionResult(
+        creators=creators,
+        publisher=publisher.strip() or None if publisher is not None else None,
+        language=language.strip() or None if language is not None else None,
+        description=description.strip() or None if description is not None else None,
+        edition_published_date=present(next(iter(publication_dates)))
+        if len(publication_dates) == 1
+        else absent(),
+        edition_isbn=present(next(iter(selected))) if len(selected) == 1 else absent(),
+    )
 
 
 def _filename_from_storage_path(path: str) -> str:

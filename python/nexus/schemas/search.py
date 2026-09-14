@@ -17,6 +17,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from nexus.schemas.contributors import ContributorCreditOut
+from nexus.schemas.presence import Presence
+from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.retrieval import RetrievalLocator, validate_locator_for_result_type
 from nexus.schemas.search_types import SEARCH_RESULT_TYPES
 
@@ -32,7 +34,7 @@ class SearchResultSourceOut(BaseModel):
     media_kind: str
     title: str
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
-    published_date: str | None = None
+    original_published_date: Presence[PublicationDate]
     summary_md: str | None = None
 
     model_config = ConfigDict(extra="forbid")

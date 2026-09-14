@@ -1,35 +1,79 @@
 "use client";
 
 import { Fragment } from "react";
+import type { Presence } from "@/lib/api/presence";
+import type { PublicationDate } from "@/lib/dates/publicationDate";
+import { formatCollectionPublicationDate } from "@/components/collections/collectionRowFormatting";
 import Dialog from "@/components/ui/Dialog";
 import MobileSheet from "@/components/ui/MobileSheet";
 import type { PaneHeaderCreditGroup } from "@/lib/panes/paneHeaderModel";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
-import styles from "./ResourceCreditsOverlay.module.css";
+import styles from "./MediaInfoOverlay.module.css";
 
-interface ResourceCreditsOverlayProps {
+interface MediaInfoOverlayProps {
   readonly open: boolean;
   readonly title: string;
   readonly creditGroups: readonly PaneHeaderCreditGroup[];
+  readonly originalPublishedDate: Presence<PublicationDate>;
+  readonly editionPublishedDate: Presence<PublicationDate>;
+  readonly publisher: string | null;
   readonly returnFocusTo: ReturnFocusTarget;
   readonly returnFocusFallback: ReturnFocusTarget;
   readonly onClose: () => void;
 }
 
-function CompleteCredits({
+function MediaInfo({
   title,
   creditGroups,
-}: Pick<ResourceCreditsOverlayProps, "title" | "creditGroups">) {
+  originalPublishedDate,
+  editionPublishedDate,
+  publisher,
+}: Pick<
+  MediaInfoOverlayProps,
+  | "title"
+  | "creditGroups"
+  | "originalPublishedDate"
+  | "editionPublishedDate"
+  | "publisher"
+>) {
   return (
-    <div
-      className={styles.content}
-      data-resource-credits-complete="true"
-      data-testid="resource-credits-complete"
-    >
+    <div className={styles.content}>
       <div className={styles.resourceTitle} dir="auto">
         {title}
       </div>
+      <dl className={styles.facts}>
+        <div className={styles.group}>
+          <dt className={styles.role}>First published</dt>
+          <dd className={styles.names}>
+            {originalPublishedDate.kind === "Present" ? (
+              <time dateTime={originalPublishedDate.value}>
+                {formatCollectionPublicationDate(originalPublishedDate.value)}
+              </time>
+            ) : (
+              "Unknown"
+            )}
+          </dd>
+        </div>
+        <div className={styles.group}>
+          <dt className={styles.role}>This edition</dt>
+          <dd className={styles.names}>
+            {editionPublishedDate.kind === "Present" ? (
+              <time dateTime={editionPublishedDate.value}>
+                {formatCollectionPublicationDate(editionPublishedDate.value)}
+              </time>
+            ) : (
+              "Unknown"
+            )}
+          </dd>
+        </div>
+        {publisher ? (
+          <div className={styles.group}>
+            <dt className={styles.role}>Publisher</dt>
+            <dd className={styles.names}>{publisher}</dd>
+          </div>
+        ) : null}
+      </dl>
       <div className={styles.groups}>
         {creditGroups.map((group, groupIndex) => (
           <div
@@ -64,23 +108,34 @@ function CompleteCredits({
   );
 }
 
-export default function ResourceCreditsOverlay({
+export default function MediaInfoOverlay({
   open,
   title,
   creditGroups,
+  originalPublishedDate,
+  editionPublishedDate,
+  publisher,
   returnFocusTo,
   returnFocusFallback,
   onClose,
-}: ResourceCreditsOverlayProps) {
+}: MediaInfoOverlayProps) {
   const isMobile = useIsMobileViewport();
-  const content = <CompleteCredits title={title} creditGroups={creditGroups} />;
+  const content = (
+    <MediaInfo
+      title={title}
+      creditGroups={creditGroups}
+      originalPublishedDate={originalPublishedDate}
+      editionPublishedDate={editionPublishedDate}
+      publisher={publisher}
+    />
+  );
 
   if (isMobile) {
     return (
       <MobileSheet
         active={open}
         onDismiss={onClose}
-        ariaLabel="Credits"
+        ariaLabel="Media info"
         returnFocusTo={returnFocusTo}
         returnFocusFallback={returnFocusFallback}
       >
@@ -93,7 +148,7 @@ export default function ResourceCreditsOverlay({
     <Dialog
       open={open}
       onClose={onClose}
-      title="Credits"
+      title="Media info"
       returnFocusTo={returnFocusTo}
       returnFocusFallback={returnFocusFallback}
     >

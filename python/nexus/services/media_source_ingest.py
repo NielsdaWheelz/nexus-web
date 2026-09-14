@@ -68,7 +68,8 @@ from nexus.schemas.media import (
     SourceRepairAdmission,
     SourceRetryAdmission,
 )
-from nexus.schemas.presence import Presence, absent, present
+from nexus.schemas.presence import Presence, Present, absent, nullable_from_presence, present
+from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.services import library_entries, library_governance
 from nexus.services import (
     media_source_types as source_types,
@@ -804,9 +805,9 @@ def accept_browser_article_capture(
         updated_at=now,
         description=excerpt.strip()[:2000] if excerpt and excerpt.strip() else None,
         publisher=site_name.strip()[:255] if site_name and site_name.strip() else None,
-        published_date=published_time.strip()[:64]
-        if published_time and published_time.strip()
-        else None,
+        edition_published_date=nullable_from_presence(
+            normalize_source_publication_date(published_time)
+        ),
     )
     storage_client = get_storage_client()
     db.add(media)
@@ -1720,16 +1721,18 @@ def _run_claimed_source_attempt(
     except SourcePublicationSuperseded:
         db.rollback()
         return {"status": "superseded"}
-    post_success_db = session_factory()
-    try:
-        _run_post_success_source_actions(
-            post_success_db,
-            media_id=terminal_media_id,
-            result=result,
-            request_id=request_id,
-        )
-    finally:
-        post_success_db.close()
+    if attempt.created_by_user_id is not None:
+        post_success_db = session_factory()
+        try:
+            _run_post_success_source_actions(
+                post_success_db,
+                media_id=terminal_media_id,
+                requester_user_id=attempt.created_by_user_id,
+                result=result,
+                request_id=request_id,
+            )
+        finally:
+            post_success_db.close()
     delete_document_storage_objects(superseded_storage_paths)
     return result
 
@@ -4022,8 +4025,9 @@ def _persist_browser_article_metadata(
         media.description = excerpt[:2000]
     if site_name:
         media.publisher = site_name[:255]
-    if published_time:
-        media.published_date = published_time[:64]
+    edition_date = normalize_source_publication_date(published_time)
+    if isinstance(edition_date, Present):
+        media.edition_published_date = edition_date.value
     bump_all_media_fact_collections(db)
     if not byline:
         return NOT_OBSERVED
@@ -4071,11 +4075,17 @@ def _run_post_success_source_actions(
     db: Session,
     *,
     media_id: UUID,
+    requester_user_id: UUID,
     result: dict[str, object],
     request_id: str | None,
 ) -> None:
     if bool(result.get("metadata_enrichment")):
-        if try_enqueue_metadata_enrichment(db, media_id=media_id, request_id=request_id):
+        if try_enqueue_metadata_enrichment(
+            db,
+            media_id=media_id,
+            requester_user_id=requester_user_id,
+            request_id=request_id,
+        ):
             db.commit()
 
 

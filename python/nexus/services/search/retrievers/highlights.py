@@ -35,7 +35,7 @@ _HIGHLIGHT_ROW_COLUMNS = """
     m.id AS media_id,
     m.kind,
     m.title,
-    m.published_date,
+    m.original_published_date,
     mcc.contributor_credits,
     h.anchor_kind,
     hfa.fragment_id,

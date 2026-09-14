@@ -50,6 +50,7 @@ from nexus.schemas.presence import (
     presence_from_nullable,
     present,
 )
+from nexus.schemas.publication_dates import PublicationDate
 from nexus.services.capabilities import (
     SearchRecoveryAnswer,
     SourceRecoveryAnswer,
@@ -195,7 +196,8 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file",
     "m.created_by_user_id = :viewer_id AS is_creator",
     f"{_SOURCE_REFRESH_AVAILABLE_SQL} AS source_refresh_available",
-    "m.published_date",
+    "m.original_published_date",
+    "m.edition_published_date",
     "m.publisher",
     "m.language",
     "m.description",
@@ -234,7 +236,7 @@ _COLLECTION_MEDIA_SELECT_COLUMNS: tuple[str, ...] = (
     f"{_DEAD_REINDEX_JOB_ID_SQL} AS dead_reindex_job_id",
     "m.last_error_code",
     "m.created_at",
-    "m.published_date",
+    "m.original_published_date",
     "m.authors_manually_managed",
     "EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file",
     "m.created_by_user_id = :viewer_id AS is_creator",
@@ -293,7 +295,7 @@ class CollectionMedia:
     listening_state: ListeningStateOut | None
     contributors: list[ContributorCreditOut]
     author_mode: Literal["automatic", "manual"]
-    published_date: str | None
+    original_published_date: Presence[PublicationDate]
     read_state: MediaReadState
     progress_fraction: float | None
     progress_resettable: bool
@@ -311,7 +313,7 @@ def media_candidate_rows_sql() -> str:
     """Policy-neutral media candidate facts.
 
     Columns: ``media_id``, ``media_kind``, canonical Nexus ``created_at``, and
-    raw partial-date ``published_date``. Visibility, teardown, destination
+    raw partial-date ``original_published_date``. Visibility, teardown, destination
     eligibility, and exact-date interpretation belong to the composing query.
     """
     return """
@@ -319,7 +321,7 @@ def media_candidate_rows_sql() -> str:
             m.id AS media_id,
             m.kind AS media_kind,
             m.created_at,
-            m.published_date
+            m.original_published_date
         FROM media m
     """
 
@@ -595,7 +597,7 @@ def list_collection_media_for_viewer_by_ids(
                 listening_state=_media_listening_state_from_row(row),
                 contributors=contributors_by_media.get(media_id, []),
                 author_mode="manual" if bool(row["authors_manually_managed"]) else "automatic",
-                published_date=cast(str | None, row["published_date"]),
+                original_published_date=presence_from_nullable(row["original_published_date"]),
                 read_state=read_state.state,
                 progress_fraction=read_state.progress_fraction,
                 progress_resettable=read_state.progress_resettable,
@@ -937,7 +939,8 @@ def _media_out_from_row(
         capabilities=capabilities,
         contributors=contributors,
         author_mode="manual" if row["authors_manually_managed"] else "automatic",
-        published_date=row["published_date"],
+        original_published_date=presence_from_nullable(row["original_published_date"]),
+        edition_published_date=presence_from_nullable(row["edition_published_date"]),
         publisher=row["publisher"],
         language=row["language"],
         description=row["description"],

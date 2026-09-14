@@ -21,7 +21,7 @@ const SECONDARY_RESOURCE_TRIGGER = "Actions";
 const MEDIA_PANE_LOCAL_PREFIX = [
   "Pane.Search",
   "consumption-activity",
-  "ViewAction.Resource.Credits",
+  "ViewAction.Resource.MediaInfo",
   "ViewAction.Reader.Settings",
   "ViewAction.Reader.Theme.Light",
   "ViewAction.Reader.Theme.Dark",

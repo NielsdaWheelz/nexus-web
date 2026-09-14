@@ -18,6 +18,7 @@ TOOL_PLAN_AUTHORITY_REVISIONS: Final[MappingProxyType[str, str]] = MappingProxyT
         ),
         "LibraryDossierRead": ("b6b91ec256ef4113aee8aff329affdfeff08f855eb71cbcce6bf05d1bed93902"),
         "IdeaDossierRead": ("35ae7ab9ab1b2da96b3c7809b93c1cce8122e9a4eb7ef146d14aec0b2ca34d8b"),
+        "MetadataRead": "422ab2500e893ad24cb5cf079ab0edd4beb7c9915f818492723eb95e9a5e31f0",
         "idea_dossier_research": (
             "7486ba6f9b6e4bedc4b0e57ebd81fd398ef65df2dfe4fa2c0a9a06c76e3fd2af"
         ),

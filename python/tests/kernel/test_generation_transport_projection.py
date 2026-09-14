@@ -128,8 +128,9 @@ def test_one_plan_lowers_to_both_transport_contracts() -> None:
         "ChatReadAdditiveWrite",
         "LibraryDossierRead",
         "IdeaDossierRead",
+        "MetadataRead",
     )
-    assert len({_content_revision(item) for item in facts}) == 4
+    assert len({_content_revision(item) for item in facts}) == 5
 
     web_binding = _binding(WEB_SEARCH_SPEC, replay_policy=ReplayPolicy.BilledOnce)
     nexus_bindings = tuple(
@@ -143,6 +144,7 @@ def test_one_plan_lowers_to_both_transport_contracts() -> None:
         "LibraryDossierRead",
         "IdeaDossierRead",
         "idea_dossier_research",
+        "MetadataRead",
     )
     assert "chat" not in runtime.operations
 
@@ -165,6 +167,11 @@ def test_one_plan_lowers_to_both_transport_contracts() -> None:
         "IdeaDossierRead": (
             _READ_IDS,
             RunLimits(12, 0, 131_072, 2_097_152, 1, 120.0),
+            None,
+        ),
+        "MetadataRead": (
+            ("web.search", "web.read", "nexus.document.search", "nexus.resource.read"),
+            RunLimits(8, 64, 262_144, 4_194_304, 1, 120.0),
             None,
         ),
     }

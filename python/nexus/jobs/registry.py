@@ -155,11 +155,10 @@ def _build_default_registry() -> dict[str, JobDefinition]:
         "enrich_metadata": JobDefinition(
             kind="enrich_metadata",
             handler_path="nexus.jobs.registry:_run_enrich_metadata",
-            resource_class="Heavy",
+            resource_class="Light",
             max_attempts=2,
             retry_delays_seconds=(0,),
             lease_seconds=300,
-            child_runtime="Llm",
             never_prune_dead=True,
         ),
         "chat_run": JobDefinition(
@@ -424,6 +423,7 @@ def _run_enrich_metadata(
     return enrich_metadata(
         media_id=str(payload["media_id"]),
         request_id=_optional_job_text(payload, "request_id", "enrich_metadata"),
+        requester_user_id=UUID(str(payload["requester_user_id"])),
         context=context,
     )
 

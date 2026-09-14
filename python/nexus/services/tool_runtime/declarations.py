@@ -13,6 +13,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from llm_tools import (
+    WEB_READ_SPEC,
     WEB_SEARCH_SPEC,
     PromptDocument,
     ToolEffect,
@@ -590,6 +591,11 @@ CHAT_TOOL_DECLARATIONS: tuple[PresentedToolDeclaration, ...] = (
         spec=WEB_SEARCH_SPEC,
         result_kind="retrieval",
         activity_label="Searching the web",
+    ),
+    PresentedToolDeclaration(
+        spec=WEB_READ_SPEC,
+        result_kind="retrieval",
+        activity_label="Reading a web page",
     ),
     *NEXUS_TOOL_DECLARATIONS,
 )

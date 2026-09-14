@@ -276,8 +276,8 @@ function readerMenuActions(resolving: boolean): readonly ActionDescriptor[] {
     },
     {
       kind: "command",
-      id: "ViewAction.Resource.Credits",
-      label: "Credits…",
+      id: "ViewAction.Resource.MediaInfo",
+      label: "Media info…",
       icon: <Users size={16} aria-hidden="true" />,
       onSelect: noop,
       ...resolvingState,
@@ -312,7 +312,7 @@ function readerMenuActions(resolving: boolean): readonly ActionDescriptor[] {
 const MEDIA_PANE_LOCAL_PREFIX = [
   "Pane.Search",
   "consumption-activity",
-  "ViewAction.Resource.Credits",
+  "ViewAction.Resource.MediaInfo",
   "ViewAction.Reader.Settings",
   "ViewAction.Reader.Theme.Light",
   "ViewAction.Reader.Theme.Dark",
@@ -729,7 +729,7 @@ describe("PaneShell pane search", () => {
       "Blocked",
       "Blocked",
     ]);
-    for (const name of ["Find", "Credits…", "Light theme", "Dark theme"]) {
+    for (const name of ["Find", "Media info…", "Light theme", "Dark theme"]) {
       expect(
         within(screen.getByRole("menu")).getByRole("menuitem", { name }),
         `${name} withheld its reason while resolving`,

@@ -1825,6 +1825,12 @@ def start_python_process(
             "apps.worker.main",
         )
         if role == "worker-interactive":
+            # Match the deployed interactive worker's memory envelope.
+            scope_properties = (
+                f"MemoryMax={256 * 1024 * 1024}",
+                "MemorySwapMax=0",
+                "OOMPolicy=continue",
+            )
             _require_loopback_port_available(
                 runtime.ports.agent_tools_mcp,
                 "worker-interactive MCP",

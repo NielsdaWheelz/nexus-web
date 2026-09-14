@@ -45,7 +45,8 @@ function mediaDetail() {
     document_embed_summary: null,
     contributors: [],
     author_mode: "automatic",
-    published_date: null,
+    original_published_date: { kind: "Absent" },
+    edition_published_date: { kind: "Absent" },
     publisher: null,
     language: null,
     description: null,
@@ -88,5 +89,30 @@ describe("media detail wire", () => {
     expect(() =>
       decodeMediaDetailResponse({ data: mediaDetail() }, OTHER_MEDIA_ID),
     ).toThrow(/must match the requested media/);
+  });
+
+  it("keeps original absence independent of an edition and rejects non-calendar dates", () => {
+    const wire = {
+      ...mediaDetail(),
+      edition_published_date: { kind: "Present", value: "2007-06" },
+    };
+    const media = decodeMediaDetail(wire);
+    expect(media.original_published_date).toEqual({ kind: "Absent" });
+    expect(media.edition_published_date).toEqual({
+      kind: "Present",
+      value: "2007-06",
+    });
+
+    for (const value of ["2023-02-29", "2026-01-01T00:00:00Z", "0000"]) {
+      expect(() =>
+        decodeMediaDetail({
+          ...wire,
+          original_published_date: { kind: "Present", value },
+        }),
+      ).toThrow(/must be a real/);
+    }
+    expect(() =>
+      decodeMediaDetail({ ...wire, original_published_date: null }),
+    ).toThrow(/Presence/);
   });
 });

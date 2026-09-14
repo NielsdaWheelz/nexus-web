@@ -17,6 +17,15 @@ before interruption, bounded reads of the owned pytest process
 are not formal passing gate receipts. the interrupted summary cannot substantiate
 the earlier completed policy/static results.
 
+corroboration: changed run `583acfc1cd7c4f72` at `87c187bcf3` was
+deliberately interrupted during `kernel-python` to integrate main `7a646cf5a5`
+and release the shared runner. its `test-results/runs/583acfc1cd7c4f72/run-context.json`
+retains eight command records owned by `static-python`, `static-web`,
+`policy-self-tests`, and `kernel-python`; `summary.json` nevertheless records
+`policy` failed and all those owners `not_run`, with zero capability durations.
+the command records establish execution reached those owners, not formal passing
+receipts; the context retains no runtime records.
+
 `python/nexus_test_control/runner.py:1135` constructs the entire capability tuple
 before returning it. an exception during iteration loses the already yielded
 records. `python/nexus_test_control/cli.py:347` leaves `failure_owner` at the first

@@ -127,7 +127,7 @@ function episode(input: {
     },
     contributors: [],
     author_mode: "automatic",
-    published_date: { kind: "Present", value: input.published },
+    original_published_date: { kind: "Present", value: input.published },
     duration_seconds: { kind: "Present", value: input.durationSeconds },
     has_show_notes: false,
     playerDescriptor: { kind: "Absent" },

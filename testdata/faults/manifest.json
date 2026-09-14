@@ -126,13 +126,15 @@
       "expected_failure": "head schema is missing product-spine tables"
     },
     {
-      "id": "migration-podcast-canonicalization-bypass",
-      "patch": "testdata/faults/migration-podcast-canonicalization-bypass.patch",
-      "sha256": "cb52b844ccb699f7ee8105d04373c75ce68380e93e9739595b28a57b34a0abb8",
+      "id": "publication-date-drain-bypass",
+      "patch": "testdata/faults/publication-date-drain-bypass.patch",
+      "sha256": "bdbeb526989f5e2dec36984e9d621010c9c784b835d5d3dfe9757aa34605156e",
       "proofs": [
-        "pytest:python/tests/migrations/test_podcast_publication_migration.py::test_0207_canonicalizes_only_legacy_podcast_publication_instants_and_reaches_head"
+        "pytest:python/tests/migrations/test_original_publication_dates.py::test_publication_dates_require_drained_work_and_invalidate_chronology"
       ],
-      "expected_failure": "0207 must canonicalize legacy Podcast instants"
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "b8347b0949b8718e381ad6c01c9ef0dc32850376fbf57c91753550da105925ca"
     },
     {
       "id": "podcast-subscription-notification-bypass",
@@ -1133,6 +1135,15 @@
       "changed_owner_sha256": "76bd914ede2b93193676e4992c0822c64abdc7eb626ff739a2b6655d44c6efc5"
     },
     {
+      "id": "generation-catalog-model-omission",
+      "patch": "testdata/faults/generation-catalog-model-omission.patch",
+      "sha256": "f43e54b3dba6ecea003c91e97f5c9b5357eb4db2bcd21ae7363e0b17fc3748e4",
+      "proofs": [
+        "pytest:python/tests/service/test_generation_catalog.py::test_complete_catalog_and_selection_contract"
+      ],
+      "expected_failure": "'anthropic:claude-sonnet-5' != 'openai:gpt-5.6-luna'"
+    },
+    {
       "id": "generation-provider-publication-omission",
       "patch": "testdata/faults/generation-provider-publication-omission.patch",
       "sha256": "1641fafff99afe9a4fe5d0478d756f6789593ead5fd79685863ce884c75add8f",
@@ -1141,7 +1152,7 @@
       ],
       "expected_failure": "Native model-tool plan lost its provider publication",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "beef9bc531d3011c97f071788fa841f6a59a9e08efae42f2aa9d249779d9f566"
+      "changed_owner_sha256": "fbd1be8dc70c5d8e8bb1ff9fada6668fc2004ba18b6f39314ca306767b72deb4"
     },
     {
       "id": "generation-frozen-policy-substitution",
@@ -1152,7 +1163,7 @@
       ],
       "expected_failure": "background admission replaced the frozen policy revision",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "8d2f2c6bd1b771c30b232883de4bc9e9a6583f3f319f1848f83fe3d8fb4fd3d4"
+      "changed_owner_sha256": "f44651f25d30fe5096a89f25b7bf70bb38247b1eb4870d3fd52a887fae42ecab"
     },
     {
       "id": "browse-search-provenance-omission",
@@ -1177,6 +1188,28 @@
       "changed_owner_sha256": "5dccea7777434a3de061b5827166f28a44da2d46ff10fafe2bd9d7f19b7c5cad"
     },
     {
+      "id": "publication-edition-leak",
+      "patch": "testdata/faults/publication-edition-leak.patch",
+      "sha256": "c428739301bac5bb1e335fe0eb7922e27b679f22c07ffc591d27317d52e0000a",
+      "proofs": [
+        "pytest:python/tests/service/test_media_publication_metadata.py::test_epub_reprint_date_never_replaces_original_and_null_research_clears"
+      ],
+      "expected_failure": "source edition populated the original publication date",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "905320fcd5e88dee2192ac31e79cd7ea72ee76bb58cedd0101fe4df7c9154faf"
+    },
+    {
+      "id": "publication-calendar-validation-bypass",
+      "patch": "testdata/faults/publication-calendar-validation-bypass.patch",
+      "sha256": "fafb2af5a0be973b20841607e256b8a94b79f74c4cbe02461613d04f8b8ee099",
+      "proofs": [
+        "pytest:python/tests/kernel/test_publication_dates.py::test_publication_dates_reject_impossible_or_unsupported_generated_values"
+      ],
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "47a965b94109a13bfaa816ffd1075fefebd89478b465320f704cb7b26daed1dd"
+    },
+    {
       "id": "reader-map-transitive-cluster-bypass",
       "patch": "testdata/faults/reader-map-transitive-cluster-bypass.patch",
       "sha256": "0ff0c364358740c888b8091f4fa2617f504bf0d720cc2dd4eb9ccfa3a4c3fc55",
@@ -1188,7 +1221,7 @@
     {
       "id": "reader-structure-cursor-migration-bypass",
       "patch": "testdata/faults/reader-structure-cursor-migration-bypass.patch",
-      "sha256": "68093212b033add5a6d9853d985e53681aefd6b09443c929eb4e03b04690f422",
+      "sha256": "5ee953d9e5cce070c706cce42a65697e6f8c118da76621920c5df40ce703cab1",
       "proofs": [
         "pytest:python/tests/migrations/test_reader_structure_migration.py::test_reader_structure_repair_preserves_fragment_identity_and_cursor"
       ],

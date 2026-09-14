@@ -4,16 +4,51 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from sqlalchemy.orm import Session
+import pytest
+from sqlalchemy import inspect
+from sqlalchemy.orm import Session, defer
 
+from nexus.config import get_settings
 from nexus.db.models import Media, MediaKind, ProcessingStatus
 from nexus.services import generation_policy
 from nexus.services.contributor_taxonomy import MAX_CONTRIBUTOR_NAME_CODE_POINTS
 from nexus.services.metadata_enrichment import (
     build_enrichment_user_content,
+    get_content_sample,
     metadata_enrichment_agent_definition,
     metadata_prompt_budget,
 )
+
+
+@pytest.mark.parametrize(
+    ("prefix", "expected"),
+    [
+        ("<p>First work &amp; author.</p>", "First work & author."),
+        ("", "A saved description."),
+    ],
+)
+def test_metadata_sample_reads_only_the_admitted_source_prefix(
+    db_session: Session, prefix: str, expected: str
+) -> None:
+    """Bound source admission; the capped worker journey proves memory containment."""
+    max_chars = get_settings().metadata_enrichment_max_content_chars
+    media = Media(
+        kind=MediaKind.pdf.value,
+        title="A whole book",
+        description="A saved description.",
+        plain_text=prefix.ljust(max_chars) + "LATE EVIDENCE " * 160_000,
+        processing_status=ProcessingStatus.ready_for_reading,
+    )
+    db_session.add(media)
+    db_session.flush()
+    media_id = media.id
+    db_session.expunge(media)
+    del media
+
+    loaded = db_session.get(Media, media_id, options=(defer(Media.plain_text),))
+    assert loaded is not None
+    assert get_content_sample(db_session, loaded) == expected
+    assert "plain_text" in inspect(loaded).unloaded, "metadata hydrated the whole source body"
 
 
 def _metadata_input_max_bytes() -> int:
@@ -74,7 +109,8 @@ def test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets(
         "authors",
         "publisher",
         "description",
-        "published_date",
+        "original_published_date",
+        "edition_published_date",
         "language",
     }
 
@@ -82,10 +118,15 @@ def test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets(
         "title": {"minLength": 1, "maxLength": 255, "pattern": r"\S"},
         "publisher": {"minLength": 1, "maxLength": 255, "pattern": r"\S"},
         "description": {"minLength": 1, "maxLength": 2000, "pattern": r"\S"},
-        "published_date": {
-            "minLength": 1,
-            "maxLength": 64,
-            "pattern": r"^\d{4}(?:-\d{2}(?:-\d{2})?)?$",
+        "original_published_date": {
+            "minLength": 4,
+            "maxLength": 10,
+            "pattern": r"^[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?$",
+        },
+        "edition_published_date": {
+            "minLength": 4,
+            "maxLength": 10,
+            "pattern": r"^[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?$",
         },
         "language": {"minLength": 1, "maxLength": 32, "pattern": r"^[a-z]{2}$"},
     }

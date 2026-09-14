@@ -36,36 +36,40 @@ def enqueue_metadata_enrichment(
     db: Session,
     *,
     media_id: UUID | str,
+    requester_user_id: UUID,
     request_id: str | None,
     dedupe_key: str | None = None,
-) -> None:
+) -> bool:
     """Enqueue one canonical metadata job without committing its transaction."""
     payload = {
         "media_id": str(media_id),
+        "requester_user_id": str(requester_user_id),
         "request_id": request_id,
     }
     max_attempts = _metadata_max_attempts()
     if dedupe_key is not None:
-        enqueue_unique_job(
+        _, inserted = enqueue_unique_job(
             db,
             kind="enrich_metadata",
             payload=payload,
             dedupe_key=dedupe_key,
             max_attempts=max_attempts,
         )
-        return
+        return inserted
     enqueue_job(
         db,
         kind="enrich_metadata",
         payload=payload,
         max_attempts=max_attempts,
     )
+    return True
 
 
 def try_enqueue_metadata_enrichment(
     db: Session,
     *,
     media_id: UUID | str,
+    requester_user_id: UUID,
     request_id: str | None,
 ) -> bool:
     """Best-effort enqueue on a fresh post-publication session.
@@ -86,6 +90,7 @@ def try_enqueue_metadata_enrichment(
         enqueue_metadata_enrichment(
             db,
             media_id=media_ref,
+            requester_user_id=requester_user_id,
             request_id=request_id,
         )
         return True

@@ -14,7 +14,7 @@ import type {
 import { decodeContributorCredit } from "@/lib/contributors/credit";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import {
-  decodeOptionalPublicationDate,
+  decodePublicationDateOnly,
   type PublicationDate,
 } from "@/lib/dates/publicationDate";
 import {
@@ -97,7 +97,7 @@ export interface PodcastEpisodeMedia {
   capabilities: MediaCapabilities;
   contributors: ContributorCredit[];
   author_mode: "automatic" | "manual";
-  published_date: string | null;
+  original_published_date: Presence<PublicationDate>;
   /** Lazy detail enrichment; never present in the compact list wire value. */
   description_text: string | null;
   has_show_notes: boolean;
@@ -122,7 +122,7 @@ export function decodePodcastEpisodeMedia(raw: unknown): PodcastEpisodeMedia {
       "capabilities",
       "contributors",
       "author_mode",
-      "published_date",
+      "original_published_date",
       "duration_seconds",
       "has_show_notes",
       "playerDescriptor",
@@ -134,8 +134,8 @@ export function decodePodcastEpisodeMedia(raw: unknown): PodcastEpisodeMedia {
     (value) => expectString(value, "canonical_source_url.value"),
   );
   const publishedDate = decodePresence(
-    item.published_date,
-    (value) => expectString(value, "published_date.value"),
+    item.original_published_date,
+    (value) => decodePublicationDateOnly(value, "original_published_date.value"),
   );
   const durationSeconds = decodePresence(
     item.duration_seconds,
@@ -266,8 +266,7 @@ export function decodePodcastEpisodeMedia(raw: unknown): PodcastEpisodeMedia {
       ["automatic", "manual"] as const,
       "author_mode",
     ),
-    published_date:
-      publishedDate.kind === "Present" ? publishedDate.value : null,
+    original_published_date: publishedDate,
     description_text: null,
     has_show_notes: expectBoolean(item.has_show_notes, "has_show_notes"),
     duration_seconds:
@@ -319,12 +318,6 @@ export interface EpisodeActivityFacts {
   totalMinutes: Presence<PositiveMinutes>;
   fraction: Presence<ProgressFraction>;
   remainingMinutes: Presence<PositiveMinutes>;
-}
-
-export function decodeEpisodePublicationDate(
-  raw: PodcastEpisodeMedia["published_date"],
-): Presence<PublicationDate> {
-  return decodeOptionalPublicationDate(raw, "episode published_date");
 }
 
 export function decodeEpisodeTimingFacts(

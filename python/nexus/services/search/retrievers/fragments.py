@@ -52,7 +52,7 @@ def _search_fragments(
                 m.id AS media_id,
                 m.kind,
                 m.title,
-                m.published_date,
+                m.original_published_date,
                 mcc.contributor_credits,
                 ts_rank_cd(
                     to_tsvector('english', f.canonical_text),
@@ -131,7 +131,7 @@ def resolve_fragment_search_result(
                 m.id,
                 m.kind,
                 m.title,
-                m.published_date,
+                m.original_published_date,
                 mcc.contributor_credits
             FROM fragments f
             JOIN media m ON m.id = f.media_id

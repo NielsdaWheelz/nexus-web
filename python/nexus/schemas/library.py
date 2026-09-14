@@ -11,6 +11,7 @@ from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import Presence
+from nexus.schemas.publication_dates import PublicationDate
 from nexus.services.podcasts.types import PodcastSyncStatus
 from nexus.services.sealed_handles import LibraryInvitationHandle, UserHandle
 
@@ -293,7 +294,7 @@ class LibraryEntryMediaOut(BaseModel):
     created_at: datetime
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
     author_mode: Literal["automatic", "manual"]
-    published_date: str | None
+    original_published_date: Presence[PublicationDate]
     canonical_source_url: str | None
     processing_status: Literal[
         "pending",

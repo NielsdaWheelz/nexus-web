@@ -11,7 +11,15 @@ from uuid import UUID
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import FailureStage, Media, ProcessingStatus
+from nexus.db.models import FailureStage, Media, MediaKind, ProcessingStatus
+
+
+def is_metadata_enrichment_eligible(*, kind: str, processing_status: str) -> bool:
+    """Metadata research does not require an audio/video transcript."""
+    return processing_status == ProcessingStatus.ready_for_reading or (
+        processing_status == ProcessingStatus.pending
+        and kind in (MediaKind.video, MediaKind.podcast_episode)
+    )
 
 
 def mark_failed(

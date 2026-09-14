@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any, Literal
 
 from llm_tools import (
+    WEB_READ_SPEC,
     WEB_SEARCH_SPEC,
     Available,
     HandlerSuccess,
@@ -62,8 +63,16 @@ def controlled_tool_runtime(handlers: Mapping[str, Any]) -> ComposedToolRuntime:
     return compose_tool_runtime(
         ToolBinding(
             spec=WEB_SEARCH_SPEC,
-            execute=Available(unexpected),
+            execute=Available(handlers.get("web.search", unexpected)),
             replay_policy=ReplayPolicy.BilledOnce,
+            implementation_revision="test_generation_tool_authority.v1",
+            policy_epoch=PolicyEpoch("generation-tool-authority-proof-v1"),
+            policy_inputs={"owner": "generation-tool-authority-proof"},
+        ),
+        web_read_binding=ToolBinding(
+            spec=WEB_READ_SPEC,
+            execute=Available(handlers.get("web.read", unexpected)),
+            replay_policy=ReplayPolicy.ReDispatchable,
             implementation_revision="test_generation_tool_authority.v1",
             policy_epoch=PolicyEpoch("generation-tool-authority-proof-v1"),
             policy_inputs={"owner": "generation-tool-authority-proof"},

@@ -361,5 +361,9 @@ behavior. See
 [docs/tickets/oracle-host-replay-received-unowned-sigterm.md](tickets/oracle-host-replay-received-unowned-sigterm.md).
 
 - [open] oi-098 · reader annotation · 2026-09-14 focus/submit review · failed highlight creation crashes the quick-note editor: [ticket](tickets/highlight-quick-note-create-failure-crashes-editor.md).
-- [open] test control · 2026-09-14 annotation verification · host oracle fixture ownership setup blocks local confidence: [ticket](tickets/host-oracle-fixture-ownership-blocks-confidence.md).
+- [open] test control · 2026-09-14 annotation/publication-date verification · host oracle fixture ownership setup blocks local confidence: [ticket](tickets/host-oracle-fixture-ownership-blocks-confidence.md).
+- [open] oi-106 · generation policy · 2026-09-14 spec review · p2 · background context-token budget is recorded without enforcement: [ticket](tickets/background-generation-context-budget-is-not-enforced.md).
+- [open] metadata verification · 2026-09-14 implementation · live research judgments and external query contents still need smoke inspection: [ticket](tickets/metadata-live-research-smoke-unverified.md).
+- [open] test control · 2026-09-14 pr #246 ci · complete python static can omit changed owners outside its curated include: [ticket](tickets/complete-python-static-omits-changed-owner-checks.md).
 - [open] resource actions · 2026-09-14 highlight popup verification · mobile parity journey finds the prior browse pane after reader navigation: [ticket](tickets/resource-action-parity-mobile-pane-readiness.md).
+- [open] agent tools · 2026-09-14 pr #246 memory review · resource reads load full bodies before enforcing their output limit: [ticket](tickets/resource-reader-loads-full-body-before-limit.md).
