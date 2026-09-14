@@ -82,6 +82,7 @@ _CONTROL_DATA = frozenset(
         "testdata/proofs.json",
         "testdata/policy-exceptions.json",
         "testdata/faults/manifest.json",
+        "testdata/evidence/bounded-workspace-receipts.json",
     }
 )
 _NORMATIVE_PATHS = (
@@ -1290,6 +1291,7 @@ def repository_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
     violations.extend(_executable_route_violations(repo_root))
     violations.extend(_package_runner_violations(repo_root))
     violations.extend(_codex_agent_runtime_construction_violations(repo_root))
+    violations.extend(bounded_receipt_violations(repo_root))
     return _sorted(violations)
 
 
@@ -1357,6 +1359,94 @@ def _source_glob_has_owner(repo_root: Path, pattern: str) -> bool:
         for character in pattern
     )
     return any(path.is_file() for path in repo_root.glob(pathlib_pattern))
+
+
+def bounded_receipt_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
+    """Check retained historical bytes and dossier coverage, not current proof validity."""
+    relative = "testdata/evidence/bounded-workspace-receipts.json"
+    rule = "bounded-dossier-receipt"
+    data, violations = _load_json(repo_root, relative, rule)
+    if data is None:
+        return _sorted(violations)
+    dossiers = [
+        "docs/cutovers/bounded-workspace-progress.md",
+        "docs/cutovers/bounded-workspace-client-progress.md",
+        "docs/cutovers/bounded-workspace-runtime-progress.md",
+        "docs/cutovers/bounded-workspace-publication-progress.md",
+    ]
+    if (
+        not isinstance(data, dict)
+        or set(data) != {"version", "dossiers", "receipts"}
+        or type(data["version"]) is not int
+        or data["version"] != 1
+        or data["dossiers"] != dossiers
+        or not isinstance(data["receipts"], list)
+    ):
+        return (PolicyViolation(rule, relative, "unexpected retained receipt index schema"),)
+    retained: set[str] = set()
+    for receipt in data["receipts"]:
+        if not isinstance(receipt, dict) or set(receipt) != {
+            "run_id", "summary_sha256", "run_context_sha256",
+            "summary", "run_context", "artifacts",
+        }:
+            violations.append(PolicyViolation(rule, relative, "unexpected retained receipt row"))
+            continue
+        run_id = receipt["run_id"]
+        if not isinstance(run_id, str) or re.fullmatch(r"[0-9a-f]{16}", run_id) is None:
+            violations.append(PolicyViolation(rule, relative, "invalid retained run id"))
+            continue
+        if run_id in retained:
+            violations.append(PolicyViolation(rule, relative, f"duplicate retained run {run_id}"))
+        retained.add(run_id)
+        for key in ("summary", "run_context"):
+            payload, digest = receipt[key], receipt[f"{key}_sha256"]
+            if (
+                not isinstance(payload, dict)
+                or payload.get("version") != 3
+                or not isinstance(digest, str)
+                or _SHA256.fullmatch(digest) is None
+                or hashlib.sha256(
+                    (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
+                ).hexdigest() != digest
+            ):
+                violations.append(
+                    PolicyViolation(rule, relative, f"{run_id} {key} original-byte hash differs")
+                )
+        summary = receipt["summary"]
+        if not isinstance(summary, dict) or (
+            summary.get("run_id") != run_id
+            or summary.get("status") not in ("pass", "fail", "not_run")
+            or summary.get("run_context_artifact")
+            != f"test-results/runs/{run_id}/run-context.json"
+        ):
+            violations.append(PolicyViolation(rule, relative, f"{run_id} summary identity differs"))
+        artifacts = receipt["artifacts"]
+        if not isinstance(artifacts, list) or any(
+            not isinstance(item, dict)
+            or set(item) != {"name", "bytes", "sha256"}
+            or not isinstance(item["name"], str)
+            or not _safe_relative(item["name"])
+            or type(item["bytes"]) is not int
+            or item["bytes"] < 0
+            or not isinstance(item["sha256"], str)
+            or _SHA256.fullmatch(item["sha256"]) is None
+            for item in artifacts
+        ):
+            violations.append(PolicyViolation(rule, relative, f"{run_id} artifact identity differs"))
+    for dossier in dossiers:
+        path = _resolved_repository_file(repo_root, dossier)
+        if path is None:
+            violations.append(PolicyViolation(rule, dossier, "dossier owner is missing"))
+            continue
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for run_id in re.findall(r"(?<![0-9a-f])[0-9a-f]{16}(?![0-9a-f])", line):
+                if run_id not in retained:
+                    violations.append(
+                        PolicyViolation(
+                            rule, dossier, f"receipt {run_id} has no retained summary", line_number
+                        )
+                    )
+    return _sorted(violations)
 
 
 def proof_manifest_schema_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:

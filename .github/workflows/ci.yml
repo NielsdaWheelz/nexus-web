@@ -230,6 +230,11 @@ jobs:
           if [ -e "$runtime" ] || [ -L "$runtime" ]; then
             ./scripts/test clean
           fi
+
+      - name: Retire generated web build
+        if: always()
+        uses: ./.github/actions/clean-generated-web-build
+
       - name: Remove run evidence staging
         if: ${{ always() && steps.proof.outputs.path != '' }}
         env:
@@ -337,6 +342,11 @@ jobs:
           if [ -e "$runtime" ] || [ -L "$runtime" ]; then
             ./scripts/test clean
           fi
+
+      - name: Retire generated web build
+        if: always()
+        uses: ./.github/actions/clean-generated-web-build
+
       - name: Remove run evidence staging
         if: ${{ always() && steps.proof.outputs.path != '' }}
         env:

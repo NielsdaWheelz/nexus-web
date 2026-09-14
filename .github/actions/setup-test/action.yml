@@ -117,6 +117,9 @@ runs:
       shell: bash
       run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.8
 
+    - name: Recreate generated web build
+      uses: ./.github/actions/clean-generated-web-build
+
     - name: Recreate locked Python environment
       shell: bash
       run: |

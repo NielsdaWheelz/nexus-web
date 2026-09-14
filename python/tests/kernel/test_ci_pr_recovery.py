@@ -14,6 +14,7 @@ import pytest
 REPO_ROOT = Path(__file__).parents[3]
 WORKFLOW = REPO_ROOT / ".github/workflows/ci.yml"
 SETUP_ACTION = REPO_ROOT / ".github/actions/setup-test/action.yml"
+GENERATED_BUILD_ACTION = REPO_ROOT / ".github/actions/clean-generated-web-build/action.yml"
 REPOSITORY = "NielsdaWheelz/nexus-web"
 PULL_REQUEST_NUMBER = "17"
 
@@ -38,6 +39,27 @@ def _step_script(name: str) -> str:
         body.append(line[10:] if line else "")
     if not body:
         raise AssertionError(f"workflow step has an empty shell body: {name}")
+    return "\n".join(body) + "\n"
+
+
+def _generated_build_cleanup_script() -> str:
+    lines = GENERATED_BUILD_ACTION.read_text(encoding="utf-8").splitlines()
+    step = "    - name: Remove generated web build"
+    try:
+        step_index = lines.index(step)
+        run_index = next(
+            index for index in range(step_index + 1, len(lines)) if lines[index] == "      run: |"
+        )
+    except (ValueError, StopIteration) as error:
+        raise AssertionError("generated-build cleanup action has no owned shell body") from error
+
+    body: list[str] = []
+    for line in lines[run_index + 1 :]:
+        if line and not line.startswith("        "):
+            break
+        body.append(line[8:] if line else "")
+    if not body:
+        raise AssertionError("generated-build cleanup action has an empty shell body")
     return "\n".join(body) + "\n"
 
 
@@ -132,6 +154,31 @@ def _runtime_repository(tmp_path: Path) -> Path:
     _git(repository, "add", ".gitignore")
     _git(repository, "commit", "--message", "runtime owner")
     return repository
+
+
+def _generated_build_repository(tmp_path: Path) -> Path:
+    repository = tmp_path / "generated-build-repository"
+    repository.mkdir()
+    _git(repository, "init", "--initial-branch=main")
+    _git(repository, "config", "user.name", "Nexus test")
+    _git(repository, "config", "user.email", "test@nexus.local")
+    (repository / ".gitignore").write_text(".next/\n", encoding="utf-8")
+    (repository / "apps/web").mkdir(parents=True)
+    (repository / "apps/web/source.ts").write_text("export {};\n", encoding="utf-8")
+    _git(repository, "add", ".")
+    _git(repository, "commit", "--message", "source")
+    return repository
+
+
+def _run_generated_build_cleanup(repository: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ("bash", "-euo", "pipefail", "-c", _generated_build_cleanup_script()),
+        cwd=repository,
+        env={**os.environ, "GITHUB_WORKSPACE": str(repository)},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _run_prior_runtime_retirement(
@@ -312,7 +359,7 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
     assert "ubuntu-latest" not in workflow
     assert workflow.count("runs-on: [self-hosted, linux, x64]") == 2
     assert "cancel-in-progress: false" in workflow
-    assert workflow.count("clean: false") == 2
+    assert workflow.count("clean: ${{ runner.environment == 'github-hosted' }}") == 2
     assert workflow.count("- name: Retire prior checkout test runtime") == 2
     assert workflow.count('test -x "$checkout/scripts/test"') == 2
     assert workflow.count('            cd "$checkout"') == 2
@@ -320,8 +367,17 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
     assert "from nexus_test_control.services import clean_owned_runtime" not in workflow
     assert workflow.count("- name: Clear prior runner evidence") == 2
     assert workflow.count("git clean -qffdx -- test-results/") == 2
-    assert workflow.count("run: ./scripts/test pr") == 1
-    assert workflow.count("run: ./scripts/test full") == 1
+    assert (
+        "            pull_request:*|workflow_dispatch:changed)\n"
+        '              scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"\n'
+        "              ;;\n"
+    ) in workflow
+    assert (
+        "            workflow_dispatch:pr)\n"
+        "              scripts/ci-proof-artifact.sh run pr\n"
+        "              ;;\n"
+    ) in workflow
+    assert workflow.count("run: scripts/ci-proof-artifact.sh run full") == 1
     assert workflow.count("- name: Retire current checkout test runtime") == 2
     assert 'command -v "$tool"' in setup
     assert "sudo -n true" in setup
@@ -329,8 +385,7 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
         "- uses: actions/setup-go@"
     )
     assert "sudo --non-interactive true" in setup
-    assert "uv sync --all-extras --locked --directory python" in setup
-    assert "--reinstall" not in setup
+    assert "uv sync --all-extras --locked --reinstall --directory python" in setup
     assert 'checkout="$(realpath -m -- "$checkout")"' in setup
     assert 'rm --recursive --force --one-file-system -- "$checkout"' in setup
     assert "github.event_name != 'workflow_dispatch'" not in workflow
@@ -340,8 +395,9 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
         r".*?^      - name: Retire prior checkout test runtime$"
         r".*?^            \./scripts/test clean$"
         r".*?^      - uses: actions/checkout@"
-        r".*?^      - name: Run the deterministic PR gate\n"
-        r"        run: \./scripts/test pr$"
+        r".*?^      - name: Run the selected PR proof\n"
+        r"        id: proof\n        shell: bash\n"
+        r".*?^        run: \|$"
         r".*?^      - name: Upload run evidence$"
         r".*?^      - name: Retire current checkout test runtime$"
         r".*?^            \./scripts/test clean$",
@@ -352,7 +408,9 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
         r".*?^      - name: Retire prior checkout test runtime$"
         r".*?^            \./scripts/test clean$"
         r".*?^      - uses: actions/checkout@"
-        r".*?^      - name: Run the candidate full gate\n        run: \./scripts/test full$"
+        r".*?^      - name: Run the candidate full gate\n"
+        r"        id: proof\n        shell: bash\n"
+        r"        run: scripts/ci-proof-artifact.sh run full$"
         r".*?^      - name: Upload run evidence$"
         r".*?^      - name: Retire current checkout test runtime$"
         r".*?^            \./scripts/test clean$",
@@ -406,6 +464,91 @@ def test_ci_recreates_the_locked_python_environment_with_a_safe_exact_target() -
         '! mountpoint --quiet -- "$environment"',
         'sudo --non-interactive rm --recursive --force --one-file-system -- "$environment"',
         'test ! -e "$environment"',
-        "uv sync --all-extras --locked --directory python",
+        "uv sync --all-extras --locked --reinstall --directory python",
     ):
         assert required_contract in setup
+
+
+def test_ci_recreates_the_generated_web_build_with_a_safe_exact_target() -> None:
+    setup = SETUP_ACTION.read_text(encoding="utf-8")
+    action = GENERATED_BUILD_ACTION.read_text(encoding="utf-8")
+
+    cleanup = setup.index("    - name: Recreate generated web build\n")
+    install = setup.index("    - name: Install locked JavaScript dependencies\n")
+    assert cleanup < install
+    assert "      uses: ./.github/actions/clean-generated-web-build\n" in setup
+    for required_contract in (
+        "command -v mountpoint >/dev/null",
+        'checkout="$(realpath -e -- "$GITHUB_WORKSPACE")"',
+        'repository_root="$(realpath -e -- "$(git -C "$checkout" rev-parse --show-toplevel)")"',
+        'build="$checkout/apps/web/.next"',
+        'test "$checkout" = "$repository_root"',
+        'test "$(stat -c \'%u\' -- "$checkout")" = "$(id -u)"',
+        'test ! -L "$checkout/apps/web"',
+        'git -C "$checkout" check-ignore --quiet -- apps/web/.next/',
+        'test ! -L "$build"',
+        '! mountpoint --quiet -- "$build"',
+        'test "$(stat -c \'%u\' -- "$build")" = "$(id -u)"',
+        'git -C "$checkout" clean -qfdx -- apps/web/.next',
+        'test ! -e "$build"',
+    ):
+        assert required_contract in action
+
+
+def test_generated_web_build_cleanup_accepts_an_absent_ignored_directory(
+    tmp_path: Path,
+) -> None:
+    repository = _generated_build_repository(tmp_path)
+
+    completed = _run_generated_build_cleanup(repository)
+
+    assert completed.returncode == 0, completed.stderr
+    assert not (repository / "apps/web/.next").exists()
+
+
+def test_generated_web_build_cleanup_removes_only_the_exact_ignored_tree(
+    tmp_path: Path,
+) -> None:
+    repository = _generated_build_repository(tmp_path)
+    build = repository / "apps/web/.next"
+    build.mkdir()
+    (build / "artifact").write_text("generated\n", encoding="utf-8")
+
+    completed = _run_generated_build_cleanup(repository)
+
+    assert completed.returncode == 0, completed.stderr
+    assert not build.exists()
+    assert (repository / "apps/web/source.ts").read_text(encoding="utf-8") == "export {};\n"
+    assert _git(repository, "status", "--short") == ""
+
+
+def test_generated_web_build_cleanup_rejects_a_symlink_without_touching_its_target(
+    tmp_path: Path,
+) -> None:
+    repository = _generated_build_repository(tmp_path)
+    foreign = tmp_path / "foreign-build"
+    foreign.mkdir()
+    marker = foreign / "artifact"
+    marker.write_text("foreign\n", encoding="utf-8")
+    build = repository / "apps/web/.next"
+    build.symlink_to(foreign, target_is_directory=True)
+
+    completed = _run_generated_build_cleanup(repository)
+
+    assert completed.returncode != 0
+    assert build.is_symlink()
+    assert marker.read_text(encoding="utf-8") == "foreign\n"
+
+
+def test_ci_retires_generated_web_builds_on_every_terminal_job_path() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert workflow.count("      - name: Retire generated web build\n") == 2
+    assert (
+        workflow.count(
+            "      - name: Retire generated web build\n"
+            "        if: always()\n"
+            "        uses: ./.github/actions/clean-generated-web-build\n"
+        )
+        == 2
+    )

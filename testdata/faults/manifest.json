@@ -2299,6 +2299,15 @@
         "pytest:python/tests/kernel/test_worker_runtime_health.py"
       ],
       "expected_failure": "the idle worker loaded provider execution modules"
+    },
+    {
+      "id": "bounded-dossier-receipt-reference-bypass",
+      "patch": "testdata/faults/bounded-dossier-receipt-reference-bypass.patch",
+      "sha256": "bec1602e25dbf58b88bbb4da789a1c3a6a63aa5d1cfde194c3e7ea739acbf2ba",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_policy.py"
+      ],
+      "expected_failure": "missing receipt evidence was accepted"
     }
   ]
 }

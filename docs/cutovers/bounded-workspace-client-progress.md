@@ -441,3 +441,24 @@ follow-up `e2d7393760e94077` was explicitly interrupted before a new claim.
   with trusted-input supersession preserved. no test ran during this batch and
   no resolved status is claimed. if necessary, the reviewed public protocol/DOM
   trace must establish the trigger during the next controller-owned run.
+
+## 2026-09-14 preview ingest-route module failure
+
+- actual Vercel deployment `dpl_GpwKP6JAuJ3Fb9d64nbcXp1cJww5`, from
+  `5d687cdc8a9e1a9b2a0106d0e136df4537c281d7`, compiled and then failed type
+  validation: `src/app/api/media/[id]/ingest/route.ts is not a module`.
+- the retained route was zero bytes
+  (`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`).
+  removed that dead module. no placeholder export or replacement endpoint was
+  added. the route was already deleted by the document-import hard cut
+  `b379a0cfa18a6b518a0cfec53f3ebf1702ab6268`; consolidation had retained an empty
+  path instead of its deletion.
+- no product caller targets media-scoped `/ingest`. current imports use
+  `/api/media/uploads/:session/confirm`, `/api/media/from-url`, and explicit
+  source retry/refresh; the backend owns those contracts and has no media-scoped
+  ingest endpoint. the sole direct web reference is the existing negative
+  journey assertion at `durable-ingest-reader-open.journey.spec.ts:216`, which
+  requires the retired route to return 404. it is unchanged.
+- an app-route scan found no other empty or comment-only route module and no
+  `export {}` route tombstone. no test or build ran during the merge batch. the
+  next actual preview must pass type validation; preview success is not claimed.

@@ -1,10 +1,24 @@
-# roughly half the cited receipts cannot be reached from the candidate
+# retained dossier receipts need controller verification
 
-- status: open
+- status: open; retained index and controller guard implemented, verification pending
 - origin: 2026-09-14 adversarial review of the bounded-workspace implementation
 - area: evidence / dossier auditability
 
 ## what is wrong
+
+the delivery now retains all 680 cited runs in
+`testdata/evidence/bounded-workspace-receipts.json`: 417 pass, 259 fail and four
+not-run results, with original summary/context hashes and artifact identities.
+all 1,360 metadata files reconstruct byte-for-byte. no historical verdict was
+changed. the index is 3,303,054 bytes; it keeps metadata, not raw artifact bodies.
+the repository policy checks coverage and retained hashes. its ordinary proof
+and missing-reference fault replay remain required before closing this ticket.
+
+this makes old evidence inspectable; it cannot supply absent source, image or
+sensitivity attestations. current qualification still uses the strict live
+evidence loaders and requires the combined committed candidate.
+
+original finding:
 
 extracting every 16-hex receipt id from the four bounded-workspace dossiers gives
 470 unique ids. `test-results/runs/` contains 253 of them; 217 are absent —

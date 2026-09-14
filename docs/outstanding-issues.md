@@ -436,7 +436,7 @@ unexpected timeouts. See
 - [open] oi-172 · sensitivity evidence · 2026-09-14 adversarial review · the coherent-fault portfolio must be replayed, not re-pinned: [ticket](tickets/coherent-fault-replay-portfolio.md).
 - [open] oi-173 · proof registry · 2026-09-14 adversarial review · the ownership pin and routing sha need their independent review: [ticket](tickets/priority-risk-ownership-floor-review.md).
 - [open] oi-174 · release process · 2026-09-14 adversarial review · the consolidated candidate is committed; exact combined qualification remains open: [ticket](tickets/bounded-workspace-candidate-is-not-committed.md).
-- [open] oi-175 · evidence · 2026-09-14 adversarial review · 217 of 470 cited receipts cannot be reached from the candidate: [ticket](tickets/dossier-receipt-index-is-not-auditable.md).
+- [open] oi-175 · evidence · all 680 historical dossier receipts retained; controller coverage and fault replay pending: [ticket](tickets/dossier-receipt-index-is-not-auditable.md).
 - [open] oi-176 · capacity qualification · 2026-09-14 adversarial review · thread/database headroom, host reserve and retained-growth tolerance are recorded nowhere: [ticket](tickets/gate-0a-recorded-capacity-limits-incomplete.md).
 - [open] oi-177 · composition qualification · 2026-09-14 adversarial review · twelve-pane restore, pinned selection and slow cancellation have no artifact: [ticket](tickets/gate-e-twelve-pane-restore-journey.md).
 - [open] oi-178 · release artifact · 2026-09-14 adversarial review · the deployed compose and release.py cannot boot the candidate: [ticket](tickets/gate-g-release-artifact-carries-no-capacity-profile.md).
@@ -556,3 +556,5 @@ unexpected timeouts. See
 - [open] oi-218 · public pdf · 2026-09-14 streaming review · file transfer lacks physical storage-read cancellation ownership: [ticket](tickets/public-pdf-storage-cancellation-owner.md).
 
 - [open] oi-219 · test controller · 2026-09-14 reporter integration · pinned external pytest suites do not load primary failure reporting: [ticket](tickets/external-pytest-primary-evidence.md).
+
+- [open] oi-220 · host admission · android visual retains the old build-memory floor: [ticket](tickets/android-visual-retains-lower-build-admission-floor.md).

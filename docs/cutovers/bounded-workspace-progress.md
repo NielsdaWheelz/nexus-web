@@ -491,3 +491,25 @@ before and after copying. the earlier residency checkpoint remains in history.
 this snapshot contains the delivery changes; it introduces no snapshot-only
 product fix. memory qualification is pending, and delivery still needs its final
 committed candidate and combined acceptance gates.
+
+2026-09-14 delivery reconciliation: all retained implementation and claude fixes
+are committed through `5d687cdc8a` on `codex/bounded-workspace`, draft pr #250.
+the following merge incorporates upstream `051a57b780` into the same delivery.
+three conflicts preserve owned evidence cleanup, generated-build retirement and
+linux/darwin admission. upstream raises the heavy-build host launch floor from
+2,048 to 3,584 mib and keeps kotlin compilation in the owned gradle process.
+price: heavy checks wait for more free host memory; application resource limits
+and reader capacity claims do not change. ci fixture updates follow the existing
+changed/pr/full routing contract. combined verification remains pending.
+
+the committed historical receipt index retains all 680 dossier runs and their
+original summary/context hashes, including failures and interruptions. price:
+3.3 mb of reviewable metadata; raw artifact bodies remain outside git. the policy
+guard and its missing-reference fault require execution. retained history is
+not qualification of this merged source; no source attestation is reconstructed.
+
+the preview for `5d687cdc8a` exposed an empty retired ingest route module.
+the module is removed; current callers use upload sessions and explicit ingest
+operations. the existing negative journey requires the retired endpoint's 404.
+the client dossier records the deployment and route audit. no preview pass is
+claimed before the next build.

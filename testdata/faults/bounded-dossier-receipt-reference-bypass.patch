@@ -1,0 +1,12 @@
+diff --git a/python/nexus_test_control/policy.py b/python/nexus_test_control/policy.py
+--- a/python/nexus_test_control/policy.py
++++ b/python/nexus_test_control/policy.py
+@@ -1440,7 +1440,7 @@
+             continue
+         for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+             for run_id in re.findall(r"(?<![0-9a-f])[0-9a-f]{16}(?![0-9a-f])", line):
+-                if run_id not in retained:
++                if False and run_id not in retained:
+                     violations.append(
+                         PolicyViolation(
+                             rule, dossier, f"receipt {run_id} has no retained summary", line_number

@@ -143,7 +143,55 @@ def test_python_ast_guard_allows_external_boundary_patch_and_owned_exceptions() 
     assert not python_ast_violations("python/tests/migrations/test_head.py", migration_sql)
 
 
+def test_bounded_dossiers_have_exact_retained_historical_receipts() -> None:
+    assert not repository_violations(REPO_ROOT)
+
+
+@pytest.mark.parametrize("change", ["missing", "summary", "context", "duplicate"])
+def test_bounded_dossier_receipt_rejects_missing_or_changed_evidence(
+    tmp_path: Path, change: str
+) -> None:
+    _minimal_repository(tmp_path)
+    relative = "testdata/evidence/bounded-workspace-receipts.json"
+    index = json.loads((REPO_ROOT / relative).read_text(encoding="utf-8"))
+    # Keep a real failed receipt and its original hashes. Historical failure is valid
+    # retained evidence, and its source need not equal this checkout's current proof.
+    receipt = next(item for item in index["receipts"] if item["summary"]["status"] == "fail")
+    index["receipts"] = [receipt]
+    for dossier in index["dossiers"]:
+        _write(tmp_path, dossier, f"historical receipt `{receipt['run_id']}`\n")
+    _dump(tmp_path, relative, index)
+    assert not repository_violations(tmp_path)
+    if change == "missing":
+        index["receipts"] = []
+    elif change == "summary":
+        receipt["summary"]["status"] = "pass"
+    elif change == "context":
+        receipt["run_context"]["browsers"] = [{"name": "changed", "revision": "changed"}]
+    else:
+        index["receipts"].append(receipt)
+    _dump(tmp_path, relative, index)
+    violations = repository_violations(tmp_path)
+    assert {violation.rule for violation in violations} == {"bounded-dossier-receipt"}, (
+        f"{change} receipt evidence was accepted"
+    )
+    assert any(receipt["run_id"] in violation.message for violation in violations)
+
+
 def _minimal_repository(root: Path) -> None:
+    receipt_dossiers = [
+        "docs/cutovers/bounded-workspace-progress.md",
+        "docs/cutovers/bounded-workspace-client-progress.md",
+        "docs/cutovers/bounded-workspace-runtime-progress.md",
+        "docs/cutovers/bounded-workspace-publication-progress.md",
+    ]
+    for dossier in receipt_dossiers:
+        _write(root, dossier, "# dossier\n")
+    _dump(
+        root,
+        "testdata/evidence/bounded-workspace-receipts.json",
+        {"version": 1, "dossiers": receipt_dossiers, "receipts": []},
+    )
     normative = (
         "docs/local-rules/testing-standards.md",
         "docs/local-rules/index.md",

@@ -176,6 +176,13 @@ confirmed by Git's ignore contract. Privileged Python proof processes MUST
 disable bytecode writes. Reusing a persistent environment across jobs permits a
 root-owned proof descendant to make the next runner-owned sync irreparable.
 
+CI MUST remove the ignored `apps/web/.next` tree before dependency setup and
+storage admission, then remove it again after each terminal job path. Generated
+frontend output belongs to one source SHA and MUST NOT consume the persistent
+runner's idle reserve or become an input to another SHA. The entry cleanup owns
+recovery when a killed runner cannot execute its terminal finalizer. Dependency
+download caches remain separately keyed and may persist.
+
 The final work report for a defect or replacement MUST state how sensitivity was
 demonstrated. “Test passes” is insufficient.
 
@@ -437,8 +444,10 @@ capabilities as blocked and launches no further heavy work.
 The controller records peak RSS for its process tree and the working set of
 containers owned by the exact test compose project. CPU count never chooses
 workers. Run one Next build, Chromium suite, or Gradle operation at a time; do
-not overlap unrelated heavy lanes. Build a strict-CSP Next artifact at most
-once per distinct executable source/environment fingerprint and reuse it.
+not overlap unrelated heavy lanes. Kotlin compilation runs inside the owned
+single-use Gradle process; no Kotlin compiler daemon may outlive an Android
+proof. Build a strict-CSP Next artifact at most once per distinct executable
+source/environment fingerprint and reuse it.
 Ordinary workflows therefore build the current revision once. Sensitivity MAY
 build one additional artifact for each distinct faulted or base revision whose
 production browser proof must execute that code; reusing the green artifact
@@ -458,7 +467,8 @@ sensitivity, and visual boundaries reenter only beneath the explicit invocation
 owner.
 
 Before launching Node/browser/build/Gradle or other heavy proof under that
-lease, the controller waits at most 30 seconds for kernel-reported available memory to reach 2,048 MiB: Linux `MemAvailable`, or
+lease, the controller waits at most 30 seconds for kernel-reported available
+memory to reach 3,584 MiB: Linux `MemAvailable`, or
 Darwin free plus file-backed pages while the kernel VM pressure state is normal.
 The Darwin estimate does not add speculative pages because they are already
 included in the file-backed owner, and excludes anonymous inactive, purgeable,
@@ -467,8 +477,9 @@ never launches or reruns proof and is not an automatic retry. Unknown memory or
 non-normal Darwin pressure is immediately `not_run`; expiry below the floor is
 `not_run` before launch and reports the latest observed value. This is a
 conservative host-safety admission floor, not a proof-size or performance
-target. Change it only from recorded memory evidence on the 8 GiB reference
-host.
+target. The floor retains the recorded 2,293 MiB process-tree peak plus the
+reference host's early-OOM reserve and operating margin. Change it only from
+recorded memory evidence on the 8 GiB reference host.
 
 Under the same lock and immediately before launch, heavy proof also requires
 8,192 MiB free across the checkout filesystem and, when the proof may use the
