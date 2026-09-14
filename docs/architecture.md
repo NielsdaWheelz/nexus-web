@@ -1839,6 +1839,8 @@ external boundary may use a small fake or protocol fixture.
 Local services are reused only within one serialized invocation, but every
 workflow receives a template-cloned database, MinIO bucket, run ledger, and
 scenario-local users. All ordinary proof is external-network denied.
+Sensitivity retires every isolated red-revision runtime before starting its
+current-revision green phase, so two service stacks never coexist.
 Playwright has one config under `apps/web/e2e/`, one worker, zero retries,
 strict CSP, fresh contexts, and no shared seed/auth state. Priority risks and
 the canonical cross-language corpus are machine-owned by

@@ -334,6 +334,7 @@ def test_fault_portfolio_reverses_each_fault_without_mutating_the_source_checkou
         for key in ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ")
         if (value := os.environ.get(key)) is not None
     }
+    run_context = RunContextRecorder()
 
     results = prove_many(
         tmp_path,
@@ -352,10 +353,14 @@ def test_fault_portfolio_reverses_each_fault_without_mutating_the_source_checkou
             ),
         ),
         environment=environment,
+        run_context=run_context,
     )
 
     assert all(result.red.failure_fingerprint.startswith("sha256:") for result in results)
     assert results[0].red.failure_fingerprint != results[1].red.failure_fingerprint
+    assert tuple(
+        command.sensitivity_attempt for command in run_context.evidence().fixed_commands
+    ) == ("red", "red", "green", "green")
     assert (owner / "values.py").read_text() == "FIRST = 1\nSECOND = 1\n"
     assert _git_output(tmp_path, "status", "--porcelain=v1", "--untracked-files=all") == ""
 

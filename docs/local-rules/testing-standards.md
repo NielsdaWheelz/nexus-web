@@ -391,7 +391,10 @@ Ordinary workflows therefore build the current revision once. Sensitivity MAY
 build one additional artifact for each distinct faulted or base revision whose
 production browser proof must execute that code; reusing the green artifact
 there would make the red oracle vacuous. Never rebuild the same fingerprint in
-one workflow.
+one workflow. A sensitivity portfolio completes and retires every isolated red
+revision runtime before it starts current-revision green attempts. Red and green
+service stacks MUST NOT coexist; green attempts still reuse one
+current-revision stack and build fingerprint.
 
 Before any workload or recovery command, the controller acquires one
 lineage-wide invocation lock and holds it through terminal runtime teardown.
