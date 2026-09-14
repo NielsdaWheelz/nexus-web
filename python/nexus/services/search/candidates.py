@@ -26,7 +26,7 @@ Target-only candidate types never enter ``SEARCH_RESULT_TYPES``/``SearchKind``
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from typing import cast
 from uuid import UUID
 
@@ -743,7 +743,7 @@ def _search_type(
     roles: list[str],
     content_kinds: list[str],
     limit: int,
-) -> list[InternalSearchResult]:
+) -> Sequence[InternalSearchResult]:
     """Search a specific content type with visibility filtering.
 
     Returns raw-scored internal results (not yet normalized).

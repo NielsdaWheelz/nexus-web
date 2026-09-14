@@ -47,7 +47,7 @@ class LatexSourceArchiveUnsafe(ValueError):
     ):
         super().__init__(message)
         self.reason = reason
-        self.resource_limit_dimension = resource_limit_dimension
+        self.resource_limit_dimension: ResourceFailureDimension | None = resource_limit_dimension
 
 
 @dataclass(frozen=True)
