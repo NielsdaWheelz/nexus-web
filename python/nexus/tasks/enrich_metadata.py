@@ -9,7 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 from sqlalchemy import select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, defer, sessionmaker
 
 from nexus.auth.permissions import can_read_media
 from nexus.config import get_settings
@@ -227,7 +227,7 @@ def reconcile_uncertain_metadata_generation(
         owner = LlmCallOwner(kind="media_enrichment", id=media_id)
         # Canonical order: owner advisory lock, domain row, then suspended job.
         lock_generation_owner_in_current_transaction(db, owner)
-        db.scalar(select(Media).where(Media.id == media_id).with_for_update())
+        db.scalar(select(Media.id).where(Media.id == media_id).with_for_update())
         job = current_dead_job_for_payload(
             db,
             kind="enrich_metadata",
@@ -403,7 +403,7 @@ def enrich_metadata(
                 # and the two other phases returned above.
                 raise AssertionError(f"unknown metadata dispatch phase {state.dispatch_phase!r}")
 
-        media = db.get(Media, media_uuid)
+        media = db.get(Media, media_uuid, options=(defer(Media.plain_text),))
         if media is None or not can_read_media(db, requester_user_id, media_uuid):
             db.commit()
             if state is not None:
@@ -448,7 +448,12 @@ def enrich_metadata(
     def lock_dispatch(db: Session) -> JobRow | None:
         """Lock metadata domain rows after the shared owner advisory lock."""
 
-        locked_media = db.scalar(select(Media).where(Media.id == media_uuid).with_for_update())
+        locked_media = db.scalar(
+            select(Media)
+            .options(defer(Media.plain_text))
+            .where(Media.id == media_uuid)
+            .with_for_update()
+        )
         jobs = lock_jobs_for_payload(
             db,
             kind="enrich_metadata",
@@ -627,7 +632,12 @@ def _complete_pre_dispatch_terminal(
         # early terminal: ledger owner -> media -> queue rows. The ledger's
         # completion acquisition below is therefore a reentrant no-op.
         lock_generation_owner_in_current_transaction(db, owner)
-        media = db.scalar(select(Media).where(Media.id == media_id).with_for_update())
+        media = db.scalar(
+            select(Media)
+            .options(defer(Media.plain_text))
+            .where(Media.id == media_id)
+            .with_for_update()
+        )
         jobs = lock_jobs_for_payload(
             db,
             kind="enrich_metadata",
@@ -865,7 +875,9 @@ def _publish_completed_transaction(
     # Media row before queue rows: dispatch and the manual-retry lifecycle
     # both lock media first and job rows second, so publication must follow
     # the same canonical order or the two sides deadlock.
-    media = db.scalar(select(Media).where(Media.id == media_id).with_for_update())
+    media = db.scalar(
+        select(Media).options(defer(Media.plain_text)).where(Media.id == media_id).with_for_update()
+    )
     if (
         lock_and_renew_running_job_claim(
             db,

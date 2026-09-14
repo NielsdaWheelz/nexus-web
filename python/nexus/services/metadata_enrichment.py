@@ -22,7 +22,7 @@ from pydantic import (
     StringConstraints,
     ValidationError,
 )
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
@@ -265,18 +265,21 @@ def metadata_enrichment_agent_definition() -> tuple[str, dict[str, object]]:
 
 
 def get_content_sample(db: Session, media: Media) -> str:
-    """Get the best early extracted text available for the enrichment prompt."""
+    """Sample bounded source prefixes before loading or normalizing their text."""
     settings = get_settings()
     max_chars = settings.metadata_enrichment_max_content_chars
 
-    plain_text = _clean_sample_text(media.plain_text)
+    plain_text = _clean_sample_text(
+        db.scalar(select(func.left(Media.plain_text, max_chars)).where(Media.id == media.id))
+    )
     if plain_text:
         return plain_text[:max_chars]
 
     chunks = db.execute(
         text(
             """
-            SELECT cc.chunk_idx, cc.source_kind, cc.heading_path, cc.chunk_text
+            SELECT cc.chunk_idx, cc.source_kind, cc.heading_path,
+                   left(cc.chunk_text, :max_chars)
             FROM content_chunks cc
             JOIN content_index_states mcis
               ON mcis.owner_kind = cc.owner_kind AND mcis.owner_id = cc.owner_id
@@ -287,7 +290,7 @@ def get_content_sample(db: Session, media: Media) -> str:
             LIMIT 4
             """
         ),
-        {"media_id": media.id},
+        {"media_id": media.id, "max_chars": max_chars},
     ).fetchall()
 
     chunk_sample = _render_indexed_text_sample(chunks, max_chars=max_chars)
@@ -297,7 +300,8 @@ def get_content_sample(db: Session, media: Media) -> str:
     blocks = db.execute(
         text(
             """
-            SELECT cb.block_idx, cb.block_kind, cb.heading_path, cb.canonical_text
+            SELECT cb.block_idx, cb.block_kind, cb.heading_path,
+                   left(cb.canonical_text, :max_chars)
             FROM content_blocks cb
             JOIN content_index_states mcis
               ON mcis.owner_kind = cb.owner_kind AND mcis.owner_id = cb.owner_id
@@ -308,7 +312,7 @@ def get_content_sample(db: Session, media: Media) -> str:
             LIMIT 8
             """
         ),
-        {"media_id": media.id},
+        {"media_id": media.id, "max_chars": max_chars},
     ).fetchall()
 
     block_sample = _render_indexed_text_sample(blocks, max_chars=max_chars)
@@ -318,7 +322,7 @@ def get_content_sample(db: Session, media: Media) -> str:
     fragments = db.execute(
         text(
             """
-            SELECT idx, canonical_text
+            SELECT idx, left(canonical_text, :max_chars)
             FROM fragments
             WHERE media_id = :media_id
               AND canonical_text IS NOT NULL
@@ -327,7 +331,7 @@ def get_content_sample(db: Session, media: Media) -> str:
             LIMIT 4
             """
         ),
-        {"media_id": media.id},
+        {"media_id": media.id, "max_chars": max_chars},
     ).fetchall()
 
     fragment_sample = _render_fragment_sample(fragments, max_chars=max_chars)
@@ -336,14 +340,19 @@ def get_content_sample(db: Session, media: Media) -> str:
 
     if media.kind == "podcast_episode":
         row = db.execute(
-            text("SELECT description_text FROM podcast_episodes WHERE media_id = :media_id"),
-            {"media_id": media.id},
+            text(
+                "SELECT left(description_text, :max_chars) "
+                "FROM podcast_episodes WHERE media_id = :media_id"
+            ),
+            {"media_id": media.id, "max_chars": max_chars},
         ).fetchone()
         show_notes = _clean_sample_text(row[0] if row else None)
         if show_notes:
             return show_notes[:max_chars]
 
-    description = _clean_sample_text(media.description)
+    description = _clean_sample_text(
+        db.scalar(select(func.left(Media.description, max_chars)).where(Media.id == media.id))
+    )
     if description:
         return description[:max_chars]
 

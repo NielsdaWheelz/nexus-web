@@ -366,3 +366,4 @@ behavior. See
 - [open] metadata verification · 2026-09-14 implementation · live research judgments and external query contents still need smoke inspection: [ticket](tickets/metadata-live-research-smoke-unverified.md).
 - [open] test control · 2026-09-14 pr #246 ci · complete python static can omit changed owners outside its curated include: [ticket](tickets/complete-python-static-omits-changed-owner-checks.md).
 - [open] resource actions · 2026-09-14 highlight popup verification · mobile parity journey finds the prior browse pane after reader navigation: [ticket](tickets/resource-action-parity-mobile-pane-readiness.md).
+- [open] agent tools · 2026-09-14 pr #246 memory review · resource reads load full bodies before enforcing their output limit: [ticket](tickets/resource-reader-loads-full-body-before-limit.md).

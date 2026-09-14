@@ -9,7 +9,7 @@ from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import select, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, defer, sessionmaker
 
 from nexus.db.models import Media, MediaFile, ProcessingStatus, ReaderPublication
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
@@ -230,7 +230,9 @@ def replace_reader_publication[T](
             ApiErrorCode.E_INVALID_KIND,
             "Reader publication requires PDF, EPUB, or web article media.",
         )
-    media = db.scalar(select(Media).where(Media.id == media_id).with_for_update())
+    media = db.scalar(
+        select(Media).options(defer(Media.plain_text)).where(Media.id == media_id).with_for_update()
+    )
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     if media.kind != expected_kind:
@@ -303,10 +305,10 @@ def replace_reader_document_title(db: Session, *, media: Media, title: str) -> b
     kind = str(media.kind)
     if kind not in _ELIGIBLE_KINDS:
         return False
-    locked = db.scalar(select(Media).where(Media.id == media.id).with_for_update())
-    if locked is None:
+    locked_id = db.scalar(select(Media.id).where(Media.id == media.id).with_for_update())
+    if locked_id is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if read_publication_generation(db, media_id=locked.id) is None:
+    if read_publication_generation(db, media_id=locked_id) is None:
         return False
 
     def replace_projection(published: Media) -> None:
@@ -314,7 +316,7 @@ def replace_reader_document_title(db: Session, *, media: Media, title: str) -> b
 
     replace_reader_publication(
         db,
-        media_id=locked.id,
+        media_id=locked_id,
         expected_kind=cast(ReaderDocumentKind, kind),
         replace_projection=replace_projection,
     )

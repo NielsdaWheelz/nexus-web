@@ -32,6 +32,14 @@ research retains its 300-second generation limit and existing bounded drain.
 the plan requires the existing brave search configuration; unavailable bindings
 fail admission instead of silently reducing the research capability.
 
+initial sampling reads source prefixes bounded in sql by
+`metadata_enrichment_max_content_chars` before normalization. source order stays
+plain text, ready indexed chunks, ready indexed blocks, fragments, podcast notes,
+then description. leading whitespace or markup consumes that raw window; the
+agent can inspect further through its scoped tools. metadata row queries defer
+the full plain text so sampling does not load the whole document into the light
+worker.
+
 lists, search, author chronology, and media recency use the original date without
 an edition fallback. the shared media response and reader's media info show both.
 provider scheduling timestamps, acquisition, and consumption keep their own
