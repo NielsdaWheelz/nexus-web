@@ -45,7 +45,7 @@ def test_metadata_sample_reads_only_the_admitted_source_prefix(
     db_session.expunge(media)
     del media
 
-    loaded = db_session.get(Media, media_id, options=(defer(Media.plain_text, raiseload=True),))
+    loaded = db_session.get(Media, media_id, options=(defer(Media.plain_text),))
     assert loaded is not None
     assert get_content_sample(db_session, loaded) == expected
     assert "plain_text" in inspect(loaded).unloaded, "metadata hydrated the whole source body"
