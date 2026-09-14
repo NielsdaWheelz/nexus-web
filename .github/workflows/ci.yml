@@ -203,6 +203,10 @@ jobs:
             ./scripts/test clean
           fi
 
+      - name: Retire generated web build
+        if: always()
+        uses: ./.github/actions/clean-generated-web-build
+
   candidate-full:
     name: Candidate full proof
     if: github.event_name == 'push'
@@ -278,3 +282,7 @@ jobs:
           if [ -e "$runtime" ] || [ -L "$runtime" ]; then
             ./scripts/test clean
           fi
+
+      - name: Retire generated web build
+        if: always()
+        uses: ./.github/actions/clean-generated-web-build

@@ -14,6 +14,7 @@ import pytest
 REPO_ROOT = Path(__file__).parents[3]
 WORKFLOW = REPO_ROOT / ".github/workflows/ci.yml"
 SETUP_ACTION = REPO_ROOT / ".github/actions/setup-test/action.yml"
+GENERATED_BUILD_ACTION = REPO_ROOT / ".github/actions/clean-generated-web-build/action.yml"
 REPOSITORY = "NielsdaWheelz/nexus-web"
 PULL_REQUEST_NUMBER = "17"
 
@@ -38,6 +39,27 @@ def _step_script(name: str) -> str:
         body.append(line[10:] if line else "")
     if not body:
         raise AssertionError(f"workflow step has an empty shell body: {name}")
+    return "\n".join(body) + "\n"
+
+
+def _generated_build_cleanup_script() -> str:
+    lines = GENERATED_BUILD_ACTION.read_text(encoding="utf-8").splitlines()
+    step = "    - name: Remove generated web build"
+    try:
+        step_index = lines.index(step)
+        run_index = next(
+            index for index in range(step_index + 1, len(lines)) if lines[index] == "      run: |"
+        )
+    except (ValueError, StopIteration) as error:
+        raise AssertionError("generated-build cleanup action has no owned shell body") from error
+
+    body: list[str] = []
+    for line in lines[run_index + 1 :]:
+        if line and not line.startswith("        "):
+            break
+        body.append(line[8:] if line else "")
+    if not body:
+        raise AssertionError("generated-build cleanup action has an empty shell body")
     return "\n".join(body) + "\n"
 
 
@@ -132,6 +154,31 @@ def _runtime_repository(tmp_path: Path) -> Path:
     _git(repository, "add", ".gitignore")
     _git(repository, "commit", "--message", "runtime owner")
     return repository
+
+
+def _generated_build_repository(tmp_path: Path) -> Path:
+    repository = tmp_path / "generated-build-repository"
+    repository.mkdir()
+    _git(repository, "init", "--initial-branch=main")
+    _git(repository, "config", "user.name", "Nexus test")
+    _git(repository, "config", "user.email", "test@nexus.local")
+    (repository / ".gitignore").write_text(".next/\n", encoding="utf-8")
+    (repository / "apps/web").mkdir(parents=True)
+    (repository / "apps/web/source.ts").write_text("export {};\n", encoding="utf-8")
+    _git(repository, "add", ".")
+    _git(repository, "commit", "--message", "source")
+    return repository
+
+
+def _run_generated_build_cleanup(repository: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ("bash", "-euo", "pipefail", "-c", _generated_build_cleanup_script()),
+        cwd=repository,
+        env={**os.environ, "GITHUB_WORKSPACE": str(repository)},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _run_prior_runtime_retirement(
@@ -409,3 +456,88 @@ def test_ci_recreates_the_locked_python_environment_with_a_safe_exact_target() -
         "uv sync --all-extras --locked --directory python",
     ):
         assert required_contract in setup
+
+
+def test_ci_recreates_the_generated_web_build_with_a_safe_exact_target() -> None:
+    setup = SETUP_ACTION.read_text(encoding="utf-8")
+    action = GENERATED_BUILD_ACTION.read_text(encoding="utf-8")
+
+    cleanup = setup.index("    - name: Recreate generated web build\n")
+    install = setup.index("    - name: Install locked JavaScript dependencies\n")
+    assert cleanup < install
+    assert "      uses: ./.github/actions/clean-generated-web-build\n" in setup
+    for required_contract in (
+        "command -v mountpoint >/dev/null",
+        'checkout="$(realpath -e -- "$GITHUB_WORKSPACE")"',
+        'repository_root="$(realpath -e -- "$(git -C "$checkout" rev-parse --show-toplevel)")"',
+        'build="$checkout/apps/web/.next"',
+        'test "$checkout" = "$repository_root"',
+        'test "$(stat -c \'%u\' -- "$checkout")" = "$(id -u)"',
+        'test ! -L "$checkout/apps/web"',
+        'git -C "$checkout" check-ignore --quiet -- apps/web/.next/',
+        'test ! -L "$build"',
+        '! mountpoint --quiet -- "$build"',
+        'test "$(stat -c \'%u\' -- "$build")" = "$(id -u)"',
+        'git -C "$checkout" clean -qfdx -- apps/web/.next',
+        'test ! -e "$build"',
+    ):
+        assert required_contract in action
+
+
+def test_generated_web_build_cleanup_accepts_an_absent_ignored_directory(
+    tmp_path: Path,
+) -> None:
+    repository = _generated_build_repository(tmp_path)
+
+    completed = _run_generated_build_cleanup(repository)
+
+    assert completed.returncode == 0, completed.stderr
+    assert not (repository / "apps/web/.next").exists()
+
+
+def test_generated_web_build_cleanup_removes_only_the_exact_ignored_tree(
+    tmp_path: Path,
+) -> None:
+    repository = _generated_build_repository(tmp_path)
+    build = repository / "apps/web/.next"
+    build.mkdir()
+    (build / "artifact").write_text("generated\n", encoding="utf-8")
+
+    completed = _run_generated_build_cleanup(repository)
+
+    assert completed.returncode == 0, completed.stderr
+    assert not build.exists()
+    assert (repository / "apps/web/source.ts").read_text(encoding="utf-8") == "export {};\n"
+    assert _git(repository, "status", "--short") == ""
+
+
+def test_generated_web_build_cleanup_rejects_a_symlink_without_touching_its_target(
+    tmp_path: Path,
+) -> None:
+    repository = _generated_build_repository(tmp_path)
+    foreign = tmp_path / "foreign-build"
+    foreign.mkdir()
+    marker = foreign / "artifact"
+    marker.write_text("foreign\n", encoding="utf-8")
+    build = repository / "apps/web/.next"
+    build.symlink_to(foreign, target_is_directory=True)
+
+    completed = _run_generated_build_cleanup(repository)
+
+    assert completed.returncode != 0
+    assert build.is_symlink()
+    assert marker.read_text(encoding="utf-8") == "foreign\n"
+
+
+def test_ci_retires_generated_web_builds_on_every_terminal_job_path() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert workflow.count("      - name: Retire generated web build\n") == 2
+    assert (
+        workflow.count(
+            "      - name: Retire generated web build\n"
+            "        if: always()\n"
+            "        uses: ./.github/actions/clean-generated-web-build\n"
+        )
+        == 2
+    )

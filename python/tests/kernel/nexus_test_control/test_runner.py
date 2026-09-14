@@ -1252,6 +1252,18 @@ def test_android_host_uses_the_fixed_synthetic_client_and_host_test_task(tmp_pat
     assert command["google_client_id"] == "nexus-test.apps.googleusercontent.com"
 
 
+def test_android_compiler_lifetime_is_owned_by_the_gradle_process() -> None:
+    strategy = [
+        line
+        for line in (REPO_ROOT / "apps/android/gradle.properties")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.startswith("kotlin.compiler.execution.strategy=")
+    ]
+
+    assert strategy == ["kotlin.compiler.execution.strategy=in-process"]
+
+
 def test_exact_android_device_proof_uses_one_instrumentation_method(tmp_path: Path) -> None:
     android_root = tmp_path / "apps/android"
     sdk = tmp_path / "android-sdk"
@@ -1534,7 +1546,7 @@ def test_web_source_promoted_to_journey_is_memory_admitted_before_static_web(
     static_web = next(item for item in evidence.capabilities if item.id is Capability.STATIC_WEB)
     assert static_web.status is RunStatus.NOT_RUN
     assert static_web.detail == (
-        "heavy memory admission requires 2048 MiB available; observed 1024 MiB"
+        "heavy memory admission requires 3584 MiB available; observed 1024 MiB"
     )
     assert len(waits) == 120
     assert sum(waits) == pytest.approx(30)
@@ -2324,7 +2336,7 @@ def test_exact_proof_waits_under_heavy_lock_for_memory_recovery_and_launches_onc
     _write(tmp_path / "apps/web/package.json", "{}\n")
     (tmp_path / "apps/web/node_modules").mkdir()
     environment = _stub_tools(tmp_path, "bun")
-    samples = iter((512, 1024, 2300))
+    samples = iter((512, 1024, 3800))
     observed: list[int] = []
     waits: list[float] = []
     now = [0.0]
@@ -2373,7 +2385,7 @@ def test_exact_proof_waits_under_heavy_lock_for_memory_recovery_and_launches_onc
         "transient memory recovery did not launch the exact proof: "
         f"status={result.evidence.status.value}; detail={result.detail}"
     )
-    assert observed == [512, 1024, 2300]
+    assert observed == [512, 1024, 3800]
     assert waits == [0.25, 0.25]
     assert not lock_held[0]
     commands = _commands(tmp_path)
