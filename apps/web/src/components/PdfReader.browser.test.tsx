@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { userEvent } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import { expect, it, vi } from "vitest";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
@@ -85,7 +85,8 @@ function committedHighlight(): PdfHighlightOut {
   };
 }
 
-function installPdfBff(pdfUrl: string) {
+function installPdfBff(pdfUrl: string, creation?: Promise<Response>) {
+  const creationStarted = deferred<void>();
   const reconciliationStarted = deferred<void>();
   const reconciliation = deferred<Response>();
   let servedInitialHighlights = false;
@@ -118,7 +119,8 @@ function installPdfBff(pdfUrl: string) {
         url.pathname === `/api/media/${MEDIA_ID}/pdf-highlights` &&
         method === "POST"
       ) {
-        return json(committedHighlight());
+        creationStarted.resolve();
+        return creation ?? json(committedHighlight());
       }
       throw new Error(
         `Unexpected PDF BFF request: ${method} ${url.pathname}${url.search}`,
@@ -127,6 +129,7 @@ function installPdfBff(pdfUrl: string) {
   );
 
   return {
+    creationStarted: creationStarted.promise,
     reconciliationStarted: reconciliationStarted.promise,
     finishReconciliation() {
       reconciliation.resolve(json({ page_number: 1, highlights: [] }));
@@ -194,6 +197,88 @@ it("keeps a committed PDF highlight visible while BFF reconciliation is pending"
     ).not.toBeNull();
     expect(committedOverlay!).toBeVisible();
   } finally {
+    bff.finishReconciliation();
+    URL.revokeObjectURL(pdfUrl);
+  }
+});
+
+it("preserves the annotation caret when pending PDF highlight creation completes", async () => {
+  await page.viewport(1_280, 800);
+  const pdfUrl = URL.createObjectURL(onePagePdf(`Alpha ${EXACT} Omega`));
+  const response = deferred<Response>();
+  const bff = installPdfBff(pdfUrl, response.promise);
+  let creation: Promise<{ id: string } | null> | null = null;
+
+  try {
+    render(
+      <MobileViewportProvider>
+        <MobileChromeProvider>
+          <ShareControllerProvider>
+            <PdfReader
+              mediaId={MEDIA_ID}
+              mobileChromeEnabled={false}
+              onAddNote={(session) => {
+                creation = session.creation;
+              }}
+            />
+            <div
+              role="textbox"
+              aria-label="Highlight note"
+              contentEditable
+              suppressContentEditableWarning
+            >
+              annotation draft
+            </div>
+          </ShareControllerProvider>
+        </MobileChromeProvider>
+      </MobileViewportProvider>,
+    );
+    const textLayer = await screen.findByTestId(
+      "pdf-page-text-layer-1",
+      {},
+      { timeout: 10_000 },
+    );
+    const textNode = textNodeContaining(textLayer, EXACT);
+    const start = textNode.data.indexOf(EXACT);
+    const range = document.createRange();
+    range.setStart(textNode, start);
+    range.setEnd(textNode, start + EXACT.length);
+    const selection = window.getSelection();
+    if (!selection) {
+      throw new Error("Chromium did not expose the document Selection.");
+    }
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    await userEvent.click(await screen.findByRole("button", { name: "Note" }));
+    await bff.creationStarted;
+
+    const annotation = screen.getByRole("textbox", { name: "Highlight note" });
+    annotation.focus();
+    const caret = document.createRange();
+    caret.selectNodeContents(annotation);
+    caret.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(caret);
+
+    expect(
+      creation,
+      "the PDF note action did not publish its pending highlight",
+    ).not.toBeNull();
+    response.resolve(json(committedHighlight()));
+    await creation;
+    expect(annotation).toHaveFocus();
+    expect(
+      selection.rangeCount,
+      "completing the PDF highlight erased the annotation's live caret",
+    ).toBe(1);
+    expect(
+      annotation.contains(selection.getRangeAt(0).commonAncestorContainer),
+    ).toBe(true);
+    await userEvent.keyboard(" survives");
+    expect(annotation).toHaveTextContent("annotation draft survives");
+  } finally {
+    response.resolve(json(committedHighlight()));
     bff.finishReconciliation();
     URL.revokeObjectURL(pdfUrl);
   }

@@ -39,3 +39,9 @@ the devbox; see `docs/tickets/devbox-buildkit-cache-retention.md`.
 test control · opened 2026-09-14 by codex · P2
 host-release proof discovers unavailable privilege only after starting the
 kernel portfolio; see `docs/tickets/host-proof-privilege-preflight.md`.
+
+### [OPEN] OI-003 — failed highlight creation crashes quick-note editor
+reader annotation · opened 2026-09-14 by codex · P2
+an expected failed highlight creation replaces the quick-note editor instead of
+retaining its draft; see
+[docs/tickets/highlight-quick-note-create-failure-crashes-editor.md](tickets/highlight-quick-note-create-failure-crashes-editor.md).

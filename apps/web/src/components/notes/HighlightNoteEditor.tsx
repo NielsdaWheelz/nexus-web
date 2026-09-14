@@ -118,6 +118,7 @@ export default function HighlightNoteEditor({
   onDelete,
   onLocalChange,
   onOpenLink,
+  onSubmitted,
 }: {
   highlightId: string;
   note: HighlightLinkedNoteBlock | null;
@@ -137,9 +138,11 @@ export default function HighlightNoteEditor({
   ) => Promise<void>;
   onLocalChange?: () => void;
   onOpenLink: (href: string, disposition: WorkspaceTargetDisposition) => void;
+  onSubmitted?: () => void;
 }) {
   const feedback = useFeedback();
   const [saveFailure, setSaveFailure] = useState<FeedbackContent | null>(null);
+  const [submitRequested, setSubmitRequested] = useState(false);
   // Announcement is decided by the situation, not derived from tone (Rule 10):
   // a blocking attachment failure is Assertive; a harmless "attached, but
   // source processing failed" degradation is Polite.
@@ -246,6 +249,7 @@ export default function HighlightNoteEditor({
     save: saveBody,
     draftMetadata: () => ({ blockId: draftBlockId }),
     onError: (error) => {
+      setSubmitRequested(false);
       if (handleUnauthenticatedApiError(error)) return;
       try {
         setSaveFailure(highlightNoteErrorMessage(error, "Save"));
@@ -263,6 +267,13 @@ export default function HighlightNoteEditor({
     retry: retrySession,
     discardDraft: discardSessionDraft,
   } = session;
+
+  useEffect(() => {
+    if (submitRequested && (saveStatus === "clean" || saveStatus === "saved")) {
+      setSubmitRequested(false);
+      onSubmitted?.();
+    }
+  }, [onSubmitted, saveStatus, submitRequested]);
 
   useEffect(() => {
     if (loadedResourceKeyRef.current === resourceKey) {
@@ -291,6 +302,7 @@ export default function HighlightNoteEditor({
   const scheduleSave = useCallback(
     (body: NoteBodyValue) => {
       editVersionRef.current += 1;
+      setSubmitRequested(false);
       setSaveFailure(null);
       onLocalChange?.();
       scheduleSessionSave(body);
@@ -351,6 +363,11 @@ export default function HighlightNoteEditor({
         compact
         onBodyChange={editable ? scheduleSave : undefined}
         onBlurFlush={flushSession}
+        onSubmit={onSubmitted ? (body) => {
+          setSubmitRequested(true);
+          setSaveFailure(null);
+          flushSession(body);
+        } : undefined}
         onOpenObject={openObject}
         onFeedback={(content) =>
           setAttachmentFeedback({ content, announcement: "Polite" })
@@ -367,6 +384,7 @@ export default function HighlightNoteEditor({
           }
         }}
       />
+      {submitRequested ? <span className={styles.status} role="status">Saving…</span> : null}
       {attachmentFeedback ? (
         <FeedbackNotice
           content={attachmentFeedback.content}

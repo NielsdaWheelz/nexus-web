@@ -97,6 +97,7 @@ export interface NoteBodyEditorProps {
   onBodyChange?: (body: NoteBodyChange) => void;
   onFocusChange?: (focused: boolean) => void;
   onBlurFlush?: (body: NoteBodyChange) => void;
+  onSubmit?: (body: NoteBodyChange) => void;
   onOpenObject?: (
     objectType: string,
     objectId: string,
@@ -174,6 +175,7 @@ export default function NoteBodyEditor({
   onBodyChange,
   onFocusChange,
   onBlurFlush,
+  onSubmit,
   onOpenObject,
   onFeedback,
   onError,
@@ -207,6 +209,7 @@ export default function NoteBodyEditor({
   const onBodyChangeRef = useRef(onBodyChange);
   const onFocusChangeRef = useRef(onFocusChange);
   const onBlurFlushRef = useRef(onBlurFlush);
+  const onSubmitRef = useRef(onSubmit);
   const onOpenObjectRef = useRef(onOpenObject);
   const onFeedbackRef = useRef(onFeedback);
   const onErrorRef = useRef(onError);
@@ -235,6 +238,7 @@ export default function NoteBodyEditor({
   onBodyChangeRef.current = onBodyChange;
   onFocusChangeRef.current = onFocusChange;
   onBlurFlushRef.current = onBlurFlush;
+  onSubmitRef.current = onSubmit;
   onOpenObjectRef.current = onOpenObject;
   onFeedbackRef.current = onFeedback;
   onErrorRef.current = onError;
@@ -640,7 +644,7 @@ export default function NoteBodyEditor({
           return true;
         },
         keydown(currentView, event) {
-          if (event.isComposing || event.keyCode === 229) return false;
+          if (currentView.composing || event.isComposing || event.keyCode === 229) return false;
           if (menuOpenRef.current) {
             if (
               handleObjectRefMenuKeydown(event, {
@@ -712,6 +716,18 @@ export default function NoteBodyEditor({
           ) {
             event.preventDefault();
             onEmptyBackspaceRef.current();
+            return true;
+          }
+          if (
+            event.key === "Enter" &&
+            !event.shiftKey &&
+            !event.altKey &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            onSubmitRef.current
+          ) {
+            event.preventDefault();
+            onSubmitRef.current(noteBodyValueFromDoc(currentView.state.doc));
             return true;
           }
           if (

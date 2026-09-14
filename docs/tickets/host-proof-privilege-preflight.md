@@ -13,6 +13,9 @@ python/tests/kernel/nexus_test_control/test_runtime.py` reached receipt
 The caller had `NoNewPrivs: 1`, so sudo returned: `The "no new privileges" flag
 is set`. The self-hosted GitHub runner has `NoNewPrivs: 0`; the controller does
 not currently qualify that required host-proof boundary before work starts.
+An independent `./scripts/test confidence` run at candidate `eb0f408c44`
+failed at the same fixture after 1,121 passing tests (receipt
+`d4ff867aa306ba96`), but its failure report omitted the captured sudo stderr.
 
 ## Prerequisite and proposed fix
 
@@ -26,4 +29,5 @@ qualified self-hosted runner or return `not_run` before the portfolio starts.
 - privilege availability is checked before any selected host-release proof;
 - an unqualified caller exits `not_run` with the exact missing prerequisite;
 - the qualified self-hosted lane still proves real root ownership and modes;
+- setup failures surface the captured command stderr;
 - no production ownership assertion or sensitivity proof is weakened.
