@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Annotated, Literal, assert_never
 from uuid import UUID
@@ -10,7 +11,9 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.db.models import FailureStage, Media, ProcessingStatus
+from nexus.auth.permissions import can_read_media
+from nexus.config import get_settings
+from nexus.db.models import ContentIndexState, FailureStage, Media, ProcessingStatus
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiErrorCode, exception_error_detail
@@ -27,6 +30,10 @@ from nexus.jobs.queue import (
 )
 from nexus.logging import get_logger
 from nexus.schemas.presence import Presence, Present, absent, present
+from nexus.services.agent_tools_mcp import (
+    CodexGenerationToolBinding,
+    compose_codex_generation_tool_binding,
+)
 from nexus.services.codex_generation_contract import (
     GenerationTerminal,
     normalized_failure,
@@ -53,8 +60,10 @@ from nexus.services.durable_step_journal import (
     read_step_states,
     stable_generation_id,
 )
+from nexus.services.generation_backend import BackendToolExecutor, CodexAdmissionBinder
 from nexus.services.generation_intent import GenerationIntent, JsonSchemaOutput
 from nexus.services.generation_spec import (
+    FrozenToolScope,
     GenerationSpec,
     ImmutablePromptPayloadRef,
     decode_generation_spec_document,
@@ -89,6 +98,11 @@ from nexus.services.metadata_enrichment import (
     metadata_enrichment_agent_definition,
     validate_structured_enrichment,
 )
+from nexus.services.reader_publication import (
+    lock_publication_generation,
+    read_publication_generation,
+)
+from nexus.services.tool_authority import compose_deferred_generation_tool_executor
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
@@ -271,6 +285,31 @@ def _metadata_generation_intent(*, input: str) -> GenerationIntent:
     )
 
 
+def _metadata_user_content(db: Session, media: Media, *, requester_user_id: UUID) -> str:
+    """Bind local reads to the same source generation as the initial sample."""
+    index = db.execute(
+        select(ContentIndexState.revision, ContentIndexState.status)
+        .where(
+            ContentIndexState.owner_kind == "media",
+            ContentIndexState.owner_id == media.id,
+        )
+        .with_for_update()
+    ).one_or_none()
+    admission_facts = json.dumps(
+        {
+            "requester_user_id": str(requester_user_id),
+            "reader_generation": read_publication_generation(db, media_id=media.id),
+            "index_revision": index.revision if index is not None else None,
+            "index_status": index.status if index is not None else None,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return build_enrichment_user_content(
+        db, media, get_content_sample(db, media), admission_facts=admission_facts
+    )
+
+
 def _failed_result(*, error_code: ApiErrorCode, detail: str) -> _CompletedFailure:
     return _CompletedFailure(
         error_code=error_code.value,
@@ -319,6 +358,7 @@ def enrich_metadata(
     media_id: str,
     request_id: str | None,
     *,
+    requester_user_id: UUID,
     context: JobExecutionContext,
 ) -> dict[str, object] | RescheduleRequested:
     """Run or replay the one billed-once ``codex/metadata`` step."""
@@ -368,7 +408,7 @@ def enrich_metadata(
                 raise AssertionError(f"unknown metadata dispatch phase {state.dispatch_phase!r}")
 
         media = db.get(Media, media_uuid)
-        if media is None:
+        if media is None or not can_read_media(db, requester_user_id, media_uuid):
             db.commit()
             if state is not None:
                 if request_fingerprint is None:
@@ -401,11 +441,7 @@ def enrich_metadata(
                 )
             return _job_result(_SkippedPublication(reason="not_ready"))
 
-        user_content = build_enrichment_user_content(
-            db,
-            media,
-            get_content_sample(db, media),
-        )
+        user_content = _metadata_user_content(db, media, requester_user_id=requester_user_id)
         intent = _metadata_generation_intent(input=user_content)
         db.commit()
 
@@ -433,14 +469,13 @@ def enrich_metadata(
             for candidate in jobs
         ):
             raise _UncertainMetadataTurn(f"media {media_uuid} already has an unresolved generation")
-        if locked_media is None:
+        if locked_media is None or not can_read_media(db, requester_user_id, media_uuid):
             raise _PreDispatchMetadataTerminal("media_not_found")
         if locked_media.processing_status not in _READY_STATES:
             raise _PreDispatchMetadataTerminal("not_ready")
-        locked_content = build_enrichment_user_content(
-            db,
-            locked_media,
-            get_content_sample(db, locked_media),
+        lock_publication_generation(db, media_id=media_uuid)
+        locked_content = _metadata_user_content(
+            db, locked_media, requester_user_id=requester_user_id
         )
         locked_intent = _metadata_generation_intent(input=locked_content)
         if locked_intent != intent:
@@ -460,32 +495,75 @@ def enrich_metadata(
         from nexus.services import generation_policy
 
         nonlocal request_fingerprint
-        execution_request = await admit_job_generation(
-            owner=owner,
-            generation_id=generation_id,
-            operation="metadata_enrichment",
-            intent=intent,
-            prompt_template_revision=generation_policy.operation_revision("metadata_enrichment"),
-            prompt_payload_ref=ImmutablePromptPayloadRef(
-                owner_kind="media_enrichment",
-                owner_id=str(media_uuid),
-                revision=generation_policy.operation_revision("metadata_enrichment"),
-                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
-            ),
-            journal=journal,
-            session_factory=factory,
-            runtime=runtime,
-        )
-        request_fingerprint = execution_request.spec.fingerprint
-        return await execute_generation(
-            execution_request,
-            session_factory=factory,
-            runtime=runtime,
-            encode_terminal=lambda terminal: _encode_metadata_terminal(
-                codex_terminal_evidence(terminal)
-            ),
-            encode_failure=_encode_metadata_failure,
-        )
+        binding: CodexGenerationToolBinding | None = None
+
+        def bind_codex(spec: GenerationSpec) -> CodexAdmissionBinder:
+            nonlocal binding
+            operation = runtime.admission.model_tool_operation(spec)
+            if operation is None:
+                raise AssertionError("metadata lost its frozen tool operation")
+            binding = compose_codex_generation_tool_binding(
+                session_factory=factory,
+                user_id=requester_user_id,
+                owner=owner,
+                generation_id=generation_id,
+                job_context=context,
+                operation=operation,
+                spec=spec,
+                intent=intent,
+                settings=get_settings(),
+            )
+            return binding.bind_admission
+
+        def provider_executor(spec: GenerationSpec) -> BackendToolExecutor:
+            operation = runtime.admission.model_tool_operation(spec)
+            if operation is None:
+                raise AssertionError("metadata lost its frozen tool operation")
+            return compose_deferred_generation_tool_executor(
+                session_factory=factory,
+                user_id=requester_user_id,
+                owner=owner,
+                generation_id=generation_id,
+                job_context=context,
+                operation=operation,
+            )
+
+        try:
+            execution_request = await admit_job_generation(
+                owner=owner,
+                generation_id=generation_id,
+                operation="metadata_enrichment",
+                intent=intent,
+                prompt_template_revision=generation_policy.operation_revision(
+                    "metadata_enrichment"
+                ),
+                prompt_payload_ref=ImmutablePromptPayloadRef(
+                    owner_kind="media_enrichment",
+                    owner_id=str(media_uuid),
+                    revision=generation_policy.operation_revision("metadata_enrichment"),
+                    payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
+                ),
+                journal=journal,
+                session_factory=factory,
+                runtime=runtime,
+                scope=FrozenToolScope(admitted_refs=(f"media:{media_uuid}",), predicates=()),
+                bind_admission_factory=bind_codex,
+                tool_executor_factory=provider_executor,
+            )
+            request_fingerprint = execution_request.spec.fingerprint
+            return await execute_generation(
+                execution_request,
+                session_factory=factory,
+                runtime=runtime,
+                encode_terminal=lambda terminal: _encode_metadata_terminal(
+                    codex_terminal_evidence(terminal)
+                ),
+                encode_failure=_encode_metadata_failure,
+                before_terminal=binding.wait_until_idle if binding is not None else None,
+            )
+        finally:
+            if binding is not None:
+                await binding.drain_and_close()
 
     try:
         execution_result = run_llm_task(_METADATA_TASK_SPEC, execute)
@@ -606,7 +684,8 @@ def _stage_pre_dispatch_terminal(
         raise AssertionError("metadata pre-dispatch terminal request fingerprint changed")
 
     reason: _PreDispatchTerminalReason
-    if media is None:
+    requester_user_id = UUID(str(job.payload["requester_user_id"]))
+    if media is None or not can_read_media(db, requester_user_id, media.id):
         reason = "media_not_found"
     elif media.processing_status not in _READY_STATES:
         reason = "not_ready"
@@ -675,11 +754,6 @@ def _normalize_terminal(
                 return _failed_result(
                     error_code=ApiErrorCode.E_GENERATION_INVALID_OUTPUT,
                     detail="generation returned metadata outside the domain output contract",
-                )
-            if not validated.model_dump(exclude_none=True):
-                return _failed_result(
-                    error_code=ApiErrorCode.E_GENERATION_INVALID_OUTPUT,
-                    detail="generation returned no confident metadata fields",
                 )
             return _CompletedSuccess(
                 enrichment=validated,
@@ -812,7 +886,8 @@ def _publish_completed_transaction(
         # result, so the common replay branch above must always consume it.
         raise AssertionError("completed metadata skip has no published result")
 
-    if media is None:
+    requester_user_id = UUID(str(job.payload["requester_user_id"]))
+    if media is None or not can_read_media(db, requester_user_id, media_id):
         return _commit_publication_result(
             db,
             context=context,
@@ -845,11 +920,8 @@ def _publish_completed_transaction(
             ),
         )
 
-    current_content = build_enrichment_user_content(
-        db,
-        media,
-        get_content_sample(db, media),
-    )
+    lock_publication_generation(db, media_id=media_id)
+    current_content = _metadata_user_content(db, media, requester_user_id=requester_user_id)
     frozen_spec, frozen_intent = _metadata_admission_from_job(job)
     current_intent = _metadata_generation_intent(input=current_content)
     if frozen_spec.fingerprint != request_fingerprint or frozen_intent != current_intent:
@@ -868,21 +940,6 @@ def _publish_completed_transaction(
         )
 
     merge_result = merge_enrichment(db, media, completed.enrichment)
-    if not merge_result.accepted_fields:
-        code = ApiErrorCode.E_GENERATION_INVALID_OUTPUT.value
-        detail = "generation returned no applicable metadata fields"
-        _record_metadata_failure(media, code, detail)
-        bump_all_collection_families(db, families=_COLLECTION_FAMILIES)
-        return _commit_publication_result(
-            db,
-            context=context,
-            completed=completed,
-            result=_FailedPublication(
-                reason="no_applicable_fields",
-                error_code=code,
-            ),
-        )
-
     apply_observed_role_slices_in_current_transaction(
         db,
         target=MediaTarget(media.id),

@@ -520,11 +520,7 @@ def list_podcast_episodes_for_viewer(
                 ),
                 contributors=episode.contributors,
                 author_mode=episode.author_mode,
-                published_date=(
-                    present(episode.published_date)
-                    if episode.published_date is not None
-                    else absent()
-                ),
+                original_published_date=episode.original_published_date,
                 duration_seconds=(
                     present(int(row["duration_seconds"]))
                     if row["duration_seconds"] is not None

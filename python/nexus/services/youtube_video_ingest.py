@@ -20,6 +20,8 @@ from nexus.config import get_settings
 from nexus.db.models import Media, MediaKind
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.schemas.presence import Present
+from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_all_collection_families,
@@ -174,7 +176,7 @@ def fetch_youtube_metadata(provider_video_id: str) -> dict[str, str] | None:
         metadata["channel_id"] = channel_id
     published_at = str(snippet.get("publishedAt") or "").strip()
     if published_at:
-        metadata["published_date"] = published_at
+        metadata["published_at"] = published_at
     language = str(
         snippet.get("defaultAudioLanguage") or snippet.get("defaultLanguage") or ""
     ).strip()
@@ -219,9 +221,9 @@ def _persist_youtube_metadata(
     if description and not media.description:
         media.description = description[:2000]
 
-    published_date = metadata.get("published_date")
-    if published_date and not media.published_date:
-        media.published_date = published_date[:64]
+    edition_date = normalize_source_publication_date(metadata.get("published_at"))
+    if isinstance(edition_date, Present):
+        media.edition_published_date = edition_date.value
 
     language = metadata.get("language")
     if language and not media.language:

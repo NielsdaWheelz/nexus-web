@@ -102,11 +102,11 @@ def load_visible_contributor_media_ids(
                 WHERE cc.contributor_id = :contributor_id
                   AND cc.podcast_id IS NOT NULL
             )
-            SELECT DISTINCT cm.media_id, m.published_date, m.title
+            SELECT DISTINCT cm.media_id, m.original_published_date, m.title
             FROM credited_media cm
             JOIN visible_media vm ON vm.media_id = cm.media_id
             JOIN media m ON m.id = cm.media_id
-            ORDER BY m.published_date DESC NULLS LAST, m.title, cm.media_id
+            ORDER BY m.original_published_date DESC NULLS LAST, m.title, cm.media_id
             """
         ),
         {"viewer_id": viewer_id, "contributor_id": contributor_id},
@@ -232,7 +232,7 @@ def distinct_visible_works_sql() -> str:
                 ELSE 'project_gutenberg_ebook'
             END AS content_kind,
             CASE
-                WHEN vcc.media_id IS NOT NULL THEN m.published_date
+                WHEN vcc.media_id IS NOT NULL THEN m.original_published_date
                 WHEN vcc.podcast_id IS NOT NULL THEN NULL
                 ELSE pg.issued::text
             END AS date_key,
@@ -256,7 +256,7 @@ def distinct_visible_works_sql() -> str:
             vcc.project_gutenberg_catalog_ebook_id,
             m.title,
             m.kind,
-            m.published_date,
+            m.original_published_date,
             p.title,
             pg.title,
             pg.issued

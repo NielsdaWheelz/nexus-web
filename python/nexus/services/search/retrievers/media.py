@@ -80,7 +80,7 @@ def _search_media(
             m.id,
             m.title,
             m.kind,
-            m.published_date,
+            m.original_published_date,
             mcc.contributor_credits,
             CASE WHEN :has_query THEN ts_rank_cd(
                 to_tsvector(
@@ -266,7 +266,7 @@ def resolve_media_search_result(
                 WITH
                     visible_media AS ({visible_media_ids_cte_sql()}),
                     media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
-                SELECT m.id, m.title, m.kind, m.published_date, mcc.contributor_credits
+                SELECT m.id, m.title, m.kind, m.original_published_date, mcc.contributor_credits
                 FROM media m
                 JOIN visible_media vm ON vm.media_id = m.id
                 LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id

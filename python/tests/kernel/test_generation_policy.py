@@ -33,7 +33,7 @@ _EXPECTED_SELECTIONS = {
 }
 
 _EXPECTED_WORKFLOW = {
-    "metadata_enrichment": (120, 32 * 1024, 64_000, 8_000, "StrictJson"),
+    "metadata_enrichment": (300, 32 * 1024, 64_000, 8_000, "StrictJson"),
     "media_summary": (120, 256 * 1024, 128_000, 16_000, "StrictJson"),
     "synapse": (120, 256 * 1024, 128_000, 16_000, "StrictJson"),
     "dawn_write": (180, 256 * 1024, 128_000, 16_000, "Text"),
@@ -107,7 +107,7 @@ def test_exact_generation_policy_is_total_content_derived_and_profile_free() -> 
         "ExactHostToolPlan"
     )
     for operation, entry in policy.background_operations.items():
-        if operation not in {"dossier_library", "dossier_idea"}:
+        if operation not in {"dossier_library", "dossier_idea", "metadata_enrichment"}:
             assert entry.workflow.model_tool_policy.kind == "NoModelTools"
         if operation != "dossier_idea":
             assert entry.workflow.host_tool_plan.kind == "NoHostToolPlan"

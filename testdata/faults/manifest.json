@@ -126,13 +126,13 @@
       "expected_failure": "head schema is missing product-spine tables"
     },
     {
-      "id": "migration-podcast-canonicalization-bypass",
-      "patch": "testdata/faults/migration-podcast-canonicalization-bypass.patch",
-      "sha256": "cb52b844ccb699f7ee8105d04373c75ce68380e93e9739595b28a57b34a0abb8",
+      "id": "publication-date-drain-bypass",
+      "patch": "testdata/faults/publication-date-drain-bypass.patch",
+      "sha256": "0f7e7ea124d3461eaa7211d7adf2b3725cc2e5af13a4646f6cecbd24dcd24477",
       "proofs": [
-        "pytest:python/tests/migrations/test_podcast_publication_migration.py::test_0207_canonicalizes_only_legacy_podcast_publication_instants_and_reaches_head"
+        "pytest:python/tests/migrations/test_original_publication_dates.py::test_publication_dates_require_drained_work_and_invalidate_chronology"
       ],
-      "expected_failure": "0207 must canonicalize legacy Podcast instants"
+      "expected_failure": "DID NOT RAISE"
     },
     {
       "id": "podcast-subscription-notification-bypass",

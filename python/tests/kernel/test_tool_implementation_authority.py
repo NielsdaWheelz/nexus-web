@@ -4,7 +4,15 @@ import json
 from dataclasses import replace
 
 import pytest
-from llm_tools import WEB_SEARCH_SPEC, ToolCatalog, Unavailable, web_family
+from llm_tools import (
+    WEB_READ_SPEC,
+    WEB_SEARCH_SPEC,
+    Available,
+    Native,
+    ToolCatalog,
+    Unavailable,
+    web_family,
+)
 
 from nexus.services.tool_runtime.bindings import NEXUS_TOOL_BINDINGS
 
@@ -65,4 +73,37 @@ def test_projection_runtime_preserves_exact_authority_without_local_execution() 
     assert all(
         isinstance(projection.catalog.binding(tool_id).execute, Unavailable)
         for tool_id in projection.catalog.tool_ids
+    )
+
+
+def test_metadata_has_only_bounded_scoped_reads_and_the_pinned_web_reader() -> None:
+    from nexus.services.tool_runtime.composition import (
+        compose_product_tool_runtime,
+        freeze_tool_plan_snapshot,
+    )
+
+    runtime = compose_product_tool_runtime(None)
+    operation = runtime.operations["MetadataRead"]
+    snapshot = freeze_tool_plan_snapshot(operation)
+    assert [grant.id for grant in snapshot.grants] == [
+        "web.search",
+        "web.read",
+        "nexus.document.search",
+        "nexus.resource.read",
+    ]
+    assert isinstance(operation.plan.exposure, Native)
+    assert snapshot.run_limits.model_dump() == {
+        "max_calls": 8,
+        "max_external_attempts": 64,
+        "max_input_bytes": 262_144,
+        "max_output_bytes": 4_194_304,
+        "max_in_flight": 1,
+        "max_elapsed_seconds": 120.0,
+    }
+    reader = runtime.catalog.binding(WEB_READ_SPEC.id)
+    assert isinstance(reader.execute, Available)
+    assert reader.implementation_revision == "llm-tools-web-read-v2"
+    assert all(
+        grant.id != "web.read"
+        for grant in freeze_tool_plan_snapshot(runtime.operations["ChatRead"]).grants
     )

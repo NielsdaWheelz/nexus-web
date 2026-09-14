@@ -314,7 +314,7 @@ import {
 } from "@/lib/highlights/api";
 import type { Highlight } from "@/lib/highlights/highlightContract";
 import { useHostedTextHighlights } from "./useHostedTextHighlights";
-import ResourceCreditsOverlay from "@/components/contributors/ResourceCreditsOverlay";
+import MediaInfoOverlay from "@/components/media/MediaInfoOverlay";
 import ResourceThumb from "@/components/ui/ResourceThumb";
 import { buildMediaResourceHeader } from "./mediaFormatting";
 import { resolveEpubInternalLinkTarget } from "./epubHelpers";
@@ -676,15 +676,15 @@ export default function MediaPaneBody() {
   >(null);
   // Edit authors is a canonical resource action now: the runtime dispatches it to
   // the app-level ResourceActionOverlays controller (opens the editor by media id).
-  const [creditsOverlayOpen, setCreditsOverlayOpen] = useState(false);
-  const [creditsOverlayMounted, setCreditsOverlayMounted] = useState(false);
-  const [creditsOverlayTrigger, setCreditsOverlayTrigger] =
+  const [mediaInfoOverlayOpen, setMediaInfoOverlayOpen] = useState(false);
+  const [mediaInfoOverlayMounted, setMediaInfoOverlayMounted] = useState(false);
+  const [mediaInfoOverlayTrigger, setMediaInfoOverlayTrigger] =
     useState<HTMLButtonElement | null>(null);
-  const openCreditsOverlay = useCallback(
+  const openMediaInfoOverlay = useCallback(
     ({ triggerEl }: ActionSelectDetail) => {
-      setCreditsOverlayTrigger(triggerEl);
-      setCreditsOverlayMounted(true);
-      setCreditsOverlayOpen(true);
+      setMediaInfoOverlayTrigger(triggerEl);
+      setMediaInfoOverlayMounted(true);
+      setMediaInfoOverlayOpen(true);
     },
     [],
   );
@@ -5592,12 +5592,12 @@ export default function MediaPaneBody() {
     if (resolving || mediaResourceHeader?.status === "Ready") {
       view.push({
         kind: "command",
-        id: "ViewAction.Resource.Credits",
-        label: "Credits…",
+        id: "ViewAction.Resource.MediaInfo",
+        label: "Media info…",
         disabled: resolving || undefined,
         disabledReason: resolving ? PANE_COMMAND_RESOLVING_REASON : undefined,
         restoreFocusOnClose: false,
-        onSelect: openCreditsOverlay,
+        onSelect: openMediaInfoOverlay,
       });
     }
     view.push({
@@ -5663,7 +5663,7 @@ export default function MediaPaneBody() {
     isReflowableReader,
     media,
     mediaResourceHeader,
-    openCreditsOverlay,
+    openMediaInfoOverlay,
     activateForkTarget,
     readerProfile.theme,
     readerPersistence.state,
@@ -7882,14 +7882,17 @@ export default function MediaPaneBody() {
         onSelectConversation={handleSelectExistingChatDestination}
       />
 
-      {creditsOverlayMounted && mediaResourceHeader?.status === "Ready" ? (
-        <ResourceCreditsOverlay
-          open={creditsOverlayOpen}
+      {mediaInfoOverlayMounted && mediaResourceHeader?.status === "Ready" ? (
+        <MediaInfoOverlay
+          open={mediaInfoOverlayOpen}
           title={media.title}
           creditGroups={mediaResourceHeader.creditGroups}
-          returnFocusTo={() => creditsOverlayTrigger}
+          originalPublishedDate={media.original_published_date}
+          editionPublishedDate={media.edition_published_date}
+          publisher={media.publisher}
+          returnFocusTo={() => mediaInfoOverlayTrigger}
           returnFocusFallback={returnFocusFallback}
-          onClose={() => setCreditsOverlayOpen(false)}
+          onClose={() => setMediaInfoOverlayOpen(false)}
         />
       ) : null}
 

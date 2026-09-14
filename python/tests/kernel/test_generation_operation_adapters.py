@@ -261,7 +261,7 @@ def test_non_chat_operation_portfolio_is_exactly_the_policy_catalog() -> None:
         for operation, policy in generation_policy.GENERATION_POLICY.background_operations.items()
         if isinstance(policy.workflow.model_tool_policy, NoModelTools)
     }
-    assert tool_operations == {"dossier_library", "dossier_idea"}
+    assert tool_operations == {"dossier_library", "dossier_idea", "metadata_enrichment"}
     assert no_tool_operations == set(_INTENTS) - tool_operations
 
 

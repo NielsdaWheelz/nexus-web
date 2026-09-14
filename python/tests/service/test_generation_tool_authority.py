@@ -10,10 +10,13 @@ from uuid import UUID, uuid4
 
 import pytest
 from llm_tools import (
+    WEB_READ_SPEC,
+    WEB_SEARCH_SPEC,
     ExecutorConfigurationDefect,
     HandlerSuccess,
     ParsedJson,
     ToolId,
+    WebReadSuccess,
     raw_input_digest,
 )
 from mcp.shared.exceptions import MCPError
@@ -24,7 +27,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.models import (
     ArtifactBuild,
+    Fragment,
     Library,
+    LibraryEntry,
+    Media,
     SynthesisArtifact,
     User,
     ViewerCollectionRevision,
@@ -65,6 +71,7 @@ from nexus.services.tool_authority import (
     compose_generation_tool_executor,
     read_tool_positions,
 )
+from nexus.services.tool_runtime.composition import compose_tool_runtime
 from nexus.services.tool_runtime.declarations import (
     NexusEvidence,
     NexusSearchSuccess,
@@ -78,10 +85,184 @@ from tests.testkit.generation_tool_authority import (
 from tests.testkit.llm_tool_scenarios import compose_available_product_tool_runtime
 from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import (
+    cleanup_committed_upload_user,
     delete_generations_by_ids,
     delete_jobs_by_ids,
     expire_job_claim,
 )
+
+
+def test_metadata_web_and_local_reads_share_scope_replay_and_call_budget(engine: Engine) -> None:
+    asyncio.run(_metadata_web_and_local_reads(engine))
+
+
+async def _metadata_web_and_local_reads(engine: Engine) -> None:
+    invocations: list[str] = []
+
+    async def web_read(value: Any, _context: Any) -> HandlerSuccess[WebReadSuccess]:
+        invocations.append(value.url)
+        return HandlerSuccess(
+            value=WebReadSuccess.model_validate(
+                {
+                    "final_url": value.url,
+                    "media_type": "text/html",
+                    "text": "First published in 1899.",
+                    "title": "A work",
+                    "evidence": {
+                        "content_sha256": generation_fact_digest("1899"),
+                        "final_uri": value.url,
+                        "locator": "body",
+                        "media_type": "text/html",
+                        "observed_at": "2026-09-14T00:00:00Z",
+                        "source_uri": value.url,
+                    },
+                }
+            ),
+            actual_attempts=1,
+        )
+
+    controlled = controlled_tool_runtime({"web.read": web_read})
+    runtime = compose_tool_runtime(
+        controlled.catalog.binding(WEB_SEARCH_SPEC.id),
+        web_read_binding=controlled.catalog.binding(WEB_READ_SPEC.id),
+    )
+    operation = runtime.operations["MetadataRead"]
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    requester, media_id, generation_id = uuid4(), uuid4(), uuid4()
+    owner = LlmCallOwner(kind="media_enrichment", id=media_id)
+    job_id = library_id = None
+    try:
+        with factory() as db:
+            library_id = bootstrap.ensure_user_and_default_library(
+                db, requester, f"metadata-read-{requester}@example.invalid"
+            )
+            db.add(
+                Media(
+                    id=media_id,
+                    kind="web_article",
+                    title="A work",
+                    created_by_user_id=requester,
+                    processing_status="ready_for_reading",
+                )
+            )
+            db.flush()
+            db.add(LibraryEntry(library_id=library_id, media_id=media_id))
+            db.add(
+                Fragment(
+                    media_id=media_id,
+                    idx=0,
+                    canonical_text="First published in 1899.",
+                    html_sanitized="<p>First published in 1899.</p>",
+                )
+            )
+            job = enqueue_job(db, kind="metadata_tool_proof", max_attempts=1)
+            job_id = job.id
+            claimed = claim_job_row(
+                db,
+                job_id=job.id,
+                worker_id="metadata-tool-proof",
+                lease_seconds=300,
+                heavy_kinds=(),
+            )
+            assert claimed is not None
+            context = JobExecutionContext(
+                job_id=job.id,
+                worker_id="metadata-tool-proof",
+                attempt_no=claimed.attempts,
+                resource_class="Light",
+                execution_id=claimed.execution_id,
+            )
+            spec = generation_tool_spec(
+                operation=operation,
+                scope=FrozenToolScope(admitted_refs=(f"media:{media_id}",), predicates=()),
+                generation_operation="metadata_enrichment",
+            )
+            start_generation_in_current_transaction(
+                db,
+                GenerationStart(
+                    generation_id=generation_id, owner=owner, spec=generation_spec_document(spec)
+                ),
+            )
+            db.commit()
+        executor = await compose_generation_tool_executor(
+            session_factory=factory,
+            user_id=requester,
+            owner=owner,
+            generation_id=generation_id,
+            job_context=context,
+            operation=operation,
+        )
+        remote = await executor.execute_canonical(
+            transport_kind="CodexMcp",
+            model_turn_seq=1,
+            transport_call_id="mcp:string:web",
+            provider_wire_name="web_read",
+            tool_id=WEB_READ_SPEC.id,
+            arguments={"url": "https://example.invalid/work"},
+        )
+        assert not remote.model_output.is_error
+        assert "1899" in remote.model_output.output
+        local = await executor.execute_canonical(
+            transport_kind="ProviderApi",
+            model_turn_seq=2,
+            transport_call_id="local",
+            provider_wire_name="nexus_resource_read",
+            tool_id=ToolId("nexus.resource.read"),
+            arguments={"uri": f"media:{media_id}"},
+        )
+        assert not local.model_output.is_error
+        assert "1899" in local.model_output.output
+        replay = await executor.execute_canonical(
+            transport_kind="ProviderApi",
+            model_turn_seq=2,
+            transport_call_id="local",
+            provider_wire_name="nexus_resource_read",
+            tool_id=ToolId("nexus.resource.read"),
+            arguments={"uri": f"media:{media_id}"},
+        )
+        assert replay.model_output.output == local.model_output.output
+        for tool_id, arguments, error in (
+            ("nexus.resource.read", {"uri": f"media:{uuid4()}"}, "widen the frozen resource scope"),
+            ("nexus.note.create", {}, "outside the frozen catalogue"),
+        ):
+            with pytest.raises(ToolAuthorityRefused, match=error):
+                await executor.execute_canonical(
+                    transport_kind="ProviderApi",
+                    model_turn_seq=3,
+                    transport_call_id=tool_id,
+                    provider_wire_name=tool_id,
+                    tool_id=ToolId(tool_id),
+                    arguments=arguments,
+                )
+        for number in range(3, 9):
+            result = await executor.execute_canonical(
+                transport_kind="ProviderApi",
+                model_turn_seq=number,
+                transport_call_id=f"read-{number}",
+                provider_wire_name="nexus_resource_read",
+                tool_id=ToolId("nexus.resource.read"),
+                arguments={"uri": f"media:{media_id}"},
+            )
+            assert not result.model_output.is_error
+        exhausted = await executor.execute_canonical(
+            transport_kind="ProviderApi",
+            model_turn_seq=9,
+            transport_call_id="read-9",
+            provider_wire_name="nexus_resource_read",
+            tool_id=ToolId("nexus.resource.read"),
+            arguments={"uri": f"media:{media_id}"},
+        )
+        assert exhausted.model_output.is_error
+        assert "BudgetExceeded" in exhausted.model_output.output
+        assert invocations == ["https://example.invalid/work"]
+        assert "dossier_citation_candidates" not in local.model_output.output
+    finally:
+        with factory() as db:
+            delete_generations_by_ids(db, generation_ids=(generation_id,))
+            if job_id is not None:
+                delete_jobs_by_ids(db, job_ids=(job_id,))
+            db.commit()
+        cleanup_committed_upload_user(engine, user_id=requester)
 
 
 def test_frozen_plan_is_transport_neutral_and_fenced(

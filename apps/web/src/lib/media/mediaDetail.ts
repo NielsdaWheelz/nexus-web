@@ -1,4 +1,8 @@
 import { decodePresence, type Presence } from "@/lib/api/presence";
+import {
+  decodePublicationDateOnly,
+  type PublicationDate,
+} from "@/lib/dates/publicationDate";
 import { decodeContributorCredit } from "@/lib/contributors/credit";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import {
@@ -68,7 +72,8 @@ const MEDIA_DETAIL_KEYS = [
   "document_embed_summary",
   "contributors",
   "author_mode",
-  "published_date",
+  "original_published_date",
+  "edition_published_date",
   "publisher",
   "language",
   "description",
@@ -112,7 +117,8 @@ export interface MediaDetail {
   document_embed_summary: DocumentEmbedSummary | null;
   contributors: ContributorCredit[];
   author_mode: "automatic" | "manual";
-  published_date: string | null;
+  original_published_date: Presence<PublicationDate>;
+  edition_published_date: Presence<PublicationDate>;
   publisher: string | null;
   language: string | null;
   description: string | null;
@@ -290,9 +296,13 @@ export function decodeMediaDetail(
       ["automatic", "manual"] as const,
       "MediaOut.author_mode",
     ),
-    published_date: expectNullableString(
-      value.published_date,
-      "MediaOut.published_date",
+    original_published_date: decodePresence(
+      value.original_published_date,
+      (date) => decodePublicationDateOnly(date, "MediaOut.original_published_date"),
+    ),
+    edition_published_date: decodePresence(
+      value.edition_published_date,
+      (date) => decodePublicationDateOnly(date, "MediaOut.edition_published_date"),
     ),
     publisher: expectNullableString(value.publisher, "MediaOut.publisher"),
     language: expectNullableString(value.language, "MediaOut.language"),

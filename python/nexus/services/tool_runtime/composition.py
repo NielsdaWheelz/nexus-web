@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 import httpx
 from llm_tools import (
+    WEB_READ_SPEC,
     WEB_SEARCH_SPEC,
     Available,
     BraveSearchProvider,
@@ -17,6 +18,7 @@ from llm_tools import (
     HostTable,
     Native,
     ReplayPolicy,
+    SafeWebReader,
     ToolBinding,
     ToolCatalog,
     ToolEffect,
@@ -26,6 +28,7 @@ from llm_tools import (
     Unavailable,
     WebSearchProvider,
     bind_brave_web_search,
+    bind_web_read,
     web_family,
 )
 from provider_runtime.agent_runtime import (
@@ -90,12 +93,17 @@ _PRESENTED_DECLARATIONS_BY_ID: Final[Mapping[ToolId, PresentedToolDeclaration]] 
 
 def _validate_binding_metadata(
     web_search_binding: ToolBinding[Any, Any, Any],
+    web_read_binding: ToolBinding[Any, Any, Any],
     nexus_bindings: tuple[ToolBinding[Any, Any, Any], ...],
 ) -> None:
     if web_search_binding.spec is not WEB_SEARCH_SPEC:
         raise ValueError("web.search binding must own the imported declaration")
     if web_search_binding.replay_policy is not ReplayPolicy.BilledOnce:
         raise ValueError("web.search must remain BilledOnce")
+    if web_read_binding.spec is not WEB_READ_SPEC:
+        raise ValueError("web.read binding must own the imported declaration")
+    if web_read_binding.replay_policy is not ReplayPolicy.ReDispatchable:
+        raise ValueError("web.read must remain ReDispatchable")
     for binding in nexus_bindings:
         if (
             binding.spec.effect is ToolEffect.Write
@@ -122,12 +130,13 @@ def _require_nexus_execution(
 def _compose_tool_runtime(
     web_search_binding: ToolBinding[Any, Any, Any],
     *,
+    web_read_binding: ToolBinding[Any, Any, Any],
     nexus_bindings: tuple[ToolBinding[Any, Any, Any], ...],
 ) -> ComposedToolRuntime:
-    _validate_binding_metadata(web_search_binding, nexus_bindings)
+    _validate_binding_metadata(web_search_binding, web_read_binding, nexus_bindings)
     catalog = ToolCatalog.compose(
         (
-            web_family(search=web_search_binding),
+            web_family(search=web_search_binding, read=web_read_binding),
             ToolFamily(
                 namespace="nexus",
                 declarations=tuple(entry.spec for entry in NEXUS_TOOL_DECLARATIONS),
@@ -155,6 +164,7 @@ def _compose_tool_runtime(
 def compose_tool_runtime(
     web_search_binding: ToolBinding[Any, Any, Any],
     *,
+    web_read_binding: ToolBinding[Any, Any, Any] | None = None,
     nexus_bindings: tuple[ToolBinding[Any, Any, Any], ...] | None = None,
 ) -> ComposedToolRuntime:
     """Freeze every reviewed operation plan against one exact tool catalogue."""
@@ -164,7 +174,11 @@ def compose_tool_runtime(
 
         nexus_bindings = NEXUS_TOOL_BINDINGS
     _require_nexus_execution(nexus_bindings, available=True)
-    return _compose_tool_runtime(web_search_binding, nexus_bindings=nexus_bindings)
+    return _compose_tool_runtime(
+        web_search_binding,
+        web_read_binding=web_read_binding or bind_web_read(SafeWebReader()),
+        nexus_bindings=nexus_bindings,
+    )
 
 
 def _validate_frozen_operation(operation: FrozenToolOperation) -> None:
@@ -315,7 +329,11 @@ def compose_projection_tool_runtime() -> ComposedToolRuntime:
         {entry.spec.id: unavailable for entry in NEXUS_TOOL_DECLARATIONS}
     )
     _require_nexus_execution(nexus_bindings, available=False)
-    return _compose_tool_runtime(web_search_binding, nexus_bindings=nexus_bindings)
+    return _compose_tool_runtime(
+        web_search_binding,
+        web_read_binding=ToolCatalog.compose((web_family(),)).binding(WEB_READ_SPEC.id),
+        nexus_bindings=nexus_bindings,
+    )
 
 
 def compose_configured_web_search_provider(

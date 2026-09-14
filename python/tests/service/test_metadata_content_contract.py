@@ -74,7 +74,8 @@ def test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets(
         "authors",
         "publisher",
         "description",
-        "published_date",
+        "original_published_date",
+        "edition_published_date",
         "language",
     }
 
@@ -82,10 +83,15 @@ def test_metadata_contract_exposes_quality_bounds_and_all_media_kind_targets(
         "title": {"minLength": 1, "maxLength": 255, "pattern": r"\S"},
         "publisher": {"minLength": 1, "maxLength": 255, "pattern": r"\S"},
         "description": {"minLength": 1, "maxLength": 2000, "pattern": r"\S"},
-        "published_date": {
-            "minLength": 1,
-            "maxLength": 64,
-            "pattern": r"^\d{4}(?:-\d{2}(?:-\d{2})?)?$",
+        "original_published_date": {
+            "minLength": 4,
+            "maxLength": 10,
+            "pattern": r"^[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?$",
+        },
+        "edition_published_date": {
+            "minLength": 4,
+            "maxLength": 10,
+            "pattern": r"^[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?$",
         },
         "language": {"minLength": 1, "maxLength": 32, "pattern": r"^[a-z]{2}$"},
     }

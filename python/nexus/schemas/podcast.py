@@ -15,6 +15,7 @@ from nexus.schemas.contributors import (
 )
 from nexus.schemas.media import MediaProcessingStatus
 from nexus.schemas.presence import Presence, absent
+from nexus.schemas.publication_dates import PublicationDate
 from nexus.services.podcasts.handles import PodcastRefreshRunHandle
 from nexus.services.podcasts.types import PodcastRefreshRunStatus, PodcastSyncStatus
 from nexus.services.sealed_handles import DiscoveryTargetHandle
@@ -334,7 +335,7 @@ class PodcastEpisodeListItemOut(BaseModel):
     capabilities: PodcastEpisodeListCapabilitiesOut
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
     author_mode: Literal["automatic", "manual"]
-    published_date: Presence[str]
+    original_published_date: Presence[PublicationDate]
     duration_seconds: Presence[int]
     has_show_notes: bool
     player_descriptor: Presence[PodcastEpisodeListPlayerDescriptorOut] = Field(

@@ -182,13 +182,14 @@ def test_enriched_title_of_a_published_document_advances_its_generation(
                 authors=None,
                 publisher=None,
                 description=None,
-                published_date=None,
+                original_published_date=None,
+                edition_published_date=None,
                 language=None,
             ),
         )
         db.commit()
 
-    assert merged.accepted_fields == ("title",)
+    assert merged.accepted_fields == ("title", "original_published_date", "edition_published_date")
     with Session(engine) as oracle:
         document = oracle.get(Media, document_id)
         assert document is not None and document.title == "The Canonical Work"
@@ -207,10 +208,11 @@ def test_enriched_title_of_a_published_document_advances_its_generation(
                 authors=None,
                 publisher=None,
                 description=None,
-                published_date=None,
+                original_published_date=None,
+                edition_published_date=None,
                 language=None,
             ),
-        ).accepted_fields == ("title",)
+        ).accepted_fields == ("title", "original_published_date", "edition_published_date")
         db.commit()
     with Session(engine) as oracle:
         video = oracle.get(Media, video_id)

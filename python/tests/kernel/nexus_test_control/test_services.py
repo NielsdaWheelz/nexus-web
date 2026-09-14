@@ -1754,8 +1754,9 @@ def test_codex_generation_peer_answers_journey_synthesis_without_tool_authority(
         "authors": None,
         "publisher": None,
         "description": None,
-        "published_date": None,
-        "language": "en",
+        "original_published_date": None,
+        "edition_published_date": None,
+        "language": None,
     }
     assert media_summary.tool_grant is None
     assert deterministic_synthesis_output(media_summary) == {

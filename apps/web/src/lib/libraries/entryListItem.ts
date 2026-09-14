@@ -7,6 +7,7 @@ import { decodeContributorCredit } from "@/lib/contributors/credit";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import {
   decodePublicationDate,
+  decodePublicationDateOnly,
   type PublicationDate,
 } from "@/lib/dates/publicationDate";
 import type { MediaActionCapabilities } from "@/lib/media/mediaActionCapabilities";
@@ -56,7 +57,7 @@ export interface LibraryMediaListValue {
   readonly created_at: string;
   readonly contributors: ContributorCredit[];
   readonly author_mode: "automatic" | "manual";
-  readonly published_date: string | null;
+  readonly original_published_date: Presence<PublicationDate>;
   readonly publicationDate: Presence<PublicationDate>;
   readonly canonical_source_url: string | null;
   readonly sourceHost: Presence<string>;
@@ -133,7 +134,7 @@ function decodeMedia(raw: unknown): LibraryMediaListWire {
       "created_at",
       "contributors",
       "author_mode",
-      "published_date",
+      "original_published_date",
       "canonical_source_url",
       "processing_status",
       "read_state",
@@ -183,9 +184,13 @@ function decodeMedia(raw: unknown): LibraryMediaListWire {
       AUTHOR_MODES,
       "Library media list item.author_mode",
     ),
-    published_date: expectNullableString(
-      media.published_date,
-      "Library media list item.published_date",
+    original_published_date: decodePresence(
+      media.original_published_date,
+      (date) =>
+        decodePublicationDateOnly(
+          date,
+          "Library media list item.original_published_date",
+        ),
     ),
     canonical_source_url: expectNullableString(
       media.canonical_source_url,

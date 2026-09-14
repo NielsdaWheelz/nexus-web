@@ -5,8 +5,8 @@
   "max_hosted_calls": 0,
   "live_qualification": "model_effort_runtime_wire_required_before_production",
   "consumer_pins": {
-    "policy_revision": "generation-policy.v2.0d24533c6d6185d1a1a0d28b654ec8cdfee1fc4f48097b31769bc50e11d4f789",
-    "policy_facts_fingerprint": "bba771639692232e1639d554b9ccbcbbdaa081f3e93e88db816feebfb79a08f5",
+    "policy_revision": "generation-policy.v2.4e9deebb0fa8a893a3bdb5345034ccebd5219e9302a5f9e5033310e2b3617be5",
+    "policy_facts_fingerprint": "8fbc38e3e9f15b2fcce8d7fff96c65a78f72994e2ea21b6a859233897a0bd9ab",
     "provider_runtime_revision": "8fde23ac56571a63c65cfcff55c73a0976f83eb4",
     "llm_tools_revision": "9e6d155f3b64f03495911435b7cae8b8d131f9a2",
     "agent_backend_contract_revision": "provider-runtime.agent-model-catalog.v1",
@@ -28,7 +28,7 @@
   "background_operations": {
     "metadata_enrichment": {
       "selection": {"route": "CodexPersonal", "model": "gpt-5.6-luna", "reasoning": "low"},
-      "model_tool_plan": null
+      "model_tool_plan": "MetadataRead"
     },
     "media_summary": {
       "selection": {"route": "CodexPersonal", "model": "gpt-5.6-luna", "reasoning": "low"},
@@ -84,6 +84,10 @@
     }
   },
   "tool_plans": {
+    "MetadataRead": {
+      "authority_revision": "422ab2500e893ad24cb5cf079ab0edd4beb7c9915f818492723eb95e9a5e31f0",
+      "effect_mode": "ReadOnly"
+    },
     "ChatRead": {
       "authority_revision": "dc584f4320765dd8b08e65976380411abe010aca0fbeef4814ca3530512429d1",
       "effect_mode": "ReadOnly"

@@ -256,6 +256,7 @@ _CHAT_READ_REVISION = "dc584f4320765dd8b08e65976380411abe010aca0fbeef4814ca35305
 _CHAT_WRITE_REVISION = "3fc34933d27eeb7518984e1274a3be5001902dfb8d4a3669bc83160302d2ceff"
 _LIBRARY_READ_REVISION = "b6b91ec256ef4113aee8aff329affdfeff08f855eb71cbcce6bf05d1bed93902"
 _IDEA_READ_REVISION = "35ae7ab9ab1b2da96b3c7809b93c1cce8122e9a4eb7ef146d14aec0b2ca34d8b"
+_METADATA_READ_REVISION = "422ab2500e893ad24cb5cf079ab0edd4beb7c9915f818492723eb95e9a5e31f0"
 
 _CODEX_TOOL_QUALIFICATIONS = (
     ToolPlanQualification(output_contract="Text", authority_revision=_CHAT_READ_REVISION),
@@ -267,6 +268,10 @@ _CODEX_TOOL_QUALIFICATIONS = (
     ToolPlanQualification(
         output_contract="StrictJson",
         authority_revision=_IDEA_READ_REVISION,
+    ),
+    ToolPlanQualification(
+        output_contract="StrictJson",
+        authority_revision=_METADATA_READ_REVISION,
     ),
 )
 _PROVIDER_TOOL_QUALIFICATIONS = _CODEX_TOOL_QUALIFICATIONS[:2]

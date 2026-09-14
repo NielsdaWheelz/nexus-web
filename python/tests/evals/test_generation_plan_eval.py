@@ -90,5 +90,6 @@ def test_reviewed_generation_plan_corpus_replays_the_shipped_policy_without_a_li
             ("ChatReadAdditiveWrite", "AdditiveWrites"),
             ("LibraryDossierRead", "ReadOnly"),
             ("IdeaDossierRead", "ReadOnly"),
+            ("MetadataRead", "ReadOnly"),
         )
     }

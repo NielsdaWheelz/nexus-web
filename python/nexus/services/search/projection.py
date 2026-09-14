@@ -10,6 +10,7 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.schemas.presence import Present
 from nexus.schemas.retrieval import RetrievalLocator, retrieval_locator_json
 from nexus.schemas.search import (
     ConversationArtifactSearchOut,
@@ -129,8 +130,8 @@ def _build_source_label(source: SearchResultSourceOut) -> str:
     credited_names = _credited_names(source.contributors)
     if credited_names:
         parts.append(", ".join(credited_names))
-    if source.published_date:
-        parts.append(source.published_date)
+    if isinstance(source.original_published_date, Present):
+        parts.append(source.original_published_date.value)
     if source.media_kind:
         parts.append(source.media_kind.replace("_", " "))
     return " - ".join(part for part in parts if part)

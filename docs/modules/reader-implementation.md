@@ -235,8 +235,9 @@ show notes, nested below the local section heading, use offset 2.
 The compact credit line renders the ordered first two credit items on desktop
 and the first one on mobile. Resolved visible credits are native pane links;
 unresolved credits are text; noninteractive `+N` counts the unmounted tail.
-Each visible name owns its ellipsis. `Credits…` in More opens the complete,
-wrapping, linked credit list. Authorization-gated `Add author…` /
+Each visible name owns its ellipsis. `media info…` in More opens the original
+and edition publication dates, publisher, and complete linked credit list.
+Authorization-gated `Add author…` /
 `Edit authors…` opens `MediaAuthorsEditor` separately; author administration is
 not inline header content. Both overlays return focus to the exact More
 trigger, with pane chrome as the disconnected-trigger fallback.

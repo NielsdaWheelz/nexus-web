@@ -30,6 +30,7 @@ type ToolScopeDerivation = Literal[
     "ChatAdmittedContext",
     "LibraryDossierManifest",
     "IdeaDossierEvidenceLedger",
+    "MetadataMedia",
 ]
 
 
@@ -289,10 +290,16 @@ _BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] 
         "metadata_enrichment",
         model="gpt-5.6-luna",
         reasoning="low",
-        timeout=120,
+        timeout=300,
         input_bytes=32 * 1024,
         context_tokens=64_000,
         output_tokens=8_000,
+        model_tool_policy=ExactModelTools(
+            plan_id="MetadataRead",
+            authority_revision=_tool_authority_revision("MetadataRead"),
+            effect_mode="ReadOnly",
+            scope_derivation="MetadataMedia",
+        ),
     ),
     "media_summary": _background(
         "media_summary",

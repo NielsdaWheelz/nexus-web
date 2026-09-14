@@ -30,7 +30,7 @@ _APPARATUS_ROW_COLUMNS = """
     rai.media_id,
     m.kind AS media_kind,
     m.title,
-    m.published_date,
+    m.original_published_date,
     mcc.contributor_credits
 """
 
@@ -87,7 +87,7 @@ def _search_reader_apparatus_items(
                     a.media_id,
                     a.media_kind,
                     a.title,
-                    a.published_date,
+                    a.original_published_date,
                     a.contributor_credits,
                     ts_headline(
                         'english',
@@ -124,7 +124,7 @@ def _search_reader_apparatus_items(
                     row["media_kind"],
                     row["title"],
                     row["contributor_credits"],
-                    row["published_date"],
+                    row["original_published_date"],
                 ),
                 score=_build_search_score(row["score"]),
             )
@@ -172,7 +172,7 @@ def resolve_reader_apparatus_search_result(
             row["media_kind"],
             row["title"],
             row["contributor_credits"],
-            row["published_date"],
+            row["original_published_date"],
         ),
         score=score,
     )

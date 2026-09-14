@@ -3,10 +3,7 @@ import type {
   PositiveMinutes,
   ProgressFraction,
 } from "@/lib/consumption/activityFacts";
-import {
-  decodeOptionalPublicationDate,
-  type PublicationDate,
-} from "@/lib/dates/publicationDate";
+import type { PublicationDate } from "@/lib/dates/publicationDate";
 import {
   MEDIA_KINDS,
   type MediaKind,
@@ -146,10 +143,6 @@ export function decodeLibraryReadingTimeEntry(
   }
 
   const media = expectRecord(entry.media, "Library entry media");
-  const publicationDate = decodeOptionalPublicationDate(
-    media.published_date,
-    "Library media published_date",
-  );
   const mediaKind = expectOneOf(
     media.kind,
     MEDIA_KINDS,
@@ -232,7 +225,7 @@ export function decodeLibraryReadingTimeEntry(
     media: {
       ...media,
       progressFraction: decodedProgressFraction,
-      publicationDate,
+      publicationDate: media.original_published_date,
       sourceHost,
     },
     readingTimeEstimate: estimate,

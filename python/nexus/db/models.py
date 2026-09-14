@@ -32,6 +32,8 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import UserDefinedType
 
+from nexus.schemas.publication_dates import PublicationDate
+
 
 class Base(DeclarativeBase):
     """Base class for all ORM models."""
@@ -1302,8 +1304,10 @@ class Media(Base):
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Document metadata enrichment fields
-    # published_date is TEXT (not DATE) because source data is often partial ("2023", "2023-01")
-    published_date: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Bibliography dates preserve partial precision ("2023", "2023-01").
+    original_published_date: Mapped[PublicationDate | None] = mapped_column(Text, nullable=True)
+    edition_published_date: Mapped[PublicationDate | None] = mapped_column(Text, nullable=True)
+    edition_isbn: Mapped[str | None] = mapped_column(Text, nullable=True)
     publisher: Mapped[str | None] = mapped_column(Text, nullable=True)
     language: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

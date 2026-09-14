@@ -424,6 +424,7 @@ def _run_enrich_metadata(
     return enrich_metadata(
         media_id=str(payload["media_id"]),
         request_id=_optional_job_text(payload, "request_id", "enrich_metadata"),
+        requester_user_id=UUID(str(payload["requester_user_id"])),
         context=context,
     )
 

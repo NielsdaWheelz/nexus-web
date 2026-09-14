@@ -1133,7 +1133,7 @@ def _hydrate_entry_rows(
                         created_at=media.created_at,
                         contributors=media.contributors,
                         author_mode=media.author_mode,
-                        published_date=media.published_date,
+                        original_published_date=media.original_published_date,
                         canonical_source_url=media.canonical_source_url,
                         processing_status=media.processing_status,
                         read_state=media.read_state,
@@ -2500,14 +2500,14 @@ def _query_view_page(
                         {creator_name_expr} AS creator_name,
                         ({creator_name_expr} IS NULL)::int AS creator_missing,
                         COALESCE(
-                            md.published_date,
+                            md.original_published_date,
                             to_char(
                                 latest_episode.published_at AT TIME ZONE 'UTC',
                                 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
                             )
                         ) AS published_date,
                         (
-                            md.published_date IS NULL
+                            md.original_published_date IS NULL
                             AND latest_episode.published_at IS NULL
                         )::int AS published_missing,
                         {read_state_expr} AS read_state

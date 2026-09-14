@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, get_args
 
 from llm_tools import (
+    WEB_READ_SPEC,
     WEB_SEARCH_SPEC,
     CapabilityProfile,
     HostTable,
@@ -55,6 +56,24 @@ EXPECTED_DECLARATIONS: dict[str, dict[str, Any]] = {
         ),
         "errors": COMMON_ERRORS | {"InvalidUpstreamResponse", "RateLimited", "UpstreamUnavailable"},
         "limits": ToolLimits(4096, 32768, 2, 15.0),
+    },
+    "web.read": {
+        "effect": ToolEffect.Read,
+        "result_kind": "retrieval",
+        "activity_label": "Reading a web page",
+        "input_keys": ("url",),
+        "success_keys": ("evidence", "final_url", "media_type", "text", "title"),
+        "errors": COMMON_ERRORS
+        | {
+            "InvalidUpstreamResponse",
+            "InvalidUrl",
+            "RateLimited",
+            "TooLarge",
+            "UnsafeDestination",
+            "UnsupportedContent",
+            "UpstreamUnavailable",
+        },
+        "limits": ToolLimits(24616, 524288, 8, 20.0),
     },
     "nexus.search": {
         "effect": ToolEffect.Read,
@@ -559,12 +578,13 @@ def test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contr
         LIBRARY_DOSSIER_READ_TOOL_PROFILE,
     )
 
-    nexus_ids = tuple(EXPECTED_DECLARATIONS)[1:]
+    nexus_ids = tuple(key for key in EXPECTED_DECLARATIONS if key.startswith("nexus."))
     assert tuple(str(entry.spec.id) for entry in NEXUS_TOOL_DECLARATIONS) == nexus_ids
     assert tuple(str(entry.spec.id) for entry in CHAT_TOOL_DECLARATIONS) == tuple(
         EXPECTED_DECLARATIONS
     )
     assert CHAT_TOOL_DECLARATIONS[0].spec is WEB_SEARCH_SPEC
+    assert CHAT_TOOL_DECLARATIONS[1].spec is WEB_READ_SPEC
 
     for entry in CHAT_TOOL_DECLARATIONS:
         tool_id = str(entry.spec.id)
@@ -577,7 +597,7 @@ def test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contr
         assert _object_keys(spec.input_schema.semantic) == expected["input_keys"]
         assert _object_keys(spec.success_schema.semantic) == expected["success_keys"]
         assert set(_error_contract(spec.error_schema.semantic)) == expected["errors"]
-        if tool_id != "web.search":
+        if tool_id.startswith("nexus."):
             _assert_recursively_closed_required_and_bounded(
                 spec.input_schema.semantic, path=f"{tool_id}.input"
             )
@@ -676,7 +696,7 @@ def test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contr
     assert CHAT_READ_ADDITIVE_WRITE_TOOL_PROFILE == CapabilityProfile(
         id=ProfileId("chat_read_additive_write"),
         grants=tuple(
-            ToolGrant(id=ToolId(tool_id), limits=None) for tool_id in EXPECTED_DECLARATIONS
+            ToolGrant(id=ToolId(tool_id), limits=None) for tool_id in ("web.search", *nexus_ids)
         ),
         run_limits=CHAT_RUN_LIMITS,
     )

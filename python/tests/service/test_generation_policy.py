@@ -371,11 +371,12 @@ async def _prove_total_policy_and_frozen_admission() -> None:
         "LibraryDossierRead"
     )
     assert admitted["dossier_idea"].model_tool_plan_snapshot.value.plan_id == "IdeaDossierRead"
+    assert admitted["metadata_enrichment"].model_tool_plan_snapshot.value.plan_id == "MetadataRead"
     assert admitted["dossier_idea"].host_tool_plan_snapshot.value.plan_id == (
         "idea_dossier_research"
     )
     assert all(
         isinstance(spec.model_tool_plan_snapshot, Absent)
         for key, spec in admitted.items()
-        if key not in {"dossier_library", "dossier_idea"}
+        if key not in {"dossier_library", "dossier_idea", "metadata_enrichment"}
     )

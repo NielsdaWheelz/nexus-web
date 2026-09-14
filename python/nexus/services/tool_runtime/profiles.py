@@ -15,6 +15,7 @@ from types import MappingProxyType
 from typing import Any, Final, Literal
 
 from llm_tools import (
+    WEB_READ_SPEC,
     WEB_SEARCH_SPEC,
     CapabilityProfile,
     HostTable,
@@ -60,11 +61,12 @@ _MODEL_TOOL_PLAN_IDS: Final[tuple[str, ...]] = (
     "ChatReadAdditiveWrite",
     "LibraryDossierRead",
     "IdeaDossierRead",
+    "MetadataRead",
 )
 
 
 def _closed_tool_specs() -> MappingProxyType[ToolId, ToolSpec[Any, Any, Any]]:
-    specs = (WEB_SEARCH_SPEC, *(entry.spec for entry in NEXUS_TOOL_DECLARATIONS))
+    specs = (WEB_SEARCH_SPEC, WEB_READ_SPEC, *(entry.spec for entry in NEXUS_TOOL_DECLARATIONS))
     if len({spec.id for spec in specs}) != len(specs):
         raise ValueError("model-tool declarations contain a duplicate canonical id")
     return MappingProxyType({spec.id: spec for spec in specs})
@@ -304,12 +306,33 @@ IDEA_DOSSIER_RESEARCH_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
     exposure="HostTable",
 )
 
+METADATA_READ_TOOL_DEFINITION: Final[ToolPlanDefinition] = _definition(
+    "MetadataRead",
+    "metadata_read",
+    (
+        WEB_SEARCH_SPEC.id,
+        WEB_READ_SPEC.id,
+        ToolId("nexus.document.search"),
+        ToolId("nexus.resource.read"),
+    ),
+    RunLimits(
+        max_calls=8,
+        max_external_attempts=64,
+        max_input_bytes=262_144,
+        max_output_bytes=4_194_304,
+        max_in_flight=1,
+        max_elapsed_seconds=120.0,
+    ),
+    exposure="Native",
+)
+
 TOOL_PLAN_DEFINITIONS: Final[tuple[ToolPlanDefinition, ...]] = (
     CHAT_READ_TOOL_DEFINITION,
     CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION,
     LIBRARY_DOSSIER_READ_TOOL_DEFINITION,
     IDEA_DOSSIER_READ_TOOL_DEFINITION,
     IDEA_DOSSIER_RESEARCH_TOOL_DEFINITION,
+    METADATA_READ_TOOL_DEFINITION,
 )
 _computed_authority_revisions = {
     definition.plan_id: definition.authority_revision for definition in TOOL_PLAN_DEFINITIONS
@@ -339,7 +362,7 @@ IDEA_DOSSIER_RESEARCH_TOOL_PLAN = IDEA_DOSSIER_RESEARCH_TOOL_DEFINITION.plan
 
 
 def tool_plan_policy_facts() -> tuple[ToolPlanPolicyFacts, ...]:
-    """Return all four model-callable plan definitions in canonical order."""
+    """Return model-callable plan definitions in canonical order."""
 
     facts = tuple(
         TOOL_PLAN_DEFINITIONS_BY_ID[plan_id].policy_facts() for plan_id in _MODEL_TOOL_PLAN_IDS

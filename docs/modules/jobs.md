@@ -293,6 +293,9 @@ decoder. Model, effort, capability, timeouts, and stream bounds come from
 `generation_policy.py`. `enrich_metadata` now uses this same command, client,
 journal, and `llm_calls` path.
 
+metadata research uses the scoped `MetadataRead` plan and an explicit requester;
+see [media metadata](media-metadata.md) for date ownership and maintenance.
+
 `dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
 Contributor, Page, Note, and internal Idea subjects. Its immutable registration
 selects one inseparable subject-policy and binding pair for collection, prompt,

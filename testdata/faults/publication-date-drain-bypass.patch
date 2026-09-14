@@ -1,0 +1,12 @@
+diff --git a/migrations/alembic/versions/0228_original_publication_dates.py b/migrations/alembic/versions/0228_original_publication_dates.py
+--- a/migrations/alembic/versions/0228_original_publication_dates.py
++++ b/migrations/alembic/versions/0228_original_publication_dates.py
+@@ -43,7 +43,7 @@
+                 UNION ALL
+                 SELECT 'metadata_generation' AS owner, id FROM llm_calls
+                 WHERE owner_kind = 'media_enrichment' AND completed_at IS NULL
+-            ) AS active ORDER BY owner, id LIMIT 1
++            ) AS active ORDER BY owner, id LIMIT 0
+             """
+         )
+     ).first()

@@ -75,21 +75,21 @@ class RequestRejected(Exception):
 
 
 def deterministic_synthesis_output(command: GenerationCommand) -> dict[str, object]:
-    """Return the exact tool-free synthesis needed by real-stack journeys."""
-
-    if command.tool_grant is not None or not isinstance(
-        command.spec.model_tool_plan_snapshot, Absent
-    ):
-        raise RequestRejected(HTTPStatus.UNPROCESSABLE_ENTITY, "synthesis_tool_grant_forbidden")
+    """Return the exact structured synthesis needed by real-stack journeys."""
     if command.spec.operation == "metadata_enrichment":
         return {
             "title": None,
             "authors": None,
             "publisher": None,
             "description": None,
-            "published_date": None,
-            "language": "en",
+            "original_published_date": None,
+            "edition_published_date": None,
+            "language": None,
         }
+    if command.tool_grant is not None or not isinstance(
+        command.spec.model_tool_plan_snapshot, Absent
+    ):
+        raise RequestRejected(HTTPStatus.UNPROCESSABLE_ENTITY, "synthesis_tool_grant_forbidden")
     if command.spec.operation == "media_summary":
         candidate = re.search(
             r"(?:\A|\n)\[0\]\s+(.+?)(?=\n\n\[\d+\]\s|\Z)",

@@ -81,6 +81,7 @@ def test_metadata_prompt_bounds_oversized_persisted_hints_without_erasing_struct
         db_session,
         media,
         "source text that must not remove trusted framing",
+        admission_facts='{"requester_user_id":"e497c08a-b6fd-4d56-b3da-846f11fdfab7","publication_generation":5,"index_revision":7,"index_status":"ready"}',
     )
 
     assert len(prompt.encode("utf-8")) < input_max_bytes
@@ -96,6 +97,17 @@ def test_metadata_prompt_bounds_oversized_persisted_hints_without_erasing_struct
         _, separator, value = line.partition(": ")
         assert separator == ": "
         json.loads(value)
+    hints = {
+        key.removeprefix("- "): json.loads(value)
+        for key, value in (line.split(": ", 1) for line in metadata_block.splitlines())
+    }
+    assert hints["media_ref"] == f"media:{media.id}"
+    assert json.loads(hints["admission_facts"]) == {
+        "requester_user_id": "e497c08a-b6fd-4d56-b3da-846f11fdfab7",
+        "publication_generation": 5,
+        "index_revision": 7,
+        "index_status": "ready",
+    }
 
 
 def test_metadata_prompt_bounds_the_author_hint_as_a_valid_json_array(

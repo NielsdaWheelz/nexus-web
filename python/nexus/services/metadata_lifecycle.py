@@ -65,6 +65,7 @@ def retry_metadata_for_viewer(
     enqueue_metadata_enrichment(
         db,
         media_id=media.id,
+        requester_user_id=viewer_id,
         request_id=request_id,
     )
     db.commit()
