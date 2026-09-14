@@ -1,11 +1,12 @@
-diff --git a/apps/worker/main.py b/apps/worker/main.py
---- a/apps/worker/main.py
-+++ b/apps/worker/main.py
-@@ -16,6 +16,7 @@
-     WorkerHeartbeatPublisher,
-     WorkerLane,
- )
+diff --git a/python/nexus/jobs/registry.py b/python/nexus/jobs/registry.py
+--- a/python/nexus/jobs/registry.py
++++ b/python/nexus/jobs/registry.py
+@@ -11,6 +11,8 @@
+ from functools import lru_cache
+ from typing import Any, Literal, cast
+ from uuid import UUID
++
 +from provider_runtime.runtime import ProviderRuntime
- from sqlalchemy.orm import Session, sessionmaker
  
- from nexus.config import (
+ from nexus.config import get_settings
+ from nexus.jobs.dead_letter_projections import DeadLetterProjection

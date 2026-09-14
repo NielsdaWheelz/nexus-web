@@ -2285,7 +2285,7 @@
     {
       "id": "worker-provider-execution-import-bypass",
       "patch": "testdata/faults/worker-provider-execution-import-bypass.patch",
-      "sha256": "f55044fa75bf59a11acff2fecf5f5a93bdb5c2f4057d910a791ce565ac9ccdfb",
+      "sha256": "748d17e679e25dd93332679e31292ec43419da9972b248df242d4f3cee4096ed",
       "proofs": [
         "pytest:python/tests/kernel/test_worker_runtime_health.py"
       ],
