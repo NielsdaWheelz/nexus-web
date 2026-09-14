@@ -577,9 +577,21 @@ test("canonical resources yield identical dropdown semantics across surfaces and
   // canonical resource suffix. The mobile header also promotes Companion as its
   // own direct control.
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
+  await expect(
+    page,
+    "mobile navigation did not settle on the requested media route.",
+  ).toHaveURL(new RegExp(`/media/${mediaId}$`));
+  const mobileMediaPane = page.getByRole("region", {
+    name: ARTICLE_TITLE,
+    exact: true,
+  });
+  await expect(
+    mobileMediaPane,
+    "the requested mobile media pane did not become active.",
+  ).toBeVisible({ timeout: 20_000 });
   const mobilePaneItems = await readContextualResourceMenu(
     page,
-    page.getByRole("button", { name: "More", exact: true }),
+    mobileMediaPane.getByRole("button", { name: "More", exact: true }),
     "mobile pane bar",
     MEDIA_PANE_LOCAL_PREFIX,
     oracle,

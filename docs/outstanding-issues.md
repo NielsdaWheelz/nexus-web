@@ -39,8 +39,3 @@ the devbox; see `docs/tickets/devbox-buildkit-cache-retention.md`.
 test control · opened 2026-09-14 by codex · P2
 host-release proof discovers unavailable privilege only after starting the
 kernel portfolio; see `docs/tickets/host-proof-privilege-preflight.md`.
-
-### [OPEN] OI-003 — resource-action parity can target a stale mobile pane
-frontend · opened 2026-09-14 by codex · P2
-the mobile parity journey can exercise the prior browse pane after requesting a
-reader; see `docs/tickets/resource-action-parity-mobile-pane-readiness.md`.
