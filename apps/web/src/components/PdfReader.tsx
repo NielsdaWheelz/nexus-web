@@ -1474,7 +1474,12 @@ export default function PdfReader({
   const clearSelection = useCallback(() => {
     clearRetainedSelection();
     setSelectionError(null);
-    getPdfSelection()?.removeAllRanges();
+    const liveSelection = getPdfSelection();
+    if (!liveSelection || liveSelection.rangeCount === 0) return;
+    const range = liveSelection.getRangeAt(0);
+    if (viewerContainerRef.current?.contains(range.commonAncestorContainer)) {
+      liveSelection.removeAllRanges();
+    }
   }, [clearRetainedSelection]);
 
   useEffect(() => {

@@ -359,3 +359,6 @@ SIGTERMs; twelve exact traced repetitions of the first case did not reproduce.
 Capture the sender under the full kernel portfolio before changing lifecycle
 behavior. See
 [docs/tickets/oracle-host-replay-received-unowned-sigterm.md](tickets/oracle-host-replay-received-unowned-sigterm.md).
+
+- [open] oi-098 · reader annotation · 2026-09-14 focus/submit review · failed highlight creation crashes the quick-note editor: [ticket](tickets/highlight-quick-note-create-failure-crashes-editor.md).
+- [open] test control · 2026-09-14 annotation verification · host oracle fixture ownership setup blocks local confidence: [ticket](tickets/host-oracle-fixture-ownership-blocks-confidence.md).

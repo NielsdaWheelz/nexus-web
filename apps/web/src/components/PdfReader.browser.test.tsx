@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, type ComponentProps } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { expect, it, vi } from "vitest";
@@ -105,7 +105,8 @@ function committedHighlight(): PdfHighlightOut {
   };
 }
 
-function installPdfBff(pdfUrl: string) {
+function installPdfBff(pdfUrl: string, creation?: Promise<Response>) {
+  const creationStarted = deferred<void>();
   const reconciliationStarted = deferred<void>();
   const reconciliation = deferred<Response>();
   let highlightMutated = false;
@@ -160,8 +161,10 @@ function installPdfBff(pdfUrl: string) {
           ? await request.clone().json()
           : JSON.parse(String(init?.body));
         highlightWrite = body as typeof highlightWrite;
+        creationStarted.resolve();
+        const response = await (creation ?? json(committedHighlight()));
         highlightMutated = true;
-        return json(committedHighlight());
+        return response;
       }
       throw new Error(
         `Unexpected PDF BFF request: ${method} ${url.pathname}${url.search}`,
@@ -170,6 +173,7 @@ function installPdfBff(pdfUrl: string) {
   );
 
   return {
+    creationStarted: creationStarted.promise,
     reconciliationStarted: reconciliationStarted.promise,
     readHighlightWrite: () => highlightWrite,
     finishReconciliation() {
@@ -194,7 +198,13 @@ function textNodeContaining(root: HTMLElement, value: string): Text {
  * `useHostedPdfPageHighlights` hook supplies page highlights behind the same
  * render-readiness gate MediaPaneBody uses (`onResourceStateChange` feedback).
  */
-function PdfReaderHarness({ navigationProof = false }: { navigationProof?: boolean }) {
+function PdfReaderHarness({
+  navigationProof = false,
+  onAddNote,
+}: {
+  navigationProof?: boolean;
+  onAddNote?: ComponentProps<typeof PdfReader>["onAddNote"];
+}) {
   const [navigation, setNavigation] = useState<PdfHighlightNavigationRequest | null>(null);
   const [arrival, setArrival] = useState("none");
   const [resumeArrival, setResumeArrival] = useState("none");
@@ -313,6 +323,7 @@ function PdfReaderHarness({ navigationProof = false }: { navigationProof?: boole
         requestSignedUrlRefresh,
       }}
       decorations={decorations}
+      onAddNote={onAddNote}
       onHighlightsMutated={handleHighlightsMutated}
       onResourceStateChange={handleResourceStateChange}
       isMobile={isMobile}
@@ -455,6 +466,84 @@ it("acknowledges PDF navigation only after the source geometry is visible and re
     expect(pageBeginning).toBeGreaterThanOrEqual(viewport.top - 1);
     expect(pageBeginning).toBeLessThan(viewport.bottom);
   } finally {
+    bff.finishReconciliation();
+    URL.revokeObjectURL(pdfUrl);
+  }
+});
+
+it("preserves the annotation caret when pending PDF highlight creation completes", async () => {
+  await page.viewport(1_280, 800);
+  const pdfUrl = URL.createObjectURL(onePagePdf(`Alpha ${EXACT} Omega`));
+  const response = deferred<Response>();
+  const bff = installPdfBff(pdfUrl, response.promise);
+  let creation: Promise<{ id: string } | null> | null = null;
+
+  try {
+    render(
+      <MobileViewportProvider>
+        <MobileChromeProvider>
+          <ShareControllerProvider>
+            <PdfReaderHarness
+              onAddNote={(session) => { creation = session.creation; }}
+            />
+            <div
+              role="textbox"
+              aria-label="Highlight note"
+              contentEditable
+              suppressContentEditableWarning
+            >
+              annotation draft
+            </div>
+          </ShareControllerProvider>
+        </MobileChromeProvider>
+      </MobileViewportProvider>,
+    );
+    const textLayer = await screen.findByTestId(
+      "pdf-page-text-layer-1",
+      {},
+      { timeout: 10_000 },
+    );
+    const textNode = textNodeContaining(textLayer, EXACT);
+    const start = textNode.data.indexOf(EXACT);
+    const range = document.createRange();
+    range.setStart(textNode, start);
+    range.setEnd(textNode, start + EXACT.length);
+    const selection = window.getSelection();
+    if (!selection) {
+      throw new Error("Chromium did not expose the document Selection.");
+    }
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    await userEvent.click(await screen.findByRole("button", { name: "Note" }));
+    await bff.creationStarted;
+
+    const annotation = screen.getByRole("textbox", { name: "Highlight note" });
+    annotation.focus();
+    const caret = document.createRange();
+    caret.selectNodeContents(annotation);
+    caret.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(caret);
+
+    expect(
+      creation,
+      "the PDF note action did not publish its pending highlight",
+    ).not.toBeNull();
+    response.resolve(json(committedHighlight()));
+    await creation;
+    expect(annotation).toHaveFocus();
+    expect(
+      selection.rangeCount,
+      "completing the PDF highlight erased the annotation's live caret",
+    ).toBe(1);
+    expect(
+      annotation.contains(selection.getRangeAt(0).commonAncestorContainer),
+    ).toBe(true);
+    await userEvent.keyboard(" survives");
+    expect(annotation).toHaveTextContent("annotation draft survives");
+  } finally {
+    response.resolve(json(committedHighlight()));
     bff.finishReconciliation();
     URL.revokeObjectURL(pdfUrl);
   }
