@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { RESOURCE_ACTION_LEDGER } from "../../../e2e/resourceActionProductOracle";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import ActionMenu from "./ActionMenu";
+import Dialog from "./Dialog";
 
 function ActionMenuHarness() {
   const [lastAction, setLastAction] = useState("None");
@@ -73,6 +74,53 @@ function ExhaustiveActionMenuHarness() {
     <>
       <ActionMenu label="Actions for Complete resource" options={options} />
       <output aria-label="Last exhaustive action">{lastAction}</output>
+    </>
+  );
+}
+
+function AnchoredActionMenuHarness({
+  fullMenu = false,
+}: {
+  fullMenu?: boolean;
+}) {
+  const [anchor, setAnchor] = useState<DOMRect | null>(null);
+  const [lastAction, setLastAction] = useState("None");
+  const options: readonly ActionDescriptor[] = (
+    fullMenu ? RESOURCE_ACTION_LEDGER : RESOURCE_ACTION_LEDGER.slice(0, 3)
+  ).map((action) => ({
+    kind: "command",
+    id: action.id,
+    label: action.label,
+    onSelect: () => setLastAction(action.id),
+  }));
+
+  return (
+    <>
+      <div
+        role="region"
+        aria-label="Reader"
+        style={{ height: 160, overflow: "auto" }}
+      >
+        <div style={{ height: 960 }}>
+          <button
+            type="button"
+            onClick={(event) =>
+              setAnchor(event.currentTarget.getBoundingClientRect())
+            }
+          >
+            Highlighted passage
+          </button>
+        </div>
+      </div>
+      <button type="button">Outside actions</button>
+      <output aria-label="Last anchored action">{lastAction}</output>
+      {anchor ? (
+        <ActionMenu
+          label="Highlight actions"
+          options={options}
+          anchored={{ anchor, onDismiss: () => setAnchor(null) }}
+        />
+      ) : null}
     </>
   );
 }
@@ -194,10 +242,141 @@ describe("ActionMenu public resource-action contract", () => {
       />,
     );
 
-    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
     await waitFor(() => expect(trigger).toHaveFocus());
     expect(trigger).toHaveAttribute("aria-disabled", "true");
     expect(trigger).toHaveAccessibleDescription("No actions are available.");
+  });
+
+  it("opens anchored actions on the passage click and preserves keyboard dismissal and focus", async () => {
+    render(<AnchoredActionMenuHarness />);
+    const passage = screen.getByRole("button", {
+      name: "Highlighted passage",
+    });
+
+    await userEvent.click(passage);
+    const menu = await screen.findByRole("menu", { name: "Highlight actions" });
+    expect(menu).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Highlight actions" }),
+      "the passage click must expose options without a second disclosure button",
+    ).not.toBeInTheDocument();
+    const items = within(menu).getAllByRole("menuitem");
+    await waitFor(() => expect(items[0]).toHaveFocus());
+    await userEvent.keyboard("{ArrowDown}");
+    expect(items[1]).toHaveFocus();
+    await userEvent.keyboard("{End}");
+    expect(items.at(-1)).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(passage).toHaveFocus());
+
+    await userEvent.keyboard("{Enter}");
+    const reopened = await screen.findByRole("menu", {
+      name: "Highlight actions",
+    });
+    const open = within(reopened).getByRole("menuitem", {
+      name: "Open",
+      exact: true,
+    });
+    await waitFor(() => expect(open).toHaveFocus());
+    await userEvent.keyboard("{Enter}");
+    expect(
+      screen.getByRole("status", { name: "Last anchored action" }),
+    ).toHaveTextContent("ResourceAction.Open");
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(passage).toHaveFocus());
+
+    await userEvent.click(passage);
+    await screen.findByRole("menu", { name: "Highlight actions" });
+    const outside = screen.getByRole("button", { name: "Outside actions" });
+    await userEvent.click(outside);
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+    expect(outside).toHaveFocus();
+  });
+
+  it("keeps a long anchored menu open during internal scrolling and dismisses it when the reader scrolls", async () => {
+    await page.viewport(320, 568);
+    render(<AnchoredActionMenuHarness fullMenu />);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Highlighted passage" }),
+    );
+    const menu = await screen.findByRole("menu", { name: "Highlight actions" });
+    await waitFor(() => {
+      const bounds = menu.getBoundingClientRect();
+      expect(bounds.left).toBeGreaterThanOrEqual(8);
+      expect(bounds.right).toBeLessThanOrEqual(312);
+      expect(bounds.top).toBeGreaterThanOrEqual(8);
+      expect(bounds.bottom).toBeLessThanOrEqual(560);
+      expect(menu.scrollHeight).toBeGreaterThan(menu.clientHeight);
+    });
+
+    const lastItem = within(menu).getByRole("menuitem", { name: "Delete page" });
+    lastItem.scrollIntoView({ block: "nearest", inline: "nearest" });
+    await waitFor(() => {
+      expect(menu).toBeVisible();
+      expect(menu.scrollTop).toBeGreaterThan(0);
+      const bounds = menu.getBoundingClientRect();
+      const itemBounds = lastItem.getBoundingClientRect();
+      expect(itemBounds.top).toBeGreaterThanOrEqual(bounds.top);
+      expect(itemBounds.bottom).toBeLessThanOrEqual(bounds.bottom);
+    });
+    await userEvent.click(lastItem);
+    expect(
+      screen.getByRole("status", { name: "Last anchored action" }),
+    ).toHaveTextContent("ResourceOperation.Page.Delete");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Highlighted passage" }),
+    );
+    await screen.findByRole("menu", { name: "Highlight actions" });
+    const reader = screen.getByRole("region", { name: "Reader" });
+    reader.scrollTop = 80;
+    await waitFor(() => {
+      expect(reader.scrollTop).toBe(80);
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    });
+  });
+
+  it("opens anchored actions inside their containing dialog and dismisses only the menu", async () => {
+    function ModalHighlightHarness() {
+      const [open, setOpen] = useState(true);
+      return (
+        <Dialog open={open} title="Reader preview" onClose={() => setOpen(false)}>
+          <AnchoredActionMenuHarness />
+        </Dialog>
+      );
+    }
+
+    render(<ModalHighlightHarness />);
+    const dialog = screen.getByRole("dialog", { name: "Reader preview" });
+    const passage = within(dialog).getByRole("button", {
+      name: "Highlighted passage",
+    });
+    await userEvent.click(passage);
+    const menu = await within(dialog).findByRole("menu", {
+      name: "Highlight actions",
+    });
+    await waitFor(() =>
+      expect(
+        within(menu).getByRole("menuitem", { name: "Open", exact: true }),
+      ).toHaveFocus(),
+    );
+
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+    expect(dialog).toBeVisible();
+    await waitFor(() => expect(passage).toHaveFocus());
   });
 
   it.each([

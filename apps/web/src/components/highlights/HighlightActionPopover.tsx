@@ -1,8 +1,8 @@
 "use client";
 
-import HighlightResourceActionMenu from "@/components/highlights/HighlightResourceActionMenu";
-import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
+import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
+import { canonicalResourceRef } from "@/lib/sharing/targets";
 
 /**
  * The reader-text click surface: the same canonical menu the sidecar
@@ -14,21 +14,19 @@ export default function HighlightActionPopover({
   anchorRect,
   onDismiss,
 }: {
-  highlight: AnchoredReaderRow;
+  highlight: Pick<AnchoredReaderRow, "id">;
   anchorRect: DOMRect;
   onDismiss: () => void;
 }) {
   return (
-    <FloatingActionSurface
-      open
-      anchor={anchorRect}
+    <ResourceActionMenu
+      actionSubject={{
+        ref: canonicalResourceRef({ scheme: "highlight", id: highlight.id }),
+      }}
+      label="Highlight actions"
       placement="below"
       align="center"
-      flip
-      scrollBehavior="dismiss"
-      onDismiss={onDismiss}
-    >
-      <HighlightResourceActionMenu highlight={highlight} />
-    </FloatingActionSurface>
+      anchored={{ anchor: anchorRect, onDismiss }}
+    />
   );
 }

@@ -306,8 +306,9 @@ interface LibraryPlacementOptionOut {
   release evicts after in-flight work settles. Historical navigation cannot grow
   the cache forever.
 - First registration batches in the existing scheduling tick; menu open causes
-  zero requests. Cache state is Loading/Ready/Error/Reconciling. The trigger is
-  always visible: Loading is disabled; Error exposes Retry.
+  zero requests. Cache state is Loading/Ready/Error/Reconciling. Triggered menus
+  keep their trigger visible and disabled during Loading; directly anchored
+  menus show the loading explanation in the open surface. Error exposes Retry.
 - Per-ref generations prevent stale resolve wins. Busy identity is
   `(subjectRef, stableActionId)` globally.
 - Effects return `None`, `Subjects(refs)`, or `AllRetained` reconciliation.
@@ -316,8 +317,9 @@ interface LibraryPlacementOptionOut {
   broadcast.
 - Reconciliation is awaited. Failure preserves last good facts but keeps the
   affected action blocked with Retry; no stale inverse verb re-enables.
-- `ResourceActionMenu` accepts only `actionSubject` plus trigger presentation.
-  It accepts no actions, flags, callbacks, projection, surface ID, or activation.
+- `ResourceActionMenu` accepts only `actionSubject` plus menu presentation:
+  a trigger, or a direct anchor with dismissal. It accepts no actions,
+  capability flags, action callbacks, projection, surface ID, or activation.
 - Collection rows, Nexus/Switchboard, players, specialist rows, `PaneShell`,
   `SurfaceHeader`, `MobilePaneBar`, and `MobileSecondaryPaneHost` consume the
   same plan. Pane bodies publish only their subject.
