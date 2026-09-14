@@ -313,7 +313,7 @@ def test_repository_guard_rejects_queued_precheckout_runtime_cleanup(
     assert any(
         violation.rule == "repository-route-contract"
         and violation.path == ".github/workflows/ci.yml"
-        and '"$python" -m nexus_test_control clean' in violation.detail
+        and '"$python" -m nexus_test_control clean' in violation.message
         for violation in violations
     )
 
