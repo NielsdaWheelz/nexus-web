@@ -34,12 +34,12 @@ export function useInitialFocus(
     if (!enabled || !containerRef.current) return;
     if (focusedRef.current && Object.is(focusedKeyRef.current, key)) return;
     const container = containerRef.current;
-    focusedRef.current = true;
-    focusedKeyRef.current = key;
     const frame = window.requestAnimationFrame(() => {
       const target =
         selectRef.current?.(container) ?? getFocusableElements(container)[0] ?? container;
       target.focus();
+      focusedRef.current = true;
+      focusedKeyRef.current = key;
     });
     return () => window.cancelAnimationFrame(frame);
   }, [active, enabled, key, containerRef]);

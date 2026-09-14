@@ -8,6 +8,8 @@ import type { HighlightLinkedNoteBlock } from "@/lib/highlights/highlightContrac
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { useInitialFocus } from "@/lib/ui/useInitialFocus";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
+import { useHistoryDismiss } from "@/lib/ui/useHistoryDismiss";
+import { useContainingModalLayer, useIsModalLayerTopmost } from "@/lib/ui/useModalLayer";
 import styles from "./HighlightQuickNoteComposer.module.css";
 
 export type QuickNoteSession =
@@ -67,10 +69,19 @@ export default function HighlightQuickNoteComposer({
   const isMobile = useIsMobileViewport();
   const desktopPanelRef = useRef<HTMLDivElement>(null);
   const editorId = session === null ? null : editorHighlightId(session);
+  const modalLayer = useContainingModalLayer();
+  const modalIsTopmost = useIsModalLayerTopmost(modalLayer);
+
+  // Keep the selection popup's history entry through the editor handoff.
+  // Popping it here would let browser traversal reset the new editor's focus.
+  useHistoryDismiss(editorId !== null && !isMobile, onClose, {
+    isTopmost: modalIsTopmost,
+  });
 
   // Desktop focus-on-open (next-frame, after FloatingActionSurface positions
   // itself); the mobile skin focuses via the sheet's initialFocus.
   useInitialFocus(desktopPanelRef, editorId !== null && !isMobile, {
+    enabled: modalIsTopmost,
     select: selectEditorTextbox,
     key: editorId,
   });
@@ -82,6 +93,7 @@ export default function HighlightQuickNoteComposer({
         highlightId={editorHighlightId(session)}
         note={session.kind === "existing" ? session.note : null}
         editable
+        onSubmitted={onClose}
         onSave={
           session.kind === "pending-create"
             ? async (_sessionId, noteBlockId, createBlockId, bodyPmJson, clientMutationId) => {
@@ -125,6 +137,7 @@ export default function HighlightQuickNoteComposer({
         >
           <div ref={desktopPanelRef} className={styles.panel}>
             {editor}
+            <p className={styles.hint}>Enter to save · Shift+Enter for a new line</p>
           </div>
         </FloatingActionSurface>
       )}
@@ -142,6 +155,7 @@ export default function HighlightQuickNoteComposer({
           <div className={styles.sheetContent}>
             <div className={styles.quote}>{session.quote}</div>
             {editor}
+            <p className={styles.hint}>Enter to save · Shift+Enter for a new line</p>
           </div>
         )}
       </MobileSheet>
