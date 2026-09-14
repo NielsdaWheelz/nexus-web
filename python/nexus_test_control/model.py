@@ -63,6 +63,31 @@ class Capability(StrEnum):
     ANDROID_VISUAL = "android-visual"
 
 
+@dataclass(frozen=True, slots=True)
+class RootOwnershipRequirement:
+    capability: Capability
+    proof_owners: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.capability, Capability):
+            raise ValueError("root ownership requirement must use a typed capability")
+        if not self.proof_owners or self.proof_owners != tuple(sorted(set(self.proof_owners))):
+            raise ValueError("root ownership proof owners must be nonempty, unique, and sorted")
+        if any(not _repository_relative(owner) for owner in self.proof_owners):
+            raise ValueError("root ownership proof owners must be repository-relative")
+
+
+ROOT_OWNERSHIP_REQUIREMENTS = (
+    RootOwnershipRequirement(
+        Capability.KERNEL_PYTHON,
+        (
+            "python/tests/kernel/test_oracle_host_release.py",
+            "python/tests/kernel/test_production_release.py",
+        ),
+    ),
+)
+
+
 PRIORITY_RISK_DIRECT_CAPABILITY_OWNERS = frozenset({Capability.STATIC_PLATFORM})
 
 
@@ -463,6 +488,11 @@ _TEST_ROUTING_CONTRACT = "\n".join(
         *(
             f"deferred|{capability.value}|{workflow.value}"
             for capability, workflow in DEFERRED_CAPABILITY_OWNER.items()
+        ),
+        *(
+            f"root-ownership|{requirement.capability.value}|{owner}"
+            for requirement in ROOT_OWNERSHIP_REQUIREMENTS
+            for owner in requirement.proof_owners
         ),
     )
 )

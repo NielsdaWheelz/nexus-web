@@ -19,6 +19,17 @@ def test_ci_setup_provides_every_platform_static_tool_without_requiring_sudo_whe
     assert 'sudo apt-get install --yes --no-install-recommends "${missing[@]}"' in setup
 
 
+def test_ci_setup_qualifies_root_owned_release_proofs_before_toolchain_work() -> None:
+    setup = (REPO_ROOT / ".github/actions/setup-test/action.yml").read_text(
+        encoding="utf-8",
+    )
+
+    assert setup.index("- name: Qualify host ownership proofs") < setup.index(
+        "- uses: actions/setup-go@"
+    )
+    assert 'if [ "$(id -u)" -ne 0 ]; then\n          sudo --non-interactive true' in setup
+
+
 def test_ci_static_checks_use_engine_buildkit_without_an_isolated_daemon() -> None:
     setup = (REPO_ROOT / ".github/actions/setup-test/action.yml").read_text(
         encoding="utf-8",

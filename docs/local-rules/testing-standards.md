@@ -423,6 +423,14 @@ floor retains roughly five percent of the 150 GiB reference host as an operator
 safety reserve. It is not a predicted proof footprint. Change it only from
 recorded disk evidence.
 
+The typed root-ownership contract names the two kernel proof owners that create
+and inspect genuinely root-owned release fixtures. Before any workflow
+capability runs, the controller requires effective uid 0 or verifies
+non-interactive `sudo`; `doctor` checks the same boundary. An unqualified host
+returns `not_run` with captured command diagnostics. CI performs the identical
+qualification before toolchain setup. Never replace the real uid, gid, or mode
+oracle with user-owned fixtures.
+
 ## 8. Repository capability contract
 
 `./scripts/test` is the sole public test and verification API. `scripts/test`
@@ -449,7 +457,7 @@ The command table above, CI routes, and deferred-owner map are explicit,
 policy-checked projections that MUST change with it; they are not generated
 from the registry.
 
-<!-- nexus-test-routing-sha256: 578da14bd8356eb0e10839e0dd30317d454686fdb1a4e2b3325801bdbf7dbb05 -->
+<!-- nexus-test-routing-sha256: ce1f399724c973bbbf8f9f6dcf65e48510fe1951980c58f2018814259aef4f45 -->
 
 When changed-file routing names a capability later than the invoked workflow,
 the controller MUST retain it in evidence with its exact `deferred_to` owner and

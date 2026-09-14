@@ -5,8 +5,10 @@ import pytest
 from nexus_test_control.model import (
     DEFERRED_CAPABILITY_OWNER,
     PRIORITY_RISK_FLOOR,
+    ROOT_OWNERSHIP_REQUIREMENTS,
     WORKFLOW_REGISTRY,
     Capability,
+    RootOwnershipRequirement,
     RunStatus,
     Selection,
     SelectionReason,
@@ -45,6 +47,18 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
     assert Capability.PROVIDER_CERTIFICATION not in pr_capabilities
     assert Capability.JOURNEYS_CRITICAL in pr_capabilities
     assert Capability.JOURNEYS_ALL not in pr_capabilities
+
+
+def test_host_root_ownership_is_an_explicit_proof_owner_contract() -> None:
+    assert ROOT_OWNERSHIP_REQUIREMENTS == (
+        RootOwnershipRequirement(
+            Capability.KERNEL_PYTHON,
+            (
+                "python/tests/kernel/test_oracle_host_release.py",
+                "python/tests/kernel/test_production_release.py",
+            ),
+        ),
+    )
 
 
 def test_confidence_keeps_real_stack_affected_and_skips_build_and_journeys() -> None:

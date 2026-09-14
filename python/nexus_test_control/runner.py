@@ -45,6 +45,7 @@ from nexus_test_control.memory import (
     measured,
 )
 from nexus_test_control.model import (
+    ROOT_OWNERSHIP_REQUIREMENTS,
     WORKFLOW_REGISTRY,
     Capability,
     PeakOwnedMemory,
@@ -831,6 +832,7 @@ def run_workflow(
     _available_storage: Callable[[Path, bool], int | None] = available_storage_mib,
     _monotonic: Callable[[], float] = time.monotonic,
     _wait: Callable[[float], None] = time.sleep,
+    _effective_uid: Callable[[], int] = os.geteuid,
     _reporter: FirstFailureReporter | None = None,
     _memory_sampler: OwnedMemorySampler | None = None,
 ) -> WorkflowRun:
@@ -857,6 +859,19 @@ def run_workflow(
         ports=_ports or _RunnerPorts(),
     )
     reporter = _reporter or FirstFailureReporter(environment_secrets(environment))
+    workflow_admission = _workflow_root_ownership_admission(
+        context,
+        environment,
+        effective_uid=_effective_uid(),
+    )
+    if workflow_admission is not None:
+        reporter.report(
+            stream,
+            owner=workflow_admission.evidence.id.value,
+            status=workflow_admission.evidence.status,
+            kind="capability_not_run",
+            detail=workflow_admission.detail,
+        )
 
     def results() -> Iterable[CapabilityResult]:
         nonlocal heavy_lock_held
@@ -902,6 +917,23 @@ def run_workflow(
                 return admitted_run()
 
         try:
+            if workflow_admission is not None:
+                for requirement in requirements:
+                    result = (
+                        workflow_admission
+                        if requirement.capability is workflow_admission.evidence.id
+                        else _not_run(
+                            requirement.capability,
+                            "blocked by unavailable "
+                            f"{workflow_admission.evidence.id.value} host prerequisite",
+                        )
+                    )
+                    memory = workflow_sampler.checkpoint()
+                    yield CapabilityResult(
+                        replace(result.evidence, peak_owned_mib=memory.total),
+                        result.detail,
+                    )
+                return
             for requirement in requirements:
                 if blocked_by is not None:
                     yield _not_run(
@@ -1286,6 +1318,77 @@ def _requires_memory_admission(context: CapabilityContext, capability: Capabilit
     return _capability_is_selected(context, capability)
 
 
+def _active_root_ownership_capabilities(context: CapabilityContext) -> tuple[Capability, ...]:
+    required = {
+        requirement.capability for requirement in WORKFLOW_REGISTRY[context.workflow].requirements
+    }
+    active: list[Capability] = []
+    for requirement in ROOT_OWNERSHIP_REQUIREMENTS:
+        if requirement.capability not in required:
+            continue
+        existing_owners = {
+            owner
+            for owner in requirement.proof_owners
+            if (context.repo_root / owner).is_file()
+        }
+        if not existing_owners:
+            continue
+        if _scope(context, requirement.capability) is SelectionScope.COMPLETE or any(
+            selection.capability is requirement.capability
+            and (selection.proof is None or selection.path in existing_owners)
+            for selection in context.selection
+        ):
+            if requirement.capability not in active:
+                active.append(requirement.capability)
+    return tuple(active)
+
+
+def _root_ownership_admission(
+    context: CapabilityContext,
+    capability: Capability,
+    environment: Mapping[str, str],
+    *,
+    effective_uid: int,
+) -> CapabilityResult | None:
+    if effective_uid == 0:
+        return None
+    checked = _run_fixed_commands(
+        capability,
+        ((("sudo", "--non-interactive", "true"), context.repo_root),),
+        environment,
+        ("sudo",),
+        context=context,
+    )
+    if checked.evidence.status is RunStatus.PASS:
+        return None
+    detail = (
+        "host root-ownership proofs require effective uid 0 or "
+        f"non-interactive sudo; {checked.detail}"
+    )
+    return CapabilityResult(
+        replace(checked.evidence, status=RunStatus.NOT_RUN, detail=detail),
+        detail,
+    )
+
+
+def _workflow_root_ownership_admission(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    *,
+    effective_uid: int,
+) -> CapabilityResult | None:
+    for capability in _active_root_ownership_capabilities(context):
+        admission = _root_ownership_admission(
+            context,
+            capability,
+            environment,
+            effective_uid=effective_uid,
+        )
+        if admission is not None:
+            return admission
+    return None
+
+
 def _run_capability_unlocked(
     context: CapabilityContext,
     capability: Capability,
@@ -1316,7 +1419,11 @@ def _run_capability_unlocked(
         case Capability.STATIC_PLATFORM:
             return _run_static_platform(context, caller_environment)
         case Capability.KERNEL_PYTHON:
-            return _run_kernel_python(context, caller_environment)
+            return _run_kernel_python(
+                context,
+                caller_environment,
+                root_ownership_admitted=execution is not None,
+            )
         case Capability.KERNEL_WEB:
             return _run_kernel_web(context, caller_environment)
         case Capability.SENSITIVITY:
@@ -1830,13 +1937,24 @@ def _run_static_platform(
 
 
 def _run_kernel_python(
-    context: CapabilityContext, environment: Mapping[str, str]
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    *,
+    root_ownership_admitted: bool = False,
 ) -> CapabilityResult:
     python_root = context.repo_root / "python"
     owner = python_root / "tests/kernel"
     owners = tuple(sorted(owner.rglob("test_*.py"))) if owner.is_dir() else ()
     if not owners or not (python_root / ".venv").is_dir():
         return _not_run(Capability.KERNEL_PYTHON, "Python kernel owner is absent")
+    if not root_ownership_admitted:
+        admission = _workflow_root_ownership_admission(
+            context,
+            environment,
+            effective_uid=os.geteuid(),
+        )
+        if admission is not None:
+            return admission
     nodes, promoted = _selected_proof_nodes(context, Capability.KERNEL_PYTHON, "pytest")
     if _scope(context, Capability.KERNEL_PYTHON) is SelectionScope.COMPLETE or promoted:
         proven_files, deselections = _python_proven_exclusions(
@@ -4304,7 +4422,12 @@ def _gradle_assertion_passed(android_root: Path, target: str) -> bool:
     return matches == 1
 
 
-def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> CapabilityResult:
+def _run_doctor(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    *,
+    _effective_uid: Callable[[], int] = os.geteuid,
+) -> CapabilityResult:
     started = time.monotonic_ns()
     child_environment = _child_environment(environment)
     required_tools = ("actionlint", "bun", "docker", "git", "java", "supabase", "uv")
@@ -4315,6 +4438,20 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
     )
     if missing_tools:
         return _not_run(Capability.DOCTOR, f"required tools are absent: {', '.join(missing_tools)}")
+
+    if any(
+        (context.repo_root / owner).is_file()
+        for requirement in ROOT_OWNERSHIP_REQUIREMENTS
+        for owner in requirement.proof_owners
+    ):
+        admission = _root_ownership_admission(
+            context,
+            Capability.DOCTOR,
+            environment,
+            effective_uid=_effective_uid(),
+        )
+        if admission is not None:
+            return admission
 
     required_paths = (
         "python/pyproject.toml",

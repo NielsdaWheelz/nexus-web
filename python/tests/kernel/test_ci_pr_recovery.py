@@ -325,6 +325,10 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
     assert workflow.count("- name: Retire current checkout test runtime") == 2
     assert 'command -v "$tool"' in setup
     assert "sudo -n true" in setup
+    assert setup.index("- name: Qualify host ownership proofs") < setup.index(
+        "- uses: actions/setup-go@"
+    )
+    assert "sudo --non-interactive true" in setup
     assert "uv sync --all-extras --locked --reinstall --directory python" in setup
     assert 'checkout="$(realpath -m -- "$checkout")"' in setup
     assert 'rm --recursive --force --one-file-system -- "$checkout"' in setup

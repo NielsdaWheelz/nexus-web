@@ -466,6 +466,125 @@ def test_changed_python_static_and_kernel_use_only_the_selected_file_and_node(
     )
 
 
+def test_root_owned_kernel_proof_is_not_run_before_workflow_portfolio_without_privilege(
+    tmp_path: Path,
+) -> None:
+    _write(
+        tmp_path / "python/tests/kernel/test_production_release.py",
+        "def test_owned(): pass\n",
+    )
+    environment = _stub_tools(
+        tmp_path,
+        "sudo",
+        exit_status=1,
+        diagnostic='sudo: The "no new privileges" flag is set',
+    )
+    stream = StringIO()
+
+    result = run_workflow(
+        CapabilityContext(tmp_path, Workflow.CONFIDENCE, ()),
+        stream,
+        environment,
+        run_id="0123456789abcdef",
+        _effective_uid=lambda: 1000,
+    )
+
+    kernel = next(item for item in result.capabilities if item.id is Capability.KERNEL_PYTHON)
+    assert all(item.status is RunStatus.NOT_RUN for item in result.capabilities)
+    assert "effective uid 0 or non-interactive sudo" in kernel.detail
+    assert 'sudo: The "no new privileges" flag is set' in kernel.detail
+    assert "owner=kernel-python; status=not_run" in stream.getvalue()
+    commands = _commands(tmp_path)
+    assert [(command["tool"], command["argv"], command["cwd"]) for command in commands] == [
+        ("sudo", ["--non-interactive", "true"], str(tmp_path))
+    ]
+    assert {"HOME", "NEXUS_ENV", "PATH"}.issubset(commands[0]["environment"])
+
+
+def test_qualified_root_owned_kernel_proof_runs_after_privilege_admission(
+    tmp_path: Path,
+) -> None:
+    proof_path = "python/tests/kernel/test_production_release.py"
+    _write(tmp_path / proof_path, "def test_owned(): pass\n")
+    (tmp_path / "python/.venv").mkdir()
+    environment = _stub_tools(tmp_path, "sudo", "uv")
+    context = _changed_context(
+        tmp_path,
+        Selection(
+            proof_path,
+            Capability.KERNEL_PYTHON,
+            SelectionReason.EXPLICIT_FOCUS,
+            f"pytest:{proof_path}::test_owned",
+        ),
+    )
+
+    admission = runner._workflow_root_ownership_admission(
+        context,
+        environment,
+        effective_uid=1000,
+    )
+    result = runner._run_kernel_python(
+        context,
+        environment,
+        root_ownership_admitted=admission is None,
+    )
+
+    assert admission is None
+    assert result.evidence.status is RunStatus.PASS
+    assert [(command["tool"], command["argv"]) for command in _commands(tmp_path)] == [
+        ("sudo", ["--non-interactive", "true"]),
+        (
+            "uv",
+            [
+                "run",
+                "--frozen",
+                "--no-sync",
+                "pytest",
+                "--maxfail=1",
+                "-p",
+                "no:randomly",
+                "--",
+                "./tests/kernel/test_production_release.py::test_owned",
+            ],
+        ),
+    ]
+
+
+def test_doctor_reports_missing_host_proof_privilege_before_dependency_checks(
+    tmp_path: Path,
+) -> None:
+    _write(
+        tmp_path / "python/tests/kernel/test_oracle_host_release.py",
+        "def test_owned(): pass\n",
+    )
+    environment = _stub_tools(
+        tmp_path,
+        "actionlint",
+        "bun",
+        "docker",
+        "git",
+        "java",
+        "sudo",
+        "supabase",
+        "uv",
+    )
+    _write_executable(
+        tmp_path / "bin/sudo",
+        exit_status=1,
+        diagnostic="sudo: a password is required",
+    )
+    result = runner._run_doctor(
+        CapabilityContext(tmp_path, Workflow.DOCTOR, ()),
+        environment,
+        _effective_uid=lambda: 1000,
+    )
+
+    assert result.evidence.status is RunStatus.NOT_RUN
+    assert "effective uid 0 or non-interactive sudo" in result.detail
+    assert "sudo: a password is required" in result.detail
+    assert [command["tool"] for command in _commands(tmp_path)] == ["sudo"]
+
+
 @pytest.mark.parametrize(
     ("owner", "source"),
     (
