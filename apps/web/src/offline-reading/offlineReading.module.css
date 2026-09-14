@@ -44,6 +44,19 @@ body {
     max(var(--space-10), env(safe-area-inset-bottom));
 }
 
+.readerShell {
+  display: flex;
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow: hidden;
+  padding:
+    max(var(--space-3), env(safe-area-inset-top))
+    var(--space-3)
+    max(var(--space-3), env(safe-area-inset-bottom));
+}
+
 /* --- Masthead ------------------------------------------------------------ */
 
 .hero {
@@ -199,19 +212,32 @@ body {
 
 .readerHeader {
   display: flex;
-  gap: var(--space-5);
-  align-items: baseline;
+  flex: none;
+  gap: var(--space-3);
+  align-items: center;
   justify-content: space-between;
-  padding-bottom: var(--space-5);
+  padding-bottom: var(--space-3);
   border-bottom: var(--stroke-hairline) solid var(--edge);
 }
 
+.readerHeader > button {
+  flex: none;
+}
+
+.readerHeader > div {
+  flex: 1;
+  min-width: 0;
+}
+
 .readerHeader h1 {
+  overflow: hidden;
   margin: 0;
   font-family: var(--font-eb-garamond);
-  font-size: var(--text-2xl);
+  font-size: var(--text-lg);
   font-weight: var(--weight-regular);
   line-height: var(--leading-snug);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .readerHeader p {
@@ -223,11 +249,17 @@ body {
 }
 
 .readerSurface {
-  margin: var(--space-8) 0;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
 }
 
 .documentReader {
-  min-height: 60vh;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
 }
 
 .saved {
@@ -246,31 +278,30 @@ body {
   margin: var(--space-3) 0;
 }
 
-.chapterNav {
-  display: flex;
-  gap: var(--space-5);
-  overflow-x: auto;
-  margin: var(--space-6) 0;
-  padding-bottom: var(--space-2);
-  border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
+.readerActions {
+  flex: none;
+  flex-wrap: nowrap;
+  gap: var(--space-3);
+  align-items: center;
+  margin: 0 0 var(--space-2);
 }
 
-.chapterNav button {
+.readerActions > button {
   flex: none;
-  min-height: var(--size-xl);
-  padding: 0;
-  border: 0;
-  border-bottom: var(--stroke-hairline) solid transparent;
-  background: none;
-  color: var(--ink-muted);
-  font-family: inherit;
-  font-size: var(--text-sm);
+}
+
+.readerActions > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.chapterNav button[aria-current="page"] {
-  border-bottom-color: var(--accent);
-  color: var(--ink);
+.readerMapPanel {
+  flex: 4.5 1 0;
+  min-width: 0;
+  min-height: 0;
+  margin-bottom: var(--space-3);
 }
 
 .dialogBody p {
@@ -287,4 +318,11 @@ body {
   .rowActions {
     justify-content: flex-start;
   }
+}
+
+.textWithMap {
+  display: grid;
+  flex: 5.5 1 0;
+  grid-template-columns: minmax(0, 1fr) 52px;
+  min-height: 0;
 }

@@ -1,0 +1,12 @@
+diff --git a/python/nexus/api/routes/offline_reading.py b/python/nexus/api/routes/offline_reading.py
+--- a/python/nexus/api/routes/offline_reading.py
++++ b/python/nexus/api/routes/offline_reading.py
+@@ -70,7 +70,7 @@
+             "account_id": str(viewer.user_id),
+             "protocol_version": 1,
+             "package_schema_version": OFFLINE_READING_PACKAGE_SCHEMA_VERSION,
+-            "reader_contract_version": OFFLINE_READING_READER_CONTRACT_VERSION,
++            "reader_contract_version": OFFLINE_READING_READER_CONTRACT_VERSION - 1,
+             "minimum_reader_bundle_version": OFFLINE_READING_READER_BUNDLE_VERSION,
+         }
+     )

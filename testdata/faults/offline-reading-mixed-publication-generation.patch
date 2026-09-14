@@ -1,7 +1,7 @@
 diff --git a/python/nexus/services/reader_publication.py b/python/nexus/services/reader_publication.py
 --- a/python/nexus/services/reader_publication.py
 +++ b/python/nexus/services/reader_publication.py
-@@ -208,7 +208,7 @@ def capture_current[T](
+@@ -384,7 +384,7 @@
          exists, generation = _read_current_identity(session_factory, media_id=media_id)
          if not exists or generation is None:
              raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")

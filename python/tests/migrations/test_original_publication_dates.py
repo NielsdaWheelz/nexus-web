@@ -16,7 +16,7 @@ def test_publication_dates_require_drained_work_and_invalidate_chronology(
     migration_root = Path(__file__).parents[3] / "migrations"
     config = Config(migration_root / "alembic.ini")
     config.set_main_option("script_location", str(migration_root / "alembic"))
-    command.upgrade(config, "0227")
+    command.upgrade(config, "0228")
     engine = create_engine(empty_migration_database_url)
     viewer_id, media_id, job_id = uuid4(), uuid4(), uuid4()
     try:
@@ -55,9 +55,9 @@ def test_publication_dates_require_drained_work_and_invalidate_chronology(
                     {"id": job_id, "kind": kind},
                 )
             with pytest.raises(RuntimeError, match="requires drained"):
-                command.upgrade(config, "0228")
+                command.upgrade(config, "0229")
             with engine.begin() as connection:
-                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0227"
+                assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0228"
                 assert (
                     connection.scalar(
                         text("SELECT published_date FROM media WHERE id = :id"), {"id": media_id}
@@ -83,11 +83,11 @@ def test_publication_dates_require_drained_work_and_invalidate_chronology(
                 },
             )
         with pytest.raises(RuntimeError, match="uncertain_metadata"):
-            command.upgrade(config, "0228")
+            command.upgrade(config, "0229")
         with engine.begin() as connection:
             connection.execute(text("DELETE FROM background_jobs WHERE id = :id"), {"id": job_id})
 
-        command.upgrade(config, "0228")
+        command.upgrade(config, "0229")
         assert "published_date" not in {
             column["name"] for column in inspect(engine).get_columns("media")
         }

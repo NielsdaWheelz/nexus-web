@@ -1,6 +1,9 @@
 "use client";
 
-import type { EpubSectionContent } from "@/lib/media/epubFind";
+import { absent, present } from "@/lib/api/presence";
+import { ApiError } from "@/lib/api/client";
+
+import type { EpubFragmentContent } from "@/lib/media/epubFragment";
 import { buildCanonicalQuoteWindow } from "./canonicalQuote";
 import { canonicalCpLength } from "./textOffsets";
 import type { ReaderResumeState } from "./types";
@@ -28,7 +31,7 @@ export type LoadedReaderDocument =
       readonly kind: "Epub";
       readonly descriptor: ReaderMedia;
       readonly navigation: ReaderNavigation;
-      readonly section: EpubSectionContent;
+      readonly fragment: EpubFragmentContent;
     }
   | {
       readonly kind: "Pdf";
@@ -41,6 +44,8 @@ export interface LoadedDocumentReaderSession {
   readonly progress: ReaderProgressView;
 }
 
+export type ReaderInitialEpubTarget = { kind: "Section" | "Fragment"; id: string };
+
 export interface DocumentReaderSession {
   load(signal: AbortSignal): Promise<LoadedDocumentReaderSession>;
   /**
@@ -50,12 +55,12 @@ export interface DocumentReaderSession {
    */
   invalidate(): void;
   seedDescriptor(descriptor: ReaderMedia): void;
-  seedInitialEpubSection(sectionId: string | null): void;
+  seedInitialEpubTarget(target: ReaderInitialEpubTarget | null): void;
   loadNavigation(signal: AbortSignal): Promise<ReaderNavigation>;
-  loadEpubSection(
-    sectionId: string,
+  loadEpubFragment(
+    fragmentId: string,
     signal: AbortSignal,
-  ): Promise<EpubSectionContent>;
+  ): Promise<EpubFragmentContent>;
   openPdf(signal: AbortSignal): Promise<ResolvedPdfDocument>;
   readonly progress: ReaderProgressPort;
 }
@@ -103,7 +108,7 @@ export function buildTextReaderLocatorAtOffset({
   documentStartOffset,
   documentLength,
   isFinalUnit,
-  epubSection,
+  epubFragment,
   epubAnchorId,
   positionBucketCodePoints,
 }: {
@@ -114,9 +119,9 @@ export function buildTextReaderLocatorAtOffset({
   readonly documentStartOffset: number;
   readonly documentLength: number;
   readonly isFinalUnit: boolean;
-  readonly epubSection: Pick<
-    EpubSectionContent,
-    "section_id" | "href_path"
+  readonly epubFragment: Pick<
+    EpubFragmentContent,
+    "fragment_id" | "href_path"
   > | null;
   readonly epubAnchorId: string | null;
   readonly positionBucketCodePoints: number;
@@ -145,13 +150,13 @@ export function buildTextReaderLocatorAtOffset({
     quote_suffix: quoteWindow.quoteSuffix,
   };
   if (format === "epub") {
-    if (epubSection?.href_path === null || epubSection === null) return null;
+    if (epubFragment === null) return null;
     return {
       kind: "epub",
       target: {
-        section_id: epubSection.section_id,
-        href_path: epubSection.href_path,
-        anchor_id: epubAnchorId,
+        fragment_id: epubFragment.fragment_id,
+        href_path: epubFragment.href_path,
+        anchor_id: epubAnchorId === null ? absent() : present(epubAnchorId),
       },
       locations,
       text,
@@ -182,58 +187,6 @@ export function preferredReaderLocator(
   }
 }
 
-function webNavigationFromTextDocument(
-  mediaId: string,
-  document: ReaderTextDocument,
-): ReaderNavigation | null {
-  if (document.navigation === undefined) return null;
-  const fragments = document.fragments.map((fragment) => {
-    const charCount = canonicalCpLength(fragment.canonical_text);
-    const result = {
-      fragment_id: fragment.id,
-      fragment_idx: fragment.idx,
-      char_count: charCount,
-    };
-    return result;
-  });
-  const sections = document.navigation.map((entry, ordinal) => {
-    const fragment = document.fragments.find(
-      (candidate) => candidate.id === entry.fragment_id,
-    );
-    const fragmentIndex = fragment?.idx ?? ordinal;
-    const before = document.fragments
-      .filter((candidate) => candidate.idx < fragmentIndex)
-      .reduce(
-        (total, candidate) => total + canonicalCpLength(candidate.canonical_text),
-        0,
-      );
-    const charCount = fragment === undefined ? 0 : canonicalCpLength(fragment.canonical_text);
-    return {
-      section_id: entry.fragment_id,
-      label: entry.label,
-      ordinal,
-      fragment_id: entry.fragment_id,
-      fragment_idx: fragmentIndex,
-      level: null,
-      depth: null,
-      start_offset: before,
-      end_offset: before + charCount,
-      href_path: null,
-      href_fragment: null,
-      anchor_id: null,
-    };
-  });
-  return {
-    media_id: mediaId,
-    kind: "web_article",
-    fragments,
-    sections,
-    toc_nodes: [],
-    landmarks: [],
-    page_list: [],
-  };
-}
-
 export function createDocumentReaderSession({
   mediaId,
   source,
@@ -247,9 +200,9 @@ export function createDocumentReaderSession({
   let loaded: LoadedDocumentReaderSession | null = null;
   let pendingLoad: Promise<LoadedDocumentReaderSession> | null = null;
   let loadGeneration = 0;
-  let initialEpubSectionAvailable = false;
+  let initialEpubFragmentAvailable = false;
   let initialPdfDocumentAvailable = false;
-  let initialEpubSectionId: string | null = null;
+  let initialEpubTarget: ReaderInitialEpubTarget | null = null;
 
   const loadOnce = async (
     signal: AbortSignal,
@@ -262,19 +215,20 @@ export function createDocumentReaderSession({
     ]);
     switch (descriptor.kind) {
       case "web_article": {
-        const document = await source.loadTextDocument(mediaId, signal);
-        const navigation =
-          webNavigationFromTextDocument(mediaId, document) ??
-          (await source.loadEpubNavigation(mediaId, signal));
+        const [document, navigation] = await Promise.all([
+          source.loadTextDocument(mediaId, signal),
+          source.loadNavigation(mediaId, signal),
+        ]);
+        if (document.fragments.length !== navigation.fragments.length || document.fragments.some((fragment, index) => {
+          const declared = navigation.fragments[index]!;
+          return fragment.id !== declared.fragment_id || fragment.idx !== declared.fragment_idx || canonicalCpLength(fragment.canonical_text) !== declared.char_count;
+        })) throw new ApiError(409, "E_READER_CONTENT_CHANGED", "Reader source changed while loading. Reload the document.");
         const locator = preferredReaderLocator(progressView);
-        const activeFragment =
-          document.fragments.find(
-            (fragment) =>
-              locator?.kind === "web" &&
-              fragment.id === locator.target.fragment_id,
-          ) ?? document.fragments[0];
+        const activeFragment = locator?.kind === "web"
+          ? document.fragments.find((fragment) => fragment.id === locator.target.fragment_id)
+          : document.fragments[0];
         if (activeFragment === undefined) {
-          throw new Error("Readable web article has no canonical fragment");
+          throw new ApiError(409, "E_READER_CONTENT_CHANGED", "The saved fragment is unavailable. Reload the document.");
         }
         return {
           document: {
@@ -288,29 +242,27 @@ export function createDocumentReaderSession({
         };
       }
       case "epub": {
-        const navigation = await source.loadEpubNavigation(mediaId, signal);
+        const navigation = await source.loadNavigation(mediaId, signal);
         const locator = preferredReaderLocator(progressView);
-        const requestedSectionId =
-          locator?.kind === "epub"
-            ? locator.target.section_id
-            : initialEpubSectionId;
-        const sectionTarget =
-          navigation.sections.find(
-            (section) => section.section_id === requestedSectionId,
-          ) ?? navigation.sections[0];
-        if (sectionTarget === undefined) {
-          throw new Error("Readable EPUB has no navigation section");
+        const initialFragmentId = initialEpubTarget === null
+          ? navigation.fragments[0]?.fragment_id
+          : initialEpubTarget.kind === "Fragment"
+            ? initialEpubTarget.id
+            : navigation.sections.find((section) => section.section_id === initialEpubTarget?.id)?.target.fragment_id;
+        const fragmentId = locator?.kind === "epub" ? locator.target.fragment_id : initialFragmentId;
+        if (fragmentId === undefined || !navigation.fragments.some((fragment) => fragment.fragment_id === fragmentId)) {
+          throw new ApiError(409, "E_READER_CONTENT_CHANGED", "The requested EPUB fragment is unavailable. Reload the document.");
         }
-        const section = await source.loadEpubSection(
-          mediaId,
-          sectionTarget.section_id,
-          signal,
-        );
+        const fragment = await source.loadEpubFragment(mediaId, fragmentId, signal);
+        if (fragment.generation !== navigation.generation) {
+          throw new ApiError(409, "E_READER_CONTENT_CHANGED", "Reader source changed while loading. Reload the document.");
+        }
         return {
-          document: { kind: "Epub", descriptor, navigation, section },
+          document: { kind: "Epub", descriptor, navigation, fragment },
           progress: progressView,
         };
       }
+
       case "pdf":
         return {
           document: {
@@ -330,7 +282,7 @@ export function createDocumentReaderSession({
     const attempt = loadOnce(signal).then((result) => {
       if (generation === loadGeneration) {
         loaded = result;
-        initialEpubSectionAvailable = result.document.kind === "Epub";
+        initialEpubFragmentAvailable = result.document.kind === "Epub";
         initialPdfDocumentAvailable = result.document.kind === "Pdf";
         pendingLoad = null;
       }
@@ -350,9 +302,9 @@ export function createDocumentReaderSession({
     seedDescriptor: (descriptor) => {
       descriptorSeed = descriptor;
     },
-    seedInitialEpubSection: (sectionId) => {
+    seedInitialEpubTarget: (target) => {
       if (loaded === null && pendingLoad === null) {
-        initialEpubSectionId = sectionId;
+        initialEpubTarget = target;
       }
     },
     load,
@@ -360,29 +312,29 @@ export function createDocumentReaderSession({
       loadGeneration += 1;
       loaded = null;
       pendingLoad = null;
-      initialEpubSectionAvailable = false;
+      initialEpubFragmentAvailable = false;
       initialPdfDocumentAvailable = false;
     },
     // Initial navigation is projected directly from `load`; this method is
     // reserved for explicit source invalidation after the mounted session is
     // already visible.
     loadNavigation: (signal) => {
-      // Source invalidation replaces content: the composed one-shot section
+      // Source invalidation replaces content: the composed one-shot fragment
       // and PDF grants must never serve pre-invalidation payloads afterwards.
-      initialEpubSectionAvailable = false;
+      initialEpubFragmentAvailable = false;
       initialPdfDocumentAvailable = false;
-      return source.loadEpubNavigation(mediaId, signal);
+      return source.loadNavigation(mediaId, signal);
     },
-    loadEpubSection: (sectionId, signal) => {
+    loadEpubFragment: (fragmentId, signal) => {
       if (
-        initialEpubSectionAvailable &&
+        initialEpubFragmentAvailable &&
         loaded?.document.kind === "Epub" &&
-        loaded.document.section.section_id === sectionId
+        loaded.document.fragment.fragment_id === fragmentId
       ) {
-        initialEpubSectionAvailable = false;
-        return Promise.resolve(loaded.document.section);
+        initialEpubFragmentAvailable = false;
+        return Promise.resolve(loaded.document.fragment);
       }
-      return source.loadEpubSection(mediaId, sectionId, signal);
+      return source.loadEpubFragment(mediaId, fragmentId, signal);
     },
     openPdf: (signal) => {
       if (initialPdfDocumentAvailable && loaded?.document.kind === "Pdf") {

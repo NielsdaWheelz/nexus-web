@@ -25,6 +25,11 @@ from nexus.auth.permissions import can_read_media
 from nexus.db.session import get_db, get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.responses import success_response
+from nexus.schemas.offline_reading_package import (
+    OFFLINE_READING_PACKAGE_SCHEMA_VERSION,
+    OFFLINE_READING_READER_BUNDLE_VERSION,
+    OFFLINE_READING_READER_CONTRACT_VERSION,
+)
 from nexus.services import reader_publication, stream_tokens
 from nexus.services.offline_reading_delivery import (
     OfflineReadingArchive,
@@ -64,9 +69,9 @@ def get_offline_reading_account_binding(
         {
             "account_id": str(viewer.user_id),
             "protocol_version": 1,
-            "package_schema_version": 1,
-            "reader_contract_version": 1,
-            "minimum_reader_bundle_version": 1,
+            "package_schema_version": OFFLINE_READING_PACKAGE_SCHEMA_VERSION,
+            "reader_contract_version": OFFLINE_READING_READER_CONTRACT_VERSION,
+            "minimum_reader_bundle_version": OFFLINE_READING_READER_BUNDLE_VERSION,
         }
     )
 

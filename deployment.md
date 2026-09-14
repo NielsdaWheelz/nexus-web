@@ -38,6 +38,11 @@ expected Oracle manifest digest, task contract, and captured VPS config.
 - `deploy/hetzner/prove-codex-capacity.sh <source-sha>` is the only Codex-host
   release qualification entrypoint. It installs the exact immutable bundle and
   records measured evidence, but never applies an application release.
+- A planned retained-swap maintenance restart is the sole exception to those
+  two entrypoints. It is authorized only after qualification has corrected the
+  exact incumbent cgroup limits, blocked before candidate startup, and reported
+  a full container ID as retaining forbidden swap. It never recreates a
+  container or changes release state.
 - Release only a clean checkout where `HEAD == origin/main == source-sha` and
   exact `main` CI succeeded.
 - CI builds each backend target once. Production pulls manifest-selected GHCR
@@ -223,6 +228,21 @@ absent, stale, retriable, or subscription-blocked result is not release
 evidence; diagnose it and rerun the unchanged qualification command. A measured
 contract breach permanently disqualifies the candidate SHA.
 
+On a host first crossing into the enforced no-service-swap contract,
+qualification may instead correct every exact incumbent's kernel limits and
+then block because pages swapped under the old policy remain charged. This is
+infrastructure settlement, not candidate evidence. Announce a no-use window,
+prove no application or Oracle attempt and no active generation job, then
+restart only each full container ID reported by the controller with
+`docker restart --timeout 30 <full-container-id>`. Use the order Postgres, API,
+interactive worker, background worker, Caddy; wait for the restarted service's
+ordinary health proof before continuing. Re-inspect the same ID and require
+`memory.swap.max == 0` and `memory.swap.current == 0`. Abort on an identity,
+health, or cgroup discrepancy, and rerun the unchanged qualification only after
+all five incumbents are healthy. Never restart by service name, recreate a
+container, clear caches, or automate this one-time database-and-writer outage
+inside qualification.
+
 After qualification passes, announce the no-use window and close clients. Then
 run:
 
@@ -256,12 +276,15 @@ authorizes a resend. There is no
 counter reset, storage clear, compatibility decoder, or legacy runtime lookup.
 
 Migration `0224` refuses every pending, running, or retryable generation job and
-every dead domain-owned generation job. Its only terminal queue exception is a
-dead `synapse_scan` after the separate nonterminal-`llm_calls` and
-`Uncertain`-journal preflights prove that no ambiguous provider effect remains;
-the reset then deletes that headless scan state while retaining its previously
-published edge set. Never update or delete production queue rows manually to
-force migration admission.
+every unclassified dead generation job. A dead `synapse_scan` is reset only
+after the separate nonterminal-`llm_calls` and `Uncertain`-journal preflights
+prove that no ambiguous provider effect remains. A dead `enrich_metadata` job
+is reset only when its finished, unclaimed attempt returned one frozen known
+failure reason in one of the two exact historical terminal result shapes whose
+error matches the queue error. The extended shape also requires exact nonempty
+provider/model attempts and a matching terminal attempt; current Media metadata
+and failure facts remain. Never update or delete production queue rows manually
+to force migration admission.
 
 The command performs the complete protocol:
 

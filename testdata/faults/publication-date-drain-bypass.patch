@@ -1,6 +1,6 @@
-diff --git a/migrations/alembic/versions/0228_original_publication_dates.py b/migrations/alembic/versions/0228_original_publication_dates.py
---- a/migrations/alembic/versions/0228_original_publication_dates.py
-+++ b/migrations/alembic/versions/0228_original_publication_dates.py
+diff --git a/migrations/alembic/versions/0229_original_publication_dates.py b/migrations/alembic/versions/0229_original_publication_dates.py
+--- a/migrations/alembic/versions/0229_original_publication_dates.py
++++ b/migrations/alembic/versions/0229_original_publication_dates.py
 @@ -43,7 +43,7 @@
                  UNION ALL
                  SELECT 'metadata_generation' AS owner, id FROM llm_calls

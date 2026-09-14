@@ -181,7 +181,6 @@ def materialize_web_article_source(
             embed_source_html=ingest_result.source_html,
             base_url=ingest_result.base_url,
             fragment_idx=0,
-            media_title=ingest_result.title,
             extract_embeds=extract_embeds,
         )
         source_apparatus = (
@@ -191,7 +190,6 @@ def materialize_web_article_source(
                 html=ingest_result.source_html,
                 base_url=ingest_result.base_url,
                 fragment_idx=0,
-                media_title=ingest_result.title,
                 extract_embeds=extract_embeds,
             )
         )

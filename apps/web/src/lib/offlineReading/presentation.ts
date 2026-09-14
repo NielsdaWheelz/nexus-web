@@ -63,22 +63,22 @@ export function offlineReadingRejectionMessage(code: ReadingRejectedCode): strin
 
 /**
  * Page/chapter context for one locator, used to qualify conflict choices.
- * `sectionLabel` resolves an EPUB section id or web fragment id to its
+ * `sectionLabel` resolves an exact text locator to its
  * navigation label; absence of a label is absence of context, never a
  * fabricated one.
  */
 export function offlineReaderLocatorContext(
   locator: ReaderResumeState | null,
-  sectionLabel: (targetId: string) => string | null = () => null,
+  sectionLabel: (locator: Extract<ReaderResumeState, { kind: "epub" | "web" }>) => string | null = () => null,
 ): string | null {
   if (locator === null) return null;
   switch (locator.kind) {
     case "pdf":
       return `Page ${locator.page}`;
     case "epub":
-      return sectionLabel(locator.target.section_id);
+      return sectionLabel(locator);
     case "web":
-      return sectionLabel(locator.target.fragment_id);
+      return sectionLabel(locator);
     case "transcript":
       return null;
   }

@@ -48,6 +48,24 @@ describe("media pane feedback policy", () => {
     );
   });
 
+  it("keeps a changed reader source recoverable without crashing the pane", () => {
+    expect(
+      mediaPaneErrorMessage(
+        new ApiError(
+          409,
+          "E_READER_CONTENT_CHANGED",
+          "The saved fragment is unavailable. Reload the document.",
+          "request-source",
+        ),
+        "Load",
+      ),
+    ).toEqual({
+      tone: "Warning",
+      title: "Reader content changed. Reload this document.",
+      requestId: "request-source",
+    });
+  });
+
   it("owns the finite initial transcript failure projection", () => {
     expect(
       transcriptSeedErrorMessage({ status: 409, code: "E_MEDIA_NOT_READY" }),

@@ -6243,6 +6243,7 @@ class EpubTocNode(Base):
     label: Mapped[str] = mapped_column(Text, nullable=False)
     href: Mapped[str | None] = mapped_column(Text, nullable=True)
     fragment_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    target_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
     depth: Mapped[int] = mapped_column(Integer, nullable=False)
     order_key: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -6309,12 +6310,14 @@ class EpubNavLocation(Base):
     location_id: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     source_node_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parent_section_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     label: Mapped[str] = mapped_column(Text, nullable=False)
     fragment_idx: Mapped[int] = mapped_column(Integer, nullable=False)
     href_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     href_fragment: Mapped[str | None] = mapped_column(Text, nullable=True)
     start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_fragment_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -6339,9 +6342,22 @@ class EpubNavLocation(Base):
             "ordinal >= 0",
             name="ck_epub_nav_locations_ordinal_nonneg",
         ),
-        CheckConstraint(
-            "source IN ('toc', 'spine')",
-            name="ck_epub_nav_locations_source_valid",
+        ForeignKeyConstraint(
+            ["media_id", "fragment_idx"],
+            ["fragments.media_id", "fragments.idx"],
+            name="fk_epub_nav_locations_start_fragment",
+        ),
+        ForeignKeyConstraint(
+            ["media_id", "end_fragment_idx"],
+            ["fragments.media_id", "fragments.idx"],
+            name="fk_epub_nav_locations_end_fragment",
+        ),
+        ForeignKeyConstraint(
+            ["media_id", "parent_section_id"],
+            ["epub_nav_locations.media_id", "epub_nav_locations.location_id"],
+            name="fk_epub_nav_locations_parent",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         UniqueConstraint("media_id", "ordinal", name="uix_epub_nav_locations_media_ordinal"),
         UniqueConstraint("media_id", "source_node_id", name="uix_epub_nav_locations_media_source"),

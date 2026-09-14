@@ -1071,19 +1071,26 @@ describe("Imports provider observation", () => {
     const { rerender } = renderImports({
       selected: importRef(`media:${MEDIA_ID}`),
     });
-    await userEvent.click(screen.getByRole("button", { name: "Open imports" }));
     await waitFor(() =>
       expect(screen.getByRole("status", { name: "Imports page" })).toHaveTextContent(
         "Unfiltered 1",
       ),
     );
-    // One live tick, so the next one is a whole interval away and the assertion
-    // below measures the cadence rather than the tail of this one.
+    await userEvent.click(screen.getByRole("button", { name: "Open imports" }));
     await waitFor(
       () =>
         expect(
           screen.getByRole("status", { name: "Imports page" }),
         ).toHaveTextContent("Unfiltered 2"),
+      { timeout: 2_000 },
+    );
+    // The open wake has settled. Wait for one scheduled observation, so the
+    // next one is a whole interval away when the reader changes keys below.
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("status", { name: "Imports page" }),
+        ).toHaveTextContent("Unfiltered 3"),
       { timeout: 6_500 },
     );
 

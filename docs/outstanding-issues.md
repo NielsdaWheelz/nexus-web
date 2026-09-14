@@ -265,16 +265,6 @@ measure 4.20:1 to 4.47:1 on their worst ground — under WCAG AA for `--text-sm`
 body copy. Sibling of OI-047, which owns the two remaining `Pill` tones. See
 [docs/tickets/tone-text-on-its-own-tint-fails-aa-outside-pill.md](tickets/tone-text-on-its-own-tint-fails-aa-outside-pill.md).
 
-### [OPEN] OI-051 — The packaged offline reader bundle drifted from its sources for five phases
-frontend · opened 2026-09-10 by Claude (imports cutover, Phase 7 chain Z review) · P2
-Five declared inputs of `nexus-offline/source-manifest.sha256` went stale between
-`4d457ab1` and `26b8161b` without a regeneration; chain Z added a sixth and
-regenerated, absorbing all six. The regeneration also grew the declared input set
-from 119 to 126 lines, so the packaged shelf now ships seven modules it never
-carried before — none of which the Android offline-reading proof has run
-against. See
-[docs/tickets/offline-reader-bundle-drifted-for-five-phases.md](tickets/offline-reader-bundle-drifted-for-five-phases.md).
-
 ### [OPEN] OI-052 — The offline-bundle staleness gate is unreachable from the sources it guards
 tooling · opened 2026-09-10 by Claude (imports cutover, Phase 7 chain Z review) · P2
 `immutable-production-release` owns the only proof that runs Gradle's
@@ -324,13 +314,12 @@ hashes the owner test file alone, so strengthening the containment probe module
 produced no owner drift and no review. Extend the digest or narrow the sentence. See
 [docs/tickets/coherent-fault-owner-digest-omits-imported-support.md](tickets/coherent-fault-owner-digest-omits-imported-support.md).
 
-### [OPEN] OI-058 — `pr` sensitivity cannot accept a new or repointed vitest proof owner
+### [OPEN] OI-058 — `pr` sensitivity cannot replay changed non-python hard-cut owners
 testing · opened 2026-09-11 by Claude (imports cutover, final gates) · P2
-BASE replay of a vitest owner that is new or imports a new module fails at
-module resolution, never at a behavioral assertion, and coherent-fault is
-Python-only, so a hard cutover with new vitest owners cannot turn `pr` green
-even when every owner's fault reddens it. Let a fault-owned vitest owner opt into
-coherent-fault, or state that `pr` sensitivity is Python-only. See
+BASE replay can fail before a behavioral assertion for new vitest imports or
+native reader2 fixtures reaching reader1 admission. coherent-fault is
+python-only, so controlled fault passes cannot unblock the hard-cut pr gate.
+define the reviewed non-python routing contract without waiving sensitivity. see
 [docs/tickets/pr-sensitivity-cannot-accept-new-vitest-owners.md](tickets/pr-sensitivity-cannot-accept-new-vitest-owners.md).
 
 ### [OPEN] OI-059 — Three changed Python proof owners on the imports branch lack a coherent-fault witness
@@ -349,6 +338,29 @@ current execution cutover, then prove the backlog converges without new
 unexpected timeouts. See
 [docs/tickets/production-synapse-scan-statement-timeout-backlog.md](tickets/production-synapse-scan-statement-timeout-backlog.md).
 
+- [open] oi-069 · reader interaction · 2026-09-11 council · implemented map controls await manual assistive-technology and actual-touch review: [ticket](tickets/reader-map-inert-position-and-mobile-controls.md).
+- [open] oi-074 · test infrastructure · 2026-09-11 reader verification · host release harness cannot establish worker-owned parser directory: [ticket](tickets/test-host-release-worker-owner-privilege.md).
+- [open] oi-075 · epub ingest · 2026-09-12 source review · decoded reserved delimiters make stored source urls ambiguous: [ticket](tickets/epub-normalized-href-reserved-delimiters.md).
+- [open] oi-076 · import progress · 2026-09-12 source review · extraction progress calls spine files chapters: [ticket](tickets/epub-import-progress-counts-files-as-chapters.md).
+- [open] oi-078 · web build · 2026-09-12 offline artifact · css minifier warns on existing custom-highlight syntax: [ticket](tickets/offline-css-minifier-rejects-highlight-syntax.md).
+- [open] oi-079 · test controller · 2026-09-12 sensitivity · fault registry rejects literal next route brackets: [ticket](tickets/fault-registry-rejects-literal-route-brackets.md).
+- [open] oi-080 · web ingest · 2026-09-12 source review · generated heading ids replace authored link and container targets: [ticket](tickets/web-ingest-replaces-authored-heading-anchors.md).
+- [open] oi-081 · pdf activity · 2026-09-12 input review · zoom renews reading eligibility through the page-turn control wrapper: [ticket](tickets/pdf-zoom-renews-reading-activity.md).
+- [open] oi-084 · test controller · 2026-09-12 confidence interruption · interruption discards completed capability evidence and reports the wrong owner: [ticket](tickets/test-controller-interrupt-discards-completed-capabilities.md).
+- [open] oi-085 · epub extraction · 2026-09-12 memory review · utf-8 output caps do not bound retained unicode string memory: [ticket](tickets/epub-utf8-output-cap-does-not-bound-resident-text.md).
+- [open] oi-086 · client telemetry · 2026-09-12 reader verification · defect reports fail at next request forwarding with a private-member branding exception: [ticket](tickets/client-defect-telemetry-request-branding-failure.md).
+- [open] oi-087 · ci actions · 2026-09-12 reader publication · the pinned buildx action targets a deprecated node runtime: [ticket](tickets/ci-buildx-action-deprecated-node-runtime.md).
+- [open] oi-088 · ci cache · 2026-09-12 reader publication · go setup requests module caching without a module owner: [ticket](tickets/ci-go-cache-has-no-module-owner.md).
+
+### [OPEN] OI-061 — Test subprocesses received unowned SIGTERMs
+testing · opened 2026-09-12 by Codex (production deployment) · P1
+Two canonical kernel runs lost different subprocess boundaries to unexplained
+SIGTERMs; twelve exact traced repetitions of the first case did not reproduce.
+Capture the sender under the full kernel portfolio before changing lifecycle
+behavior. See
+[docs/tickets/oracle-host-replay-received-unowned-sigterm.md](tickets/oracle-host-replay-received-unowned-sigterm.md).
+
+- [open] oi-098 · reader annotation · 2026-09-14 focus/submit review · failed highlight creation crashes the quick-note editor: [ticket](tickets/highlight-quick-note-create-failure-crashes-editor.md).
+- [open] test control · 2026-09-14 annotation/publication-date verification · host oracle fixture ownership setup blocks local confidence: [ticket](tickets/host-oracle-fixture-ownership-blocks-confidence.md).
 - [open] oi-106 · generation policy · 2026-09-14 spec review · p2 · background context-token budget is recorded without enforcement: [ticket](tickets/background-generation-context-budget-is-not-enforced.md).
 - [open] metadata verification · 2026-09-14 implementation · live research judgments and external query contents still need smoke inspection: [ticket](tickets/metadata-live-research-smoke-unverified.md).
-- [open] test control · 2026-09-14 publication-date verification · host oracle fixture ownership setup blocks local confidence: [ticket](tickets/host-oracle-fixture-ownership-blocks-confidence.md).

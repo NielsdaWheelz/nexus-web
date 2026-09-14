@@ -245,13 +245,17 @@ def verify_offline_reading_package(
     try:
         reader = parse_offline_reader_document(entry_bodies["reader.json"])
     except (ValidationError, ValueError) as exc:
-        raise OfflineReadingPackageError("reader.json violates the V1 reader contract") from exc
+        raise OfflineReadingPackageError("reader.json violates the V2 reader contract") from exc
 
     if (
         reader.reader_contract_version != manifest.reader_contract_version
         or reader.media_id != manifest.media_id
         or reader.media_kind != manifest.media_kind
         or reader.title != manifest.title
+        or (
+            not isinstance(reader, PdfOfflineReaderDocument)
+            and reader.navigation.generation != manifest.reader_generation
+        )
     ):
         raise OfflineReadingPackageError("reader.json identity does not match manifest")
 
@@ -362,12 +366,16 @@ def verify_offline_reading_package_files(
     try:
         reader = parse_offline_reader_document(reader_body)
     except (ValidationError, ValueError) as exc:
-        raise OfflineReadingPackageError("reader.json violates the V1 reader contract") from exc
+        raise OfflineReadingPackageError("reader.json violates the V2 reader contract") from exc
     if (
         reader.reader_contract_version != manifest.reader_contract_version
         or reader.media_id != manifest.media_id
         or reader.media_kind != manifest.media_kind
         or reader.title != manifest.title
+        or (
+            not isinstance(reader, PdfOfflineReaderDocument)
+            and reader.navigation.generation != manifest.reader_generation
+        )
     ):
         raise OfflineReadingPackageError("reader.json identity does not match manifest")
     _verify_kind_member_files(
@@ -544,7 +552,7 @@ def _verify_kind_members(
 
     if not isinstance(reader, EpubOfflineReaderDocument):  # pragma: no cover - closed union
         raise OfflineReadingPackageError("unknown reader document kind")
-    referenced_assets = {path for section in reader.sections for path in section.asset_paths}
+    referenced_assets = {path for fragment in reader.fragments for path in fragment.asset_paths}
     if set(entries) != {"reader.json", *referenced_assets}:
         raise OfflineReadingPackageError("EPUB package assets must exactly match reader.json")
     for path in referenced_assets:
@@ -585,7 +593,7 @@ def _verify_kind_member_files(
 
     if not isinstance(reader, EpubOfflineReaderDocument):  # pragma: no cover - closed union
         raise OfflineReadingPackageError("unknown reader document kind")
-    referenced_assets = {path for section in reader.sections for path in section.asset_paths}
+    referenced_assets = {path for fragment in reader.fragments for path in fragment.asset_paths}
     if set(entries) != {"reader.json", *referenced_assets}:
         raise OfflineReadingPackageError("EPUB package assets must exactly match reader.json")
     for path in referenced_assets:

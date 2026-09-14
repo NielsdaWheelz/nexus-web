@@ -886,7 +886,6 @@ def _build_x_fragment(
             html=html,
             base_url=base_url,
             fragment_idx=idx,
-            media_title=None,
             extract_embeds=bool(quote_occurrences),
         )
     except ValueError as exc:

@@ -271,6 +271,39 @@ describe("selection action toolbar in Chromium", () => {
     );
   });
 
+  it("preserves annotation focus when the selection toolbar retires after handoff", async () => {
+    const plan = selectionPlan();
+    const view = render(
+      withRenderEnvironment(
+        <>
+          <Dock plan={plan} />
+          <textarea aria-label="Highlight note" />
+        </>,
+      ),
+    );
+    screen.getByRole("button", { name: "Return to passage" }).focus();
+    fireEvent.keyDown(window, { key: "F10", altKey: true });
+    expect(screen.getByRole("button", { name: "Highlight" })).toHaveFocus();
+
+    const annotation = screen.getByRole("textbox", { name: "Highlight note" });
+    await userEvent.click(annotation);
+    view.rerender(
+      withRenderEnvironment(
+        <>
+          <Dock plan={plan} showDock={false} />
+          <textarea aria-label="Highlight note" />
+        </>,
+      ),
+    );
+
+    expect(
+      annotation,
+      "retiring the selection toolbar stole focus from the active annotation",
+    ).toHaveFocus();
+    await userEvent.keyboard("annotation stays active");
+    expect(annotation).toHaveValue("annotation stays active");
+  });
+
   it("opens the overflow menu with exactly the spec's text-labeled items", async () => {
     render(withRenderEnvironment(<Dock plan={selectionPlan()} />));
 

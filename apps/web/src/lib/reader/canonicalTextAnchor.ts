@@ -11,19 +11,17 @@ import {
   type CanonicalDomSpan,
 } from "@/lib/highlights/canonicalCursor";
 import {
-  getPaneScrollContainer,
   getPaneScrollTopPaddingPx,
-  isElementInPaneView,
   type ReaderScrollCommands,
 } from "@/lib/reader/paneScroll";
 
 export const READER_END_TOLERANCE_PX = 2;
 
-export { getPaneScrollContainer, isElementInPaneView };
 
 export interface VisibleCanonicalTextRange {
   startOffset: number;
   endOffset: number;
+  primaryOffset: number | null;
 }
 
 export function isTextViewportAtEnd(
@@ -68,7 +66,7 @@ export function findFirstVisibleCanonicalOffset(
   cursor: CanonicalCursorResult,
 ): number | null {
   return (
-    captureVisibleCanonicalTextRange(container, cursor)?.startOffset ?? null
+    captureVisibleCanonicalTextRange(container, cursor)?.primaryOffset ?? null
   );
 }
 
@@ -99,6 +97,7 @@ export function captureVisibleCanonicalTextRange(
     return null;
   }
   const viewport = container.getBoundingClientRect();
+  const readingTop = viewport.top + getPaneScrollTopPaddingPx(container);
   const rectsByOffset = new Map<number, DOMRect[]>();
   const readRects = (offset: number): DOMRect[] => {
     const cached = rectsByOffset.get(offset);
@@ -109,18 +108,29 @@ export function captureVisibleCanonicalTextRange(
     rectsByOffset.set(offset, rects);
     return rects;
   };
-  const intersectsViewport = (offset: number): boolean =>
+  const intersectsViewport = (offset: number, top = viewport.top): boolean =>
     readRects(offset).some(
       (rect) =>
-        rect.bottom > viewport.top &&
+        rect.bottom > top &&
         rect.top < viewport.bottom &&
         rect.right > viewport.left &&
         rect.left < viewport.right,
     );
-  const reachesVisibleTop = (offset: number): boolean =>
-    readRects(offset).some((rect) => rect.bottom > viewport.top);
   const startsBeforeVisibleBottom = (offset: number): boolean =>
     readRects(offset).some((rect) => rect.top < viewport.bottom);
+  const firstVisibleOffset = (start: number, end: number, top: number): number | null => {
+    let low = start;
+    let high = end;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (readRects(middle).some((rect) => rect.bottom > top)) high = middle;
+      else low = middle + 1;
+    }
+    for (let offset = Math.max(start, low - 2); offset < end; offset += 1) {
+      if (intersectsViewport(offset, top)) return offset;
+    }
+    return null;
+  };
 
   const entries = cursor.nodes.filter(
     (entry) =>
@@ -188,6 +198,7 @@ export function captureVisibleCanonicalTextRange(
   let followingBoundary: number | null = null;
   let firstVisible: number | null = null;
   let lastVisible: number | null = null;
+  let primaryVisible: number | null = null;
 
   for (let index = firstCandidateIndex; index < entries.length; index += 1) {
     const entry = entries[index];
@@ -211,26 +222,9 @@ export function captureVisibleCanonicalTextRange(
       continue;
     }
 
-    let firstLow = entry.start;
-    let firstHigh = entry.end;
-    while (firstLow < firstHigh) {
-      const middle = Math.floor((firstLow + firstHigh) / 2);
-      if (reachesVisibleTop(middle)) {
-        firstHigh = middle;
-      } else {
-        firstLow = middle + 1;
-      }
-    }
-    for (
-      let offset = Math.max(entry.start, firstLow - 2);
-      offset < entry.end;
-      offset += 1
-    ) {
-      if (intersectsViewport(offset)) {
-        firstVisible = Math.min(firstVisible ?? offset, offset);
-        break;
-      }
-    }
+    const first = firstVisibleOffset(entry.start, entry.end, viewport.top);
+    if (first !== null) firstVisible = Math.min(firstVisible ?? first, first);
+    if (primaryVisible === null) primaryVisible = firstVisibleOffset(entry.start, entry.end, readingTop);
 
     let lastLow = entry.start;
     let lastHigh = entry.end - 1;
@@ -258,12 +252,17 @@ export function captureVisibleCanonicalTextRange(
     return {
       startOffset: firstVisible,
       endOffset: Math.max(firstVisible, lastVisible + 1),
+      // Navigation aligns to this same reading line. Context above it remains
+      // in the visible band but does not select the preceding section. A short
+      // document wholly above the line still has an exact visible primary.
+      primaryOffset: primaryVisible ?? firstVisible,
     };
   }
   const startOffset = precedingBoundary ?? 0;
   return {
     startOffset,
     endOffset: Math.max(startOffset, followingBoundary ?? cursor.length),
+    primaryOffset: null,
   };
 }
 
@@ -389,17 +388,11 @@ export function resolveCanonicalTextRanges(
   });
 }
 
-function anchorRect(anchor: CanonicalTextAnchor): {
-  rect: DOMRect;
-  fallbackElement: HTMLElement | null;
-} {
+function anchorRect(anchor: CanonicalTextAnchor): DOMRect {
   const range = anchor.node.ownerDocument.createRange();
   range.setStart(anchor.node, anchor.rawUtf16Offset);
   range.collapse(true);
-  return {
-    rect: range.getBoundingClientRect(),
-    fallbackElement: anchor.node.parentElement,
-  };
+  return range.getBoundingClientRect();
 }
 
 export function measureCanonicalTextAnchorViewportDelta(
@@ -409,7 +402,8 @@ export function measureCanonicalTextAnchorViewportDelta(
 ): number | null {
   const anchor = resolveCanonicalTextAnchor(cursor, canonicalOffset, "Forward");
   if (!anchor) return null;
-  const { rect } = anchorRect(anchor);
+  const rect = anchorRect(anchor);
+  if (rect.width === 0 && rect.height === 0) return null;
   const containerRect = container.getBoundingClientRect();
   const delta = rect.top - containerRect.top;
   return Number.isFinite(delta) ? delta : null;
@@ -446,33 +440,6 @@ export function restoreCanonicalTextAnchorViewportPosition(
   );
 }
 
-export function scrollToCanonicalTextAnchor(
-  commands: ReaderScrollCommands,
-  container: HTMLElement,
-  cursor: CanonicalCursorResult,
-  canonicalOffset: number,
-): boolean {
-  const anchor = resolveCanonicalTextAnchor(cursor, canonicalOffset, "Forward");
-  if (!anchor) {
-    return false;
-  }
-
-  const { rect: targetRect, fallbackElement } = anchorRect(anchor);
-  const containerRect = container.getBoundingClientRect();
-  const topPaddingPx = getPaneScrollTopPaddingPx(container);
-  if (targetRect.width > 0 || targetRect.height > 0) {
-    const delta = targetRect.top - containerRect.top - topPaddingPx;
-    commands.setTop(container, Math.max(0, container.scrollTop + delta));
-    return true;
-  }
-
-  if (fallbackElement) {
-    commands.reveal(container, fallbackElement);
-    return true;
-  }
-  return false;
-}
-
 export function scrollToExactCanonicalTextAnchor(
   commands: ReaderScrollCommands,
   container: HTMLElement,
@@ -483,10 +450,9 @@ export function scrollToExactCanonicalTextAnchor(
   if (!anchor) {
     return false;
   }
-  const range = anchor.node.ownerDocument.createRange();
-  range.setStart(anchor.node, anchor.rawUtf16Offset);
-  range.collapse(true);
-  const targetTop = range.getBoundingClientRect().top;
+  const rect = anchorRect(anchor);
+  if (rect.width === 0 && rect.height === 0) return false;
+  const targetTop = rect.top;
   const containerTop = container.getBoundingClientRect().top;
   if (!Number.isFinite(targetTop) || !Number.isFinite(containerTop)) {
     return false;
@@ -514,21 +480,13 @@ export function isCanonicalTextAnchorVisible(
     return false;
   }
 
-  const { rect: targetRect, fallbackElement } = anchorRect(anchor);
+  const targetRect = anchorRect(anchor);
   const containerRect = container.getBoundingClientRect();
   const visibleTop =
     containerRect.top + Math.floor(getPaneScrollTopPaddingPx(container) / 2);
-  if (targetRect.width > 0 || targetRect.height > 0) {
-    return (
-      targetRect.bottom > visibleTop && targetRect.top < containerRect.bottom
-    );
-  }
-
-  if (!fallbackElement) {
-    return false;
-  }
-  const fallbackRect = fallbackElement.getBoundingClientRect();
   return (
-    fallbackRect.bottom > visibleTop && fallbackRect.top < containerRect.bottom
+    (targetRect.width > 0 || targetRect.height > 0) &&
+    targetRect.bottom > visibleTop && targetRect.top < containerRect.bottom &&
+    targetRect.right >= containerRect.left && targetRect.left < containerRect.right
   );
 }

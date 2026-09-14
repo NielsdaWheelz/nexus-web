@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/offline-reading/OfflineDocumentReader.tsx b/apps/web/src/offline-reading/OfflineDocumentReader.tsx
+--- a/apps/web/src/offline-reading/OfflineDocumentReader.tsx
++++ b/apps/web/src/offline-reading/OfflineDocumentReader.tsx
+@@ -471,7 +471,7 @@
+     }));
+     if (!saveReading || direction === null) return;
+     const locator = buildTextReaderLocatorAtOffset({
+-      anchorOffset: offset,
++      anchorOffset: Math.floor(viewport.scrollTop / Math.max(1, viewport.scrollHeight - viewport.clientHeight) * cursor.length),
+       canonicalText: activeBody.text,
+       fragmentId: activeBody.id,
+       format: document.kind === "Epub" ? "epub" : "web",

@@ -28,6 +28,7 @@ from nexus.jobs.queue import JobExecutionContext
 from nexus.services import bootstrap, library_entries
 from nexus.services.chat_prompt import PromptPlan, build_prompt_plan
 from nexus.services.prompt_budget import make_prompt_block
+from nexus.services.reader_publication import replace_reader_publication
 
 if TYPE_CHECKING:
     from nexus.services.generation_catalog import GenerationCatalogService
@@ -326,6 +327,7 @@ def create_readable_media(
     default_library_id: UUID,
     title: str,
     canonical_text: str,
+    html_sanitized: str | None = None,
 ) -> UUID:
     media = Media(
         id=uuid4(),
@@ -337,14 +339,21 @@ def create_readable_media(
     )
     db.add(media)
     db.flush()
-    db.add(
-        Fragment(
-            id=uuid4(),
-            media_id=media.id,
-            idx=0,
-            canonical_text=canonical_text,
-            html_sanitized=f"<p>{canonical_text}</p>",
-        )
+    replace_reader_publication(
+        db,
+        media_id=media.id,
+        expected_kind="web_article",
+        replace_projection=lambda _media: db.add(
+            Fragment(
+                id=uuid4(),
+                media_id=media.id,
+                idx=0,
+                canonical_text=canonical_text,
+                html_sanitized=html_sanitized
+                if html_sanitized is not None
+                else f"<p>{xml_escape(canonical_text)}</p>",
+            )
+        ),
     )
     db.flush()
     assert library_entries.ensure_media_in_default_library(db, user_id, media.id)

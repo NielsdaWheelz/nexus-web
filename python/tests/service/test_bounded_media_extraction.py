@@ -621,11 +621,14 @@ def _run_parser_resource_probe(case: str, output: Connection) -> None:
             paragraph_count = 992 if case == "epub-maximum-safe" else 1024
             chapter_count = 3
             base_count, remainder = divmod(paragraph_count, chapter_count)
+            # Keep source byte sizes fixed while making the middle chapter non-NFC:
+            # even one decomposed accent requires source mapping for its whole text.
             payload = _epub_spine_payload(
                 {
                     f"chapter-{index}": (
                         b'<html xmlns="http://www.w3.org/1999/xhtml"><body>'
-                        + paragraph * (base_count + (1 if index < remainder else 0))
+                        + (paragraph.replace(b"xxx", b"e\xcc\x81", 1) if index == 1 else paragraph)
+                        * (base_count + (1 if index < remainder else 0))
                         + b"</body></html>"
                     )
                     for index in range(chapter_count)
@@ -1889,7 +1892,7 @@ def test_epub_footnote_link_into_another_spine_document_survives_extraction() ->
     )
 
     assert isinstance(plan, EpubExtractionPlan), f"valid EPUB did not produce a plan: {plan!r}"
-    assert plan.result.chapter_count == 2
+    assert plan.result.fragment_count == 2
     _chapter_fragment, chapter_spec, chapter_items, chapter_edges = plan.fragment_specs[0]
     _notes_fragment, notes_spec, notes_items, _notes_edges = plan.fragment_specs[1]
     assert chapter_spec.href == "EPUB/chapter.xhtml"
@@ -1974,7 +1977,7 @@ def test_epub_extraction_reads_an_inert_doctype_without_resolving_it(
     )
 
     assert isinstance(plan, EpubExtractionPlan), f"inert doctype was rejected: {plan!r}"
-    assert plan.result.chapter_count == 1
+    assert plan.result.fragment_count == 1
     assert "Safe doctype." in plan.fragment_specs[0][0].canonical_text
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
@@ -2008,7 +2011,7 @@ def test_epub_publishes_a_chapter_that_is_not_well_formed_xml() -> None:
     )
 
     assert isinstance(plan, EpubExtractionPlan), f"malformed chapter was rejected: {plan!r}"
-    assert plan.result.chapter_count == 1
+    assert plan.result.fragment_count == 1
     fragment = plan.fragment_specs[0][0]
     assert "Unclosed paragraph with" in fragment.canonical_text
     assert "a raw & ampersand and overlap" in fragment.canonical_text
@@ -2056,7 +2059,7 @@ def test_epub_optional_navigation_entry_that_cannot_be_parsed_is_absence(
     )
 
     assert isinstance(plan, EpubExtractionPlan), f"{case} NCX failed the book: {plan!r}"
-    assert plan.result.chapter_count == 1
+    assert plan.result.fragment_count == 1
     assert plan.result.toc_node_count == 0
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
@@ -2092,7 +2095,7 @@ def test_epub_publishes_readable_chapters_when_one_spine_entry_is_unreadable() -
     )
 
     assert isinstance(plan, EpubExtractionPlan), f"partial EPUB did not produce a plan: {plan!r}"
-    assert plan.result.chapter_count == 1
+    assert plan.result.fragment_count == 1
     assert [chapter.href for _fragment, chapter, _items, _edges in plan.fragment_specs] == [
         "EPUB/chapter.xhtml"
     ]

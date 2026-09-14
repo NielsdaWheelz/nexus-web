@@ -1,4 +1,4 @@
-"""Reader routes: evidence resolution, EPUB sections/navigation, reader state, file.
+"""Reader routes: evidence resolution, EPUB fragments/navigation, reader state, file.
 
 Transport-only: validate input, call one reader-family service, return the
 envelope. All paths are `/media/{media_id}/...`.
@@ -51,15 +51,15 @@ def resolve_media_evidence(
     return success_response(result)
 
 
-@router.get("/media/{media_id}/sections/{section_id:path}")
-def get_epub_section(
+@router.get("/media/{media_id}/fragments/{fragment_id}")
+def get_epub_fragment(
     media_id: UUID,
-    section_id: str,
+    fragment_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
-    """Get a canonical EPUB section by encoded section id."""
-    result = epub_read.get_epub_section_for_viewer(db, viewer.user_id, media_id, section_id)
+    """Get one canonical EPUB render unit in a coherent publication snapshot."""
+    result = epub_read.get_epub_fragment_for_viewer(db, viewer.user_id, media_id, fragment_id)
     return ok(result)
 
 
@@ -78,7 +78,7 @@ def find_in_epub(
 def get_media_navigation(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
     """Get canonical reader navigation payload."""
     result = reader_navigation.get_media_navigation_for_viewer(db, viewer.user_id, media_id)

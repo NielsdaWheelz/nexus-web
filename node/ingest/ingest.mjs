@@ -32,12 +32,12 @@
  */
 
 import { JSDOM } from 'jsdom';
-import { Readability } from '@mozilla/readability';
 import {
     DEFAULT_ACCEPTED_URL_LIMITS,
     fetchAcceptedHtml,
     MAX_ACCEPTED_URL_TIMEOUT_MS,
 } from './accepted_url_egress.mjs';
+import { extractArticle } from './article_extraction.mjs';
 
 const PROTOCOL_VERSION = 1;
 const MAX_SUCCESS_URL_BYTES = 4096;
@@ -71,54 +71,6 @@ async function readStdin() {
         chunks.push(chunk);
     }
     return Buffer.concat(chunks).toString('utf-8');
-}
-
-function extractWikisourceArticle(document) {
-    const contentRoot = document.querySelector('.mw-parser-output');
-    if (!contentRoot) return null;
-
-    const body = contentRoot.querySelector(':scope > .prp-pages-output:not(.reflist)')
-        || contentRoot.querySelector(':scope > .prp-pages-output');
-    if (!body) return null;
-
-    const clone = body.cloneNode(true);
-    for (const selector of [
-        '.reference',
-        '.references',
-        '.reflist',
-        '.ws-noexport',
-        '.noprint',
-        '.pagenum',
-        'style',
-        'script',
-    ]) {
-        for (const element of clone.querySelectorAll(selector)) {
-            element.remove();
-        }
-    }
-
-    const text = (clone.textContent || '').replace(/\s+/g, ' ').trim();
-    if (text.length < 200) return null;
-
-    const title = document.querySelector('#firstHeading')?.textContent?.trim()
-        || document.title
-        || '';
-    return {
-        title,
-        content: `<article>${clone.innerHTML}</article>`,
-        byline: '',
-        excerpt: '',
-        siteName: 'Wikisource',
-        publishedTime: '',
-    };
-}
-
-function extractArticle(document) {
-    const wikisourceArticle = extractWikisourceArticle(document);
-    if (wikisourceArticle) return wikisourceArticle;
-
-    const reader = new Readability(document, { keepClasses: true });
-    return reader.parse();
 }
 
 /**

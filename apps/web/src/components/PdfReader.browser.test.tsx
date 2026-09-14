@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { useCallback, useMemo, useRef, useState, type ComponentProps } from "react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { expect, it, vi } from "vitest";
 import "pdfjs-dist/web/pdf_viewer.css";
@@ -17,10 +17,13 @@ import { createHostedReaderProgressPort } from "@/lib/reader/ReaderProgressPort"
 import { createDocumentReaderSession } from "@/lib/reader/DocumentReaderSession";
 import { useDocumentReaderSession } from "@/lib/reader/useDocumentReaderSession";
 import { useReaderScrollPositioner } from "@/lib/reader/paneScroll";
+import { dispatchReaderPulse } from "@/lib/reader/pulseEvent";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { PdfHighlightOut } from "@/lib/reader/ReaderDecorations";
 import PdfReader, {
   type PdfReaderResourceState,
+  type PdfHighlightNavigationRequest,
+  type PdfReaderControlActions,
   type PdfReaderVisibleLockReason,
 } from "./PdfReader";
 
@@ -102,7 +105,8 @@ function committedHighlight(): PdfHighlightOut {
   };
 }
 
-function installPdfBff(pdfUrl: string) {
+function installPdfBff(pdfUrl: string, creation?: Promise<Response>) {
+  const creationStarted = deferred<void>();
   const reconciliationStarted = deferred<void>();
   const reconciliation = deferred<Response>();
   let highlightMutated = false;
@@ -157,8 +161,10 @@ function installPdfBff(pdfUrl: string) {
           ? await request.clone().json()
           : JSON.parse(String(init?.body));
         highlightWrite = body as typeof highlightWrite;
+        creationStarted.resolve();
+        const response = await (creation ?? json(committedHighlight()));
         highlightMutated = true;
-        return json(committedHighlight());
+        return response;
       }
       throw new Error(
         `Unexpected PDF BFF request: ${method} ${url.pathname}${url.search}`,
@@ -167,6 +173,7 @@ function installPdfBff(pdfUrl: string) {
   );
 
   return {
+    creationStarted: creationStarted.promise,
     reconciliationStarted: reconciliationStarted.promise,
     readHighlightWrite: () => highlightWrite,
     finishReconciliation() {
@@ -191,7 +198,18 @@ function textNodeContaining(root: HTMLElement, value: string): Text {
  * `useHostedPdfPageHighlights` hook supplies page highlights behind the same
  * render-readiness gate MediaPaneBody uses (`onResourceStateChange` feedback).
  */
-function PdfReaderHarness() {
+function PdfReaderHarness({
+  navigationProof = false,
+  onAddNote,
+}: {
+  navigationProof?: boolean;
+  onAddNote?: ComponentProps<typeof PdfReader>["onAddNote"];
+}) {
+  const [navigation, setNavigation] = useState<PdfHighlightNavigationRequest | null>(null);
+  const [arrival, setArrival] = useState("none");
+  const [resumeArrival, setResumeArrival] = useState("none");
+  const navigationId = useRef(0);
+  const controlsRef = useRef<PdfReaderControlActions | null>(null);
   const [highlightRefresh, setHighlightRefresh] = useState(0);
   const [resourceState, setResourceState] = useState<PdfReaderResourceState>({
     pageNumber: 1,
@@ -225,7 +243,7 @@ function PdfReaderHarness() {
     },
     navigation: { cacheKey: null, expectedKind: null },
     loadCacheKey: `${MEDIA_ID}:reader-session`,
-    initialEpubSectionId: null,
+    initialEpubTarget: null,
     pdf: {
       sourceCacheKey: `${MEDIA_ID}:pdf-source:0`,
       sourceRefreshToken: 0,
@@ -274,7 +292,29 @@ function PdfReaderHarness() {
     () => setHighlightRefresh((value) => value + 1),
     [],
   );
+  const jump = (top: number) => {
+    const requestId = ++navigationId.current;
+    setArrival("pending");
+    setNavigation({ highlightId: "source", pageNumber: 1, requestId,
+      quads: [{ x1: 70, y1: top, x2: 130, y2: top, x3: 130, y3: top + 10, x4: 70, y4: top + 10 }],
+      isCurrent: () => requestId === navigationId.current });
+  };
   return (
+    <>
+      {navigationProof ? <>
+        <button onClick={() => jump(2_000)}>unreachable source</button>
+        <button onClick={() => jump(650)}>lower source</button>
+        <button onClick={() => {
+          const requestId = ++navigationId.current;
+          setNavigation(null);
+          setResumeArrival("pending");
+          void controlsRef.current!.applyResumeState({ kind: "pdf", page: 1, page_progression: 0, zoom: null, position: 1 }, () => requestId === navigationId.current)
+            .then((positioned) => setResumeArrival(positioned ? "visible" : "failed"));
+        }}>return to page beginning</button>
+        <output aria-label="PDF source arrival">{arrival}</output>
+        <output aria-label="PDF resume arrival">{resumeArrival}</output>
+      </> : null}
+      <div style={{ height: navigationProof ? 320 : 640, width: 800 }}>
     <PdfReader
       mediaId={MEDIA_ID}
       resources={{
@@ -283,6 +323,7 @@ function PdfReaderHarness() {
         requestSignedUrlRefresh,
       }}
       decorations={decorations}
+      onAddNote={onAddNote}
       onHighlightsMutated={handleHighlightsMutated}
       onResourceStateChange={handleResourceStateChange}
       isMobile={isMobile}
@@ -291,7 +332,12 @@ function PdfReaderHarness() {
       acquireMobileChromeVisibleLock={acquireMobileChromeVisibleLock}
       scrollPositioner={scrollPositioner}
       handleAuthenticationError={handleAuthenticationError}
+      navigateToHighlight={navigation}
+      onHighlightNavigationComplete={(positioned) => { setArrival(positioned ? "visible" : "failed"); setNavigation(null); }}
+      onControlsReady={(controls) => { controlsRef.current = controls; }}
     />
+      </div>
+    </>
   );
 }
 
@@ -380,6 +426,124 @@ it("keeps a committed PDF highlight visible while BFF reconciliation is pending"
     expect(committedOverlay!).toBeVisible();
   } finally {
     foreignTextLayer?.remove();
+    bff.finishReconciliation();
+    URL.revokeObjectURL(pdfUrl);
+  }
+});
+
+
+it("acknowledges PDF navigation only after the source geometry is visible and returns to its exact page locus", async () => {
+  await page.viewport(1_280, 800);
+  const pdfUrl = URL.createObjectURL(onePagePdf("A known 612 by 792 point source page"));
+  const bff = installPdfBff(pdfUrl);
+  try {
+    render(<MobileViewportProvider><MobileChromeProvider><ShareControllerProvider>
+      <PdfReaderHarness navigationProof />
+    </ShareControllerProvider></MobileChromeProvider></MobileViewportProvider>);
+    await screen.findByTestId("pdf-page-text-layer-1", {}, { timeout: 10_000 });
+    fireEvent.click(screen.getByRole("button", { name: "unreachable source" }));
+    await waitFor(() => expect(screen.getByLabelText("PDF source arrival")).toHaveTextContent("failed"));
+    fireEvent.click(screen.getByRole("button", { name: "lower source" }));
+    await waitFor(() => expect(screen.getByLabelText("PDF source arrival")).toHaveTextContent("visible"));
+    const viewport = screen.getByRole("region", { name: "PDF document" }).getBoundingClientRect();
+    const canvas = screen.getByTestId("pdf-page-canvas-1").getBoundingClientRect();
+    const sourceCenter = canvas.top + canvas.height * 655 / 792;
+    expect(sourceCenter).toBeGreaterThanOrEqual(viewport.top);
+    expect(sourceCenter).toBeLessThanOrEqual(viewport.bottom);
+    const beforeDecoration = screen.getByRole("region", { name: "PDF document" }).scrollTop;
+    act(() => dispatchReaderPulse({
+      mediaId: MEDIA_ID,
+      locator: { ...committedHighlight().anchor, exact: EXACT },
+      snippet: null,
+      highlightBehavior: "pulse",
+      focusBehavior: "preserve_position",
+    }));
+    await screen.findByTestId("pdf-highlight-reader-pulse-1-0");
+    expect(screen.getByRole("region", { name: "PDF document" }).scrollTop).toBe(beforeDecoration);
+    fireEvent.click(screen.getByRole("button", { name: "return to page beginning" }));
+    await waitFor(() => expect(screen.getByLabelText("PDF resume arrival")).toHaveTextContent("visible"));
+    const pageBeginning = screen.getByTestId("pdf-page-canvas-1").getBoundingClientRect().top;
+    expect(pageBeginning).toBeGreaterThanOrEqual(viewport.top - 1);
+    expect(pageBeginning).toBeLessThan(viewport.bottom);
+  } finally {
+    bff.finishReconciliation();
+    URL.revokeObjectURL(pdfUrl);
+  }
+});
+
+it("preserves the annotation caret when pending PDF highlight creation completes", async () => {
+  await page.viewport(1_280, 800);
+  const pdfUrl = URL.createObjectURL(onePagePdf(`Alpha ${EXACT} Omega`));
+  const response = deferred<Response>();
+  const bff = installPdfBff(pdfUrl, response.promise);
+  let creation: Promise<{ id: string } | null> | null = null;
+
+  try {
+    render(
+      <MobileViewportProvider>
+        <MobileChromeProvider>
+          <ShareControllerProvider>
+            <PdfReaderHarness
+              onAddNote={(session) => { creation = session.creation; }}
+            />
+            <div
+              role="textbox"
+              aria-label="Highlight note"
+              contentEditable
+              suppressContentEditableWarning
+            >
+              annotation draft
+            </div>
+          </ShareControllerProvider>
+        </MobileChromeProvider>
+      </MobileViewportProvider>,
+    );
+    const textLayer = await screen.findByTestId(
+      "pdf-page-text-layer-1",
+      {},
+      { timeout: 10_000 },
+    );
+    const textNode = textNodeContaining(textLayer, EXACT);
+    const start = textNode.data.indexOf(EXACT);
+    const range = document.createRange();
+    range.setStart(textNode, start);
+    range.setEnd(textNode, start + EXACT.length);
+    const selection = window.getSelection();
+    if (!selection) {
+      throw new Error("Chromium did not expose the document Selection.");
+    }
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    await userEvent.click(await screen.findByRole("button", { name: "Note" }));
+    await bff.creationStarted;
+
+    const annotation = screen.getByRole("textbox", { name: "Highlight note" });
+    annotation.focus();
+    const caret = document.createRange();
+    caret.selectNodeContents(annotation);
+    caret.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(caret);
+
+    expect(
+      creation,
+      "the PDF note action did not publish its pending highlight",
+    ).not.toBeNull();
+    response.resolve(json(committedHighlight()));
+    await creation;
+    expect(annotation).toHaveFocus();
+    expect(
+      selection.rangeCount,
+      "completing the PDF highlight erased the annotation's live caret",
+    ).toBe(1);
+    expect(
+      annotation.contains(selection.getRangeAt(0).commonAncestorContainer),
+    ).toBe(true);
+    await userEvent.keyboard(" survives");
+    expect(annotation).toHaveTextContent("annotation draft survives");
+  } finally {
+    response.resolve(json(committedHighlight()));
     bff.finishReconciliation();
     URL.revokeObjectURL(pdfUrl);
   }

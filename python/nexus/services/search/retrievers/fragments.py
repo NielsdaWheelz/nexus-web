@@ -49,7 +49,6 @@ def _search_fragments(
                 f.canonical_text,
                 f.t_start_ms,
                 f.t_end_ms,
-                nav.location_id AS section_id,
                 m.id AS media_id,
                 m.kind,
                 m.title,
@@ -68,14 +67,6 @@ def _search_fragments(
             FROM fragments f
             JOIN media m ON m.id = f.media_id
             JOIN visible_media vm ON vm.media_id = f.media_id
-            LEFT JOIN LATERAL (
-                SELECT location_id
-                FROM epub_nav_locations nav
-                WHERE nav.media_id = f.media_id
-                  AND nav.fragment_idx <= f.idx
-                ORDER BY nav.fragment_idx DESC, nav.ordinal DESC
-                LIMIT 1
-            ) nav ON true
             JOIN content_index_states mcis ON mcis.owner_kind = 'media'
                 AND mcis.owner_id = f.media_id
                 AND mcis.status = 'ready'
@@ -91,8 +82,8 @@ def _search_fragments(
     results: list[InternalSearchResult] = []
     for row in rows:
         locator = _direct_fragment_locator(
-            media_id=row[6],
-            media_kind=str(row[7] or ""),
+            media_id=row[5],
+            media_kind=str(row[6] or ""),
             fragment_id=row[0],
             text_value=str(row[2] or ""),
             start_offset=0,
@@ -100,7 +91,6 @@ def _search_fragments(
             exact=str(row[2] or ""),
             t_start_ms=int(row[3]) if row[3] is not None else None,
             t_end_ms=int(row[4]) if row[4] is not None else None,
-            section_id=str(row[5]) if row[5] is not None else None,
         )
         if locator is None:
             continue
@@ -108,9 +98,9 @@ def _search_fragments(
             _RankedFragmentResult(
                 id=row[0],
                 idx=int(row[1]),
-                snippet=_truncate_snippet(str(row[12] or row[2] or "")),
-                source=_build_search_source(row[6], row[7], row[8], row[10], row[9]),
-                score=_build_search_score(row[11]),
+                snippet=_truncate_snippet(str(row[11] or row[2] or "")),
+                source=_build_search_source(row[5], row[6], row[7], row[9], row[8]),
+                score=_build_search_score(row[10]),
                 citation_label=f"fragment {int(row[1]) + 1}",
                 locator=locator,
             )
@@ -138,7 +128,6 @@ def resolve_fragment_search_result(
                 f.canonical_text,
                 f.t_start_ms,
                 f.t_end_ms,
-                nav.location_id AS section_id,
                 m.id,
                 m.kind,
                 m.title,
@@ -147,14 +136,6 @@ def resolve_fragment_search_result(
             FROM fragments f
             JOIN media m ON m.id = f.media_id
             JOIN visible_media vm ON vm.media_id = f.media_id
-            LEFT JOIN LATERAL (
-                SELECT location_id
-                FROM epub_nav_locations nav
-                WHERE nav.media_id = f.media_id
-                  AND nav.fragment_idx <= f.idx
-                ORDER BY nav.fragment_idx DESC, nav.ordinal DESC
-                LIMIT 1
-            ) nav ON true
             JOIN content_index_states mcis ON mcis.owner_kind = 'media'
                 AND mcis.owner_id = f.media_id
                 AND mcis.status = 'ready'
@@ -167,8 +148,8 @@ def resolve_fragment_search_result(
     if row is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
     locator = _direct_fragment_locator(
-        media_id=row[6],
-        media_kind=str(row[7] or ""),
+        media_id=row[5],
+        media_kind=str(row[6] or ""),
         fragment_id=row[0],
         text_value=str(row[2] or ""),
         start_offset=0,
@@ -176,7 +157,6 @@ def resolve_fragment_search_result(
         exact=str(row[2] or ""),
         t_start_ms=int(row[3]) if row[3] is not None else None,
         t_end_ms=int(row[4]) if row[4] is not None else None,
-        section_id=str(row[5]) if row[5] is not None else None,
     )
     if locator is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
@@ -184,7 +164,7 @@ def resolve_fragment_search_result(
         id=row[0],
         idx=int(row[1]),
         snippet=_truncate_snippet(str(row[2] or "")),
-        source=_build_search_source(row[6], row[7], row[8], row[10], row[9]),
+        source=_build_search_source(row[5], row[6], row[7], row[9], row[8]),
         score=score,
         citation_label=f"fragment {int(row[1]) + 1}",
         locator=locator,

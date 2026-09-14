@@ -34,7 +34,7 @@ provider scheduling timestamps, acquisition, and consumption keep their own
 contracts. see the [implementation contract](../cutovers/original-publication-dates-hard-cutover.md)
 for tool limits and acceptance.
 
-the forward-only `0228` migration requires maintenance, drained publication work,
+the forward-only `0229` migration requires maintenance, drained publication work,
 and stopped old api/workers. it drops the mixed old date without copying it and
 advances affected collection revisions. deploy api, workers, and web together.
 

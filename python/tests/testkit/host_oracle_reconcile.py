@@ -89,6 +89,28 @@ def _container_config(image: str, service: str) -> dict[str, object]:
     }
 
 
+def _write_container_resource_cgroup(
+    root: Path,
+    service: str,
+    container: dict[str, object],
+) -> None:
+    relative = f"system.slice/docker-{container['id']}.scope"
+    proc = root / "proc" / str(container["pid"])
+    proc.mkdir(parents=True, exist_ok=True)
+    (proc / "cgroup").write_text(f"0::/{relative}\n", encoding="ascii")
+    cgroup = root / "sys/fs/cgroup" / relative
+    cgroup.mkdir(parents=True, exist_ok=True)
+    reservation, memory, pids = _RESOURCE_LIMITS[service]
+    for name, value in (
+        ("memory.low", reservation),
+        ("memory.max", memory),
+        ("memory.swap.max", 0),
+        ("memory.swap.current", 0),
+        ("pids.max", pids),
+    ):
+        (cgroup / name).write_text(f"{value}\n", encoding="ascii")
+
+
 @dataclass(frozen=True, slots=True)
 class HostOracleReconcileHarness:
     root: Path
@@ -250,10 +272,13 @@ class HostOracleReconcileHarness:
                 },
                 "id": character * 64,
                 "image_id": image_id,
+                "pid": 4400 + int(character),
                 "running": True,
             }
             for service, character, image_id, image in container_specs
         }
+        for service, container in containers.items():
+            _write_container_resource_cgroup(root, service, container)
         state_path = root / "fake-oracle-host-state.json"
         _save_state(
             state_path,
@@ -558,6 +583,7 @@ def _container_inspect(state: dict[str, Any], container_id: str) -> dict[str, ob
             "Health": health,
             "OOMKilled": False,
             "Paused": False,
+            "Pid": container["pid"] if container["running"] else 0,
             "Restarting": False,
             "Running": container["running"],
         },
@@ -874,7 +900,10 @@ def fake_docker_main() -> int:
     elif arguments[0] == "start":
         container_ids = arguments[1:]
         for container_id in container_ids:
-            _container_for_id(state, container_id)["running"] = True
+            container = _container_for_id(state, container_id)
+            container["running"] = True
+            service = next(name for name, item in state["containers"].items() if item is container)
+            _write_container_resource_cgroup(Path(state["root"]), service, container)
         state["start_calls"].append(container_ids)
     elif arguments[0] == "logs":
         target = arguments[-1]

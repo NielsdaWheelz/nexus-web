@@ -124,13 +124,17 @@ def test_nexus_reads_are_scoped_citable_and_closed(request: pytest.FixtureReques
         )
         conversation = conversations.create_conversation(db, owner_id)
 
-        body = "First section. A singular nebula appears only in this admitted document."
+        body = "First section\nA singular nebula appears only in this admitted document."
         media_id = create_readable_media(
             db,
             user_id=owner_id,
             default_library_id=owner_default,
             title="Admitted evidence atlas",
             canonical_text=body,
+            html_sanitized=(
+                "<h1>First section</h1>"
+                "<p>A singular nebula appears only in this admitted document.</p>"
+            ),
         )
         related_media_id = create_readable_media(
             db,
@@ -361,7 +365,7 @@ def test_nexus_reads_are_scoped_citable_and_closed(request: pytest.FixtureReques
                 "page_end": None,
                 "page_start": None,
                 "parent_label": None,
-                "preview": body,
+                "preview": "First section",
                 "read_uri": f"fragment:{fragment_id}",
                 "section_kind": "heading",
                 "t_end_ms": None,

@@ -1,0 +1,71 @@
+{
+  "cases": [
+    {
+      "name": "unequal chapters and a co-located parent and child",
+      "fragments": [
+        { "fragment_id": "first", "fragment_idx": 0, "char_count": 100 },
+        { "fragment_id": "middle", "fragment_idx": 1, "char_count": 300 },
+        { "fragment_id": "last", "fragment_idx": 2, "char_count": 600 }
+      ],
+      "sections": [
+        { "id": "part", "parent": null, "start": ["first", 0], "end": ["last", 600] },
+        { "id": "first-chapter", "parent": "part", "start": ["first", 0], "end": ["middle", 0] },
+        { "id": "middle-chapter", "parent": "part", "start": ["middle", 0], "end": ["last", 0] },
+        { "id": "middle-opening", "parent": "middle-chapter", "start": ["middle", 0], "end": ["middle", 100] },
+        { "id": "last-chapter", "parent": "part", "start": ["last", 0], "end": ["last", 600] }
+      ],
+      "coverage": [
+        { "start": 0, "end": 100, "section": "first-chapter" },
+        { "start": 100, "end": 200, "section": "middle-opening" },
+        { "start": 200, "end": 400, "section": "middle-chapter" },
+        { "start": 400, "end": 1000, "section": "last-chapter" }
+      ],
+      "points": [
+        { "point": ["first", 50], "absolute": 50, "global": 0.05, "section": "first-chapter", "local": 0.5 },
+        { "point": ["first", 100], "absolute": 100, "global": 0.1, "section": "middle-opening", "local": 0 },
+        { "point": ["middle", 0], "absolute": 100, "global": 0.1, "section": "middle-opening", "local": 0 },
+        { "point": ["middle", 100], "absolute": 200, "global": 0.2, "section": "middle-chapter", "local": 0.3333333333333333 },
+        { "point": ["middle", 150], "absolute": 250, "global": 0.25, "section": "middle-chapter", "local": 0.5 },
+        { "point": ["last", 300], "absolute": 700, "global": 0.7, "section": "last-chapter", "local": 0.5 },
+        { "point": ["last", 600], "absolute": 1000, "global": 1, "section": "last-chapter", "local": 1 }
+      ]
+    },
+    {
+      "name": "unsectioned gaps, aliases, an empty section and an extentless target",
+      "fragments": [{ "fragment_id": "text", "fragment_idx": 0, "char_count": 100 }],
+      "sections": [
+        { "id": "opening", "parent": null, "start": ["text", 10], "end": ["text", 20] },
+        { "id": "z-alias", "parent": null, "start": ["text", 30], "end": ["text", 70] },
+        { "id": "a-chapter", "parent": null, "start": ["text", 30], "end": ["text", 70] },
+        { "id": "child", "parent": "a-chapter", "start": ["text", 30], "end": ["text", 40] },
+        { "id": "empty", "parent": null, "start": ["text", 70], "end": ["text", 70] },
+        { "id": "uncertain", "parent": null, "start": ["text", 80], "end": null }
+      ],
+      "coverage": [
+        { "start": 0, "end": 10, "section": null },
+        { "start": 10, "end": 20, "section": "opening" },
+        { "start": 20, "end": 30, "section": null },
+        { "start": 30, "end": 40, "section": "child" },
+        { "start": 40, "end": 70, "section": "a-chapter" },
+        { "start": 70, "end": 80, "section": null },
+        { "start": 80, "end": 100, "section": null }
+      ],
+      "points": [
+        { "point": ["text", 0], "absolute": 0, "global": 0, "section": null, "local": null },
+        { "point": ["text", 10], "absolute": 10, "global": 0.1, "section": "opening", "local": 0 },
+        { "point": ["text", 20], "absolute": 20, "global": 0.2, "section": null, "local": null },
+        { "point": ["text", 30], "absolute": 30, "global": 0.3, "section": "child", "local": 0 },
+        { "point": ["text", 40], "absolute": 40, "global": 0.4, "section": "a-chapter", "local": 0.25 },
+        { "point": ["text", 70], "absolute": 70, "global": 0.7, "section": null, "local": null },
+        { "point": ["text", 100], "absolute": 100, "global": 1, "section": null, "local": null }
+      ]
+    },
+    {
+      "name": "textless content retains an exact outline target without percentages",
+      "fragments": [{ "fragment_id": "illustration", "fragment_idx": 0, "char_count": 0 }],
+      "sections": [{ "id": "plate", "parent": null, "start": ["illustration", 0], "end": ["illustration", 0] }],
+      "coverage": [],
+      "points": [{ "point": ["illustration", 0], "absolute": 0, "global": null, "section": null, "local": null }]
+    }
+  ]
+}

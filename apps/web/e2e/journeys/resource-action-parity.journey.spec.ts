@@ -300,30 +300,35 @@ test("canonical resources yield identical dropdown semantics across surfaces and
     "resource-action-parity",
   );
 
+  const fragmentsResponse = await api.get(`/api/media/${mediaId}/fragments`);
+  expect(
+    fragmentsResponse.ok(),
+    "The captured article must publish its source fragments.",
+  ).toBeTruthy();
+  const articleFragments = (await fragmentsResponse.json()) as {
+    data: { id: string }[];
+  };
+  expect(
+    articleFragments.data,
+    "The captured article fixture contains one source fragment.",
+  ).toHaveLength(1);
+  const articleFragment = articleFragments.data[0]!;
+
   // ---- Pin the CONSUMPTION fact before ANY surface read ---------------------
-  // AC1 parity holds for one facts revision. Reading a web article records a
-  // reader-engagement row, which the snapshot projects as InProgress and which
-  // also switches on the "Reset progress" resource action. That write is what the
-  // reader UI performs asynchronously on open, so if it landed mid-journey a later
-  // surface would legitimately read a DIFFERENT facts revision than the oracle and
-  // fail parity for a non-regression reason. Do it deterministically up front
-  // through the SAME real endpoint the reader uses (PUT reader-state), keeping
-  // total progression far below the 0.95 finished threshold, then wait for the
-  // AUTHORITATIVE action-snapshot to project InProgress. Every surface below then
-  // reads this one stable fact — only an explicit Mark-as-finished (never invoked
-  // here) could move it on, and the reader opens below only GREATEST() this low
-  // progression, so it cannot drift.
+  // AC1 parity compares one facts revision. Seed a real source cursor through
+  // reader-state, then wait for its authoritative InProgress action snapshot.
+  // Opening the reader restores that cursor without recording new reading.
   const mediaRef = `media:${mediaId}`;
   const readerState = await api.put(`/api/media/${mediaId}/reader-state`, {
     headers: { origin: webOrigin },
     data: {
       locator: {
         kind: "web",
-        target: { fragment_id: "p0" },
+        target: { fragment_id: articleFragment.id },
         locations: {
           text_offset: 0,
-          progression: 0.02,
-          total_progression: 0.02,
+          progression: 0,
+          total_progression: 0,
           position: 1,
         },
         text: { quote: null, quote_prefix: null, quote_suffix: null },

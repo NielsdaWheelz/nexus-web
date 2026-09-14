@@ -28,6 +28,15 @@ cancelled). GitHub-hosted runners took about 75 minutes.
 `docs/local-rules/testing-standards.md` section 7 states the `pr` warm target
 as 3 to 5 minutes locally.
 
+2026-09-12 evidence: main run `34712797648`, receipt `28bf282776b0105f`,
+passes in 99m40s of controller execution (101m24s for the job); kernel-python
+takes 73m44s. ordinary changed run `34718249742` selects the complete kernel
+after proof-ownership changes, then exceeds its 90-minute job limit during
+service verification. its annotation reads `The job has exceeded the maximum
+execution time of 1h30m0s`; evidence upload is skipped. the ordinary job envelope
+is now 120 minutes. this preserves the portfolio but does not resolve
+the latency target or establish a p95 bound; this ticket remains open.
+
 ## Done on 2026-09-06
 
 The `pull_request` CI job now runs `./scripts/test changed --base <base sha>`;

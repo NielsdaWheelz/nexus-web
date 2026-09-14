@@ -91,7 +91,12 @@ export default function SelectionActionDock({
 
   useEffect(() => {
     return () => {
-      if (focusEnteredRef.current && priorFocusRef.current?.isConnected) {
+      if (
+        focusEnteredRef.current &&
+        priorFocusRef.current?.isConnected &&
+        (document.activeElement === document.body ||
+          document.activeElement === document.documentElement)
+      ) {
         priorFocusRef.current.focus();
       }
     };

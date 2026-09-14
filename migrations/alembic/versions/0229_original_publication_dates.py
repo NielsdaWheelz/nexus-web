@@ -1,7 +1,7 @@
 """Separate work publication from the encountered edition.
 
-Revision ID: 0228
-Revises: 0227
+Revision ID: 0229
+Revises: 0228
 
 Stop admission and old API/workers before applying this forward-only cutover.
 Mixed historical dates cannot safely seed either new field.
@@ -10,8 +10,8 @@ Mixed historical dates cannot safely seed either new field.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0228"
-down_revision = "0227"
+revision = "0229"
+down_revision = "0228"
 branch_labels = None
 depends_on = None
 
@@ -53,8 +53,12 @@ def upgrade() -> None:
             f"resolve {pending.owner} {pending.id} before migrating."
         )
 
-    op.add_column("media", sa.Column("original_published_date", sa.Text(), nullable=True))
-    op.add_column("media", sa.Column("edition_published_date", sa.Text(), nullable=True))
+    op.add_column(
+        "media", sa.Column("original_published_date", sa.Text(), nullable=True)
+    )
+    op.add_column(
+        "media", sa.Column("edition_published_date", sa.Text(), nullable=True)
+    )
     op.add_column("media", sa.Column("edition_isbn", sa.Text(), nullable=True))
     op.drop_column("media", "published_date")
     connection.execute(

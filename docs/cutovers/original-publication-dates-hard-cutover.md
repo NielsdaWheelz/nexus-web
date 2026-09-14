@@ -62,7 +62,7 @@ the existing `ResourceCreditsOverlay` has one production consumer. evolve it int
 
 **hard cutover.** enter maintenance: stop new admission, drain/reconcile relevant source/podcast/metadata work, then stop old api and worker readers/writers before migration. unresolved accepted metadata execution blocks the cutover. do not decode old generated payloads with a compatibility branch.
 
-add the new columns empty and drop `media.published_date`. do not copy mixed legacy values into either date. keep historical migration files and opaque completed execution history; remove executable old-field readers/writers. deploy api, worker, and web together; refresh stale clients and advance affected collection revisions so old cursor projections cannot be reused.
+migration `0229`, after reader structure migration `0228`, adds the new columns empty and drops `media.published_date`. do not copy mixed legacy values into either date. keep historical migration files and opaque completed execution history; remove executable old-field readers/writers. deploy api, worker, and web together; refresh stale clients and advance affected collection revisions so old cursor projections cannot be reused.
 
 provide one maintenance command, `backfill_media_publication_dates --viewer-id <uuid>`, using existing queue admission and per-media dedupe. process authorized readable media in bounded batches. for existing epubs, reuse opf-only extraction from their stored source to populate edition/isbn hints; do not rebuild content, search indexes, annotations, or reader packages. enqueue one research job per selected media. normal ingestion handles unfinished imports. report queued/skipped/failed counts through ordinary command/job output; no new dashboard or durable backfill framework.
 

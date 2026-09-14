@@ -1,3 +1,6 @@
+import { decodePresence, type Presence } from "@/lib/api/presence";
+import { expectString } from "@/lib/validation";
+
 /**
  * Reader profile and persisted resume-state types.
  *
@@ -105,9 +108,9 @@ export interface TranscriptReaderResumeState {
 export interface EpubReaderResumeState {
   kind: "epub";
   target: {
-    section_id: string;
+    fragment_id: string;
     href_path: string;
-    anchor_id: string | null;
+    anchor_id: Presence<string>;
   };
   locations: ReaderResumeLocations;
   text: ReaderResumeTextContext;
@@ -336,27 +339,26 @@ export function parseReaderResumeState(value: unknown): ReaderResumeState | null
     if (!hasExactKeys(value, ["kind", "target", "locations", "text"])) {
       throw new Error("Invalid reader state payload");
     }
-    if (!hasExactKeys(target, ["section_id", "href_path", "anchor_id"])) {
+    if (!hasExactKeys(target, ["fragment_id", "href_path", "anchor_id"])) {
       throw new Error("Invalid reader state payload");
     }
-    const sectionId = parseRequiredStringField(target.section_id);
+    const fragmentId = parseRequiredStringField(target.fragment_id);
     const hrefPath = parseRequiredStringField(target.href_path);
-    const anchorId = parseNullableStringField(target.anchor_id);
+    const anchorId = decodePresence(target.anchor_id, (value) => expectString(value, "reader target.anchor_id.value"));
     if (
-      !sectionId.ok ||
-      sectionId.value === null ||
+      !fragmentId.ok ||
+      fragmentId.value === null ||
       !hrefPath.ok ||
-      hrefPath.value === null ||
-      !anchorId.ok
+      hrefPath.value === null
     ) {
       throw new Error("Invalid reader state payload");
     }
     return {
       kind,
       target: {
-        section_id: sectionId.value,
+        fragment_id: fragmentId.value,
         href_path: hrefPath.value,
-        anchor_id: anchorId.value,
+        anchor_id: anchorId,
       },
       locations,
       text,
@@ -373,9 +375,11 @@ function reflowableReaderResumeStatesEqual(
   return (
     left.kind === right.kind &&
     (left.kind === "epub" && right.kind === "epub"
-      ? left.target.section_id === right.target.section_id &&
+      ? left.target.fragment_id === right.target.fragment_id &&
         left.target.href_path === right.target.href_path &&
-        left.target.anchor_id === right.target.anchor_id
+        left.target.anchor_id.kind === right.target.anchor_id.kind &&
+        (left.target.anchor_id.kind === "Absent" ||
+          (right.target.anchor_id.kind === "Present" && left.target.anchor_id.value === right.target.anchor_id.value))
       : left.kind !== "epub" &&
         right.kind !== "epub" &&
         left.target.fragment_id === right.target.fragment_id) &&

@@ -44,20 +44,30 @@ proves the candidate version code is greater, installs the signed candidate in
 place, and verifies the resulting installed version. It also reads
 `ro.kernel.qemu` and `ro.boot.qemu` back from the device and refuses an emulated
 endpoint, because a `usb:` row is a topology fact and not proof of real
-hardware. The signed instrumentation selection contains exactly, in this order:
+hardware. The signed instrumentation owners are:
 
-1. `OfflineReadingSignedPhysicalPromotionTest#acquiresAllFormatsAndPersistsPendingProgressOnBaseline`
-2. `OfflineReadingSignedPhysicalPromotionTest#opensShelfAfterForceStopRebootAndAirplaneMode`
-3. `NativeAuthHandoffTest#nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin`
-4. `OfflineReadingDeviceLifecycleTest#sqliteFilesSealRecreateLeaseRemovalAndAccountPurge`
-5. `OfflineReadingSignedPhysicalPromotionTest#opensV1AfterUpdateThenPurgesOfflineState`
+1. `OfflineReadingSignedPhysicalPromotionTest#acquiresAllFormatsAndPersistsPendingProgress`
+2. `OfflineReadingSignedPhysicalPromotionTest#attestsEmptyOfflineStateOnIncompatibleBaseline`
+3. `OfflineReadingSignedPhysicalPromotionTest#opensShelfAfterForceStopRebootAndAirplaneMode`
+4. `NativeAuthHandoffTest#nativeAuthStartCarriesTheExactHandoffContractToTheOwnedOrigin`
+5. `OfflineReadingDeviceLifecycleTest#sqliteFilesSealRecreateLeaseRemovalAndAccountPurge`
+6. `OfflineReadingSignedPhysicalPromotionTest#reopensPersistedPackagesThenPurgesOfflineState`
 
-The staged controller owns the sequence between them: it builds both APKs
+The default compatible topology builds both APKs
 without installing the candidate, attests the device online, installs only the
 release instrumentation APK beside the strictly older baseline, runs (1), then
-force-stops, reboots, waits for first unlock, attests airplane mode, runs (2),
-installs the candidate in place, and only then runs the candidate-update methods
-(3)–(5). `OfflineReadingDeviceLifecycleTest` proves the signed artifact can
+force-stops, reboots, waits for first unlock, attests airplane mode, runs (3),
+installs the candidate in place, and only then runs (4)–(6).
+
+The explicit `empty_baseline_hard_cut` topology is only for an incompatible
+contract after production activates the candidate contract. It starts offline,
+force-stops the old app, and runs (2) as a read-only census of its package files
+and every durable offline-reading table. It requires the complete legacy shelf
+empty without starting recovery or cleanup. It then installs the
+candidate, goes online for (1), and only afterward runs the rebooted-offline
+(3)–(6) validation. Any legacy item blocks release. The mode cannot be combined
+with `bootstrap_no_device` and is never an excuse to delete or guess old state.
+`OfflineReadingDeviceLifecycleTest` proves the signed artifact can
 recreate sealed SQLite/file state, reopen a package, delay removal behind a
 lease, and purge on account change; it is not a substitute for the promotion
 scenario.

@@ -257,6 +257,10 @@ android {
 }
 
 tasks.withType<Test>().configureEach {
+    testLogging {
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showStackTraces = false
+    }
     systemProperty(
         "nexus.testdata.offlineReadingContract",
         rootProject.file("../../testdata/offline-reading-contract-v1.json").absolutePath,

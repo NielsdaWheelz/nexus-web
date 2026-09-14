@@ -4,6 +4,7 @@ import ast
 import hashlib
 
 _PYTHON_EXACT_OWNER_DIGEST_DOMAIN = b"nexus-python-exact-proof-source-v1\0"
+_NODE_WHOLE_FILE_OWNER_DIGEST_DOMAIN = b"nexus-node-whole-file-proof-source-v1\0"
 
 
 def _statement_source(source_lines: list[str], statement: ast.stmt) -> str | None:
@@ -52,4 +53,13 @@ def python_exact_proof_owner_sha256(source: str, node: str) -> str | None:
         encoded = statement.encode("utf-8")
         digest.update(len(encoded).to_bytes(8, byteorder="big"))
         digest.update(encoded)
+    return digest.hexdigest()
+
+
+def node_whole_file_proof_owner_sha256(source: str) -> str:
+    """Hash the complete source owned by one whole-file Node proof."""
+    encoded = source.encode("utf-8")
+    digest = hashlib.sha256(_NODE_WHOLE_FILE_OWNER_DIGEST_DOMAIN)
+    digest.update(len(encoded).to_bytes(8, byteorder="big"))
+    digest.update(encoded)
     return digest.hexdigest()

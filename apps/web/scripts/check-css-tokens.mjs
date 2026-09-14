@@ -84,12 +84,6 @@ const runtimeCustomPropertyOwners = new Map([
     "--position",
     "src/components/reader/ReaderDocumentMapOverviewRail.tsx",
   ],
-  // How far the living marginalia's vine is drawn: the furthest-read fraction,
-  // accumulated locally and installed per document on the rail's own SVG.
-  [
-    "--vine-reach",
-    "src/components/reader/ReaderDocumentMapOverviewRail.tsx",
-  ],
 ]);
 
 // Direction §5 — the absence lint. No Tengwar webfont ships, ever: the

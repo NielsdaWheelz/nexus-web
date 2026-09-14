@@ -137,23 +137,23 @@ selected exact module-level Python test plus its imports and non-test module
 support differs from base. Sibling tests are separate owners: changing only a
 sibling retains the selected owner's declared FAULT.
 
-One exact module-level Python proof MAY opt into
+One exact module-level Python proof or whole-file Node proof MAY opt into
 `changed_owner_red: coherent-fault` on its single registered product fault when
 an intentional hard-cut interface or a behavior-preserving proof-ownership
 refactor prevents BASE from reaching or falsifying the retained behavioral
-contract. Policy MUST require one canonical exact proof, one product-only
-applicable patch, its SHA-256, and its expected assertion fingerprint. The
-manifest MUST also pin the SHA-256 of version-stable source slices for that exact
-test plus its imports and non-test module support; interpreter-specific AST
-serialization is not a durable encoding. Any owner drift is a policy failure
-requiring explicit review and a new digest. The coherent-candidate fault proves
-only that registered contract; every independent new behavior requires a
-separate exact proof and sensitivity witness. The exception mechanism itself
-MUST have a canonical BASE sensitivity owner. The work report MUST name why
-BASE was inapplicable.
-Whole-file owners, class-qualified nodes, non-Python exact nodes, unmarked
-faults, absent owners, duplicate owners, parse failures, digest drift, and Git
-read failures fail closed.
+contract. Policy MUST require one canonical proof, one product-only applicable
+patch, its SHA-256, and its expected assertion fingerprint. The manifest MUST
+also pin the SHA-256 of version-stable source slices for the exact Python test
+plus its imports and non-test module support, or the complete source of the
+whole-file Node owner; interpreter-specific syntax-tree serialization is not a
+durable encoding. Any owner drift is a policy failure requiring explicit review
+and a new digest. The coherent-candidate fault proves only that registered
+contract; every independent new behavior requires a separate proof and
+sensitivity witness. The exception mechanism itself MUST have a canonical BASE
+sensitivity owner. The work report MUST name why BASE was inapplicable.
+Whole-file Python owners, class-qualified Python nodes, node-qualified Node
+owners, other runners, unmarked faults, absent owners, duplicate owners, parse
+failures, digest drift, and Git read failures fail closed.
 
 A Python BASE checkout MUST retain the baseline revision's dependency manifests
 and locks. Candidate Python proof and shared test-support overlays MUST NOT
@@ -455,7 +455,11 @@ adapter. The Makefile deliberately has no test/check/verify aliases.
 Manual CI recovery verifies the exact open PR head and base, then constructs
 their synthetic merge. Its `proof` choice defaults to `changed`; select `pr`
 to run the complete PR portfolio and same-run sensitivity on the Linux runner.
-Only that manual `pr` job has a 480-minute limit; ordinary PR proof keeps 90.
+That manual `pr` job has a 480-minute limit; ordinary PR and manual `changed`
+jobs have 120 minutes. Main run `34712797648` completed its job in 101m24s
+(controller: 99m39.736s), giving 18m36s of observed headroom. This is a
+provisional execution bound from one measured run, not a p95 target. Proof
+selection and behavioral timeouts remain unchanged.
 
 The controller gives real-stack browser capabilities one clean data epoch. It
 recreates the exact run-owned application database from the immutable template
@@ -868,14 +872,23 @@ direct API origin embedded in the APK. Physical offline-reading promotion must
 compare that origin with the real mint response's `package_base_url` and fail
 closed on drift; native exact-origin enforcement is not relaxed.
 
-The signed physical promotion controller is staged: it must acquire against the
-strictly older installed baseline before candidate installation, own and attest
-force-stop/reboot/first-unlock/airplane before the cold-offline phase, and only
-then install the candidate in place for V1 reopen/progress/purge/update. A
-missing executable staged owner is `not_run`; a controller topology test is not
-physical promotion evidence. Retained release evidence records only facts the
-controller read back from the device — the qemu build properties and each
-phase's `airplane_mode_on` value — never an assumed constant.
+The signed physical promotion controller has two explicit device topologies.
+The default, compatible topology acquires against the strictly older installed
+baseline, owns and attests force-stop/reboot/first-unlock/airplane for its cold
+offline phase, then installs the candidate in place for exact
+reopen/progress/purge validation. An incompatible contract cut may instead use
+`empty_baseline_hard_cut`, but only after production activates the candidate
+contract: the controller first enables airplane mode and proves the complete
+legacy shelf empty through a quiesced read-only file/database census that cannot
+invoke cleanup, installs the candidate, disables airplane mode for
+candidate acquisition, then force-stops/reboots and proves the candidate's
+packages and progress offline before purge. This mode is not compatible with
+`bootstrap_no_device`; it never guesses, migrates, or silently discards legacy
+offline state. A missing executable staged owner is `not_run`; a controller
+topology test is not physical promotion evidence. Retained release evidence
+records the selected topology and only facts the controller read back from the
+device — the qemu build properties and each phase's `airplane_mode_on` value —
+never an assumed constant.
 
 Extension proof covers MV3 runtime, permissions, bearer scope, content capture,
 and handoff boundaries. Reuse the canonical content corpus.
@@ -908,7 +921,9 @@ Immutable run-context/resource-plan evidence is the complete audit record, not
 the cleanup oracle. The mutable recovery ledger is the cleanup authority.
 
 Process identity uses the persisted run and random owner tokens, process-group
-leader PID, and kernel start token. The planned command remains audit evidence,
+leader PID, and kernel start token. On Linux, each owner token also names one
+transient user scope whose cgroup contains the complete descendant tree across
+sessions and controller restarts. The planned command remains audit evidence,
 not a live identity oracle: runtimes such as Next may legitimately rewrite
 `argv`. Readiness MUST verify that a socket in the exact owned process group
 owns the expected loopback listener; a healthy stale or foreign listener is a

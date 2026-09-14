@@ -5,6 +5,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.util.UUID
@@ -94,7 +95,12 @@ class OfflineReadingSharedContractTest {
                     .toByteArray()
             )
             if (expected == "Accept") {
-                OfflineReaderDocumentVerifier.verify(vector.getString("utf8").toByteArray(), manifest)
+                assertTrue(
+                    "shared accepted reader failed admission: ${vector.getString("id")}",
+                    runCatching {
+                        OfflineReaderDocumentVerifier.verify(vector.getString("utf8").toByteArray(), manifest)
+                    }.isSuccess,
+                )
             } else {
                 assertThrows("expected ${vector.getString("id")} to reject", RuntimeException::class.java) {
                     OfflineReaderDocumentVerifier.verify(vector.getString("utf8").toByteArray(), manifest)

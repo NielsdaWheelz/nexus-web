@@ -309,13 +309,11 @@ completion event model, observer framework, or second command.
 
 ### layered epub/web/pdf resume
 
-- epub resolves one-shot hash targets such as `#loc-<section_id>` first,
-  then saved exact target snapshots, then coarse fallback, then first section.
-  Pane-local section navigation replaces `?loc={section_id}` as coarse
-  in-visit address state; it adds no Back/Forward entry.
-- once the section is open, epub restores by exact text offset,
-  then quote context, then progression, then coarse publication fallback,
-  then anchor fallback
+- epub resolves fresh exact targets, then the saved exact fragment cursor,
+  then an empty-cursor outline query, then the first source fragment.
+- content loads by fragment identity; headings determine semantic context.
+  exact offsets and named anchors are verified after rendering. unavailable
+  targets do not become quote/progression approximations.
 - restore is one-shot and abortable; user scroll cancels any pending
   automatic restore
 - web/transcript pick fresh explicit fragment/time targets first. A saved web
@@ -347,8 +345,8 @@ absent rather than becoming a zero or a scrollbar estimate.
 
 Document Map markers use exact owner start locators. EPUB Contents targets are
 exact element starts; missing named anchors reject navigation. Dense rail
-targets cluster by median position and expose every destination, rather than
-choosing a first marker. Preview, Return, and restore can paint the rail but
+targets retain exact ticks while bounded hit groups expose every destination.
+structure and evidence use separate lanes; aliases do not duplicate content. Preview, Return, and restore can paint the rail but
 cannot write progress or activity.
 
 ### addressability versus history
@@ -365,19 +363,17 @@ workspace to guess reader semantics from URL shape; instead the reader
 replaces its own address and the workspace's Back/Forward stays about panes,
 not passages.
 
-the one accepted cost: pane Back/Forward no longer returns to the passage a
-footnote, apparatus entry, highlight, or embed jump was launched from. the
-prototype accepts this loss rather than adding a reader-local return stack or
-a new affordance; Contents, section controls, Document Map/Evidence
-navigation, and canonical resume remain, but none of them restores the exact
-source passage.
+document-map excursions retain one exact departure for return, without adding
+pane history or a reader history stack. successful arrival establishes the
+origin; failure preserves the prior position. genuine reading adoption,
+dismissal, source replacement, and successful return clear it.
 
 ### epub request surface
 
 - epub navigation is sourced from `GET /api/media/{id}/navigation`
-- epub section content is sourced from
-  `GET /api/media/{id}/sections/{section_id}`
-- `section_id` is path-encoded and may contain `/`
+- epub render content is sourced from
+  `GET /api/media/{id}/fragments/{fragment_id}`
+- section identity addresses structure; fragment identity addresses content
 - `#loc-<section_id>` is the one-shot reader target shape; `?loc={section_id}`
   is the pane-local coarse address state that replace writes — not a
   Back/Forward checkpoint

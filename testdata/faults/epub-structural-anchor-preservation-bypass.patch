@@ -1,9 +1,12 @@
-diff --git a/python/nexus/services/epub_ingest.py b/python/nexus/services/epub_ingest.py
---- a/python/nexus/services/epub_ingest.py
-+++ b/python/nexus/services/epub_ingest.py
-@@ -1646,5 +1646,1 @@ def _sanitize_epub_element(element: HtmlElement) -> None:
--        if _element_id(element) is not None:
--            element.tag = "span"
--            _sanitize_epub_attributes(element, "span")
--            return
-         unwrap_element(element)
+diff --git a/python/nexus/services/epub_structure.py b/python/nexus/services/epub_structure.py
+--- a/python/nexus/services/epub_structure.py
++++ b/python/nexus/services/epub_structure.py
+@@ -147,7 +147,7 @@
+ 
+     for fragment in fragments:
+         for index, element in enumerate(fragment.canonical.elements):
+-            if element.tag not in HEADING_TAGS:
++            if element.tag not in HEADING_TAGS or (fragment.fragment_idx, index) not in by_element:
+                 continue
+             label = normalize_whitespace(
+                 fragment.canonical.text[element.start_offset : element.end_offset]

@@ -1390,20 +1390,25 @@ admission. Migration preflight refuses:
 
 - any nonterminal `chat_runs`, `llm_calls`, or `agent_turns` row;
 - any pending/running/failed generation-kind background job;
-- any dead domain-owned generation job, and any dead `synapse_scan` whose
-  payload still contains an `Uncertain` dispatch journal;
+- any unclassified dead generation job, any dead `synapse_scan` whose payload
+  still contains an `Uncertain` dispatch journal, and any dead
+  `enrich_metadata` job without a finished, unclaimed, known failed result in
+  one of the two frozen historical shapes whose error matches the queue error;
 - any uncertain generation/tool dispatch journal; or
 - an Artifact build or Learn resolver whose outcome could still publish.
 
 Operators drain or explicitly cancel those exact rows and rerun the migration;
-the migration never guesses. A dead `synapse_scan` is the sole terminal queue
-exception: its queue row is the complete scan state, its failed execution
-preserves the previously published edge set, and the complete generation reset
-deletes the row only after the independent nonterminal-`llm_calls` and
-`Uncertain`-journal preflights pass. Never update or delete a queue row manually
-to satisfy this preflight. A production backup/PITR checkpoint is a prudent
-operator safeguard but is outside repository acceptance and is not represented
-as a tested disaster-recovery guarantee.
+the migration never guesses. A dead `synapse_scan` is headless queue state: its
+failed execution preserves the previously published edge set, and the reset
+deletes it only after the independent nonterminal-`llm_calls` and
+`Uncertain`-journal preflights pass. A dead `enrich_metadata` row is deleted only
+when its exact terminal queue result proves one frozen intentional failure. The
+extended historical shape additionally requires exact nonempty provider/model
+attempt objects and a top-level provider/model pair matching the terminal
+attempt; current Media metadata and failure facts remain. Never update or delete
+a queue row manually to satisfy this preflight. A production backup/PITR
+checkpoint is a prudent operator safeguard but is outside repository acceptance
+and is not represented as a tested disaster-recovery guarantee.
 
 Within one deterministic PostgreSQL migration transaction, using explicit
 child-first deletes rather than broad cascade:
@@ -1597,7 +1602,7 @@ meaningful RED before GREEN.
 | Secrets/confinement | `pytest:python/tests/service/test_generation_secret_isolation.py::test_route_secrets_and_continuations_never_cross_boundaries` | cross-route credential projection; sealed-continuation non-disclosure; terminal redaction; ProviderApi header/body observation; native process, bearer/lease, and egress stay with their existing named owners |
 | Provider loopback control | `pytest:python/tests/kernel/nexus_test_control/test_provider_api_peer.py::test_provider_peer_is_controller_owned_and_recovered` | resource/port/credentials; TLS/base URL; recovery/cleanup; no fixture branch |
 | Operation portfolio | `pytest:python/tests/kernel/test_generation_operation_adapters.py` | exact fourteen intent/policy rows; exactly Library/Idea `ExactModelTools`; exactly twelve `NoModelTools`; Dawn, Media Unit, Oracle, and Synapse task adapters delegate one frozen route-neutral generation; content owners cannot choose runtime policy |
-| Reset migration admission | `pytest:python/tests/migrations/test_generation_backends_cutover_admission.py::test_0224_refuses_the_only_undrained_generation_job_before_history_reset` | otherwise-empty 0223; one queue row proves pending and dead domain-owned refusal, nonterminal-call and uncertain-journal refusal for dead Synapse without mutation, and deletion only after the headless scan is unambiguous |
+| Reset migration admission | `pytest:python/tests/migrations/test_generation_backends_cutover_admission.py::test_0224_refuses_the_only_undrained_generation_job_before_history_reset` | otherwise-empty 0223; pending and dead domain-owned refusal; nonterminal-call and uncertain-journal refusal for dead Synapse; absent, mismatched, unknown, malformed, claimed, and unfinished enrichment-result refusal; both exact historical terminal shapes reset only |
 | Reset migration convergence | `pytest:python/tests/migrations/test_generation_backends_cutover.py::test_0223_aggregate_reset_preserves_domain_data` | empty DB; synthetic 0223; domain-reference refusal; preservation digests; empty final authorship table; zero legacy refs |
 | Product Chat API | `pytest:python/tests/service/test_generation_chat_api.py::test_exact_selection_and_authority_cross_every_chat_projection` (canonical node; the whole file stays registered, so its sibling nodes remain priority-routed) | create/idempotency/frozen spec/history/trust; rerun/regenerate authority; strict legacy/bodyless ingress; typed selection failures; pre-durable binding refusal; closed failure projection and rerun eligibility |
 | Product catalog API | `pytest:python/tests/service/test_generation_catalog.py` (sibling nodes of the registered whole-file owner; canonical node above) | strict private catalog projection and typed source failure |

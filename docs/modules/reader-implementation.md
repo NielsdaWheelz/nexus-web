@@ -112,12 +112,12 @@ seeks, plays, resumes, mounts a progress seam, or creates an activity seam.
 Partial coverage is explicit in both zero and nonzero result states. Close
 clears marks without returning; Return restores and retires the one origin.
 
-EPUB Find searches canonical fragments through the bounded EPUB Find API.
-Cross-section preview uses a rendered-section override, while committed
+epub find searches canonical fragments through the bounded epub find api.
+cross-fragment preview uses a rendered-fragment override, while committed
 navigation, URL, restore state, progress, completion, and activity remain
-fenced. The first genuine input atomically adopts the rendered section and is
-capture-suppressed; later input resumes ordinary reader behavior. Same-section
-stepping reuses the rendered section without a request.
+fenced. the first genuine input atomically adopts the rendered fragment and is
+capture-suppressed; later input resumes ordinary reader behavior. same-fragment
+stepping reuses the rendered fragment without a request.
 
 PDF Find delegates exact matching and marks to PDF.js while the shared session
 owns query, cancellation, preview, and Return. App-owned page, zoom, restore,
@@ -186,19 +186,19 @@ generic secondary-pane disclosure contract.
 - Desktop has a fixed **Document Map overview rail**. It consumes aggregate
   markers from `GET /media/{id}/document-map`, shows whole-document positions
   for positioned reader facts, and activates the matching contextual target.
-  It has no generic opener.
-- Contents uses `ReaderContentsNav`.
+  source ticks keep exact coordinates; separate hit groups open their members.
+- contents uses the shared `ReaderDocumentMapDetail`: outline, pinned local
+  scope, current position, and one excursion return.
 - Evidence uses `EvidencePaneSurface`. The shipped surface merges highlights,
   source-authored apparatus, and resource-graph connections; its wide-reader
   companion is `MarginRail`.
 - Mobile has no interactive Document Map overview rail. The same
   Contents/Evidence bodies render in the Resource Inspector's workspace mobile
-  sheet; readable Web, EPUB, and PDF render the passive reader-relative
-  position ribbon defined by the
+  sheet; readable web, epub, and pdf render a reader-relative position ribbon
+  with a named document-map disclosure. placement is defined by the
   [mobile ribbon cutover](../cutovers/mobile-reader-position-ribbon-hard-cutover.md).
-- `useResourceInspector` supplies the only visible generic control through the
-  shared Companion action; no reader-specific toolbar, Options, transcript, or
-  overview-rail opener exists.
+- `useResourceInspector` owns generic companion disclosure. the map controls
+  select its existing contents surface; they introduce no second inspector.
 - The open region id is scoped by primary pane and secondary group. Mobile
   carries the Companion opener as ephemeral return-focus state, focuses the
   active surface tab, and returns to that opener when the sheet closes.
@@ -380,19 +380,21 @@ owns its placement.
 
 - text is `(fragment_id, canonical codepoint offset)` over ordered unique
   fragments; every fragment contributes its length once
-- EPUB navigation sections are targets, not lengths: each carries an exact
-  `start_offset`/`end_offset` inside its required fragment; fragments carry
-  `char_count`
+- semantic sections carry an exact target and optional cross-fragment extent.
+  source containers determine ownership; publisher toc nesting is presentation.
+  parent and child spans overlap without adding content length twice
 - PDF is `(one-based page, normalized full-page fraction)`; page gaps, zoom,
   and scrollable-remainder fractions are not document coordinates
 - a marker with no exact owner start has no rail marker; no midpoint, ordinal,
   section-top, or scrollbar fallback exists
-- the rail receives only markers, a projected visible range, and activation;
+- the rail receives source structure, markers, a current point, a visible range,
+  pinned scope, and activation;
   it owns no scroll listener, content observer, `documentSpan`, content ref, or
   position calculation. A track-only `ResizeObserver` recomputes presentation
   clusters after fixed-chrome reflow and reads no document geometry
-- overlapping 24px targets form a median-position cluster. Every member is a
-  named native button; no primary member is selected implicitly.
+- separate structure/evidence lanes retain every exact tick. each hit group
+  spans less than 24px; neighboring groups cannot chain across the document.
+  every member remains a named native button.
 
 ### highlight read paths
 
@@ -687,6 +689,11 @@ pure black/white to reduce halation under long sessions.
   (`{locator, base_revision}` — no wrapping envelope, no optional sibling
   block). Extra fields, old bare locators, and a top-level `null` clear are
   rejected with `400`.
+  - Web targets require a canonical UUID identifying a fragment owned by this
+    media. A supplied text offset must be within its canonical codepoint length,
+    including EOF; an absent offset remains absent. EPUB targets additionally
+    require the owned package href and an exact offset or unique source anchor.
+    Invalid addresses are rejected before cursor or engagement mutation.
   - Empty + matching `base_revision` writes a Positioned cursor at the next
     revision; only an absent row starts from `0`.
   - A matching `base_revision` replaces the cursor at `revision + 1`.
@@ -727,8 +734,8 @@ pure black/white to reduce halation under long sessions.
   - `pdf`: `page`, `page_progression`, `zoom`, `position`
   - `web`: `target.fragment_id`, `locations`, `text`
   - `transcript`: `target.fragment_id`, `locations`, `text`
-  - `epub`: `target.section_id`, `target.href_path`,
-    `target.anchor_id`, `locations`, `text`
+  - `epub`: `target.fragment_id`, `target.href_path`,
+    `target.anchor_id: Presence<string>`, `locations`, `text`
 - the backend and frontend both reject blank strings, removed flat fields,
   unknown keys, invalid ranges, and media-kind mismatches
 - quote context is bounded consistently in backend schemas and the frontend
@@ -766,6 +773,12 @@ Consumption Activity's bounded historical facts.
   activity scrollport through one format-neutral adapter contract. Restore,
   navigation, preview, and return intents remain ineligible until genuine
   input returns the source to `Reader`.
+- a prose tap may adopt the exact restored viewport before a new `Reader`
+  publication. that permission cannot carry into a later restoration, even in
+  the same fragment. source links and control activation do not adopt reading;
+  actual scrolling over a link does. the text leaf and activity adapter share
+  one keyboard-direction classifier so activating an inline button with space
+  cannot claim a forward reading gesture.
 - The adapter projects the same semantic viewport that drives document-position
   presentation; it
   never remeasures a scrollbar, writes spans itself, sends a raw device id, or
@@ -861,10 +874,9 @@ of its location-target writes uses.
   (`#fragment-<id>`, `#evidence-<id>`, `#highlight-<id>`, or `#t-<ms>` for
   transcript), consumed by `useReaderTarget`, and falls back to the saved
   `target.fragment_id` when no hash target is present
-- web article/transcript visual restore uses
-  `text_offset` -> quote match -> `progression` ->
-  `total_progression` -> `position`
-  after layout settles
+- web article and epub restore exact canonical offsets after layout settles;
+  missing exact coordinates remain unavailable. transcript retains its existing
+  time/quote/progression restore contract
 - pdf restores in this order: hash `#page-<n>` (one-shot, consumed by
   `useReaderTarget`) -> saved `page`, `page_progression`, and `zoom`. After
   open, later page, intra-page scroll, and zoom changes persist in place
@@ -872,22 +884,30 @@ of its location-target writes uses.
 
 ### epub reader surface
 
-- epub reader bootstraps from `GET /api/media/{id}/navigation`
-- navigation carries ordered unique `fragments` and exact section targets.
-  Fragments own document length; sections carry their required `fragment_id`,
-  `start_offset`, and `end_offset`. Repeated headings in one XHTML fragment do
-  not duplicate its length.
-- active epub content loads from
-  `GET /api/media/{id}/sections/{section_id}`
-- `section_id` is treated as a path-encoded identifier and may contain `/`
-- one-shot reader target hashes use `#loc-{section_id}` and are consumed by
-  `useReaderTarget`; pane-local EPUB section navigation replaces the `?loc=`
-  search parameter as coarse in-visit address state and adds no Back/Forward
-  entry
-- removed `chapters` and `toc` reader routes stay out of the client surface
-- the pane label and resource-header title are driven by media metadata, not by
-  navigation section title or active section content. navigation and section
-  loading are content-level states and do not own workspace label/header state.
+- `GET /api/media/{id}/navigation` returns one generation, unique source
+  fragments, semantic sections, publisher toc, landmarks, and page list.
+- `GET /api/media/{id}/fragments/{fragment_id}` loads one render unit, independent
+  of its number of headings. the removed section-content route has no adapter.
+- publisher targets and headings reconcile by exact source identity. bounded
+  numbered entries carry visible `InferredNumberedEntry` provenance.
+- current section is the deepest range containing the exact visible locus.
+  unique source positions determine next/previous sections; source fragments
+  determine resource continuation, including books without an outline.
+- `#loc-<section_id>` addresses a surviving outline identity. explicit passage
+  targets use `#text-<fragment_uuid>:<start>:<end>`. internal links carry fragment
+  identity and optional source anchor. no approximate target is substituted.
+- section activation prefers its retained unique source anchor; codepoints measure
+  its position and extent. image-only sections remain distinct inside text-bearing
+  fragments. a viewport without a visible text primary has no text percentage
+  (apart from a genuine end-of-document witness); it never borrows a later glyph.
+- map preview, return, and restore do not save progress. one excursion origin
+  survives successful subsequent jumps; failed navigation restores departure.
+  epub section controls and internal source links use the same positioning owner
+  and return origin; navigation does not renew reading activity.
+  mobile map jumps keep detail open so return remains available; explicit
+  dismissal ends the excursion.
+- media metadata owns workspace labels; fragment loading and semantic section
+  context do not rename the pane.
 
 ### Android offline publication and package boundary
 
@@ -905,7 +925,8 @@ The title is bounded presentation metadata, not authorization or package
 identity; the verified package manifest replaces it after installation.
 
 `offline_reading_packages.py` creates deterministic package-schema and
-reader-contract V1 ZIPs. `testdata/offline-reading-contract-v1.json` is the
+archive1/reader2 zips. unique fragment bodies and the full hosted navigation
+contract are serialized once; adapters never invent source metadata. `testdata/offline-reading-contract-v1.json` is the
 shared Python/TypeScript/Kotlin oracle for strict keys, paths, bounds, hashes,
 revision-key computation, local EPUB assets, PDF binding, and text-only article
 content. Native verifies the response digest, ZIP grammar, manifest and entry
@@ -1000,7 +1021,9 @@ lease-delayed removal, and account purge and is included in signed-release
 instrumentation. Promotion still requires protected physical-device evidence
 for force-stop, reboot after unlock, airplane-mode cold launch, real local API
 package acquisition for all three formats, pending-progress restoration, and
-in-place V1 update compatibility. Host or emulator success is not that evidence.
+either compatible in-place update continuity or a complete empty-baseline
+attestation before an incompatible candidate acquisition. Host or emulator
+success is not that evidence.
 
 ## validation commands
 

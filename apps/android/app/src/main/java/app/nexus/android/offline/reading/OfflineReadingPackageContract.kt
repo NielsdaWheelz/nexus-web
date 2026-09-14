@@ -87,9 +87,9 @@ internal object OfflineReadingManifestParser {
             )
         )
         if (
-            root.getValue("packageSchemaVersion").requireLong() != 1L ||
-            root.getValue("readerContractVersion").requireLong() != 1L ||
-            root.getValue("minimumReaderBundleVersion").requireLong() != 1L
+            root.getValue("packageSchemaVersion").requireLong() != OFFLINE_READING_PACKAGE_SCHEMA_VERSION.toLong() ||
+            root.getValue("readerContractVersion").requireLong() != OFFLINE_READING_READER_CONTRACT_VERSION.toLong() ||
+            root.getValue("minimumReaderBundleVersion").requireLong() != OFFLINE_READING_READER_BUNDLE_VERSION.toLong()
         ) {
             throw UnsupportedOfflineReadingPackageException()
         }
@@ -224,7 +224,8 @@ internal sealed interface StrictJson {
         }
 
         private fun read(reader: JsonReader, depth: Int): StrictJson {
-            require(depth <= 64)
+            // A source TOC can contain 32 levels, each with an object and children array.
+            require(depth <= 128)
             return when (reader.peek()) {
                 JsonReader.Token.BEGIN_OBJECT -> {
                     val fields = linkedMapOf<String, StrictJson>()
