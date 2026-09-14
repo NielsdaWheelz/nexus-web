@@ -424,8 +424,8 @@ export default function HighlightNoteEditor({
         <FeedbackNotice
           content={saveFailure.content}
           announcement="Assertive"
-          actions={[
-            ...(saveFailure.retryable
+          actions={
+            saveFailure.retryable
               ? [
                   {
                     label: "Retry",
@@ -434,16 +434,24 @@ export default function HighlightNoteEditor({
                       retrySession();
                     },
                   },
+                  {
+                    label: "Discard",
+                    onClick: () => {
+                      setSaveFailure(null);
+                      discardRecoveredDraft();
+                    },
+                  },
                 ]
-              : []),
-            {
-              label: "Discard",
-              onClick: () => {
-                setSaveFailure(null);
-                discardRecoveredDraft();
-              },
-            },
-          ]}
+              : [
+                  {
+                    label: "Discard",
+                    onClick: () => {
+                      setSaveFailure(null);
+                      discardRecoveredDraft();
+                    },
+                  },
+                ]
+          }
         />
       ) : (
         <NoteDraftRecovery
