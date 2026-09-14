@@ -129,6 +129,13 @@ CI MUST bind `UV_CACHE_DIR` to an invocation-owned directory beneath
 runner cache or a cache pruned before an offline sensitivity environment is
 materialized is not a valid dependency boundary.
 
+CI MUST recreate the ignored Python virtual environment from the lockfile for
+each job. The setup path MUST be the validated, runner-owned repository root;
+the deletion target MUST be the exact non-symlink, non-mount `python/.venv`
+confirmed by Git's ignore contract. Privileged Python proof processes MUST
+disable bytecode writes. Reusing a persistent environment across jobs permits a
+root-owned proof descendant to make the next runner-owned sync irreparable.
+
 The final work report for a defect or replacement MUST state how sensitivity was
 demonstrated. “Test passes” is insufficient.
 
