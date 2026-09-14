@@ -1241,8 +1241,7 @@ def retire_run_processes(
             except Exception as error:
                 failures.append(
                     RuntimeContractError(
-                        "process cleanup failed for "
-                        f"{candidate.resource.identity}: {error}"
+                        f"process cleanup failed for {candidate.resource.identity}: {error}"
                     )
                 )
         if failures:
