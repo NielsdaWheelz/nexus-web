@@ -1206,7 +1206,7 @@
     {
       "id": "reader-structure-cursor-migration-bypass",
       "patch": "testdata/faults/reader-structure-cursor-migration-bypass.patch",
-      "sha256": "68093212b033add5a6d9853d985e53681aefd6b09443c929eb4e03b04690f422",
+      "sha256": "5ee953d9e5cce070c706cce42a65697e6f8c118da76621920c5df40ce703cab1",
       "proofs": [
         "pytest:python/tests/migrations/test_reader_structure_migration.py::test_reader_structure_repair_preserves_fragment_identity_and_cursor"
       ],
