@@ -257,3 +257,62 @@ def test_pytest_records_redact_before_json_encoding_and_field_truncation(
     assert "local-" not in retained, "pytest encoding/truncation exposed a full or partial secret"
     assert secret not in retained
     assert json.dumps(secret, ensure_ascii=False)[1:-1] not in retained
+
+
+def test_pytest_truncated_summary_cannot_split_a_parent_only_secret_in_the_node(
+    tmp_path: Path,
+) -> None:
+    secret = "local- - secret-canary"
+    (tmp_path / "conftest.py").write_text(
+        'pytest_plugins = ("nexus_test_control.pytest_report",)\n'
+        "def pytest_terminal_summary(terminalreporter):\n"
+        '    terminalreporter.write_line("unrelated-tail-" * 20000)\n'
+    )
+    source = tmp_path / "test_owned.py"
+    source.write_text(
+        "import os, pytest\n"
+        + '@pytest.mark.parametrize("value", (None,), ids=('
+        + f'bytes.fromhex("{secret.encode().hex()}").decode(),))\n'
+        + "def test_owned(value):\n"
+        + '    assert "API_TOKEN" not in os.environ\n'
+        + '    pytest.fail("owned primary invariant " + "x" * 120)\n'
+    )
+    run_id = "0123456789abcdef"
+    directory = tmp_path / "test-results/runs" / run_id
+    directory.mkdir(parents=True)
+    # Exercise the real truncation path even when the enclosing run sets CI.
+    commands = (
+        ((sys.executable, "-m", "pytest", "-q", "--force-short-summary", str(source)), tmp_path),
+    )
+    result = _run_fixed_commands(
+        Capability.KERNEL_PYTHON,
+        commands,
+        {
+            **os.environ,
+            "NEXUS_ENV": "test",
+            "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
+            "NEXUS_TEST_RESULTS_DIR": str(directory),
+            "API_TOKEN": secret,
+        },
+        (),
+        context=None,
+        pythonpath=Path(__file__).parents[3],
+    )
+    assert result.evidence.status is RunStatus.FAIL
+    assert result.detail.startswith("proof_result=behavioral_assertion_failure|"), result.detail
+    reports = [
+        tmp_path / path for path in result.evidence.artifacts if path.endswith(".pytest.json")
+    ]
+    assert len(reports) == 1
+    records = json.loads(reports[0].read_text())["failures"]
+    assert len(records) == 1
+    assert records[0]["node"] == "test_owned.py::test_owned[[REDACTED]]"
+    assert records[0]["phase"] == "call"
+    assert records[0]["exception_type"] == "builtins.Failed"
+    assert records[0]["message"] == "owned primary invariant " + "x" * 120
+    assert records[0]["truncated"] is False
+    retained = result.detail + "".join(
+        (tmp_path / path).read_text() for path in result.evidence.artifacts
+    )
+    assert "local-" not in retained, "pytest summary split a parent-only secret inside its node"
+    assert secret not in retained

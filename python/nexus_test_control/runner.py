@@ -7487,6 +7487,16 @@ def _failure_artifacts(
     log.parent.mkdir(parents=True, exist_ok=True)
     stdout = _bounded_diagnostic(completed.stdout or "")
     stderr = _bounded_diagnostic(completed.stderr or "")
+    if "pytest" in argv:
+        # Pytest can cut a secret inside its duplicate terminal-width summary.
+        # The node can itself contain " - "; retain no guessed prefix from it.
+        # The structured record owns the exact node and failure message.
+        stdout = "\n".join(
+            line.split(" ", 1)[0] + " ..."
+            if line.startswith(("FAILED ", "ERROR ")) and line.endswith("...") and " - " in line
+            else line
+            for line in stdout.split("\n")
+        )
     secrets = environment_secrets(environment)
     # Pytest records encode JSON strings before the parent receives stdout.
     # Scrub that spelling too for caller-only secrets withheld from the child.
