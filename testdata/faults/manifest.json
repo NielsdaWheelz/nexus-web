@@ -311,7 +311,7 @@
     {
       "id": "mobile-highlight-action-lock-bypass",
       "patch": "testdata/faults/mobile-highlight-action-lock-bypass.patch",
-      "sha256": "70633e0ed23bab9ead9b1675215ab4e6e8915055fb10fe012632ab451ca78880",
+      "sha256": "a66d6479628f537af0bf2de61bda0bcd868cffc90194c94cfea0b752363e5949",
       "proofs": [
         "playwright:apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts"
       ],
