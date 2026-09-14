@@ -170,6 +170,17 @@ def _generated_build_repository(tmp_path: Path) -> Path:
     return repository
 
 
+def _run_generated_build_cleanup(repository: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ("bash", "-euo", "pipefail", "-c", _generated_build_cleanup_script()),
+        cwd=repository,
+        env={**os.environ, "GITHUB_WORKSPACE": str(repository)},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def _run_prior_runtime_retirement(
     tmp_path: Path, repository: Path
 ) -> subprocess.CompletedProcess[str]:
@@ -478,17 +489,44 @@ def test_generated_web_build_cleanup_accepts_an_absent_ignored_directory(
 ) -> None:
     repository = _generated_build_repository(tmp_path)
 
-    completed = subprocess.run(
-        ("bash", "-euo", "pipefail", "-c", _generated_build_cleanup_script()),
-        cwd=repository,
-        env={**os.environ, "GITHUB_WORKSPACE": str(repository)},
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    completed = _run_generated_build_cleanup(repository)
 
     assert completed.returncode == 0, completed.stderr
     assert not (repository / "apps/web/.next").exists()
+
+
+def test_generated_web_build_cleanup_removes_only_the_exact_ignored_tree(
+    tmp_path: Path,
+) -> None:
+    repository = _generated_build_repository(tmp_path)
+    build = repository / "apps/web/.next"
+    build.mkdir()
+    (build / "artifact").write_text("generated\n", encoding="utf-8")
+
+    completed = _run_generated_build_cleanup(repository)
+
+    assert completed.returncode == 0, completed.stderr
+    assert not build.exists()
+    assert (repository / "apps/web/source.ts").read_text(encoding="utf-8") == "export {};\n"
+    assert _git(repository, "status", "--short") == ""
+
+
+def test_generated_web_build_cleanup_rejects_a_symlink_without_touching_its_target(
+    tmp_path: Path,
+) -> None:
+    repository = _generated_build_repository(tmp_path)
+    foreign = tmp_path / "foreign-build"
+    foreign.mkdir()
+    marker = foreign / "artifact"
+    marker.write_text("foreign\n", encoding="utf-8")
+    build = repository / "apps/web/.next"
+    build.symlink_to(foreign, target_is_directory=True)
+
+    completed = _run_generated_build_cleanup(repository)
+
+    assert completed.returncode != 0
+    assert build.is_symlink()
+    assert marker.read_text(encoding="utf-8") == "foreign\n"
 
 
 def test_ci_retires_generated_web_builds_on_every_terminal_job_path() -> None:
