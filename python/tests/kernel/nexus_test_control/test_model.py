@@ -2,13 +2,12 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+import nexus_test_control.model as model
 from nexus_test_control.model import (
     DEFERRED_CAPABILITY_OWNER,
     PRIORITY_RISK_FLOOR,
-    ROOT_OWNERSHIP_REQUIREMENTS,
     WORKFLOW_REGISTRY,
     Capability,
-    RootOwnershipRequirement,
     RunStatus,
     Selection,
     SelectionReason,
@@ -50,8 +49,14 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
 
 
 def test_host_root_ownership_is_an_explicit_proof_owner_contract() -> None:
-    assert ROOT_OWNERSHIP_REQUIREMENTS == (
-        RootOwnershipRequirement(
+    assert hasattr(model, "ROOT_OWNERSHIP_REQUIREMENTS"), (
+        "the test controller has no explicit root-ownership contract"
+    )
+    assert hasattr(model, "RootOwnershipRequirement"), (
+        "the root-ownership contract has no validated value type"
+    )
+    assert model.ROOT_OWNERSHIP_REQUIREMENTS == (
+        model.RootOwnershipRequirement(
             Capability.KERNEL_PYTHON,
             (
                 "python/tests/kernel/test_oracle_host_release.py",
