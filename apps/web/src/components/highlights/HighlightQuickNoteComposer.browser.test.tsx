@@ -14,8 +14,11 @@ import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import SelectionPopover from "@/components/SelectionPopover";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
-import { deleteHighlightNote, saveHighlightNote } from "@/lib/highlights/api";
-import type { HighlightLinkedNoteBlock } from "@/lib/highlights/highlightContract";
+import {
+  deleteHighlightNote,
+  saveHighlightNote,
+  type HighlightLinkedNoteBlock,
+} from "@/lib/highlights/api";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import HighlightQuickNoteComposer, {
   type QuickNoteSession,
