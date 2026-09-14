@@ -99,6 +99,7 @@ from nexus_test_control.services import (
     prepare_openai_provider_fixture,
     prepare_run,
     resolve_adb,
+    retire_run_processes,
     run_environment,
     start_python_process,
     start_web_process,
@@ -302,6 +303,13 @@ _LOCAL_RUNTIME_CAPABILITIES = frozenset(
         Capability.LLM_EVAL,
         Capability.EXTENSION,
         Capability.AUDIT,
+    }
+)
+_BROWSER_RUNTIME_CAPABILITIES = frozenset(
+    {
+        Capability.JOURNEYS_CRITICAL,
+        Capability.JOURNEYS_ALL,
+        Capability.EXTENSION,
     }
 )
 _EXTERNAL_PROTOCOL_CAPABILITIES = frozenset(
@@ -568,6 +576,14 @@ class _RunnerPorts:
     ) -> None:
         clean_run(repo_root, environment, run_id, supabase=supabase)
 
+    def retire_run_processes(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        run_id: str,
+    ) -> None:
+        retire_run_processes(repo_root, environment, run_id)
+
     def browser_installed(self, repo_root: Path, environment: Mapping[str, str]) -> bool:
         return _browser_installed(repo_root, environment)
 
@@ -668,6 +684,7 @@ class _WorkflowExecution:
     build: StandaloneBuild | None = None
     external_protocol_started: bool = False
     openai_protocol: OpenAIProviderFixture | None = None
+    openai_protocol_started: bool = False
     journey_runtime_started: bool = False
     preparation_attempted: bool = False
     preparation_failure: CapabilityResult | None = None
@@ -708,14 +725,17 @@ class _WorkflowExecution:
         capability: Capability,
         prepared: TestRun,
     ) -> CapabilityResult | None:
-        if self.openai_protocol is not None:
+        if self.openai_protocol_started:
             return None
         try:
-            fixture = self.ports.prepare_openai_provider_fixture(
-                self.context.repo_root,
-                {"NEXUS_ENV": "test"},
-                prepared,
-            )
+            fixture = self.openai_protocol
+            if fixture is None:
+                fixture = self.ports.prepare_openai_provider_fixture(
+                    self.context.repo_root,
+                    {"NEXUS_ENV": "test"},
+                    prepared,
+                )
+                self.openai_protocol = fixture
             provider = self.ports.start_python_process(
                 self.context.repo_root,
                 {"NEXUS_ENV": "test"},
@@ -738,8 +758,20 @@ class _WorkflowExecution:
             )
         except RuntimeContractError as error:
             return _fail(capability, f"owned OpenAI protocol failed: {error}")
-        self.openai_protocol = fixture
+        self.openai_protocol_started = True
         return None
+
+    def retire_browser_runtime(self) -> None:
+        if self.run is None:
+            return
+        self.ports.retire_run_processes(
+            self.context.repo_root,
+            {"NEXUS_ENV": "test", **_child_environment(self.caller_environment)},
+            self.run.run_id,
+        )
+        self.external_protocol_started = False
+        self.openai_protocol_started = False
+        self.journey_runtime_started = False
 
     def prepare(self, capability: Capability) -> TestRun | CapabilityResult:
         if self.run is not None:
@@ -879,42 +911,45 @@ def run_workflow(
 
         def run_requirement(capability: Capability) -> CapabilityResult:
             if not _requires_memory_admission(context, capability):
-                return _run_capability(
+                result = _run_capability(
                     context,
                     capability,
                     environment,
                     execution,
                     heavy_lock_held=heavy_lock_held,
                 )
+            else:
 
-            def admitted_run() -> CapabilityResult:
-                admission = _await_heavy_memory_admission(
-                    capability,
-                    _available_memory,
-                    monotonic=_monotonic,
-                    wait=_wait,
-                )
-                if admission is not None:
-                    return admission
-                storage_admission = _heavy_storage_admission(
-                    capability,
-                    _available_storage(
-                        context.repo_root,
-                        capability in _LOCAL_RUNTIME_CAPABILITIES,
-                    ),
-                )
-                return storage_admission or _run_capability(
-                    context,
-                    capability,
-                    environment,
-                    execution,
-                    heavy_lock_held=True,
-                )
+                def admitted_run() -> CapabilityResult:
+                    admission = _await_heavy_memory_admission(
+                        capability,
+                        _available_memory,
+                        monotonic=_monotonic,
+                        wait=_wait,
+                    )
+                    if admission is not None:
+                        return admission
+                    storage_admission = _heavy_storage_admission(
+                        capability,
+                        _available_storage(
+                            context.repo_root,
+                            capability in _LOCAL_RUNTIME_CAPABILITIES,
+                        ),
+                    )
+                    return storage_admission or _run_capability(
+                        context,
+                        capability,
+                        environment,
+                        execution,
+                        heavy_lock_held=True,
+                    )
 
-            if heavy_lock_held:
-                return admitted_run()
-            with execution.ports.heavy_lock(context.repo_root):
-                return admitted_run()
+                if heavy_lock_held:
+                    result = admitted_run()
+                else:
+                    with execution.ports.heavy_lock(context.repo_root):
+                        result = admitted_run()
+            return _retire_browser_runtime_after_capability(capability, result, execution)
 
         try:
             if workflow_admission is not None:
@@ -1017,6 +1052,26 @@ def run_workflow(
             ),
         )
     return WorkflowRun(capabilities, workflow_memory)
+
+
+def _retire_browser_runtime_after_capability(
+    capability: Capability,
+    result: CapabilityResult,
+    execution: _WorkflowExecution,
+) -> CapabilityResult:
+    if capability not in _BROWSER_RUNTIME_CAPABILITIES or execution.run is None:
+        return result
+    try:
+        execution.retire_browser_runtime()
+    except Exception as error:
+        detail = f"owned browser runtime retirement failed: {error}"
+        if result.evidence.status is not RunStatus.PASS:
+            detail = f"{result.detail}; {detail}"
+        return CapabilityResult(
+            replace(result.evidence, status=RunStatus.FAIL),
+            detail,
+        )
+    return result
 
 
 def stream_first_failure(

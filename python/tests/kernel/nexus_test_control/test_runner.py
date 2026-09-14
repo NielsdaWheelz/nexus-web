@@ -1554,6 +1554,99 @@ def test_web_source_promoted_to_journey_is_memory_admitted_before_static_web(
     assert not (tmp_path / "commands.jsonl").exists()
 
 
+def test_each_browser_capability_retires_only_process_liveness(tmp_path: Path) -> None:
+    retired: list[str] = []
+
+    class Ports(runner._RunnerPorts):
+        def retire_run_processes(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            run_id: str,
+        ) -> None:
+            retired.append(run_id)
+
+    fixture = OpenAIProviderFixture(
+        tmp_path / "openai-provider",
+        tmp_path / "openai-provider/ca.pem",
+        tmp_path / "openai-provider/server-key.pem",
+        tmp_path / "openai-provider/requests.jsonl",
+        19092,
+    )
+    execution = runner._WorkflowExecution(
+        CapabilityContext(tmp_path, Workflow.FULL, ()),
+        {},
+        include_migration_database=True,
+        run_id="0123456789abcdef",
+        ports=Ports(),
+        run=_test_run(include_migration_database=True),
+        external_protocol_started=True,
+        openai_protocol=fixture,
+        openai_protocol_started=True,
+        journey_runtime_started=True,
+    )
+
+    for capability in (Capability.JOURNEYS_ALL, Capability.EXTENSION):
+        result = runner._retire_browser_runtime_after_capability(
+            capability,
+            runner._pass(capability, "passed"),
+            execution,
+        )
+
+        assert result.evidence.status is RunStatus.PASS
+        assert not execution.external_protocol_started
+        assert not execution.openai_protocol_started
+        assert not execution.journey_runtime_started
+        assert execution.openai_protocol is fixture
+        execution.external_protocol_started = True
+        execution.openai_protocol_started = True
+        execution.journey_runtime_started = True
+
+    static = runner._retire_browser_runtime_after_capability(
+        Capability.STATIC_WEB,
+        runner._pass(Capability.STATIC_WEB, "passed"),
+        execution,
+    )
+    assert static.evidence.status is RunStatus.PASS
+    assert retired == ["0123456789abcdef", "0123456789abcdef"]
+
+
+def test_browser_runtime_retirement_failure_fails_the_capability_and_keeps_liveness(
+    tmp_path: Path,
+) -> None:
+    class Ports(runner._RunnerPorts):
+        def retire_run_processes(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _run_id: str,
+        ) -> None:
+            raise RuntimeError("retirement failed")
+
+    execution = runner._WorkflowExecution(
+        CapabilityContext(tmp_path, Workflow.FULL, ()),
+        {},
+        include_migration_database=True,
+        run_id="0123456789abcdef",
+        ports=Ports(),
+        run=_test_run(include_migration_database=True),
+        external_protocol_started=True,
+        openai_protocol_started=True,
+        journey_runtime_started=True,
+    )
+    result = runner._retire_browser_runtime_after_capability(
+        Capability.JOURNEYS_ALL,
+        runner._pass(Capability.JOURNEYS_ALL, "passed"),
+        execution,
+    )
+
+    assert result.evidence.status is RunStatus.FAIL
+    assert result.detail == "owned browser runtime retirement failed: retirement failed"
+    assert execution.external_protocol_started
+    assert execution.openai_protocol_started
+    assert execution.journey_runtime_started
+
+
 def test_unknown_available_memory_fails_closed_before_heavy_work(tmp_path: Path) -> None:
     _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
     (tmp_path / "python/.venv").mkdir()

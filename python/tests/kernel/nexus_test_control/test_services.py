@@ -47,6 +47,7 @@ from nexus_test_control.services import (
     new_run_id,
     prepare_openai_provider_fixture,
     release_openai_provider_fixture,
+    retire_run_processes,
     run_environment,
     start_python_process,
     start_web_process,
@@ -218,6 +219,54 @@ def test_owned_process_unblocks_sigterm_before_exec_and_stops_gracefully(
             os.killpg(started.process_group_id, signal.SIGKILL)
         except ProcessLookupError:
             pass
+
+
+def test_run_processes_retire_and_restart_without_erasing_logs(tmp_path: Path) -> None:
+    run = _empty_owned_run(tmp_path)
+    fixture = prepare_openai_provider_fixture(tmp_path, TEST_ENV, run)
+
+    def start(marker: str) -> int:
+        process = _start_owned_process(
+            tmp_path,
+            TEST_ENV,
+            RUN_ID,
+            "api",
+            (
+                sys.executable,
+                "-u",
+                "-c",
+                f"import signal; print({marker!r}, flush=True); signal.pause()",
+            ),
+            cwd=tmp_path,
+            process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+        )
+        log = tmp_path / process.log_path
+        for _attempt in range(500):
+            if log.is_file() and marker in log.read_text(encoding="utf-8"):
+                return process.process_group_id
+            threading.Event().wait(0.01)
+        raise AssertionError(f"owned process did not write {marker!r}")
+
+    try:
+        first = start("first")
+        retire_run_processes(tmp_path, TEST_ENV, RUN_ID)
+        with pytest.raises(ProcessLookupError):
+            os.kill(first, 0)
+
+        second = start("second")
+        retire_run_processes(tmp_path, TEST_ENV, RUN_ID)
+        with pytest.raises(ProcessLookupError):
+            os.kill(second, 0)
+
+        assert (tmp_path / "test-results/runs" / RUN_ID / "api.log").read_text(
+            encoding="utf-8"
+        ).splitlines() == ["first", "second"]
+        assert [entry.resource.kind for entry in read_ledger(tmp_path, RUN_ID).entries] == [
+            ResourceKind.PROVIDER_FIXTURE
+        ]
+        assert fixture.state.is_dir()
+    finally:
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
 
 
 def test_clean_recovers_a_process_killed_between_spawn_and_created_record(

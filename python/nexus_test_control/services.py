@@ -43,6 +43,7 @@ from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.model import Resource, ResourceKind
 from nexus_test_control.process import run_command, unblock_and_exec_command
 from nexus_test_control.runtime import (
+    CleanupCandidate,
     EndpointKind,
     LedgerEntry,
     ResourcePhase,
@@ -1162,7 +1163,7 @@ def _start_owned_process(
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
     process: subprocess.Popen[str] | None = None
     try:
-        with log_path.open("w", encoding="utf-8") as log:
+        with log_path.open("a", encoding="utf-8") as log:
             process = subprocess.Popen(
                 unblock_and_exec_command(command),
                 cwd=cwd,
@@ -1201,6 +1202,52 @@ def _start_owned_process(
     )
 
 
+def _stop_run_process(candidate: CleanupCandidate, run_id: str) -> None:
+    if candidate.resource.kind is not ResourceKind.PROCESS:
+        raise AssertionError("process cleanup received a non-process resource")
+    if candidate.external_id is None:
+        raise RuntimeContractError("owned process lacks its pre-recorded owner token")
+    process_group_id = candidate.process_group_id
+    process_start_token = candidate.process_start_token
+    if process_group_id is None:
+        recovered = _recover_planned_process_group(candidate.external_id, run_id)
+        if recovered is not None:
+            process_group_id, process_start_token = recovered
+    if process_group_id is not None:
+        _stop_process_group(
+            process_group_id,
+            process_start_token,
+            run_id,
+            candidate.external_id,
+        )
+
+
+def retire_run_processes(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run_id: str,
+) -> None:
+    """Retire exact run-owned processes while preserving reusable run resources."""
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    with run_lifecycle_lock(root, environment, run_id):
+        failures: list[Exception] = []
+        for candidate in cleanup_candidates(root, environment, run_id):
+            if candidate.resource.kind is not ResourceKind.PROCESS:
+                continue
+            try:
+                _stop_run_process(candidate, run_id)
+                forget_cleaned(root, environment, run_id, candidate.resource)
+            except Exception as error:
+                failures.append(
+                    RuntimeContractError(
+                        f"process cleanup failed for {candidate.resource.identity}: {error}"
+                    )
+                )
+        if failures:
+            raise ExceptionGroup(f"run {run_id} process cleanup failed", failures)
+
+
 def clean_run(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -1218,26 +1265,7 @@ def clean_run(
             resource = candidate.resource
             try:
                 if resource.kind is ResourceKind.PROCESS:
-                    if candidate.external_id is None:
-                        raise RuntimeContractError(
-                            "owned process lacks its pre-recorded owner token"
-                        )
-                    process_group_id = candidate.process_group_id
-                    process_start_token = candidate.process_start_token
-                    if process_group_id is None:
-                        recovered = _recover_planned_process_group(
-                            candidate.external_id,
-                            run_id,
-                        )
-                        if recovered is not None:
-                            process_group_id, process_start_token = recovered
-                    if process_group_id is not None:
-                        _stop_process_group(
-                            process_group_id,
-                            process_start_token,
-                            run_id,
-                            candidate.external_id,
-                        )
+                    _stop_run_process(candidate, run_id)
                 elif resource.kind is ResourceKind.TEMPLATE_BUILD:
                     if candidate.external_id is None:
                         raise RuntimeContractError("template build lacks its lifecycle fingerprint")
