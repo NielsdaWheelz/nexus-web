@@ -137,9 +137,11 @@ disable bytecode writes. Reusing a persistent environment across jobs permits a
 root-owned proof descendant to make the next runner-owned sync irreparable.
 
 CI MUST remove the ignored `apps/web/.next` tree before dependency setup and
-storage admission. Generated frontend output belongs to one source SHA and MUST
-NOT consume the persistent runner's reserve or become an input to another SHA.
-Dependency download caches remain separately keyed and may persist.
+storage admission, then remove it again after each terminal job path. Generated
+frontend output belongs to one source SHA and MUST NOT consume the persistent
+runner's idle reserve or become an input to another SHA. The entry cleanup owns
+recovery when a killed runner cannot execute its terminal finalizer. Dependency
+download caches remain separately keyed and may persist.
 
 The final work report for a defect or replacement MUST state how sensitivity was
 demonstrated. “Test passes” is insufficient.

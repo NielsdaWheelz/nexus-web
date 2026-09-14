@@ -14,6 +14,7 @@ import pytest
 REPO_ROOT = Path(__file__).parents[3]
 WORKFLOW = REPO_ROOT / ".github/workflows/ci.yml"
 SETUP_ACTION = REPO_ROOT / ".github/actions/setup-test/action.yml"
+GENERATED_BUILD_ACTION = REPO_ROOT / ".github/actions/clean-generated-web-build/action.yml"
 REPOSITORY = "NielsdaWheelz/nexus-web"
 PULL_REQUEST_NUMBER = "17"
 
@@ -413,10 +414,12 @@ def test_ci_recreates_the_locked_python_environment_with_a_safe_exact_target() -
 
 def test_ci_recreates_the_generated_web_build_with_a_safe_exact_target() -> None:
     setup = SETUP_ACTION.read_text(encoding="utf-8")
+    action = GENERATED_BUILD_ACTION.read_text(encoding="utf-8")
 
     cleanup = setup.index("    - name: Recreate generated web build\n")
     install = setup.index("    - name: Install locked JavaScript dependencies\n")
     assert cleanup < install
+    assert "      uses: ./.github/actions/clean-generated-web-build\n" in setup
     for required_contract in (
         "command -v mountpoint >/dev/null",
         'checkout="$(realpath -e -- "$GITHUB_WORKSPACE")"',
@@ -432,4 +435,18 @@ def test_ci_recreates_the_generated_web_build_with_a_safe_exact_target() -> None
         'git -C "$checkout" clean -qfdx -- apps/web/.next',
         'test ! -e "$build"',
     ):
-        assert required_contract in setup
+        assert required_contract in action
+
+
+def test_ci_retires_generated_web_builds_on_every_terminal_job_path() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert workflow.count("      - name: Retire generated web build\n") == 2
+    assert (
+        workflow.count(
+            "      - name: Retire generated web build\n"
+            "        if: always()\n"
+            "        uses: ./.github/actions/clean-generated-web-build\n"
+        )
+        == 2
+    )
