@@ -504,11 +504,11 @@ that invocation, and tears down the exact stack, volumes, and runtime state
 after every normal, failing, or handled-interrupt terminal path. Immutable
 evidence under `test-results/` survives. `clean` remains the recovery owner for
 an unhandled process death, and CI repeats cleanup in its always-run finalizer.
-Before replacing a persistent runner checkout, CI may invoke the prior
-controller's exact ownership cleaner directly: the runner's single assigned job
-proves that workspace idle, while bypassing the lineage proof queue prevents
-recovery from being starved by unrelated worktrees. This is the sole
-pre-checkout bootstrap exception to the public `./scripts/test` interface.
+Before replacing a persistent runner checkout, CI invokes the prior controller's
+public `./scripts/test clean` route. Recovery therefore acquires the same
+lineage-wide lease as every workload before it tears down that checkout's exact
+owned runtime. The incoming checkout cannot replace the runtime schema until
+recovery succeeds.
 Initial allocation MUST exclude the host kernel's ephemeral client-port range;
 when the kernel range interface is absent, the controller excludes ports
 `32768–65535`; an unreadable or malformed present interface fails closed.

@@ -169,14 +169,18 @@ def _minimal_repository(root: Path) -> None:
         'GIT_COMMITTER_DATE="$merge_timestamp"\n'
         "git rev-list --parents -n 1 HEAD\n"
         "Retire prior checkout test runtime\n"
-        "from nexus_test_control.services import clean_owned_runtime, test_environment\n"
-        "clean_owned_runtime(pathlib.Path(sys.argv[1]), test_environment(os.environ))\n"
-        '"$python" -c "$cleanup_program" "$checkout"\n'
+        'test -x "$checkout/scripts/test"\n'
+        '            cd "$checkout"\n'
+        "            ./scripts/test clean\n"
         "run: ./scripts/test pr\n"
-        "if: github.event_name == 'push'\n"
-        "run: ./scripts/test full\n"
         "Retire current checkout test runtime\n"
         "            ./scripts/test clean\n"
+        "if: github.event_name == 'push'\n"
+        "Retire prior checkout test runtime\n"
+        'test -x "$checkout/scripts/test"\n'
+        '            cd "$checkout"\n'
+        "            ./scripts/test clean\n"
+        "run: ./scripts/test full\n"
         "Retire current checkout test runtime\n"
         "            ./scripts/test clean\n"
         "if: always()\n",
@@ -295,15 +299,15 @@ def test_repository_guard_rejects_route_drift(tmp_path: Path) -> None:
     assert "repository-route-contract" in _rules(repository_violations(tmp_path))
 
 
-def test_repository_guard_rejects_queued_precheckout_runtime_cleanup(
+def test_repository_guard_rejects_direct_precheckout_runtime_cleanup(
     tmp_path: Path,
 ) -> None:
     _minimal_repository(tmp_path)
     workflow = tmp_path / ".github/workflows/ci.yml"
     workflow.write_text(
         workflow.read_text(encoding="utf-8").replace(
-            '"$python" -c "$cleanup_program" "$checkout"',
-            '"$python" -m nexus_test_control clean',
+            '            cd "$checkout"',
+            '            cd "$checkout/python"',
         ),
         encoding="utf-8",
     )
@@ -313,7 +317,7 @@ def test_repository_guard_rejects_queued_precheckout_runtime_cleanup(
     assert any(
         violation.rule == "repository-route-contract"
         and violation.path == ".github/workflows/ci.yml"
-        and '"$python" -m nexus_test_control clean' in violation.message
+        and 'cd "$checkout"' in violation.message
         for violation in violations
     )
 

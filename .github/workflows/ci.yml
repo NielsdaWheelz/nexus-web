@@ -66,11 +66,9 @@ jobs:
             exit 1
           fi
 
-      # A persistent runner may retain a runtime after a killed job. The runner
-      # makes its workspace idle before assignment, so invoke the still-checked-
-      # out controller's exact ownership cleaner without joining the lineage
-      # proof convoy. The incoming checkout cannot replace that schema owner
-      # until cleanup succeeds.
+      # A persistent runner may retain a runtime after a killed job. Recover
+      # through the still-checked-out controller's public route so teardown owns
+      # the lineage lease before the incoming checkout replaces its schema.
       - name: Retire prior checkout test runtime
         shell: bash
         run: |
@@ -86,12 +84,10 @@ jobs:
           test ! -L "$runtime"
           test "$(stat -c '%u' -- "$runtime")" = "$(id -u)"
           git -C "$checkout" check-ignore --quiet -- .nexus-test/runtime.json
-          python="$checkout/python/.venv/bin/python"
-          test -x "$python"
-          cleanup_program='import os, pathlib, sys; from nexus_test_control.services import clean_owned_runtime, test_environment; cleaned = clean_owned_runtime(pathlib.Path(sys.argv[1]), test_environment(os.environ)); print(f"clean: pass; runs={len(cleaned)}; runtime=removed")'
+          test -x "$checkout/scripts/test"
           (
-            cd "$checkout/python"
-            "$python" -c "$cleanup_program" "$checkout"
+            cd "$checkout"
+            ./scripts/test clean
           )
           test ! -e "$runtime"
           test ! -L "$runtime"
@@ -231,12 +227,10 @@ jobs:
           test ! -L "$runtime"
           test "$(stat -c '%u' -- "$runtime")" = "$(id -u)"
           git -C "$checkout" check-ignore --quiet -- .nexus-test/runtime.json
-          python="$checkout/python/.venv/bin/python"
-          test -x "$python"
-          cleanup_program='import os, pathlib, sys; from nexus_test_control.services import clean_owned_runtime, test_environment; cleaned = clean_owned_runtime(pathlib.Path(sys.argv[1]), test_environment(os.environ)); print(f"clean: pass; runs={len(cleaned)}; runtime=removed")'
+          test -x "$checkout/scripts/test"
           (
-            cd "$checkout/python"
-            "$python" -c "$cleanup_program" "$checkout"
+            cd "$checkout"
+            ./scripts/test clean
           )
           test ! -e "$runtime"
           test ! -L "$runtime"

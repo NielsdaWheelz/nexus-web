@@ -128,7 +128,7 @@ def _runtime_repository(tmp_path: Path) -> Path:
     _git(repository, "config", "user.name", "Nexus test")
     _git(repository, "config", "user.email", "test@nexus.local")
     (repository / ".gitignore").write_text(".nexus-test/\n", encoding="utf-8")
-    (repository / "python/.venv/bin").mkdir(parents=True)
+    (repository / "scripts").mkdir()
     _git(repository, "add", ".gitignore")
     _git(repository, "commit", "--message", "runtime owner")
     return repository
@@ -165,29 +165,22 @@ def test_prior_runtime_is_retired_by_its_own_checkout_before_replacement(
     runtime = repository / ".nexus-test/runtime.json"
     runtime.parent.mkdir()
     runtime.write_text('{"version":5}\n', encoding="utf-8")
-    owner_python = repository / "python/.venv/bin/python"
-    owner_python.write_text(
+    owner_route = repository / "scripts/test"
+    owner_route.write_text(
         "#!/bin/sh\n"
         "set -eu\n"
         'printf \'%s\\n\' "$PWD" "$@" > "$CLEAN_INVOCATION"\n'
         'rm -- "$GITHUB_WORKSPACE/.nexus-test/runtime.json"\n',
         encoding="utf-8",
     )
-    owner_python.chmod(0o755)
+    owner_route.chmod(0o755)
 
     completed = _run_prior_runtime_retirement(tmp_path, repository)
 
     assert completed.returncode == 0, completed.stderr
     assert not runtime.exists()
-    invocation = (
-        (tmp_path / "clean-invocation").read_text(encoding="utf-8").splitlines()
-    )
-    assert invocation[0:2] == [str(repository / "python"), "-c"]
-    assert (
-        "from nexus_test_control.services import clean_owned_runtime" in invocation[2]
-    )
-    assert "test_environment(os.environ)" in invocation[2]
-    assert invocation[3:] == [str(repository)]
+    invocation = (tmp_path / "clean-invocation").read_text(encoding="utf-8").splitlines()
+    assert invocation == [str(repository), "clean"]
 
 
 def test_prior_runtime_retirement_is_a_no_op_for_a_fresh_runner(tmp_path: Path) -> None:
@@ -321,14 +314,15 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
     assert "cancel-in-progress: false" in workflow
     assert workflow.count("clean: false") == 2
     assert workflow.count("- name: Retire prior checkout test runtime") == 2
-    assert workflow.count('"$python" -c "$cleanup_program" "$checkout"') == 2
-    assert workflow.count("from nexus_test_control.services import clean_owned_runtime") == 2
+    assert workflow.count('test -x "$checkout/scripts/test"') == 2
+    assert workflow.count('            cd "$checkout"') == 2
+    assert workflow.count("            ./scripts/test clean") == 4
+    assert "from nexus_test_control.services import clean_owned_runtime" not in workflow
     assert workflow.count("- name: Clear prior runner evidence") == 2
     assert workflow.count("git clean -qffdx -- test-results/") == 2
     assert workflow.count("run: ./scripts/test pr") == 1
     assert workflow.count("run: ./scripts/test full") == 1
     assert workflow.count("- name: Retire current checkout test runtime") == 2
-    assert workflow.count("            ./scripts/test clean") == 2
     assert 'command -v "$tool"' in setup
     assert "sudo -n true" in setup
     assert "uv sync --all-extras --locked --reinstall --directory python" in setup
@@ -339,20 +333,24 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
         r"(?ms)^  pr:\n.*?^    if: github\.event_name == 'pull_request' "
         r"\|\| github\.event_name == 'workflow_dispatch'$"
         r".*?^      - name: Retire prior checkout test runtime$"
+        r".*?^            \./scripts/test clean$"
         r".*?^      - uses: actions/checkout@"
         r".*?^      - name: Run the deterministic PR gate\n"
         r"        run: \./scripts/test pr$"
         r".*?^      - name: Upload run evidence$"
-        r".*?^      - name: Retire current checkout test runtime$",
+        r".*?^      - name: Retire current checkout test runtime$"
+        r".*?^            \./scripts/test clean$",
         workflow,
     )
     assert re.search(
         r"(?ms)^  candidate-full:\n.*?^    if: github\.event_name == 'push'$"
         r".*?^      - name: Retire prior checkout test runtime$"
+        r".*?^            \./scripts/test clean$"
         r".*?^      - uses: actions/checkout@"
         r".*?^      - name: Run the candidate full gate\n        run: \./scripts/test full$"
         r".*?^      - name: Upload run evidence$"
-        r".*?^      - name: Retire current checkout test runtime$",
+        r".*?^      - name: Retire current checkout test runtime$"
+        r".*?^            \./scripts/test clean$",
         workflow,
     )
     recovery = _step_script("Construct the exact PR merge")
