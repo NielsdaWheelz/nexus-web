@@ -147,7 +147,9 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             'GIT_COMMITTER_DATE="$merge_timestamp"',
             "git rev-list --parents -n 1 HEAD",
             "Retire prior checkout test runtime",
-            '"$python" -m nexus_test_control clean',
+            "from nexus_test_control.services import clean_owned_runtime, test_environment",
+            "clean_owned_runtime(pathlib.Path(sys.argv[1]), test_environment(os.environ))",
+            '"$python" -c "$cleanup_program" "$checkout"',
             "run: ./scripts/test pr",
             "if: github.event_name == 'push'",
             "run: ./scripts/test full",
@@ -157,6 +159,7 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         (
             "github.event_name != 'workflow_dispatch'",
+            '"$python" -m nexus_test_control clean',
             "make test",
             "pytest",
             "playwright test",
