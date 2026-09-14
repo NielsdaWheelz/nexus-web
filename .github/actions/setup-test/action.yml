@@ -99,10 +99,38 @@ runs:
       shell: bash
       run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.8
 
+    - name: Recreate locked Python environment
+      shell: bash
+      run: |
+        set -euo pipefail
+        command -v mountpoint >/dev/null
+        checkout="$(realpath -e -- "$GITHUB_WORKSPACE")"
+        repository_root="$(realpath -e -- "$(git -C "$checkout" rev-parse --show-toplevel)")"
+        environment="$checkout/python/.venv"
+
+        test "$checkout" = "$repository_root"
+        test "$(stat -c '%u' -- "$checkout")" = "$(id -u)"
+        test -d "$checkout/python"
+        test ! -L "$checkout/python"
+        test "$(realpath -e -- "$checkout/python")" = "$checkout/python"
+        test "$(stat -c '%u' -- "$checkout/python")" = "$(id -u)"
+        git -C "$checkout" check-ignore --quiet -- python/.venv
+
+        if [ -e "$environment" ] || [ -L "$environment" ]; then
+          test -d "$environment"
+          test ! -L "$environment"
+          test "$(realpath -e -- "$environment")" = "$environment"
+          ! mountpoint --quiet -- "$environment"
+          if ! rm --recursive --force --one-file-system -- "$environment"; then
+            sudo --non-interactive rm --recursive --force --one-file-system -- "$environment"
+          fi
+        fi
+        test ! -e "$environment"
+        test ! -L "$environment"
+
     - name: Install locked Python dependencies
       shell: bash
-      # Reinstall the same-version Git dependency when its exact revision moves.
-      run: uv sync --all-extras --locked --reinstall --directory python
+      run: uv sync --all-extras --locked --directory python
 
     - name: Install locked JavaScript dependencies
       shell: bash

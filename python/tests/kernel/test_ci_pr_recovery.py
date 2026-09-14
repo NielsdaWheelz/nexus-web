@@ -329,7 +329,8 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
         "- uses: actions/setup-go@"
     )
     assert "sudo --non-interactive true" in setup
-    assert "uv sync --all-extras --locked --reinstall --directory python" in setup
+    assert "uv sync --all-extras --locked --directory python" in setup
+    assert "--reinstall" not in setup
     assert 'checkout="$(realpath -m -- "$checkout")"' in setup
     assert 'rm --recursive --force --one-file-system -- "$checkout"' in setup
     assert "github.event_name != 'workflow_dispatch'" not in workflow
@@ -385,3 +386,26 @@ def test_ci_uses_an_invocation_owned_offline_complete_uv_cache() -> None:
     )
     if required_configuration not in setup:
         raise AssertionError("ci uv cache must be job-owned and retain downloaded wheels")
+
+
+def test_ci_recreates_the_locked_python_environment_with_a_safe_exact_target() -> None:
+    setup = SETUP_ACTION.read_text(encoding="utf-8")
+
+    cleanup = setup.index("    - name: Recreate locked Python environment\n")
+    sync = setup.index("    - name: Install locked Python dependencies\n")
+    assert cleanup < sync
+    for required_contract in (
+        'checkout="$(realpath -e -- "$GITHUB_WORKSPACE")"',
+        "command -v mountpoint >/dev/null",
+        'repository_root="$(realpath -e -- "$(git -C "$checkout" rev-parse --show-toplevel)")"',
+        'test "$checkout" = "$repository_root"',
+        'test "$(stat -c \'%u\' -- "$checkout")" = "$(id -u)"',
+        'test ! -L "$checkout/python"',
+        'git -C "$checkout" check-ignore --quiet -- python/.venv',
+        'test ! -L "$environment"',
+        '! mountpoint --quiet -- "$environment"',
+        'sudo --non-interactive rm --recursive --force --one-file-system -- "$environment"',
+        'test ! -e "$environment"',
+        "uv sync --all-extras --locked --directory python",
+    ):
+        assert required_contract in setup

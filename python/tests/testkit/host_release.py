@@ -612,6 +612,7 @@ class HostReleaseHarness:
             "HTTPS_PROXY": proxy,
             "NO_PROXY": "",
             "PATH": f"{self.fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONPATH": f"{self.repo_root / 'python'}{os.pathsep}"
             f"{os.environ.get('PYTHONPATH', '')}",
             "SSL_CERT_FILE": str(self.tls_certificate),
