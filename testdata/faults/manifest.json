@@ -1139,7 +1139,7 @@
       ],
       "expected_failure": "background admission replaced the frozen policy revision",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "8d2f2c6bd1b771c30b232883de4bc9e9a6583f3f319f1848f83fe3d8fb4fd3d4"
+      "changed_owner_sha256": "f44651f25d30fe5096a89f25b7bf70bb38247b1eb4870d3fd52a887fae42ecab"
     },
     {
       "id": "browse-search-provenance-omission",
@@ -1162,6 +1162,24 @@
       "expected_failure": "trust projection omitted durable machine authorship from a successful additive write",
       "changed_owner_red": "coherent-fault",
       "changed_owner_sha256": "5dccea7777434a3de061b5827166f28a44da2d46ff10fafe2bd9d7f19b7c5cad"
+    },
+    {
+      "id": "publication-edition-leak",
+      "patch": "testdata/faults/publication-edition-leak.patch",
+      "sha256": "c428739301bac5bb1e335fe0eb7922e27b679f22c07ffc591d27317d52e0000a",
+      "proofs": [
+        "pytest:python/tests/service/test_media_publication_metadata.py::test_epub_reprint_date_never_replaces_original_and_null_research_clears"
+      ],
+      "expected_failure": "source edition populated the original publication date"
+    },
+    {
+      "id": "publication-calendar-validation-bypass",
+      "patch": "testdata/faults/publication-calendar-validation-bypass.patch",
+      "sha256": "fafb2af5a0be973b20841607e256b8a94b79f74c4cbe02461613d04f8b8ee099",
+      "proofs": [
+        "pytest:python/tests/kernel/test_publication_dates.py::test_publication_dates_reject_impossible_or_unsupported_generated_values"
+      ],
+      "expected_failure": "DID NOT RAISE"
     }
   ]
 }

@@ -1201,6 +1201,22 @@
         "component",
         "android-device"
       ]
+    },
+    {
+      "id": "media-publication-date-integrity",
+      "source_globs": [
+        "python/nexus/schemas/publication_dates.py",
+        "python/nexus/services/epub_metadata.py",
+        "python/nexus/services/metadata_enrichment.py"
+      ],
+      "proofs": [
+        "pytest:python/tests/service/test_media_publication_metadata.py::test_epub_reprint_date_never_replaces_original_and_null_research_clears",
+        "pytest:python/tests/kernel/test_publication_dates.py::test_publication_dates_reject_impossible_or_unsupported_generated_values"
+      ],
+      "capabilities": [
+        "kernel-python",
+        "service"
+      ]
     }
   ],
   "journeys": [

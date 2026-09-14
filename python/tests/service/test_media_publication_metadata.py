@@ -73,7 +73,9 @@ def test_epub_reprint_date_never_replaces_original_and_null_research_clears(
     persist_epub_metadata(db_session, media, result)
     db_session.flush()
     db_session.refresh(media)
-    assert media.original_published_date is None
+    assert media.original_published_date is None, (
+        "source edition populated the original publication date"
+    )
     assert media.edition_published_date == "2007-09-06"
     assert media.edition_isbn == "9780141441672"
     # Controlled accepted research proves publication semantics, not model accuracy.
