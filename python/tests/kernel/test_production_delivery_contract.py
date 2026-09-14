@@ -17,7 +17,24 @@ def test_ci_setup_provides_every_platform_static_tool_without_requiring_sudo_whe
     assert 'command -v "$tool"' in setup
     assert "sudo -n true" in setup
     assert 'sudo apt-get install --yes --no-install-recommends "${missing[@]}"' in setup
-    assert "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f" in setup
+
+
+def test_ci_static_checks_use_engine_buildkit_without_an_isolated_daemon() -> None:
+    setup = (REPO_ROOT / ".github/actions/setup-test/action.yml").read_text(
+        encoding="utf-8",
+    )
+    publication = (REPO_ROOT / ".github/workflows/backend-images.yml").read_text(
+        encoding="utf-8",
+    )
+    pinned_setup = (
+        "docker/setup-buildx-action@"
+        "8d2750c68a42422c14e847fe6c8ac0403b4cbd6f"
+    )
+
+    assert setup.count(pinned_setup) == 1
+    assert f"uses: {pinned_setup}\n      with:\n        driver: docker" in setup
+    assert publication.count(pinned_setup) == 1
+    assert "driver: docker" not in publication
 
 
 def test_deploy_is_one_exact_immutable_staged_release_path() -> None:
