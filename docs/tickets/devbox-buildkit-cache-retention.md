@@ -23,19 +23,31 @@ idle, run-owned builder cache restored 3.769 gb free without touching the engine
 cache. this was emergency headroom recovery, not resolution of the engine-cache
 lifetime defect.
 
+the same day, changed proof `5faa12aeac76d6ca` was correctly refused at the
+8,192 mib storage admission floor after observing 7,063 mib. the default engine
+held 5.576 gb across 72 inactive build-cache records, including two near-identical
+api/worker check sets last used about 10 and 54 minutes earlier. pruning only
+that inactive default-builder cache restored 12,530 mib free. this proves the
+engine-driver static Dockerfile checks also need an owned cache lifetime; moving
+cache out of per-job volumes did not bound it.
+
 ## prerequisites and fix
 
 coordinate with the backend candidate-image proof now under development in the
-bounded-workspace lane. give each proof run a uniquely named docker-container
-builder and remove that builder in a `finally` path after success, failure, or
-interruption. retain the existing exact image cleanup. admit this capability
-only when free storage covers its measured maximum transient footprint plus the
-8 gb operator reserve; do not raise the floor for unrelated heavy proofs.
+bounded-workspace lane. every controller-owned Buildx operation, including
+static Dockerfile checks, must select a uniquely named run-owned builder and
+remove its builder and cache in a `finally` path after success, failure, or
+interruption. retain the existing exact image cleanup. setup may provision the
+Buildx client but must not become a second cache-lifetime owner. admit image
+build capabilities only when free storage covers their measured maximum
+transient footprint plus the 8 gb operator reserve; do not raise the floor for
+unrelated heavy proofs.
 
 ## acceptance
 
 - success, injected build failure, and interruption all remove only the owned
   builder and cache;
-- repeated exact candidate-image proofs leave no builder or cache growth;
+- repeated static Dockerfile checks and exact candidate-image proofs leave no
+  builder or cache growth;
 - foreign builders and caches remain untouched;
 - the affected proofs pass through `./scripts/test`.
