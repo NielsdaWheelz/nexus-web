@@ -508,6 +508,14 @@ original summary/context hashes, including failures and interruptions. price:
 guard and its missing-reference fault require execution. retained history is
 not qualification of this merged source; no source attestation is reconstructed.
 
+the index now additionally retains four local failures through
+`c7f4c2b64f39176f`, bringing the total to 684. that run reached the actual
+reporter privacy assertion after selected python static checks passed. pytest's
+truncated duplicate summary exposed part of an artificial secret; the structured
+failure record was correctly redacted. correcting this evidence boundary leaves
+the original assertion and capture limits intact. the focused controller suite
+and remaining acceptance gates are not yet green.
+
 the preview for `5d687cdc8a` exposed an empty retired ingest route module.
 the module is removed; current callers use upload sessions and explicit ingest
 operations. the existing negative journey requires the retired endpoint's 404.

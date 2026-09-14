@@ -30,3 +30,12 @@ a bounded marker record, with redaction before encoding and strict incomplete
 evidence classification. the same failed deadline case and reporter sensitivity
 remain unrun on the combined candidate. do not close this ticket from source
 review alone.
+
+focused run `c7f4c2b64f39176f` at `0d3b2164aea65bf06f5948b31ecb1e59e58e1f11`
+reached the reporter privacy proof after selected python static checks passed.
+structured records redact correctly, but pytest's terminal-width summary retains
+`local-"sec...` from the artificial canary. the complete secret is already lost
+before parent redaction. the correction discards that truncated duplicate line's
+message and node; the structured record remains authoritative. a node can itself
+contain the summary delimiter, so retaining a guessed node prefix is unsafe.
+the original thirteen cases and a parameter-id case must pass before acceptance.
