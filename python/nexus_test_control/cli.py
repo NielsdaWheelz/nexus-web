@@ -7,7 +7,8 @@ import re
 import subprocess
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import TextIO
@@ -49,7 +50,10 @@ from nexus_test_control.runner import (
     environment_secrets,
     run_workflow,
 )
-from nexus_test_control.runtime import RuntimeContractError, workspace_heavy_lock
+from nexus_test_control.runtime import (
+    RuntimeContractError,
+    workspace_invocation_lock,
+)
 from nexus_test_control.selection import (
     ChangedPath,
     GitChangeKind,
@@ -78,6 +82,10 @@ _HEAD_SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 
 class ControlPlaneError(ValueError):
+    pass
+
+
+class RuntimeLeaseError(RuntimeContractError):
     pass
 
 
@@ -120,6 +128,7 @@ class ListCommand:
 
 
 type Command = WorkflowCommand | ProveCommand | DiagnoseCommand | CleanCommand | ListCommand
+type RuntimeCleaner = Callable[[Path, Mapping[str, str]], tuple[str, ...]]
 
 
 def parser() -> argparse.ArgumentParser:
@@ -242,6 +251,7 @@ def main(
     environment: Mapping[str, str] | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
+    runtime_cleaner: RuntimeCleaner = clean_owned_runtime,
 ) -> int:
     arguments = tuple(argv) if argv is not None else tuple(sys.argv[1:])
     output = stdout if stdout is not None else sys.stdout
@@ -257,20 +267,39 @@ def main(
         root = _git_repo_root(repo_root or Path.cwd())
         local_test_environment = test_environment(env)
         with controller_signal_handlers():
-            if isinstance(command, ProveCommand):
-                return _execute_prove(root, command, env, output, reporter)
-            if isinstance(command, DiagnoseCommand):
-                return _execute_diagnose(root, command, env, output, reporter)
             if isinstance(command, CleanCommand):
-                with workspace_heavy_lock(root):
+                with workspace_invocation_lock(root):
                     runtime_existed = (root / ".nexus-test/runtime.json").is_file()
-                    cleaned = clean_owned_runtime(root, local_test_environment)
+                    cleaned = runtime_cleaner(root, local_test_environment)
                 output.write(
                     f"clean: pass; runs={len(cleaned)}; "
                     f"runtime={'removed' if runtime_existed else 'absent'}\n"
                 )
                 return 0
-            return _execute_workflow(root, command, env, output, reporter)
+            with _workspace_runtime_lease(
+                root,
+                local_test_environment,
+                runtime_cleaner=runtime_cleaner,
+            ):
+                if isinstance(command, ProveCommand):
+                    return _execute_prove(root, command, env, output, reporter)
+                if isinstance(command, DiagnoseCommand):
+                    return _execute_diagnose(root, command, env, output, reporter)
+                return _execute_workflow(root, command, env, output, reporter)
+    except RuntimeLeaseError as error:
+        if not reporter.report(
+            errors,
+            owner="runtime-cleanup",
+            status=RunStatus.FAIL,
+            kind="controller_failure",
+            detail=error,
+        ):
+            errors.write(
+                "secondary: owner=runtime-cleanup; status=fail; "
+                "detail=cleanup failed after the decisive test failure; "
+                "recover with ./scripts/test clean\n"
+            )
+        return 1
     except (CommandInterrupted, ControlPlaneError, RuntimeContractError, SensitivityError) as error:
         reporter.report(
             errors,
@@ -280,6 +309,27 @@ def main(
             detail=error,
         )
         return 1
+
+
+@contextmanager
+def _workspace_runtime_lease(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    *,
+    runtime_cleaner: RuntimeCleaner = clean_owned_runtime,
+) -> Iterator[None]:
+    with workspace_invocation_lock(repo_root):
+        try:
+            runtime_cleaner(repo_root, environment)
+        except Exception as error:
+            raise RuntimeLeaseError("could not clear prior test runtime state") from error
+        try:
+            yield
+        finally:
+            try:
+                runtime_cleaner(repo_root, environment)
+            except Exception as error:
+                raise RuntimeLeaseError("could not retire test invocation runtime") from error
 
 
 def _execute_workflow(

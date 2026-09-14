@@ -318,7 +318,8 @@ Never copy a deleted legacy helper or generalize unrelated endpoint shapes.
 
 ### Isolation and fixture shape
 
-- Reuse service processes; never reuse writable test state.
+- Reuse service processes only within one controller invocation; never retain
+  them after that invocation, and never reuse writable test state.
 - Proof MUST NOT depend on execution order or mutations left by another test.
 - Isolate users, libraries, object prefixes, files, ports, queues, and browser
   state wherever writes can escape.
@@ -373,10 +374,10 @@ not targets.
 A red or `not_run` result is decisive. The controller records later
 capabilities as blocked and launches no further heavy work.
 
-| Workflow | Warm target | Cold behavior |
+| Workflow | Cached target | Additional cold behavior |
 |---|---:|---|
-| exact proof / `changed` | under 10 seconds when no heavy boundary is selected | dependency or first template/build cost is recorded, not hidden |
-| `confidence` | 60–90 seconds | selected service/component setup may exceed the warm target |
+| exact proof / `changed` | under 10 seconds when no heavy boundary is selected | dependency, service, or first template/build cost is recorded, not hidden |
+| `confidence` | 60–90 seconds | selected service/component setup may exceed the cached target |
 | `pr` | 3–5 minutes locally | CI duration is measured before a p95 ratchet is adopted |
 | `full` | measured; no fixed acceptance number | one current-revision build and one sequential heavy process |
 | `nightly` / `release` | scheduled and cost-capped | hosted/device work remains fail-closed |
@@ -392,15 +393,23 @@ production browser proof must execute that code; reusing the green artifact
 there would make the red oracle vacuous. Never rebuild the same fingerprint in
 one workflow.
 
-Before launching Node/browser/build/Gradle or other heavy proof, the controller
-acquires the single-heavy-operation lock and waits at most 30 seconds for
-kernel-reported `MemAvailable` to reach 2,048 MiB. This bounded admission wait
-only resamples host state; it never launches or reruns proof and is not an
-automatic retry. Unknown memory is immediately `not_run`; expiry below the
-floor is `not_run` before launch and reports the latest observed value. This is
-a conservative host-safety admission floor, not a proof-size or performance
-target. Change it only from recorded memory evidence on the 8 GiB reference
-host.
+Before any workload or recovery command, the controller acquires one
+lineage-wide invocation lock and holds it through terminal runtime teardown.
+Linked worktrees and independent complete-history clones derive the same lock
+from their Git lineage. `list --json` alone bypasses the lock because it starts
+no work or runtime. The historical single-heavy-operation lock path remains the
+same so older controllers cannot overlap a heavy phase; nested heavy,
+sensitivity, and visual boundaries reenter only beneath the explicit invocation
+owner.
+
+Before launching Node/browser/build/Gradle or other heavy proof under that
+lease, the controller waits at most 30 seconds for kernel-reported
+`MemAvailable` to reach 2,048 MiB. This bounded admission wait only resamples
+host state; it never launches or reruns proof and is not an automatic retry.
+Unknown memory is immediately `not_run`; expiry below the floor is `not_run`
+before launch and reports the latest observed value. This is a conservative
+host-safety admission floor, not a proof-size or performance target. Change it
+only from recorded memory evidence on the 8 GiB reference host.
 
 Under the same lock and immediately before launch, heavy proof also requires
 8,192 MiB free across the checkout filesystem and, when the proof may use the
@@ -429,7 +438,7 @@ adapter. The Makefile deliberately has no test/check/verify aliases.
 | `./scripts/test android-visual --sha HEAD_SHA --path /OWNED_PATH [--device primary]` | explicit opt-in physical-device authenticated WebView visual check of the current non-`main` worktree; never included in `changed`/`confidence`/`pr`/`full`/`nightly`/`release` |
 | `./scripts/test prove --proof PROOF --against base:REF\|fault:FAULT_ID` | exact demonstrated-red then green sensitivity evidence |
 | `./scripts/test diagnose --of RUN_ID` | one separately recorded replay of the exact failed workflow; never a new verdict |
-| `./scripts/test clean` | delete exact ledger-owned runs, the recorded local workspace stack/volumes, and its runtime state |
+| `./scripts/test clean` | recover from an unhandled interruption by deleting exact ledger-owned runs, the recorded local workspace stack/volumes, and its runtime state |
 | `./scripts/test list --json` | machine-readable registry from the same typed execution source |
 
 The typed registry is the single execution and workflow-composition source.
@@ -484,8 +493,14 @@ apply. A direct invocation is not a workflow verdict.
 
 ### Local runtime and ownership
 
-The controller owns one persistent, health-checked, workspace-local
-PostgreSQL/MinIO/Supabase-test stack recorded in `.nexus-test/runtime.json`.
+The controller may own one health-checked, workspace-local
+PostgreSQL/MinIO/Supabase-test stack recorded in `.nexus-test/runtime.json` and
+scoped to exactly one workload invocation. It clears stale recorded runtime
+state before starting work, reuses service processes across capabilities in
+that invocation, and tears down the exact stack, volumes, and runtime state
+after every normal, failing, or handled-interrupt terminal path. Immutable
+evidence under `test-results/` survives. `clean` remains the recovery owner for
+an unhandled process death, and CI repeats cleanup in its always-run finalizer.
 Initial allocation MUST exclude the host kernel's ephemeral client-port range;
 when the kernel range interface is absent, the controller excludes ports
 `32768–65535`; an unreadable or malformed present interface fails closed.
@@ -792,7 +807,7 @@ The paved road enforces the mechanically decidable part of this contract:
 | Browser network denial | component global guards and controller-recorded loopback Playwright allowlist |
 | Local-resource isolation | pre-contact environment/endpoint/name validators and exact ownership ledger |
 | No test-only product seams | product-source policy scan plus test-owned loopback protocol processes |
-| Deterministic execution | zero automatic retries, one Playwright worker, fixed audit seeds, one heavy-process lock |
+| Deterministic execution | zero automatic retries, one Playwright worker, fixed audit seeds, one lineage-wide invocation lock |
 | Fixture provenance | `testdata/manifest.json` path, provenance, and SHA-256 validation |
 | Priority-risk and journey routing | `testdata/proofs.json` schema, source owners, minimum risk IDs, exact journey selection, and sensitivity records |
 | Falsifiability | `prove` red/green evidence plus PR policy for changed priority-risk and declared-fault proof |
@@ -874,7 +889,7 @@ The replacement order is:
 
 1. cap resource use and stop repeated setup/build waste;
 2. define critical risks and approximately ten product-existence journeys;
-3. establish persistent services, per-run state, and the shared corpus;
+3. establish invocation-scoped services, per-run state, and the shared corpus;
 4. build the compact kernel/service/component portfolio without translating old
    tests one-for-one;
 5. replay known regressions and inject representative faults;
@@ -896,7 +911,7 @@ Build these in order:
    `release`, and `doctor` interface;
 2. an explicit memory-admission floor, measured ratchets, no `-n auto`, and no
    overlapping heavy local gates;
-3. one persistent Postgres/MinIO/Supabase stack;
+3. one invocation-scoped Postgres/MinIO/Supabase stack;
 4. one migrated seed database cloned per run;
 5. one immutable canonical corpus plus per-run writable state;
 6. default-deny network, owned-mock/sleep lint, E2E lint, and visible flakes;

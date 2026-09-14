@@ -37,6 +37,7 @@ from nexus_test_control.runtime import (
     template_lifecycle_lock,
     upgrade_previous_runtime,
     workspace_heavy_lock,
+    workspace_invocation_lock,
 )
 
 RUN_ID = "0123456789abcdef"
@@ -98,6 +99,50 @@ def test_heavy_lock_serializes_linked_worktrees_through_their_common_git_owner(
             capture_output=True,
         )
 
+    assert completed.returncode != 0
+    assert "BlockingIOError" in completed.stderr
+
+
+def test_invocation_lock_preserves_nested_heavy_boundaries_and_external_exclusion(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(("git", "init", "-q"), cwd=repository, check=True)
+    (repository / "proof.txt").write_text("proof\n", encoding="utf-8")
+    subprocess.run(("git", "add", "."), cwd=repository, check=True)
+    subprocess.run(
+        (
+            "git",
+            "-c",
+            "user.name=Nexus Test",
+            "-c",
+            "user.email=nexus@example.invalid",
+            "commit",
+            "-qm",
+            "base",
+        ),
+        cwd=repository,
+        check=True,
+    )
+
+    with workspace_invocation_lock(repository) as invocation_path:
+        with workspace_heavy_lock(repository, blocking=False) as nested_path:
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-c",
+                    "import fcntl, pathlib, sys; "
+                    "f = pathlib.Path(sys.argv[1]).open('a+b'); "
+                    "fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)",
+                    str(invocation_path),
+                ),
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+    assert nested_path == invocation_path
     assert completed.returncode != 0
     assert "BlockingIOError" in completed.stderr
 
