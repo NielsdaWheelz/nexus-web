@@ -4783,7 +4783,7 @@ def test_exact_deterministic_llm_eval_does_not_start_an_unowned_external_protoco
     process_roles: list[str] = []
     cleaned: list[str] = []
 
-    class Ports(_ReadyExternalPorts):
+    class Ports(_ReadyProtocolPorts):
         def prepare_run(
             self,
             _root: Path,

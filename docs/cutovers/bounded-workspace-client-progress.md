@@ -479,3 +479,19 @@ follow-up `e2d7393760e94077` was explicitly interrupted before a new claim.
 - this is a source correction for the actual build failure. no test or build ran
   during the frozen batch; the next paved type/build check and pending-selection
   behavior proofs remain required. preview success is not claimed.
+
+
+## 2026-09-14 preview missing navigation identity
+
+- actual Vercel deployment `dpl_JBW7rxZBhNw4ud1AypudYsFW78DH`, from
+  `b6928c60a32e8cc651cb9511097b9cb12ae70994`, failed type validation at
+  21:27:54 UTC: `MediaPaneBody.tsx:7392`, the invalid EPUB link pathname branch
+  omitted the required `navigationId` in its publication render defect.
+- supply the existing `publicationNavigationId`, matching the adjacent missing
+  source-unit branch in the same synchronous internal-link click handler. this
+  records the current presentation owner before any navigation command begins.
+  the other four setter calls already provide their captured current navigation
+  identity; no field was made optional and no null placeholder was introduced.
+- failure-first settlement, explicit retries and stale command checks are
+  unchanged. no test or build ran for this draft; actual paved type validation
+  and preview success remain pending.

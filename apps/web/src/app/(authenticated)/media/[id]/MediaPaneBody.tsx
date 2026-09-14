@@ -7389,7 +7389,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
                 if (target === null) return false;
                 const pathname = target.path ?? normalizeEpubPathname(base);
                 if (pathname === null) {
-                  setPublicationRenderDefect({ session: documentReaderSession, attempt: publicationRenderAttempt,
+                  setPublicationRenderDefect({ session: documentReaderSession, attempt: publicationRenderAttempt, navigationId: publicationNavigationId,
                     error: new Error("Reader link source has no publication pathname") });
                   return true;
                 }
