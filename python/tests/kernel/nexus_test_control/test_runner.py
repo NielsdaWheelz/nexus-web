@@ -1252,6 +1252,18 @@ def test_android_host_uses_the_fixed_synthetic_client_and_host_test_task(tmp_pat
     assert command["google_client_id"] == "nexus-test.apps.googleusercontent.com"
 
 
+def test_android_compiler_lifetime_is_owned_by_the_gradle_process() -> None:
+    strategy = [
+        line
+        for line in (REPO_ROOT / "apps/android/gradle.properties")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.startswith("kotlin.compiler.execution.strategy=")
+    ]
+
+    assert strategy == ["kotlin.compiler.execution.strategy=in-process"]
+
+
 def test_exact_android_device_proof_uses_one_instrumentation_method(tmp_path: Path) -> None:
     android_root = tmp_path / "apps/android"
     sdk = tmp_path / "android-sdk"

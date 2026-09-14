@@ -402,8 +402,10 @@ capabilities as blocked and launches no further heavy work.
 The controller records peak RSS for its process tree and the working set of
 containers owned by the exact test compose project. CPU count never chooses
 workers. Run one Next build, Chromium suite, or Gradle operation at a time; do
-not overlap unrelated heavy lanes. Build a strict-CSP Next artifact at most
-once per distinct executable source/environment fingerprint and reuse it.
+not overlap unrelated heavy lanes. Kotlin compilation runs inside the owned
+single-use Gradle process; no Kotlin compiler daemon may outlive an Android
+proof. Build a strict-CSP Next artifact at most once per distinct executable
+source/environment fingerprint and reuse it.
 Ordinary workflows therefore build the current revision once. Sensitivity MAY
 build one additional artifact for each distinct faulted or base revision whose
 production browser proof must execute that code; reusing the green artifact
