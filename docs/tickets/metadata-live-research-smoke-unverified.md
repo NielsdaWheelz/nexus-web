@@ -11,6 +11,10 @@ no hosted metadata smoke was run in this change. the approved cutover's
 acceptance 4 calls for inspecting untrusted instructions and external queries as
 model behavior.
 
+local inspection on 2026-09-14 found no brave search key or configured/default
+codex host socket. the test controller supplies controlled peers; no existing
+`./scripts/test` capability runs a hosted metadata smoke.
+
 prerequisite: a configured live metadata runtime and brave search, using public
 sample documents and an explicit small cost ceiling. inspect a few original /
 edition resolutions and actual query contents, including an untrusted passage.
