@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/resource_graph/cleanup.py b/python/nexus/services/resource_graph/cleanup.py
+--- a/python/nexus/services/resource_graph/cleanup.py
++++ b/python/nexus/services/resource_graph/cleanup.py
+@@ -185,7 +185,7 @@
+     """Remove both motif halves when either endpoint dies, across all viewers."""
+     notes = select(ResourceEdge.source_scheme, ResourceEdge.source_id).where(
+         ResourceEdge.origin == "link_note",
+-        tuple_(ResourceEdge.target_scheme, ResourceEdge.target_id).in_(targets),
++        tuple_(ResourceEdge.target_scheme, ResourceEdge.target_id).in_(db.execute(targets).all()),
+     )
+     _delete_link_note_edges_from_notes(db, notes=notes)
+ 

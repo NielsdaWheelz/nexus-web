@@ -36,6 +36,8 @@ export interface ImportsPageResult {
    * data, and only the freshness notice changes.
    */
   readonly refreshFailed: boolean;
+  readonly refreshDefect: { readonly error: unknown } | null;
+  readonly refreshKey: string;
   loadMore(): void;
   retry(): void;
 }
@@ -80,8 +82,10 @@ export function useImportsPage(
   const absorbRereadFailure = useLiveRereadFailure();
   const query = importsQueryParams(view, state).toString();
   const cacheKey = `${query} ${observation.revision}`;
+  const [defect, setDefect] = useState<{ readonly key: string; readonly error: unknown } | null>(null);
   const keyed = useResource<ImportPage>({
     cacheKey,
+    onDefect: (error) => setDefect({ key: cacheKey, error }),
     load: (signal) =>
       fetchImportPage({
         query: new URLSearchParams(query),
@@ -120,6 +124,7 @@ export function useImportsPage(
   const lastGood = lastGoodRef.current;
   const page =
     read ?? (lastGood !== null && lastGood.query === query ? lastGood.page : null);
+  const refreshDefect = defect?.key === cacheKey ? defect : null;
 
   // The newest read of this query failed while the page above is the one read
   // before it: the reader is looking at facts, not at a failure, so the pane
@@ -205,6 +210,10 @@ export function useImportsPage(
       ),
   });
 
+  // A failed initial read has no data to retain. A refresh has an independently
+  // valid page; its freshness boundary reports the defect without unmounting it.
+  if (refreshDefect !== null && page === null) throw refreshDefect.error;
+
   return {
     items: pagination.items,
     status: pagination.status,
@@ -214,6 +223,8 @@ export function useImportsPage(
     hasMore: pagination.hasMore,
     loadingMore: pagination.loadingMore,
     refreshFailed,
+    refreshDefect,
+    refreshKey: cacheKey,
     loadMore: pagination.loadMore,
     retry: pagination.retry,
   };

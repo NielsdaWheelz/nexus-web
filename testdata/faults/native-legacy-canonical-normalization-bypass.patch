@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyCanonical.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyCanonical.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyCanonical.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyCanonical.kt
+@@ -91,7 +91,7 @@
+     // Real closing events can own pending canonical whitespace; synthetic crop
+     // closures cannot. NFC still spans adjacent source text nodes.
+     val rawText = raw.toString()
+-    val normalized = Normalizer.normalize(rawText, Normalizer.Form.NFC)
++    val normalized = rawText
+     val normalizedStarts = canonicalNormalizationStarts(rawText, normalized)
+     val canonical = StringBuilder()
+     val origins = mutableListOf<Int>()

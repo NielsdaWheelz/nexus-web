@@ -1,3 +1,6 @@
+import { pdfReaderSession } from "./__tests__/pdfReaderSession";
+import type { DocumentReaderSession } from "@/lib/reader/DocumentReaderSession";
+import { onePagePdf } from "./__tests__/pdfFixtures";
 import { useCallback, useMemo, useState } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
@@ -12,13 +15,10 @@ import {
 } from "@/lib/workspace/mobileChrome";
 import { createHostedPdfReaderDecorations } from "@/app/(authenticated)/media/[id]/hostedPdfReaderDecorations";
 import { useHostedPdfPageHighlights } from "@/app/(authenticated)/media/[id]/useHostedPdfPageHighlights";
-import { createHostedReaderSource } from "@/lib/reader/ReaderDocumentSource";
-import { createHostedReaderProgressPort } from "@/lib/reader/ReaderProgressPort";
-import { createDocumentReaderSession } from "@/lib/reader/DocumentReaderSession";
-import { useDocumentReaderSession } from "@/lib/reader/useDocumentReaderSession";
 import { useReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { PdfHighlightOut } from "@/lib/reader/ReaderDecorations";
+import type { ReaderPublicationDescriptor } from "@/lib/reader/publicationContract";
 import PdfReader, {
   type PdfReaderResourceState,
   type PdfReaderVisibleLockReason,
@@ -41,42 +41,20 @@ function deferred<T>(): Deferred<T> {
 }
 
 function json(data: unknown): Response {
-  return new Response(JSON.stringify({ data }), {
+  const body = JSON.stringify({ data });
+  return new Response(body, {
     status: 200,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Content-Length": String(new TextEncoder().encode(body).byteLength) },
   });
 }
 
-function onePagePdf(text: string): Blob {
-  const stream = `BT\n/F1 18 Tf\n72 720 Td\n(${text}) Tj\nET\n`;
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
-    `<< /Length ${stream.length} >>\nstream\n${stream}endstream`,
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-  ];
-  let body = "%PDF-1.4\n%NEXUS\n";
-  const offsets = objects.map((object, index) => {
-    const offset = body.length;
-    body += `${index + 1} 0 obj\n${object}\nendobj\n`;
-    return offset;
-  });
-  const xrefOffset = body.length;
-  body += "xref\n0 6\n0000000000 65535 f \n";
-  body += offsets
-    .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
-    .join("");
-  body += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
-  return new Blob([body], { type: "application/pdf" });
-}
-
-function committedHighlight(): PdfHighlightOut {
+function committedHighlight(sourceSha256: string): PdfHighlightOut {
   return {
-    id: "committed-highlight",
+    id: "33333333-3333-4333-8333-333333333333",
     anchor: {
       type: "pdf_page_geometry",
       media_id: MEDIA_ID,
+      source_sha256: sourceSha256,
       page_number: 1,
       quads: [
         {
@@ -99,10 +77,12 @@ function committedHighlight(): PdfHighlightOut {
     updated_at: "2026-08-01T12:00:00.000Z",
     author_user_id: "22222222-2222-4222-8222-222222222222",
     is_owner: true,
+    linked_conversations: [],
+    linked_note_blocks: [],
   };
 }
 
-function installPdfBff(pdfUrl: string) {
+function installPdfBff(sourceSha256: string, fixture: Awaited<ReturnType<typeof pdfReaderSession>>) {
   const reconciliationStarted = deferred<void>();
   const reconciliation = deferred<Response>();
   let highlightMutated = false;
@@ -122,29 +102,16 @@ function installPdfBff(pdfUrl: string) {
       );
       const method = (init?.method ?? request?.method ?? "GET").toUpperCase();
 
-      if (url.pathname === `/api/media/${MEDIA_ID}` && method === "GET") {
-        return json({ id: MEDIA_ID, title: "PDF proof", kind: "pdf" });
-      }
+      const initial = fixture.read(url.pathname);
+      if (initial !== null) return initial;
       if (
-        url.pathname === `/api/media/${MEDIA_ID}/reader-state` &&
-        method === "GET"
-      ) {
-        return json({ state: "Empty", revision: 0 });
-      }
-      if (url.pathname === `/api/media/${MEDIA_ID}/file` && method === "GET") {
-        return json({
-          url: pdfUrl,
-          expires_at: "2099-01-01T00:00:00.000Z",
-        });
-      }
-      if (
-        url.pathname === `/api/media/${MEDIA_ID}/pdf-highlights` &&
-        method === "GET"
+        url.pathname === `/api/media/${MEDIA_ID}/reader-publications/7/pdf-highlights` &&
+        method === "POST"
       ) {
         // Reads before the committed mutation are empty; the read AFTER the
         // mutation is the reconciliation read the proof holds pending.
         if (!highlightMutated) {
-          return json({ page_number: 1, highlights: [] });
+          return json({ page_number: 1, source_sha256: sourceSha256, highlights: [], next_cursor: null });
         }
         reconciliationStarted.resolve();
         return reconciliation.promise;
@@ -158,7 +125,7 @@ function installPdfBff(pdfUrl: string) {
           : JSON.parse(String(init?.body));
         highlightWrite = body as typeof highlightWrite;
         highlightMutated = true;
-        return json(committedHighlight());
+        return json(committedHighlight(sourceSha256));
       }
       throw new Error(
         `Unexpected PDF BFF request: ${method} ${url.pathname}${url.search}`,
@@ -170,7 +137,7 @@ function installPdfBff(pdfUrl: string) {
     reconciliationStarted: reconciliationStarted.promise,
     readHighlightWrite: () => highlightWrite,
     finishReconciliation() {
-      reconciliation.resolve(json({ page_number: 1, highlights: [] }));
+      reconciliation.resolve(json({ page_number: 1, source_sha256: sourceSha256, highlights: [], next_cursor: null }));
     },
   };
 }
@@ -185,13 +152,9 @@ function textNodeContaining(root: HTMLElement, value: string): Text {
   throw new Error(`Rendered PDF text layer omitted ${JSON.stringify(value)}.`);
 }
 
-/**
- * Drives PdfReader through the production owners: the composed
- * `useDocumentReaderSession` supplies the signed-URL resource and the hosted
- * `useHostedPdfPageHighlights` hook supplies page highlights behind the same
- * render-readiness gate MediaPaneBody uses (`onResourceStateChange` feedback).
- */
-function PdfReaderHarness() {
+// The actual leaf receives the selected PDF bytes; hosted query/write owners
+// still cross the BFF and reconcile committed highlights against PDF.js geometry.
+function PdfReaderHarness({ pdfUrl, descriptor, session }: { session: DocumentReaderSession; pdfUrl: string; descriptor: Extract<ReaderPublicationDescriptor, { kind: "pdf" }> }) {
   const [highlightRefresh, setHighlightRefresh] = useState(0);
   const [resourceState, setResourceState] = useState<PdfReaderResourceState>({
     pageNumber: 1,
@@ -199,42 +162,20 @@ function PdfReaderHarness() {
     loading: true,
     error: null,
   });
-  const session = useMemo(
-    () =>
-      createDocumentReaderSession({
-        mediaId: MEDIA_ID,
-        source: createHostedReaderSource(),
-        progress: createHostedReaderProgressPort(),
-      }),
-    [],
-  );
   const decorations = useMemo(
-    () => createHostedPdfReaderDecorations(MEDIA_ID),
-    [],
+    () => createHostedPdfReaderDecorations(descriptor, session),
+    [descriptor, session],
   );
-  const composition = useDocumentReaderSession({
-    session,
-    progress: {
-      capability: { state: "Readable", mediaId: MEDIA_ID, locatorKind: "pdf" },
-      isPaneActive: true,
-      handleUnauthenticatedError: () => false,
-      captureCurrentLocator: () => null,
-      applyCursor: async () => "applied",
-      onTerminalWriteAcknowledged: () => undefined,
-      previewLease: { isActive: () => false },
-    },
-    navigation: { cacheKey: null, expectedKind: null },
-    loadCacheKey: `${MEDIA_ID}:reader-session`,
-    initialEpubSectionId: null,
-    pdf: {
-      sourceCacheKey: `${MEDIA_ID}:pdf-source:0`,
-      sourceRefreshToken: 0,
-    },
-  });
+  const signedUrl = useMemo(
+    () => ({
+      status: "ready" as const,
+      data: { url: pdfUrl },
+    }),
+    [pdfUrl],
+  );
   const pageHighlights = useHostedPdfPageHighlights({
-    mediaId: MEDIA_ID,
-    enabled: true,
-    decorations,
+    sourceKey: JSON.stringify([descriptor.media_id, descriptor.reader_generation, descriptor.document_asset_ref.sha256]),
+    session,
     resourceState,
     refreshToken: highlightRefresh,
   });
@@ -278,8 +219,9 @@ function PdfReaderHarness() {
     <PdfReader
       mediaId={MEDIA_ID}
       resources={{
-        signedUrl: composition.pdfDocument,
-        pageHighlights,
+        signedUrl,
+        pageHighlights: pageHighlights.resource,
+        retryPageHighlights: pageHighlights.retry,
         requestSignedUrlRefresh,
       }}
       decorations={decorations}
@@ -297,16 +239,23 @@ function PdfReaderHarness() {
 
 it("keeps a committed PDF highlight visible while BFF reconciliation is pending", async () => {
   await page.viewport(1_280, 800);
-  const pdfUrl = URL.createObjectURL(onePagePdf(`Alpha ${EXACT} Omega`));
-  const bff = installPdfBff(pdfUrl);
+  const pdf = onePagePdf(`Alpha ${EXACT} Omega`);
+  const pdfUrl = URL.createObjectURL(pdf);
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", await pdf.arrayBuffer()));
+  const sha256 = Array.from(hash, (value) => value.toString(16).padStart(2, "0")).join("");
+  const descriptor = { kind: "pdf" as const, media_id: MEDIA_ID, reader_generation: 7, title: "Selected PDF",
+    reader_contract_version: 1 as const, page_count: 1, document_asset_ref: { key: "assets/document.pdf", bytes: pdf.size, sha256 } };
+  const fixture = await pdfReaderSession(descriptor);
+  const bff = installPdfBff(sha256, fixture);
+  await fixture.load();
   let foreignTextLayer: HTMLDivElement | null = null;
 
   try {
-    render(
+    const view = render(
       <MobileViewportProvider>
         <MobileChromeProvider>
           <ShareControllerProvider>
-            <PdfReaderHarness />
+            <PdfReaderHarness pdfUrl={pdfUrl} descriptor={descriptor} session={fixture.session} />
           </ShareControllerProvider>
         </MobileChromeProvider>
       </MobileViewportProvider>,
@@ -371,16 +320,18 @@ it("keeps a committed PDF highlight visible while BFF reconciliation is pending"
     expect(highlightWrite?.quads.length).toBeGreaterThan(0);
 
     const committedOverlay = screen.queryByTestId(
-      "pdf-highlight-committed-highlight-0",
+      "pdf-highlight-33333333-3333-4333-8333-333333333333-0",
     );
     expect(
       committedOverlay,
       "Committed PDF highlight disappeared before BFF reconciliation completed.",
     ).not.toBeNull();
     expect(committedOverlay!).toBeVisible();
+    view.unmount();
   } finally {
     foreignTextLayer?.remove();
     bff.finishReconciliation();
+    fixture.close();
     URL.revokeObjectURL(pdfUrl);
   }
 });

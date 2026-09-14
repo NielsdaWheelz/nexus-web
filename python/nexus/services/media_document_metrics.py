@@ -15,7 +15,7 @@ _MAX_POSTGRES_BIGINT = 2**63 - 1
 _DOCUMENT_KINDS = frozenset(("web_article", "epub", "pdf"))
 
 
-def _is_canonical_word_separator(character: str) -> bool:
+def is_canonical_word_separator(character: str) -> bool:
     """Match PostgreSQL ``[[:space:]]`` under Nexus' UTF-8 database locale.
 
     This intentionally excludes non-breaking spaces, narrow non-breaking
@@ -33,7 +33,9 @@ def _is_canonical_word_separator(character: str) -> bool:
     )
 
 
-def canonical_word_boundary_ordinal(canonical_text: str, offset: int) -> int:
+def canonical_word_boundary_ordinal(
+    canonical_text: str, offset: int, *, starts_in_word: bool = False
+) -> int:
     """Count canonical token starts before a Unicode-code-point boundary."""
     if (
         isinstance(offset, bool)
@@ -42,9 +44,9 @@ def canonical_word_boundary_ordinal(canonical_text: str, offset: int) -> int:
     ):
         raise ValueError(f"offset must be an integer in 0..{len(canonical_text)}")
     ordinal = 0
-    in_word = False
+    in_word = starts_in_word
     for character in canonical_text[:offset]:
-        if _is_canonical_word_separator(character):
+        if is_canonical_word_separator(character):
             in_word = False
         elif not in_word:
             ordinal += 1

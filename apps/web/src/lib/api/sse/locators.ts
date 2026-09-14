@@ -36,6 +36,7 @@ export type RetrievalLocator =
   | {
       type: "pdf_page_geometry";
       media_id: string;
+      source_sha256?: string | null;
       page_number: number;
       quads: unknown[];
       exact: string;
@@ -153,6 +154,7 @@ export function isRetrievalLocator(value: unknown): value is RetrievalLocator {
         hasOnlyKeys(value, [
           "type",
           "media_id",
+          "source_sha256",
           "page_number",
           "quads",
           "exact",
@@ -161,6 +163,7 @@ export function isRetrievalLocator(value: unknown): value is RetrievalLocator {
           "text_quote_selector",
         ]) &&
         typeof value.media_id === "string" &&
+        (value.source_sha256 == null || (typeof value.source_sha256 === "string" && /^[0-9a-f]{64}$/.test(value.source_sha256))) &&
         typeof value.page_number === "number" &&
         Number.isInteger(value.page_number) &&
         value.page_number >= 1 &&

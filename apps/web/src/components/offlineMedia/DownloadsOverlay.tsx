@@ -7,7 +7,13 @@ import {
   useSyncExternalStore,
   type MouseEvent,
 } from "react";
-import { CheckCircle2, Download, RotateCcw, Trash2, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  Download,
+  RotateCcw,
+  Trash2,
+  XCircle,
+} from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
@@ -18,7 +24,10 @@ import type { OfflineMediaInventoryItem } from "@/lib/offlineMedia/clientStore";
 import type { OfflineMediaController } from "@/lib/offlineMedia/controller";
 import type { OfflineMediaCapability } from "@/lib/offlineMedia/OfflineMediaProvider";
 import type { LocalAvailability } from "@/lib/offlineMedia/contract";
-import type { NetworkPolicy, ReadingSnapshot } from "@/lib/offlineReading/contract";
+import type {
+  NetworkPolicy,
+  ReadingSnapshot,
+} from "@/lib/offlineReading/contract";
 import type { OfflineReadingCapability } from "@/lib/offlineReading/OfflineReadingProvider";
 import {
   OFFLINE_READING_COPY,
@@ -98,49 +107,94 @@ function ReadingAction({
     case "Downloading":
     case "Verifying":
     case "Restarting":
-      return <Button variant="ghost" size="sm" onClick={() => void capability.controller.cancel(item.mediaId)}>Cancel</Button>;
-    case "Failed":
-      // TB-04 requires both a Retry and a Remove path on a failed transfer.
-      return <span className={styles.actions}>
-        <Button
-          variant="secondary"
-          size="sm"
-          leadingIcon={<RotateCcw size={16} aria-hidden="true" />}
-          onClick={() => void capability.controller.retry(item.mediaId)}
-        >Retry</Button>
+      return (
         <Button
           variant="ghost"
           size="sm"
-          leadingIcon={<Trash2 size={16} aria-hidden="true" />}
-          onClick={() => void capability.controller.remove(item.mediaId)}
-        >Remove</Button>
-      </span>;
+          onClick={() => void capability.controller.cancel(item.mediaId)}
+        >
+          Cancel
+        </Button>
+      );
+    case "Failed":
+    case "UpgradeRequired":
+    case "UpgradeBlockedByStorage":
+    case "UpgradeFailed":
+      // TB-04 requires both a Retry and a Remove path on a failed transfer.
+      return (
+        <span className={styles.actions}>
+          <Button
+            variant="secondary"
+            size="sm"
+            leadingIcon={<RotateCcw size={16} aria-hidden="true" />}
+            onClick={() => void capability.controller.retry(item.mediaId)}
+          >
+            Retry
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={<Trash2 size={16} aria-hidden="true" />}
+            onClick={() => {
+              // Every unconverted copy still holds a position Nexus has not
+              // accepted, whichever reason is blocking its local update.
+              if (
+                item.availability.kind !== "Failed" &&
+                !window.confirm(OFFLINE_READING_COPY.pendingRemoveConfirmation)
+              )
+                return;
+              void capability.controller.remove(item.mediaId);
+            }}
+          >
+            Remove
+          </Button>
+        </span>
+      );
     case "Ready": {
       const progress = item.availability.progress;
       // One primary action per ready row; removal lives in the row overflow.
-      return <span className={styles.actions}>
-        <Button variant="secondary" size="sm" onClick={() => void capability.controller.openDownloadedCopy(item.mediaId)}>Open downloaded copy</Button>
-        <ActionMenu
-          label={`More actions for ${item.title}`}
-          options={[{
-            kind: "command",
-            id: "remove",
-            label: "Remove",
-            tone: "danger",
-            icon: <Trash2 size={16} aria-hidden="true" />,
-            onSelect: () => {
-              if (
-                offlineReadingHasUnsyncedPosition(progress) &&
-                !window.confirm(OFFLINE_READING_COPY.pendingRemoveConfirmation)
-              ) return;
-              void capability.controller.remove(item.mediaId);
-            },
-          }]}
-        />
-      </span>;
+      return (
+        <span className={styles.actions}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() =>
+              void capability.controller.openDownloadedCopy(item.mediaId)
+            }
+          >
+            Open downloaded copy
+          </Button>
+          <ActionMenu
+            label={`More actions for ${item.title}`}
+            options={[
+              {
+                kind: "command",
+                id: "remove",
+                label: "Remove",
+                tone: "danger",
+                icon: <Trash2 size={16} aria-hidden="true" />,
+                onSelect: () => {
+                  if (
+                    offlineReadingHasUnsyncedPosition(progress) &&
+                    !window.confirm(
+                      OFFLINE_READING_COPY.pendingRemoveConfirmation,
+                    )
+                  )
+                    return;
+                  void capability.controller.remove(item.mediaId);
+                },
+              },
+            ]}
+          />
+        </span>
+      );
     }
     case "Removing":
-      return <Button variant="ghost" size="sm" disabled>Removing…</Button>;
+      return (
+        <Button variant="ghost" size="sm" disabled>
+          Removing…
+        </Button>
+      );
   }
 }
 
@@ -154,37 +208,49 @@ function ReadingInventory({
   readonly onClose: () => void;
 }) {
   if (snapshot.items.length === 0) return null;
-  return <>
-    <h3>Reading</h3>
-    <ul className={styles.list} aria-label="Downloaded reading">
-      {snapshot.items.map((item) => <li key={`reading:${item.mediaId}`} className={styles.item}>
-        <button
-          type="button"
-          className={styles.title}
-          onClick={(event) => {
-            if (requestWorkspaceTargetActivation({
-              target: { href: `/media/${item.mediaId}`, labelHint: item.title },
-              disposition: { kind: "Follow" },
-              modality: event.detail === 0 ? "Keyboard" : "Pointer",
-            })) {
-              onClose();
-            }
-          }}
-        >{item.title}</button>
-        <p className={styles.state}>{offlineReadingKindCopy(item.mediaKind)}</p>
-        <p className={styles.state}>{offlineReadingAvailabilityCopy(item.availability)}</p>
-        {item.availability.kind === "Ready" ? (
-          <p className={styles.state}>
-            {offlineReaderProgressCopy(item.availability.progress)}
-          </p>
-        ) : null}
-        {item.mediaKind === "WebArticle" ? (
-          <p className={styles.state}>{OFFLINE_READING_COPY.textOnlyNotice}</p>
-        ) : null}
-        <ReadingAction item={item} capability={capability} />
-      </li>)}
-    </ul>
-  </>;
+  return (
+    <>
+      <h3>Reading</h3>
+      <ul className={styles.list} aria-label="Downloaded reading">
+        {snapshot.items.map((item) => (
+          <li key={`reading:${item.mediaId}`} className={styles.item}>
+            <button
+              type="button"
+              className={styles.title}
+              onClick={(event) => {
+                if (
+                  requestWorkspaceTargetActivation({
+                    target: {
+                      href: `/media/${item.mediaId}`,
+                      labelHint: item.title,
+                    },
+                    disposition: { kind: "Follow" },
+                    modality: event.detail === 0 ? "Keyboard" : "Pointer",
+                  })
+                ) {
+                  onClose();
+                }
+              }}
+            >
+              {item.title}
+            </button>
+            <p className={styles.state}>
+              {offlineReadingKindCopy(item.mediaKind)}
+            </p>
+            <p className={styles.state}>
+              {offlineReadingAvailabilityCopy(item.availability)}
+            </p>
+            {item.availability.kind === "Ready" ? (
+              <p className={styles.state}>
+                {offlineReaderProgressCopy(item.availability.progress)}
+              </p>
+            ) : null}
+            <ReadingAction item={item} capability={capability} />
+          </li>
+        ))}
+      </ul>
+    </>
+  );
 }
 
 function InventoryAction({
@@ -266,7 +332,8 @@ function DownloadsPanel({
 }) {
   const [policyRetry, setPolicyRetry] = useState<NetworkPolicy | null>(null);
   const store = audio?.store ?? null;
-  const readingController = reading.kind === "Ready" ? reading.controller : null;
+  const readingController =
+    reading.kind === "Ready" ? reading.controller : null;
   const subscribeInventory = useCallback(
     (listener: () => void) =>
       store === null ? () => undefined : store.subscribeInventory(listener),
@@ -279,7 +346,9 @@ function DownloadsPanel({
   );
   const subscribeReading = useCallback(
     (listener: () => void) =>
-      readingController === null ? () => undefined : readingController.subscribe(listener),
+      readingController === null
+        ? () => undefined
+        : readingController.subscribe(listener),
     [readingController],
   );
   const inventory = useSyncExternalStore(
@@ -302,30 +371,37 @@ function DownloadsPanel({
   const networkPolicy =
     store !== null
       ? audioNetworkPolicy
-      : readingSnapshot?.networkPolicy ?? DEFAULT_NETWORK_POLICY();
-  const downloadedBytes = inventory.reduce(
-    (total, item) =>
-      item.state.kind === "Ready" ? total + item.state.sizeBytes : total,
-    0,
-  ) + (readingSnapshot?.items.reduce(
-    (total, item) => item.availability.kind === "Ready"
-      ? total + item.availability.sizeBytes
-      : total,
-    0,
-  ) ?? 0);
-  const hasAnyDownload = inventory.length > 0 || (readingSnapshot?.items.length ?? 0) > 0;
-  const applyNetworkPolicy = useCallback(async (policy: NetworkPolicy) => {
-    try {
-      if (readingController !== null) {
-        await readingController.setNetworkPolicy(policy);
-      } else if (audio !== null) {
-        await audio.controller.setNetworkPolicy(policy);
+      : (readingSnapshot?.networkPolicy ?? DEFAULT_NETWORK_POLICY());
+  const downloadedBytes =
+    inventory.reduce(
+      (total, item) =>
+        item.state.kind === "Ready" ? total + item.state.sizeBytes : total,
+      0,
+    ) +
+    (readingSnapshot?.items.reduce(
+      (total, item) =>
+        item.availability.kind === "Ready"
+          ? total + item.availability.sizeBytes
+          : total,
+      0,
+    ) ?? 0);
+  const hasAnyDownload =
+    inventory.length > 0 || (readingSnapshot?.items.length ?? 0) > 0;
+  const applyNetworkPolicy = useCallback(
+    async (policy: NetworkPolicy) => {
+      try {
+        if (readingController !== null) {
+          await readingController.setNetworkPolicy(policy);
+        } else if (audio !== null) {
+          await audio.controller.setNetworkPolicy(policy);
+        }
+        setPolicyRetry(null);
+      } catch {
+        setPolicyRetry(policy);
       }
-      setPolicyRetry(null);
-    } catch {
-      setPolicyRetry(policy);
-    }
-  }, [audio, readingController]);
+    },
+    [audio, readingController],
+  );
 
   const openItem = (
     event: MouseEvent<HTMLButtonElement>,
@@ -370,9 +446,11 @@ function DownloadsPanel({
       </label>
       {policyRetry !== null ? (
         <p role="alert">
-          The download network setting could not be applied to every download.
-          {" "}
-          <button type="button" onClick={() => void applyNetworkPolicy(policyRetry)}>
+          The download network setting could not be applied to every download.{" "}
+          <button
+            type="button"
+            onClick={() => void applyNetworkPolicy(policyRetry)}
+          >
             Retry setting
           </button>
         </p>
@@ -384,29 +462,34 @@ function DownloadsPanel({
             <Download size={16} aria-hidden="true" />
             {formatByteCount(downloadedBytes)} downloaded
           </p>
-          {inventory.length > 0 && audio !== null ? <>
-            <h3>Listening</h3>
-            <ul className={styles.list} aria-label="Downloaded listening">
-              {inventory.map((item) => (
-              <li key={item.mediaId} className={styles.item}>
-                <button
-                  type="button"
-                  className={styles.title}
-                  onClick={(event) => openItem(event, item)}
-                >
-                  {item.title}
-                </button>
-                <p className={styles.state}>
-                  {item.state.kind === "Ready" ? (
-                    <CheckCircle2 size={15} aria-hidden="true" />
-                  ) : null}
-                  {stateCopy(item.state)}
-                </p>
-                <InventoryAction item={item} controller={audio.controller} />
-              </li>
-              ))}
-            </ul>
-          </> : null}
+          {inventory.length > 0 && audio !== null ? (
+            <>
+              <h3>Listening</h3>
+              <ul className={styles.list} aria-label="Downloaded listening">
+                {inventory.map((item) => (
+                  <li key={item.mediaId} className={styles.item}>
+                    <button
+                      type="button"
+                      className={styles.title}
+                      onClick={(event) => openItem(event, item)}
+                    >
+                      {item.title}
+                    </button>
+                    <p className={styles.state}>
+                      {item.state.kind === "Ready" ? (
+                        <CheckCircle2 size={15} aria-hidden="true" />
+                      ) : null}
+                      {stateCopy(item.state)}
+                    </p>
+                    <InventoryAction
+                      item={item}
+                      controller={audio.controller}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
           {reading.kind === "Ready" && readingSnapshot !== null ? (
             <ReadingInventory
               capability={reading}
@@ -442,11 +525,7 @@ export default function DownloadsOverlay({
 
   return (
     <>
-      <Dialog
-        open={open && !isMobile}
-        onClose={onClose}
-        title="Downloads"
-      >
+      <Dialog open={open && !isMobile} onClose={onClose} title="Downloads">
         {panel}
       </Dialog>
       <MobileSheet

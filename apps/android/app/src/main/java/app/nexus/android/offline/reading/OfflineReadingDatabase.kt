@@ -52,27 +52,7 @@ internal class OfflineReadingDatabase(
             )
             """.trimIndent()
         )
-        database.execSQL(
-            """
-            CREATE TABLE offline_reader_packages (
-                id TEXT NOT NULL PRIMARY KEY,
-                binding_id TEXT NOT NULL,
-                media_id TEXT NOT NULL,
-                media_kind TEXT NOT NULL,
-                title TEXT NOT NULL,
-                reader_generation INTEGER NOT NULL,
-                reader_revision_key TEXT NOT NULL,
-                package_schema_version INTEGER NOT NULL,
-                reader_contract_version INTEGER NOT NULL,
-                minimum_bundle_version INTEGER NOT NULL,
-                package_sha256 TEXT NOT NULL,
-                size_bytes INTEGER NOT NULL,
-                installed_at TEXT NOT NULL,
-                UNIQUE(binding_id, media_id),
-                FOREIGN KEY(binding_id) REFERENCES offline_reader_binding(binding_id)
-            )
-            """.trimIndent()
-        )
+        createPackageTables(database, replacement = false)
         database.execSQL(
             """
             CREATE TABLE offline_reader_transfers (
@@ -85,18 +65,10 @@ internal class OfflineReadingDatabase(
                 automatic_restart_count INTEGER NOT NULL,
                 staging_name TEXT NOT NULL,
                 requested_at TEXT NOT NULL,
+                reader_generation INTEGER CHECK(reader_generation > 0),
+                preparation_started_at TEXT,
                 UNIQUE(binding_id, media_id),
                 FOREIGN KEY(binding_id) REFERENCES offline_reader_binding(binding_id)
-            )
-            """.trimIndent()
-        )
-        database.execSQL(
-            """
-            CREATE TABLE offline_reader_removals (
-                id TEXT NOT NULL PRIMARY KEY,
-                package_id TEXT NOT NULL UNIQUE,
-                requested_at TEXT NOT NULL,
-                FOREIGN KEY(package_id) REFERENCES offline_reader_packages(id)
             )
             """.trimIndent()
         )
@@ -133,13 +105,94 @@ internal class OfflineReadingDatabase(
         )
     }
 
+    private fun createPackageTables(database: SQLiteDatabase, replacement: Boolean) {
+        val packages = if (replacement) "offline_reader_packages_new" else "offline_reader_packages"
+        val removals = if (replacement) "offline_reader_removals_new" else "offline_reader_removals"
+        database.execSQL(
+            """
+            CREATE TABLE ${packages} (
+                id TEXT NOT NULL PRIMARY KEY,
+                binding_id TEXT NOT NULL,
+                media_id TEXT NOT NULL,
+                media_kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                reader_generation INTEGER NOT NULL,
+                reader_revision_key TEXT NOT NULL,
+                package_schema_version INTEGER NOT NULL,
+                reader_contract_version INTEGER NOT NULL,
+                minimum_bundle_version INTEGER NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                installed_at TEXT NOT NULL,
+                table_index_sha256 TEXT,
+                conversion_refusal TEXT,
+                UNIQUE(binding_id, media_id),
+                FOREIGN KEY(binding_id) REFERENCES offline_reader_binding(binding_id)
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            CREATE TABLE ${removals} (
+                id TEXT NOT NULL PRIMARY KEY,
+                package_id TEXT NOT NULL UNIQUE,
+                requested_at TEXT NOT NULL,
+                FOREIGN KEY(package_id) REFERENCES ${packages}(id)
+            )
+            """.trimIndent()
+        )
+    }
+
     override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        error("unsupported offline reading database upgrade $oldVersion to $newVersion")
+        check(oldVersion == 1 && newVersion == 3) {
+            "unsupported offline reading database upgrade $oldVersion to $newVersion"
+        }
+        migrateCursorSources(database)
+        database.execSQL("ALTER TABLE offline_reader_transfers ADD COLUMN reader_generation INTEGER CHECK(reader_generation > 0)")
+        database.execSQL("ALTER TABLE offline_reader_transfers ADD COLUMN preparation_started_at TEXT")
+        // Rebuild the two related tables within SQLiteOpenHelper's upgrade
+        // transaction. Keep foreign keys enabled throughout the replacement.
+        createPackageTables(database, replacement = true)
+        val columns = "id, binding_id, media_id, media_kind, title, reader_generation, reader_revision_key, package_schema_version, reader_contract_version, minimum_bundle_version, size_bytes, installed_at"
+        database.execSQL("INSERT INTO offline_reader_packages_new($columns) SELECT $columns FROM offline_reader_packages")
+        database.execSQL("INSERT INTO offline_reader_removals_new SELECT id, package_id, requested_at FROM offline_reader_removals")
+        database.execSQL("DROP TABLE offline_reader_removals")
+        database.execSQL("DROP TABLE offline_reader_packages")
+        database.execSQL("ALTER TABLE offline_reader_packages_new RENAME TO offline_reader_packages")
+        database.execSQL("ALTER TABLE offline_reader_removals_new RENAME TO offline_reader_removals")
+        database.rawQuery("PRAGMA foreign_key_check", null).use { check(!it.moveToFirst()) }
+
+    }
+
+    private fun migrateCursorSources(database: SQLiteDatabase) {
+        database.rawQuery(
+            "SELECT id, server_snapshot_json FROM offline_reader_progress_baselines ORDER BY id",
+            emptyArray(),
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val root = StrictJson.parse(cursor.text("server_snapshot_json").toByteArray())
+                    as StrictJson.ObjectValue
+                if (root.fields.getValue("state").requireString() == "Empty") {
+                    OfflineReaderStateValidator.requireCursorSnapshot(root.toJson())
+                    continue
+                }
+                require(root.fields.keys == setOf("state", "revision", "locator"))
+                // Schema 1 recorded no source. The last observed current generation
+                // cannot establish which publication supplied the stored locator.
+                val migrated = StrictJson.ObjectValue(root.fields + (
+                    "source" to StrictJson.ObjectValue(mapOf("kind" to StrictJson.StringValue("Unresolved")))
+                )).toJson()
+                OfflineReaderStateValidator.requireCursorSnapshot(migrated)
+                database.execSQL(
+                    "UPDATE offline_reader_progress_baselines SET server_snapshot_json = ? WHERE id = ?",
+                    arrayOf(migrated, cursor.text("id")),
+                )
+            }
+        }
     }
 
     companion object {
         internal const val DATABASE_NAME = "offline_reading.db"
-        private const val DATABASE_VERSION = 1
+        private const val DATABASE_VERSION = 3
     }
 }
 

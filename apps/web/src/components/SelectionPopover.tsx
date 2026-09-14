@@ -80,7 +80,15 @@ export default function SelectionPopover<H extends { id: string }>({
   useHistoryDismiss(
     true,
     () => {
-      window.getSelection()?.removeAllRanges();
+      const selection = window.getSelection();
+      const root = containerRef.current;
+      if (selection !== null && root !== null && selection.rangeCount > 0) {
+        let owned = true;
+        for (let index = 0; index < selection.rangeCount; index += 1) {
+          if (!root.contains(selection.getRangeAt(index).commonAncestorContainer)) owned = false;
+        }
+        if (owned) selection.removeAllRanges();
+      }
       onDismiss();
     },
     { isTopmost: modalIsTopmost },

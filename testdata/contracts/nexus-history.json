@@ -1,0 +1,33 @@
+{
+  "sourceMaxima": {
+    "openables": 20,
+    "owned": 40,
+    "panes": 12,
+    "destinations": 18,
+    "recents": 5
+  },
+  "maxTargets": 95,
+  "maxHrefCodePoints": 2000,
+  "maxQueryCodePoints": 200,
+  "maxLabelCodePoints": 120,
+  "destinationHrefs": [
+    "/atlas",
+    "/browse",
+    "/conversations",
+    "/daily",
+    "/imports",
+    "/lectern",
+    "/libraries",
+    "/notes",
+    "/oracle",
+    "/podcasts",
+    "/search",
+    "/search?kinds=people",
+    "/settings",
+    "/settings/appearance",
+    "/settings/identities",
+    "/settings/keybindings",
+    "/settings/reader",
+    "/stats"
+  ]
+}

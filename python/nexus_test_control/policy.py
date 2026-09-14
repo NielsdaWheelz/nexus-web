@@ -65,6 +65,8 @@ _MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]\n]+\]\(([^)\n]+)\)")
 _URI_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*:", re.I)
 _WEB_TEST_LOOKING = re.compile(r"(?:^|[._-])(?:test|spec)\.[cm]?[jt]sx?\Z", re.I)
 _WEB_TEST_EXECUTABLE = re.compile(r"\.(?:unit|browser)\.test\.(?:ts|tsx)\Z")
+_WEB_TEST_PREFIX = "apps/web/src/"
+_ANDROID_HOST_TEST_PREFIX = "apps/android/app/src/test/"
 _REQUIRED_JOURNEY_IDS = frozenset({"nexus-search-open-restore"})
 _SECRET = re.compile(
     rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
@@ -1302,7 +1304,8 @@ def _safe_relative(value: str, *, glob: bool = False) -> bool:
         return False
     if str(path) != value:
         return False
-    return glob or not any(character in value for character in "*?[]")
+    # Brackets are literal Next route names; exact owners never use glob lookup.
+    return glob or not any(character in value for character in "*?")
 
 
 def _resolved_repository_file(repo_root: Path, relative: str) -> Path | None:
@@ -1916,13 +1919,30 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
             )
             coherent_path, coherent_separator, coherent_node = coherent_identity.partition("::")
             coherent_owner_path = _resolved_repository_file(repo_root, coherent_path)
-            coherent_shape = (
-                coherent_proof is not None
-                and coherent_proof.startswith("pytest:")
+            coherent_runner = coherent_proof.partition(":")[0] if coherent_proof else ""
+            python_owner = (
+                coherent_runner == "pytest"
                 and coherent_identity.count("::") == 1
-                and bool(coherent_separator)
                 and bool(coherent_node)
                 and coherent_path.endswith(".py")
+            )
+            # A coherent fault is replayed by `changed`, so its owner must be
+            # executable there: a host Vitest file, never a device Gradle class.
+            file_owner = not coherent_separator and (
+                (
+                    coherent_runner == "vitest"
+                    and coherent_path.startswith(_WEB_TEST_PREFIX)
+                    and _WEB_TEST_EXECUTABLE.search(coherent_path) is not None
+                )
+                or (
+                    coherent_runner == "gradle"
+                    and coherent_path.startswith(_ANDROID_HOST_TEST_PREFIX)
+                    and coherent_path.endswith("Test.kt")
+                )
+            )
+            coherent_shape = (
+                coherent_proof is not None
+                and (python_owner or file_owner)
                 and coherent_owner_path is not None
             )
             if not coherent_shape:
@@ -1930,7 +1950,7 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                     PolicyViolation(
                         "fault-coherent-owner",
                         location,
-                        "changed-owner coherent fault requires one exact module-level pytest proof",
+                        "changed-owner coherent fault requires one exact pytest or whole-file vitest/gradle owner",
                     )
                 )
             else:
@@ -1946,10 +1966,12 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                     )
                 owner_sha256 = fault.get("changed_owner_sha256")
                 try:
-                    owner_source = coherent_owner_path.read_text(encoding="utf-8")
-                    actual_owner_sha256 = python_exact_proof_owner_sha256(
-                        owner_source,
-                        coherent_node,
+                    actual_owner_sha256 = (
+                        python_exact_proof_owner_sha256(
+                            coherent_owner_path.read_text(encoding="utf-8"), coherent_node
+                        )
+                        if python_owner
+                        else hashlib.sha256(coherent_owner_path.read_bytes()).hexdigest()
                     )
                 except (OSError, UnicodeError, SyntaxError):
                     actual_owner_sha256 = None
@@ -1962,7 +1984,7 @@ def fault_manifest_violations(repo_root: Path) -> tuple[PolicyViolation, ...]:
                         PolicyViolation(
                             "fault-coherent-owner-drift",
                             location,
-                            "changed-owner coherent fault must pin its exact proof and module-support SHA-256",
+                            "changed-owner coherent fault must pin its exact owner SHA-256",
                         )
                     )
         elif "changed_owner_sha256" in fault:
@@ -2154,6 +2176,7 @@ def _is_product_path(path: str) -> bool:
     )
     test_runtime_product = path in {
         "python/nexus_test_control/build.py",
+        "python/nexus_test_control/containers.py",
         "python/nexus_test_control/process.py",
         "python/nexus_test_control/runner.py",
         "python/nexus_test_control/runtime.py",

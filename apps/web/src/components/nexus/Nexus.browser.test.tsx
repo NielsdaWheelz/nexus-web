@@ -15,7 +15,12 @@ import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { ImportsProvider } from "@/lib/imports/ImportsProvider";
+import { DESTINATIONS } from "@/lib/navigation/destinations";
+import { MAX_NEXUS_HISTORY_TARGETS } from "@/lib/nexus/history";
+import { ArtworkProvider } from "@/lib/media/ArtworkProvider";
+import { ARTWORK_CAPACITY } from "@/lib/media/artworkCapacity";
 import { NEXUS_OPEN_PERFORMANCE } from "@/lib/nexus/performance";
+import { requestNexusOpen } from "@/lib/nexus/events";
 import { writeDailyDraft } from "@/lib/notes/dailyDraftStore";
 import { resolveDailyLocalDate } from "@/lib/notes/openDailyPage";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
@@ -341,10 +346,58 @@ let activeWorkspaceLocation: string | null = null;
 let respondToOpenables: (init: RequestInit | undefined) => Promise<Response>;
 let respondToSearch: (init: RequestInit | undefined) => Promise<Response>;
 let respondToSelection: (init: RequestInit | undefined) => Promise<Response>;
+let respondToHistory: (
+  body: Record<string, unknown> | null,
+) => Promise<Response>;
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     headers: { "Content-Type": "application/json" },
+  });
+}
+
+function errorResponse(status: number, code: string, message: string): Response {
+  return new Response(JSON.stringify({ error: { code, message } }), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+interface StubbedHistory {
+  readonly recent: readonly {
+    readonly target_href: string;
+    readonly label_snapshot: string;
+    readonly source: string;
+    readonly last_used_at: string;
+  }[];
+  readonly frecencyByHref: Readonly<Record<string, number>>;
+}
+
+/**
+ * The history read as the service implements it, so no proof here is more
+ * permissive than the server: a bounded command is answered with scores for the
+ * requested candidates that have history and silence for every other candidate,
+ * and only a command outside the input bounds is refused outright.
+ */
+function historyQueryResponse(
+  body: Record<string, unknown> | null,
+  history: StubbedHistory,
+): Response {
+  const targets = body?.target_hrefs;
+  if (!Array.isArray(targets) || targets.length > MAX_NEXUS_HISTORY_TARGETS) {
+    return errorResponse(400, "E_INVALID_REQUEST", "Unbounded Nexus history query");
+  }
+  return jsonResponse({
+    data: {
+      recent: history.recent,
+      frecency_by_href: Object.fromEntries(
+        targets.flatMap((href: unknown) =>
+          typeof href === "string" && href in history.frecencyByHref
+            ? [[href, history.frecencyByHref[href]]]
+            : [],
+        ),
+      ),
+    },
   });
 }
 
@@ -384,10 +437,8 @@ function installBff() {
           },
         });
       }
-      if (url.pathname === "/api/me/nexus-history") {
-        return jsonResponse({
-          data: { recent: [], frecency_by_href: {} },
-        });
+      if (url.pathname === "/api/nexus/history/query") {
+        return respondToHistory(body);
       }
       if (url.pathname === "/api/me/nexus-selections" && method === "POST") {
         return respondToSelection(init);
@@ -447,6 +498,7 @@ function renderNexus(
           calendarTimeZone: CALENDAR_TIME_ZONE,
         }}
       >
+        <ArtworkProvider limits={ARTWORK_CAPACITY}>
         <MobileChromeProvider>
           {withMobileChromeScrollport ? <MobileChromeScrollport /> : null}
           <KeybindingsProvider>
@@ -476,6 +528,7 @@ function renderNexus(
             </FeedbackProvider>
           </KeybindingsProvider>
         </MobileChromeProvider>
+        </ArtworkProvider>
       </AuthenticatedAccountProvider>,
       { initialViewport },
     ),
@@ -524,8 +577,14 @@ function openablesRequests(query?: string) {
 function queryHistoryRequests() {
   return requests.filter(
     (request) =>
-      request.pathname === "/api/me/nexus-history" &&
-      new URLSearchParams(request.search).has("query"),
+      request.pathname === "/api/nexus/history/query" &&
+      request.body?.query !== null,
+  );
+}
+
+function historyReads() {
+  return requests.filter(
+    (request) => request.pathname === "/api/nexus/history/query",
   );
 }
 
@@ -609,6 +668,8 @@ describe("Nexus product composition", () => {
         page: { has_more: false, next_cursor: null },
       });
     respondToSelection = async () => jsonResponse({ data: null });
+    respondToHistory = async (body) =>
+      historyQueryResponse(body, { recent: [], frecencyByHref: {} });
     localStorage.clear();
     document.documentElement.style.removeProperty("font-size");
     window.history.replaceState({}, "", "/libraries");
@@ -651,6 +712,189 @@ describe("Nexus product composition", () => {
       source: "Workspace",
     });
   });
+
+  it.each(["desktop", "mobile"] as const)("contains history exhaustion and retains add work on %s", async (viewport) => {
+    let releaseHistory!: (response: Response) => void;
+    let started!: () => void;
+    const firstRead = new Promise<void>((resolve) => { started = resolve; });
+    respondToHistory = () => {
+      started();
+      return new Promise<Response>((resolve) => { releaseHistory = resolve; });
+    };
+    await page.viewport(viewport === "mobile" ? 390 : 1_280, 900);
+    renderNexus(viewport);
+    const sibling = screen.getByRole("status", { name: "Workspace pane count" });
+    requestNexusOpen({ kind: "Add", seed: {
+      kind: "Content", initialFocus: "Url", initialDestinations: [],
+    } });
+    await firstRead;
+    const draft = "https://example.org/retained-draft";
+    fireEvent.change(await screen.findByRole("textbox", { name: "Links" }), { target: { value: draft } });
+    respondToHistory = async () => new Response(null, { status: 502 });
+    releaseHistory(new Response(null, { status: 502 }));
+    const retry = await screen.findByRole("button", { name: "Retry Nexus" }, { timeout: 3_000 });
+    expect(sibling.isConnected, "feature failure unmounted another workspace view").toBe(true);
+    respondToHistory = async (body) =>
+      historyQueryResponse(body, { recent: [], frecencyByHref: {} });
+    await userEvent.click(retry);
+    expect(await screen.findByRole("textbox", { name: "Links" })).toHaveValue(draft);
+    expect(sibling.isConnected).toBe(true);
+  });
+
+  it("scores its whole displayed union for an open session and never for a closed one", async () => {
+    await page.viewport(390, 800);
+    respondToHistory = async (body) =>
+      historyQueryResponse(body, {
+        recent: [
+          {
+            // A recent target that is not a destination, so following it moves
+            // the candidate union a latched read would notice.
+            target_href: "/media/11111111-1111-4111-8111-111111111111",
+            label_snapshot: "Deep Work",
+            source: "Recent",
+            last_used_at: "2026-09-13T00:00:00Z",
+          },
+        ],
+        // Scores for the two destinations the record grammar refused before
+        // this change: the read answers the command that carries them instead
+        // of refusing the whole command, so its recents survive.
+        frecencyByHref: { "/daily": 0.9, "/browse": 0.8 },
+      });
+    renderNexus("mobile");
+    expect(
+      historyReads(),
+      "a closed Nexus scored candidates nobody is looking at",
+    ).toHaveLength(0);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Open Nexus, 1 tab" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Nexus" });
+    await waitFor(() => expect(historyReads()).toHaveLength(1));
+    expect(
+      historyReads()[0]?.body?.target_hrefs,
+      "Nexus must send the candidates it displays, not a subset its own copy of the server grammar allows",
+    ).toEqual(
+      expect.arrayContaining([
+        ...DESTINATIONS.map((destination) => destination.href),
+        "/libraries",
+      ]),
+    );
+    const recent = within(
+      await within(dialog).findByRole("region", { name: "Recent" }),
+    ).getByRole("button", {
+      name: "Deep Work /media/11111111-1111-4111-8111-111111111111",
+    });
+    expect(
+      recent,
+      "an unscoreable candidate in the union cost the whole read its recents",
+    ).toBeVisible();
+
+    await userEvent.click(recent);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Nexus" })).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("status", { name: "Workspace active location" }),
+      ).toHaveTextContent("/media/11111111-1111-4111-8111-111111111111"),
+    );
+    await waitFor(() => expect(selectionRequests()).toHaveLength(1), {
+      timeout: 3_000,
+    });
+    expect(
+      historyReads(),
+      "pane navigation re-scored candidates for a Nexus nobody had open",
+    ).toHaveLength(1);
+  });
+
+  it.each(["desktop", "mobile"] as const)(
+    "contains a refused selection write and replays its exact mutation once on %s",
+    async (viewport) => {
+      await page.viewport(viewport === "mobile" ? 390 : 1_280, 900);
+      let writes = 0;
+      respondToSelection = async () => {
+        writes += 1;
+        return writes === 1
+          ? errorResponse(400, "E_INVALID_REQUEST", "Unsupported Nexus target")
+          : jsonResponse({ data: null });
+      };
+      renderNexus(viewport);
+      const sibling = screen.getByRole("status", {
+        name: "Workspace pane count",
+      });
+      if (viewport === "mobile") {
+        await userEvent.click(
+          await screen.findByRole("button", { name: "Open Nexus, 1 tab" }),
+        );
+        const dialog = await screen.findByRole("dialog", { name: "Nexus" });
+        await userEvent.click(
+          within(
+            within(dialog).getByRole("region", { name: "Places" }),
+          ).getByRole("button", { name: "Notes" }),
+        );
+      } else {
+        fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+        const dialog = await screen.findByRole("dialog", { name: "Nexus" });
+        const input = within(dialog).getByRole("combobox", {
+          name: "Find anything…",
+        });
+        await waitFor(() => expect(input).toHaveFocus());
+        fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+      }
+
+      await waitFor(() => expect(selectionRequests()).toHaveLength(1), {
+        timeout: 3_000,
+      });
+      const mutationId = selectionRequests()[0]?.body?.client_mutation_id;
+      expect(typeof mutationId).toBe("string");
+      const retry = await screen.findByRole(
+        "button",
+        { name: "Retry Nexus" },
+        { timeout: 3_000 },
+      );
+      expect(
+        sibling.isConnected,
+        "a refused history write unmounted another workspace view",
+      ).toBe(true);
+      if (viewport === "mobile") {
+        expect(
+          screen.getByRole("button", { name: /^Open Nexus, / }),
+          "a refused history write deleted the way back into Nexus",
+        ).toBeVisible();
+      }
+
+      await userEvent.click(retry);
+      await waitFor(() => expect(selectionRequests()).toHaveLength(2), {
+        timeout: 3_000,
+      });
+      expect(
+        selectionRequests().map((request) => request.body?.client_mutation_id),
+        "recovery must replay the frozen selection, not mint a second history use",
+      ).toEqual([mutationId, mutationId]);
+      if (viewport === "mobile") {
+        await userEvent.click(
+          screen.getByRole("button", { name: /^Open Nexus, / }),
+        );
+      } else {
+        fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+      }
+      await waitFor(() =>
+        expect(
+          screen.getByRole("dialog", { name: "Nexus" }),
+          "recovery restored the opener but not the Nexus session it guards",
+        ).toBeVisible(),
+      );
+
+      // A page exit flushes every selection the journal still holds, so it
+      // reports whether the replayed one was committed or is still queued.
+      fireEvent(window, new Event("pagehide"));
+      expect(
+        selectionRequests(),
+        "the committed replay stayed queued and would be sent a second time",
+      ).toHaveLength(2);
+    },
+  );
 
   it("opens the mobile task, focuses search, and follows a place through the same workspace owner", async () => {
     await page.viewport(390, 800);
@@ -1181,7 +1425,7 @@ describe("Nexus product composition", () => {
     );
     await waitFor(() => expect(queryHistoryRequests()).toHaveLength(1));
     expect(
-      new URLSearchParams(queryHistoryRequests()[0]?.search).get("query"),
+      queryHistoryRequests()[0]?.body?.query,
     ).toBe("alpha");
   });
 

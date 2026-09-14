@@ -11,10 +11,11 @@ export default async function WorkspaceBootstrapGate({
 }: {
   renderEnvironment: RenderEnvironment;
 }) {
-  const { account, readerProfile, initialState, resources } =
+  const { account, readerProfile, initialState, resources, entryHref } =
     await loadWorkspaceBootstrap(renderEnvironment.androidShell);
   return (
     <AuthenticatedShell
+      entryHref={entryHref}
       account={account}
       readerProfile={readerProfile}
       renderEnvironment={renderEnvironment}

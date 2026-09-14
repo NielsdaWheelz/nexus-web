@@ -1,0 +1,23 @@
+{
+  "contract": "HTML ol/li source ordinals; ASCII integer prefixes within int32; saturating increments; nearest list owner; rendered boxes count. Original attributes remain in retained source. Explicit rendered li.value removes implicit counter differences across units and engines.",
+  "cases": [
+    {"name":"prefix","html":"<ol start=\"3junk\"><li>first</li><li value=\"7junk\">second</li><li>third</li></ol>","numbers":["3","7","8"]},
+    {"name":"underscore","html":"<ol start=\"3_000\"><li>first</li><li>second</li></ol>","numbers":["3","4"]},
+    {"name":"ascii-space","html":"<ol start=\" \t-3junk\"><li>first</li><li>second</li></ol>","numbers":["-3","-2"]},
+    {"name":"plus","html":"<ol start=\"+03.1\"><li>first</li><li value=\"-0x1\">second</li><li>third</li></ol>","numbers":["3","0","1"]},
+    {"name":"nbsp","html":"<ol start=\"\u00a03\"><li>first</li><li>second</li></ol>","numbers":["1","2"]},
+    {"name":"overflow","html":"<ol start=\"2147483648\"><li>first</li><li>second</li></ol>","numbers":["1","2"]},
+    {"name":"value-overflow","html":"<ol start=\"4\"><li>first</li><li value=\"2147483648\">second</li><li>third</li></ol>","numbers":["4","5","6"]},
+    {"name":"maximum","html":"<ol start=\"2147483647\"><li>first</li><li>second</li><li>third</li></ol>","numbers":["2147483647","2147483647","2147483647"]},
+    {"name":"minimum","html":"<ol reversed start=\"-2147483648\"><li>first</li><li>second</li></ol>","numbers":["-2147483648","-2147483648"]},
+    {"name":"reversed","html":"<ol reversed><li>first</li><li>second</li><li>third</li></ol>","numbers":["3","2","1"]},
+    {"name":"reversed-value","html":"<ol reversed><li>first</li><li value=\"7\">second</li><li>third</li></ol>","numbers":["3","7","6"]},
+    {"name":"reversed-invalid-start","html":"<ol reversed start=\"oops\"><li>first</li><li>second</li><li>third</li></ol>","numbers":["3","2","1"]},
+    {"name":"nested","html":"<ol reversed><div><li>first</li></div><li>second</li><li>third</li></ol>","numbers":["3","2","1"]},
+    {"name":"nested-lists","html":"<ol reversed><li>first<ul><li>inner</li></ul></li><li>second<ol><li>inside</li></ol></li><li>third</li></ol>","numbers":["3",null,"2","1","1"]},
+    {"name":"hidden","html":"<ol reversed><li hidden>first</li><li>second</li><li>third</li></ol>","numbers":[null,"2","1"]},
+    {"name":"hidden-container","html":"<ol reversed><div hidden><li>first</li></div><li>second</li><li>third</li></ol>","numbers":[null,"2","1"]},
+    {"name":"hidden-until-found","html":"<ol reversed><li hidden=\"until-found\">first</li><li>second</li><li>third</li></ol>","numbers":["3","2","1"]},
+    {"name":"until-found-container","html":"<ol reversed><div hidden=\"until-found\"><li>first</li></div><li>second</li><li>third</li></ol>","numbers":[null,"2","1"]}
+  ]
+}

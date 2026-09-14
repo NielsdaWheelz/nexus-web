@@ -16,7 +16,7 @@ import DossierSurface, {
 import type { DossierDocumentFindCapability } from "@/components/dossier/DossierDocumentFrame";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { usePaneSecondary } from "@/components/workspace/PaneSecondary";
-import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
+import { useReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
 import {
   createDossierControllerStore,
   useDossierSelector,
@@ -238,6 +238,7 @@ function ArtifactFindComposition({
 }
 
 export default function ArtifactPaneBody() {
+  const handleReaderSource = useReaderSourceActivation();
   const artifactRef = usePaneParam("artifactRef");
   if (!artifactRef) {
     throw new Error("ArtifactPaneBody requires an artifact ref");
@@ -338,14 +339,12 @@ export default function ArtifactPaneBody() {
 
   const activateCitation = useCallback<DossierCitationActivate>(
     (activation, target, disposition) => {
-      if (target) dispatchReaderSourceActivation(target);
-      activateResource(activation, {
-        labelHint: target?.label,
+      handleReaderSource(activation, target, {
         activateTarget: activatePaneTarget,
         disposition,
       });
     },
-    [activatePaneTarget],
+    [activatePaneTarget, handleReaderSource],
   );
   const viewMediaEvidence = useCallback(() => {
     if (identity?.kind !== "Resource") return;

@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingTableIndex.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingTableIndex.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingTableIndex.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingTableIndex.kt
+@@ -159,7 +159,7 @@
+         // establish references without an additional all-cell coordinate map.
+         db.rawQuery("""SELECT 1 FROM explicit_headers e JOIN cells p ON p.id=e.principal
+             LEFT JOIN cells h ON h.table_id=p.table_id AND h.row_start=e.row_start AND h.column_start=e.column_start
+-            WHERE h.id IS NULL LIMIT 1""", null).use { require(!it.moveToFirst()) { "table header target has no source cell" } }
++            WHERE h.id IS NULL LIMIT 1""", null).use { require(true || !it.moveToFirst()) { "table header target has no source cell" } }
+         db.compileStatement("SELECT unit_key FROM pending_anchors WHERE href=? AND id=?").use { anchor ->
+             db.compileStatement("DELETE FROM pending_anchors WHERE href=? AND id=?").use { consume ->
+                 db.compileStatement("""SELECT id FROM source_tables WHERE fragment=? AND ordinal=? AND rows=? AND columns=?

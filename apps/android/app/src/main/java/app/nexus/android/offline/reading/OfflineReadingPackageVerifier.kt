@@ -4,11 +4,17 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
+import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
-import javax.xml.parsers.DocumentBuilderFactory
+import javax.xml.parsers.SAXParserFactory
+import org.xml.sax.Attributes
+import org.xml.sax.InputSource
+import org.xml.sax.SAXException
+import org.xml.sax.SAXParseException
+import org.xml.sax.ext.DefaultHandler2
 
 internal class OfflineReadingPackageException(
     val reason: ReadingFailureReason,
@@ -24,11 +30,11 @@ internal data class OfflineReadingTransferArtifact(
     val packageSha256: String,
 )
 
-internal data class VerifiedOfflineReadingPackage(
+/** Attested bytes and member contracts; cross-member joins still require preparation. */
+internal data class VerifiedOfflineReadingMembers(
     val manifest: OfflineReadingManifest,
     val extractedDirectory: File,
-    val packageSha256: String,
-    val compressedBytes: Long,
+    val installedBytes: Long,
 )
 
 internal fun interface OfflineReadingPackageVerifierPort {
@@ -37,7 +43,7 @@ internal fun interface OfflineReadingPackageVerifierPort {
         expectedAccountId: UUID,
         expectedMediaId: UUID,
         destination: File,
-    ): VerifiedOfflineReadingPackage
+    ): VerifiedOfflineReadingMembers
 }
 
 internal class OfflineReadingPackageVerifier : OfflineReadingPackageVerifierPort {
@@ -46,7 +52,7 @@ internal class OfflineReadingPackageVerifier : OfflineReadingPackageVerifierPort
         expectedAccountId: UUID,
         expectedMediaId: UUID,
         destination: File,
-    ): VerifiedOfflineReadingPackage {
+    ): VerifiedOfflineReadingMembers {
         try {
             require(artifact.accountId == expectedAccountId)
             require(artifact.readerGeneration > 0)
@@ -71,6 +77,7 @@ internal class OfflineReadingPackageVerifier : OfflineReadingPackageVerifierPort
                     input.readBounded(OFFLINE_READING_MAX_MANIFEST_JSON_BYTES.toLong())
                 }
                 val manifest = OfflineReadingManifestParser.parse(manifestBytes)
+                if (manifest.packageSchemaVersion != 2) throw UnsupportedOfflineReadingPackageException()
                 require(manifest.mediaId == expectedMediaId)
                 require(manifest.readerGeneration == artifact.readerGeneration)
                 require(manifest.entries.sumOf { it.sizeBytes } == artifact.expandedBytes)
@@ -85,9 +92,8 @@ internal class OfflineReadingPackageVerifier : OfflineReadingPackageVerifierPort
                         listOf("manifest.json") + manifest.entries.map { it.path }
                 )
 
-                check(destination.mkdirs())
+                Files.createDirectory(destination.toPath())
                 writeVerifiedFile(destination, "manifest.json", manifestBytes)
-                var readerBytes: ByteArray? = null
                 manifest.entries.forEach { declared ->
                     val entry = members.single { it.name == declared.path }
                     require(entry.size == declared.sizeBytes)
@@ -99,23 +105,13 @@ internal class OfflineReadingPackageVerifier : OfflineReadingPackageVerifierPort
                         expectedSha256 = declared.sha256,
                         input = archive.getInputStream(entry),
                     )
-                    if (declared.path == "reader.json") {
-                        require(declared.sizeBytes <= OFFLINE_READING_MAX_READER_JSON_BYTES)
-                        readerBytes = target.inputStream().use { input ->
-                            input.readBounded(declared.sizeBytes)
-                        }
-                    }
                 }
-                OfflineReaderDocumentVerifier.verify(
-                    readerBytes ?: error("reader.json was not extracted"),
-                    manifest,
-                )
+                OfflineReaderPublicationVerifier.verify(destination, manifest, PublicationOrigin.Downloaded)
                 verifySignatures(manifest, destination)
-                return VerifiedOfflineReadingPackage(
+                return VerifiedOfflineReadingMembers(
                     manifest,
                     destination,
-                    artifact.packageSha256,
-                    artifact.compressedBytes,
+                    Math.addExact(artifact.expandedBytes, manifestBytes.size.toLong()),
                 )
             }
         } catch (error: UnsupportedOfflineReadingPackageException) {
@@ -151,20 +147,23 @@ internal class OfflineReadingPackageVerifier : OfflineReadingPackageVerifierPort
         root: File,
     ) {
         if (manifest.mediaKind == OfflineReadingMediaKind.Pdf) {
-            val document = manifest.entries.single { it.path != "reader.json" }
-            require(document.path.lowercase().endsWith(".pdf"))
+            val document = manifest.entries.single { it.mediaType == "application/pdf" }
             require(File(root, document.path).readPrefix(5).startsWith("%PDF-".toByteArray()))
             return
         }
-        manifest.entries.filter { it.path != "reader.json" }.forEach { entry ->
-            require(assetSignatureMatches(entry.path, entry.mediaType, File(root, entry.path)))
+        manifest.entries.filter { it.mediaType != "application/json" }.forEach { entry ->
+            require(assetSignatureMatches(entry.path, entry.mediaType, File(root, entry.path), manifest.packageSchemaVersion))
         }
     }
 
-    internal fun assetSignatureMatches(path: String, mediaType: String, file: File): Boolean {
-        val expectedMediaType = ASSET_MEDIA_TYPES[path.substringAfterLast('.', "").lowercase()]
-            ?: return false
-        if (expectedMediaType != mediaType) return false
+    internal fun assetSignatureMatches(path: String, mediaType: String, file: File, packageSchemaVersion: Int): Boolean {
+        if (packageSchemaVersion == 1) {
+            val expectedMediaType = ASSET_MEDIA_TYPES[path.substringAfterLast('.', "").lowercase()]
+                ?: return false
+            if (expectedMediaType != mediaType) return false
+        } else {
+            require(packageSchemaVersion == 2)
+        }
         val body = file.readPrefix(32)
         return when (mediaType) {
             "image/png" -> body.startsWith(byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a))
@@ -185,56 +184,79 @@ internal class OfflineReadingPackageVerifier : OfflineReadingPackageVerifierPort
 
     private fun verifySvg(file: File): Boolean {
         if (file.length() > OFFLINE_READING_MAX_SVG_BYTES) return false
-        val bytes = file.readBytes()
-        if (Regex("<!DOCTYPE|<!ENTITY", RegexOption.IGNORE_CASE).containsMatchIn(bytes.toString(Charsets.UTF_8))) {
-            return false
-        }
-        return runCatching {
-            val factory = DocumentBuilderFactory.newInstance().apply {
-                isNamespaceAware = true
-                isXIncludeAware = false
-                setExpandEntityReferences(false)
-                setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-                setFeature("http://xml.org/sax/features/external-general-entities", false)
-                setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+        // Preserve the byte-level declaration policy without retaining the file.
+        // Read/setup failures are resource failures, never invalid source evidence.
+        file.bufferedReader(Charsets.ISO_8859_1).use { input ->
+            val buffer = CharArray(DEFAULT_BUFFER_SIZE)
+            val declarations = Regex("<!DOCTYPE|<!ENTITY", RegexOption.IGNORE_CASE)
+            var tail = ""
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                val chunk = tail + String(buffer, 0, count)
+                if (declarations.containsMatchIn(chunk)) return false
+                tail = chunk.takeLast(8)
             }
-            val document = bytes.inputStream().use { factory.newDocumentBuilder().parse(it) }
-            val root = document.documentElement ?: return@runCatching false
-            if (root.localName?.lowercase() != "svg") return@runCatching false
-            val elements = document.getElementsByTagName("*")
-            for (elementIndex in 0 until elements.length) {
-                val element = elements.item(elementIndex)
-                val tag = (element.localName ?: element.nodeName.substringAfterLast(':')).lowercase()
-                if (tag in SVG_FORBIDDEN_TAGS) return@runCatching false
-                val attributes = element.attributes
-                for (attributeIndex in 0 until attributes.length) {
-                    val attribute = attributes.item(attributeIndex)
-                    // Namespace declarations are identifiers, never fetched subresources.
-                    // The Python owner's lxml verifier never sees them (`attrib` excludes
-                    // xmlns), so skipping them here keeps the cross-language decision
-                    // identical for the shared vector.
-                    if (
-                        attribute.namespaceURI == "http://www.w3.org/2000/xmlns/" ||
-                        attribute.nodeName == "xmlns" ||
-                        attribute.nodeName.startsWith("xmlns:")
-                    ) {
-                        continue
-                    }
-                    val name = (attribute.localName ?: attribute.nodeName.substringAfterLast(':')).lowercase()
-                    val value = attribute.nodeValue.orEmpty()
-                    if (name.startsWith("on") || name == "style") return@runCatching false
-                    if (REMOTE_OR_EXECUTABLE_SVG_URL.containsMatchIn(value)) return@runCatching false
-                    if (name in SVG_URL_ATTRIBUTES && !value.startsWith('#')) return@runCatching false
+        }
+        var rootSeen = false
+        val handler = object : DefaultHandler2() {
+            override fun startDTD(name: String?, publicId: String?, systemId: String?) {
+                throw InvalidSvgSource("SVG declarations are forbidden")
+            }
+            override fun resolveEntity(publicId: String?, systemId: String?): InputSource {
+                throw InvalidSvgSource("SVG external entities are forbidden")
+            }
+            override fun skippedEntity(name: String?) {
+                throw InvalidSvgSource("SVG unresolved entities are forbidden")
+            }
+            override fun startElement(uri: String, localName: String, qName: String, attributes: Attributes) {
+                val tag = localName.lowercase()
+                if (!rootSeen) {
+                    if (tag != "svg") throw InvalidSvgSource("SVG root is required")
+                    rootSeen = true
+                }
+                if (tag in SVG_FORBIDDEN_TAGS) throw InvalidSvgSource("SVG element is forbidden")
+                for (index in 0 until attributes.length) {
+                    // Namespace declarations are identifiers; the namespace-aware
+                    // parser excludes them here.
+                    val name = attributes.getLocalName(index).lowercase()
+                    val value = attributes.getValue(index)
+                    if (name.startsWith("on") || name == "style")
+                        throw InvalidSvgSource("SVG executable attributes are forbidden")
+                    if (REMOTE_OR_EXECUTABLE_SVG_URL.containsMatchIn(value))
+                        throw InvalidSvgSource("SVG external resources are forbidden")
+                    if (name in SVG_URL_ATTRIBUTES && !value.startsWith('#'))
+                        throw InvalidSvgSource("SVG reference must be local")
                 }
             }
-            true
-        }.getOrDefault(false)
+        }
+        val parser = SAXParserFactory.newInstance().apply {
+            isNamespaceAware = true
+        }.newSAXParser().xmlReader
+        parser.setFeature("http://xml.org/sax/features/external-general-entities", false)
+        parser.setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+        parser.setProperty("http://xml.org/sax/properties/lexical-handler", handler)
+        parser.contentHandler = handler
+        parser.entityResolver = handler
+        return try {
+            file.inputStream().use { parser.parse(InputSource(it)) }
+            rootSeen
+        } catch (_: InvalidSvgSource) {
+            false
+        } catch (error: SAXParseException) {
+            // A parser can wrap an input/setup exception. Only uncaused syntax
+            // rejection proves malformed bytes; preserve a wrapped resource error.
+            if (error.exception != null || error.cause != null) throw error
+            false
+        }
     }
+
+    private class InvalidSvgSource(message: String) : SAXException(message)
 
     private fun writeVerifiedFile(root: File, path: String, bytes: ByteArray) {
         val target = File(root, path)
         require(target.canonicalFile.toPath().startsWith(root.canonicalFile.toPath()))
-        ensureParentDirectory(target)
+        ensureParentDirectory(root, target)
         FileOutputStream(target).use { output ->
             output.write(bytes)
             output.fd.sync()
@@ -249,7 +271,7 @@ internal class OfflineReadingPackageVerifier : OfflineReadingPackageVerifierPort
         input: java.io.InputStream,
     ) {
         require(target.canonicalFile.toPath().startsWith(root.canonicalFile.toPath()))
-        ensureParentDirectory(target)
+        ensureParentDirectory(root, target)
         val digest = MessageDigest.getInstance("SHA-256")
         var total = 0L
         input.use { source ->
@@ -270,12 +292,13 @@ internal class OfflineReadingPackageVerifier : OfflineReadingPackageVerifierPort
         require(digest.digest().toHex() == expectedSha256)
     }
 
-    private fun ensureParentDirectory(target: File) {
-        // mkdirs() returns false when the directory already exists; only assert the
-        // parent is a directory after ensuring it, never assert the mkdirs() result.
-        val parent = checkNotNull(target.parentFile)
-        parent.mkdirs()
-        check(parent.isDirectory)
+    private fun ensureParentDirectory(root: File, target: File) {
+        var parent = root
+        for (part in target.relativeTo(root).invariantSeparatorsPath.split('/').dropLast(1)) {
+            parent = File(parent, part)
+            // The store owns the staging root; extraction cannot recreate retired ancestry.
+            if (!parent.isDirectory) Files.createDirectory(parent.toPath())
+        }
     }
 
     private fun sha256(file: File): String {

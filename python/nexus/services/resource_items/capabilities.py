@@ -11,8 +11,7 @@ from enum import StrEnum
 from typing import Literal, assert_never
 from uuid import UUID
 
-from sqlalchemy import select, text
-from sqlalchemy.orm import Session
+from sqlalchemy import Select, Uuid, bindparam, literal, select, text
 
 from nexus.auth.permissions import highlight_visibility_filter
 from nexus.db.models import Highlight
@@ -663,44 +662,44 @@ def resource_expansion_policy(ref: ResourceRef) -> ResourceExpansionPolicy:
     return capability_for_ref(ref).expansion_policy
 
 
-def expand_owned_child_refs(
-    db: Session, *, viewer_id: UUID, ref: ResourceRef
-) -> tuple[ResourceRef, ...]:
+def owned_child_ref_queries(*, viewer_id: UUID, ref: ResourceRef) -> tuple[Select, ...]:
+    """Select owned child identities without materializing an owner's history.
+
+    Connection reads compose these queries before their edge page limit. These
+    are membership facts, never authority to choose a historical source body.
+    """
     policy = resource_expansion_policy(ref)
     if policy == "none":
         return ()
     if policy == "media_owned_reader_children":
         return (
-            *_child_refs(
-                db,
+            _child_ref_query(
                 "evidence_span",
                 "SELECT id FROM evidence_spans WHERE owner_kind = 'media' AND owner_id = :id",
                 ref.id,
             ),
-            *_child_refs(
-                db,
+            _child_ref_query(
                 "content_chunk",
                 "SELECT id FROM content_chunks WHERE owner_kind = 'media' AND owner_id = :id",
                 ref.id,
             ),
-            *_child_refs(db, "fragment", "SELECT id FROM fragments WHERE media_id = :id", ref.id),
-            *(
-                ResourceRef(scheme="highlight", id=highlight_id)
-                for highlight_id in db.scalars(
-                    select(Highlight.id)
-                    .where(Highlight.anchor_media_id == ref.id)
-                    .where(highlight_visibility_filter(viewer_id, ref.id))
-                    .distinct()
-                )
-            ),
-            *_child_refs(
-                db,
-                "reader_apparatus_item",
-                "SELECT id FROM reader_apparatus_items WHERE media_id = :id",
+            _child_ref_query(
+                "fragment",
+                "SELECT id FROM fragments WHERE media_id = :id "
+                "UNION SELECT fragment_id AS id FROM reader_publication_units WHERE media_id = :id",
                 ref.id,
             ),
-            *_child_refs(
-                db,
+            select(literal("highlight").label("scheme"), Highlight.id.label("id"))
+            .where(Highlight.anchor_media_id == ref.id)
+            .where(highlight_visibility_filter(viewer_id, ref.id)),
+            _child_ref_query(
+                "reader_apparatus_item",
+                "SELECT id FROM reader_apparatus_items WHERE media_id = :id "
+                "UNION SELECT item_id AS id FROM reader_publication_apparatus_items "
+                "WHERE media_id = :id",
+                ref.id,
+            ),
+            _child_ref_query(
                 "passage_anchor",
                 "SELECT id FROM passage_anchors "
                 "WHERE user_id = :viewer_id AND owner_scheme = 'media' AND owner_id = :id",
@@ -709,46 +708,51 @@ def expand_owned_child_refs(
             ),
         )
     if policy == "page_note_blocks":
-        return (*_child_refs(db, "note_block", _PAGE_NOTE_BLOCKS_SQL, ref.id, viewer_id=viewer_id),)
+        return (_child_ref_query("note_block", _PAGE_NOTE_BLOCKS_SQL, ref.id, viewer_id=viewer_id),)
     if policy == "note_block_owned_evidence":
         return (
-            *_child_refs(
-                db,
+            _child_ref_query(
                 "evidence_span",
                 "SELECT id FROM evidence_spans WHERE owner_kind = 'note_block' AND owner_id = :id",
                 ref.id,
             ),
-            *_child_refs(
-                db,
+            _child_ref_query(
                 "content_chunk",
                 "SELECT id FROM content_chunks WHERE owner_kind = 'note_block' AND owner_id = :id",
                 ref.id,
             ),
         )
     if policy == "artifact_revisions":
-        return _child_refs(
-            db,
-            "artifact_revision",
-            "SELECT r.id FROM artifact_revisions r "
-            "JOIN artifact_builds b ON b.id = r.build_id "
-            "WHERE b.artifact_id = :id",
-            ref.id,
+        return (
+            _child_ref_query(
+                "artifact_revision",
+                "SELECT r.id FROM artifact_revisions r "
+                "JOIN artifact_builds b ON b.id = r.build_id "
+                "WHERE b.artifact_id = :id",
+                ref.id,
+            ),
         )
     assert_never(policy)
 
 
-def _child_refs(
-    db: Session,
+def _child_ref_query(
     scheme: ResourceScheme,
     sql: str,
     parent_id: UUID,
     *,
     viewer_id: UUID | None = None,
-) -> tuple[ResourceRef, ...]:
+) -> Select:
     params: dict[str, object] = {"id": parent_id}
     if viewer_id is not None:
         params["viewer_id"] = viewer_id
-    return tuple(ResourceRef(scheme=scheme, id=row[0]) for row in db.execute(text(sql), params))
+    # unique parameters keep different requested owners distinct inside a union.
+    ids = (
+        text(sql)
+        .bindparams(*(bindparam(key, value=value, unique=True) for key, value in params.items()))
+        .columns(id=Uuid())
+        .subquery()
+    )
+    return select(literal(scheme).label("scheme"), ids.c.id)
 
 
 CONVERSATION_CONTEXT_EDGE_ORIGINS: tuple[EdgeOrigin, ...] = ("user", "citation", "system")

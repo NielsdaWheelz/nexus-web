@@ -101,6 +101,16 @@ def test_podcasts_default_to_disabled_without_provider_credentials() -> None:
     assert settings.podcasts_enabled is False
 
 
+def test_embedding_models_have_an_attested_input_contract() -> None:
+    for model in ("text-embedding-3-small", "text-embedding-3-large"):
+        settings = _settings(TRANSCRIPT_EMBEDDING_MODEL_OPENAI=model)
+        assert settings.transcript_embedding_model_openai == model
+        assert settings.transcript_embedding_dimensions == 256
+    for model in ("text-embedding-ada-002", "unknown-embedding-model"):
+        with pytest.raises(ValueError, match="TRANSCRIPT_EMBEDDING_MODEL_OPENAI"):
+            _settings(TRANSCRIPT_EMBEDDING_MODEL_OPENAI=model)
+
+
 @pytest.mark.parametrize("nexus_env", [Environment.LOCAL, Environment.TEST])
 @pytest.mark.parametrize(
     ("missing_alias", "present_alias", "present_value"),

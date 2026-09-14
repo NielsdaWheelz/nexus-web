@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.exc import TimeoutError as SAQueuePoolTimeout
 from sqlalchemy.pool import QueuePool
+from starlette.requests import ClientDisconnect
 
 from nexus.db.engine import get_engine
 from nexus.errors import ApiError, ApiErrorCode
@@ -102,11 +103,37 @@ async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
         content=error_response(exc.code, exc.message, details=exc.details),
+        headers=(
+            {"Retry-After": str(exc.retry_after_seconds)}
+            if exc.retry_after_seconds is not None
+            else None
+        ),
+    )
+
+
+async def client_disconnect_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Classify a client hanging up as 499, wherever the body is read.
+
+    Routes that read the request body themselves raise ``ClientDisconnect``
+    directly; without this handler it would reach ``unhandled_exception_handler``
+    and be logged and answered as an internal defect.
+    """
+    if not isinstance(exc, ClientDisconnect):
+        raise exc
+    logger.info("client_disconnected", path=request.url.path, method=request.method)
+    return JSONResponse(
+        status_code=499,
+        content=error_response(ApiErrorCode.E_CLIENT_DISCONNECT, "Client disconnected"),
     )
 
 
 async def http_exception_handler(request: Request, exc: Any) -> JSONResponse:
     """Handle FastAPI HTTPException and return proper JSON response."""
+    # FastAPI reads a declared body itself and re-raises a disconnect as
+    # ``HTTPException(400) from ClientDisconnect``, so the raised type no longer
+    # reaches the ClientDisconnect handler; recover the classification here.
+    if isinstance(exc.__cause__, ClientDisconnect):
+        return await client_disconnect_handler(request, exc.__cause__)
     # Map common HTTP status codes to our error codes
     status_to_code = {
         400: ApiErrorCode.E_INVALID_REQUEST,

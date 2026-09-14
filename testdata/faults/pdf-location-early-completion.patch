@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/components/PdfReader.tsx b/apps/web/src/components/PdfReader.tsx
+--- a/apps/web/src/components/PdfReader.tsx
++++ b/apps/web/src/components/PdfReader.tsx
+@@ -2867,7 +2867,7 @@
+         highlightId: null,
+         transientPulseId: key,
+       });
+-      return promise;
++      return true;
+     },
+     [numPages, retireLocalPulse],
+   );

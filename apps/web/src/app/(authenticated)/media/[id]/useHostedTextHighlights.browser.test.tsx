@@ -66,7 +66,7 @@ describe("hosted text-highlight projection", () => {
     vi.stubGlobal("fetch", fetch);
 
     const { result } = renderHook(() =>
-      useHostedTextHighlights({ mediaId: "media-1", fragmentId: "fragment-a" }),
+      useHostedTextHighlights({ mediaId: "media-1", source: { kind: "Fragment", fragmentId: "fragment-a" } }),
     );
 
     expect(result.current.initialLoading).toBe(true);
@@ -88,7 +88,7 @@ describe("hosted text-highlight projection", () => {
 
     const { result, rerender } = renderHook(
       ({ fragmentId }: { fragmentId: string }) =>
-        useHostedTextHighlights({ mediaId: "media-1", fragmentId }),
+        useHostedTextHighlights({ mediaId: "media-1", source: { kind: "Fragment", fragmentId } }),
       { initialProps: { fragmentId: "fragment-a" } },
     );
     rerender({ fragmentId: "fragment-b" });
@@ -121,7 +121,7 @@ describe("hosted text-highlight projection", () => {
     vi.stubGlobal("fetch", fetch);
 
     const { result } = renderHook(() =>
-      useHostedTextHighlights({ mediaId: "media-1", fragmentId: "fragment-a" }),
+      useHostedTextHighlights({ mediaId: "media-1", source: { kind: "Fragment", fragmentId: "fragment-a" } }),
     );
     await waitFor(() => expect(result.current.status).toBe("error"));
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -145,7 +145,7 @@ describe("hosted text-highlight projection", () => {
     vi.stubGlobal("fetch", fetch);
 
     const { result } = renderHook(() =>
-      useHostedTextHighlights({ mediaId: "media-1", fragmentId: "fragment-a" }),
+      useHostedTextHighlights({ mediaId: "media-1", source: { kind: "Fragment", fragmentId: "fragment-a" } }),
     );
 
     await waitFor(
@@ -169,7 +169,7 @@ describe("hosted text-highlight projection", () => {
 
     const { result, rerender, unmount } = renderHook(
       ({ fragmentId }: { fragmentId: string }) =>
-        useHostedTextHighlights({ mediaId: "media-1", fragmentId }),
+        useHostedTextHighlights({ mediaId: "media-1", source: { kind: "Fragment", fragmentId } }),
       { initialProps: { fragmentId: "fragment-a" } },
     );
     await waitFor(() => expect(result.current.status).toBe("ready"));
@@ -227,7 +227,7 @@ describe("hosted text-highlight projection", () => {
     }
 
     function Probe() {
-      useHostedTextHighlights({ mediaId: "media-1", fragmentId: "fragment-a" });
+      useHostedTextHighlights({ mediaId: "media-1", source: { kind: "Fragment", fragmentId: "fragment-a" } });
       return <p>Highlight projection mounted</p>;
     }
 

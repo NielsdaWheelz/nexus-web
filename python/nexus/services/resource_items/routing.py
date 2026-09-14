@@ -403,7 +403,10 @@ def _dynamic_routes_for_refs(
         rows = db.execute(
             text(
                 """
-                SELECT id, owner_kind, owner_id, primary_evidence_span_id, summary_locator
+                SELECT id, owner_kind, owner_id, primary_evidence_span_id,
+                       jsonb_build_object('note_block_id', summary_locator->'note_block_id',
+                                          'start_offset', summary_locator->'start_offset',
+                                          'end_offset', summary_locator->'end_offset')
                 FROM content_chunks
                 WHERE id = ANY(:ids)
                 """
@@ -422,7 +425,10 @@ def _dynamic_routes_for_refs(
         rows = db.execute(
             text(
                 """
-                SELECT id, owner_kind, owner_id, selector, resolver_kind
+                SELECT id, owner_kind, owner_id,
+                       jsonb_build_object('note_block_id', selector->'note_block_id',
+                                          'start_offset', selector->'start_offset',
+                                          'end_offset', selector->'end_offset'), resolver_kind
                 FROM evidence_spans
                 WHERE id = ANY(:ids)
                 """

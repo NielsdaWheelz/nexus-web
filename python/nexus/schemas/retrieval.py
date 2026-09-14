@@ -579,6 +579,7 @@ class PdfPageGeometryLocator(BaseModel):
     media_id: UUID | str
     page_number: int = Field(ge=1)
     quads: list[PdfGeometryQuad] = Field(min_length=1, max_length=512)
+    source_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     exact: str
     prefix: str | None = None
     suffix: str | None = None

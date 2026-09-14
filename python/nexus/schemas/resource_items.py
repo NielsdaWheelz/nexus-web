@@ -334,6 +334,11 @@ class ResourceLocatorResolveRequest(BaseModel):
 
 class ResourceLocatorResolutionOut(BaseModel):
     locator: ResourceLocatorIn
+    document_reader: bool = Field(
+        strict=True,
+        validation_alias=AliasChoices("document_reader", "documentReader"),
+        serialization_alias="documentReader",
+    )
     resource_item: ResourceItemOut = Field(
         validation_alias=AliasChoices("resource_item", "resourceItem"),
         serialization_alias="resourceItem",
@@ -344,7 +349,7 @@ class ResourceLocatorResolutionOut(BaseModel):
         serialization_alias="canonicalHref",
     )
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
 class ResourceLocatorResolveResponse(BaseModel):

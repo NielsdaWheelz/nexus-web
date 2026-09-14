@@ -63,6 +63,7 @@ function resolution(id: string, missing = false) {
     locator: locator(id),
     resourceItem: item,
     canonicalHref: item.route,
+    documentReader: false,
   };
 }
 
@@ -111,6 +112,18 @@ describe("resource locator transport identity", () => {
         resolution(PAGE_A),
         { ...resolution(PAGE_B), canonicalHref: `/pages/${PAGE_A}` },
       ],
+    },
+    {
+      label: "missing document capability",
+      rows: [resolution(PAGE_A), { ...resolution(PAGE_B), documentReader: undefined }],
+    },
+    {
+      label: "untyped document capability",
+      rows: [resolution(PAGE_A), { ...resolution(PAGE_B), documentReader: "false" }],
+    },
+    {
+      label: "document capability on a non-media resource",
+      rows: [resolution(PAGE_A), { ...resolution(PAGE_B), documentReader: true }],
     },
     {
       label: "malformed echoed locator",

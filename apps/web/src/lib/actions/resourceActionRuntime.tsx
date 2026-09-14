@@ -16,6 +16,13 @@ import {
 import { RefreshCw } from "lucide-react";
 
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { requestWithRetry } from "@/lib/api/retryPolicy";
+import {
+  ResourceCacheContext,
+  type ResourceCache,
+} from "@/lib/api/resourceCache";
+import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
+import { selectHostedReaderPublication } from "@/lib/reader/ReaderDocumentSource";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   useFeedback,
@@ -263,6 +270,7 @@ function busyIdsForRef(
 // ---------------------------------------------------------------------------
 
 interface RuntimePorts {
+  readonly readerCache: ResourceCache;
   readonly workspace: ReturnType<typeof useWorkspaceStore>;
   readonly activePaneId: string;
   readonly openShare: (
@@ -297,7 +305,9 @@ interface RuntimePorts {
   readonly playerCommands: ReturnType<typeof usePlayerCommands>;
   readonly playerSession: ReturnType<typeof usePlayerSession>;
   readonly offlineCapability: OfflineMediaCapability;
-  readonly offlineReadingCapability: ReturnType<typeof useOfflineReadingCapability>;
+  readonly offlineReadingCapability: ReturnType<
+    typeof useOfflineReadingCapability
+  >;
   readonly feedback: FeedbackContextValue;
   // A user-invoked exact completion (Mark finished / Mark played) offers the
   // canonical 10-second completion Undo HUD.
@@ -331,21 +341,31 @@ function requireOfflineReadingController(ports: RuntimePorts) {
   return ports.offlineReadingCapability.controller;
 }
 
-function projectReadingAvailability(value: ReadingAvailability): import("@/lib/actions/resourceActionEnvironment").ResourceActionOfflineReadingAvailability {
+function projectReadingAvailability(
+  value: ReadingAvailability,
+): import("@/lib/actions/resourceActionEnvironment").ResourceActionOfflineReadingAvailability {
   switch (value.kind) {
     case "Preparing":
     case "Authorizing":
     case "Verifying":
       return { kind: "Resolving" };
     case "Queued":
-      return {
-        kind: "Queued",
-        reason: value.reason === "WaitingForUnmetered"
-          ? "WaitingForUnmetered"
-          : value.reason === "Scheduler" ? "SystemLimit" : "Capacity",
-      };
+      switch (value.reason) {
+        case "WaitingForUnmetered":
+          return { kind: "Queued", reason: "WaitingForUnmetered" };
+        case "Scheduler":
+          return { kind: "Queued", reason: "SystemLimit" };
+        case "Capacity":
+        case "ServerCapacity":
+        case "Preparation":
+          return { kind: "Queued", reason: "Capacity" };
+      }
     case "Downloading":
-      return { kind: "Downloading", bytesDownloaded: value.receivedBytes, totalBytes: present(value.totalBytes) };
+      return {
+        kind: "Downloading",
+        bytesDownloaded: value.receivedBytes,
+        totalBytes: present(value.totalBytes),
+      };
     case "Restarting":
       return { kind: "Restarting" };
     case "Ready":
@@ -356,6 +376,13 @@ function projectReadingAvailability(value: ReadingAvailability): import("@/lib/a
         updatedAt: value.installedAt,
         hasDevicePosition: value.progress.kind !== "Canonical",
       };
+    // All three need the same action: the planner's "Update saved copy" retry,
+    // which frees the conversion to run again once space or the converter allows.
+    // Only the shelf's own copy distinguishes why the update has not happened.
+    case "UpgradeRequired":
+    case "UpgradeBlockedByStorage":
+    case "UpgradeFailed":
+      return { kind: "UpgradeRequired" };
     case "Failed":
       return { kind: "Failed", code: "DownloadFailed" };
     case "Removing":
@@ -814,25 +841,59 @@ async function runResourceActionEffect(
       return;
     case "OfflineDownload":
       if (intent.owner === "Reading") {
-        if (intent.requestedTitle === undefined) throw new Error("Offline reading title is unavailable");
-        if (intent.mediaKind === undefined) throw new Error("Offline reading media kind is unavailable");
-        await requireOfflineReadingController(ports).enqueue(
-          requireRefId(target),
-          intent.requestedTitle,
-          offlineReadingPackageMediaKind(intent.mediaKind),
+        if (intent.requestedTitle === undefined)
+          throw new Error("Offline reading title is unavailable");
+        if (intent.mediaKind === undefined)
+          throw new Error("Offline reading media kind is unavailable");
+        const mediaId = requireRefId(target);
+        // This location-independent action selects current content once. Native
+        // preparation and every transfer retry retain this exact generation.
+        const descriptor = await requestWithRetry(
+          (signal) =>
+            selectHostedReaderPublication({ mediaId, signal, capacity: READER_CAPACITY, cache: ports.readerCache }),
+          new AbortController().signal,
         );
+        if (descriptor.kind === "Capacity") {
+          ports.feedback.publish({
+            kind: "Hud",
+            content: {
+              tone: "Neutral",
+              title: "Reader content is busy",
+              message: "Try the download again after the current reads finish.",
+            },
+          });
+          return;
+        }
+        await requireOfflineReadingController(ports).enqueue({
+          mediaId,
+          readerGeneration: descriptor.source.reader_generation,
+          requestedTitle: descriptor.title,
+          mediaKind: offlineReadingPackageMediaKind(descriptor.kind),
+        });
       } else {
         await requireOfflineController(ports).enqueue(requireRefId(target));
       }
       return;
     case "OfflineCancel":
-      await (intent.owner === "Reading" ? requireOfflineReadingController(ports) : requireOfflineController(ports)).cancel(requireRefId(target));
+      await (
+        intent.owner === "Reading"
+          ? requireOfflineReadingController(ports)
+          : requireOfflineController(ports)
+      ).cancel(requireRefId(target));
       return;
     case "OfflineRetry":
-      await (intent.owner === "Reading" ? requireOfflineReadingController(ports) : requireOfflineController(ports)).retry(requireRefId(target));
+      await (
+        intent.owner === "Reading"
+          ? requireOfflineReadingController(ports)
+          : requireOfflineController(ports)
+      ).retry(requireRefId(target));
       return;
     case "OfflineRemove":
-      await (intent.owner === "Reading" ? requireOfflineReadingController(ports) : requireOfflineController(ports)).remove(requireRefId(target));
+      await (
+        intent.owner === "Reading"
+          ? requireOfflineReadingController(ports)
+          : requireOfflineController(ports)
+      ).remove(requireRefId(target));
       return;
     case "EditAuthors":
       // Opening a self-loading overlay is not itself a mutation; the overlay
@@ -1489,6 +1550,9 @@ export function ResourceActionRuntimeProvider({
 }: {
   children: ReactNode;
 }) {
+  const readerCache = useContext(ResourceCacheContext);
+  if (readerCache === null)
+    throw new Error("Resource actions require the account reader cache");
   const [defect, setDefect] = useState<{ readonly error: unknown } | null>(
     null,
   );
@@ -1563,6 +1627,7 @@ export function ResourceActionRuntimeProvider({
     );
 
   const ports: RuntimePorts = {
+    readerCache,
     workspace,
     activePaneId: workspace.state.activePrimaryPaneId,
     openShare,
@@ -1700,18 +1765,25 @@ export function ResourceActionRuntimeProvider({
     getInventory,
     () => EMPTY_INVENTORY,
   );
-  const readingController = offlineReadingCapability.kind === "Ready"
-    ? offlineReadingCapability.controller
-    : null;
+  const readingController =
+    offlineReadingCapability.kind === "Ready"
+      ? offlineReadingCapability.controller
+      : null;
   const readingSnapshot = useSyncExternalStore(
     readingController?.subscribe ?? (() => () => undefined),
     readingController?.getSnapshot ?? (() => null),
     () => null,
   );
   const readingByRef = useMemo(() => {
-    const byRef = new Map<CanonicalResourceRef, import("@/lib/actions/resourceActionEnvironment").ResourceActionOfflineReadingAvailability>();
+    const byRef = new Map<
+      CanonicalResourceRef,
+      import("@/lib/actions/resourceActionEnvironment").ResourceActionOfflineReadingAvailability
+    >();
     for (const item of readingSnapshot?.items ?? []) {
-      byRef.set(`media:${item.mediaId}` as CanonicalResourceRef, projectReadingAvailability(item.availability));
+      byRef.set(
+        `media:${item.mediaId}` as CanonicalResourceRef,
+        projectReadingAvailability(item.availability),
+      );
     }
     return byRef;
   }, [readingSnapshot]);

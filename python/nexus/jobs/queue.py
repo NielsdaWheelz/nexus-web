@@ -1929,7 +1929,7 @@ def current_dead_job_for_payload(
 
 
 def parser_operation_has_live_job(db: Session, *, operation_id: UUID) -> bool:
-    """Whether a parser-temp owner has exact nonterminal source or reindex work."""
+    """Whether a parser-temp owner has exact nonterminal source, index or archive work."""
     return bool(
         db.execute(
             text(
@@ -1949,7 +1949,8 @@ def parser_operation_has_live_job(db: Session, *, operation_id: UUID) -> bool:
                     SELECT 1
                     FROM background_jobs job
                     WHERE job.id = :operation_id
-                      AND job.kind = 'media_content_reindex_job'
+                      AND job.kind IN ('media_content_reindex_job', 'prepare_offline_reading_package',
+                                       'prepare_reader_publication')
                       AND job.status IN ('pending', 'failed', 'running')
                 )
                 """

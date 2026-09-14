@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/offlineReading/OfflineReaderAdapters.ts b/apps/web/src/lib/offlineReading/OfflineReaderAdapters.ts
+--- a/apps/web/src/lib/offlineReading/OfflineReaderAdapters.ts
++++ b/apps/web/src/lib/offlineReading/OfflineReaderAdapters.ts
+@@ -681,7 +681,7 @@
+     this.#assertMedia(mediaId);
+     this.#view = await this.controller.resolveReaderProgress({
+       mediaId,
+-      choice,
++      choice: "Canonical",
+       expected: this.#view,
+       readerGeneration: this.opened.readerGeneration,
+       readerRevisionKey: this.opened.readerRevisionKey,

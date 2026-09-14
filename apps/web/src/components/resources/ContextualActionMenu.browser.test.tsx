@@ -1,3 +1,7 @@
+import { ArtworkProvider } from "@/lib/media/ArtworkProvider";
+import { ARTWORK_CAPACITY } from "@/lib/media/artworkCapacity";
+import { ResourceCacheProvider } from "@/lib/api/resourceCache";
+import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
 import type { ReactNode } from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
@@ -135,12 +139,19 @@ function menuEnvironment(menu: ReactNode) {
                         transport={null}
                       >
                         <ResourceOverlaysProvider>
-                          <GlobalPlayerProvider>
-                            <ResourceActionRuntimeProvider>
-                              {menu}
-                              <ResourceActionOverlays />
-                            </ResourceActionRuntimeProvider>
-                          </GlobalPlayerProvider>
+                          <ResourceCacheProvider
+                            value={{}}
+                            publicationLimits={READER_CAPACITY.cache}
+                          >
+                            <ArtworkProvider limits={ARTWORK_CAPACITY}>
+                              <GlobalPlayerProvider>
+                                <ResourceActionRuntimeProvider>
+                                  {menu}
+                                  <ResourceActionOverlays />
+                                </ResourceActionRuntimeProvider>
+                              </GlobalPlayerProvider>
+                            </ArtworkProvider>
+                          </ResourceCacheProvider>
                         </ResourceOverlaysProvider>
                       </OfflineMediaProvider>
                     </ShareControllerProvider>

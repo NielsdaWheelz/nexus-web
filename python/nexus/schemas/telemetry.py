@@ -26,12 +26,10 @@ class WebVitalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ClientDefectRequest(BaseModel):
+class _ClientDefectFields(BaseModel):
     """One bounded structural failure report; no exception or request payload."""
 
     release: str = Field(min_length=1, max_length=128)
-    pane_id: str = Field(min_length=1, max_length=128)
-    visit_id: str = Field(min_length=1, max_length=128)
     phase: Literal["Admission", "Read", "Render"]
     command_id: Presence[Annotated[str, Field(min_length=1, max_length=128)]]
     run_id: Presence[UUID]
@@ -40,3 +38,18 @@ class ClientDefectRequest(BaseModel):
     component_stack: str = Field(max_length=8000)
 
     model_config = ConfigDict(extra="forbid")
+
+
+class PaneClientDefectRequest(_ClientDefectFields):
+    scope: Literal["Pane"]
+    pane_id: str = Field(min_length=1, max_length=128)
+    visit_id: str = Field(min_length=1, max_length=128)
+
+
+class FeatureClientDefectRequest(_ClientDefectFields):
+    scope: Literal["Nexus", "Workspace", "ReaderProgress", "ReaderContent", "Imports", "Artwork"]
+
+
+ClientDefectRequest = Annotated[
+    PaneClientDefectRequest | FeatureClientDefectRequest, Field(discriminator="scope")
+]

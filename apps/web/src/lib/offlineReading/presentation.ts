@@ -16,8 +16,6 @@ export type OfflineReadingMediaKind =
  * planner all read these; no surface restates one in its own words.
  */
 export const OFFLINE_READING_COPY = {
-  /** TB-07. */
-  textOnlyNotice: "Text-only copy; images not included",
   /** UI: changed source. */
   changedSourceNotice:
     "A newer source version exists. This downloaded copy and its position remain only on this device.",
@@ -27,6 +25,8 @@ export const OFFLINE_READING_COPY = {
   conflictNotice: "Nexus and this device have different saved locations.",
   conflictCanonicalChoice: "Use saved location from Nexus",
   conflictDeviceChoice: "Keep this device's location",
+  /** UI: the device refused the position write. */
+  saveFailedNotice: "Position could not be stored on this device. Try again.",
   /** UI: pending Remove confirmation. */
   pendingRemoveConfirmation:
     "Remove downloaded copy and discard this device's unsynced position.",
@@ -42,7 +42,9 @@ export const OFFLINE_READING_COPY = {
  * network), never a reason to tear down the workspace: installed copies stay
  * readable through the Android shelf.
  */
-export function offlineReadingRejectionMessage(code: ReadingRejectedCode): string {
+export function offlineReadingRejectionMessage(
+  code: ReadingRejectedCode,
+): string {
   switch (code) {
     case "AuthorizationRequired":
       return "Reconnect to Nexus to authorize offline downloads. Downloaded copies remain readable on this device.";
@@ -150,19 +152,29 @@ export function formatOfflineReadingDate(instant: string): string {
 
 export function offlineReadingKindCopy(kind: OfflineReadingMediaKind): string {
   switch (kind) {
-    case "Pdf": return "PDF";
-    case "Epub": return "EPUB";
-    case "WebArticle": return "Web article";
+    case "Pdf":
+      return "PDF";
+    case "Epub":
+      return "EPUB";
+    case "WebArticle":
+      return "Web article";
   }
 }
 
-export function offlineReaderProgressCopy(progress: ReaderProgressView): string {
+export function offlineReaderProgressCopy(
+  progress: ReaderProgressView,
+): string {
   switch (progress.kind) {
-    case "Canonical": return "Position synced";
-    case "Pending": return "Position saved on this device";
-    case "Conflict": return "Position needs your choice";
-    case "ContentChanged": return "Position kept for this downloaded version";
-    case "SourceUnavailable": return "Position kept locally · source unavailable";
+    case "Canonical":
+      return "Position synced";
+    case "Pending":
+      return "Position saved on this device";
+    case "Conflict":
+      return "Position needs your choice";
+    case "ContentChanged":
+      return "Position kept for this downloaded version";
+    case "SourceUnavailable":
+      return "Position kept locally · source unavailable";
   }
 }
 
@@ -170,17 +182,27 @@ export function offlineReadingAvailabilityCopy(
   availability: ReadingAvailability,
 ): string {
   switch (availability.kind) {
-    case "Preparing": return "Preparing reading copy";
+    case "Preparing":
+      return "Preparing reading copy";
     case "Queued":
       switch (availability.reason) {
-        case "WaitingForUnmetered": return "Queued · waiting for Wi-Fi";
-        case "Capacity": return "Queued · another download is active";
-        case "Scheduler": return "Queued · Android scheduling unavailable";
+        case "WaitingForUnmetered":
+          return "Queued · waiting for Wi-Fi";
+        case "Capacity":
+          return "Queued · another download is active";
+        case "Scheduler":
+          return "Queued · Android scheduling unavailable";
+        case "Preparation":
+          return "Preparing downloaded copy";
+        case "ServerCapacity":
+          return "Queued · Nexus is at capacity";
       }
-    case "Authorizing": return "Authorizing reading copy";
+    case "Authorizing":
+      return "Authorizing reading copy";
     case "Downloading":
       return `${formatOfflineReadingBytes(availability.receivedBytes)} of ${formatOfflineReadingBytes(availability.totalBytes)}`;
-    case "Verifying": return "Verifying reading copy";
+    case "Verifying":
+      return "Verifying reading copy";
     case "Restarting":
       return availability.reason === "PolicyChanged"
         ? `Restarting · network policy changed · attempt ${availability.attempt}`
@@ -189,7 +211,14 @@ export function offlineReadingAvailabilityCopy(
       return `Download failed · ${offlineReadingFailureCopy(availability.reason)}`;
     case "Ready":
       return `${formatOfflineReadingBytes(availability.sizeBytes)} · saved ${formatOfflineReadingDate(availability.installedAt)}`;
-    case "Removing": return "Removing reading copy";
+    case "UpgradeRequired":
+      return "This saved copy needs a local update before it can open. Your copy and position are preserved.";
+    case "UpgradeBlockedByStorage":
+      return "The local update needs more free space. Your copy and position are preserved.";
+    case "UpgradeFailed":
+      return "This app cannot yet update this saved copy. Your copy and position are preserved.";
+    case "Removing":
+      return "Removing reading copy";
   }
 }
 
@@ -197,16 +226,27 @@ function offlineReadingFailureCopy(
   reason: Extract<ReadingAvailability, { kind: "Failed" }>["reason"],
 ): string {
   switch (reason) {
-    case "AuthorizationRequired": return "sign in required";
-    case "SourceUnavailable": return "source unavailable";
-    case "ContentChanged": return "source changed";
-    case "TooLarge": return "copy too large";
-    case "LowSpace": return "not enough storage";
-    case "Network": return "network interrupted";
-    case "SystemStopped": return "stopped by Android";
-    case "Integrity": return "integrity check failed";
-    case "UnsupportedPackage": return "unsupported package";
-    case "RecoveryRequired": return "recovery required";
-    case "Server": return "server unavailable";
+    case "AuthorizationRequired":
+      return "sign in required";
+    case "SourceUnavailable":
+      return "source unavailable";
+    case "ContentChanged":
+      return "source changed";
+    case "TooLarge":
+      return "copy too large";
+    case "LowSpace":
+      return "not enough storage";
+    case "Network":
+      return "network interrupted";
+    case "SystemStopped":
+      return "stopped by Android";
+    case "Integrity":
+      return "integrity check failed";
+    case "UnsupportedPackage":
+      return "unsupported package";
+    case "RecoveryRequired":
+      return "recovery required";
+    case "Server":
+      return "server unavailable";
   }
 }

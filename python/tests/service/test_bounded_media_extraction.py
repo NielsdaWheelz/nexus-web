@@ -48,6 +48,7 @@ from nexus.services.epub_ingest import (
     EpubExtractionError,
     EpubExtractionPlan,
     build_epub_extraction_plan,
+    read_epub_fragment,
 )
 from nexus.services.latex_apparatus import (
     LATEX_APPARATUS_MAX_ITEMS,
@@ -324,7 +325,12 @@ def _raw_span(
         "chars": [
             {
                 "c": character,
-                "bbox": (left + index * advance, top, left + (index + 1) * advance, bottom),
+                "bbox": (
+                    left + index * advance,
+                    top,
+                    left + (index + 1) * advance,
+                    bottom,
+                ),
             }
             for index, character in enumerate(text)
         ],
@@ -418,7 +424,10 @@ def _run_parser_resource_probe(case: str, output: Connection) -> None:
             assert plan.error_code == "E_RESOURCE_LIMIT"
             assert plan.resource_limit_dimension == "Structure"
             assert plan.terminal is True
-            detail = {"links": PDF_APPARATUS_MAX_ITEMS + 1, "error_code": plan.error_code}
+            detail = {
+                "links": PDF_APPARATUS_MAX_ITEMS + 1,
+                "error_code": plan.error_code,
+            }
         elif case == "latex-output-limit":
             document = fitz.open()
             document.new_page().insert_text((72, 72), "Bounded source package proof")
@@ -591,17 +600,19 @@ def _run_parser_resource_probe(case: str, output: Connection) -> None:
                     del payload
                     attempt_id = uuid4()
                     _reset_peak_rss()
-                    plan = build_epub_extraction_plan(
-                        session_factory=lambda: ReservationSession(),
-                        media_id=uuid4(),
-                        attempt_id=attempt_id,
-                        storage_path=f"resource-probe/{label}.epub",
-                        source_size_bytes=source_size_bytes,
-                        expected_source_sha256=expected_source_sha256,
-                        storage_client=_FileSourceStorage(source_path),
-                        record_progress=lambda _completed, _total, _unit: None,
-                    )
-                    structural_peaks.append(_process_status_mib("VmHWM"))
+                    with parser_attempt_directory(attempt_id) as attempt_directory:
+                        plan = build_epub_extraction_plan(
+                            attempt_directory=attempt_directory,
+                            session_factory=lambda: ReservationSession(),
+                            media_id=uuid4(),
+                            attempt_id=attempt_id,
+                            storage_path=f"resource-probe/{label}.epub",
+                            source_size_bytes=source_size_bytes,
+                            expected_source_sha256=expected_source_sha256,
+                            storage_client=_FileSourceStorage(source_path),
+                            record_progress=lambda _completed, _total, _unit: None,
+                        )
+                        structural_peaks.append(_process_status_mib("VmHWM"))
                 assert isinstance(plan, EpubExtractionError), (
                     f"{label}: bounded EPUB case produced a plan instead of a failure"
                 )
@@ -617,55 +628,60 @@ def _run_parser_resource_probe(case: str, output: Connection) -> None:
             reported_high_water_rss_mib = max(structural_peaks)
             detail = structural_details
         elif case in {"epub-maximum-safe", "epub-pathological"}:
-            paragraph = b"<p>" + (b"x" * (32 * 1024)) + b"</p>"
-            paragraph_count = 992 if case == "epub-maximum-safe" else 1024
-            chapter_count = 3
-            base_count, remainder = divmod(paragraph_count, chapter_count)
-            payload = _epub_spine_payload(
-                {
-                    f"chapter-{index}": (
-                        b'<html xmlns="http://www.w3.org/1999/xhtml"><body>'
-                        + paragraph * (base_count + (1 if index < remainder else 0))
-                        + b"</body></html>"
+            attempt_id = uuid4()
+            with parser_attempt_directory(attempt_id) as attempt_directory:
+                paragraph = b"<p>" + (b"x" * (32 * 1024)) + b"</p>"
+                paragraph_count = 992 if case == "epub-maximum-safe" else 1024
+                chapter_count = 3
+                base_count, remainder = divmod(paragraph_count, chapter_count)
+                payload = _epub_spine_payload(
+                    {
+                        f"chapter-{index}": (
+                            b'<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+                            + paragraph * (base_count + (1 if index < remainder else 0))
+                            + b"</body></html>"
+                        )
+                        for index in range(chapter_count)
+                    }
+                )
+                with tempfile.TemporaryDirectory(prefix="nexus-parser-probe-") as directory:
+                    source_path = Path(directory) / "source.epub"
+                    source_path.write_bytes(payload)
+                    source_size_bytes = len(payload)
+                    expected_source_sha256 = hashlib.sha256(payload).hexdigest()
+                    del payload
+                    progress_peaks: list[float] = []
+                    _reset_peak_rss()
+                    plan = build_epub_extraction_plan(
+                        attempt_directory=attempt_directory,
+                        session_factory=lambda: ReservationSession(),
+                        media_id=uuid4(),
+                        attempt_id=attempt_id,
+                        storage_path=f"resource-probe/{case}.epub",
+                        source_size_bytes=source_size_bytes,
+                        expected_source_sha256=expected_source_sha256,
+                        storage_client=_FileSourceStorage(source_path),
+                        record_progress=lambda _completed, _total, _unit: progress_peaks.append(
+                            _process_status_mib("VmRSS")
+                        ),
                     )
-                    for index in range(chapter_count)
-                }
-            )
-            with tempfile.TemporaryDirectory(prefix="nexus-parser-probe-") as directory:
-                source_path = Path(directory) / "source.epub"
-                source_path.write_bytes(payload)
-                source_size_bytes = len(payload)
-                expected_source_sha256 = hashlib.sha256(payload).hexdigest()
-                del payload
-                progress_peaks: list[float] = []
-                _reset_peak_rss()
-                plan = build_epub_extraction_plan(
-                    session_factory=lambda: ReservationSession(),
-                    media_id=uuid4(),
-                    attempt_id=uuid4(),
-                    storage_path=f"resource-probe/{case}.epub",
-                    source_size_bytes=source_size_bytes,
-                    expected_source_sha256=expected_source_sha256,
-                    storage_client=_FileSourceStorage(source_path),
-                    record_progress=lambda _completed, _total, _unit: progress_peaks.append(
-                        _process_status_mib("VmRSS")
-                    ),
-                )
-            if case == "epub-maximum-safe":
-                assert isinstance(plan, EpubExtractionPlan)
-                retained_bytes = sum(
-                    len(fragment.html_sanitized.encode("utf-8"))
-                    + len(fragment.canonical_text.encode("utf-8"))
-                    for fragment, _chapter, _items, _edges in plan.fragment_specs
-                )
-                assert 60 * 1024 * 1024 < retained_bytes <= EPUB_RENDERED_TEXT_MAX_BYTES
-                detail = {"retained_bytes": retained_bytes, "progress_peaks": progress_peaks}
-            else:
-                assert isinstance(plan, EpubExtractionError)
-                assert plan.error_code == "E_RESOURCE_LIMIT"
-                assert plan.resource_limit_dimension == "Output"
-                assert plan.terminal is True
-                detail = plan.error_code
+                if case == "epub-maximum-safe":
+                    assert isinstance(plan, EpubExtractionPlan)
+                    retained_bytes = sum(
+                        sum(len(text.encode("utf-8")) for text in read_epub_fragment(fragment))
+                        for fragment in plan.fragments
+                    )
+                    assert 60 * 1024 * 1024 < retained_bytes <= EPUB_RENDERED_TEXT_MAX_BYTES
+                    detail = {
+                        "retained_bytes": retained_bytes,
+                        "progress_peaks": progress_peaks,
+                    }
+                else:
+                    assert isinstance(plan, EpubExtractionError)
+                    assert plan.error_code == "E_RESOURCE_LIMIT"
+                    assert plan.resource_limit_dimension == "Output"
+                    assert plan.terminal is True
+                    detail = plan.error_code
         else:
             raise AssertionError(f"unknown parser resource probe: {case}")
         output.send(
@@ -782,7 +798,9 @@ def test_pdf_extraction_reports_counted_progress_and_cleans_attempt_files(
     )
 
 
-def test_parser_temp_pruning_preserves_live_and_unknown_directories(tmp_path: Path) -> None:
+def test_parser_temp_pruning_preserves_live_and_unknown_directories(
+    tmp_path: Path,
+) -> None:
     live_attempt_id = uuid4()
     stale_attempt_id = uuid4()
     (tmp_path / str(live_attempt_id)).mkdir()
@@ -821,7 +839,9 @@ def test_overlapping_parser_runs_never_delete_their_peer_directory() -> None:
     assert not first.parent.exists()
 
 
-def test_parser_temp_liveness_preserves_an_older_nonterminal_attempt(engine: Engine) -> None:
+def test_parser_temp_liveness_preserves_an_older_nonterminal_attempt(
+    engine: Engine,
+) -> None:
     viewer_id, media_id = _persist_test_media(engine, kind=MediaKind.pdf)
     older_attempt_id = uuid4()
     newer_attempt_id = uuid4()
@@ -1159,21 +1179,23 @@ def test_epub_digest_mismatch_refuses_to_open_and_cleans_attempt(
         raise AssertionError("digest mismatch must stop before EPUB open")
 
     monkeypatch.setattr(zipfile, "ZipFile", _unexpected_open)
-    result = build_epub_extraction_plan(
-        session_factory=lambda: ReservationSession(),
-        media_id=uuid4(),
-        attempt_id=attempt_id,
-        storage_path="sources/digest-mismatch.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256="0" * 64,
-        storage_client=ChunkedSourceStorage(payload),
-        record_progress=lambda _completed, _total, _unit: None,
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        result = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=lambda: ReservationSession(),
+            media_id=uuid4(),
+            attempt_id=attempt_id,
+            storage_path="sources/digest-mismatch.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256="0" * 64,
+            storage_client=ChunkedSourceStorage(payload),
+            record_progress=lambda _completed, _total, _unit: None,
+        )
 
-    assert isinstance(result, EpubExtractionError)
-    assert result.error_code == "E_SOURCE_INTEGRITY"
-    assert result.terminal is True
-    assert opened is False
+        assert isinstance(result, EpubExtractionError)
+        assert result.error_code == "E_SOURCE_INTEGRITY"
+        assert result.terminal is True
+        assert opened is False
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
@@ -1342,7 +1364,10 @@ def test_pdf_page_snapshot_failure_keeps_page_heights_aligned_with_pages(
                         "lines": [
                             {
                                 "spans": [
-                                    _raw_span("[1] Bounded reference body", (10, 100, 200, 112))
+                                    _raw_span(
+                                        "[1] Bounded reference body",
+                                        (10, 100, 200, 112),
+                                    )
                                 ]
                             }
                         ],
@@ -1485,7 +1510,10 @@ def test_pdf_native_link_marker_text_is_clipped_to_the_link_rectangle(
     ("chapter_body", "expected_message"),
     [
         (b"<span>" * 129 + b"x" + b"</span>" * 129, "depth"),
-        (b"<p " + b" ".join(f'a{i}="x"'.encode() for i in range(65)) + b">x</p>", "attributes"),
+        (
+            b"<p " + b" ".join(f'a{i}="x"'.encode() for i in range(65)) + b">x</p>",
+            "attributes",
+        ),
     ],
 )
 def test_epub_structural_preflight_rejects_adversarial_xhtml_before_dom_build(
@@ -1494,21 +1522,23 @@ def test_epub_structural_preflight_rejects_adversarial_xhtml_before_dom_build(
 ) -> None:
     payload = _epub_payload(chapter_body=chapter_body)
     attempt_id = uuid4()
-    result = build_epub_extraction_plan(
-        session_factory=lambda: ReservationSession(),
-        media_id=uuid4(),
-        attempt_id=attempt_id,
-        storage_path="sources/adversarial-structure.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=ChunkedSourceStorage(payload),
-        record_progress=lambda _completed, _total, _unit: None,
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        result = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=lambda: ReservationSession(),
+            media_id=uuid4(),
+            attempt_id=attempt_id,
+            storage_path="sources/adversarial-structure.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+            storage_client=ChunkedSourceStorage(payload),
+            record_progress=lambda _completed, _total, _unit: None,
+        )
 
-    assert isinstance(result, EpubExtractionError)
-    assert result.error_code == "E_RESOURCE_LIMIT"
-    assert result.resource_limit_dimension == "Structure"
-    assert expected_message in result.error_message
+        assert isinstance(result, EpubExtractionError)
+        assert result.error_code == "E_RESOURCE_LIMIT"
+        assert result.resource_limit_dimension == "Structure"
+        assert expected_message in result.error_message
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
@@ -1539,27 +1569,29 @@ def test_epub_structural_preflight_fuzzes_both_sides_of_shape_limits(
     payload = _epub_payload(chapter_body=chapter_body)
     attempt_id = uuid4()
 
-    result = build_epub_extraction_plan(
-        session_factory=lambda: ReservationSession(),
-        media_id=uuid4(),
-        attempt_id=attempt_id,
-        storage_path="sources/structural-fuzz.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=ChunkedSourceStorage(payload),
-        record_progress=lambda _completed, _total, _unit: None,
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        result = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=lambda: ReservationSession(),
+            media_id=uuid4(),
+            attempt_id=attempt_id,
+            storage_path="sources/structural-fuzz.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+            storage_client=ChunkedSourceStorage(payload),
+            record_progress=lambda _completed, _total, _unit: None,
+        )
 
-    exceeds_shape = nested_depth + 3 > EPUB_XML_MAX_DEPTH or (
-        attribute_count > EPUB_XML_MAX_ATTRIBUTES_PER_ELEMENT
-    )
-    if exceeds_shape:
-        assert isinstance(result, EpubExtractionError)
-        assert result.error_code == "E_RESOURCE_LIMIT"
-        assert result.resource_limit_dimension == "Structure"
-        assert result.terminal is True
-    else:
-        assert isinstance(result, EpubExtractionPlan)
+        exceeds_shape = nested_depth + 3 > EPUB_XML_MAX_DEPTH or (
+            attribute_count > EPUB_XML_MAX_ATTRIBUTES_PER_ELEMENT
+        )
+        if exceeds_shape:
+            assert isinstance(result, EpubExtractionError)
+            assert result.error_code == "E_RESOURCE_LIMIT"
+            assert result.resource_limit_dimension == "Structure"
+            assert result.terminal is True
+        else:
+            assert isinstance(result, EpubExtractionPlan)
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
@@ -1700,22 +1732,24 @@ def test_epub_combined_rendered_text_limit_returns_typed_terminal_failure() -> N
     paragraph = b"<p>" + (b"x" * (32 * 1024)) + b"</p>"
     payload = _epub_payload(chapter_body=paragraph * 1024)
     attempt_id = uuid4()
-    result = build_epub_extraction_plan(
-        session_factory=lambda: ReservationSession(),
-        media_id=uuid4(),
-        attempt_id=attempt_id,
-        storage_path="sources/oversized-text.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=ChunkedSourceStorage(payload),
-        record_progress=lambda _completed, _total, _unit: None,
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        result = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=lambda: ReservationSession(),
+            media_id=uuid4(),
+            attempt_id=attempt_id,
+            storage_path="sources/oversized-text.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+            storage_client=ChunkedSourceStorage(payload),
+            record_progress=lambda _completed, _total, _unit: None,
+        )
 
-    assert EPUB_RENDERED_TEXT_MAX_BYTES == 64 * 1024 * 1024
-    assert isinstance(result, EpubExtractionError)
-    assert result.error_code == "E_RESOURCE_LIMIT"
-    assert result.resource_limit_dimension == "Output"
-    assert result.terminal is True
+        assert EPUB_RENDERED_TEXT_MAX_BYTES == 64 * 1024 * 1024
+        assert isinstance(result, EpubExtractionError)
+        assert result.error_code == "E_RESOURCE_LIMIT"
+        assert result.resource_limit_dimension == "Output"
+        assert result.terminal is True
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
@@ -1731,24 +1765,28 @@ def test_epub_apparatus_index_limit_is_a_typed_output_resource_failure() -> None
     payload = _epub_payload(chapter_body=b'<section epub:type="footnotes">' + notes + b"</section>")
     attempt_id = uuid4()
 
-    result = build_epub_extraction_plan(
-        session_factory=lambda: ReservationSession(),
-        media_id=uuid4(),
-        attempt_id=attempt_id,
-        storage_path="sources/apparatus-index.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=ChunkedSourceStorage(payload),
-        record_progress=lambda _completed, _total, _unit: None,
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        result = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=lambda: ReservationSession(),
+            media_id=uuid4(),
+            attempt_id=attempt_id,
+            storage_path="sources/apparatus-index.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+            storage_client=ChunkedSourceStorage(payload),
+            record_progress=lambda _completed, _total, _unit: None,
+        )
 
-    assert isinstance(result, EpubExtractionError)
-    assert result.error_code == "E_RESOURCE_LIMIT", f"apparatus budget misclassified: {result!r}"
-    assert result.resource_limit_dimension == "Output", (
-        f"apparatus budget misclassified: {result!r}"
-    )
-    assert result.terminal is True
-    assert "bounded index" in result.error_message
+        assert isinstance(result, EpubExtractionError)
+        assert result.error_code == "E_RESOURCE_LIMIT", (
+            f"apparatus budget misclassified: {result!r}"
+        )
+        assert result.resource_limit_dimension == "Output", (
+            f"apparatus budget misclassified: {result!r}"
+        )
+        assert result.terminal is True
+        assert "bounded index" in result.error_message
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
@@ -1759,25 +1797,29 @@ def test_epub_assets_stream_without_retaining_asset_bytes(engine: Engine) -> Non
     _viewer_id, media_id = _persist_test_media(engine, kind=MediaKind.epub)
     attempt_id = uuid4()
 
-    plan = build_epub_extraction_plan(
-        session_factory=create_session_factory(engine),
-        media_id=media_id,
-        attempt_id=attempt_id,
-        storage_path="sources/asset.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=storage,
-        record_progress=lambda _completed, _total, _unit: None,
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        plan = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=create_session_factory(engine),
+            media_id=media_id,
+            attempt_id=attempt_id,
+            storage_path="sources/asset.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+            storage_client=storage,
+            record_progress=lambda _completed, _total, _unit: None,
+        )
 
-    assert isinstance(plan, EpubExtractionPlan), f"valid EPUB did not produce a plan: {plan!r}"
-    assert len(plan.asset_entries) == 1
-    assert "content" not in {field.name for field in fields(plan.asset_entries[0])}
-    assert list(storage.uploads.values()) == [(asset, "image/png")]
+        assert isinstance(plan, EpubExtractionPlan), f"valid EPUB did not produce a plan: {plan!r}"
+        assert len(plan.asset_entries) == 1
+        assert "content" not in {field.name for field in fields(plan.asset_entries[0])}
+        assert list(storage.uploads.values()) == [(asset, "image/png")]
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
-def test_epub_referenced_svg_asset_is_sanitized_from_one_entry_handle(engine: Engine) -> None:
+def test_epub_referenced_svg_asset_is_sanitized_from_one_entry_handle(
+    engine: Engine,
+) -> None:
     """The SVG preflight and the sanitizing parse share the caller's entry handle."""
     entries = _epub_package(
         manifest_items=(
@@ -1800,24 +1842,26 @@ def test_epub_referenced_svg_asset_is_sanitized_from_one_entry_handle(engine: En
     _viewer_id, media_id = _persist_test_media(engine, kind=MediaKind.epub)
     attempt_id = uuid4()
 
-    plan = build_epub_extraction_plan(
-        session_factory=create_session_factory(engine),
-        media_id=media_id,
-        attempt_id=attempt_id,
-        storage_path="sources/svg-asset.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=storage,
-        record_progress=lambda _completed, _total, _unit: None,
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        plan = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=create_session_factory(engine),
+            media_id=media_id,
+            attempt_id=attempt_id,
+            storage_path="sources/svg-asset.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+            storage_client=storage,
+            record_progress=lambda _completed, _total, _unit: None,
+        )
 
-    assert isinstance(plan, EpubExtractionPlan), f"SVG asset failed the book: {plan!r}"
-    assert [content_type for _content, content_type in storage.uploads.values()] == [
-        "image/svg+xml"
-    ]
-    (sanitized, _content_type) = next(iter(storage.uploads.values()))
-    assert b"<script" not in sanitized, f"SVG script survived sanitization: {sanitized!r}"
-    assert b"circle" in sanitized, f"SVG lost its drawable content: {sanitized!r}"
+        assert isinstance(plan, EpubExtractionPlan), f"SVG asset failed the book: {plan!r}"
+        assert [content_type for _content, content_type in storage.uploads.values()] == [
+            "image/svg+xml"
+        ]
+        (sanitized, _content_type) = next(iter(storage.uploads.values()))
+        assert b"<script" not in sanitized, f"SVG script survived sanitization: {sanitized!r}"
+        assert b"circle" in sanitized, f"SVG lost its drawable content: {sanitized!r}"
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
@@ -1838,21 +1882,23 @@ def test_epub_referenced_svg_is_structurally_preflighted(engine: Engine) -> None
     _viewer_id, media_id = _persist_test_media(engine, kind=MediaKind.epub)
     attempt_id = uuid4()
 
-    result = build_epub_extraction_plan(
-        session_factory=create_session_factory(engine),
-        media_id=media_id,
-        attempt_id=attempt_id,
-        storage_path="sources/deep-svg.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=_StreamingAssetStorage(payload),
-        record_progress=lambda _completed, _total, _unit: None,
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        result = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=create_session_factory(engine),
+            media_id=media_id,
+            attempt_id=attempt_id,
+            storage_path="sources/deep-svg.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+            storage_client=_StreamingAssetStorage(payload),
+            record_progress=lambda _completed, _total, _unit: None,
+        )
 
-    assert isinstance(result, EpubExtractionError)
-    assert result.error_code == "E_RESOURCE_LIMIT"
-    assert result.resource_limit_dimension == "Structure"
-    assert "depth" in result.error_message
+        assert isinstance(result, EpubExtractionError)
+        assert result.error_code == "E_RESOURCE_LIMIT"
+        assert result.resource_limit_dimension == "Structure"
+        assert "depth" in result.error_message
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
@@ -1877,32 +1923,39 @@ def test_epub_footnote_link_into_another_spine_document_survives_extraction() ->
     )
     attempt_id = uuid4()
 
-    plan = build_epub_extraction_plan(
-        session_factory=lambda: ReservationSession(),
-        media_id=uuid4(),
-        attempt_id=attempt_id,
-        storage_path="sources/cross-document-notes.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=ChunkedSourceStorage(payload),
-        record_progress=lambda _completed, _total, _unit: None,
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        plan = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=lambda: ReservationSession(),
+            media_id=uuid4(),
+            attempt_id=attempt_id,
+            storage_path="sources/cross-document-notes.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+            storage_client=ChunkedSourceStorage(payload),
+            record_progress=lambda _completed, _total, _unit: None,
+        )
 
-    assert isinstance(plan, EpubExtractionPlan), f"valid EPUB did not produce a plan: {plan!r}"
-    assert plan.result.chapter_count == 2
-    _chapter_fragment, chapter_spec, chapter_items, chapter_edges = plan.fragment_specs[0]
-    _notes_fragment, notes_spec, notes_items, _notes_edges = plan.fragment_specs[1]
-    assert chapter_spec.href == "EPUB/chapter.xhtml"
-    assert notes_spec.href == "EPUB/notes.xhtml"
-    note_edges = [edge for edge in chapter_edges if edge["relation"] == "points_to_note"]
-    assert len(note_edges) == 1, f"cross document footnote link was dropped: {chapter_edges!r}"
-    assert note_edges[0]["confidence"] == "strong"
-    assert note_edges[0]["from_stable_key"] in {
-        item["stable_key"] for item in chapter_items if item["kind"] == "footnote_ref"
-    }
-    assert note_edges[0]["to_stable_key"] in {
-        item["stable_key"] for item in notes_items if item["kind"] == "footnote"
-    }
+        assert isinstance(plan, EpubExtractionPlan), f"valid EPUB did not produce a plan: {plan!r}"
+        assert plan.result.chapter_count == 2
+        chapter, notes = plan.fragments
+        chapter_spec, chapter_items, chapter_edges = (
+            chapter.chapter,
+            chapter.apparatus_items,
+            chapter.apparatus_edges,
+        )
+        notes_spec, notes_items = notes.chapter, notes.apparatus_items
+        assert chapter_spec.href == "EPUB/chapter.xhtml"
+        assert notes_spec.href == "EPUB/notes.xhtml"
+        note_edges = [edge for edge in chapter_edges if edge["relation"] == "points_to_note"]
+        assert len(note_edges) == 1, f"cross document footnote link was dropped: {chapter_edges!r}"
+        assert note_edges[0]["confidence"] == "strong"
+        assert note_edges[0]["from_stable_key"] in {
+            item["stable_key"] for item in chapter_items if item["kind"] == "footnote_ref"
+        }
+        assert note_edges[0]["to_stable_key"] in {
+            item["stable_key"] for item in notes_items if item["kind"] == "footnote"
+        }
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
@@ -1916,20 +1969,22 @@ def test_epub_structural_preflight_rejects_an_internal_dtd_subset() -> None:
     )
     attempt_id = uuid4()
 
-    result = build_epub_extraction_plan(
-        session_factory=lambda: ReservationSession(),
-        media_id=uuid4(),
-        attempt_id=attempt_id,
-        storage_path="sources/internal-subset.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=ChunkedSourceStorage(payload),
-        record_progress=lambda _completed, _total, _unit: None,
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        result = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=lambda: ReservationSession(),
+            media_id=uuid4(),
+            attempt_id=attempt_id,
+            storage_path="sources/internal-subset.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+            storage_client=ChunkedSourceStorage(payload),
+            record_progress=lambda _completed, _total, _unit: None,
+        )
 
-    assert isinstance(result, EpubExtractionError)
-    assert result.error_code == "E_INVALID_FILE_TYPE"
-    assert "entities and external resolution are disabled" in result.error_message
+        assert isinstance(result, EpubExtractionError)
+        assert result.error_code == "E_INVALID_FILE_TYPE"
+        assert "entities and external resolution are disabled" in result.error_message
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
@@ -1962,20 +2017,22 @@ def test_epub_extraction_reads_an_inert_doctype_without_resolving_it(
     payload = _epub_spine_payload({"chapter": chapter_document})
     attempt_id = uuid4()
 
-    plan = build_epub_extraction_plan(
-        session_factory=lambda: ReservationSession(),
-        media_id=uuid4(),
-        attempt_id=attempt_id,
-        storage_path=f"sources/inert-doctype-{case}.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=ChunkedSourceStorage(payload),
-        record_progress=lambda _completed, _total, _unit: None,
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        plan = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=lambda: ReservationSession(),
+            media_id=uuid4(),
+            attempt_id=attempt_id,
+            storage_path=f"sources/inert-doctype-{case}.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+            storage_client=ChunkedSourceStorage(payload),
+            record_progress=lambda _completed, _total, _unit: None,
+        )
 
-    assert isinstance(plan, EpubExtractionPlan), f"inert doctype was rejected: {plan!r}"
-    assert plan.result.chapter_count == 1
-    assert "Safe doctype." in plan.fragment_specs[0][0].canonical_text
+        assert isinstance(plan, EpubExtractionPlan), f"inert doctype was rejected: {plan!r}"
+        assert plan.result.chapter_count == 1
+        assert "Safe doctype." in read_epub_fragment(plan.fragments[0])[1]
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
@@ -1996,22 +2053,24 @@ def test_epub_publishes_a_chapter_that_is_not_well_formed_xml() -> None:
     )
     attempt_id = uuid4()
 
-    plan = build_epub_extraction_plan(
-        session_factory=lambda: ReservationSession(),
-        media_id=uuid4(),
-        attempt_id=attempt_id,
-        storage_path="sources/not-well-formed.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=ChunkedSourceStorage(payload),
-        record_progress=lambda _completed, _total, _unit: None,
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        plan = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=lambda: ReservationSession(),
+            media_id=uuid4(),
+            attempt_id=attempt_id,
+            storage_path="sources/not-well-formed.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+            storage_client=ChunkedSourceStorage(payload),
+            record_progress=lambda _completed, _total, _unit: None,
+        )
 
-    assert isinstance(plan, EpubExtractionPlan), f"malformed chapter was rejected: {plan!r}"
-    assert plan.result.chapter_count == 1
-    fragment = plan.fragment_specs[0][0]
-    assert "Unclosed paragraph with" in fragment.canonical_text
-    assert "a raw & ampersand and overlap" in fragment.canonical_text
+        assert isinstance(plan, EpubExtractionPlan), f"malformed chapter was rejected: {plan!r}"
+        assert plan.result.chapter_count == 1
+        _html, canonical_text = read_epub_fragment(plan.fragments[0])
+        assert "Unclosed paragraph with" in canonical_text
+        assert "a raw & ampersand and overlap" in canonical_text
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
@@ -2044,20 +2103,22 @@ def test_epub_optional_navigation_entry_that_cannot_be_parsed_is_absence(
         )
     attempt_id = uuid4()
 
-    plan = build_epub_extraction_plan(
-        session_factory=lambda: ReservationSession(),
-        media_id=uuid4(),
-        attempt_id=attempt_id,
-        storage_path=f"sources/{case}-ncx.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=ChunkedSourceStorage(payload),
-        record_progress=lambda _completed, _total, _unit: None,
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        plan = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=lambda: ReservationSession(),
+            media_id=uuid4(),
+            attempt_id=attempt_id,
+            storage_path=f"sources/{case}-ncx.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+            storage_client=ChunkedSourceStorage(payload),
+            record_progress=lambda _completed, _total, _unit: None,
+        )
 
-    assert isinstance(plan, EpubExtractionPlan), f"{case} NCX failed the book: {plan!r}"
-    assert plan.result.chapter_count == 1
-    assert plan.result.toc_node_count == 0
+        assert isinstance(plan, EpubExtractionPlan), f"{case} NCX failed the book: {plan!r}"
+        assert plan.result.chapter_count == 1
+        assert plan.result.toc_node_count == 0
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
@@ -2080,23 +2141,27 @@ def test_epub_publishes_readable_chapters_when_one_spine_entry_is_unreadable() -
     attempt_id = uuid4()
     progress: list[tuple[int, int, str]] = []
 
-    plan = build_epub_extraction_plan(
-        session_factory=lambda: ReservationSession(),
-        media_id=uuid4(),
-        attempt_id=attempt_id,
-        storage_path="sources/unreadable-spine-entry.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=ChunkedSourceStorage(payload),
-        record_progress=lambda completed, total, unit: progress.append((completed, total, unit)),
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        plan = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=lambda: ReservationSession(),
+            media_id=uuid4(),
+            attempt_id=attempt_id,
+            storage_path="sources/unreadable-spine-entry.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+            storage_client=ChunkedSourceStorage(payload),
+            record_progress=lambda completed, total, unit: progress.append(
+                (completed, total, unit)
+            ),
+        )
 
-    assert isinstance(plan, EpubExtractionPlan), f"partial EPUB did not produce a plan: {plan!r}"
-    assert plan.result.chapter_count == 1
-    assert [chapter.href for _fragment, chapter, _items, _edges in plan.fragment_specs] == [
-        "EPUB/chapter.xhtml"
-    ]
-    assert progress == [(0, 1, "Chapter"), (1, 1, "Chapter")]
+        assert isinstance(plan, EpubExtractionPlan), (
+            f"partial EPUB did not produce a plan: {plan!r}"
+        )
+        assert plan.result.chapter_count == 1
+        assert [fragment.chapter.href for fragment in plan.fragments] == ["EPUB/chapter.xhtml"]
+        assert progress == [(0, 1, "Chapter"), (1, 1, "Chapter")]
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
@@ -2114,24 +2179,28 @@ def test_epub_with_only_unreadable_spine_entries_returns_typed_retryable_failure
     )
     attempt_id = uuid4()
 
-    result = build_epub_extraction_plan(
-        session_factory=lambda: ReservationSession(),
-        media_id=uuid4(),
-        attempt_id=attempt_id,
-        storage_path="sources/unreadable-book.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=ChunkedSourceStorage(payload),
-        record_progress=lambda _completed, _total, _unit: None,
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        result = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=lambda: ReservationSession(),
+            media_id=uuid4(),
+            attempt_id=attempt_id,
+            storage_path="sources/unreadable-book.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+            storage_client=ChunkedSourceStorage(payload),
+            record_progress=lambda _completed, _total, _unit: None,
+        )
 
-    assert isinstance(result, EpubExtractionError)
-    assert result.error_code == ApiErrorCode.E_SOURCE_NOT_READABLE.value
-    assert result.terminal is False
+        assert isinstance(result, EpubExtractionError)
+        assert result.error_code == ApiErrorCode.E_SOURCE_NOT_READABLE.value
+        assert result.terminal is False
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()
 
 
-def test_source_progress_is_monotonic_and_rejects_a_lost_heavy_fence(engine: Engine) -> None:
+def test_source_progress_is_monotonic_and_rejects_a_lost_heavy_fence(
+    engine: Engine,
+) -> None:
     viewer_id, media_id = _persist_test_media(engine, kind=MediaKind.pdf)
     attempt_id = uuid4()
     worker_id = "bounded-parser-worker"
@@ -2360,3 +2429,37 @@ def test_parser_process_rss_stays_inside_the_background_memory_envelope() -> Non
         "parser plus the 96 MiB supervisor target exceeded the 448 MiB "
         f"background-worker hard limit: {measured!r}; {details!r}"
     )
+
+
+@pytest.mark.parametrize(
+    ("canonical", "expected"),
+    [
+        *(
+            (f" \t{separator}  word\u00a0 {separator}later", "word")
+            for separator in (
+                "\n",
+                "\r",
+                "\r\n",
+                "\v",
+                "\f",
+                "\x1c",
+                "\x1d",
+                "\x1e",
+                "\x85",
+                "\u2028",
+                "\u2029",
+            )
+        ),
+        ("", "Chapter 3"),
+        (" \t\u00a0\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029", "Chapter 3"),
+        ("a" + " " * 1000 + "z", "a" + " " * 511),
+        ("a" + " " * 1000 + "\nlater", "a"),
+        ("a" * 512 + " " * 1000 + "z", "a" * 512),
+        ("\ufefflabel", "\ufefflabel"),
+        ("q\u0301 label", "q\u0301 label"),
+    ],
+)
+def test_epub_fallback_label_preserves_first_trimmed_line(canonical: str, expected: str) -> None:
+    from nexus.services.epub_ingest import _fallback_fragment_label
+
+    assert _fallback_fragment_label(canonical, 2) == expected

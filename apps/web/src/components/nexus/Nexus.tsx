@@ -12,6 +12,7 @@ import AddPanelBoundary from "./AddPanelBoundary";
 import ChooseBrowsePage from "./ChooseBrowsePage";
 import ChooseCreatePage from "./ChooseCreatePage";
 import ManageTabsPage from "./ManageTabsPage";
+import NexusErrorBoundary from "./NexusErrorBoundary";
 import DesktopNexus from "./desktop/DesktopNexus";
 import { useNexusController, type NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
@@ -221,8 +222,15 @@ function desktopWorkflow(input: {
   );
 }
 
-export default function Nexus() {
-  const controller = useNexusController();
+/** The surfaces one Nexus session owns; a failing capability replaces only these. */
+function NexusSession({
+  controller,
+  returnFocusTo,
+}: {
+  controller: NexusController;
+  returnFocusTo: () => HTMLButtonElement | null;
+}) {
+  if (controller.defect !== null) throw controller.defect.error;
   const sessionId = controller.addSession.state.sessionId;
   const [addDefect, setAddDefect] = useState<{
     readonly sessionId: string;
@@ -236,6 +244,38 @@ export default function Nexus() {
     [sessionId],
   );
   const clearAddDefect = useCallback(() => setAddDefect(null), []);
+  const viewport = useViewportState();
+  const waitingForViewport = controller.open && !viewport.hydrated;
+  const workflow = desktopWorkflow({
+    controller,
+    activeAddDefect: addDefect?.sessionId === sessionId,
+    onAddDefect: reportAddDefect,
+    onClearAddDefect: clearAddDefect,
+  });
+  const desktopController = useMemo(
+    () => ({ ...controller.desktop, workflow }),
+    [controller.desktop, workflow],
+  );
+
+  return (
+    <>
+      <SwitchboardTask
+        controller={controller}
+        active={controller.open && viewport.isMobile}
+        returnFocusTo={returnFocusTo}
+        activeAddDefect={addDefect?.sessionId === sessionId}
+        onAddDefect={reportAddDefect}
+        onClearAddDefect={clearAddDefect}
+      />
+      {!viewport.isMobile && !waitingForViewport ? (
+        <DesktopNexus controller={desktopController} />
+      ) : null}
+    </>
+  );
+}
+
+export default function Nexus() {
+  const controller = useNexusController();
   const viewport = useViewportState();
   const pendingMobileNexusOpenerRef = useRef<HTMLButtonElement>(null);
   const currentMobileNexusButtonRef = useRef<HTMLButtonElement>(null);
@@ -261,27 +301,11 @@ export default function Nexus() {
     return current?.isConnected ? current : null;
   }, []);
   const waitingForViewport = controller.open && !viewport.hydrated;
-  const workflow = desktopWorkflow({
-    controller,
-    activeAddDefect: addDefect?.sessionId === sessionId,
-    onAddDefect: reportAddDefect,
-    onClearAddDefect: clearAddDefect,
-  });
-  const desktopController = useMemo(
-    () => ({ ...controller.desktop, workflow }),
-    [controller.desktop, workflow],
-  );
 
+  // The opener and the controller's open state stay outside the boundary: a
+  // failed Nexus capability must never delete the way back into Nexus.
   return (
     <>
-      <SwitchboardTask
-        controller={controller}
-        active={controller.open && viewport.isMobile}
-        returnFocusTo={resolveMobileNexusReturnFocus}
-        activeAddDefect={addDefect?.sessionId === sessionId}
-        onAddDefect={reportAddDefect}
-        onClearAddDefect={clearAddDefect}
-      />
       {viewport.isMobile && !waitingForViewport ? (
         <NexusButton
           paneCount={controller.paneCount}
@@ -291,9 +315,12 @@ export default function Nexus() {
           onButtonNodeChange={setCurrentMobileNexusButton}
         />
       ) : null}
-      {!viewport.isMobile && !waitingForViewport ? (
-        <DesktopNexus controller={desktopController} />
-      ) : null}
+      <NexusErrorBoundary active={controller.open} onRetry={controller.retryDefect}>
+        <NexusSession
+          controller={controller}
+          returnFocusTo={resolveMobileNexusReturnFocus}
+        />
+      </NexusErrorBoundary>
     </>
   );
 }

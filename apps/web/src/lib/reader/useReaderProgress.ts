@@ -19,20 +19,22 @@ import {
   useRef,
   useState,
 } from "react";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isAbortError } from "@/lib/errors";
 import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
 import {
   canScheduleSave,
   initialReaderProgressState,
   pendingLocator,
   reduceReaderProgress,
-  saveBaseRevision,
+  readerCursorSourcesEqual,
   type ReaderCursorSnapshot,
   type ReaderProgressEvent,
   type ReaderProgressState,
 } from "./readerProgress";
+import type { SelectedReaderSource } from "./readerIntentStore";
 import type {
   ReaderProgressPort,
-  ReaderProgressSaveResult,
   ReaderProgressView,
 } from "./ReaderProgressPort";
 import { readerResumeStatesEqual, type ReaderResumeState } from "./types";
@@ -46,6 +48,7 @@ export type ReaderCapability =
       state: "Readable";
       mediaId: string;
       locatorKind: ReaderResumeState["kind"];
+      source: SelectedReaderSource;
     };
 
 export type ApplyCursorResult = "applied" | "cancelled_by_user" | "failed";
@@ -69,6 +72,7 @@ export interface ReaderProgressHandoffState {
   busy: boolean;
   applyFailed: boolean;
   captureUnavailable: boolean;
+  canApply: boolean;
 }
 
 /**
@@ -97,6 +101,8 @@ export interface UseReaderProgressOptions {
    * the sign-in redirect handler). Returning true consumes the failure.
    */
   handleUnauthenticatedError: (error: unknown) => boolean;
+  /** Publish asynchronous defects beneath the retained reader-progress boundary. */
+  reportDefect: (error: unknown) => void;
   /** Synchronous freshest-position capture; null when no position is available. */
   captureCurrentLocator: () => ReaderResumeState | null;
   /** Format-owned application of a remote cursor or canonical reset snapshot. */
@@ -124,6 +130,12 @@ export interface ReaderProgress {
    * seeding. `undefined` until authority is first established.
    */
   initialSnapshot: ReaderCursorSnapshot | undefined;
+  /** Applicable view position; unlike authority, this never crosses sources. */
+  initialLocator: ReaderResumeState | null | undefined;
+  sourceStatus: "ContentChanged" | "SourceUnavailable" | null;
+  syncPending: boolean;
+  /** Local movement has either committed or reached the durable device outbox. */
+  canSuspend: boolean;
   /** Genuine reader movement; replaces the pending locator. */
   reportMovement: (locator: ReaderResumeState) => void;
   /** Genuine input that may not produce a locator (cancels auto-adoption). */
@@ -151,31 +163,15 @@ function isTerminalReaderLocator(locator: ReaderResumeState): boolean {
   );
 }
 
-function canonicalProgressSnapshot(
+function progressSnapshot(
   view: ReaderProgressView,
 ): ReaderCursorSnapshot {
-  if (view.kind !== "Canonical") {
-    throw new Error(
-      `Hosted reader received unsupported ${view.kind} progress view`,
-    );
-  }
-  return view.snapshot;
-}
-
-function canonicalSaveSnapshot(
-  result: ReaderProgressSaveResult,
-): ReaderCursorSnapshot | null {
-  switch (result.kind) {
-    case "Canonical":
-      return result.snapshot;
-    case "Conflict":
-      return null;
-    case "DurablyPending":
+  switch (view.kind) {
+    case "Canonical": return view.snapshot;
+    case "Conflict": return view.canonical;
+    case "Pending":
     case "ContentChanged":
-    case "SourceUnavailable":
-      throw new Error(
-        `Hosted reader received unsupported ${result.kind} save result`,
-      );
+    case "SourceUnavailable": return view.baseline;
   }
 }
 
@@ -198,6 +194,13 @@ export function useReaderProgress(
   const [initialSnapshot, setInitialSnapshot] = useState<
     ReaderCursorSnapshot | undefined
   >(undefined);
+  const [initialLocator, setInitialLocator] = useState<ReaderResumeState | null | undefined>();
+  const [sourceStatus, updateSourceStatus] = useState<ReaderProgress["sourceStatus"]>(null);
+  const sourceStatusRef = useRef<ReaderProgress["sourceStatus"]>(null);
+  const setSourceStatus = useCallback((status: ReaderProgress["sourceStatus"]) => {
+    sourceStatusRef.current = status;
+    updateSourceStatus(status);
+  }, []);
   const [announcement, setAnnouncement] = useState("");
   const [applyFailed, setApplyFailed] = useState(false);
   const [captureUnavailable, setCaptureUnavailable] = useState(false);
@@ -213,6 +216,7 @@ export function useReaderProgress(
   const applyInFlightRef = useRef(false);
   const applyIdRef = useRef(0);
   const saveInFlightRef = useRef<Promise<void> | null>(null);
+  const captureSeqRef = useRef(0);
 
   const captureRef = useRef(options.captureCurrentLocator);
   captureRef.current = options.captureCurrentLocator;
@@ -226,6 +230,13 @@ export function useReaderProgress(
     options.handleUnauthenticatedError,
   );
   handleUnauthenticatedErrorRef.current = options.handleUnauthenticatedError;
+  const reportDefectRef = useRef(options.reportDefect);
+  reportDefectRef.current = options.reportDefect;
+  const reportFailure = useCallback((error: unknown) => {
+    if (!isAbortError(error) && (!isApiError(error) || isSameSystemApiDefect(error))) {
+      reportDefectRef.current(error);
+    }
+  }, []);
   const composedAuthorityRef = useRef(options.composedAuthority);
   composedAuthorityRef.current = options.composedAuthority;
   // "composed" while the current generation's authority mirrors the session's
@@ -246,12 +257,68 @@ export function useReaderProgress(
     [],
   );
 
-  /**
-   * Send the pending locator. `baseRevision` defaults to the acknowledged
-   * authority revision; `Stay at this position` passes the candidate revision.
-   */
+  const captureIntent = useCallback((locator: ReaderResumeState): void => {
+    if (readableMediaId === null || stateRef.current.authority.status !== "ready") return;
+    const generation = generationRef.current;
+    const sequence = ++captureSeqRef.current;
+    void port.capture(readableMediaId, locator).then((result) => {
+      if (generationRef.current !== generation || captureSeqRef.current !== sequence) return;
+      if (result.kind === "ContentChanged" || result.kind === "SourceUnavailable") {
+        setSourceStatus(result.kind);
+        const selected = stateRef.current.source;
+        if (selected === null || !readerCursorSourcesEqual(selected, result.view.source) ||
+            !readerResumeStatesEqual(locator, result.view.device)) {
+          apply({ type: "capture_failed" });
+        }
+      }
+    }).catch((error: unknown) => {
+      if (generationRef.current !== generation || captureSeqRef.current !== sequence) return;
+      console.error("Failed to retain reader cursor on this device:", error);
+      apply({ type: "capture_failed" });
+      reportFailure(error);
+    });
+  }, [apply, port, readableMediaId, reportFailure, setSourceStatus]);
+
+  const observeView = useCallback((view: ReaderProgressView, initial: boolean): ReaderProgressState => {
+    const snapshot = progressSnapshot(view);
+    const current = stateRef.current;
+    const knownRevision = Math.max(
+      current.authority.status === "ready" ? current.authority.snapshot.revision : 0,
+      current.remote.status === "candidate" ? current.remote.snapshot.revision : 0,
+    );
+    if (!initial && (view.kind === "Canonical" || view.kind === "Conflict") &&
+        snapshot.revision < knownRevision) return current;
+    const waitingMovement = initial && stateRef.current.authority.status !== "ready"
+      ? pendingLocator(stateRef.current.local) : null;
+    const selected = stateRef.current.source;
+    const deviceApplies = view.kind !== "Canonical" && selected !== null &&
+      readerCursorSourcesEqual(selected, view.source);
+    setSourceStatus(view.kind === "ContentChanged" || view.kind === "SourceUnavailable" ? view.kind
+      : view.kind !== "Canonical" && !deviceApplies ? "ContentChanged" : null);
+    let next = apply({ type: initial ? "load_succeeded" : "revalidated", snapshot });
+    if (deviceApplies && (view.kind === "Pending" || view.kind === "Conflict")) {
+      if (next.local.status === "clean") next = apply({ type: "moved", locator: view.device });
+      if (view.kind === "Conflict" && next.local.status !== "saving") {
+        apply({ type: "save_started" });
+        next = apply({ type: "save_conflicted", current: view.canonical });
+      }
+    }
+    if (initial) {
+      setInitialSnapshot((existing) => existing ?? snapshot);
+      const applicable = view.kind !== "Canonical" && deviceApplies ? view.device
+        : view.kind === "Canonical" && snapshot.state === "Positioned" && selected !== null &&
+          readerCursorSourcesEqual(selected, snapshot.source) ? snapshot.locator : null;
+      setInitialLocator((existing) => existing === undefined ? applicable : existing);
+    }
+    if (waitingMovement !== null && pendingLocator(next.local) !== null) {
+      captureIntent(waitingMovement);
+    }
+    return next;
+  }, [apply, captureIntent, setSourceStatus]);
+
+  /** Flush the persisted attempt; the port owns its frozen revision. */
   const sendCursor = useCallback(
-    (baseRevision: number, keepalive = false): Promise<void> => {
+    (keepalive = false): Promise<void> => {
       const run = async (): Promise<void> => {
         const mediaId = readableMediaId;
         if (mediaId === null) {
@@ -265,8 +332,7 @@ export function useReaderProgress(
         requestSeqRef.current += 1;
         apply({ type: "save_started" });
         try {
-          const result = await port.save(mediaId, locator, {
-            baseRevision,
+          const result = await port.flush(mediaId, {
             ...(keepalive ? { keepalive: true } : {}),
           });
           if (generationRef.current !== generation) {
@@ -276,10 +342,13 @@ export function useReaderProgress(
             apply({ type: "save_conflicted", current: result.canonical });
             return;
           }
-          const snapshot = canonicalSaveSnapshot(result);
-          if (snapshot === null) {
+          if (result.kind !== "Canonical") {
+            apply({ type: "save_pending" });
+            setSourceStatus(result.kind === "ContentChanged" || result.kind === "SourceUnavailable" ? result.kind : null);
             return;
           }
+          setSourceStatus(null);
+          const snapshot = result.snapshot;
           if (snapshot.state !== "Positioned") {
             throw new Error("Cursor write returned an Empty snapshot");
           }
@@ -300,6 +369,7 @@ export function useReaderProgress(
                 "Terminal reader cursor acknowledgement failed:",
                 error,
               );
+              reportFailure(error);
             }
           }
         } catch (err) {
@@ -311,6 +381,7 @@ export function useReaderProgress(
           }
           console.error("Failed to save reader cursor:", err);
           apply({ type: "save_failed" });
+          reportFailure(err);
         }
       };
       const pending = run();
@@ -329,7 +400,7 @@ export function useReaderProgress(
       );
       return pending;
     },
-    [apply, port, readableMediaId],
+    [apply, port, readableMediaId, reportFailure, setSourceStatus],
   );
 
   const load = useCallback(async (): Promise<ReaderProgressState | null> => {
@@ -344,10 +415,7 @@ export function useReaderProgress(
       if (generationRef.current !== generation) {
         return null;
       }
-      const snapshot = canonicalProgressSnapshot(view);
-      const next = apply({ type: "load_succeeded", snapshot });
-      setInitialSnapshot((existing) => existing ?? snapshot);
-      return next;
+      return observeView(view, true);
     } catch (err) {
       if (generationRef.current !== generation) {
         return null;
@@ -357,9 +425,10 @@ export function useReaderProgress(
       }
       // Failure is failure — never an empty cursor and never a default write.
       console.error("Failed to load reader cursor:", err);
+      reportFailure(err);
       return apply({ type: "load_failed" });
     }
-  }, [apply, port, readableMediaId]);
+  }, [apply, observeView, port, readableMediaId, reportFailure]);
 
   /**
    * Re-establish failed authority through its owning channel: the composed
@@ -380,6 +449,12 @@ export function useReaderProgress(
 
   const applyRemote = useCallback(
     async (snapshot: ReaderCursorSnapshot, auto: boolean): Promise<void> => {
+      const selected = stateRef.current.source;
+      if (snapshot.state === "Positioned" &&
+          (selected === null || !readerCursorSourcesEqual(selected, snapshot.source))) {
+        setSourceStatus("ContentChanged");
+        return;
+      }
       if (applyInFlightRef.current) {
         return;
       }
@@ -426,6 +501,7 @@ export function useReaderProgress(
       } catch (error) {
         if (generationRef.current === generation) {
           console.error("Failed to apply reader cursor:", error);
+          reportFailure(error);
           setApplyFailed(true);
         }
       } finally {
@@ -435,7 +511,7 @@ export function useReaderProgress(
         }
       }
     },
-    [apply],
+    [apply, reportFailure, setSourceStatus],
   );
 
   const installCanonicalSnapshot = useCallback(
@@ -443,16 +519,41 @@ export function useReaderProgress(
       if (readableMediaId === null) {
         return;
       }
-      // Discard timers, in-flight acknowledgements, and any remote handoff from
-      // the prior generation before applying the command's server snapshot.
+      // Fence callbacks from before reset, then reconcile the durable writer.
+      // A reset receipt never authorizes deleting a competing pending intent.
       generationRef.current += 1;
       const generation = generationRef.current;
       requestSeqRef.current += 1;
+      let view: ReaderProgressView;
+      try {
+        view = await port.load(readableMediaId);
+        if (generationRef.current !== generation) return;
+        if ((view.kind === "Canonical" || view.kind === "Conflict") &&
+            progressSnapshot(view).revision < snapshot.revision) {
+          throw new Error("Reader authority predates its committed reset");
+        }
+      } catch (error) {
+        if (generationRef.current === generation) {
+          reportFailure(error);
+          setApplyFailed(true);
+        }
+        return;
+      }
+      if (view.kind !== "Canonical" || view.snapshot.revision !== snapshot.revision) {
+        observeView(view, false);
+        return;
+      }
+      snapshot = view.snapshot;
       apply({ type: "canonical_snapshot_installed", snapshot });
       setInitialSnapshot(snapshot);
+      const selected = stateRef.current.source;
+      const applicable = snapshot.state === "Empty" || (selected !== null && readerCursorSourcesEqual(selected, snapshot.source));
+      setInitialLocator(applicable && snapshot.state === "Positioned" ? snapshot.locator : null);
+      setSourceStatus(applicable ? null : "ContentChanged");
       setAnnouncement("");
       setApplyFailed(false);
       setCaptureUnavailable(false);
+      if (!applicable) return;
 
       applyInFlightRef.current = true;
       const applyId = ++applyIdRef.current;
@@ -473,6 +574,7 @@ export function useReaderProgress(
       } catch (error) {
         if (generationRef.current === generation) {
           console.error("Failed to install canonical reader cursor:", error);
+          reportFailure(error);
           setApplyFailed(true);
         }
       } finally {
@@ -482,7 +584,7 @@ export function useReaderProgress(
         }
       }
     },
-    [apply, readableMediaId],
+    [apply, observeView, port, readableMediaId, reportFailure, setSourceStatus],
   );
 
   const drainForProgressReset = useCallback(async (): Promise<void> => {
@@ -498,9 +600,9 @@ export function useReaderProgress(
       current.authority.status === "ready" &&
       current.remote.status === "none" &&
       (current.local.status === "dirty" ||
-        current.local.status === "save_failed")
+        current.local.status === "save_failed" || current.local.status === "pending")
     ) {
-      await sendCursor(saveBaseRevision(current));
+      await sendCursor();
     }
   }, [sendCursor]);
 
@@ -527,9 +629,9 @@ export function useReaderProgress(
         if (generationRef.current !== generation) {
           return;
         }
-        const snapshot = canonicalProgressSnapshot(view);
+        const snapshot = progressSnapshot(view);
         const before = stateRef.current;
-        const next = apply({ type: "revalidated", snapshot });
+        const next = observeView(view, false);
         const becameCandidate =
           next.remote.status === "candidate" &&
           next.remote.snapshot.revision === snapshot.revision &&
@@ -537,11 +639,20 @@ export function useReaderProgress(
             before.remote.snapshot.revision !== snapshot.revision);
         const autoAdopt =
           becameCandidate &&
+          view.kind === "Canonical" &&
+          (snapshot.state === "Empty" || (next.source !== null && readerCursorSourcesEqual(next.source, snapshot.source))) &&
           startedDormant &&
           inputSeqRef.current === inputSeqAtStart &&
           next.local.status === "clean";
         if (autoAdopt && next.remote.status === "candidate") {
           void applyRemote(next.remote.snapshot, true);
+          return;
+        }
+        // Reconnecting or returning is a delivery opportunity: a durably
+        // pending attempt resumes here instead of waiting for newer movement or
+        // for the user. The port replays its frozen attempt, not a new write.
+        if (next.local.status === "pending" && next.remote.status === "none") {
+          void sendCursor();
         }
       } catch (err) {
         // Background revalidation failure preserves the current Ready reader
@@ -551,12 +662,13 @@ export function useReaderProgress(
           !handleUnauthenticatedErrorRef.current(err)
         ) {
           console.error("Reader cursor revalidation failed:", err);
+          reportFailure(err);
         }
       } finally {
         revalidateInFlightRef.current = false;
       }
     },
-    [apply, applyRemote, port, readableMediaId, recoverAuthority],
+    [applyRemote, observeView, port, readableMediaId, recoverAuthority, reportFailure, sendCursor],
   );
 
   /**
@@ -589,15 +701,15 @@ export function useReaderProgress(
       // A clean reader must not capture or engage the preview viewport.
       if (
         current.local.status === "dirty" ||
-        current.local.status === "save_failed"
+        current.local.status === "save_failed" || current.local.status === "pending"
       ) {
-        void sendCursor(saveBaseRevision(current), true);
+        void sendCursor(true);
       }
       return;
     }
     if (
       current.local.status === "dirty" ||
-      current.local.status === "save_failed"
+      current.local.status === "save_failed" || current.local.status === "pending"
     ) {
       if (!isTerminalReaderLocator(current.local.locator)) {
         const captured = captureRef.current();
@@ -606,11 +718,16 @@ export function useReaderProgress(
           !readerResumeStatesEqual(captured, current.local.locator)
         ) {
           apply({ type: "moved", locator: captured });
+          captureIntent(captured);
         }
       }
-      void sendCursor(saveBaseRevision(current), true);
+      void sendCursor(true);
       return;
     }
+    if (sourceStatusRef.current !== null) return;
+    const snapshot = current.authority.snapshot;
+    if (snapshot.state === "Positioned" &&
+        (current.source === null || !readerCursorSourcesEqual(current.source, snapshot.source))) return;
     // Clean: nothing moved. Capture and dispatch the current locator anyway
     // so the flush still fires a same-locator cursor write.
     const captured = captureRef.current();
@@ -618,22 +735,31 @@ export function useReaderProgress(
       return;
     }
     apply({ type: "moved", locator: captured });
-    void sendCursor(saveBaseRevision(current), true);
-  }, [apply, options.previewLease, readableMediaId, sendCursor]);
+    captureIntent(captured);
+    void sendCursor(true);
+  }, [apply, captureIntent, options.previewLease, readableMediaId, sendCursor]);
+  // Teardown flushes the current lifecycle closure: the generation effect below
+  // is keyed on the reader identity and never re-subscribes for a new one.
+  const lifecycleFlushRef = useRef(lifecycleFlush);
+  lifecycleFlushRef.current = lifecycleFlush;
 
   // Generation lifecycle: reset and (re)establish authority per readable
   // media/locator-kind; Unavailable performs no progress I/O.
   useEffect(() => {
     generationRef.current += 1;
-    apply({ type: "reset" });
+    apply({ type: "reset", source: capability.state === "Readable" ? capability.source : null });
     setInitialSnapshot(undefined);
+    setInitialLocator(undefined);
+    setSourceStatus(null);
     setAnnouncement("");
     setApplyFailed(false);
     setCaptureUnavailable(false);
     if (readableMediaId === null || readableLocatorKind === null) {
       return;
     }
-    const composedKey = `${readableMediaId} ${readableLocatorKind}`;
+    if (capability.state === "Readable") port.bindSource(readableMediaId, capability.source);
+    const detach = port.attach();
+    const composedKey = JSON.stringify([readableMediaId, readableLocatorKind, stateRef.current.source]);
     if (
       composedAuthorityRef.current !== undefined &&
       composedConsumedKeyRef.current !== composedKey
@@ -649,12 +775,13 @@ export function useReaderProgress(
       void load();
     }
     const flushOnTeardown = () => {
-      lifecycleFlush();
+      lifecycleFlushRef.current();
       generationRef.current += 1;
+      detach();
     };
     return flushOnTeardown;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [readableMediaId, readableLocatorKind]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: this effect owns the progress generation, so it must run once per readable identity; re-running it for a new `apply`, `load` or `capability` object identity would bump the generation, detach the live writer and re-load mid-visit. Teardown reads `lifecycleFlushRef`, so the pending flush is never a stale closure, and a changed publication generation arrives as a new reader identity.
+  }, [readableMediaId, readableLocatorKind, port]);
 
   // Composed-authority mirror: while this generation's authority is sourced
   // from the composed session load, project that resource's lifecycle into
@@ -680,9 +807,7 @@ export function useReaderProgress(
         if (stateRef.current.authority.status === "ready") {
           return;
         }
-        const snapshot = canonicalProgressSnapshot(composedResource.data);
-        apply({ type: "load_succeeded", snapshot });
-        setInitialSnapshot((existing) => existing ?? snapshot);
+        observeView(composedResource.data, true);
         return;
       }
       case "error":
@@ -697,7 +822,7 @@ export function useReaderProgress(
         }
         return;
     }
-  }, [apply, composedResource]);
+  }, [apply, composedResource, observeView]);
 
   // Save scheduling: idle debounce with a maximum wait during continuous
   // movement. Only one PUT is in flight; queued movement follows the ack.
@@ -714,7 +839,7 @@ export function useReaderProgress(
       () => {
         const current = stateRef.current;
         if (canScheduleSave(current)) {
-          void sendCursor(saveBaseRevision(current));
+          void sendCursor();
         }
       },
       Math.max(0, deadline - now),
@@ -803,7 +928,8 @@ export function useReaderProgress(
       const current = stateRef.current;
       const canonical =
         current.authority.status === "ready" &&
-        current.authority.snapshot.state === "Positioned"
+        current.authority.snapshot.state === "Positioned" &&
+        current.source !== null && readerCursorSourcesEqual(current.source, current.authority.snapshot.source)
           ? current.authority.snapshot.locator
           : null;
       const baseline = pendingLocator(current.local) ?? canonical;
@@ -815,8 +941,9 @@ export function useReaderProgress(
       }
       lastMovedAtRef.current = Date.now();
       apply({ type: "moved", locator });
+      captureIntent(locator);
     },
-    [apply, options.previewLease],
+    [apply, captureIntent, options.previewLease],
   );
 
   const noteGenuineInput = useCallback(() => {
@@ -832,7 +959,7 @@ export function useReaderProgress(
     // committed. `load` is not used here — it would reset local state.
     void (async () => {
       const mediaId = readableMediaId;
-      if (mediaId === null || stateRef.current.local.status !== "save_failed") {
+      if (mediaId === null || (stateRef.current.local.status !== "save_failed" && stateRef.current.local.status !== "pending")) {
         return;
       }
       const generation = generationRef.current;
@@ -841,13 +968,14 @@ export function useReaderProgress(
         if (generationRef.current !== generation) {
           return;
         }
-        const snapshot = canonicalProgressSnapshot(view);
-        const next = apply({ type: "revalidated", snapshot });
+        const next = observeView(view, false);
         if (
-          next.local.status === "save_failed" &&
+          (next.local.status === "save_failed" || next.local.status === "pending") &&
           next.remote.status === "none"
         ) {
-          void sendCursor(saveBaseRevision(next));
+          const locator = pendingLocator(next.local);
+          if (locator !== null) await port.capture(mediaId, locator);
+          void sendCursor();
         }
       } catch (err) {
         if (
@@ -855,21 +983,36 @@ export function useReaderProgress(
           !handleUnauthenticatedErrorRef.current(err)
         ) {
           console.error("Reader cursor save retry failed:", err);
+          reportFailure(err);
         }
       }
     })();
-  }, [apply, port, readableMediaId, sendCursor]);
+  }, [observeView, port, readableMediaId, reportFailure, sendCursor]);
 
   const acceptRemoteCursor = useCallback(() => {
     const current = stateRef.current;
-    if (current.remote.status === "candidate") {
-      void applyRemote(current.remote.snapshot, false);
-    }
-  }, [applyRemote]);
+    if (current.remote.status !== "candidate" || readableMediaId === null) return;
+    const expected = current.remote.snapshot;
+    const generation = generationRef.current;
+    void port.resolve(readableMediaId, "Canonical").then((view) => {
+      if (generationRef.current !== generation) return;
+      const snapshot = progressSnapshot(view);
+      if (view.kind !== "Canonical" || snapshot.revision !== expected.revision) {
+        observeView(view, false);
+        return;
+      }
+      void applyRemote(snapshot, false);
+    }).catch((error: unknown) => {
+      if (generationRef.current !== generation) return;
+      console.error("Failed to resolve reader position:", error);
+      reportFailure(error);
+      setApplyFailed(true);
+    });
+  }, [applyRemote, observeView, port, readableMediaId, reportFailure]);
 
   const stayAtLocalPosition = useCallback(() => {
     const current = stateRef.current;
-    if (current.remote.status !== "candidate") {
+    if (current.remote.status !== "candidate" || readableMediaId === null) {
       return;
     }
     const pending = pendingLocator(current.local);
@@ -884,9 +1027,34 @@ export function useReaderProgress(
     setCaptureUnavailable(false);
     inputSeqRef.current += 1;
     apply({ type: "moved", locator: captured });
-    // Intentionally canonicalize this viewport against the remote revision.
-    void sendCursor(current.remote.snapshot.revision);
-  }, [apply, sendCursor]);
+    const expectedRevision = current.remote.snapshot.revision;
+    const generation = generationRef.current;
+    setHandoffBusy(true);
+    void (async () => {
+      await port.capture(readableMediaId, captured);
+      await sendCursor();
+      if (generationRef.current !== generation) return;
+      const observed = stateRef.current.remote;
+      if (observed.status !== "candidate" || observed.snapshot.revision !== expectedRevision) return;
+      apply({ type: "save_started" });
+      const view = await port.resolve(readableMediaId, "Device");
+      if (generationRef.current !== generation) return;
+      if (view.kind === "Canonical" && view.snapshot.state === "Positioned") {
+        apply({ type: "save_succeeded", snapshot: view.snapshot });
+        publishConsumptionProjectionChange();
+      } else if (view.kind === "Conflict") {
+        apply({ type: "save_conflicted", current: view.canonical });
+      } else {
+        observeView(view, false);
+        apply({ type: "save_pending" });
+      }
+    })().catch((error: unknown) => {
+      if (generationRef.current !== generation) return;
+      console.error("Failed to keep reader position:", error);
+      reportFailure(error);
+      apply({ type: "capture_failed" });
+    }).finally(() => { if (generationRef.current === generation) setHandoffBusy(false); });
+  }, [apply, observeView, port, readableMediaId, reportFailure, sendCursor]);
 
   const handoff = useMemo<ReaderProgressHandoffState | null>(() => {
     if (state.remote.status !== "candidate") {
@@ -897,8 +1065,10 @@ export function useReaderProgress(
       busy: handoffBusy,
       applyFailed,
       captureUnavailable,
+      canApply: state.remote.snapshot.state === "Empty" || (state.source !== null &&
+        readerCursorSourcesEqual(state.source, state.remote.snapshot.source)),
     };
-  }, [applyFailed, captureUnavailable, handoffBusy, state.remote]);
+  }, [applyFailed, captureUnavailable, handoffBusy, state.remote, state.source]);
 
   return {
     status:
@@ -908,6 +1078,10 @@ export function useReaderProgress(
           ? "load_failed"
           : "loading",
     initialSnapshot,
+    initialLocator,
+    sourceStatus,
+    syncPending: state.local.status === "pending",
+    canSuspend: state.local.status === "clean" || state.local.status === "pending",
     reportMovement,
     noteGenuineInput,
     retryLoad,

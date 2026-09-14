@@ -10,10 +10,12 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.config import Environment, get_settings
+from nexus.config import require_reader_publication_limits
 from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode
+from nexus.ids import new_uuid7
 from nexus.logging import get_logger
+from nexus.schemas.media import DocumentEmbedSource
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_all_collection_families,
@@ -25,7 +27,7 @@ from nexus.services.contributor_taxonomy import (
     build_observation,
 )
 from nexus.services.document_embeds import (
-    DocumentEmbedLockSetChanged,
+    prepare_document_embed_sources,
     replace_document_embed_artifact,
 )
 from nexus.services.fragment_blocks import insert_fragment_blocks
@@ -33,8 +35,6 @@ from nexus.services.media_author_observation_seam import attach_author_observati
 from nexus.services.node_ingest import (
     IngestError,
     IngestResult,
-    NodeIngestCommand,
-    local_node_ingest_command,
     run_node_ingest,
 )
 from nexus.services.reader_apparatus import (
@@ -53,29 +53,9 @@ from nexus.services.web_article_structure import (
     document_embed_artifact_occurrences,
     prepare_web_article_fragment,
 )
+from nexus.tasks.storage_object_cleanup import finalize_storage_object_write
 
 logger = get_logger(__name__)
-
-
-def _node_ingest_command_for_environment(environment: Environment) -> NodeIngestCommand | None:
-    """Compose the checked-out adapter only for local and test workers."""
-
-    if environment in {Environment.LOCAL, Environment.TEST}:
-        return local_node_ingest_command()
-    return None
-
-
-def run_web_article_node_ingest(
-    url: str,
-    *,
-    environment: Environment,
-) -> IngestResult | IngestError:
-    """Run the environment-owned Node composition for one accepted URL."""
-
-    return run_node_ingest(
-        url,
-        command=_node_ingest_command_for_environment(environment),
-    )
 
 
 def materialize_web_article_source(
@@ -106,10 +86,7 @@ def materialize_web_article_source(
     finally:
         snapshot.close()
 
-    ingest_result = run_web_article_node_ingest(
-        url,
-        environment=get_settings().nexus_env,
-    )
+    ingest_result = run_node_ingest(url)
 
     if isinstance(ingest_result, IngestError):
         logger.warning(
@@ -198,33 +175,42 @@ def materialize_web_article_source(
         raise ApiError(ApiErrorCode.E_SANITIZATION_FAILED, error_message) from exc
 
     author_observation = _build_web_article_observation(ingest_result)
-    embed_urls = [
-        detected.detected.canonical_source_url
-        for detected in prepared.document_embeds
+    prepared_fragment_id = new_uuid7()
+    occurrences, planned_existing_media_ids = prepare_document_embed_sources(
+        session_factory,
+        media_id=media_id,
+        owner_user_id=actor_user_id,
+        fence=publication_fence,
+        occurrences=document_embed_artifact_occurrences(
+            fragment_id=prepared_fragment_id, document_embeds=prepared.document_embeds
+        )
         if extract_embeds
-        if detected.detected.resolution_status == "pending"
-        and detected.detected.canonical_source_url
-    ]
-    planned_existing_media_ids: set[UUID] = set()
-    fragment_id: UUID | None = None
-    for _lock_set_attempt in range(3):
-        discovery = session_factory()
-        try:
-            from nexus.services.media_source_ingest import (
-                reusable_embedded_source_media_ids,
-            )
+        else (),
+        request_id=request_id,
+    )
+    from nexus.services.reader_publication_web import (
+        WebReaderFragment,
+        prepare_web_reader_publication,
+    )
 
-            if extract_embeds:
-                planned_existing_media_ids.update(
-                    reusable_embedded_source_media_ids(
-                        discovery,
-                        viewer_id=actor_user_id,
-                        urls=list(embed_urls),
-                    )
-                )
-            discovery.rollback()
-        finally:
-            discovery.close()
+    with prepare_web_reader_publication(
+        session_factory,
+        media_id=media_id,
+        fragments=(
+            WebReaderFragment(
+                prepared_fragment_id,
+                0,
+                prepared,
+                tuple(
+                    DocumentEmbedSource.model_validate(item.model_dump(exclude={"fragment_id"}))
+                    for item in occurrences
+                ),
+            ),
+        ),
+        source_html=ingest_result.source_html,
+        title=ingest_result.title[:255] if ingest_result.title else None,
+        limits=require_reader_publication_limits(),
+    ) as publication:
 
         def replace_projection(db: Session, media: Media) -> UUID:
             owner_user_id = media.created_by_user_id or actor_user_id
@@ -234,6 +220,7 @@ def materialize_web_article_source(
                 include_content_index=False,
             )
             fragment = Fragment(
+                id=prepared_fragment_id,
                 media_id=media_id,
                 idx=0,
                 html_sanitized=prepared.html_sanitized,
@@ -244,32 +231,17 @@ def materialize_web_article_source(
             db.flush()
             insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
             if extract_embeds:
-                queued_children = replace_document_embed_artifact(
+                replace_document_embed_artifact(
                     db,
                     owner_user_id=owner_user_id,
                     media_id=media_id,
                     source_attempt_id=source_attempt_id,
-                    occurrences=document_embed_artifact_occurrences(
-                        fragment_id=fragment.id,
-                        document_embeds=prepared.document_embeds,
-                    ),
+                    occurrences=occurrences,
                     extraction_error_code=prepared.document_embed_extraction_error_code,
                     extraction_error_message=prepared.document_embed_extraction_error_message,
                     request_id=request_id,
                     locked_existing_target_media_ids=frozenset(planned_existing_media_ids),
                 )
-                from nexus.services.media_source_ingest import (
-                    enqueue_accepted_source_attempt_in_transaction,
-                )
-
-                for child_media_id, child_attempt_id in queued_children:
-                    enqueue_accepted_source_attempt_in_transaction(
-                        db,
-                        media_id=child_media_id,
-                        attempt_id=child_attempt_id,
-                        actor_user_id=actor_user_id,
-                        request_id=request_id,
-                    )
             if ingest_result.title:
                 media.title = ingest_result.title[:255]
             _persist_web_metadata(db, media, ingest_result)
@@ -302,23 +274,22 @@ def materialize_web_article_source(
                 media_id=media_id,
                 expected_kind="web_article",
                 replace_projection=lambda media: replace_projection(db, media),
+                prepared=publication,
             )
 
-        try:
-            fragment_id = run_source_publication_phase(
-                session_factory=session_factory,
-                label="publish_web_article_artifacts",
-                fence=publication_fence,
-                media_ids=tuple({media_id, *planned_existing_media_ids}),
-                mutate=publish_artifacts,
-            )
-            break
-        except DocumentEmbedLockSetChanged as exc:
-            planned_existing_media_ids.add(exc.media_id)
-    if fragment_id is None:
-        # justify-defect: a continuously changing child identity cannot be
-        # published under a finite exact lock set.
-        raise AssertionError("web embed media lock set did not stabilize")
+        fragment_id = run_source_publication_phase(
+            session_factory=session_factory,
+            label="publish_web_article_artifacts",
+            fence=publication_fence,
+            media_ids=tuple({media_id, *planned_existing_media_ids}),
+            mutate=publish_artifacts,
+        )
+        # The published members now own their bytes, so conclude each write
+        # reservation here instead of leaving it Armed until its own deadline
+        # fires (spec 3.1 write reservation).
+        with session_factory() as db:
+            for storage_path in sorted({member.storage_path for member in publication.members}):
+                finalize_storage_object_write(db, media_id=media_id, storage_path=storage_path)
 
     result: dict[str, object] = {
         "status": "success",

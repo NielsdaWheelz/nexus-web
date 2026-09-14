@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from starlette.responses import Response
+from starlette.datastructures import MutableHeaders
 
 PUBLIC_RESOURCE_SHARE_PATH_RE = re.compile(r"^/public/resource-share(?:/.*)?$")
 PUBLIC_RESOURCE_SHARE_RESPONSE_HEADERS = {
@@ -20,8 +20,8 @@ PUBLIC_RESOURCE_SHARE_RESPONSE_HEADERS = {
 }
 
 
-def apply_public_resource_share_headers(response: Response) -> None:
+def apply_public_resource_share_headers(headers: MutableHeaders) -> None:
     for key, value in PUBLIC_RESOURCE_SHARE_RESPONSE_HEADERS.items():
-        response.headers[key] = value
-    if "set-cookie" in response.headers:
-        del response.headers["set-cookie"]
+        headers[key] = value
+    if "set-cookie" in headers:
+        del headers["set-cookie"]

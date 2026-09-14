@@ -1,0 +1,11 @@
+diff --git a/apps/web/src/components/PdfReader.tsx b/apps/web/src/components/PdfReader.tsx
+--- a/apps/web/src/components/PdfReader.tsx
++++ b/apps/web/src/components/PdfReader.tsx
+@@ -2457,6 +2457,7 @@
+             pageNumber: activeSelection.pageNumber,
+             quads,
+           });
++          return null;
+         } else {
+           createdHighlight = await decorations.createHighlight({
+             pageNumber: activeSelection.pageNumber,

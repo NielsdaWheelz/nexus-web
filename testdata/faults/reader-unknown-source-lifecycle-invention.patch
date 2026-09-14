@@ -1,0 +1,15 @@
+diff --git a/apps/web/src/lib/reader/useReaderProgress.ts b/apps/web/src/lib/reader/useReaderProgress.ts
+--- a/apps/web/src/lib/reader/useReaderProgress.ts
++++ b/apps/web/src/lib/reader/useReaderProgress.ts
+@@ -715,10 +715,7 @@
+       void sendCursor(true);
+       return;
+     }
+-    if (sourceStatusRef.current !== null) return;
+-    const snapshot = current.authority.snapshot;
+-    if (snapshot.state === "Positioned" &&
+-        (current.source === null || !readerCursorSourcesEqual(current.source, snapshot.source))) return;
++    // Fault: lifecycle capture assumes the current viewport has established source intent.
+     // Clean: nothing moved. Capture and dispatch the current locator anyway
+     // so the flush still fires a same-locator cursor write.
+     const captured = captureRef.current();

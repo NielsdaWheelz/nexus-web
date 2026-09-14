@@ -15,13 +15,14 @@ import {
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
 import {
   apiFetch,
+  decodeApiPayload,
   isApiError,
   isSameSystemApiDefect,
-  type ApiPath,
 } from "@/lib/api/client";
 import { absent, present, type Presence } from "@/lib/api/presence";
 import { useDebouncedFetch } from "@/lib/api/useDebouncedFetch";
 import { useResource } from "@/lib/api/useResource";
+import { requestWithRetry } from "@/lib/api/retryPolicy";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createLibrary } from "@/lib/libraries/client";
 import { DESTINATIONS } from "@/lib/navigation/destinations";
@@ -76,7 +77,17 @@ import {
   nexusEntryHasSecondaryActions,
   nexusEntryKeyValue,
 } from "@/lib/nexus/model";
-import { useNexusSelectionJournal } from "@/lib/nexus/useNexusSelectionJournal";
+import {
+  decodeNexusHistoryResponse,
+  nexusHistoryLabel,
+  nexusHistoryQuery,
+  NEXUS_OWNED_CANDIDATE_LIMIT,
+  type NexusHistoryResponse,
+} from "@/lib/nexus/history";
+import {
+  useNexusSelectionJournal,
+  type NexusSelectionJournalFailure,
+} from "@/lib/nexus/useNexusSelectionJournal";
 import {
   commitNexusRevision,
   composeNexusProjection,
@@ -102,7 +113,6 @@ import {
   usePlayerSession,
 } from "@/lib/player/globalPlayer";
 import {
-  ResourceOpenablesContractDefect,
   searchOpenableResources,
   type ResourceOpenableSearchResponse,
 } from "@/lib/resources/openableResources";
@@ -113,7 +123,6 @@ import {
 } from "@/lib/renderEnvironment/provider";
 import {
   fetchSearchResultPage,
-  SearchContractDefect,
 } from "@/lib/search/searchApi";
 import { SEARCH_KINDS } from "@/lib/search/kinds";
 import type { SearchResultRowViewModel } from "@/lib/search/types";
@@ -145,13 +154,6 @@ import {
   type AddContentSessionController,
 } from "./useAddContentSession";
 
-interface NexusHistoryResponse {
-  readonly data: {
-    readonly recent: NexusRecentTarget[];
-    readonly frecency_by_href: Record<string, number>;
-  };
-}
-
 export interface NexusManagedPane extends NexusPane {
   readonly activationRouteId: ReturnType<typeof resolveWorkspaceActivationRouteId>;
 }
@@ -169,6 +171,8 @@ export interface NexusMobileProjection {
 }
 
 export interface NexusController {
+  readonly defect: { readonly error: unknown } | null;
+  retryDefect(): void;
   readonly open: boolean;
   readonly paneCount: number;
   readonly query: string;
@@ -379,6 +383,31 @@ export function nexusErrorMessage(
   }
 }
 
+type NexusHistoryWriteOutcome =
+  | { readonly kind: "Retryable"; readonly content: FeedbackContent }
+  | { readonly kind: "Defect"; readonly error: unknown };
+
+/**
+ * SaveHistory is a background, replay-safe write, so only the availability codes
+ * `nexusErrorMessage` models for it are product-facing. A refused, unauthorized
+ * or unknown failure means Nexus built a command its own contract forbids: a
+ * defect the user cannot resolve by retrying, and never a lost retry closure.
+ */
+function nexusHistoryWriteOutcome(error: unknown): NexusHistoryWriteOutcome {
+  if (!isApiError(error) || isSameSystemApiDefect(error)) {
+    return { kind: "Defect", error };
+  }
+  switch (error.code) {
+    case "E_NETWORK":
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+    case "E_RATE_LIMITED":
+      return { kind: "Retryable", content: nexusErrorMessage(error, "SaveHistory") };
+    default:
+      return { kind: "Defect", error };
+  }
+}
+
 function actionTarget(action: NexusAction): NexusTarget | null {
   return action.availability.kind === "Available"
     ? action.availability.target
@@ -424,6 +453,7 @@ export function useNexusController(): NexusController {
   } = workspace;
 
   const [open, setOpen] = useState(false);
+  useEffect(() => { if (!open) warmPane(null); }, [open, warmPane]);
   const [query, setQueryState] = useState("");
   const [page, setPage] = useState<NexusPage>({ kind: "Root" });
   const [commit, setCommit] = useState<ProgressiveNexusCommit>({
@@ -439,10 +469,23 @@ export function useNexusController(): NexusController {
   const [announcement, setAnnouncement] = useState("");
   const [openablesRetry, setOpenablesRetry] = useState(0);
   const [searchRetry, setSearchRetry] = useState(0);
-  const [historyEnabled, setHistoryEnabled] = useState(false);
   const [historyRevision, setHistoryRevision] = useState(0);
   const [showBusy, setShowBusy] = useState(false);
   const [defectState, setDefectState] = useState<{ error: unknown } | null>(null);
+  const observeDefect = useCallback((error: unknown) => setDefectState({ error }), []);
+  // A defected selection write keeps its frozen entry in the journal. Explicit
+  // recovery replays those exact mutation ids, which the backend's replay record
+  // counts once, so recovery never adds a second history use.
+  const historyReplaysRef = useRef<(() => void)[]>([]);
+  const retryDefect = useCallback(() => {
+    const replays = historyReplaysRef.current;
+    historyReplaysRef.current = [];
+    setDefectState(null);
+    setHistoryRevision((value) => value + 1);
+    setOpenablesRetry((value) => value + 1);
+    setSearchRetry((value) => value + 1);
+    for (const replay of replays) replay();
+  }, []);
   const [managedTabsFeedback, setManagedTabsFeedback] = useState<{
     content: FeedbackContent;
     paneId: string;
@@ -459,31 +502,37 @@ export function useNexusController(): NexusController {
   const requestIdRef = useRef(0);
   const commandFailureRetryRef = useRef<(() => void) | null>(null);
   const openablesCacheRef = useRef(new Map<string, ResourceOpenableSearchResponse>());
-  const handleHistoryWriteError = useCallback(
-    (error: unknown, retry: () => void) => {
-      if (handleUnauthenticatedApiError(error)) return;
-      try {
-        feedback.publish({
-          kind: "Persistent",
-          key: NEXUS_HISTORY_FEEDBACK_KEY,
-          // Polite: a failed history write neither loses in-flight data nor
-          // blocks the current action; the record persists on the rail with
-          // Retry, so it need not interrupt speech.
-          announcement: "Polite",
-          content: nexusErrorMessage(error, "SaveHistory"),
-          actions: [
-            {
-              label: "Retry",
-              onClick: () => {
-                feedback.resolve(NEXUS_HISTORY_FEEDBACK_KEY);
-                retry();
-              },
-            },
-          ],
-        });
-      } catch (caughtDefect: unknown) {
-        setDefectState({ error: caughtDefect });
+  const handleHistoryFailure = useCallback(
+    (failure: NexusSelectionJournalFailure) => {
+      if (failure.kind === "DrainDefect") {
+        setDefectState({ error: failure.error });
+        return;
       }
+      if (handleUnauthenticatedApiError(failure.error)) return;
+      const outcome = nexusHistoryWriteOutcome(failure.error);
+      if (outcome.kind === "Defect") {
+        historyReplaysRef.current.push(failure.retry);
+        setDefectState({ error: failure.error });
+        return;
+      }
+      feedback.publish({
+        kind: "Persistent",
+        key: NEXUS_HISTORY_FEEDBACK_KEY,
+        // Polite: a failed history write neither loses in-flight data nor
+        // blocks the current action; the record persists on the rail with
+        // Retry, so it need not interrupt speech.
+        announcement: "Polite",
+        content: outcome.content,
+        actions: [
+          {
+            label: "Retry",
+            onClick: () => {
+              feedback.resolve(NEXUS_HISTORY_FEEDBACK_KEY);
+              failure.retry();
+            },
+          },
+        ],
+      });
     },
     [feedback],
   );
@@ -496,7 +545,7 @@ export function useNexusController(): NexusController {
   );
   const recordSelection = useNexusSelectionJournal({
     foregroundActive: open,
-    onError: handleHistoryWriteError,
+    onFailure: handleHistoryFailure,
     onQuiescentCommit: markHistoryCommitted,
   });
 
@@ -513,7 +562,6 @@ export function useNexusController(): NexusController {
   useEffect(() => {
     if (open) {
       suppressReturnFocusRef.current = false;
-      setHistoryEnabled(true);
       return;
     }
     // Results are useful only within one visible Nexus session. Release them
@@ -523,13 +571,33 @@ export function useNexusController(): NexusController {
     openablesCacheRef.current = new Map();
   }, [open]);
 
+  const historyLocalTargets = useMemo(() => [...new Set([
+    ...getWorkspacePrimaryPanes(state).map((pane) => pane.currentVisit.href),
+    ...DESTINATIONS.map((destination) => destination.href),
+  ])].sort(), [state]);
   const baseHistoryResource = useResource<NexusHistoryResponse>({
-    cacheKey: historyEnabled
-      ? `${accountId}:nexus-history:${historyRevision}`
+    onDefect: observeDefect,
+    // Candidate scoring is a read after discovery. Keying it on the open session
+    // keeps pane navigation from re-scoring a surface nobody is looking at.
+    cacheKey: open
+      ? JSON.stringify([accountId, "nexus-history", historyRevision, historyLocalTargets])
       : null,
-    load: (signal) =>
-      apiFetch<NexusHistoryResponse>("/api/me/nexus-history", { signal }),
+    load: async (signal) => decodeApiPayload(await apiFetch<unknown>("/api/nexus/history/query", {
+      method: "POST", signal,
+      body: JSON.stringify({ query: null, target_hrefs: historyLocalTargets }),
+    }), decodeNexusHistoryResponse, "Nexus history query"),
   });
+  const readyBaseHistory =
+    baseHistoryResource.status === "ready" ? baseHistoryResource.data.data : null;
+  // The closed session has no read of its own; the last one it took still ranks
+  // the next open until its replacement lands.
+  const [retainedBaseHistory, setRetainedBaseHistory] = useState<
+    NexusHistoryResponse["data"] | null
+  >(null);
+  useEffect(() => {
+    if (readyBaseHistory !== null) setRetainedBaseHistory(readyBaseHistory);
+  }, [readyBaseHistory]);
+  const baseHistory = readyBaseHistory ?? retainedBaseHistory;
 
   const panes = useMemo<NexusManagedPane[]>(
     () =>
@@ -600,9 +668,9 @@ export function useNexusController(): NexusController {
     [keybindingController],
   );
   const findEnabled = open && parsed.text.length > 0;
-  const openablesIdentity = findEnabled ? query : null;
+  const openablesIdentity = findEnabled ? `${query}:${openablesRetry}` : null;
   const openablesFetch = useDebouncedFetch(
-    openablesIdentity === null ? null : `${query}:${openablesRetry}`,
+    openablesIdentity,
     async (signal) => {
       const cacheKey = parsed.normalizedText;
       const cached = openablesCacheRef.current.get(cacheKey);
@@ -611,11 +679,11 @@ export function useNexusController(): NexusController {
         openablesCacheRef.current.set(cacheKey, cached);
         return cached;
       }
-      const response = await searchOpenableResources({
+      const response = await requestWithRetry((signal) => searchOpenableResources({
         q: parsed.text,
         schemes: absent(),
         signal,
-      });
+      }), signal);
       if (!signal.aborted) {
         while (openablesCacheRef.current.size >= OPENABLE_CACHE_LIMIT) {
           const oldest = openablesCacheRef.current.keys().next().value;
@@ -638,7 +706,7 @@ export function useNexusController(): NexusController {
       requestedKinds: new Set([...kinds].filter((kind) => kind !== "web")),
     };
   }, [parsed.searchQuery]);
-  const ownedCandidateIdentity = open && parsed.text.length >= 2 ? query : null;
+  const ownedCandidateIdentity = open && parsed.text.length >= 2 ? `${query}:${searchRetry}` : null;
   // Preserve the established latency policy: cheap Openables reaches a
   // terminal state before expensive owned full-text retrieval starts.
   const openablesTerminal =
@@ -650,13 +718,13 @@ export function useNexusController(): NexusController {
       ? ownedCandidateIdentity
       : null;
   const ownedFetch = useDebouncedFetch(
-    ownedIdentity === null ? null : `${query}:${searchRetry}`,
+    ownedIdentity,
     (signal) =>
-      fetchSearchResultPage(ownedSearchQuery, {
-        limit: 40,
+      requestWithRetry((signal) => fetchSearchResultPage(ownedSearchQuery, {
+        limit: NEXUS_OWNED_CANDIDATE_LIMIT,
         cursor: null,
         signal,
-      }),
+      }), signal),
     { debounceMs: SEARCH_DEBOUNCE_MS, identity: ownedIdentity },
   );
   const ownedTerminal =
@@ -668,27 +736,25 @@ export function useNexusController(): NexusController {
     (parsed.text.length === 1 ? openablesTerminal : ownedTerminal)
       ? query
       : null;
-  const typedHistoryPath =
-    typedHistoryIdentity === null
-      ? null
-      : (`/api/me/nexus-history?${new URLSearchParams({ query: parsed.text })}` as ApiPath);
+  const historyCandidateTargets = [...new Set([
+    ...historyLocalTargets,
+    ...(openablesFetch.dataIdentity === openablesIdentity
+      ? (openablesFetch.data?.items ?? []).flatMap((item) => item.activation.href ? [item.activation.href] : []) : []),
+    ...(ownedFetch.dataIdentity === ownedIdentity
+      ? (ownedFetch.data?.rows ?? []).flatMap((row) => row.activation.href ? [row.activation.href] : []) : []),
+    ...(baseHistory?.recent.map((entry) => entry.target_href) ?? []),
+  ])].sort();
   const typedHistoryResource = useResource<NexusHistoryResponse>({
-    cacheKey:
-      typedHistoryPath === null
-        ? null
-        : `${accountId}:${historyRevision}:${typedHistoryPath}`,
-    load: (signal) => {
-      if (typedHistoryPath === null) {
-        throw new Error("Typed Nexus history requires a current query path");
-      }
-      return apiFetch<NexusHistoryResponse>(typedHistoryPath, { signal });
-    },
+    onDefect: observeDefect,
+    cacheKey: typedHistoryIdentity === null ? null
+      : JSON.stringify([accountId, historyRevision, typedHistoryIdentity, historyCandidateTargets]),
+    load: async (signal) => decodeApiPayload(await apiFetch<unknown>("/api/nexus/history/query", {
+      method: "POST", signal,
+      body: JSON.stringify({ query: nexusHistoryQuery(parsed.text), target_hrefs: historyCandidateTargets }),
+    }), decodeNexusHistoryResponse, "Nexus history query"),
   });
   const history = useMemo(() => {
-    const baseData =
-      baseHistoryResource.status === "ready"
-        ? baseHistoryResource.data.data
-        : null;
+    const baseData = baseHistory;
     const typedData =
       typedHistoryResource.status === "ready"
         ? typedHistoryResource.data.data
@@ -702,7 +768,7 @@ export function useNexusController(): NexusController {
         baseData?.frecency_by_href ??
         EMPTY_FRECENCY,
     };
-  }, [androidShell, baseHistoryResource, parsed.text, typedHistoryResource]);
+  }, [androidShell, baseHistory, parsed.text, typedHistoryResource]);
   const openablesData =
     openablesFetch.dataIdentity === openablesIdentity
       ? openablesFetch.data
@@ -716,13 +782,11 @@ export function useNexusController(): NexusController {
   const ownedError =
     ownedFetch.errorIdentity === ownedIdentity ? ownedFetch.error : null;
   const contractDefect =
-    openablesError instanceof ResourceOpenablesContractDefect ||
-    isSameSystemApiDefect(openablesError)
+    openablesError !== null && (!isApiError(openablesError) || isSameSystemApiDefect(openablesError))
       ? openablesError
-      : ownedError instanceof SearchContractDefect || isSameSystemApiDefect(ownedError)
+      : ownedError !== null && (!isApiError(ownedError) || isSameSystemApiDefect(ownedError))
         ? ownedError
         : null;
-  if (contractDefect) throw contractDefect;
 
   const remoteBusy = openablesFetch.loading || ownedFetch.loading;
   useEffect(() => {
@@ -1147,13 +1211,15 @@ export function useNexusController(): NexusController {
               ? panes.find((pane) => pane.id === target.paneId)?.href
               : null;
       if (!href || isAndroidShellRestrictedHref(href, androidShell)) return;
-      const selection = {
+      // History stores a display excerpt, and a blank one names nothing the
+      // viewer could recognize or the command contract would accept.
+      if (nexusHistoryLabel(entry.label) === "") return;
+      recordSelection({
         query: parsed.text || null,
         target_href: href,
         label_snapshot: entry.label,
         source: entry.historySource,
-      };
-      recordSelection(selection);
+      });
     },
     [androidShell, panes, parsed.text, recordSelection],
   );
@@ -1255,13 +1321,13 @@ export function useNexusController(): NexusController {
         );
       const target = entry ? actionTarget(entry.primaryAction) : null;
       if (target?.kind === "InternalHref") warmPane(target.href);
-      if (
+      else if (
         target?.kind === "ResourceOpen" &&
         target.activation.kind === "route" &&
         target.activation.href
       ) {
         warmPane(target.activation.href);
-      }
+      } else warmPane(null);
     },
     [parsed.text, projection.groups, warmPane],
   );
@@ -1873,7 +1939,6 @@ export function useNexusController(): NexusController {
         : [],
     [page],
   );
-  if (defectState !== null) throw defectState.error;
 
   const desktop: DesktopNexusController = {
     open,
@@ -1908,6 +1973,8 @@ export function useNexusController(): NexusController {
   };
 
   return {
+    defect: defectState ?? (contractDefect === null ? null : { error: contractDefect }),
+    retryDefect,
     open,
     paneCount: panes.length,
     query,

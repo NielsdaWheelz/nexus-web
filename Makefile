@@ -176,6 +176,7 @@ web:
 worker-interactive: local-runtime-identity
 	cd python && PYTHONPATH=$$PWD:$$PWD/.. DATABASE_URL=$(DATABASE_URL) \
 		NEXUS_RUNTIME_IDENTITY_FILE=$(LOCAL_RUNTIME_IDENTITY) \
+		NEXUS_NODE_INGEST_SCRIPT="$$PWD/../node/ingest/ingest.mjs" \
 		WORKER_LANE=interactive DATABASE_STATEMENT_TIMEOUT_MS=300000 \
 		SUPABASE_AUTH_ADMIN_KEY= \
 		uv run python -m apps.worker.main
@@ -183,6 +184,7 @@ worker-interactive: local-runtime-identity
 worker-background: local-runtime-identity
 	cd python && PYTHONPATH=$$PWD:$$PWD/.. DATABASE_URL=$(DATABASE_URL) \
 		NEXUS_RUNTIME_IDENTITY_FILE=$(LOCAL_RUNTIME_IDENTITY) \
+		NEXUS_NODE_INGEST_SCRIPT="$$PWD/../node/ingest/ingest.mjs" \
 		WORKER_LANE=background DATABASE_STATEMENT_TIMEOUT_MS=300000 \
 		SUPABASE_AUTH_ADMIN_KEY= \
 		uv run python -m apps.worker.main

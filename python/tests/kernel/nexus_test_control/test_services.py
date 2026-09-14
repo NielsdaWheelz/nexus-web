@@ -1693,9 +1693,14 @@ def test_codex_generation_peer_materializes_one_exact_secret_free_client_identit
 
     run = _empty_owned_run(tmp_path)
 
-    peer = materialize_codex_generation_peer(tmp_path, TEST_ENV, run)
+    previous_umask = os.umask(0o022)
+    try:
+        peer = materialize_codex_generation_peer(tmp_path, TEST_ENV, run)
+    finally:
+        os.umask(previous_umask)
 
     assert peer.state == codex_generation_peer_state_dir(tmp_path, RUN_ID)
+    assert peer.state.stat().st_mode & 0o777 == 0o700
     assert not peer.socket.exists()
     assert len(os.fsencode(peer.socket)) < 104
     assert peer.audit.read_bytes() == b""

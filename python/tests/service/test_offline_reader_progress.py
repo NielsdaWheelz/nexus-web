@@ -3,84 +3,42 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
-from dataclasses import dataclass
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
 
 from nexus.app import add_request_id_middleware, create_app
 from nexus.auth.middleware import AuthMiddleware
-from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus, ReaderPublication
+from nexus.db.models import Media, MediaKind, ProcessingStatus, ReaderPublication
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.ids import new_uuid7
-from nexus.schemas.offline_reader_progress import OfflineReaderWrite
 from nexus.schemas.reader import (
-    CursorWrite,
-    ReaderFragmentTarget,
-    ReaderQuoteContext,
-    ReaderTextLocations,
+    ReaderCursorSnapshot,
+    TranscriptReaderResumeState,
     WebReaderResumeState,
 )
-from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.consumption import offline_reader_progress
+from nexus.services.consumption import reader_progress
 from nexus.services.consumption import service as consumption
 from nexus.services.library_entries import ensure_media_in_default_library
-from nexus.services.reader_publication import replace_reader_publication
 from tests.testkit.auth import StaticTokenVerifier, UserRecord
-
-
-@dataclass(frozen=True, slots=True)
-class _PublishedArticle:
-    viewer_id: UUID
-    email: str
-    media_id: UUID
-    fragment_id: UUID
-
-
-@contextmanager
-def _committed_published_article(engine: Engine) -> Iterator[_PublishedArticle]:
-    viewer_id = uuid4()
-    media_id = uuid4()
-    fragment_id = uuid4()
-    email = f"offline-reader-progress-{viewer_id}@example.invalid"
-    with Session(engine) as db:
-        ensure_user_and_default_library(
-            db,
-            viewer_id,
-            email,
-        )
-        db.add(
-            Media(
-                id=media_id,
-                kind=MediaKind.web_article.value,
-                title="Offline reader progress proof",
-                processing_status=ProcessingStatus.ready_for_reading,
-                created_by_user_id=viewer_id,
-            )
-        )
-        db.add(
-            Fragment(
-                id=fragment_id,
-                media_id=media_id,
-                idx=0,
-                canonical_text="Publication-fenced progress.",
-                html_sanitized="<p>Publication-fenced progress.</p>",
-            )
-        )
-        db.add(ReaderPublication(id=new_uuid7(), media_id=media_id, generation=7))
-        db.flush()
-        ensure_media_in_default_library(db, viewer_id, media_id)
-        db.commit()
-
-    yield _PublishedArticle(viewer_id, email, media_id, fragment_id)
+from tests.testkit.reader_progress import (
+    PublishedArticle as _PublishedArticle,
+)
+from tests.testkit.reader_progress import (
+    committed_published_article as _committed_published_article,
+)
+from tests.testkit.reader_progress import (
+    reader_cursor as _cursor,
+)
+from tests.testkit.reader_progress import (
+    reader_write as _write,
+)
 
 
 def _reader_media_state_row(article: _PublishedArticle, engine: Engine) -> dict[str, Any]:
@@ -123,6 +81,22 @@ def _assert_row_untouched(
     assert after["xmax"] == "0", (
         f"the {fence} fence mutated reader_media_state and rolled back: {after!r}"
     )
+
+
+def _seed_canonical_cursor(
+    article: _PublishedArticle, locator: WebReaderResumeState
+) -> ReaderCursorSnapshot:
+    """Install the baseline through the one writer every real client uses.
+
+    The fixture publishes generation 7, so the seeded cursor records the same
+    `Publication` provenance a device would read back as its own baseline.
+    """
+    return reader_progress.put(
+        viewer_id=article.viewer_id,
+        expected_account_id=article.viewer_id,
+        media_id=article.media_id,
+        write=_write(generation=7, base_revision=0, locator=locator),
+    ).cursor
 
 
 def _progress_client(article: _PublishedArticle) -> TestClient:
@@ -176,38 +150,45 @@ def _await_blocked_publication_read(engine: Engine) -> None:
     )
 
 
-def _cursor(fragment_id: UUID, *, offset: int) -> WebReaderResumeState:
-    progression = offset / 100
-    return WebReaderResumeState(
-        kind="web",
-        target=ReaderFragmentTarget(fragment_id=str(fragment_id)),
-        locations=ReaderTextLocations(
-            text_offset=offset,
-            progression=progression,
-            total_progression=progression,
-            position=1,
-        ),
-        text=ReaderQuoteContext(
-            quote="progress",
-            quote_prefix="Publication-fenced ",
-            quote_suffix=".",
-        ),
-    )
-
-
-def _write(
-    *,
-    generation: int,
-    base_revision: int,
-    locator: WebReaderResumeState,
-) -> OfflineReaderWrite:
-    return OfflineReaderWrite.model_validate(
-        {
-            "expectedReaderGeneration": generation,
-            "baseRevision": base_revision,
+def test_timeline_progress_uses_the_shared_account_and_cursor_contract(engine: Engine) -> None:
+    """A transcript has no publication generation and still gets attested CAS writes."""
+    with _committed_published_article(engine) as article:
+        with Session(engine) as db:
+            publication = db.scalar(
+                select(ReaderPublication).where(ReaderPublication.media_id == article.media_id)
+            )
+            assert publication is not None
+            db.delete(publication)
+            media = db.get(Media, article.media_id)
+            assert media is not None
+            media.kind = MediaKind.video.value
+            db.commit()
+        web_locator = _cursor(article.fragment_id, offset=12)
+        locator = TranscriptReaderResumeState(
+            kind="transcript",
+            target=web_locator.target,
+            locations=web_locator.locations,
+            text=web_locator.text,
+        )
+        path = f"/media/{article.media_id}/offline-reader-state"
+        headers = {"X-Nexus-Expected-Account-Id": str(article.viewer_id)}
+        body = {
+            "expectedReaderGeneration": None,
+            "baseRevision": 0,
             "locator": locator.model_dump(mode="json"),
         }
-    )
+        with _progress_client(article) as client:
+            saved = client.put(path, headers=headers, json=body)
+            assert saved.status_code == 200, saved.text
+            reply = saved.json()["data"]
+            assert reply["readerGeneration"] is None
+            assert reply["cursor"]["source"] == {"kind": "Timeline"}
+            assert reply["cursor"]["locator"] == body["locator"]
+            assert "Nexus-Reader-Generation" not in saved.headers
+            replay = client.put(path, headers=headers, json=body)
+            assert replay.json()["data"] == reply
+            current = client.get(path, headers=headers)
+            assert current.json()["data"] == reply
 
 
 def _prove_wrong_account_leaves_canonical_cursor_unchanged(
@@ -216,15 +197,11 @@ def _prove_wrong_account_leaves_canonical_cursor_unchanged(
     with _committed_published_article(engine) as article:
         accepted = _cursor(article.fragment_id, offset=10)
         rejected = _cursor(article.fragment_id, offset=80)
-        canonical = consumption.put_reader_cursor(
-            article.viewer_id,
-            article.media_id,
-            CursorWrite(locator=accepted, base_revision=0),
-        )
+        canonical = _seed_canonical_cursor(article, accepted)
         before = _reader_media_state_row(article, engine)
 
         with pytest.raises(ApiError) as wrong_account:
-            offline_reader_progress.put(
+            reader_progress.put(
                 viewer_id=article.viewer_id,
                 expected_account_id=uuid4(),
                 media_id=article.media_id,
@@ -237,7 +214,7 @@ def _prove_wrong_account_leaves_canonical_cursor_unchanged(
         assert wrong_account.value.code == ApiErrorCode.E_FORBIDDEN
 
         with Session(engine) as db:
-            observed = consumption.get_reader_cursor(db, article.viewer_id, article.media_id)
+            observed = consumption.get_reader_cursor(db, article.viewer_id, article.media_id).cursor
         assert observed == canonical, (
             "account fence mutated the canonical cursor: "
             f"expected={canonical!r} actual={observed!r}"
@@ -251,15 +228,11 @@ def _prove_wrong_generation_leaves_canonical_cursor_unchanged(
     with _committed_published_article(engine) as article:
         accepted = _cursor(article.fragment_id, offset=10)
         rejected = _cursor(article.fragment_id, offset=80)
-        canonical = consumption.put_reader_cursor(
-            article.viewer_id,
-            article.media_id,
-            CursorWrite(locator=accepted, base_revision=0),
-        )
+        canonical = _seed_canonical_cursor(article, accepted)
         before = _reader_media_state_row(article, engine)
 
         with pytest.raises(ApiError) as changed_publication:
-            offline_reader_progress.put(
+            reader_progress.put(
                 viewer_id=article.viewer_id,
                 expected_account_id=article.viewer_id,
                 media_id=article.media_id,
@@ -272,7 +245,7 @@ def _prove_wrong_generation_leaves_canonical_cursor_unchanged(
         assert changed_publication.value.code == ApiErrorCode.E_READER_CONTENT_CHANGED
 
         with Session(engine) as db:
-            observed = consumption.get_reader_cursor(db, article.viewer_id, article.media_id)
+            observed = consumption.get_reader_cursor(db, article.viewer_id, article.media_id).cursor
         assert observed == canonical, (
             "publication fence mutated the canonical cursor: "
             f"expected={canonical!r} actual={observed!r}"
@@ -289,14 +262,14 @@ def _prove_matching_account_and_generation_return_attested_canonical_snapshot(
 ) -> None:
     with _committed_published_article(engine) as article:
         locator = _cursor(article.fragment_id, offset=25)
-        saved = offline_reader_progress.put(
+        saved = reader_progress.put(
             viewer_id=article.viewer_id,
             expected_account_id=article.viewer_id,
             media_id=article.media_id,
             write=_write(generation=7, base_revision=0, locator=locator),
         )
         with Session(engine) as db:
-            loaded = offline_reader_progress.get(
+            loaded = reader_progress.get(
                 db,
                 viewer_id=article.viewer_id,
                 expected_account_id=article.viewer_id,
@@ -376,11 +349,7 @@ def test_offline_reader_state_route_fences_account_and_generation_before_any_mut
     with _committed_published_article(engine) as article:
         accepted = _cursor(article.fragment_id, offset=10)
         rejected = _cursor(article.fragment_id, offset=80)
-        canonical = consumption.put_reader_cursor(
-            article.viewer_id,
-            article.media_id,
-            CursorWrite(locator=accepted, base_revision=0),
-        )
+        canonical = _seed_canonical_cursor(article, accepted)
         before = _reader_media_state_row(article, engine)
         path = f"/media/{article.media_id}/offline-reader-state"
         body = {
@@ -458,11 +427,7 @@ def test_offline_reader_state_get_attests_one_snapshot_of_cursor_and_generation(
     """
     with _committed_published_article(engine) as article:
         locator = _cursor(article.fragment_id, offset=10)
-        canonical = consumption.put_reader_cursor(
-            article.viewer_id,
-            article.media_id,
-            CursorWrite(locator=locator, base_revision=0),
-        )
+        canonical = _seed_canonical_cursor(article, locator)
         client = _progress_client(article)
         path = f"/media/{article.media_id}/offline-reader-state"
         headers = {"X-Nexus-Expected-Account-Id": str(article.viewer_id)}
@@ -472,11 +437,18 @@ def test_offline_reader_state_get_attests_one_snapshot_of_cursor_and_generation(
             try:
                 call = pool.submit(client.get, path, headers=headers)
                 _await_blocked_publication_read(engine)
-                replace_reader_publication(
-                    publisher,
-                    media_id=article.media_id,
-                    expected_kind=MediaKind.web_article.value,
-                    replace_projection=lambda _media: None,
+                # The publisher's own entry mints immutable members from object
+                # storage; the fact this read must not straddle is only the
+                # committed generation advance, so this raises it directly.
+                publisher.execute(
+                    text(
+                        """
+                        UPDATE reader_publications
+                        SET generation = generation + 1, changed_at = now()
+                        WHERE media_id = :media_id
+                        """
+                    ),
+                    {"media_id": article.media_id},
                 )
                 publisher.commit()
             finally:

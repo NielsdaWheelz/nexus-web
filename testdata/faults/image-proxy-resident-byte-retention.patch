@@ -1,0 +1,18 @@
+diff --git a/python/nexus/services/image_proxy.py b/python/nexus/services/image_proxy.py
+--- a/python/nexus/services/image_proxy.py
++++ b/python/nexus/services/image_proxy.py
+@@ -8,6 +8,12 @@
+ )
+ 
+ 
++_retained: ValidatedImage | None = None
++
++
+ def fetch_image(url: str) -> ValidatedImage:
+-    with create_http_client() as client:
+-        return fetch_validated_image(url, client, decoder_limits=require_image_decoder_limits())
++    global _retained
++    if _retained is None:
++        with create_http_client() as client:
++            _retained = fetch_validated_image(url, client, decoder_limits=require_image_decoder_limits())
++    return _retained

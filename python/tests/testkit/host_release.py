@@ -284,7 +284,6 @@ def _nexus_worker_own(path: Path, *, mode: int = 0o700) -> None:
                 f"{mode:04o}",
             ),
             check=True,
-            capture_output=True,
         )
 
 

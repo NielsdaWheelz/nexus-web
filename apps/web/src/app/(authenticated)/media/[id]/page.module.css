@@ -119,7 +119,9 @@
 }
 
 .documentEmbedCard[data-document-embed-state="unsupported"],
-.documentEmbedCard[data-document-embed-state="failed"] {
+.documentEmbedCard[data-document-embed-state="failed"],
+.documentEmbedCard[data-document-embed-state="forbidden"],
+.documentEmbedCard[data-document-embed-state="missing"] {
   border-left-color: var(--danger);
 }
 

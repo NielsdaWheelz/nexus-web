@@ -16,6 +16,10 @@ from nexus.storage.client import StorageClientBase, StorageError, get_storage_cl
 from nexus.storage.read import read_object_checked
 
 _ASSET_KEY_RE = re.compile(r"^[a-zA-Z0-9_./-]+$")
+READER_ASSET_CONTENT_SECURITY_POLICY = (
+    "default-src 'none'; img-src 'self' data:; script-src 'none'; "
+    "object-src 'none'; base-uri 'none'"
+)
 _EPUB_ASSET_CONTENT_TYPES = frozenset(
     {
         "image/png",
@@ -130,8 +134,7 @@ def get_epub_asset_for_viewer(
 
     # SVG can carry script; lock served EPUB SVG assets down at the response level.
     content_security_policy = (
-        "default-src 'none'; img-src 'self' data:; script-src 'none'; "
-        "object-src 'none'; base-uri 'none'"
+        READER_ASSET_CONTENT_SECURITY_POLICY
         if asset_metadata.content_type == "image/svg+xml"
         else None
     )

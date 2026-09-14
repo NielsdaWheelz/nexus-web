@@ -7,39 +7,41 @@ from pathlib import Path
 
 import pytest
 
-from nexus.config import Environment
+from nexus.config import clear_settings_cache
 from nexus.errors import ApiErrorCode
-from nexus.services import node_ingest, web_article_ingest
+from nexus.services import node_ingest
 from nexus.services.node_ingest import (
     IngestError,
     NodeIngestCommand,
     NodeIngestProtocolDefect,
-    local_node_ingest_command,
     run_node_ingest,
 )
 
 
-def test_local_web_article_worker_composition_supplies_the_explicit_repo_node_command(
+def test_web_ingest_uses_the_configured_script_independently_of_data_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Risk: local workers select the missing image path or an ambient override."""
-
+    """Risk: an installed test worker infers a nonexistent checkout script."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://unused:unused@127.0.0.1:1/unused")
+    monkeypatch.setenv("SUPABASE_JWKS_URL", "http://127.0.0.1:1/auth/v1/.well-known/jwks.json")
+    monkeypatch.setenv("SUPABASE_ISSUER", "http://127.0.0.1:1/auth/v1")
+    monkeypatch.setenv("SUPABASE_AUDIENCES", "authenticated")
     monkeypatch.setenv("NODE_INGEST_SCRIPT", "/tmp/ambient-override.mjs")
-    result = web_article_ingest.run_web_article_node_ingest(
-        "http://127.0.0.1/private",
-        environment=Environment.TEST,
+    monkeypatch.setenv(
+        "NEXUS_NODE_INGEST_SCRIPT",
+        str(Path(__file__).resolve().parents[3] / "node/ingest/ingest.mjs"),
     )
-    assert result == IngestError(
-        error_code=ApiErrorCode.E_SSRF_BLOCKED,
-        message="Source cannot be fetched safely.",
-    )
-    command = local_node_ingest_command()
-    node = shutil.which("node")
-    assert node is not None
-    assert command.executable == Path(node).resolve(strict=True).as_posix()
-    assert command.script == (Path(__file__).resolve().parents[3] / "node/ingest/ingest.mjs")
-    assert web_article_ingest._node_ingest_command_for_environment(Environment.STAGING) is None
-    assert web_article_ingest._node_ingest_command_for_environment(Environment.PROD) is None
+    for environment in ("local", "test"):
+        monkeypatch.setenv("NEXUS_ENV", environment)
+        clear_settings_cache()
+        try:
+            result = run_node_ingest("http://127.0.0.1/private")
+            assert result == IngestError(
+                error_code=ApiErrorCode.E_SSRF_BLOCKED,
+                message="Source cannot be fetched safely.",
+            )
+        finally:
+            clear_settings_cache()
 
 
 def test_local_script_seam_uses_minimal_environment_and_redacts_egress_failure_detail(

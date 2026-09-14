@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/components/PdfReader.tsx b/apps/web/src/components/PdfReader.tsx
+--- a/apps/web/src/components/PdfReader.tsx
++++ b/apps/web/src/components/PdfReader.tsx
+@@ -2982,7 +2982,7 @@
+           withCredentials: false,
+           disableRange: false,
+           // PDF.js requires both flags to avoid streaming the complete source.
+-          disableStream: true,
++          disableStream: false,
+           disableAutoFetch: true,
+           cMapUrl: PDF_CMAP_URL,
+           cMapPacked: true,

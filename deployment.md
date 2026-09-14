@@ -457,28 +457,68 @@ unsupported-removal preflight likewise requires an additive replacement
 manifest on a new SHA, or a separate reviewed retirement operation; never edit
 the attempt or manifest in place.
 
+## Foreground capacity profiles
+
+three profiles are part of the published production config, not optional tuning.
+the api refuses to start without them and none has a default, so a config file
+missing any one of them is refused at publication rather than crash-looping on
+the host. every number in them is an output of the capacity qualification run;
+copy the values from that run's receipt and never invent or round them.
+
+| key | owner | contents |
+|---|---|---|
+| `API_READ_ADMISSION_LIMITS` | `nexus.api.read_admission` | `max_concurrency`, `max_image_concurrency`, `max_package_transfer_concurrency`, `retry_after_seconds`, `work_deadline_seconds`, `package_transfer_deadline_seconds`, `request_bytes` |
+| `IMAGE_DECODER_LIMITS` | `nexus.services.image_decoder` | `address_space_bytes`, `cpu_seconds`, `wall_seconds` |
+| `READER_PUBLICATION_LIMITS` | `nexus.config` | `unit_bytes`, `unit_codepoints`, `unit_dom_nodes`, `index_bytes`, `descriptor_bytes` |
+
+the admission concurrencies bound how much expensive read work the api holds at
+once; the deadlines bound how long one admitted permit may live, since a permit
+covers execution, serialization and body transfer and an unbounded one removes
+foreground capacity for as long as a stalled client keeps its connection open.
+`request_bytes` is the seventh number: a permit also covers the request body, so
+an admitted route refuses a declared or streamed body above it with `413
+E_REQUEST_TOO_LARGE` before taking a slot. it is a qualified number like the
+others and has no default.
+all three live in `deploy/env/env-prod-backend`; the merged content-addressed
+config is shared by the api and both workers.
+
+changing any of these values is a config-bearing release: it requires a new
+source sha, a fresh capacity qualification receipt, and the usual publication
+order in [`deploy/env/README.md`](deploy/env/README.md).
+
 ## Reader publication preflight
 
-Offline reading identifies a reader document by its publication generation.
-Revision `0216` creates one generation-`1` row per eligible `ready_for_reading`
-document at the instant it runs; a document that becomes ready afterwards is
-published by whichever application artifact is deployed, and an artifact that
-predates the publication owner cannot create that row. Such a document has no
-generation at all, so both offline routes fail closed forever.
-
-Before exposing the first reading-capable APK — and, because it is idempotent,
-before every later Android release — close that window explicitly:
+reader publications retain exact generations and their immutable member bytes.
+the additive migration supplies generation metadata for already-ready documents;
+existing data also needs worker-prepared members before the bounded reader is
+activated. the release-qualified `READER_PUBLICATION_LIMITS` profile above is
+required before this preflight runs.
 
 ```bash
-python -m nexus.ops.reader_publication_preflight census   # read-only report
-python -m nexus.ops.reader_publication_preflight rebuild  # publish the remainder
+python -m nexus.ops.reader_publication_preflight census   # metadata counts only
+python -m nexus.ops.reader_publication_preflight rebuild  # durably enqueue missing members
 ```
 
-`rebuild` publishes only documents that still have no publication row, at
-generation `1`, through the publication owner; it never reads an existing row as
-stale and never bumps one. It re-reads its census within a bounded number of
-passes and fails unless every eligible ready document carries a publication row.
-This is an application-data operation, not a release-controller flag.
+`rebuild` scans finite keyset pages. it atomically accepts any missing generation
+`1` row and its exact-generation background job; existing generations never
+advance. repeated acceptance deduplicates, and dead jobs remain available to the
+existing operator repair owner. no offline archive is built unless requested.
+
+let the candidate background worker finish those jobs. then use the existing
+release maintenance stop to fence ALL publication writers: old and candidate API,
+interactive workers, background workers, and administrative publication commands.
+while that stop remains in force, run the candidate's existing one-shot container:
+
+```bash
+python -m nexus.ops.reader_publication_preflight verify
+```
+
+`verify` fails on missing generations/members and checks each retained object,
+closed member graph, and unit/navigation query projection against its source.
+a descriptor row or a successful enqueue is insufficient. verification creates no
+archive and changes no data; its cost is a full source-byte read plus temporary
+file staging. keep writers stopped through the activation decision. these are
+application-data operations; the deployment owner enforces the maintenance stop.
 
 ## Infrastructure operations
 

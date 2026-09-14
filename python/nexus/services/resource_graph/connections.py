@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import and_, false, or_, select, tuple_
+from sqlalchemy import Integer, and_, column, false, func, or_, select, true, union_all, values
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock, ResourceEdge
@@ -28,7 +28,7 @@ from nexus.services.resource_graph.schemas import (
     is_neutral_link_shape,
     snapshot_from_jsonb,
 )
-from nexus.services.resource_items.capabilities import expand_owned_child_refs
+from nexus.services.resource_items.capabilities import owned_child_ref_queries
 from nexus.services.resource_items.routing import resource_activations_for_refs
 
 
@@ -40,15 +40,12 @@ def query_connections(db: Session, *, viewer_id: UUID, query: ConnectionQuery) -
     if query.limit < 1 or query.limit > 100:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "limit must be between 1 and 100")
 
-    expanded_refs = _expand_refs(db, viewer_id=viewer_id, refs=query.refs, rollup=query.rollup)
-    rows = _query_rows(db, viewer_id=viewer_id, refs=expanded_refs, query=query)
-    page_rows = rows[: query.limit]
-    next_cursor = _encode_cursor(page_rows[-1]) if len(rows) > query.limit else None
+    matches = _query_rows(db, viewer_id=viewer_id, query=query)
+    page_matches = matches[: query.limit]
+    page_rows = [row for row, _source_matched, _target_matched in page_matches]
+    next_cursor = _encode_cursor(page_rows[-1]) if len(matches) > query.limit else None
     endpoints = _hydrate_endpoints(db, viewer_id=viewer_id, rows=page_rows)
     link_notes = _link_notes_for_rows(db, viewer_id=viewer_id, rows=page_rows)
-    expanded_keys: set[tuple[ResourceScheme, UUID]] = {
-        (ref.scheme, ref.id) for ref in expanded_refs
-    }
     citation_projections = citation_reader_targets_for_edges(
         db,
         viewer_id=viewer_id,
@@ -68,30 +65,55 @@ def query_connections(db: Session, *, viewer_id: UUID, query: ConnectionQuery) -
                 row=row,
                 query_direction=query.direction,
                 endpoints=endpoints,
-                expanded_keys=expanded_keys,
+                source_matched=source_matched,
+                target_matched=target_matched,
                 citation_projection=citation_projections.get(row.id),
                 link_note=link_notes.get(row.id),
             )
-            for row in page_rows
+            for row, source_matched, target_matched in page_matches
         ),
         next_cursor=next_cursor,
     )
 
 
 def _query_rows(
-    db: Session, *, viewer_id: UUID, refs: tuple[ResourceRef, ...], query: ConnectionQuery
-) -> list[ResourceEdge]:
-    direction_clauses: list[Any] = []
-    if query.direction in ("incoming", "both"):
-        direction_clauses.append(
-            _endpoint_clause(ResourceEdge.target_scheme, ResourceEdge.target_id, refs)
-        )
-    if query.direction in ("outgoing", "both"):
-        direction_clauses.append(
-            _endpoint_clause(ResourceEdge.source_scheme, ResourceEdge.source_id, refs)
+    db: Session, *, viewer_id: UUID, query: ConnectionQuery
+) -> list[tuple[ResourceEdge, bool, bool]]:
+    children = (
+        [
+            child
+            for ref in query.refs
+            for child in owned_child_ref_queries(viewer_id=viewer_id, ref=ref)
+        ]
+        if query.rollup == "owner"
+        else []
+    )
+    child_refs = union_all(*children).subquery() if children else None
+
+    def endpoint_matches(scheme_column: Any, id_column: Any) -> Any:
+        direct = _endpoint_clause(scheme_column, id_column, query.refs)
+        if child_refs is None:
+            return direct
+        return or_(
+            direct,
+            select(child_refs.c.id)
+            .where(
+                child_refs.c.scheme == scheme_column,
+                child_refs.c.id == id_column,
+            )
+            .exists(),
         )
 
-    stmt = select(ResourceEdge).where(ResourceEdge.user_id == viewer_id, or_(*direction_clauses))
+    source_matched = endpoint_matches(ResourceEdge.source_scheme, ResourceEdge.source_id)
+    target_matched = endpoint_matches(ResourceEdge.target_scheme, ResourceEdge.target_id)
+    direction_clauses: list[Any] = []
+    if query.direction in ("incoming", "both"):
+        direction_clauses.append(target_matched)
+    if query.direction in ("outgoing", "both"):
+        direction_clauses.append(source_matched)
+    stmt = select(ResourceEdge, source_matched, target_matched).where(
+        ResourceEdge.user_id == viewer_id, or_(*direction_clauses)
+    )
     # Structural Link-note attachment edges never render as their own connection
     # (Invariant 12); they are folded onto their Link by _link_notes_for_rows.
     stmt = stmt.where(ResourceEdge.origin != "link_note")
@@ -117,7 +139,7 @@ def _query_rows(
                 query.limit + 1
             )
         )
-        .scalars()
+        .tuples()
         .all()
     )
 
@@ -174,14 +196,13 @@ def _connection_for_row(
     row: ResourceEdge,
     query_direction: str,
     endpoints: dict[str, ConnectionEndpoint],
-    expanded_keys: set[tuple[ResourceScheme, UUID]],
+    source_matched: bool,
+    target_matched: bool,
     citation_projection: CitationTargetProjection | None,
     link_note: ConnectionLinkNote | None,
 ) -> Connection:
     source_ref = ResourceRef(scheme=cast("ResourceScheme", row.source_scheme), id=row.source_id)
     target_ref = ResourceRef(scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id)
-    source_matched = (source_ref.scheme, source_ref.id) in expanded_keys
-    target_matched = (target_ref.scheme, target_ref.id) in expanded_keys
     matched_incoming = query_direction == "incoming" or (
         query_direction == "both" and target_matched and not source_matched
     )
@@ -240,8 +261,63 @@ def _is_neutral_link_row(row: ResourceEdge) -> bool:
     )
 
 
-_Pair = tuple[str, UUID]
 _PREVIEW_CHARS = 200
+
+
+def link_note_ids_for_pairs(
+    db: Session, *, viewer_id: UUID, pairs: tuple[tuple[ResourceRef, ResourceRef], ...]
+) -> tuple[UUID | None, ...]:
+    """Resolve each requested motif in SQL, without loading all attachment rows.
+
+    The authoring owner permits one note per Link. If older data contains more,
+    the earliest first-endpoint attachment (created_at, id) wins in both readers
+    and mutations. The endpoint order is the Link's canonical storage order.
+    """
+    if not pairs:
+        return ()
+    edge = ResourceEdge.__table__
+    wanted = values(
+        column("ordinal", Integer),
+        column("source_scheme", edge.c.source_scheme.type),
+        column("source_id", edge.c.source_id.type),
+        column("target_scheme", edge.c.target_scheme.type),
+        column("target_id", edge.c.target_id.type),
+        name="wanted_link_note",
+    ).data([(ordinal, a.scheme, a.id, b.scheme, b.id) for ordinal, (a, b) in enumerate(pairs)])
+    first = edge.alias("first_attachment")
+    second = edge.alias("second_attachment")
+    match = (
+        select(first.c.source_id.label("note_id"))
+        .where(
+            first.c.user_id == viewer_id,
+            first.c.origin == "link_note",
+            first.c.source_scheme == "note_block",
+            first.c.target_scheme == wanted.c.source_scheme,
+            first.c.target_id == wanted.c.source_id,
+            select(second.c.id)
+            .where(
+                second.c.user_id == viewer_id,
+                second.c.origin == "link_note",
+                second.c.source_scheme == "note_block",
+                second.c.source_id == first.c.source_id,
+                second.c.target_scheme == wanted.c.target_scheme,
+                second.c.target_id == wanted.c.target_id,
+            )
+            .correlate(first, wanted)
+            .exists(),
+        )
+        .order_by(first.c.created_at, first.c.id)
+        .limit(1)
+        .correlate(wanted)
+        .lateral("matched_link_note")
+    )
+    found = {
+        ordinal: note_id
+        for ordinal, note_id in db.execute(
+            select(wanted.c.ordinal, match.c.note_id).select_from(wanted.join(match, true()))
+        )
+    }
+    return tuple(found.get(ordinal) for ordinal in range(len(pairs)))
 
 
 def _link_notes_for_rows(
@@ -258,66 +334,38 @@ def _link_notes_for_rows(
     if not link_rows:
         return {}
 
-    endpoints: set[_Pair] = set()
-    for row in link_rows:
-        endpoints.add((row.source_scheme, row.source_id))
-        endpoints.add((row.target_scheme, row.target_id))
-
-    targets_by_note: dict[_Pair, set[_Pair]] = defaultdict(set)
-    for ss, si, ts, ti in db.execute(
-        select(
-            ResourceEdge.source_scheme,
-            ResourceEdge.source_id,
-            ResourceEdge.target_scheme,
-            ResourceEdge.target_id,
-        ).where(
-            ResourceEdge.user_id == viewer_id,
-            ResourceEdge.origin == "link_note",
-            tuple_(ResourceEdge.target_scheme, ResourceEdge.target_id).in_(endpoints),
-        )
-    ).all():
-        targets_by_note[(ss, si)].add((ts, ti))
-
-    note_for_edge: dict[UUID, _Pair] = {}
-    for row in link_rows:
-        pair = {(row.source_scheme, row.source_id), (row.target_scheme, row.target_id)}
-        for note_key, note_targets in targets_by_note.items():
-            if pair <= note_targets:
-                note_for_edge[row.id] = note_key
-                break
-
-    previews = _note_previews(db, note_keys=set(note_for_edge.values()))
+    note_ids = link_note_ids_for_pairs(
+        db,
+        viewer_id=viewer_id,
+        pairs=tuple(
+            (
+                ResourceRef(scheme=cast("ResourceScheme", row.source_scheme), id=row.source_id),
+                ResourceRef(scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id),
+            )
+            for row in link_rows
+        ),
+    )
+    present = {note_id for note_id in note_ids if note_id is not None}
+    previews = (
+        {
+            note_id: preview
+            for note_id, preview in db.execute(
+                select(NoteBlock.id, func.substr(NoteBlock.body_text, 1, _PREVIEW_CHARS)).where(
+                    NoteBlock.id.in_(present)
+                )
+            )
+        }
+        if present
+        else {}
+    )
     return {
-        edge_id: ConnectionLinkNote(
-            ref=ResourceRef(scheme=cast("ResourceScheme", note_key[0]), id=note_key[1]),
-            preview=previews.get(note_key[1]),
+        row.id: ConnectionLinkNote(
+            ref=ResourceRef(scheme="note_block", id=note_id),
+            preview=previews.get(note_id) or None,
         )
-        for edge_id, note_key in note_for_edge.items()
+        for row, note_id in zip(link_rows, note_ids, strict=True)
+        if note_id is not None
     }
-
-
-def _note_previews(db: Session, *, note_keys: set[_Pair]) -> dict[UUID, str | None]:
-    ids = [key[1] for key in note_keys if key[0] == "note_block"]
-    if not ids:
-        return {}
-    return {
-        block_id: (body_text[:_PREVIEW_CHARS] if body_text else None)
-        for block_id, body_text in db.execute(
-            select(NoteBlock.id, NoteBlock.body_text).where(NoteBlock.id.in_(ids))
-        ).all()
-    }
-
-
-def _expand_refs(
-    db: Session, *, viewer_id: UUID, refs: tuple[ResourceRef, ...], rollup: str
-) -> tuple[ResourceRef, ...]:
-    out: dict[str, ResourceRef] = {}
-    for ref in refs:
-        out.setdefault(ref.uri, ref)
-        if rollup == "owner":
-            for child in expand_owned_child_refs(db, viewer_id=viewer_id, ref=ref):
-                out.setdefault(child.uri, child)
-    return tuple(out.values())
 
 
 def _encode_cursor(edge: ResourceEdge) -> str:

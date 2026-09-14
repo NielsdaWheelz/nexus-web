@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyHtml.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyHtml.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyHtml.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyHtml.kt
+@@ -126,7 +126,7 @@
+                         list.relative = false
+                     }
+                     database.execSQL("INSERT INTO html_list_numbers VALUES(?, ?, ?, ?, ?)", arrayOf(fragmentOrdinal, id, list.ordinal, list.next.toString(), if (list.relative) 1 else 0))
+-                    list.next = (list.next.toLong() + if (list.reversed) -1 else 1).coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()
++                    list.next = (list.next.toLong() + 1).coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()
+                     list.count += 1
+                 }
+                 database.execSQL("INSERT INTO html_nodes VALUES(?, ?, ?, 'Element', ?, ?, ?, ?, ?)",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Sequence
 from datetime import datetime
@@ -1373,3 +1374,54 @@ def read_events(db: Session, *, owner: HistoryOwner) -> list[dict[str, object]]:
         (dict(row._mapping) for row in rows),
         key=lambda event: (event["occurred_at"], event["id"]),
     )
+
+
+def seed_nexus_history_growth(
+    db: Session, viewer_id: UUID, *, first: int, last: int, repeated_target: bool = False
+) -> str:
+    """Append a distinct-target or repeat-heavy history prefix; return recipe identity."""
+    if repeated_target:
+        other = """
+            INSERT INTO nexus_usages
+                (id, user_id, query_normalized, target_href, label_snapshot, source,
+                 use_count, visit_timestamps, last_used_at)
+            SELECT lpad(to_hex(200000 + i), 32, '0')::uuid, :viewer,
+                CASE WHEN i % 2 = 0 THEN '' ELSE 'reader' END,
+                '/media/' || lpad(to_hex(i / 2 + 2), 32, '0')::uuid::text,
+                'other-' || (i / 2)::text || ':' ||
+                    CASE WHEN i % 2 = 0 THEN 'blank' ELSE 'reader' END,
+                CASE WHEN i % 2 = 0 THEN 'Search' ELSE 'Workspace' END,
+                1, jsonb_build_array(now()::text), now() - (i / 2 + 1) * interval '1 minute'
+            FROM generate_series(0, 9) AS i
+        """
+        if first == 0:
+            db.execute(text(other), {"viewer": viewer_id})
+        recipe = """
+        INSERT INTO nexus_usages
+            (id, user_id, query_normalized, target_href, label_snapshot, source,
+             use_count, visit_timestamps, last_used_at)
+        SELECT lpad(to_hex(i + 1), 32, '0')::uuid, :viewer,
+            'query-' || i::text, :target, 'repeat-' || i::text,
+            CASE WHEN i % 2 = 0 THEN 'Static' ELSE 'Oracle' END,
+            1, jsonb_build_array(now()::text), now()
+        FROM generate_series(CAST(:first AS INTEGER), CAST(:last AS INTEGER)) AS i
+    """
+        db.execute(
+            text(recipe),
+            {"viewer": viewer_id, "target": f"/media/{UUID(int=1)}", "first": first, "last": last},
+        )
+        return hashlib.sha256((other + recipe).encode()).hexdigest()
+    recipe = """
+        INSERT INTO nexus_usages
+            (id, user_id, query_normalized, target_href, label_snapshot, source,
+             use_count, visit_timestamps, last_used_at)
+        SELECT lpad(to_hex(i + 1), 32, '0')::uuid, :user_id,
+            CASE WHEN i % 2 = 0 THEN '' ELSE 'reader' END,
+            '/media/' || lpad(to_hex(i / 2 + 1), 32, '0')::uuid::text,
+            'target-' || (i / 2)::text || ':' || CASE WHEN i % 2 = 0 THEN 'blank' ELSE 'reader' END,
+            'Search', 2, jsonb_build_array(now()::text),
+            now() - (i / 2) * interval '1 minute'
+        FROM generate_series(CAST(:first AS INTEGER), CAST(:last AS INTEGER)) AS i
+    """
+    db.execute(text(recipe), {"user_id": viewer_id, "first": first, "last": last})
+    return hashlib.sha256(recipe.encode()).hexdigest()

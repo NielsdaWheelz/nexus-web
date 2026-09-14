@@ -6,6 +6,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, model_validator
 
 X_AUTHOR_THREAD_PROVIDER_ID_PREFIX = "author-thread:"
 X_POST_PROVIDER_ID_PREFIX = "post:"
@@ -117,6 +120,25 @@ class XSinglePostSnapshot:
     post: XPostSnapshot
     users: Mapping[str, XUserSnapshot]
     media: Mapping[str, XMediaSnapshot]
+
+
+class XPostSourceCheckpoint(BaseModel):
+    """An already acquired parent snapshot owned by the child's existing source attempt."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    version: Literal[1] = 1
+    parent_source_attempt_id: UUID
+    snapshot: XSinglePostSnapshot
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> XPostSourceCheckpoint:
+        if (
+            self.snapshot.requested_post_id != self.snapshot.post.id
+            or self.snapshot.canonical_url != canonical_x_post_url(self.snapshot.post.id)
+        ):
+            raise ValueError("X source checkpoint must describe exactly its requested post")
+        return self
 
 
 def canonical_x_post_url(post_id: str) -> str:

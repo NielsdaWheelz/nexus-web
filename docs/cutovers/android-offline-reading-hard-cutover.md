@@ -747,6 +747,19 @@ idempotent convergence path.
   WebView cookie session is unavailable, intent remains and becomes
   `AuthorizationRequired`; no background credential is invented.
 
+### download publication selection
+
+`Enqueue` freezes a positive publication generation before native intent commits.
+The location-independent “download current copy” action selects the current
+immutable descriptor at invocation, then uses its generation, title, and kind.
+Descriptor failure aborts enqueue. Preparation, token minting, interruption, and
+explicit retry retain that generation; none reselects a newer publication.
+An older visible pane does not change this command's selection semantics.
+
+Native preparation remains the scheduling owner. Its persisted
+`Queued: Preparation` state displays “preparing downloaded copy”; the web UI
+starts no preparation poller.
+
 ### Web capability
 
 Add one new WebKit object `nexusOfflineReading`; keep `nexusOfflineMedia`
@@ -761,6 +774,7 @@ type ReadingCommand =
   | GetSnapshot
   | Enqueue<{
       mediaId: MediaId;
+      readerGeneration: number; // positive selected publication generation
       mediaKind: "WebArticle" | "Epub" | "Pdf";
       requestedTitle: string;
     }>
@@ -961,11 +975,17 @@ Deployment:
 1. Complete target-36 cut.
 2. Deploy/prove Cut 1. Rollback is the prior immutable web artifact.
 3. Deploy Cut-2 additive migration/API. Rollback deploys the prior application
-   artifact **against the migrated DB**; never downgrade the database. Because
-   no offline client exists yet, the Cut-3 preflight
-   `python -m nexus.ops.reader_publication_preflight rebuild` rebuilds
-   publication rows from the then-current canonical projection at generation `1`
-   before exposing the first reading-capable APK.
+   artifact **against the migrated DB**; never downgrade the database.
+   the original Cut-3 preflight supplied missing generation-`1` publication rows.
+   for the bounded-workspace successor, `reader_publication_preflight rebuild`
+   now atomically enqueues exact-generation immutable member preparation. let the
+   candidate background worker finish, stop ALL old/candidate publication writers
+   through the existing release maintenance owner, then run
+   `python -m nexus.ops.reader_publication_preflight verify` in the candidate's
+   one-shot container before activation. verification checks exact member bytes
+   and query projections; enqueue or descriptor existence never proves readiness.
+   keep that maintenance stop through activation; see the authoritative commands
+   in [deployment.md](../../deployment.md#reader-publication-preflight).
 4. Deploy Cut-3 API/BFF/Caddy/web assets before distributing the APK. Old APKs
    continue audio. New APK advertises hosted reading only after the fixed
    account-binding response declares protocol/schema 1.

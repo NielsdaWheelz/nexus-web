@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/api/resourceCache.tsx b/apps/web/src/lib/api/resourceCache.tsx
+--- a/apps/web/src/lib/api/resourceCache.tsx
++++ b/apps/web/src/lib/api/resourceCache.tsx
+@@ -96,7 +96,7 @@
+   retainReaderSourceInput(input: ReaderPulseInput): { readonly kind: "Acquired"; readonly lease: ReaderSourceInputLease } | { readonly kind: "Capacity"; readonly reason: "Payload" } {
+     const bytes = publicationPayloadBytes(input);
+     if (!this.makePublicationPayloadRoom(bytes)) return { kind: "Capacity", reason: "Payload" };
+-    this.publicationPayloadBytes += bytes;
++    // Fault: pending source input retains no account charge.
+     let released = false;
+     return { kind: "Acquired", lease: { cache: this, release: () => {
+       if (released) return;

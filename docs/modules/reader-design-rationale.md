@@ -190,16 +190,19 @@ sync hook would blur.
   nullable jsonb `locator` and a monotonic bigint `revision` (starts `1`,
   authoritative — `updated_at` is metadata only, not a conflict token).
   `locator IS NULL` is an internal revisioned Empty reset tombstone.
-- `GET /api/media/{id}/reader-state` returns exactly
+- `GET /api/media/{id}/offline-reader-state` returns the cursor inside its
+  account and generation attestation; the cursor itself is exactly
   `{state:"Empty",revision>=0}` or
-  `{state:"Positioned",revision>=1,locator}`, never raw `null`; Empty revision
-  `0` means no row and Empty revision `>=1` is a persisted tombstone
-- `PUT /api/media/{id}/reader-state` takes the bare `CursorWrite`
-  (`{locator, base_revision}`) — no wrapping envelope and no sibling block;
-  old bare locators, extra fields, and a top-level `null` clear are rejected
-  with `400`
-- a matching `base_revision` replaces the cursor and increments `revision`; a
-  stale `base_revision` returns `409` with the exact current snapshot and
+  `{state:"Positioned",revision>=1,locator,source}`, never raw `null`; Empty
+  revision `0` means no row and Empty revision `>=1` is a persisted tombstone
+- `PUT /api/media/{id}/offline-reader-state` takes
+  `{expectedReaderGeneration, baseRevision, locator}` — no wrapping envelope
+  and no sibling block; old bare locators, extra fields, and a top-level
+  `null` clear are rejected with `400`. One account-bound, generation-fenced
+  writer owns this row: a second route that could write a locator no
+  generation attests is what the provenance contract exists to prevent
+- a matching `baseRevision` replaces the cursor and increments `revision`; a
+  stale `baseRevision` returns `409` with the exact current snapshot and
   mutates nothing and records no engagement
 - an equal desired locator is idempotent success at the current revision — the
   cursor does not advance, but the save still records engagement, because "the
@@ -374,14 +377,16 @@ source passage.
 
 ### epub request surface
 
-- epub navigation is sourced from `GET /api/media/{id}/navigation`
-- epub section content is sourced from
-  `GET /api/media/{id}/sections/{section_id}`
-- `section_id` is path-encoded and may contain `/`
+- epub navigation is sourced from the selected publication's index chain,
+  `GET /api/media/{id}/reader-publications/{generation}/index`
+- epub content is sourced one bounded unit at a time from
+  `GET /api/media/{id}/reader-publications/{generation}/units/{key}`
+- `section_id` identifies a section of that publication, not a source path
 - `#loc-<section_id>` is the one-shot reader target shape; `?loc={section_id}`
   is the pane-local coarse address state that replace writes — not a
   Back/Forward checkpoint
-- the reader no longer depends on removed chapter manifests or toc fetches
+- the reader no longer depends on removed chapter manifests, toc fetches, or
+  the whole-document `navigation`/`sections` routes
 
 ## regression strategy
 

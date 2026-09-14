@@ -148,7 +148,9 @@ describe("resolveResourceActionPlan final semantic contract", () => {
     });
   });
 
-  it("confirms the honest text-only limitation only for a first web-article download", () => {
+  it("offers a first web-article download as the current copy without a text-only warning", () => {
+    // Schema-2 reading packages carry the article's captured images, so the
+    // text-only limitation the earlier package format had to confess is gone.
     const action = actionWithIntent(finalPlan([{
       kind: "OfflineReading",
       availability: AVAILABLE,
@@ -160,12 +162,8 @@ describe("resolveResourceActionPlan final semantic contract", () => {
         offlineReading: { kind: "Ready", byRef: new Map() },
       }),
     }), "OfflineDownload");
-    expect(action.confirmation).toEqual({
-      kind: "Required",
-      title: "Download text-only copy?",
-      body: "Downloaded web articles include readable text but not images.",
-      confirmLabel: "Download text-only copy",
-    });
+    expect(action.presentation.label).toBe("Download current copy");
+    expect(action.confirmation).toEqual({ kind: "None" });
   });
 
   it("confirms reading removal when a device position would be discarded", () => {

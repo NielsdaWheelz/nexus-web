@@ -59,10 +59,44 @@ Reflowable anchors use canonical codepoint offsets, not DOM ranges. The browser
 maps selections to offsets with the highlight cursor helpers, and the backend
 validates offsets against the stored fragment text before writing.
 
-PDF anchors use page-space coordinates and text-layer match metadata. Geometry
-is canonical; rendered viewport coordinates are derived presentation state.
-PDF writes serialize through the PDF highlight geometry owner so duplicate and
-match-state decisions are made against current anchor rows.
+pdf geometry belongs to exact source bytes. creation, link selection, and explicit
+bounds edits require `reader_generation`; the write authorizes that retained
+publication and records its verified pdf asset `source_sha256`. title-only
+publications share that digest. page bounds and literal text matching use the
+selected publication, including its original raw text, indexed page spans, and
+frozen quote readiness. a present empty page span never searches another page.
+
+migration 0230 stamps `media_file.source_sha256` onto null anchors of pdf media
+exactly where the binary history proves the bytes were unchanged when the anchor
+was authored: the media has never republished (`reader_publications.generation =
+1`), or the anchor is newer than the last republication (`created_at >=
+reader_publications.changed_at`). anchors outside that proof keep their null
+digest deliberately — an unprovable digest is never backfilled from the current
+pointer.
+
+those remaining null digests stay visible on full detail and the evidence
+sidebar but cannot paint or locate automatically. explicit bounds editing
+reattaches them; color/note edits do not. the reader-target route no longer
+answers a false 404 for them: `resolve_highlight_reader_target_disposition`
+reports `resolved` / `source_unverified` / `unavailable`, and a
+`source_unverified` anchor is answered as the typed
+`UnresolvedSource` member of `ResolvedHighlightReaderTarget` (client decoder
+`readerTargetHash.ts`), which the reader renders as the unverified-position
+affordance rather than erasing the requested highlight. a target is still
+withheld from public sharing unless its status is `resolved`. unknown digests
+are still refused before consulting current page dimensions.
+
+paint is a bounded selected-generation query:
+`POST /media/{id}/reader-publications/{g}/pdf-highlights`, with
+`{page_number,mine_only,after,limit}`. its page returns a common source digest,
+compact geometry rows, and a signed continuation. authored text and related
+bodies remain explicit detail reads. the former unbounded page-list get is
+retired at the publication cutover.
+
+pdf writes take the existing coordination and duplicate locks, then reload the
+locked highlight, anchor, and quads before comparing effective state. exact
+quantized ordered-quad equality runs in sql and returns only a matching id.
+no-op acknowledgments describe locked stored state, not an earlier pane read.
 
 Reader projection is not persisted. The reader may derive visible row anchors
 from rendered DOM segments or PDF viewport transforms, but that state belongs to
@@ -82,8 +116,8 @@ candidate, or an existing apparatus/index row) is a separate table,
 `passage_anchors` — user-owned, keyed by owner (`media`/`note_block`) plus an
 immutable `anchor_key` hash of the normalized quote, with a replaceable
 `locator_hint`. It shares the highlight module's quote-matching primitives
-(`services/text_quote.py`, `services/pdf_quote_match.py`, and the shared
-`services/locator_resolver.py` that both Highlights and passage anchors call)
+(`services/text_quote.py` and the shared `services/locator_resolver.py` that
+both Highlights and passage anchors call)
 but is not a highlight row and never becomes a visible Highlight on its own —
 a search-derived PDF passage in particular is a passage anchor, never a
 geometry-only Highlight.

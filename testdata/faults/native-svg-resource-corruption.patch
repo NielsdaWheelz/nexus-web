@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt
+@@ -239,6 +239,8 @@
+         return try {
+             file.inputStream().use { parser.parse(InputSource(it)) }
+             rootSeen
++        } catch (_: java.io.IOException) {
++            false
+         } catch (_: InvalidSvgSource) {
+             false
+         } catch (error: SAXParseException) {

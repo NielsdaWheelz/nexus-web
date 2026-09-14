@@ -205,6 +205,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
     private lateinit var audioProcessorChain: DefaultAudioSink.DefaultAudioProcessorChain
     private lateinit var savedTime: SavedTimeAccounting
     private lateinit var consumptionRecorder: NativeConsumptionRecorder
+    private lateinit var artwork: NexusCurrentArtwork
     private lateinit var activityOutbox: NativeActivityOutbox
     private lateinit var offlineMediaStore: OfflineMediaStore
     private lateinit var remoteMediaSourceFactory: DefaultMediaSourceFactory
@@ -264,10 +265,14 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             )
             .build()
         activityOutbox = NativeActivityOutbox(this)
+        val origin = NexusOriginClient()
+        // UNQUALIFIED native artwork experiment; actual-device allocation is a
+        // release gate. At most one producer and one current-track derivative.
+        artwork = NexusCurrentArtwork(player, serviceScope, NexusArtworkReader(origin, maxDimension = 1024))
         consumptionRecorder = NativeConsumptionRecorder(
             context = this,
             scope = serviceScope,
-            client = NexusOriginClient(),
+            client = origin,
             activityOutbox = activityOutbox,
             readPlayback = ::recorderPlaybackSample,
             onListeningStateAccepted = ::installAcceptedListeningState,
@@ -313,6 +318,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
 
     override fun onDestroy() {
         checkpointSavedTime()
+        artwork.clear()
         releasePlaybackSource()
         consumptionRecorder.close()
         timelineJob?.cancel()
@@ -617,6 +623,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         accountId = command.accountId
         consumptionRecorder.openActivityOutbox(command.accountId)
         consumptionRecorder.retryPersistence()
+        artwork.retry(command.accountId, loaded?.sessionKey)
         refreshControllerAvailableCommands()
         return PlayerWire.connected(
             command.requestId,
@@ -638,6 +645,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
             PlayerRejectionCode.AccountMismatch,
         )
         checkpointSavedTime()
+        artwork.clear()
         releasePlaybackSource()
         persistenceDrained = false
         val descriptor = command.session.descriptor
@@ -686,6 +694,8 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         }
         player.prepare()
         player.play()
+        artwork.install(connectedAccount, command.sessionKey,
+            (descriptor.artworkUrl as? Presence.Present)?.value?.let { NativeArtworkSource(it) })
         startSavedTimeEpoch()
         publishSnapshot()
         return PlayerWire.accepted(command.requestId)
@@ -693,7 +703,11 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
 
     private fun loadPreview(command: PlayerCommand.LoadPreview): String {
         loadReplayReply(command.sessionKey, command)?.let { return it }
+        val connectedAccount = accountId ?: return PlayerWire.rejected(
+            command.requestId, PlayerRejectionCode.AccountMismatch,
+        )
         checkpointSavedTime()
+        artwork.clear()
         releasePlaybackSource()
         persistenceDrained = false
         consumptionRecorder.dismiss()
@@ -715,6 +729,8 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         )
         player.prepare()
         player.play()
+        artwork.install(connectedAccount, command.sessionKey,
+            (command.descriptor.imageUrl as? Presence.Present)?.value?.let(::artworkSourceFromProxyPath))
         savedTime.clearEpoch()
         publishSnapshot()
         return PlayerWire.accepted(command.requestId)
@@ -991,6 +1007,7 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
 
     private fun dismiss(discardRecorder: Boolean = false) {
         checkpointSavedTime()
+        artwork.clear()
         releasePlaybackSource()
         if (discardRecorder) {
             consumptionRecorder.discardPending()
@@ -1486,11 +1503,6 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         return MediaMetadata.Builder()
             .setTitle(descriptor.title)
             .setArtist((descriptor.subtitle as? Presence.Present)?.value)
-            .apply {
-                (descriptor.artworkUrl as? Presence.Present)?.value?.let {
-                    setArtworkUri(android.net.Uri.parse(it))
-                }
-            }
             .build()
     }
 
@@ -1498,11 +1510,6 @@ class NexusPlaybackService : MediaSessionService(), Player.Listener {
         return MediaMetadata.Builder()
             .setTitle(descriptor.title)
             .setArtist(descriptor.source)
-            .apply {
-                (descriptor.imageUrl as? Presence.Present)?.value?.let {
-                    setArtworkUri(android.net.Uri.parse(it))
-                }
-            }
             .build()
     }
 

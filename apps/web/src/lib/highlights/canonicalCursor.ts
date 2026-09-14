@@ -28,32 +28,20 @@ export function validateCanonicalText(
     return true;
   }
 
-  const emittedCps = [...result.emitted];
-  const expectedCps = [...expectedCanonicalText];
-  let firstDiffIdx = -1;
-  for (let i = 0; i < Math.max(emittedCps.length, expectedCps.length); i++) {
-    if (emittedCps[i] !== expectedCps[i]) {
-      firstDiffIdx = i;
-      break;
-    }
+  const emitted = result.emitted[Symbol.iterator]();
+  const expected = expectedCanonicalText[Symbol.iterator]();
+  let firstDiffIdx = 0;
+  while (true) {
+    const left = emitted.next();
+    const right = expected.next();
+    if (left.done !== right.done || left.value !== right.value) break;
+    firstDiffIdx += 1;
   }
   console.warn("canonical_text_mismatch", {
     fragmentId,
     emittedLength: result.length,
     expectedLength: codepointLength(expectedCanonicalText),
     firstDiffIdx,
-    emittedAround: emittedCps
-      .slice(Math.max(0, firstDiffIdx - 20), firstDiffIdx + 20)
-      .join(""),
-    expectedAround: expectedCps
-      .slice(Math.max(0, firstDiffIdx - 20), firstDiffIdx + 20)
-      .join(""),
-    emittedCharCodes: emittedCps
-      .slice(firstDiffIdx, firstDiffIdx + 5)
-      .map((codepoint) => codepoint.codePointAt(0)?.toString(16)),
-    expectedCharCodes: expectedCps
-      .slice(firstDiffIdx, firstDiffIdx + 5)
-      .map((codepoint) => codepoint.codePointAt(0)?.toString(16)),
   });
   return false;
 }

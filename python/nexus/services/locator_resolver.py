@@ -18,12 +18,32 @@ from nexus.services.text_quote import QuoteStatus
 
 ResolverStatus = Literal["resolved", "unresolved", "no_geometry"]
 
+HighlightReaderTargetStatus = Literal["resolved", "source_unverified", "unavailable"]
+
 
 @dataclass(frozen=True)
 class LocatorResolution:
     params: dict[str, str]
     status: ResolverStatus
     highlight: dict[str, Any] | None
+
+
+@dataclass(frozen=True, slots=True)
+class HighlightReaderTargetResolution:
+    """Whether one highlight still addresses the published document it names.
+
+    ``source_unverified`` names a PDF anchor whose authored geometry cannot be
+    attributed to the currently published binary: either no digest was ever
+    recorded against it, or the recorded digest belongs to a superseded binary.
+    The authored record is intact and readable; only its reader target is
+    withheld, because painting that geometry over different bytes would
+    substitute current content beneath an old locator. Callers offer the explicit
+    reanchoring choice for it and must never report it as a missing highlight.
+    ``unavailable`` is the highlight the reader genuinely has no facts for.
+    """
+
+    status: HighlightReaderTargetStatus
+    target: ResolvedHighlightReaderTarget | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,11 +67,21 @@ def resolve_highlight_reader_target(
     *,
     highlight_id: UUID,
 ) -> ResolvedHighlightReaderTarget | None:
+    """Return only the reader target, for callers that present no disposition."""
+    return resolve_highlight_reader_target_disposition(db, highlight_id=highlight_id).target
+
+
+def resolve_highlight_reader_target_disposition(
+    db: Session,
+    *,
+    highlight_id: UUID,
+) -> HighlightReaderTargetResolution:
     """Resolve one highlight against current reader-owned source rows.
 
     This trusted read performs no authorization. Authenticated and public
     callers must establish their own audience authority before calling it.
-    Missing, incoherent, stale, and unsupported anchor facts return ``None``.
+    Unattributable PDF provenance is reported as ``source_unverified``; missing,
+    incoherent and unsupported anchor facts are ``unavailable``.
     """
     row = (
         db.execute(
@@ -70,6 +100,13 @@ def resolve_highlight_reader_target(
                        f.t_end_ms,
                        nav.location_id AS section_id,
                        hpa.page_number,
+                       hpa.source_sha256,
+                       EXISTS (SELECT 1 FROM reader_publications rp
+                           JOIN reader_publication_artifacts rpa ON rpa.media_id = rp.media_id
+                             AND rpa.generation = rp.generation
+                           WHERE rp.media_id = h.anchor_media_id
+                             AND rpa.role = 'asset' AND rpa.media_type = 'application/pdf'
+                             AND rpa.sha256 = hpa.source_sha256) AS pdf_source_matches,
                        ppts.page_width,
                        ppts.page_height
                 FROM highlights h
@@ -102,10 +139,12 @@ def resolve_highlight_reader_target(
         .first()
     )
     if row is None:
-        return None
+        return HighlightReaderTargetResolution(status="unavailable", target=None)
 
     raw_quads: list[dict[str, object]] | None = None
     if row["anchor_kind"] == "pdf_page_geometry":
+        if row["source_sha256"] is None or not row["pdf_source_matches"]:
+            return HighlightReaderTargetResolution(status="source_unverified", target=None)
         raw_quads = [
             dict(quad)
             for quad in (
@@ -126,7 +165,7 @@ def resolve_highlight_reader_target(
         ]
 
     fragment_id = row["fragment_id"]
-    return reader_locations.resolved_highlight_reader_target(
+    target = reader_locations.resolved_highlight_reader_target(
         media_kind=str(row["media_kind"]),
         anchor_kind=str(row["anchor_kind"]),
         fragment_id=UUID(str(fragment_id)) if fragment_id is not None else None,
@@ -142,7 +181,11 @@ def resolve_highlight_reader_target(
         page_width=float(row["page_width"]) if row["page_width"] is not None else None,
         page_height=float(row["page_height"]) if row["page_height"] is not None else None,
         pdf_quads=raw_quads,
+        source_sha256=row["source_sha256"],
     )
+    if target is None:
+        return HighlightReaderTargetResolution(status="unavailable", target=None)
+    return HighlightReaderTargetResolution(status="resolved", target=target)
 
 
 def resolve_passage_selector(
@@ -726,87 +769,64 @@ def _resolve_transcript_selector(
     return LocatorResolution(params=params, status="unresolved", highlight=None)
 
 
+def evidence_span_snapshot_matches_sql() -> str:
+    """Exact source-block equality for the caller's checked-in `es` alias.
+
+    Compare each source slice with its place in the stored span, without joining
+    complete block strings in foreground Python or aggregating them in SQL.
+    Source block ordinals are unique per owner; count plus endpoint bounds proves
+    the same contiguous interval that the existing resolver requires.
+    """
+    return """
+        EXISTS (
+            WITH source AS (
+                SELECT cb.block_idx, cb.canonical_text,
+                       start_block.block_idx AS first_idx, end_block.block_idx AS last_idx,
+                       CASE WHEN cb.id = es.start_block_id THEN es.start_block_offset ELSE 0 END AS lo,
+                       CASE WHEN cb.id = es.end_block_id THEN es.end_block_offset
+                            ELSE char_length(cb.canonical_text) END AS hi
+                FROM content_blocks start_block
+                JOIN content_blocks end_block ON end_block.id = es.end_block_id
+                  AND end_block.owner_kind = es.owner_kind AND end_block.owner_id = es.owner_id
+                JOIN content_blocks cb ON cb.owner_kind = es.owner_kind AND cb.owner_id = es.owner_id
+                  AND cb.block_idx BETWEEN start_block.block_idx AND end_block.block_idx
+                WHERE start_block.id = es.start_block_id
+                  AND start_block.owner_kind = es.owner_kind AND start_block.owner_id = es.owner_id
+            ), pieces AS (
+                SELECT *, lo >= 0 AND hi >= lo AND hi <= char_length(canonical_text) AS valid,
+                       CASE WHEN lo >= 0 AND hi >= lo AND hi <= char_length(canonical_text)
+                            THEN substring(canonical_text from lo + 1 for hi - lo) END AS piece
+                FROM source
+            ), positioned AS (
+                SELECT *, coalesce(sum(char_length(piece)) OVER (
+                    ORDER BY block_idx ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                ), 0)::integer AS span_start
+                FROM pieces
+            )
+            SELECT 1 FROM positioned
+            HAVING count(*) = max(last_idx) - min(first_idx) + 1
+               AND bool_and(valid)
+               AND sum(char_length(piece)) = char_length(es.span_text)
+               AND bool_and(piece COLLATE "C" = substring(es.span_text from span_start + 1 for char_length(piece)) COLLATE "C")
+        )
+    """
+
+
 def _evidence_span_snapshot_matches(
     db: Session,
     *,
     evidence_span_id: UUID,
     exact: str,
 ) -> bool:
-    rows = (
-        db.execute(
+    return bool(
+        db.scalar(
             text(
-                """
-                SELECT
-                    es.span_text,
-                    es.start_block_id,
-                    es.end_block_id,
-                    es.start_block_offset,
-                    es.end_block_offset,
-                    start_block.block_idx AS start_block_idx,
-                    end_block.block_idx AS end_block_idx,
-                    cb.id AS block_id,
-                    cb.block_idx,
-                    cb.canonical_text
-                FROM evidence_spans es
-                JOIN content_blocks start_block
-                  ON start_block.id = es.start_block_id
-                 AND start_block.owner_kind = es.owner_kind AND start_block.owner_id = es.owner_id
-                JOIN content_blocks end_block
-                  ON end_block.id = es.end_block_id
-                 AND end_block.owner_kind = es.owner_kind AND end_block.owner_id = es.owner_id
-                JOIN content_blocks cb
-                  ON cb.owner_kind = es.owner_kind AND cb.owner_id = es.owner_id
-                 AND cb.block_idx BETWEEN start_block.block_idx AND end_block.block_idx
-                WHERE es.id = :evidence_span_id
-                ORDER BY cb.block_idx ASC
-                """
+                f'SELECT es.span_text COLLATE "C" = :exact COLLATE "C" AND {evidence_span_snapshot_matches_sql()} '
+                "FROM evidence_spans es WHERE es.id = :evidence_span_id"
             ),
-            {"evidence_span_id": evidence_span_id},
+            {"evidence_span_id": evidence_span_id, "exact": exact},
         )
-        .mappings()
-        .all()
     )
-    if not rows:
-        return False
-
-    parts: list[str] = []
-    start_idx = int(rows[0]["start_block_idx"])
-    end_idx = int(rows[0]["end_block_idx"])
-    if start_idx > end_idx:
-        return False
-    expected_block_idx = start_idx
-    for row in rows:
-        block_idx = int(row["block_idx"])
-        if block_idx != expected_block_idx:
-            return False
-        block_text = str(row["canonical_text"] or "")
-        if block_idx == start_idx:
-            block_start = int(row["start_block_offset"])
-        else:
-            block_start = 0
-        if block_idx == end_idx:
-            block_end = int(row["end_block_offset"])
-        else:
-            block_end = len(block_text)
-        if block_start < 0 or block_end < block_start or block_end > len(block_text):
-            return False
-        parts.append(block_text[block_start:block_end])
-        expected_block_idx += 1
-
-    reconstructed = "".join(parts)
-    if expected_block_idx != end_idx + 1:
-        return False
-
-    first_row = rows[0]
-    last_row = rows[-1]
-    if (
-        first_row["block_id"] != first_row["start_block_id"]
-        or last_row["block_id"] != first_row["end_block_id"]
-    ):
-        return False
-
-    span_text = str(first_row["span_text"] or "")
-    return reconstructed == span_text and span_text == exact
 
 
 _LEGACY_SELECTOR_IDENTITY_KEYS = frozenset(

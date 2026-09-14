@@ -5,14 +5,22 @@ import { canonicalCpLength } from "@/lib/reader/textOffsets";
  * stored document metrics. Offsets are Unicode code points, never UTF-16
  * indexes.
  */
-export function wordBoundaryOrdinal(canonicalText: string, offset: number): number {
+export function documentWordBoundaryOrdinal({ canonicalText, documentWordStart, offset, startsInWord }: {
+  canonicalText: string;
+  documentWordStart: number;
+  offset: number;
+  startsInWord: boolean;
+}): number {
+  if (!Number.isInteger(documentWordStart) || documentWordStart < 0) {
+    throw new TypeError("documentWordStart must be a non-negative integer");
+  }
   const length = canonicalCpLength(canonicalText);
   if (!Number.isInteger(offset) || offset < 0 || offset > length) {
     throw new TypeError(`Canonical word offset must be an integer in 0..${length}`);
   }
 
-  let ordinal = 0;
-  let inWord = false;
+  let ordinal = documentWordStart;
+  let inWord = startsInWord;
   let index = 0;
   for (const codePoint of canonicalText) {
     if (index >= offset) {
@@ -44,15 +52,4 @@ function isCanonicalWordSeparator(codePoint: string): boolean {
     value === 0x205f ||
     value === 0x3000
   );
-}
-
-export function documentWordBoundaryOrdinal(input: {
-  canonicalText: string;
-  documentWordStart: number;
-  offset: number;
-}): number {
-  if (!Number.isInteger(input.documentWordStart) || input.documentWordStart < 0) {
-    throw new TypeError("documentWordStart must be a non-negative integer");
-  }
-  return input.documentWordStart + wordBoundaryOrdinal(input.canonicalText, input.offset);
 }

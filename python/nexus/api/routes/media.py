@@ -10,9 +10,11 @@ registered before this one so the literals are not parsed as `/media/{media_id}`
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, Query, Request, Response
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
+from nexus.api.read_admission import AdmittedReadRoute
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
@@ -34,6 +36,7 @@ from nexus.services.resonance import service as resonance_service
 from nexus.services.resource_graph.schemas import ConnectionEndpoint
 
 router = APIRouter(tags=["media"])
+reads = APIRouter(route_class=AdmittedReadRoute)
 
 # The administrator role that widens author-editing to null/other-creator media
 # (spec 6: canEditAuthors = canReadMedia AND (isMediaCreator OR isAdministrator)).
@@ -42,6 +45,22 @@ _ADMIN_ROLE = "admin"
 # Clamp for GET /media/{id}/related ``limit`` (spec S5).
 _RELATED_LIMIT_MIN = 1
 _RELATED_LIMIT_MAX = 20
+
+
+class NoRequestBody(BaseModel):
+    """The declared empty body of a command whose whole input is its path.
+
+    Declaring it keeps the malformed-body contract uniform: FastAPI parses the
+    body it is given, so ``{malformed`` is answered 400 E_INVALID_REQUEST here
+    exactly as on a command that carries fields, and an unexpected field is
+    refused instead of silently ignored. The parameter defaults to ``None`` so
+    the commands stay bodyless for the clients that send no body at all.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+_NO_BODY = Annotated[NoRequestBody | None, Body()]
 
 
 def _endpoint_out(endpoint: ConnectionEndpoint) -> ConnectionEndpointOut:
@@ -158,7 +177,7 @@ def get_media_libraries(
     return ok(rows)
 
 
-@router.get("/media/{media_id}/fragments")
+@reads.get("/media/{media_id}/fragments")
 def get_media_fragments(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
@@ -213,6 +232,7 @@ def add_media_saved_in_nexus(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    body: _NO_BODY = None,
 ) -> Response:
     """Idempotently create the physical Default-backed saved relation."""
     library_entries.ensure_media_saved_in_nexus_for_viewer(
@@ -257,6 +277,7 @@ def refresh_media_source(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     request: Request,
+    body: _NO_BODY = None,
 ) -> dict:
     """Refresh source-backed media by requeueing source acquisition."""
     result = media_source_ingest.refresh_source_for_viewer(
@@ -292,3 +313,6 @@ def get_media_intelligence(
             model_name=projection.model_name,
         )
     )
+
+
+router.include_router(reads)

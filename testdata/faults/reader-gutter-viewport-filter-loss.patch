@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/reader_publication_evidence.py b/python/nexus/services/reader_publication_evidence.py
+--- a/python/nexus/services/reader_publication_evidence.py
++++ b/python/nexus/services/reader_publication_evidence.py
+@@ -511,7 +511,7 @@
+     sql += f""", located AS (
+         SELECT fact.*, {geometry} AS quads FROM fact_positions fact
+         WHERE fact.scope = 'Passages' AND (fact.unit_key IS NOT NULL OR fact.pdf_page IS NOT NULL)
+-    ), visible AS (SELECT * FROM located fact WHERE {visible}), occurrences AS (
++    ), visible AS (SELECT * FROM located fact WHERE TRUE), occurrences AS (
+         SELECT fact.*, 'margin:' || fact.fact_id AS occurrence_id, fact.fact_kind AS occurrence_kind,
+                0 AS occurrence_order, ''::text AS object_ref, NULL::uuid AS stance_edge, NULL::text AS stance
+         FROM visible fact WHERE fact.fact_kind = ANY(:kinds)

@@ -21,6 +21,7 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { ApiRetryExhausted, requestWithRetry } from "@/lib/api/retryPolicy";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
@@ -86,36 +87,40 @@ const SEARCH_VISIT_DATA =
   definePaneVisitDataKey<SearchSnapshot>("Search.Results");
 const EMPTY_SEARCH_ROWS: readonly SearchResultRowViewModel[] = [];
 
+// Both search reads run under the one retry owner, so an availability failure
+// arrives here already exhausted. Losing the browser's own connection stays the
+// modeled, user-actionable outcome; a persistent dependency outage is a defect.
 function searchErrorMessage(error: unknown): FeedbackContent {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  switch (error.code) {
+  const failure = error instanceof ApiRetryExhausted ? error.cause : error;
+  if (!isApiError(failure) || isSameSystemApiDefect(failure)) throw error;
+  switch (failure.code) {
     case "E_NETWORK":
       return {
         tone: "Danger",
         title: "Search couldn’t be completed",
         message: "Check your connection and retry.",
-        requestId: error.requestId,
+        requestId: failure.requestId,
       };
     case "E_INVALID_CURSOR":
       return {
         tone: "Danger",
         title: "More results couldn’t be loaded",
         message: "Retry from the current results.",
-        requestId: error.requestId,
+        requestId: failure.requestId,
       };
     case "E_INVALID_REQUEST":
       return {
         tone: "Danger",
         title: "This search isn’t valid",
         message: "Adjust the query or filters and retry.",
-        requestId: error.requestId,
+        requestId: failure.requestId,
       };
     case "E_NOT_FOUND":
     case "E_CONVERSATION_NOT_FOUND":
       return {
         tone: "Danger",
         title: "The search scope is no longer available",
-        requestId: error.requestId,
+        requestId: failure.requestId,
       };
     default:
       throw error;
@@ -279,7 +284,15 @@ export default function SearchPaneBody() {
   const firstPage = useDebouncedFetch<SearchResultPage>(
     blank || restored !== null ? null : queryString,
     (signal) =>
-      fetchSearchResultPage(query, { limit: PAGE_LIMIT, cursor: null, signal }),
+      requestWithRetry(
+        (readSignal) =>
+          fetchSearchResultPage(query, {
+            limit: PAGE_LIMIT,
+            cursor: null,
+            signal: readSignal,
+          }),
+        signal,
+      ),
     { debounceMs: 0 },
   );
 
@@ -346,11 +359,15 @@ export default function SearchPaneBody() {
       setLoadingMore(true);
       setMoreError(null);
       try {
-        const page = await fetchSearchResultPage(query, {
-          limit: PAGE_LIMIT,
-          cursor,
-          signal: controller.signal,
-        });
+        const page = await requestWithRetry(
+          (readSignal) =>
+            fetchSearchResultPage(query, {
+              limit: PAGE_LIMIT,
+              cursor,
+              signal: readSignal,
+            }),
+          controller.signal,
+        );
         setController((current) =>
           current === null
             ? current

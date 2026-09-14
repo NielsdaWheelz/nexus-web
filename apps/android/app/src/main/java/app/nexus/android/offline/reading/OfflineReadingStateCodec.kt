@@ -3,6 +3,54 @@ package app.nexus.android.offline.reading
 import com.squareup.moshi.JsonReader
 import okio.Buffer
 
+internal fun readerProgressViewJson(view: NativeReaderProgressView): StrictJson.ObjectValue {
+    val fields = when (view) {
+        is NativeReaderProgressView.Canonical -> mapOf("kind" to "Canonical", "snapshot" to view.baselineJson)
+        is NativeReaderProgressView.Pending -> mapOf("kind" to "Pending", "baseline" to view.baselineJson,
+            "device" to view.deviceLocatorJson, "source" to view.sourceJson)
+        is NativeReaderProgressView.Conflict -> mapOf("kind" to "Conflict", "canonical" to view.canonicalJson,
+            "device" to view.deviceLocatorJson, "source" to view.sourceJson)
+        is NativeReaderProgressView.ContentChanged -> mapOf("kind" to "ContentChanged", "baseline" to view.baselineJson,
+            "device" to view.deviceLocatorJson, "source" to view.sourceJson)
+        is NativeReaderProgressView.SourceUnavailable -> mapOf("kind" to "SourceUnavailable", "baseline" to view.baselineJson,
+            "device" to view.deviceLocatorJson, "source" to view.sourceJson)
+    }
+    return StrictJson.ObjectValue(fields.mapValues { (key, value) ->
+        if (key == "kind") StrictJson.StringValue(value) else StrictJson.parse(value.toByteArray())
+    })
+}
+
+internal fun requireReaderProgressViewJson(json: String): StrictJson.ObjectValue {
+    val value = StrictJson.parse(json.toByteArray()) as? StrictJson.ObjectValue
+        ?: error("reader progress view must be an object")
+    // Every renderer-supplied key is absent until proven present: Map.getValue would
+    // raise NoSuchElementException, which is not this module's malformed-input signal.
+    val kind = value.fields["kind"]?.requireString() ?: error("reader progress view is missing kind")
+    val snapshotKey = when (kind) {
+        "Canonical" -> "snapshot"
+        "Conflict" -> "canonical"
+        "Pending", "ContentChanged", "SourceUnavailable" -> "baseline"
+        else -> error("unknown reader progress view")
+    }
+    val fields = value.requireObject(if (kind == "Canonical") setOf("kind", snapshotKey)
+        else setOf("kind", snapshotKey, "device", "source"))
+    OfflineReaderStateValidator.requireCursorSnapshot(fields.getValue(snapshotKey).toJson())
+    if (kind != "Canonical") {
+        OfflineReaderStateValidator.requireLocator(fields.getValue("device").toJson())
+        val source = fields.getValue("source") as? StrictJson.ObjectValue ?: error("invalid reader source")
+        when (source.fields["kind"]?.requireString() ?: error("reader source is missing kind")) {
+            "Publication" -> require(source.requireObject(setOf("kind", "reader_generation"))
+                .getValue("reader_generation").requireLong() > 0)
+            "Unresolved" -> {
+                source.requireObject(setOf("kind"))
+                require(kind == "ContentChanged" || kind == "SourceUnavailable")
+            }
+            else -> error("unsupported native reader source")
+        }
+    }
+    return value
+}
+
 internal object OfflineReadingStateCodec {
     fun encode(state: ReadingTransferState): String = when (state) {
         ReadingTransferState.Preparing -> "{\"kind\":\"Preparing\"}"

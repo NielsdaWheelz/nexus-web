@@ -1397,7 +1397,11 @@ def test_fault_guard_rejects_a_stale_patch_in_a_git_worktree(tmp_path: Path) -> 
 
 @pytest.mark.parametrize(
     "owner",
-    ("python/nexus_test_control/process.py", "python/nexus_test_control/runner.py"),
+    (
+        "python/nexus_test_control/containers.py",
+        "python/nexus_test_control/process.py",
+        "python/nexus_test_control/runner.py",
+    ),
 )
 def test_fault_guard_allows_the_exact_controller_execution_owner(
     tmp_path: Path,

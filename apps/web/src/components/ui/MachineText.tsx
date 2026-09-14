@@ -169,6 +169,15 @@ export default function MachineText({
   );
 }
 
+/** Inline machine text in an admitted, imperative reader subtree. */
+export function createInlineMachineText(text: string, origin: MachineOrigin): HTMLSpanElement {
+  const element = document.createElement("span");
+  element.className = `${styles.machine} ${styles.inline}`;
+  element.dataset.machineOrigin = origin.label;
+  element.textContent = text;
+  return element;
+}
+
 function MachineSignature({
   label,
   timestamp,

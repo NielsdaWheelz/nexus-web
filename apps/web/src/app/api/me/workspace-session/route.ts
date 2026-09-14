@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { proxyToFastAPI } from "@/lib/api/proxy";
+import { proxyAccountBoundToFastAPI, proxyToFastAPI } from "@/lib/api/proxy";
 import { readDeviceId } from "@/lib/auth/deviceCookie";
 import {
   InvalidWorkspaceStateError,
@@ -87,5 +87,5 @@ export async function PUT(req: Request) {
     headers: req.headers,
     body: JSON.stringify({ state, device_id: deviceId }),
   });
-  return proxyToFastAPI(forwarded, "/me/workspace-session");
+  return proxyAccountBoundToFastAPI(forwarded, "/me/workspace-session");
 }

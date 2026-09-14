@@ -32,8 +32,17 @@ internal object OfflineReaderStateValidator {
                 fields.getValue("revision").requireLong().also { require(it >= 0) }
             }
             "Positioned" -> {
-                fields.requireExact(setOf("state", "revision", "locator"))
+                fields.requireExact(setOf("state", "revision", "source", "locator"))
                 val revision = fields.getValue("revision").requireLong().also { require(it >= 1) }
+                val source = fields.getValue("source").requireMap()
+                when (source["kind"]?.requireString()) {
+                    "Publication" -> {
+                        source.requireExact(setOf("kind", "reader_generation"))
+                        require(source.getValue("reader_generation").requireLong() > 0)
+                    }
+                    "Unresolved" -> source.requireExact(setOf("kind"))
+                    else -> error("offline reader cursor source is invalid")
+                }
                 requireLocator(fields.getValue("locator").toJson())
                 revision
             }
@@ -43,13 +52,10 @@ internal object OfflineReaderStateValidator {
 
     private fun requireTextLocator(fields: Map<String, StrictJson>, epub: Boolean) {
         fields.requireExact(setOf("kind", "target", "locations", "text"))
-        val target = fields.getValue("target").requireMap()
         if (epub) {
-            target.requireExact(setOf("section_id", "href_path", "anchor_id"))
-            requireVisible(target.getValue("section_id").requireString())
-            requireVisible(target.getValue("href_path").requireString())
-            target.getValue("anchor_id").requireNullableVisible()
+            requireEpubTarget(fields.getValue("target"))
         } else {
+            val target = fields.getValue("target").requireMap()
             target.requireExact(setOf("fragment_id"))
             requireVisible(target.getValue("fragment_id").requireString())
         }
@@ -65,6 +71,15 @@ internal object OfflineReaderStateValidator {
         val prefix = text.getValue("quote_prefix").requireNullableBoundedText(128)
         val suffix = text.getValue("quote_suffix").requireNullableBoundedText(128)
         require(quote != null || (prefix == null && suffix == null))
+    }
+
+    fun requireEpubTarget(value: StrictJson): Map<String, StrictJson> {
+        val target = value.requireMap()
+        target.requireExact(setOf("section_id", "href_path", "anchor_id"))
+        requireVisible(target.getValue("section_id").requireString())
+        requireVisible(target.getValue("href_path").requireString())
+        target.getValue("anchor_id").requireNullableVisible()
+        return target
     }
 
     private fun Map<String, StrictJson>.requireExact(keys: Set<String>) {

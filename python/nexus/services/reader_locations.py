@@ -171,6 +171,7 @@ def resolved_highlight_reader_target(
     page_width: float | None = None,
     page_height: float | None = None,
     pdf_quads: Sequence[Mapping[str, object]] | None = None,
+    source_sha256: str | None = None,
 ) -> ResolvedHighlightReaderTarget | None:
     """Map current owner facts to the one closed highlight reader target.
 
@@ -235,6 +236,7 @@ def resolved_highlight_reader_target(
             or page_height is None
             or page_width <= 0
             or page_height <= 0
+            or source_sha256 is None
             or pdf_quads is None
             or not 1 <= len(pdf_quads) <= 512
         ):
@@ -253,7 +255,9 @@ def resolved_highlight_reader_target(
                 ):
                     return None
             quads.append(HighlightTargetPdfQuadOut(**values))
-        return PdfPageGeometryTargetOut(page_number=page_number, quads=quads)
+        return PdfPageGeometryTargetOut(
+            page_number=page_number, quads=quads, source_sha256=source_sha256
+        )
     except (KeyError, TypeError, ValueError, ValidationError):
         return None
 

@@ -38,12 +38,6 @@
   cursor: pointer;
 }
 
-.empty {
-  padding: var(--space-8);
-  text-align: center;
-  color: var(--reader-text-muted, var(--ink-faint));
-}
-
 .fragments {
   display: flex;
   flex-direction: column;

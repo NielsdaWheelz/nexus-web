@@ -6,6 +6,8 @@
 !apps/api/**
 !apps/worker/
 !apps/worker/**
+!apps/codex_agent/
+!apps/codex_agent/**
 
 !docker/
 !docker/Dockerfile.backend

@@ -6,10 +6,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
+from nexus.api.read_admission import AdmittedReadRoute
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import ok, success_response
+from nexus.responses import ok
 from nexus.schemas.resource_action_snapshots import ResourceActionSnapshotResolveRequest
 from nexus.schemas.resource_items import (
     ResourceBodyMutationRequest,
@@ -26,6 +27,7 @@ from nexus.services.resource_items import action_snapshots, mutations, openables
 from nexus.services.resource_items import locators as locator_service
 
 router = APIRouter(prefix="/resource-items", tags=["resource-items"])
+reads = APIRouter(route_class=AdmittedReadRoute)
 
 
 def _parse_ref(raw: str) -> ResourceRef:
@@ -38,25 +40,7 @@ def _parse_ref(raw: str) -> ResourceRef:
     return parsed
 
 
-@router.post("/resolve")
-def resolve_resource_items(
-    refs: list[str],
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    return success_response(
-        {
-            "items": [
-                surfaces.resource_item_out(
-                    db, viewer_id=viewer.user_id, ref=_parse_ref(ref)
-                ).model_dump(mode="json", by_alias=True)
-                for ref in refs
-            ]
-        }
-    )
-
-
-@router.post("/action-snapshots/resolve")
+@reads.post("/action-snapshots/resolve")
 def resolve_action_snapshots(
     request: ResourceActionSnapshotResolveRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
@@ -78,7 +62,7 @@ def resolve_action_snapshots(
     )
 
 
-@router.post("/locators/resolve")
+@reads.post("/locators/resolve")
 def resolve_resource_locators(
     request: ResourceLocatorResolveRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
@@ -96,7 +80,7 @@ def resolve_resource_locators(
     )
 
 
-@router.post("/targets/search")
+@reads.post("/targets/search")
 def search_resource_targets(
     request: ResourceTargetSearchRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
@@ -108,7 +92,7 @@ def search_resource_targets(
     )
 
 
-@router.post("/openables/search")
+@reads.post("/openables/search")
 def search_openable_resources(
     request: ResourceOpenableSearchRequest,
     response: Response,
@@ -126,7 +110,7 @@ def search_openable_resources(
     return ok(result, by_alias=True)
 
 
-@router.get("/{resource_ref}")
+@reads.get("/{resource_ref}")
 def get_resource_item(
     resource_ref: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
@@ -138,7 +122,7 @@ def get_resource_item(
     )
 
 
-@router.get("/{resource_ref}/surface")
+@reads.get("/{resource_ref}/surface")
 def get_resource_surface(
     resource_ref: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
@@ -202,3 +186,6 @@ def update_resource_body(
         ),
         by_alias=True,
     )
+
+
+router.include_router(reads)

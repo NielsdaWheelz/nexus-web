@@ -120,10 +120,9 @@ function findNodeAtOffset(
     const last = nodes[nodes.length - 1];
     if (canonicalOffset === last.end) {
       // Return position at end of last node
-      const nodeText = [...(last.node.textContent || "")];
       return {
         node: last.node,
-        offsetInNode: nodeText.length,
+        offsetInNode: codepointLength(last.node.textContent || ""),
       };
     }
   }
@@ -174,8 +173,7 @@ function wrapTextRange(
   segment: Segment
 ): HTMLSpanElement {
   const text = node.textContent || "";
-  const codepoints = [...text];
-  const totalCodepoints = codepoints.length;
+  const totalCodepoints = codepointLength(text);
 
   // Clamp offsets
   const clampedStart = Math.max(0, Math.min(startOffset, totalCodepoints));
@@ -244,7 +242,8 @@ function applySegmentsToDom(
   root: Element,
   cursorResult: CanonicalCursorResult,
   segments: Segment[],
-  highlights: NormalizedHighlight[]
+  highlights: NormalizedHighlight[],
+  anchorIds?: ReadonlySet<string>,
 ): Set<string> {
   const doc = root.ownerDocument;
   const renderedHighlightIds = new Set<string>();
@@ -335,7 +334,7 @@ function applySegmentsToDom(
     // Insert anchors for highlights that start in this segment
     if (firstSpanForSegment) {
       for (const highlightId of segment.activeIds) {
-        if (anchorInserted.has(highlightId)) continue;
+        if (anchorInserted.has(highlightId) || (anchorIds !== undefined && !anchorIds.has(highlightId))) continue;
 
         const highlight = highlightMap.get(highlightId);
         if (!highlight) continue;
@@ -357,7 +356,7 @@ function applySegmentsToDom(
   // Insert anchors for any highlights that weren't covered
   // (This handles edge cases where a highlight's start is exactly at a segment boundary)
   for (const highlight of highlights) {
-    if (anchorInserted.has(highlight.id)) continue;
+    if (anchorInserted.has(highlight.id) || (anchorIds !== undefined && !anchorIds.has(highlight.id))) continue;
     if (!renderedHighlightIds.has(highlight.id)) continue;
 
     // Find where to insert the anchor
@@ -426,7 +425,26 @@ export function applyHighlightsToHtml(
     };
   }
 
-  // Build canonical cursor and validate.
+  const plan = planHighlightsForDom(root, canonicalText, fragmentId, highlights);
+  if (plan.kind === "Mismatch") {
+    return { html: htmlSanitized, failedIds: plan.failedIds, validationPassed: false };
+  }
+  const result = plan.apply();
+  return { html: root.innerHTML, ...result };
+}
+
+/** Plan against existing nodes so a publication can admit additions before mutation. */
+export function planHighlightsForDom(
+  root: Element,
+  canonicalText: string,
+  fragmentId: string,
+  highlights: HighlightInput[],
+  anchorIds?: ReadonlySet<string>,
+): { readonly kind: "Mismatch"; readonly failedIds: string[] } | {
+  readonly kind: "Ready";
+  readonly additionalNodes: number;
+  apply(): { readonly failedIds: string[]; readonly validationPassed: true };
+} {
   const cursorResult = buildCanonicalCursor(root);
   const validationPassed = validateCanonicalText(
     cursorResult,
@@ -435,12 +453,7 @@ export function applyHighlightsToHtml(
   );
 
   if (!validationPassed) {
-    // Abort highlight rendering, return original HTML
-    return {
-      html: htmlSanitized,
-      failedIds: highlights.map((h) => h.id),
-      validationPassed: false,
-    };
+    return { kind: "Mismatch", failedIds: highlights.map((h) => h.id) };
   }
 
   // Normalize highlights for segmenter
@@ -450,34 +463,35 @@ export function applyHighlightsToHtml(
   const textLength = codepointLength(canonicalText);
   const { segments, droppedIds } = segmentHighlights(textLength, normalized);
 
-  // Apply segments to DOM
-  const renderedIds = applySegmentsToDom(root, cursorResult, segments, normalized);
-
-  // Calculate failed IDs
-  const failedIds = [
-    ...droppedIds,
-    ...highlights
-      .filter((h) => !renderedIds.has(h.id) && !droppedIds.includes(h.id))
-      .map((h) => h.id),
-  ];
-
-  // Log any failed highlights
-  for (const id of failedIds) {
-    if (!droppedIds.includes(id)) {
-      console.warn("highlight_render_failed", {
-        highlightId: id,
-        fragmentId,
-        reason: "Could not apply to DOM",
-      });
+  let additionalNodes = anchorIds?.size ?? normalized.length; // At most one anchor per highlight.
+  for (const mapping of cursorResult.nodes) {
+    const rawText = mapping.node.textContent ?? "";
+    const rawLength = codepointLength(rawText);
+    for (const segment of segments) {
+      const start = Math.max(segment.start, mapping.start);
+      const end = Math.min(segment.end, mapping.end);
+      if (start >= end) continue;
+      additionalNodes += 1; // Wrapping span; reparenting preserves the text node.
+      const rawStart = canonicalCpToRawCp(rawText, start - mapping.start, mapping.trimLeadCp);
+      const rawEnd = canonicalCpToRawCp(rawText, end - mapping.start, mapping.trimLeadCp);
+      if (rawStart > 0) additionalNodes += 1;
+      if (rawEnd < rawLength) additionalNodes += 1;
     }
   }
-
-  // Serialize back to HTML
-  const html = root.innerHTML;
-
   return {
-    html,
-    failedIds,
-    validationPassed: true,
+    kind: "Ready", additionalNodes,
+    apply() {
+      const renderedIds = applySegmentsToDom(root, cursorResult, segments, normalized, anchorIds);
+      const failedIds = [
+        ...droppedIds,
+        ...highlights.filter((h) => !renderedIds.has(h.id) && !droppedIds.includes(h.id)).map((h) => h.id),
+      ];
+      for (const id of failedIds) {
+        if (!droppedIds.includes(id)) {
+          console.warn("highlight_render_failed", { highlightId: id, fragmentId, reason: "Could not apply to DOM" });
+        }
+      }
+      return { failedIds, validationPassed: true };
+    },
   };
 }

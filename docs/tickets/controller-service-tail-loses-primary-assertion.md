@@ -1,0 +1,26 @@
+# bounded service output can lose the primary assertion
+
+- status: open; exact failed testcase verdict unavailable
+- origin: 2026-09-14 bounded-workspace deadline proof
+- area: test controller / retained failure evidence
+
+web proof run `7b9fcecb0a209f5f` at `f075c680ed` failed the actual
+`test_sync_read_deadline_retains_its_transaction_and_permit_until_worker_returns`
+case. its retained `service-1.log` begins midway through a captured middleware
+trace and ends with the expected deadline RuntimeError plus the generic pytest
+failed-case list. the primary pytest assertion and traceback were discarded.
+`summary.json` records only the capability failure. the run contains no junit
+or other structured testcase result; all retained artifacts were inspected.
+
+this is insufficient to identify the first actionable failure or claim the
+intended regression assertion was observed. increasing the diagnostic tail
+alone does not establish a bound that preserves primary evidence.
+
+preserve a bounded structured testcase failure alongside the existing log tail,
+using the current service execution/artifact owner. do not change the product
+proof oracle to manufacture an expected fingerprint.
+
+acceptance: this same failed service case retains its actual exception type,
+assertion message and owned frame even when captured application logging
+exceeds the log-tail bound. setup failures remain distinct from assertions;
+retention remains bounded.

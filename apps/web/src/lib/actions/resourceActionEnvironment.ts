@@ -28,6 +28,7 @@ export type ResourceActionOfflineState =
     };
 
 export type ResourceActionOfflineReadingAvailability =
+  | { readonly kind: "UpgradeRequired" }
   | Exclude<LocalAvailability, { readonly kind: "Ready" }>
   | {
       readonly kind: "Ready";
@@ -42,7 +43,10 @@ export type ResourceActionOfflineReadingState =
   | { readonly kind: "Unavailable" }
   | {
       readonly kind: "Ready";
-      readonly byRef: ReadonlyMap<CanonicalResourceRef, ResourceActionOfflineReadingAvailability>;
+      readonly byRef: ReadonlyMap<
+        CanonicalResourceRef,
+        ResourceActionOfflineReadingAvailability
+      >;
     };
 
 /**

@@ -22,12 +22,28 @@ export type PaneResourceResolutionState =
       readonly kind: "Resolved";
       readonly status: "ready" | "missing";
       readonly item: ResourceItem;
+      readonly documentReader: boolean;
     }
   | {
       readonly kind: "Failed";
       readonly status: "unauthorized" | "invalid" | "error";
       readonly error: ApiError;
-    };
+    }
+  /** A malformed or same-system response, held against the locators of the one
+   *  batch that asked for it. It is never a resource status and never a
+   *  retryable result: `ThrowPaneResourceDefect` raises the original cause
+   *  inside the owning pane's boundary, which reports it. */
+  | { readonly kind: "Defected"; readonly cause: unknown };
+
+/** Raises one pane's resolution defect from inside that pane's error boundary,
+ *  so the failure is contained there and reported by its `componentDidCatch`. */
+export function ThrowPaneResourceDefect({
+  cause,
+}: {
+  readonly cause: unknown;
+}): never {
+  throw cause;
+}
 
 interface RegistryEntry {
   readonly locator: PaneResourceLocator;
@@ -67,14 +83,13 @@ export function usePaneResourceResolutionRegistry(
   }
 
   const entriesRef = useRef<Map<string, RegistryEntry>>(new Map());
-  const controllersRef = useRef<Set<AbortController>>(new Set());
+  const controllersRef = useRef<
+    Map<AbortController, readonly [string, RegistryEntry][]>
+  >(new Map());
   const mountedRef = useRef(true);
   const [statesByKey, setStatesByKey] = useState<
     ReadonlyMap<string, PaneResourceResolutionState>
   >(() => new Map());
-  const [defect, setDefect] = useState<{ readonly error: unknown } | null>(
-    null,
-  );
 
   const publish = useCallback(() => {
     if (!mountedRef.current) return;
@@ -90,7 +105,7 @@ export function usePaneResourceResolutionRegistry(
       if (requests.length === 0) return;
       for (const [, request] of requests) request.requesting = true;
       const controller = new AbortController();
-      controllersRef.current.add(controller);
+      controllersRef.current.set(controller, requests);
       void resolveResourceLocators(
         requests.map(([, entry]) => entry.locator),
         { signal: controller.signal },
@@ -104,6 +119,7 @@ export function usePaneResourceResolutionRegistry(
               kind: "Resolved",
               status: item.missing ? "missing" : "ready",
               item,
+              documentReader: resolutions[index]!.documentReader,
             };
           });
           publish();
@@ -111,15 +127,18 @@ export function usePaneResourceResolutionRegistry(
         .catch((error: unknown) => {
           if (!mountedRef.current || controller.signal.aborted) return;
           const failure = operationalFailure(error);
-          if (failure === null) {
-            setDefect({ error });
-            return;
+          if (failure !== null) handleUnauthenticatedApiError(error);
+          // justify-defect: a malformed or same-system resolution means this
+          // client and the api disagree about the wire. It is contained to the
+          // locators of this batch — the only panes whose resource it answers.
+          const state: PaneResourceResolutionState =
+            failure === null
+              ? { kind: "Defected", cause: error }
+              : { kind: "Failed", ...failure };
+          for (const [key, request] of requests) {
+            if (entriesRef.current.get(key) !== request) continue;
+            request.state = state;
           }
-          handleUnauthenticatedApiError(error);
-          requests.forEach(([key, request]) => {
-            if (entriesRef.current.get(key) !== request) return;
-            request.state = { kind: "Failed", ...failure };
-          });
           publish();
         })
         .finally(() => {
@@ -144,7 +163,7 @@ export function usePaneResourceResolutionRegistry(
         if (entry.state.kind !== "Pending") continue;
         entries.set(key, { ...entry, requesting: false });
       }
-      for (const controller of controllers) controller.abort();
+      for (const controller of controllers.keys()) controller.abort();
       controllers.clear();
     };
   }, []);
@@ -174,6 +193,13 @@ export function usePaneResourceResolutionRegistry(
       requests.push([key, entry]);
       changed = true;
     }
+    for (const [controller, batch] of controllersRef.current) {
+      if (batch.some(([key, entry]) => entriesRef.current.get(key) === entry)) {
+        continue;
+      }
+      controller.abort();
+      controllersRef.current.delete(controller);
+    }
     if (changed) publish();
     run(requests);
   }, [locatorsByKey, publish, run]);
@@ -194,6 +220,5 @@ export function usePaneResourceResolutionRegistry(
     [publish, run],
   );
 
-  if (defect !== null) throw defect.error;
   return { statesByKey, retry };
 }

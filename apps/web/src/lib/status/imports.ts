@@ -182,6 +182,12 @@ export const IMPORT_FAILURE_COPY: Readonly<
       "This source can’t be imported right now because an import allowance was used up.",
     recovery: "None",
   },
+  E_READER_CONTENT_TOO_LARGE: {
+    reason: "Too large for the reader",
+    title: "This source is larger than the reader can present.",
+    explanation: "Its text or a single part of it exceeds a reader limit.",
+    recovery: "None",
+  },
   E_REPAIR_NOT_ALLOWED: {
     reason: "Repair no longer offered",
     title: "This import can no longer be repaired.",

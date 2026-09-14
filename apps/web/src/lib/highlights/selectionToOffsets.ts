@@ -17,7 +17,7 @@
 
 import { type CanonicalCursorResult } from "./canonicalCursor";
 import { rawCpToCanonicalCp } from "./canonicalText";
-import { codepointLength, utf16ToCodepoint } from "./codepoints";
+import { utf16ToCodepoint } from "./codepoints";
 
 // =============================================================================
 // Types
@@ -94,33 +94,6 @@ function isInsideCodeBlock(node: Node): boolean {
   return false;
 }
 
-/**
- * Find the first non-whitespace codepoint index from the start.
- */
-function findFirstNonWhitespace(text: string): number {
-  const codepoints = [...text];
-  for (let i = 0; i < codepoints.length; i++) {
-    if (!/\s/.test(codepoints[i])) {
-      return i;
-    }
-  }
-  return codepoints.length; // All whitespace
-}
-
-/**
- * Find the last non-whitespace codepoint index from the end.
- * Returns the index AFTER the last non-whitespace character (exclusive end).
- */
-function findLastNonWhitespace(text: string): number {
-  const codepoints = [...text];
-  for (let i = codepoints.length - 1; i >= 0; i--) {
-    if (!/\s/.test(codepoints[i])) {
-      return i + 1;
-    }
-  }
-  return 0; // All whitespace
-}
-
 // =============================================================================
 // Main Function
 // =============================================================================
@@ -136,7 +109,7 @@ function findLastNonWhitespace(text: string): number {
  * @returns true if selection intersects a code block
  */
 export function selectionIntersectsCodeBlock(
-  cursor: CanonicalCursorResult,
+  cursor: Pick<CanonicalCursorResult, "nodes">,
   absStart: number,
   absEnd: number
 ): boolean {
@@ -166,7 +139,7 @@ export function selectionIntersectsCodeBlock(
  *
  * @param range - The browser Range object from the selection
  * @param cursor - The canonical cursor mapping from the rendered content
- * @param canonicalText - The canonical text from the fragment
+ * @param spans - Resident canonical source slices in original fragment coordinates
  * @param mismatchDisabled - Whether highlighting is disabled due to mismatch
  * @returns Conversion result with offsets or error
  */
@@ -189,8 +162,8 @@ function resolveDirectTextNodeMatch(
 
 export function selectionToOffsets(
   range: Range,
-  cursor: CanonicalCursorResult,
-  canonicalText: string,
+  cursor: Pick<CanonicalCursorResult, "nodes">,
+  spans: readonly { readonly start: number; readonly text: string }[],
   mismatchDisabled: boolean = false
 ): SelectionConversionResult {
   // Guard: Check mismatch state first
@@ -342,44 +315,45 @@ export function selectionToOffsets(
     };
   }
 
-  // Extract the selected text from canonical_text
-  const selectedText = [...canonicalText].slice(absStart, absEnd).join("");
-
-  // Trim leading and trailing whitespace
-  const trimStartDelta = findFirstNonWhitespace(selectedText);
-  const trimmedText = selectedText.trim();
-
-  if (!trimmedText) {
-    return {
-      success: false,
-      error: "EMPTY_AFTER_TRIM",
-      message: "Selection contains only whitespace.",
-    };
+  // Source slices retain real separator gaps; presentation wrappers add none.
+  // Retain at most one highlight's text, even for a much larger DOM selection.
+  const points: string[] = [];
+  let covered = absStart;
+  let trimmedStart: number | null = null;
+  let trimmedEnd = absStart;
+  for (const span of spans) {
+    if (span.start > covered) break;
+    let offset = span.start;
+    for (const point of span.text) {
+      if (offset >= absEnd) break;
+      if (offset >= covered) {
+        if (!/\s/.test(point)) {
+          trimmedStart ??= offset;
+          trimmedEnd = offset + 1;
+          if (trimmedEnd - trimmedStart > MAX_HIGHLIGHT_LENGTH) {
+            return { success: false, error: "TOO_LONG", message: `Selection must be at most ${MAX_HIGHLIGHT_LENGTH} characters.` };
+          }
+        }
+        if (trimmedStart !== null && points.length < MAX_HIGHLIGHT_LENGTH) points.push(point);
+        covered = offset + 1;
+      }
+      offset += 1;
+    }
+    if (covered === absEnd) break;
   }
-
-  // Calculate new offsets after trimming
-  const trimEndDelta = codepointLength(selectedText) - findLastNonWhitespace(selectedText);
-  absStart += trimStartDelta;
-  absEnd -= trimEndDelta;
-
-  // Validate length constraints
-  const finalLength = codepointLength(trimmedText);
-
+  if (covered !== absEnd) {
+    return { success: false, error: "OUTSIDE_CONTENT", message: "Selection crosses source text that is not loaded." };
+  }
+  if (trimmedStart === null) {
+    return { success: false, error: "EMPTY_AFTER_TRIM", message: "Selection contains only whitespace." };
+  }
+  absStart = trimmedStart;
+  absEnd = trimmedEnd;
+  const finalLength = absEnd - absStart;
   if (finalLength < MIN_HIGHLIGHT_LENGTH) {
-    return {
-      success: false,
-      error: "TOO_SHORT",
-      message: `Selection must be at least ${MIN_HIGHLIGHT_LENGTH} characters.`,
-    };
+    return { success: false, error: "TOO_SHORT", message: `Selection must be at least ${MIN_HIGHLIGHT_LENGTH} characters.` };
   }
-
-  if (finalLength > MAX_HIGHLIGHT_LENGTH) {
-    return {
-      success: false,
-      error: "TOO_LONG",
-      message: `Selection must be at most ${MAX_HIGHLIGHT_LENGTH} characters.`,
-    };
-  }
+  const trimmedText = points.slice(0, finalLength).join("");
 
   return {
     success: true,

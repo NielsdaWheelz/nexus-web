@@ -88,6 +88,7 @@ vi.mock("@testing-library/react", async (importOriginal) => {
 });
 
 const HTTP_PROTOCOLS = new Set(["http:", "https:"]);
+const FETCH_PROTOCOLS = new Set(["http:", "https:", "blob:"]);
 const WEBSOCKET_PROTOCOLS = new Set(["ws:", "wss:"]);
 const NATIVE_FETCH = globalThis.fetch.bind(globalThis);
 const NATIVE_EVENT_SOURCE = globalThis.EventSource;
@@ -115,7 +116,7 @@ function installApplicationNetworkGuards() {
   vi.stubGlobal(
     "fetch",
     (input: RequestInfo | URL, init?: RequestInit) => {
-      assertApplicationOrigin(input, HTTP_PROTOCOLS, "fetch");
+      assertApplicationOrigin(input, FETCH_PROTOCOLS, "fetch");
       return NATIVE_FETCH(input, init);
     },
   );

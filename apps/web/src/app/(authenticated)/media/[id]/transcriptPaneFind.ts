@@ -366,24 +366,27 @@ export function createTranscriptFindAdapter({
           }
         : null;
       return {
-        sessionId: request.sessionId,
-        sourceKey: request.sourceKey,
-        scopes: [
-          {
-            kind: "EntireResource",
-            id: ENTIRE_TRANSCRIPT_SCOPE_ID,
-            label: "Entire transcript",
-          },
-          ...(preparedScope
-            ? [
-                {
-                  kind: "Narrow" as const,
-                  id: preparedScope.id,
-                  label: "This chapter",
-                },
-              ]
-            : []),
-        ],
+        kind: "Prepared",
+        session: {
+          sessionId: request.sessionId,
+          sourceKey: request.sourceKey,
+          scopes: [
+            {
+              kind: "EntireResource",
+              id: ENTIRE_TRANSCRIPT_SCOPE_ID,
+              label: "Entire transcript",
+            },
+            ...(preparedScope
+              ? [
+                  {
+                    kind: "Narrow" as const,
+                    id: preparedScope.id,
+                    label: "This chapter",
+                  },
+                ]
+              : []),
+          ],
+        },
       };
     },
     async find(request) {
@@ -506,6 +509,7 @@ export function createTranscriptFindAdapter({
         }
         return {
           kind: "Rejected",
+          returnAvailable: false,
           sessionId: request.sessionId,
           queryId: request.queryId,
           sourceKey: request.sourceKey,
@@ -585,7 +589,7 @@ export function createTranscriptFindAdapter({
       assertCurrentSource(request.sourceKey);
       assertCurrentSession(request.sessionId);
       throwIfAborted(request.signal);
-      if (!origin) return;
+      if (!origin) return { kind: "Returned" };
       if (origin.sessionId !== request.sessionId) {
         throw new Error("Transcript Find origin belongs to another session.");
       }
@@ -609,6 +613,7 @@ export function createTranscriptFindAdapter({
       segmentList.focus({ preventScroll: true });
       origin = null;
       previewLease.completeReturn();
+      return { kind: "Returned" };
     },
     errorMessage: mediaPaneFindErrorMessage,
     dispose() {

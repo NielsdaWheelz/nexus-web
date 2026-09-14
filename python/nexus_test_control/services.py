@@ -47,6 +47,7 @@ from nexus.release_artifact import (
     write_runtime_identity_value,
 )
 from nexus_test_control.build import StandaloneBuild
+from nexus_test_control.containers import delete_owned_container
 from nexus_test_control.model import Resource, ResourceKind
 from nexus_test_control.process import (
     run_command,
@@ -446,6 +447,24 @@ def run_environment(
             "child process resources do not match the exact persisted local test run"
         )
     values = {
+        # Explicit fixture input, not a production-qualified capacity profile.
+        "API_READ_ADMISSION_LIMITS": (
+            '{"max_concurrency":2,"max_image_concurrency":1,'
+            '"max_package_transfer_concurrency":1,"retry_after_seconds":1,'
+            '"work_deadline_seconds":120,"package_transfer_deadline_seconds":600,'
+            '"request_bytes":262144}'
+        ),
+        "IMAGE_DECODER_LIMITS": '{"address_space_bytes":268435456,"cpu_seconds":5,"wall_seconds":10}',
+        "READER_PUBLICATION_LIMITS": json.dumps(
+            {
+                "unit_bytes": 256 * 1024,
+                "unit_codepoints": 65_536,
+                "unit_dom_nodes": 8_192,
+                "index_bytes": 256 * 1024,
+                "descriptor_bytes": 16 * 1024,
+            },
+            separators=(",", ":"),
+        ),
         "APP_PUBLIC_URL": runtime_endpoint(root, environment, EndpointKind.WEB),
         "CSP_MEDIA_ORIGINS": expected_external_url,
         "DATABASE_URL": expected_database_url,
@@ -1617,7 +1636,7 @@ def materialize_codex_generation_peer(
     record_planned(root, environment, run.run_id, resource)
     state = codex_generation_peer_state_dir(root, run.run_id)
     try:
-        state.mkdir(parents=False, exist_ok=False)
+        state.mkdir(mode=0o700, parents=False, exist_ok=False)
     except FileExistsError as exc:
         raise RuntimeContractError(
             "Codex generation peer state already exists for this run"
@@ -1864,7 +1883,14 @@ def start_python_process(
             **shared_process_environment,
             "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
             **(overrides or {}),
-            **({"WORKER_LANE": role.removeprefix("worker-")} if role.startswith("worker-") else {}),
+            **(
+                {
+                    "WORKER_LANE": role.removeprefix("worker-"),
+                    "NEXUS_NODE_INGEST_SCRIPT": str(root / "node/ingest/ingest.mjs"),
+                }
+                if role.startswith("worker-")
+                else {}
+            ),
             **(user_systemd_environment() if role == "worker-background" else {}),
             **owned_role_environment,
         }
@@ -2502,6 +2528,10 @@ def clean_run(
                             candidate.external_id,
                             resource.identity,
                         )
+                elif resource.kind is ResourceKind.CONTAINER:
+                    if candidate.external_id is None:
+                        raise RuntimeContractError("owned container lacks its owner token")
+                    delete_owned_container(root, run_id, resource.identity, candidate.external_id)
                 elif resource.kind is ResourceKind.TEMPLATE_BUILD:
                     if candidate.external_id is None:
                         raise RuntimeContractError("template build lacks its lifecycle fingerprint")

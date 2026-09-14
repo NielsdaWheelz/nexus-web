@@ -39,10 +39,12 @@ def test_offline_package_token_is_media_generation_and_schema_bound(
     assert verified.user_id == user_id
     assert verified.media_id == media_id
     assert verified.reader_generation == 7
-    assert verified.package_schema_version == 1
+    # The wire contract the native client pins (OFFLINE_READING_PACKAGE_SCHEMA_VERSION
+    # = 2 in apps/android/.../offline/reading/OfflineReadingModels.kt).
+    assert verified.package_schema_version == 2
     assert minted.account_id == user_id
     assert minted.reader_generation == 7
-    assert minted.package_schema_version == 1
+    assert minted.package_schema_version == 2
 
     with pytest.raises(ApiError) as wrong_path:
         verify_offline_reading_package_token(minted.token, expected_media_id=uuid4())

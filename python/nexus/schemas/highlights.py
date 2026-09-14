@@ -59,8 +59,40 @@ class PdfAnchorOut(BaseModel):
 
     type: Literal["pdf_page_geometry"] = "pdf_page_geometry"
     media_id: UUID
+    source_sha256: str | None = Field(pattern=r"^[0-9a-f]{64}$")
     page_number: int
     quads: list[PdfQuadOut]
+
+
+class PdfHighlightPaint(BaseModel):
+    """Only selected-source geometry needed to paint one page."""
+
+    id: UUID
+    color: HIGHLIGHT_COLORS
+    created_at: datetime
+    author_user_id: UUID
+    is_owner: bool
+    quads: tuple[PdfQuadOut, ...]
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class PdfHighlightPaintRequest(BaseModel):
+    page_number: int = Field(ge=1)
+    mine_only: bool = True
+    after: str | None = Field(default=None, max_length=16384)
+    limit: int = Field(default=50, ge=1, le=100)
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class PdfHighlightPaintPage(BaseModel):
+    page_number: int = Field(ge=1)
+    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    highlights: tuple[PdfHighlightPaint, ...]
+    next_cursor: str | None
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 # --- Highlight output schemas ---
@@ -138,6 +170,7 @@ class PdfQuadIn(BaseModel):
 class CreatePdfHighlightRequest(BaseModel):
     """Request schema for creating a PDF geometry highlight."""
 
+    reader_generation: int = Field(ge=1)
     page_number: int = Field(..., ge=1, description="1-based page number")
     quads: list[PdfQuadIn] = Field(..., min_length=1, max_length=512)
     exact: str = Field("", description="Text layer extracted text (may be empty)")
@@ -164,6 +197,7 @@ class FragmentAnchorUpdateRequest(BaseModel):
 class PdfAnchorUpdateRequest(BaseModel):
     """Typed PDF anchor update payload."""
 
+    reader_generation: int = Field(ge=1)
     page_number: int = Field(..., ge=1, description="1-based page number")
     quads: list[PdfQuadIn] = Field(..., min_length=1, max_length=512)
     type: Literal["pdf_page_geometry"] = "pdf_page_geometry"
@@ -174,6 +208,7 @@ class PdfAnchorUpdateRequest(BaseModel):
 class PdfBoundsUpdate(BaseModel):
     """Internal PDF anchor replacement payload."""
 
+    reader_generation: int = Field(ge=1)
     page_number: int = Field(..., ge=1, description="1-based page number")
     quads: list[PdfQuadIn] = Field(..., min_length=1, max_length=512)
     exact: str = Field("", description="Replacement exact text (may be empty)")

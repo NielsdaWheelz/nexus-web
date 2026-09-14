@@ -261,6 +261,19 @@ export function isReflowableReaderResumeState(
   return value?.kind === "web" || value?.kind === "transcript" || value?.kind === "epub";
 }
 
+export function parseReaderEpubTarget(value: unknown): EpubReaderResumeState["target"] {
+  if (!isRecord(value) || !hasExactKeys(value, ["section_id", "href_path", "anchor_id"])) {
+    throw new Error("Invalid reader state payload");
+  }
+  const sectionId = parseRequiredStringField(value.section_id);
+  const hrefPath = parseRequiredStringField(value.href_path);
+  const anchorId = parseNullableStringField(value.anchor_id);
+  if (!sectionId.ok || sectionId.value === null || !hrefPath.ok || hrefPath.value === null || !anchorId.ok) {
+    throw new Error("Invalid reader state payload");
+  }
+  return { section_id: sectionId.value, href_path: hrefPath.value, anchor_id: anchorId.value };
+}
+
 export function parseReaderResumeState(value: unknown): ReaderResumeState | null {
   if (value === null) {
     return null;
@@ -336,28 +349,9 @@ export function parseReaderResumeState(value: unknown): ReaderResumeState | null
     if (!hasExactKeys(value, ["kind", "target", "locations", "text"])) {
       throw new Error("Invalid reader state payload");
     }
-    if (!hasExactKeys(target, ["section_id", "href_path", "anchor_id"])) {
-      throw new Error("Invalid reader state payload");
-    }
-    const sectionId = parseRequiredStringField(target.section_id);
-    const hrefPath = parseRequiredStringField(target.href_path);
-    const anchorId = parseNullableStringField(target.anchor_id);
-    if (
-      !sectionId.ok ||
-      sectionId.value === null ||
-      !hrefPath.ok ||
-      hrefPath.value === null ||
-      !anchorId.ok
-    ) {
-      throw new Error("Invalid reader state payload");
-    }
     return {
       kind,
-      target: {
-        section_id: sectionId.value,
-        href_path: hrefPath.value,
-        anchor_id: anchorId.value,
-      },
+      target: parseReaderEpubTarget(target),
       locations,
       text,
     };

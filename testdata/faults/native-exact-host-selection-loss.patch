@@ -1,0 +1,12 @@
+diff --git a/python/nexus_test_control/runner.py b/python/nexus_test_control/runner.py
+--- a/python/nexus_test_control/runner.py
++++ b/python/nexus_test_control/runner.py
+@@ -1358,7 +1358,7 @@
+             case Capability.ANDROID_DEVICE:
+                 result = _run_android_device_exact(proof_context, node, environment)
+             case Capability.ANDROID_HOST:
+-                result = _run_android_host(proof_context, environment, exact=True)
++                result = _run_android_host(proof_context, environment)
+             case Capability.AUDIT:
+                 result = _run_audit(proof_context, environment, execution, exact=True)
+             case _:

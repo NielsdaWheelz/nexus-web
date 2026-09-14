@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTablePublication.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTablePublication.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTablePublication.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTablePublication.kt
+@@ -103,7 +103,7 @@
+                     check(it.moveToFirst())
+                     owned.context.getJSONArray("cells").put(JSONObject().put("row", it.getLong(0)).put("column", it.getLong(1))
+                         .put("row_span", it.getLong(2) - it.getLong(0)).put("column_span", it.getLong(3) - it.getLong(1))
+-                        .put("continued_before", it.getLong(4) < start).put("continued_after", it.getLong(5) > crop.end))
++                        .put("continued_before", it.getLong(4) + 1 < start).put("continued_after", it.getLong(5) > crop.end))
+                 }
+             }
+         }

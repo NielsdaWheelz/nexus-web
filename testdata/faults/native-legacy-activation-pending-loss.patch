@@ -1,0 +1,11 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
+@@ -1520,6 +1520,7 @@
+             check(update("offline_reader_packages", values, "id = ?", arrayOf(installed.id.toString())) == 1)
+         }
+         // Neither baseline nor pending rows participate in a byte-layout migration.
++        database.writableDatabase.execSQL("DELETE FROM offline_reader_progress_pending WHERE media_id = ?", arrayOf(installed.mediaId.toString()))
+         verifiedPackages.remove(installed.id)
+         val activated = readPackage(binding.bindingId, installed.mediaId)
+             ?: error("converted offline reading package row is missing")

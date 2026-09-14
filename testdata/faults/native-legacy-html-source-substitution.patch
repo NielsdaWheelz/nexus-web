@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyHtml.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyHtml.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyHtml.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyHtml.kt
+@@ -85,7 +85,7 @@
+ 
+             override fun characters(buffer: CharArray, start: Int, length: Int) {
+                 if (length == 0) return
+-                var value = (pendingSurrogate?.toString() ?: "") + String(buffer, start, length)
++                var value = (pendingSurrogate?.toString() ?: "") + String(buffer, start, length).replace("🧠", "?")
+                 pendingSurrogate = if (value.last().isHighSurrogate()) value.last() else null
+                 if (pendingSurrogate != null) value = value.dropLast(1)
+                 if (value.isEmpty()) return

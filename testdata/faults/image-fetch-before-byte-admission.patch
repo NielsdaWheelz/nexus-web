@@ -1,0 +1,20 @@
+diff --git a/python/nexus/services/image_validation.py b/python/nexus/services/image_validation.py
+--- a/python/nexus/services/image_validation.py
++++ b/python/nexus/services/image_validation.py
+@@ -492,6 +492,7 @@
+         },
+         follow_redirects=False,
+     ) as response:
++        response.read()
+         if response.status_code in REDIRECT_STATUS_CODES:
+             location = response.headers.get("location")
+             if not location:
+@@ -524,7 +525,7 @@
+         content_type = response.headers.get("content-type")
+         validate_content_type(content_type)
+         with io.BytesIO() as body:
+-            for chunk in response.iter_raw(chunk_size=64 * 1024):
++            for chunk in response.iter_bytes(chunk_size=64 * 1024):
+                 if body.tell() + len(chunk) > MAX_IMAGE_BYTES:
+                     raise ApiError(ApiErrorCode.E_IMAGE_TOO_LARGE, "Image exceeds maximum size")
+                 body.write(chunk)

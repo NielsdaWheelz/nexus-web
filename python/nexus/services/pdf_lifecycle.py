@@ -5,8 +5,10 @@ Public confirm/retry calls route through ``media_source_ingest`` so source
 attempts remain the owner.
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -41,6 +43,9 @@ from nexus.services.reader_publication import (
     unpublished_reader_source_paths,
 )
 from nexus.storage.client import get_storage_client
+
+if TYPE_CHECKING:
+    from nexus.services.reader_publication_artifacts import PreparedReaderPublication
 
 logger = get_logger(__name__)
 
@@ -96,6 +101,7 @@ def publish_pdf_source(
     *,
     media_id: UUID,
     plan: PdfExtractionPlan,
+    publication: PreparedReaderPublication,
     source_file: ReaderPublicationSourceFile | None = None,
 ) -> tuple[dict[str, object], list[str]]:
     """Publish one prepared PDF plan in the caller's fenced transaction.
@@ -156,6 +162,7 @@ def publish_pdf_source(
         expected_kind="pdf",
         replace_projection=replace_projection,
         source_file=source_file,
+        prepared=publication,
     )
     return response, superseded_source_paths
 

@@ -11,29 +11,12 @@ import type { ReaderProgressView } from "@/lib/reader/ReaderProgressPort";
 export type { OfflineReadingTransport } from "./transport";
 import type { OfflineReadingTransport } from "./transport";
 
-type ReadingRequest =
-  | { readonly kind: "ConnectHosted" | "ConnectOffline" | "GetSnapshot" | "OpenHosted" | "LogoutAndPurge" }
-  | {
-      readonly kind: "Enqueue";
-      readonly mediaId: string;
-      readonly requestedTitle: string;
-      readonly mediaKind: "Pdf" | "Epub" | "WebArticle";
-    }
-  | { readonly kind: "Cancel" | "Retry" | "Remove" | "OpenReading" | "OpenDownloadedCopy"; readonly mediaId: string }
-  | { readonly kind: "CloseReading"; readonly leaseId: string }
-  | {
-      readonly kind: "SaveReaderProgress";
-      readonly mediaId: string;
-      readonly readerGeneration: number;
-      readonly readerRevisionKey: string;
-      readonly locator: ReaderResumeState;
-    }
-  | {
-      readonly kind: "ResolveReaderProgress";
-      readonly mediaId: string;
-      readonly choice: "Canonical" | "Device";
-    }
-  | { readonly kind: "SetNetworkPolicy"; readonly policy: NetworkPolicy };
+type ReadingRequest = {
+  [Command in ReadingCommand as Command["kind"]]: Omit<
+    Command,
+    "protocolVersion" | "requestId"
+  >;
+}[ReadingCommand["kind"]];
 
 interface PendingReply {
   readonly resolve: (outcome: ReadingReplyOutcome) => void;
@@ -50,7 +33,9 @@ export interface OpenedOfflineReading {
 }
 
 export class OfflineReadingRejectedError extends Error {
-  constructor(readonly code: Extract<ReadingReplyOutcome, { kind: "Rejected" }>["code"]) {
+  constructor(
+    readonly code: Extract<ReadingReplyOutcome, { kind: "Rejected" }>["code"],
+  ) {
     super(`Offline reading command rejected: ${code}`);
     this.name = "OfflineReadingRejectedError";
   }
@@ -91,6 +76,7 @@ export class OfflineReadingControllerRuntime {
   #defect: Error | null = null;
   #stop: (() => void) | null = null;
   #disposed = false;
+  #pendingOpenRequest: string | null = null;
 
   constructor(
     readonly transport: OfflineReadingTransport,
@@ -109,42 +95,71 @@ export class OfflineReadingControllerRuntime {
     return () => this.#listeners.delete(listener);
   };
 
-  readonly subscribeOpenRequest = (listener: (mediaId: string) => void): (() => void) => {
+  readonly subscribeOpenRequest = (
+    listener: (mediaId: string) => void,
+  ): (() => void) => {
     this.#openRequestListeners.add(listener);
+    if (this.#pendingOpenRequest !== null) {
+      const mediaId = this.#pendingOpenRequest;
+      this.#pendingOpenRequest = null;
+      listener(mediaId);
+    }
     return () => this.#openRequestListeners.delete(listener);
   };
 
   /** Session-fatal transport/protocol failures observed outside a request. */
-  readonly subscribeDefect = (listener: (error: Error) => void): (() => void) => {
+  readonly subscribeDefect = (
+    listener: (error: Error) => void,
+  ): (() => void) => {
     this.#defectListeners.add(listener);
     return () => this.#defectListeners.delete(listener);
   };
 
   async connect(mode: "Hosted" | "Offline"): Promise<ReadingSnapshot> {
-    if (this.#stop !== null) throw new Error("Offline reading controller connected twice");
-    this.#stop = this.transport.start(
-      (raw) => this.#receive(raw),
-      (error) => this.#fail(error),
-    );
-    const outcome = await this.#request({ kind: mode === "Hosted" ? "ConnectHosted" : "ConnectOffline" });
-    if (outcome.kind === "Rejected") throw new OfflineReadingRejectedError(outcome.code);
-    if (outcome.kind !== "Connected") throw new Error(`Connect returned ${outcome.kind}`);
-    return this.#installSnapshot(outcome.snapshot);
+    if (this.#stop !== null)
+      throw new Error("Offline reading controller connected twice");
+    try {
+      this.#stop = this.transport.start(
+        (raw) => this.#receive(raw),
+        (error) => this.#fail(error),
+      );
+      const outcome = await this.#request({
+        kind: mode === "Hosted" ? "ConnectHosted" : "ConnectOffline",
+      });
+      if (outcome.kind === "Rejected")
+        throw new OfflineReadingRejectedError(outcome.code);
+      if (outcome.kind !== "Connected")
+        throw new Error(`Connect returned ${outcome.kind}`);
+      return this.#installSnapshot(outcome.snapshot);
+    } catch (error) {
+      const failure =
+        error instanceof Error
+          ? error
+          : new Error("Offline reading connection failed");
+      this.#fail(failure);
+      throw failure;
+    }
   }
 
   async refresh(): Promise<ReadingSnapshot> {
     const outcome = await this.#request({ kind: "GetSnapshot" });
-    if (outcome.kind === "Rejected") throw new OfflineReadingRejectedError(outcome.code);
-    if (outcome.kind !== "Snapshot") throw new Error(`GetSnapshot returned ${outcome.kind}`);
+    if (outcome.kind === "Rejected")
+      throw new OfflineReadingRejectedError(outcome.code);
+    if (outcome.kind !== "Snapshot")
+      throw new Error(`GetSnapshot returned ${outcome.kind}`);
     return this.#installSnapshot(outcome.snapshot);
   }
 
   enqueue(
-    mediaId: string,
-    requestedTitle: string,
-    mediaKind: "Pdf" | "Epub" | "WebArticle",
+    input: Omit<Extract<ReadingRequest, { kind: "Enqueue" }>, "kind">,
   ): Promise<void> {
-    return this.#accept({ kind: "Enqueue", mediaId, requestedTitle, mediaKind });
+    if (
+      !Number.isSafeInteger(input.readerGeneration) ||
+      input.readerGeneration < 1
+    ) {
+      throw new Error("Offline download requires a selected reader generation");
+    }
+    return this.#accept({ kind: "Enqueue", ...input });
   }
 
   cancel(mediaId: string): Promise<void> {
@@ -156,7 +171,9 @@ export class OfflineReadingControllerRuntime {
   }
 
   remove(mediaId: string): Promise<void> {
-    return this.#accept({ kind: "Remove", mediaId }).then(() => this.refresh()).then(() => undefined);
+    return this.#accept({ kind: "Remove", mediaId })
+      .then(() => this.refresh())
+      .then(() => undefined);
   }
 
   setNetworkPolicy(policy: NetworkPolicy): Promise<void> {
@@ -173,8 +190,10 @@ export class OfflineReadingControllerRuntime {
 
   async open(mediaId: string): Promise<OpenedOfflineReading> {
     const outcome = await this.#request({ kind: "OpenReading", mediaId });
-    if (outcome.kind === "Rejected") throw new OfflineReadingRejectedError(outcome.code);
-    if (outcome.kind !== "OpenedReading") throw new Error(`OpenReading returned ${outcome.kind}`);
+    if (outcome.kind === "Rejected")
+      throw new OfflineReadingRejectedError(outcome.code);
+    if (outcome.kind !== "OpenedReading")
+      throw new Error(`OpenReading returned ${outcome.kind}`);
     return outcome;
   }
 
@@ -204,16 +223,26 @@ export class OfflineReadingControllerRuntime {
       readerRevisionKey,
       locator,
     });
-    if (outcome.kind === "Rejected") throw new OfflineReadingRejectedError(outcome.code);
+    if (outcome.kind === "Rejected")
+      throw new OfflineReadingRejectedError(outcome.code);
     if (outcome.kind !== "ReaderProgressSaved") {
       throw new Error(`SaveReaderProgress returned ${outcome.kind}`);
     }
     return outcome.result;
   }
 
-  async resolveReaderProgress(mediaId: string, choice: "Canonical" | "Device") {
-    const outcome = await this.#request({ kind: "ResolveReaderProgress", mediaId, choice });
-    if (outcome.kind === "Rejected") throw new OfflineReadingRejectedError(outcome.code);
+  async resolveReaderProgress(
+    input: Omit<
+      Extract<ReadingRequest, { kind: "ResolveReaderProgress" }>,
+      "kind"
+    >,
+  ) {
+    const outcome = await this.#request({
+      kind: "ResolveReaderProgress",
+      ...input,
+    });
+    if (outcome.kind === "Rejected")
+      throw new OfflineReadingRejectedError(outcome.code);
     if (outcome.kind !== "ReaderProgressSaved") {
       throw new Error(`ResolveReaderProgress returned ${outcome.kind}`);
     }
@@ -233,18 +262,22 @@ export class OfflineReadingControllerRuntime {
     const error = new Error("Offline reading session ended");
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();
+    this.#pendingOpenRequest = null;
     this.#snapshot = null;
     this.#emit();
   }
 
   async #accept(command: ReadingRequest): Promise<void> {
     const outcome = await this.#request(command);
-    if (outcome.kind === "Rejected") throw new OfflineReadingRejectedError(outcome.code);
-    if (outcome.kind !== "Accepted") throw new Error(`${command.kind} returned ${outcome.kind}`);
+    if (outcome.kind === "Rejected")
+      throw new OfflineReadingRejectedError(outcome.code);
+    if (outcome.kind !== "Accepted")
+      throw new Error(`${command.kind} returned ${outcome.kind}`);
   }
 
   #request(command: ReadingRequest): Promise<ReadingReplyOutcome> {
-    if (this.#disposed) return Promise.reject(new Error("Offline reading session ended"));
+    if (this.#disposed)
+      return Promise.reject(new Error("Offline reading session ended"));
     if (this.#defect !== null) return Promise.reject(this.#defect);
     const requestId = this.#mintRequestId();
     const wire = {
@@ -258,7 +291,11 @@ export class OfflineReadingControllerRuntime {
         this.transport.send(wire);
       } catch (error) {
         this.#pending.delete(requestId);
-        reject(error instanceof Error ? error : new Error("Offline reading transport failed"));
+        reject(
+          error instanceof Error
+            ? error
+            : new Error("Offline reading transport failed"),
+        );
       }
     });
   }
@@ -280,7 +317,10 @@ export class OfflineReadingControllerRuntime {
       return;
     }
     if (message.kind === "OpenReadingRequested") {
-      for (const listener of this.#openRequestListeners) listener(message.mediaId);
+      if (this.#openRequestListeners.size === 0)
+        this.#pendingOpenRequest = message.mediaId;
+      for (const listener of this.#openRequestListeners)
+        listener(message.mediaId);
       return;
     }
     if (message.kind === "SnapshotChanged") {
@@ -295,7 +335,9 @@ export class OfflineReadingControllerRuntime {
     }
     const pending = this.#pending.get(message.requestId);
     if (pending === undefined) {
-      this.#fail(new Error(`Unexpected offline reading reply ${message.requestId}`));
+      this.#fail(
+        new Error(`Unexpected offline reading reply ${message.requestId}`),
+      );
       return;
     }
     this.#pending.delete(message.requestId);
@@ -304,7 +346,9 @@ export class OfflineReadingControllerRuntime {
 
   #installSnapshot(snapshot: ReadingSnapshot): ReadingSnapshot {
     const boundAccountId =
-      snapshot.binding.kind === "Present" ? snapshot.binding.value.accountId : null;
+      snapshot.binding.kind === "Present"
+        ? snapshot.binding.value.accountId
+        : null;
     if (
       this.#expectedAccountId !== null &&
       boundAccountId !== null &&
@@ -326,6 +370,7 @@ export class OfflineReadingControllerRuntime {
   #fail(error: Error): void {
     if (this.#disposed || this.#defect !== null) return;
     this.#defect = error;
+    this.#pendingOpenRequest = null;
     this.#snapshot = null;
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();

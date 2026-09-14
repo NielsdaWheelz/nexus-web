@@ -35,6 +35,9 @@ _FINGERPRINT = re.compile(r"[0-9a-f]{40}\Z")
 _SCENARIO_ID = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\Z")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z")
 _PROCESS_OWNER = re.compile(r"[0-9a-f]{32}\Z")
+_CONTAINER_ROLES = frozenset(
+    {"api-baseline", "api-candidate", "cleanup-proof", "worker-ingest", "capacity-worker"}
+)
 _PROCESS_ROLES = frozenset(
     {
         "api",
@@ -335,6 +338,10 @@ def record_planned(
             if not normalized_command or any(not part for part in normalized_command):
                 raise RuntimeContractError("planned process requires its exact command")
             _require_match(external_id, _PROCESS_OWNER, "planned process owner token")
+        elif resource.kind is ResourceKind.CONTAINER:
+            _require_match(external_id, _PROCESS_OWNER, "planned container owner token")
+            if normalized_command is not None:
+                raise RuntimeContractError("container cannot record a process command")
         elif normalized_command is not None:
             raise RuntimeContractError("only a process can record a command")
         if resource.kind is ResourceKind.SUPABASE_USER:
@@ -342,7 +349,7 @@ def record_planned(
                 _require_match(external_id, _UUID, "planned Supabase admin user id")
         elif resource.kind is ResourceKind.TEMPLATE_BUILD:
             _require_match(external_id, _FINGERPRINT, "template build fingerprint")
-        elif resource.kind is ResourceKind.PROCESS:
+        elif resource.kind in {ResourceKind.PROCESS, ResourceKind.CONTAINER}:
             pass
         elif external_id is not None:
             raise RuntimeContractError("resource kind cannot record an external id while planned")
@@ -389,7 +396,7 @@ def record_created(
         elif process_start_token is not None:
             raise RuntimeContractError("only a process can record a birth token")
         resolved_external_id = external_id if external_id is not None else entry.external_id
-        if resource.kind is ResourceKind.PROCESS:
+        if resource.kind in {ResourceKind.PROCESS, ResourceKind.CONTAINER}:
             _require_match(resolved_external_id, _PROCESS_OWNER, "process owner token")
             if resolved_external_id != entry.external_id:
                 raise RuntimeContractError("created process owner changed after planning")
@@ -785,7 +792,7 @@ def _validate_ledger(ledger: RunLedger) -> None:
             raise RuntimeContractError("non-process resource has a process-group id")
         elif entry.command is not None or entry.process_start_token is not None:
             raise RuntimeContractError("non-process resource has process state")
-        if entry.resource.kind is ResourceKind.PROCESS:
+        if entry.resource.kind in {ResourceKind.PROCESS, ResourceKind.CONTAINER}:
             _require_match(entry.external_id, _PROCESS_OWNER, "process owner token")
         elif entry.resource.kind is ResourceKind.SUPABASE_USER:
             if entry.phase is ResourcePhase.CREATED or entry.external_id is not None:
@@ -794,6 +801,24 @@ def _validate_ledger(ledger: RunLedger) -> None:
             _require_match(entry.external_id, _FINGERPRINT, "template build fingerprint")
         elif entry.external_id is not None:
             raise RuntimeContractError("resource kind cannot have an external id")
+
+
+def container_resource_identity(run_id: str, role: str) -> str:
+    require_run_id(run_id)
+    if role not in _CONTAINER_ROLES:
+        raise RuntimeContractError("unknown test container role")
+    return f"nexus-container-{run_id}-{role}"
+
+
+def _run_owned_role(kind: ResourceKind, identity: str, prefix: str) -> str:
+    """Read the role out of an identity this run already owns.
+
+    Another run's identity carries no role of ours, so parsing it first reports
+    a role-grammar failure for what is actually a run-ownership violation.
+    """
+    if not identity.startswith(prefix):
+        raise RuntimeContractError(f"{kind.value} identity is not the exact test-only name")
+    return identity.removeprefix(prefix)
 
 
 def _validate_resource(resource: Resource, run_id: str, scenario_id: str | None) -> None:
@@ -822,8 +847,13 @@ def _validate_resource(resource: Resource, run_id: str, scenario_id: str | None)
     elif kind is ResourceKind.PROCESS:
         if scenario_id is not None:
             raise RuntimeContractError("process must not carry scenario metadata")
-        role = identity.removeprefix(f"nexus-process-{run_id}-")
-        expected = process_resource_identity(run_id, role)
+        expected = process_resource_identity(
+            run_id, _run_owned_role(kind, identity, f"nexus-process-{run_id}-")
+        )
+    elif kind is ResourceKind.CONTAINER:
+        expected = container_resource_identity(
+            run_id, _run_owned_role(kind, identity, f"nexus-container-{run_id}-")
+        )
     elif kind is ResourceKind.EXTENSION_PROFILE:
         if scenario_id is None:
             raise RuntimeContractError("extension profile requires scenario metadata")

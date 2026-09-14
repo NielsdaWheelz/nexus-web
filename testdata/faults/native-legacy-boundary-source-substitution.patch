@@ -1,0 +1,16 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyCanonical.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyCanonical.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyCanonical.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyCanonical.kt
+@@ -157,11 +157,7 @@
+             end += 1
+         }
+     }
+-    val sourceStarts = LongArray(text.length + end - renderEnd) { index ->
+-        val origin = if (index < text.length) origins[contentStart + index]
+-            else markerOrigins[markerOrigins.size - (end - renderEnd) + index - text.length]
+-        rawSources[origin]
+-    }
++    val sourceStarts = LongArray(text.length + end - renderEnd) { 0L }
+     val anchorSources = markerOrigins.toIntArray()
+     anchorSources.sort()
+     fun canonicalOffset(rawOffset: Int): Long {

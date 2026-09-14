@@ -137,21 +137,23 @@ selected exact module-level Python test plus its imports and non-test module
 support differs from base. Sibling tests are separate owners: changing only a
 sibling retains the selected owner's declared FAULT.
 
-One exact module-level Python proof MAY opt into
+One exact module-level Python proof or canonical whole-file Vitest/Gradle proof MAY opt into
 `changed_owner_red: coherent-fault` on its single registered product fault when
 an intentional hard-cut interface or a behavior-preserving proof-ownership
 refactor prevents BASE from reaching or falsifying the retained behavioral
 contract. Policy MUST require one canonical exact proof, one product-only
 applicable patch, its SHA-256, and its expected assertion fingerprint. The
-manifest MUST also pin the SHA-256 of version-stable source slices for that exact
-test plus its imports and non-test module support; interpreter-specific AST
-serialization is not a durable encoding. Any owner drift is a policy failure
+manifest MUST also pin the SHA-256 of version-stable source slices for the exact
+Python test plus its imports and non-test module support, or the exact file bytes
+for a Vitest/Gradle owner. Interpreter-specific AST serialization is not a durable
+encoding. Imported testkit and fixtures retain their normal source/input identities;
+the owner digest does not attest their contents. Any owner drift is a policy failure
 requiring explicit review and a new digest. The coherent-candidate fault proves
 only that registered contract; every independent new behavior requires a
-separate exact proof and sensitivity witness. The exception mechanism itself
+separate proof and sensitivity witness. The exception mechanism itself
 MUST have a canonical BASE sensitivity owner. The work report MUST name why
 BASE was inapplicable.
-Whole-file owners, class-qualified nodes, non-Python exact nodes, unmarked
+Whole-file Python owners, class-qualified nodes, non-Python exact nodes, unmarked
 faults, absent owners, duplicate owners, parse failures, digest drift, and Git
 read failures fail closed.
 
@@ -521,7 +523,36 @@ The command table above, CI routes, and deferred-owner map are explicit,
 policy-checked projections that MUST change with it; they are not generated
 from the registry.
 
-<!-- nexus-test-routing-sha256: 16be00b8b3dea025d985dacb2bc676ac278d12736120c133ef2593ebd896d864 -->
+`api-capacity` runs the candidate proof nodes declared in the typed registry;
+the PDF, sparse EPUB and dense-word EPUB worker-overlap nodes build API and
+background-worker targets from one frozen source context. they upload actual
+100 MiB / 10,000-page / 32 MiB extracted-text PDF or 64 MiB aggregate
+sanitized-HTML-plus-canonical EPUB recipes. both cgroups, source publication,
+selected-source queries and reader/image/progress/readiness outcomes are retained.
+the same worker also overlaps the first and repeated history endpoint calls
+against 100,000 retained usage rows and the complete 95-candidate request. all
+five expensive reader/history/image calls must succeed and intersect the actual
+source child; readiness and progress remain observable alongside them. history
+means first endpoint use in a fresh API process with a warm fixture database,
+not a cold-cache database measurement.
+these are qualification profiles, not successful maximum-capacity claims.
+the worker uses exact run-owned loopback infrastructure with host networking and
+the existing external Codex and embedding peers outside its measured cgroup.
+the inherited default-deny network guard remains active; only its public CA and
+exact Codex socket enter the image. metadata and indexing follow-ups must reach
+successful domain outcomes. this exercises actual worker/job code but does not
+claim production network-latency equivalence.
+the secret-free run-owned socket permits local connects with mode 0666 because
+rootless Docker group ids do not equal host group ids. its host parent remains
+private, its audit remains 0600, and only that socket is mounted read-only into
+the unchanged uid-10001 worker. the receipt records the actual socket mode;
+successful metadata execution, not file permissions alone, proves composition.
+`list --json` exposes that complete set. Historical image qualification runs only
+when its exact incident-baseline node is explicitly selected through `changed`.
+An imports-only receipt proves no request/worker envelope; the final resource
+qualification must include those workloads before production limits are adopted.
+
+<!-- nexus-test-routing-sha256: faa535199f2c1665e37a2f90aabd77da4461f57425537b5f73feb3393797a903 -->
 
 When changed-file routing names a capability later than the invoked workflow,
 the controller MUST retain it in evidence with its exact `deferred_to` owner and
@@ -541,6 +572,7 @@ physical-device boundaries are excluded. The owning `full`, `nightly`, or
 | Pinned portable LLM tools | `python/tests/llm_tools_contract/` |
 | Node accepted-URL ingest egress | `node/ingest/test/*.test.mjs` |
 | Release artifact/image binding | `python/tests/release_artifact/` |
+| API image memory qualification | `python/tests/capacity/` |
 | Deterministic LLM semantics | `python/tests/evals/` |
 | Property/random-order audit | `python/tests/audit/` |
 | Web pure kernel | `apps/web/src/**/*.unit.test.{ts,tsx}` |
@@ -585,10 +617,15 @@ This conservative lease prevents a local run and the self-hosted Actions runner
 from producing nominally green but resource-contended evidence on the same
 devbox.
 Before `full` or a higher local workflow, `scripts/agency_setup.sh` hydrates the
-exact pinned `provider-runtime` and `llm-tools` commits and all of their locked
-artifacts. It requires adjacent `llm-calling` and `llm-tools` Git checkouts,
-fetches only a missing pinned commit object, and MUST NOT move either checkout's
-HEAD or refs or alter its index, tracked files, or untracked files. The test
+exact pinned `provider-runtime`, `llm-tools` and `llm-agent-kernel` commits and
+all of their locked artifacts. It requires adjacent `llm-calling`, `llm-tools`
+and `llm-agent-kernel` Git checkouts, fetches only a missing pinned commit
+object, and MUST NOT move any checkout's HEAD or refs or alter its index,
+tracked files, or untracked files. The `llm-agent-kernel` checkout is also the
+provider gate's and `doctor`'s prerequisite: both run `uv build --no-sources
+--offline` in the hydrated kernel, so a kernel that cannot be packaged offline
+fails the gate rather than being skipped. A missing adjacent checkout is a
+fail-closed `_not_run`, never a pass. The test
 controller then archives that immutable object into its owned checkout and
 materializes the suite with network disabled. Android proof honors an explicit,
 consistent `ANDROID_HOME` or `ANDROID_SDK_ROOT`; when both are absent, the
@@ -1097,6 +1134,13 @@ Failure artifacts include, as applicable:
 - database identity and migration head;
 - last observed job/storage state;
 - sensitivity method and result.
+
+
+If capability admission, execution or cleanup raises, the summary retains completed
+capability evidence and fails the active owner; pending capabilities remain
+`not_run`. Cleanup failure replaces that owner's prior result while preserving
+its duration, artifacts and any earlier failure detail. The normal workflow and
+formal diagnostic replay use this same projection and existing secret redaction.
 
 Formal diagnostic evidence names `command: diagnose`, the original failed run
 and summary, and a nested `diagnostic_result`. Its top-level status remains

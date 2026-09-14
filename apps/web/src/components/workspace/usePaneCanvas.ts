@@ -39,6 +39,7 @@ export function usePaneCanvas({
   const cleanupRef = useRef<(() => void) | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const [edges, setEdges] = useState(EMPTY_EDGES);
+  const [isDragging, setIsDragging] = useState(false);
   const inViewPaneIds = useStringIdSet();
   const {
     add: markPaneInView,
@@ -117,6 +118,7 @@ export function usePaneCanvas({
         doc.removeEventListener("mousemove", handleMouseMove);
         doc.removeEventListener("mouseup", handleMouseUp);
         cleanupRef.current = null;
+        setIsDragging(false);
       };
       const handleMouseMove = (moveEvent: MouseEvent) => {
         const dx = moveEvent.clientX - startX;
@@ -125,6 +127,7 @@ export function usePaneCanvas({
         }
         if (!dragging) {
           dragging = true;
+          setIsDragging(true);
           doc.body.style.cursor = "grabbing";
           doc.body.style.userSelect = "none";
         }
@@ -252,6 +255,7 @@ export function usePaneCanvas({
     canvasRef,
     onWheel,
     edges: enabled ? edges : EMPTY_EDGES,
+    isDragging,
     inViewPaneIds: enabled ? inViewPaneIds.ids : EMPTY_IN_VIEW_PANE_IDS,
     handleChromeMouseDown,
     scrollPaneIntoView,

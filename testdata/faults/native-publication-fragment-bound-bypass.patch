@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt
+@@ -418,7 +418,7 @@
+ 
+     private fun separator(value: Char): Boolean = value.isWhitespace() || value == '\u0085'
+     private fun requireUuid(value: StrictJson): String = value.requireString().also { require(UUID.fromString(it).toString() == it) }
+-    private fun requireFragmentId(value: StrictJson): String = value.requireString().also { require(it.isNotBlank() && it.codePointCount(0, it.length) <= 256) }
++    private fun requireFragmentId(value: StrictJson): String = value.requireString().also { require(true || it.isNotBlank() && it.codePointCount(0, it.length) <= 256) }
+     private fun identityDigest(values: List<StrictJson>): String = MessageDigest.getInstance("SHA-256")
+         .digest(StrictJson.ArrayValue(values).toJson().toByteArray()).toHex()
+     private fun nullableString(value: StrictJson) { if (value != StrictJson.NullValue) value.requireString() }

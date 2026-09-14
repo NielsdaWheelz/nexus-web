@@ -13,7 +13,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated, Any, assert_never
+from typing import TYPE_CHECKING, Annotated, Any, assert_never
 
 from pydantic import (
     BaseModel,
@@ -39,6 +39,9 @@ from nexus.services.contributor_taxonomy import (
     build_observation,
 )
 from nexus.services.reader_publication import replace_reader_document_title
+
+if TYPE_CHECKING:
+    from nexus.services.reader_publication_artifacts import PreparedReaderPublicationTitle
 
 logger = get_logger(__name__)
 
@@ -677,7 +680,9 @@ def validate_structured_enrichment(payload: object) -> MetadataEnrichmentOutput 
 # ---------------------------------------------------------------------------
 
 
-def _replace_media_title(db: Session, media: Media, title: str) -> None:
+def _replace_media_title(
+    db: Session, media: Media, title: str, prepared: PreparedReaderPublicationTitle | None
+) -> None:
     """Write the enriched title through the owner of that field.
 
     The title of a published PDF, EPUB, or web article is reader-visible canonical
@@ -686,7 +691,7 @@ def _replace_media_title(db: Session, media: Media, title: str) -> None:
     the write and bumps the generation. Every other media title is this merge's own
     write.
     """
-    if not replace_reader_document_title(db, media=media, title=title):
+    if not replace_reader_document_title(db, media=media, title=title, prepared=prepared):
         media.title = title
 
 
@@ -694,6 +699,8 @@ def merge_enrichment(
     db: Session,
     media: Media,
     enrichment: MetadataEnrichmentOutput,
+    *,
+    prepared_title: PreparedReaderPublicationTitle | None = None,
 ) -> MetadataMergeResult:
     """Merge accepted Codex-generated enrichment into media.
 
@@ -705,7 +712,7 @@ def merge_enrichment(
     author_observation: ContributorObservationBatch = NOT_OBSERVED
 
     if enrichment.title is not None:
-        _replace_media_title(db, media, enrichment.title)
+        _replace_media_title(db, media, enrichment.title, prepared_title)
         accepted_fields.append("title")
 
     if enrichment.authors is not None:

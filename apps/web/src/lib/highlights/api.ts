@@ -1,6 +1,7 @@
 "use client";
 
-import { apiFetch, decodeApiPayload } from "@/lib/api/client";
+import { apiFetch, decodeApiPayload, type ApiError } from "@/lib/api/client";
+import { expectCanonicalUuid, expectExactRecord } from "@/lib/validation";
 import { compareStableString } from "@/lib/display/format";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import {
@@ -8,6 +9,7 @@ import {
   decodeHighlightListEnvelope,
   decodeHighlightNoteEnvelope,
   decodeMediaHighlightListEnvelope,
+  decodeMediaHighlight,
   type Highlight,
   type HighlightLinkedNoteBlock,
   type MediaHighlight,
@@ -26,6 +28,32 @@ export async function fetchHighlights(
     decodeHighlightListEnvelope,
     "Highlight list",
   );
+}
+
+export async function fetchHighlight(
+  highlightId: string,
+  signal: AbortSignal,
+): Promise<MediaHighlight> {
+  const response = await apiFetch<unknown>(`/api/highlights/${highlightId}`, {
+    cache: "no-store",
+    signal,
+  });
+  return decodeApiPayload(response, (raw) => {
+    const highlight = decodeMediaHighlight(expectExactRecord(raw, ["data"], "Highlight detail response").data);
+    if (highlight.id !== highlightId) {
+      throw new TypeError("Highlight detail returned another highlight");
+    }
+    return highlight;
+  }, "Highlight detail");
+}
+
+export function conflictingHighlightId(error: ApiError): string | null {
+  const details = error.details;
+  if (error.code !== "E_HIGHLIGHT_CONFLICT" ||
+      details === undefined || !("existing_highlight_id" in details)) return null;
+  return decodeApiPayload(details.existing_highlight_id,
+    (raw) => expectCanonicalUuid(raw, "existing_highlight_id"),
+    "Highlight conflict");
 }
 
 export async function fetchMediaHighlights(

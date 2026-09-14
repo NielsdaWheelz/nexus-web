@@ -1,3 +1,7 @@
+import { ArtworkProvider } from "@/lib/media/ArtworkProvider";
+import { ARTWORK_CAPACITY } from "@/lib/media/artworkCapacity";
+import { ResourceCacheProvider } from "@/lib/api/resourceCache";
+import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { useState, type ReactNode } from "react";
 import { cdp, userEvent } from "vitest/browser";
@@ -567,12 +571,19 @@ function ImportsShell({ children }: { children: ReactNode }) {
                           transport={null}
                         >
                           <ResourceOverlaysProvider>
-                            <GlobalPlayerProvider>
-                              <ResourceActionRuntimeProvider>
-                                <ImportsProvider>{children}</ImportsProvider>
-                                <ResourceActionOverlays />
-                              </ResourceActionRuntimeProvider>
-                            </GlobalPlayerProvider>
+                            <ResourceCacheProvider
+                              value={{}}
+                              publicationLimits={READER_CAPACITY.cache}
+                            >
+                              <ArtworkProvider limits={ARTWORK_CAPACITY}>
+                                <GlobalPlayerProvider>
+                                  <ResourceActionRuntimeProvider>
+                                    <ImportsProvider>{children}</ImportsProvider>
+                                    <ResourceActionOverlays />
+                                  </ResourceActionRuntimeProvider>
+                                </GlobalPlayerProvider>
+                              </ArtworkProvider>
+                            </ResourceCacheProvider>
                           </ResourceOverlaysProvider>
                         </OfflineMediaProvider>
                       </ShareControllerProvider>

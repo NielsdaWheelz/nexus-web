@@ -1,0 +1,11 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderProgressSync.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderProgressSync.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderProgressSync.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderProgressSync.kt
+@@ -150,7 +150,6 @@
+     if (root.fields["state"]?.requireString() != "Positioned") return false
+     val source = root.fields.getValue("source") as StrictJson.ObjectValue
+     if (source.fields.getValue("kind").requireString() != "Publication") return false
+-    if (source.fields.getValue("reader_generation").requireLong() != candidate.readerGeneration) return false
+     return strictJsonSemanticallyEqual(
+         root.fields.getValue("locator"),
+         StrictJson.parse(candidate.locatorJson.toByteArray()),

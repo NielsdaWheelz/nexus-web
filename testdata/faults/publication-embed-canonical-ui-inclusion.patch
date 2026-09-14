@@ -1,0 +1,8 @@
+diff --git a/apps/web/src/lib/reader/publicationDom.ts b/apps/web/src/lib/reader/publicationDom.ts
+--- a/apps/web/src/lib/reader/publicationDom.ts
++++ b/apps/web/src/lib/reader/publicationDom.ts
+@@ -148,3 +148,4 @@
+       if (!lease.extend(cards.additionalNodes)) { root.remove(); lease.release(); return { kind: "Capacity", reason: "Dom" }; }
+       cards.apply();
++      Object.assign(cursor, buildCanonicalCursor(root));
+     }

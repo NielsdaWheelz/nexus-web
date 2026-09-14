@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -12,12 +13,12 @@ import {
 } from "react";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { mediaErrorMessage } from "@/lib/media/mediaErrorMessage";
+import { reportClientDefect } from "@/lib/telemetry/clientDefects";
 import type { PdfReaderResumeState } from "@/lib/reader/types";
 import type {
   ReaderPositionIntent,
   ReaderSemanticViewport,
 } from "@/lib/reader/readerDocumentPosition";
-import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
 import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import { composeRefs } from "@/lib/ui/composeRefs";
 import {
@@ -39,7 +40,6 @@ import {
 } from "@/components/pdfReaderRuntime";
 import {
   createPdfFindRuntime,
-  pdfFindSourceAccessRefreshAbort,
   type PdfFindOrigin,
   type PdfFindOriginCapture,
   type PdfFindRuntime,
@@ -66,13 +66,17 @@ import { clamp } from "@/lib/clamp";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { isPositiveFinite } from "@/lib/validation";
 import type { ResolvedPdfDocument } from "@/lib/reader/ReaderDocumentSource";
-import type { ReaderResource } from "@/lib/reader/DocumentReaderSession";
+import type { ReaderResource, ReaderPdfPaintLease, ReaderViewCapacity } from "@/lib/reader/DocumentReaderSession";
+import { readerCapacityNotice, type ReaderCapacityReason } from "@/lib/reader/readerCapacity";
 import {
   useRetainedReaderSelection,
   useRetainedReaderSelectionGeometry,
 } from "@/lib/reader/useRetainedReaderSelection";
+import { PDF_PULSE_KEY_PREFIX } from "@/lib/reader/ReaderDecorations";
 import type {
   PdfHighlightOut,
+  PdfHighlightRectangle,
+  PdfHighlightPaint,
   PdfReaderDecorations,
 } from "@/lib/reader/ReaderDecorations";
 import styles from "./PdfReader.module.css";
@@ -93,13 +97,14 @@ export interface PdfTemporaryHighlight {
 interface PdfTransientPulseHighlight {
   id: string;
   pageNumber: number;
-  quads: PdfHighlightQuad[];
+  quads: readonly PdfHighlightQuad[];
 }
 
 interface PdfPulseNavigationTarget {
   key: string;
   pageNumber: number;
-  quads: PdfHighlightQuad[];
+  /** null addresses the page itself; no rectangle is invented. */
+  quads: readonly PdfHighlightQuad[] | null;
   highlightId: string | null;
   transientPulseId: string | null;
 }
@@ -123,6 +128,14 @@ export interface PdfReaderControlActions {
   zoomOut: () => void;
   /** Later addressable cursor application (page/progression/zoom), no remount. */
   applyResumeState: (resume: PdfReaderResumeState) => boolean;
+  /** Completes after positioning, pulse and retirement of borrowed geometry. */
+  locate: (
+    page: number,
+    quads: readonly PdfHighlightQuad[],
+    signal: AbortSignal,
+  ) => Promise<boolean>;
+  /** Completes after the requested page has actually been positioned. */
+  locatePage: (page: number, signal: AbortSignal) => Promise<boolean>;
   /** Synchronous freshest-position capture for lifecycle promotion. */
   captureResumeState: () => PdfReaderResumeState | null;
 }
@@ -138,6 +151,38 @@ export interface PdfReaderIntrinsicWidthState {
 
 export type PdfReaderVisibleLockReason = "pdf-selection" | "reader-restore";
 
+/**
+ * Why the highlight layer of ONE page could not be painted. Every arm carries
+ * the page it belongs to, so a notice retires with its page rather than
+ * outliving the read that raised it. `SavedUnpainted` is the committed-write
+ * arm: the server holds the highlight, only its projection was refused.
+ */
+type PdfPaintNotice =
+  | { readonly kind: "Capacity"; readonly pageNumber: number; readonly reason: ReaderCapacityReason }
+  | { readonly kind: "Unavailable"; readonly pageNumber: number; readonly message: string }
+  | {
+      readonly kind: "SavedUnpainted";
+      readonly pageNumber: number;
+      readonly highlightId: string;
+      readonly capacity: ReaderCapacityReason | null;
+    };
+
+function paintNoticePresentation(notice: PdfPaintNotice): { readonly message: string; readonly retryable: boolean } {
+  switch (notice.kind) {
+    case "Capacity":
+      return readerCapacityNotice(notice.reason);
+    case "Unavailable":
+      return { message: notice.message, retryable: true };
+    case "SavedUnpainted": {
+      if (notice.capacity === null) {
+        return { message: "This highlight is saved, but it cannot be shown on this page.", retryable: true };
+      }
+      const capacity = readerCapacityNotice(notice.capacity);
+      return { message: `This highlight is saved, but it cannot be shown yet. ${capacity.message}`, retryable: capacity.retryable };
+    }
+  }
+}
+
 export interface PdfReaderResourceState {
   pageNumber: number;
   numPages: number;
@@ -147,13 +192,14 @@ export interface PdfReaderResourceState {
 
 export interface PdfReaderResources {
   signedUrl: ReaderResource<ResolvedPdfDocument>;
-  pageHighlights: ReaderResource<PdfHighlightOut[]>;
+  pageHighlights: ReaderResource<ReaderPdfPaintLease | ReaderViewCapacity>;
   requestSignedUrlRefresh: (targetPage: number) => void;
+  retryPageHighlights: (() => void) | null;
 }
 
 export type PdfReaderDecorationWrites = Pick<
   PdfReaderDecorations,
-  "createHighlight" | "updateHighlight"
+  "createHighlight" | "updateHighlight" | "adoptHighlightPaint"
 >;
 
 interface PdfReaderProps {
@@ -175,19 +221,17 @@ interface PdfReaderProps {
   contentRef?: MutableRefObject<HTMLDivElement | null>;
   onControlsStateChange?: (state: PdfReaderControlsState) => void;
   onResourceStateChange?: (state: PdfReaderResourceState) => void;
+  onCanSuspendChange?: (canSuspend: boolean) => void;
+  displayed?: boolean;
   onControlsReady?: (actions: PdfReaderControlActions | null) => void;
   onIntrinsicWidthChange?: (state: PdfReaderIntrinsicWidthState) => void;
   focusedHighlightId?: string | null;
   hoveredHighlightId?: string | null;
   editingHighlightId?: string | null;
   highlightRefreshToken?: number;
-  onPageHighlightsChange?: (
-    pageNumber: number,
-    highlights: PdfHighlightOut[],
-  ) => void;
   navigateToHighlight?: PdfHighlightNavigationRequest | null;
   onHighlightNavigationComplete?: () => void;
-  onHighlightsMutated?: () => void;
+  onHighlightsMutated?: (highlight: PdfHighlightOut) => void;
   onHighlightTap?: (highlightId: string, anchorRect: DOMRect) => void;
   onHighlightHover?: (highlightId: string | null) => void;
   temporaryHighlight?: PdfTemporaryHighlight | null;
@@ -241,19 +285,9 @@ interface SelectionState {
   pageNumber: number;
 }
 
-interface ProjectedHighlightRect {
-  highlightId: string;
-  color: HighlightColor;
-  index: number;
-  isTemporary: boolean;
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
 
 interface PendingCommittedHighlight {
-  highlight: PdfHighlightOut;
+  lease: ReaderPdfPaintLease;
   externalRefreshTokenAtCommit: number;
 }
 
@@ -273,7 +307,6 @@ interface PdfReaderPositioningRenderTarget {
 
 export type PdfViewportIntent = "ReaderRestore" | "FindPreview" | "FindReturn";
 
-const SIGNED_URL_REFRESH_SKEW_MS = 2_000;
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 2;
 const ZOOM_STEP = 0.25;
@@ -505,33 +538,15 @@ function pdfReaderErrorMessage(error: unknown): string {
   }
 }
 
-function upsertCommittedPageHighlight(
-  highlights: PdfHighlightOut[],
-  committed: PdfHighlightOut,
-): PdfHighlightOut[] {
-  const existingIndex = highlights.findIndex(
-    (highlight) => highlight.id === committed.id,
-  );
-  if (existingIndex < 0) {
-    return [...highlights, committed];
-  }
-  return highlights.map((highlight, index) =>
-    index === existingIndex ? committed : highlight,
-  );
-}
-
 function samePdfHighlightProjection(
-  left: PdfHighlightOut,
-  right: PdfHighlightOut,
+  left: PdfHighlightPaint,
+  right: PdfHighlightPaint,
 ): boolean {
-  const leftQuads = left.anchor.quads;
-  const rightQuads = right.anchor.quads;
+  const leftQuads = left.quads;
+  const rightQuads = right.quads;
   return (
     left.id === right.id &&
     left.color === right.color &&
-    left.exact === right.exact &&
-    left.anchor.media_id === right.anchor.media_id &&
-    left.anchor.page_number === right.anchor.page_number &&
     leftQuads.length === rightQuads.length &&
     leftQuads.every((leftQuad, index) => {
       const rightQuad = rightQuads[index];
@@ -634,6 +649,11 @@ function refreshPdfSelectionSnapshot(
   }
 }
 
+function samePdfRange(left: Range, right: Range): boolean {
+  return left.startContainer === right.startContainer && left.startOffset === right.startOffset &&
+    left.endContainer === right.endContainer && left.endOffset === right.endOffset;
+}
+
 function samePdfSelection(
   left: SelectionState,
   right: SelectionState,
@@ -641,10 +661,7 @@ function samePdfSelection(
   return (
     left.pageNumber === right.pageNumber &&
     left.selectedText === right.selectedText &&
-    left.range.startContainer === right.range.startContainer &&
-    left.range.startOffset === right.range.startOffset &&
-    left.range.endContainer === right.range.endContainer &&
-    left.range.endOffset === right.range.endOffset
+    samePdfRange(left.range, right.range)
   );
 }
 
@@ -659,12 +676,12 @@ async function destroyPdfDocument(doc: PdfDocumentLike | null): Promise<void> {
   }
 }
 
-function destroyPdfLoadingTask(task: PdfDocumentLoadingTaskLike | null): void {
+async function destroyPdfLoadingTask(task: PdfDocumentLoadingTaskLike | null): Promise<void> {
   if (!task?.destroy) {
     return;
   }
   try {
-    task.destroy();
+    await task.destroy();
   } catch {
     // Best-effort cleanup only.
   }
@@ -725,13 +742,14 @@ export default function PdfReader({
   contentRef,
   onControlsStateChange,
   onResourceStateChange,
+  onCanSuspendChange,
+  displayed = true,
   onControlsReady,
   onIntrinsicWidthChange,
   focusedHighlightId = null,
   hoveredHighlightId = null,
   editingHighlightId = null,
   highlightRefreshToken = 0,
-  onPageHighlightsChange,
   navigateToHighlight = null,
   onHighlightNavigationComplete,
   onHighlightsMutated,
@@ -772,6 +790,7 @@ export default function PdfReader({
   const [textGeometryReliable, setTextGeometryReliable] = useState(true);
   const {
     visible: selection,
+    hasCaptured: hasSelection,
     capture: captureRetainedSelection,
     clear: clearRetainedSelection,
     retainVisibleOrClear: retainVisibleSelectionOrClear,
@@ -796,13 +815,17 @@ export default function PdfReader({
       setAsyncDefect({ error: defect });
     }
   }, []);
+  const reportPaintUnavailable = useCallback((noticePage: number, failure: unknown) => {
+    try {
+      setPaintNotice({ kind: "Unavailable", pageNumber: noticePage, message: pdfReaderErrorMessage(failure) });
+    } catch (defect) {
+      setAsyncDefect({ error: defect });
+    }
+  }, []);
   const highlightCreationInFlightRef = useRef(false);
-  const [pendingCommittedHighlights, setPendingCommittedHighlights] = useState<
-    PendingCommittedHighlight[]
-  >([]);
-  const [serverPageHighlights, setServerPageHighlights] = useState<
-    PdfHighlightOut[]
-  >([]);
+  const pendingCommittedHighlights = useRef<PendingCommittedHighlight[]>([]);
+  const [paintEpoch, setPaintEpoch] = useState(0);
+  const [paintNotice, setPaintNotice] = useState<PdfPaintNotice | null>(null);
   const [pulsingHighlightId, setPulsingHighlightId] = useState<string | null>(
     null,
   );
@@ -825,7 +848,6 @@ export default function PdfReader({
   > | null>(null);
   const pendingPdfFindRuntimeRef = useRef<PdfFindRuntime | null>(null);
   const eventHandlersRef = useRef<ViewerEventHandlers | null>(null);
-  const signedUrlExpiryRef = useRef<number | null>(null);
   const recoverAndRenderRef = useRef<
     ((targetPage: number, runId: number) => void) | null
   >(null);
@@ -842,13 +864,44 @@ export default function PdfReader({
   const pendingViewerPageRef = useRef<number | null>(null);
   const pendingViewerScaleRef = useRef<string | number | null>(null);
   const recoveringFromRenderErrorRef = useRef(false);
-  const onPageHighlightsChangeRef = useRef(onPageHighlightsChange);
   const onHighlightTapRef = useRef(onHighlightTap);
   const onHighlightHoverRef = useRef(onHighlightHover);
   const hasHighlightTapHandler = Boolean(onHighlightTap);
   const hasHighlightHoverHandler = Boolean(onHighlightHover);
   const pulseTimerRef = useRef<number | null>(null);
   const pulseSequenceRef = useRef(0);
+  const [pulseRetirement, setPulseRetirement] = useState(0);
+  const localPulseRef = useRef<{
+    key: string;
+    pageNumber: number;
+    run: number;
+    phase: "Positioning" | "Pulsing" | "Shown";
+    outcome: boolean | DOMException | null;
+    promise: Promise<boolean>;
+    finish: () => void;
+  } | null>(null);
+
+  const retireLocalPulse = useCallback((outcome: boolean | DOMException) => {
+    const operation = localPulseRef.current;
+    if (!operation || operation.outcome !== null) return;
+    operation.outcome = outcome;
+    // Abort may arrive before the target first commits; still schedule retirement.
+    setPulseRetirement((value) => value + 1);
+    if (pulseTimerRef.current !== null) {
+      window.clearTimeout(pulseTimerRef.current);
+      pulseTimerRef.current = null;
+    }
+    setPulseNavigationTarget((current) =>
+      current?.key === operation.key ? null : current,
+    );
+    setTransientPulseHighlight((current) =>
+      current?.id === operation.key ? null : current,
+    );
+    setPulsingHighlightId((current) =>
+      current === operation.key ? null : current,
+    );
+  }, []);
+
   const textLayerRefreshFrameRef = useRef<{
     pageNumber: number;
     runId: number;
@@ -872,39 +925,15 @@ export default function PdfReader({
   const readerRestoreSettledRef = useRef(false);
 
   const signedUrlResource = resources.signedUrl;
+  const sourceStatus = signedUrlResource.status;
+  const sourceUrl = signedUrlResource.status === "ready" ? signedUrlResource.data.url : null;
+  const sourceError = signedUrlResource.status === "error" ? signedUrlResource.error : null;
   const pageHighlightsResource = resources.pageHighlights;
   const requestSignedUrlRefresh = resources.requestSignedUrlRefresh;
-  const pageHighlights = useMemo(() => {
-    let projected = serverPageHighlights.filter(
-      (highlight) =>
-        highlight.anchor.media_id === mediaId &&
-        highlight.anchor.page_number === pageNumber,
-    );
-    for (const pending of pendingCommittedHighlights) {
-      const committed = pending.highlight;
-      if (
-        committed.anchor.media_id === mediaId &&
-        committed.anchor.page_number === pageNumber
-      ) {
-        projected = upsertCommittedPageHighlight(projected, committed);
-      }
-    }
-    return projected;
-  }, [mediaId, pageNumber, pendingCommittedHighlights, serverPageHighlights]);
-
   // Latest-value refs read by async callbacks (event handlers, RAF, etc.).
-  onPageHighlightsChangeRef.current = onPageHighlightsChange;
   onHighlightTapRef.current = onHighlightTap;
   onHighlightHoverRef.current = onHighlightHover;
   isMobileRef.current = isMobile;
-
-  useEffect(() => {
-    setPendingCommittedHighlights([]);
-  }, [mediaId]);
-
-  useEffect(() => {
-    onPageHighlightsChangeRef.current?.(pageNumber, pageHighlights);
-  }, [pageHighlights, pageNumber]);
 
   useEffect(() => {
     onResourceStateChange?.({ pageNumber, numPages, loading, error });
@@ -1445,18 +1474,16 @@ export default function PdfReader({
   );
 
   const clearSelection = useCallback(() => {
+    const live = getPdfSelection();
     clearRetainedSelection();
     setSelectionError(null);
-    getPdfSelection()?.removeAllRanges();
-  }, [clearRetainedSelection]);
-
-  useEffect(() => {
-    if (selection !== null || !highlightCreationInFlightRef.current) {
-      return;
+    const root = internalContentRef.current;
+    if (live === null || root === null || live.rangeCount === 0) return;
+    for (let index = 0; index < live.rangeCount; index += 1) {
+      if (!root.contains(live.getRangeAt(index).commonAncestorContainer)) return;
     }
-    highlightCreationInFlightRef.current = false;
-    setIsCreating(false);
-  }, [selection]);
+    live.removeAllRanges();
+  }, [clearRetainedSelection]);
 
   const applyPdfViewportPage = useCallback(
     (targetPage: number, intent: PdfViewportIntent) => {
@@ -1474,8 +1501,7 @@ export default function PdfReader({
 
       if (targetPage !== pageNumberRef.current) {
         clearSelection();
-        setServerPageHighlights([]);
-      }
+          }
       pageNumberRef.current = targetPage;
       setPageNumber(targetPage);
       setNavigating(false);
@@ -1671,24 +1697,6 @@ export default function PdfReader({
 
       zoomRef.current = origin.zoom;
       setZoom(origin.zoom);
-      const refreshExpiredSourceAccess = (): boolean => {
-        const expiryMs = signedUrlExpiryRef.current;
-        if (
-          typeof expiryMs !== "number" ||
-          Date.now() < expiryMs - SIGNED_URL_REFRESH_SKEW_MS
-        ) {
-          return false;
-        }
-        const recover = recoverAndRenderRef.current;
-        if (!recover) {
-          throw new Error("PDF signed URL recovery is unavailable");
-        }
-        recover(origin.pageNumber, runRef.current);
-        return true;
-      };
-      if (refreshExpiredSourceAccess()) {
-        throw pdfFindSourceAccessRefreshAbort();
-      }
 
       const previousIntent = viewportIntentRef.current;
       viewportIntentGenerationRef.current += 1;
@@ -1755,11 +1763,6 @@ export default function PdfReader({
             container.focus({ preventScroll: true });
           }
         });
-      } catch (error) {
-        if (!signal.aborted && refreshExpiredSourceAccess()) {
-          throw pdfFindSourceAccessRefreshAbort();
-        }
-        throw error;
       } finally {
         if (
           viewportIntentGenerationRef.current === intentGeneration &&
@@ -1776,26 +1779,6 @@ export default function PdfReader({
       getPageElement,
       readerScrollPositioner,
     ],
-  );
-
-  const openDocument = useCallback(
-    async (signedUrl: string): Promise<OpenedPdfDocument> => {
-      const pdfJs = await ensurePdfJs();
-      const task = pdfJs.getDocument({
-        url: signedUrl,
-        withCredentials: false,
-        disableRange: false,
-        disableStream: false,
-        disableAutoFetch: true,
-        cMapUrl: PDF_CMAP_URL,
-        cMapPacked: true,
-        standardFontDataUrl: PDF_STANDARD_FONT_URL,
-        wasmUrl: PDF_WASM_URL,
-      });
-      const doc = await task.promise;
-      return { doc, loadingTask: task };
-    },
-    [ensurePdfJs],
   );
 
   const replaceDocument = useCallback(async (nextOpened: OpenedPdfDocument) => {
@@ -1844,6 +1827,11 @@ export default function PdfReader({
       eventHandlersRef.current = null;
       linkServiceRef.current?.setDocument(null, null);
       pdfViewerRef.current?.setDocument(null);
+      void pdfViewerRef.current?.l10n?.destroy().catch((error: unknown) => {
+        reportClientDefect(toViewerLifecycleError("localization teardown", error), {
+          scope: "ReaderContent", componentStack: "",
+        });
+      });
       eventBusRef.current = null;
       linkServiceRef.current = null;
       pdfViewerRef.current = null;
@@ -1928,8 +1916,7 @@ export default function PdfReader({
         setNavigating(false);
         if (pageChanged) {
           clearSelection();
-          setServerPageHighlights([]);
-        }
+              }
         rememberPageScale(nextPage);
         setTextLayerUsable(isTextLayerUsableForPage(nextPage));
         setTextGeometryReliable(evaluatePageGeometryReliability(nextPage));
@@ -2159,7 +2146,7 @@ export default function PdfReader({
   const attachDocumentToViewer = useCallback(
     async (doc: PdfDocumentLike, targetPage: number, runId: number) => {
       await initializeViewerIfNeeded(runId);
-      if (runId !== runRef.current) {
+      if (runId !== runRef.current || documentRef.current !== doc) {
         return;
       }
       const viewer = pdfViewerRef.current;
@@ -2329,6 +2316,7 @@ export default function PdfReader({
   );
 
   const syncSelectionFromWindow = useCallback(() => {
+    if (!displayed || viewerContainerRef.current?.getClientRects().length === 0) return;
     const sel = getPdfSelection();
     if (!sel || sel.rangeCount === 0) {
       retainVisibleSelectionOrClear();
@@ -2376,6 +2364,7 @@ export default function PdfReader({
       publication: isMobileRef.current ? "Stabilized" : "Immediate",
     });
   }, [
+    displayed,
     captureRetainedSelection,
     clearRetainedSelection,
     retainVisibleSelectionOrClear,
@@ -2407,33 +2396,18 @@ export default function PdfReader({
         return null;
       }
 
+      const currentRun = runRef.current;
       highlightCreationInFlightRef.current = true;
       setIsCreating(true);
       setSelectionError(null);
-      let selectionRetiring = false;
       try {
         let createdHighlight: PdfHighlightOut | null = null;
         if (editingHighlightId) {
-          await decorations.updateHighlight(editingHighlightId, {
+          createdHighlight = await decorations.updateHighlight(editingHighlightId, {
             exact,
             pageNumber: activeSelection.pageNumber,
             quads,
           });
-          const existingHighlight = pageHighlights.find(
-            (highlight) => highlight.id === editingHighlightId,
-          );
-          createdHighlight = existingHighlight
-            ? {
-                ...existingHighlight,
-                exact,
-                anchor: {
-                  type: "pdf_page_geometry",
-                  media_id: mediaId,
-                  page_number: activeSelection.pageNumber,
-                  quads,
-                },
-              }
-            : null;
         } else {
           createdHighlight = await decorations.createHighlight({
             pageNumber: activeSelection.pageNumber,
@@ -2443,36 +2417,44 @@ export default function PdfReader({
           });
         }
 
+        // The server holds the write the moment it answers; painting it is a
+        // separate, independently failable concern that must never retract the
+        // acknowledgment or speak in the selection's voice.
+        onHighlightsMutated?.(createdHighlight);
         if (
+          currentRun === runRef.current &&
           createdHighlight?.anchor.type === "pdf_page_geometry" &&
           createdHighlight.anchor.media_id === mediaId
         ) {
-          setPendingCommittedHighlights((current) => {
-            const pending: PendingCommittedHighlight = {
-              highlight: createdHighlight,
-              externalRefreshTokenAtCommit: highlightRefreshToken,
-            };
-            const existingIndex = current.findIndex(
-              (candidate) => candidate.highlight.id === createdHighlight.id,
-            );
-            if (existingIndex < 0) {
-              return [...current, pending];
+          const paintPage = activeSelection.pageNumber;
+          const highlightId = createdHighlight.id;
+          try {
+            const adopted = decorations.adoptHighlightPaint(createdHighlight);
+            if (adopted.kind === "Capacity") {
+              setPaintNotice({ kind: "SavedUnpainted", pageNumber: paintPage, highlightId, capacity: adopted.reason });
+            } else {
+              pendingCommittedHighlights.current.push({
+                lease: adopted.lease,
+                externalRefreshTokenAtCommit: highlightRefreshToken,
+              });
+              setPaintEpoch((value) => value + 1);
             }
-            return current.map((candidate, index) =>
-              index === existingIndex ? pending : candidate,
-            );
-          });
+          } catch {
+            setPaintNotice({ kind: "SavedUnpainted", pageNumber: paintPage, highlightId, capacity: null });
+          }
         }
-        onHighlightsMutated?.();
-        selectionRetiring = true;
-        clearSelection();
+        if (currentRun === runRef.current && readRetainedSelection()?.range === activeSelection.range) {
+          const live = getPdfSelection();
+          if (live === null || live.isCollapsed ||
+              (live.rangeCount === 1 && samePdfRange(live.getRangeAt(0), activeSelection.range))) clearSelection();
+        }
         return createdHighlight;
       } catch (err) {
         if (handleAuthenticationError(err)) return null;
         reportSelectionError(err);
         return null;
       } finally {
-        if (!selectionRetiring) {
+        if (currentRun === runRef.current) {
           highlightCreationInFlightRef.current = false;
           setIsCreating(false);
         }
@@ -2487,7 +2469,6 @@ export default function PdfReader({
       handleAuthenticationError,
       highlightRefreshToken,
       mediaId,
-      pageHighlights,
       readRetainedSelection,
       textGeometryReliable,
       onHighlightsMutated,
@@ -2547,24 +2528,11 @@ export default function PdfReader({
       let waitsForRender = false;
       setNavigating(true);
       clearSelection();
-      setServerPageHighlights([]);
-      pageNumberRef.current = nextPage;
+        pageNumberRef.current = nextPage;
       setPageNumber(nextPage);
 
       const currentRun = runRef.current;
       try {
-        const expiryMs = signedUrlExpiryRef.current;
-        if (
-          typeof expiryMs === "number" &&
-          Date.now() >= expiryMs - SIGNED_URL_REFRESH_SKEW_MS
-        ) {
-          waitsForRender = waitForReaderPositioningRender(
-            nextPage,
-            expectedZoom,
-          );
-          requestSignedUrlRecovery(nextPage, currentRun);
-          return;
-        }
         if (!pageHasRenderedAtZoom(nextPage, expectedZoom)) {
           waitsForRender = waitForReaderPositioningRender(
             nextPage,
@@ -2606,15 +2574,21 @@ export default function PdfReader({
     ],
   );
 
-  const scrollToProjectedHighlight = useCallback(
-    (targetPage: number, quads: PdfHighlightQuad[]): boolean => {
-      if (quads.length === 0) {
+  const scrollToTarget = useCallback(
+    (targetPage: number, quads: readonly PdfHighlightQuad[] | null): boolean => {
+      if (quads?.length === 0) {
         return false;
       }
       const container = viewerContainerRef.current;
       const pageElement = getPageElement(targetPage);
       if (!container || !pageElement) {
         return false;
+      }
+      if (!pageHasRenderedAtZoom(targetPage, zoomRef.current)) return false;
+      if (quads === null) {
+        let positioned = false;
+        void readerScrollPositioner.run(({ setTop }) => { setTop(container, pageElement.offsetTop); positioned = true; });
+        return positioned;
       }
       const pageScaleValue = readPageScale(targetPage);
       if (pageScaleValue <= 0) {
@@ -2649,10 +2623,12 @@ export default function PdfReader({
       });
       return positioned;
     },
-    [getPageElement, readPageScale, readerScrollPositioner],
+    [getPageElement, pageHasRenderedAtZoom, readPageScale, readerScrollPositioner],
   );
 
   usePdfScrollToTarget({
+    eventBusRef,
+    failed: error !== null,
     target: useMemo(
       () =>
         navigateToHighlight
@@ -2668,11 +2644,13 @@ export default function PdfReader({
     runRef,
     pageNumberRef,
     goToPage,
-    scrollToProjectedHighlight,
+    scrollToTarget,
     onSettle: onHighlightNavigationComplete,
   });
 
   usePdfScrollToTarget({
+    eventBusRef,
+    failed: error !== null,
     target: useMemo(
       () =>
         temporaryHighlight
@@ -2688,23 +2666,25 @@ export default function PdfReader({
     runRef,
     pageNumberRef,
     goToPage,
-    scrollToProjectedHighlight,
+    scrollToTarget,
   });
 
   const pulseHighlightOverlay = useCallback(
     (target: PdfPulseNavigationTarget) => {
+      if (target.quads === null) return;
       if (pulseTimerRef.current != null) {
         window.clearTimeout(pulseTimerRef.current);
       }
 
-      const pulseId = target.highlightId ?? target.transientPulseId;
+      const { key, transientPulseId } = target;
+      const pulseId = target.highlightId ?? transientPulseId;
       if (!pulseId) {
         return;
       }
 
-      if (target.transientPulseId) {
+      if (transientPulseId) {
         setTransientPulseHighlight({
-          id: target.transientPulseId,
+          id: transientPulseId,
           pageNumber: target.pageNumber,
           quads: target.quads,
         });
@@ -2712,12 +2692,16 @@ export default function PdfReader({
       setPulsingHighlightId(pulseId);
       pulseTimerRef.current = window.setTimeout(() => {
         pulseTimerRef.current = null;
+        const operation = localPulseRef.current;
+        if (operation?.key === key && operation.outcome === null) {
+          operation.outcome = operation.phase === "Shown";
+        }
         setPulsingHighlightId((current) =>
           current === pulseId ? null : current,
         );
-        if (target.transientPulseId) {
+        if (transientPulseId) {
           setTransientPulseHighlight((current) =>
-            current?.id === target.transientPulseId ? null : current,
+            current?.id === transientPulseId ? null : current,
           );
         }
       }, PDF_PULSE_DURATION_MS);
@@ -2726,6 +2710,8 @@ export default function PdfReader({
   );
 
   usePdfScrollToTarget({
+    eventBusRef,
+    failed: error !== null,
     target: useMemo(
       () =>
         pulseNavigationTarget
@@ -2741,54 +2727,100 @@ export default function PdfReader({
     runRef,
     pageNumberRef,
     goToPage,
-    scrollToProjectedHighlight,
-    onSettle: useCallback(() => {
-      if (!pulseNavigationTarget) {
-        return;
-      }
-      pulseHighlightOverlay(pulseNavigationTarget);
-      setPulseNavigationTarget((current) =>
-        current?.key === pulseNavigationTarget.key ? null : current,
-      );
-    }, [pulseHighlightOverlay, pulseNavigationTarget]),
+    scrollToTarget,
+    onSettle: useCallback(
+      (positioned: boolean) => {
+        if (!pulseNavigationTarget) return;
+        const operation = localPulseRef.current;
+        if (operation?.key === pulseNavigationTarget.key) {
+          if (operation.outcome !== null) return;
+          if (!positioned) {
+            retireLocalPulse(false);
+            return;
+          }
+          if (pulseNavigationTarget.quads === null) { retireLocalPulse(true); return; }
+          operation.phase = "Pulsing";
+        }
+        if (positioned) pulseHighlightOverlay(pulseNavigationTarget);
+        setPulseNavigationTarget((current) =>
+          current?.key === pulseNavigationTarget.key ? null : current,
+        );
+      },
+      [pulseHighlightOverlay, pulseNavigationTarget, retireLocalPulse],
+    ),
   });
 
-  useReaderPulseHighlight(
-    useCallback(
-      (target) => {
-        if (target.mediaId !== mediaId) return;
-        const locator = target.locator;
-        if (locator.type !== "pdf_page_geometry") return;
-        const pageNumber = locator.page_number;
-        const quads = locator.quads as PdfHighlightQuad[];
-        const highlightId =
-          typeof target.highlightId === "string" ? target.highlightId : null;
-        pulseSequenceRef.current += 1;
-        const sequence = pulseSequenceRef.current;
-        const pulseTarget: PdfPulseNavigationTarget = {
-          key: `${highlightId ?? "transient"}:${pageNumber}:${sequence}`,
-          pageNumber,
-          quads,
-          highlightId,
-          transientPulseId: highlightId ? null : `reader-pulse-${sequence}`,
-        };
-        if (quads.length > 0) {
-          setPulseNavigationTarget(pulseTarget);
-          return;
-        }
-        const navigate = async () => {
-          if (pageNumber !== pageNumberRef.current) {
-            await goToPage(pageNumber);
-          }
-          window.requestAnimationFrame(() =>
-            pulseHighlightOverlay(pulseTarget),
-          );
-        };
-        void navigate();
-      },
-      [goToPage, mediaId, pulseHighlightOverlay],
-    ),
+  const locateTarget = useCallback(
+    async (
+      page: number,
+      quads: readonly PdfHighlightQuad[] | null,
+      signal: AbortSignal,
+    ): Promise<boolean> => {
+      if (signal.aborted)
+        throw new DOMException("PDF location aborted", "AbortError");
+      const sequence = ++pulseSequenceRef.current;
+      if (!Number.isSafeInteger(sequence)) throw new Error("PDF pulse sequence exhausted");
+      const previous = localPulseRef.current;
+      if (previous) {
+        retireLocalPulse(false);
+        await previous.promise.catch(() => false);
+      }
+      if (signal.aborted)
+        throw new DOMException("PDF location aborted", "AbortError");
+      if (
+        sequence !== pulseSequenceRef.current ||
+        !documentRef.current ||
+        !readerRestoreSettledRef.current ||
+        !Number.isInteger(page) ||
+        page < 1 ||
+        page > numPages ||
+        quads?.length === 0
+      )
+        return false;
+      const key = `${PDF_PULSE_KEY_PREFIX}${sequence}`;
+      let resolve!: (positioned: boolean) => void;
+      let reject!: (error: DOMException) => void;
+      const promise = new Promise<boolean>((success, failure) => {
+        resolve = success;
+        reject = failure;
+      });
+      const onAbort = () =>
+        retireLocalPulse(
+          new DOMException("PDF location aborted", "AbortError"),
+        );
+      const operation = {
+        key,
+        pageNumber: page,
+        run: runRef.current,
+        phase: "Positioning" as "Positioning" | "Pulsing" | "Shown",
+        outcome: null as boolean | DOMException | null,
+        promise,
+        finish: () => {
+          signal.removeEventListener("abort", onAbort);
+          if (localPulseRef.current === operation) localPulseRef.current = null;
+          if (operation.outcome instanceof DOMException)
+            reject(operation.outcome);
+          else resolve(operation.outcome === true);
+        },
+      };
+      localPulseRef.current = operation;
+      signal.addEventListener("abort", onAbort, { once: true });
+      setPulseNavigationTarget({
+        key,
+        pageNumber: page,
+        quads,
+        highlightId: null,
+        transientPulseId: key,
+      });
+      return promise;
+    },
+    [numPages, retireLocalPulse],
   );
+
+  const locate = useCallback((page: number, quads: readonly PdfHighlightQuad[], signal: AbortSignal) =>
+    locateTarget(page, quads, signal), [locateTarget]);
+  const locatePage = useCallback((page: number, signal: AbortSignal) => locateTarget(page, null, signal), [locateTarget]);
+
 
   useEffect(() => {
     zoomRef.current = zoom;
@@ -2834,6 +2866,8 @@ export default function PdfReader({
   useEffect(() => {
     settleReaderPositioning();
     runRef.current += 1;
+    highlightCreationInFlightRef.current = false;
+    setIsCreating(false);
     const pageScaleCache = pageScaleByNumberRef.current;
     const renderedPageZooms = renderedPageZoomByNumberRef.current;
     const textLayerRenderEpochs = textLayerRenderEpochByPageRef.current;
@@ -2855,7 +2889,6 @@ export default function PdfReader({
     setReaderRestoreSettled(false);
     clearRetainedSelection();
     setSelectionError(null);
-    setServerPageHighlights([]);
     setTextLayerUsable(false);
     setTextGeometryReliable(true);
     pageNumberRef.current = startPage;
@@ -2867,7 +2900,6 @@ export default function PdfReader({
     pageGeometryReliability.clear();
     pendingViewerPageRef.current = null;
     pendingViewerScaleRef.current = null;
-    signedUrlExpiryRef.current = null;
     recoveringFromRenderErrorRef.current = false;
     initialMobileFitDoneRef.current = false;
     recoveryTargetPageRef.current = null;
@@ -2875,7 +2907,6 @@ export default function PdfReader({
 
     return () => {
       runRef.current += 1;
-      signedUrlExpiryRef.current = null;
       pageScaleCache.clear();
       renderedPageZooms.clear();
       textLayerRenderEpochs.clear();
@@ -2902,48 +2933,59 @@ export default function PdfReader({
   ]);
 
   useEffect(() => {
-    if (
-      signedUrlResource.status === "idle" ||
-      signedUrlResource.status === "loading"
-    ) {
-      return;
-    }
-
     const runId = runRef.current;
     const targetPage =
       recoveryTargetPageRef.current ?? startPageNumberRef.current ?? 1;
     let active = true;
+    let pendingTask: PdfDocumentLoadingTaskLike | null = null;
 
-    if (signedUrlResource.status === "error") {
-      if (handleAuthenticationError(signedUrlResource.error)) {
+    if (sourceStatus === "error") {
+      if (handleAuthenticationError(sourceError)) {
         setLoading(false);
         return;
       }
-      reportReaderError(signedUrlResource.error);
+      reportReaderError(sourceError);
       setLoading(false);
       setRecovering(false);
       recoveringFromRenderErrorRef.current = false;
       recoveryTargetPageRef.current = null;
       return;
     }
+    if (sourceUrl === null) return;
 
     const bootstrap = async () => {
       try {
-        const opened = await openDocument(signedUrlResource.data.url);
+        const pdfJs = await ensurePdfJs();
+        if (!active || runId !== runRef.current) return;
+        const task = pdfJs.getDocument({
+          url: sourceUrl,
+          withCredentials: false,
+          disableRange: false,
+          // PDF.js requires both flags to avoid streaming the complete source.
+          disableStream: true,
+          disableAutoFetch: true,
+          cMapUrl: PDF_CMAP_URL,
+          cMapPacked: true,
+          standardFontDataUrl: PDF_STANDARD_FONT_URL,
+          wasmUrl: PDF_WASM_URL,
+        });
+        pendingTask = task;
+        const doc = await task.promise;
+        pendingTask = null;
         if (!active || runId !== runRef.current) {
-          await destroyPdfDocument(opened.doc);
-          destroyPdfLoadingTask(opened.loadingTask);
+          await destroyPdfDocument(doc);
+          await destroyPdfLoadingTask(task);
           return;
         }
-        signedUrlExpiryRef.current = signedUrlResource.data.expiresAtMs;
         const refreshesExistingSource =
           recoveryTargetPageRef.current !== null &&
           pdfFindRuntimeRef.current !== null;
         teardownViewer({
           publishFindUnavailable: !refreshesExistingSource,
         });
-        await replaceDocument(opened);
-        await attachDocumentToViewer(opened.doc, targetPage, runId);
+        await replaceDocument({ doc, loadingTask: task });
+        if (!active || runId !== runRef.current || documentRef.current !== doc) return;
+        await attachDocumentToViewer(doc, targetPage, runId);
         if (active && runId === runRef.current) {
           setError(null);
         }
@@ -2953,6 +2995,8 @@ export default function PdfReader({
           if (!handleAuthenticationError(err)) reportReaderError(err);
         }
       } finally {
+        void destroyPdfLoadingTask(pendingTask);
+        pendingTask = null;
         if (active && runId === runRef.current) {
           setLoading(false);
           setRecovering(false);
@@ -2965,14 +3009,18 @@ export default function PdfReader({
 
     return () => {
       active = false;
+      void destroyPdfLoadingTask(pendingTask);
+      pendingTask = null;
     };
   }, [
     attachDocumentToViewer,
     handleAuthenticationError,
-    openDocument,
+    ensurePdfJs,
     replaceDocument,
     reportReaderError,
-    signedUrlResource,
+    sourceUrl,
+    sourceError,
+    sourceStatus,
     teardownViewer,
   ]);
 
@@ -2981,41 +3029,24 @@ export default function PdfReader({
       pageHighlightsResource.status === "idle" ||
       pageHighlightsResource.status === "loading"
     ) {
+      // The page's paint has not been attempted; no outcome may be asserted.
+      setPaintNotice(null);
       return;
     }
     if (pageHighlightsResource.status === "error") {
-      if (!handleAuthenticationError(pageHighlightsResource.error)) {
-        reportSelectionError(pageHighlightsResource.error);
+      if (handleAuthenticationError(pageHighlightsResource.error)) {
+        return;
       }
+      reportPaintUnavailable(pageNumberRef.current, pageHighlightsResource.error);
       return;
     }
-    setServerPageHighlights(pageHighlightsResource.data);
-    setPendingCommittedHighlights((current) =>
-      current.filter((pending) => {
-        const committed = pending.highlight;
-        if (committed.anchor.media_id !== mediaId) {
-          return false;
-        }
-        if (committed.anchor.page_number !== pageNumber) {
-          return true;
-        }
-        const acknowledged = pageHighlightsResource.data.some((highlight) =>
-          samePdfHighlightProjection(highlight, committed),
-        );
-        if (acknowledged) {
-          return false;
-        }
-        return pending.externalRefreshTokenAtCommit === highlightRefreshToken;
-      }),
+    const data = pageHighlightsResource.data;
+    setPaintNotice(
+      "kind" in data
+        ? { kind: "Capacity", pageNumber: pageNumberRef.current, reason: data.reason }
+        : null,
     );
-  }, [
-    highlightRefreshToken,
-    handleAuthenticationError,
-    mediaId,
-    pageHighlightsResource,
-    pageNumber,
-    reportSelectionError,
-  ]);
+  }, [handleAuthenticationError, pageHighlightsResource, reportPaintUnavailable]);
 
   useEffect(() => {
     document.addEventListener("selectionchange", syncSelectionFromWindow);
@@ -3025,6 +3056,7 @@ export default function PdfReader({
   }, [syncSelectionFromWindow]);
 
   const refreshRetainedSelectionGeometry = useCallback(() => {
+    if (!displayed || viewerContainerRef.current?.getClientRects().length === 0) return;
     const retainedSelection = readRetainedSelection();
     if (!retainedSelection) return;
     let selectionContext: ReturnType<typeof resolveTextLayerRootFromRange> =
@@ -3045,6 +3077,7 @@ export default function PdfReader({
     }
     refreshRetainedSelection(() => refreshedSelection);
   }, [
+    displayed,
     clearRetainedSelection,
     readRetainedSelection,
     refreshRetainedSelection,
@@ -3052,7 +3085,7 @@ export default function PdfReader({
   ]);
 
   useRetainedReaderSelectionGeometry({
-    enabled: true,
+    enabled: displayed,
     sourceKey: `${mediaId}:${pageNumber}:${pageRenderEpoch}:${pageScale}:${zoom}`,
     viewportRef: viewerContainerRef,
     contentRef: internalContentRef,
@@ -3062,7 +3095,7 @@ export default function PdfReader({
   // justify-polling: browser PDF text-layer selection events can miss active
   // selections, so this bounded UI poll runs only while a text layer is usable.
   useIntervalPoll({
-    enabled: textLayerUsable,
+    enabled: displayed && textLayerUsable,
     onPoll: () => {
       const sel = getPdfSelection();
       if (!sel || sel.toString().trim().length === 0) return;
@@ -3071,10 +3104,47 @@ export default function PdfReader({
     pollIntervalMs: PDF_SELECTION_POLL_INTERVAL_MS,
   });
 
-  const projectedHighlightRects = useMemo(() => {
+  useLayoutEffect(() => {
+    removeOverlayLayers();
+    const serverLease = pageHighlightsResource.status === "ready" &&
+      !("kind" in pageHighlightsResource.data) && !pageHighlightsResource.data.released &&
+      pageHighlightsResource.data.page.page_number === pageNumber
+      ? pageHighlightsResource.data : null;
+    const serverPage = serverLease?.page;
+    // Old DOM is gone before withdrawing acknowledged or off-page writes.
+    const pending = pendingCommittedHighlights.current;
+    pendingCommittedHighlights.current = [];
+    for (let index = 0; index < pending.length; index += 1) {
+      const item = pending[index];
+      const page = item.lease.page;
+      const paint = page.highlights[0];
+      const replaced = pending.some((later, laterIndex) => laterIndex > index && later.lease.page.highlights[0].id === paint.id);
+      const acknowledged = serverPage?.highlights.some((row) => samePdfHighlightProjection(row, paint));
+      if (page.page_number !== pageNumber || replaced || acknowledged ||
+          (serverPage && item.externalRefreshTokenAtCommit !== highlightRefreshToken)) {
+        item.lease.release();
+      } else pendingCommittedHighlights.current.push(item);
+    }
+    const paintLeases = [
+      ...(serverLease === null ? [] : [serverLease]),
+      ...pendingCommittedHighlights.current.map((item) => item.lease),
+    ];
+    // Every retain is taken inside the try so a refused lease unwinds the ones
+    // already charged; nothing may hold a consumer no holder can release.
+    const releasePaint: (() => void)[] = [];
+    let overlayLayer: HTMLDivElement | null = null;
+    const retire = () => {
+      overlayLayer?.remove();
+      overlayLayer = null;
+      releasePaint.forEach((release) => release());
+    };
+    try {
+    for (const lease of paintLeases) {
+      releasePaint.push(lease.retain());
+    }
     const activeScale = pageScale <= 0 ? activePageScaleRef.current : pageScale;
     if (activeScale <= 0) {
-      return [] as ProjectedHighlightRect[];
+      return retire;
     }
     const pageView = pdfViewerRef.current?.getPageView?.(
       Math.max(0, pageNumber - 1),
@@ -3089,23 +3159,17 @@ export default function PdfReader({
       pageHeightPoints: 0,
       dpiScale: 1,
     };
-    const projected: ProjectedHighlightRect[] = [];
-    for (const highlight of pageHighlights) {
-      if (
-        highlight.anchor.type !== "pdf_page_geometry" ||
-        highlight.anchor.page_number !== pageNumber
-      ) {
-        continue;
-      }
-      highlight.anchor.quads.forEach((quad, index) => {
-        projected.push({
-          highlightId: highlight.id,
-          color: highlight.color,
-          index,
-          isTemporary: false,
-          ...projectPdfQuadToViewportRect(quad, viewportTransform),
+    const projected: PdfHighlightRectangle[] = [];
+    for (const lease of paintLeases) {
+      for (const highlight of lease.page.highlights) {
+        if (lease === serverLease && pendingCommittedHighlights.current.some(
+          (item) => item.lease.page.highlights[0].id === highlight.id,
+        )) continue;
+        highlight.quads.forEach((quad, index) => {
+          projected.push({ highlightId: highlight.id, color: highlight.color, index,
+            isTemporary: false, ...projectPdfQuadToViewportRect(quad, viewportTransform) });
         });
-      });
+      }
     }
     if (temporaryHighlight?.pageNumber === pageNumber) {
       temporaryHighlight.quads.forEach((quad, index) => {
@@ -3129,31 +3193,14 @@ export default function PdfReader({
         });
       });
     }
-    return projected;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- justify-eslint-override: pageRenderEpoch is an intentional invalidation trigger
-  }, [
-    pageHighlights,
-    pageNumber,
-    pageRenderEpoch,
-    pageScale,
-    temporaryHighlight,
-    transientPulseHighlight,
-  ]);
-
-  useEffect(() => {
-    removeOverlayLayers();
-    if (projectedHighlightRects.length === 0) {
-      return;
-    }
+    if (projected.length === 0) return retire;
     const pageElement = getPageElement(pageNumber);
-    if (!pageElement) {
-      return;
-    }
-    const overlayLayer = document.createElement("div");
+    if (!pageElement) return retire;
+    overlayLayer = document.createElement("div");
     overlayLayer.className = styles.overlayLayer;
     overlayLayer.setAttribute("data-nexus-overlay-layer", "true");
 
-    for (const rect of projectedHighlightRects) {
+    for (const rect of projected) {
       const rectEl = document.createElement("div");
       rectEl.className = styles.highlightOverlayRect;
       if (rect.isTemporary) {
@@ -3253,17 +3300,92 @@ export default function PdfReader({
       overlayLayer.append(rectEl);
     }
     pageElement.append(overlayLayer);
+    const operation = localPulseRef.current;
+    if (
+      operation?.phase === "Pulsing" &&
+      operation.outcome === null &&
+      projected.some((rect) => rect.highlightId === operation.key)
+    ) {
+      operation.phase = "Shown";
+    }
+    return retire;
+    } catch (failure) {
+      retire();
+      throw failure;
+    }
   }, [
     focusedHighlightId,
     getPageElement,
     hasHighlightHoverHandler,
     hasHighlightTapHandler,
     pageNumber,
-    projectedHighlightRects,
+    pageHighlightsResource,
+    paintEpoch,
+    pageRenderEpoch,
+    pageScale,
+    highlightRefreshToken,
+    temporaryHighlight,
+    transientPulseHighlight,
     hoveredHighlightId,
     pulsingHighlightId,
     removeOverlayLayers,
   ]);
+
+  // This runs after the overlay effect has retired the old DOM. Promise
+  // completion releases the caller's location lease, so it cannot precede it.
+  useEffect(() => {
+    const operation = localPulseRef.current;
+    if (!operation) return;
+    if (
+      operation.outcome === null &&
+      (operation.run !== runRef.current ||
+        error !== null ||
+        (operation.phase !== "Positioning" &&
+          operation.pageNumber !== pageNumber))
+    ) {
+      retireLocalPulse(false);
+      return;
+    }
+    if (
+      operation.outcome !== null &&
+      pulseNavigationTarget?.key !== operation.key &&
+      transientPulseHighlight?.id !== operation.key &&
+      !internalContentRef.current?.querySelector(`[data-highlight-id="${CSS.escape(operation.key)}"]`)
+    ) {
+      operation.finish();
+    }
+  }, [
+    error,
+    pageNumber,
+    pageRenderEpoch,
+    paintEpoch,
+    pulseNavigationTarget,
+    pulseRetirement,
+    retireLocalPulse,
+    transientPulseHighlight,
+  ]);
+
+  useEffect(
+    () => () => {
+      removeOverlayLayers();
+      const pending = pendingCommittedHighlights.current;
+      pendingCommittedHighlights.current = [];
+      pending.forEach((item) => item.lease.release());
+      const operation = localPulseRef.current;
+      if (operation) {
+        operation.outcome ??= false;
+        operation.finish();
+      }
+    },
+    [removeOverlayLayers],
+  );
+
+  const canSuspend = !hasSelection && !isCreating && !navigating && !recovering &&
+    editingHighlightId === null && pulseNavigationTarget === null && transientPulseHighlight === null;
+  useLayoutEffect(() => {
+    onCanSuspendChange?.(canSuspend && localPulseRef.current === null);
+    return () => onCanSuspendChange?.(false);
+  }, [canSuspend, onCanSuspendChange, pulseRetirement]);
 
   const showBusy = loading || navigating || recovering;
   const zoomPercent = Math.round(zoom * 100);
@@ -3416,6 +3538,8 @@ export default function PdfReader({
       zoomOut,
       applyResumeState,
       captureResumeState,
+      locate,
+      locatePage,
     });
     return () => {
       onControlsReady(null);
@@ -3423,6 +3547,8 @@ export default function PdfReader({
   }, [
     applyResumeState,
     captureResumeState,
+    locate,
+    locatePage,
     goToNextPage,
     goToPreviousPage,
     onControlsReady,
@@ -3461,8 +3587,11 @@ export default function PdfReader({
 
   if (asyncDefect) throw asyncDefect.error;
 
+  // A paint outcome speaks only for the page whose read produced it.
+  const shownPaintNotice = paintNotice !== null && paintNotice.pageNumber === pageNumber ? paintNotice : null;
+  const shownPaintPresentation = shownPaintNotice === null ? null : paintNoticePresentation(shownPaintNotice);
   const selectionPopoverProps =
-    selection && viewerContainerRef.current
+    displayed && selection && viewerContainerRef.current
       ? {
           selectionRect: selection.rect,
           selectionLineRects: selection.lineRects,
@@ -3553,6 +3682,21 @@ export default function PdfReader({
         <div className={styles.notice}>
           Text geometry is misaligned on this page. Highlights will use
           area-based bounds.
+        </div>
+      )}
+
+      {shownPaintNotice && shownPaintPresentation && (
+        <div
+          className={styles.notice}
+          role="status"
+          data-unpainted-highlight={
+            shownPaintNotice.kind === "SavedUnpainted" ? shownPaintNotice.highlightId : undefined
+          }
+        >
+          {shownPaintPresentation.message}
+          {shownPaintPresentation.retryable && resources.retryPageHighlights && (
+            <button type="button" onClick={resources.retryPageHighlights}>Retry highlights</button>
+          )}
         </div>
       )}
 

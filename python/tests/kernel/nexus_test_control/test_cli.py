@@ -13,6 +13,7 @@ from nexus_test_control.cli import (
     ProveCommand,
     WorkflowCommand,
     _canonical_selection,
+    _failed_capabilities,
     _focus_selections,
     _route_selection_for_workflow,
     main,
@@ -842,4 +843,59 @@ def _git_repository(path: Path) -> None:
         ],
         cwd=path,
         check=True,
+    )
+
+
+@pytest.mark.parametrize("completed_status", [None, RunStatus.PASS, RunStatus.FAIL])
+def test_workflow_failure_projection_retains_completed_results_and_cleanup_evidence(
+    completed_status: RunStatus | None,
+) -> None:
+    policy = CapabilityEvidence(
+        Capability.POLICY,
+        RunStatus.PASS,
+        17,
+        3,
+        artifacts=("test-results/policy.log",),
+        detail="policy accepted",
+    )
+    completed = (policy,)
+    if completed_status is not None:
+        completed += (
+            CapabilityEvidence(
+                Capability.SERVICE,
+                completed_status,
+                29,
+                7,
+                artifacts=("test-results/service.log",),
+                detail="original service assertion failed"
+                if completed_status is RunStatus.FAIL
+                else "service passed",
+            ),
+        )
+
+    capabilities = _failed_capabilities(
+        Workflow.CHANGED,
+        Capability.SERVICE,
+        "owned runtime cleanup failed",
+        completed=completed,
+    )
+
+    assert [item.id for item in capabilities] == [
+        requirement.capability for requirement in WORKFLOW_REGISTRY[Workflow.CHANGED].requirements
+    ]
+    assert capabilities[0] is policy
+    service = next(item for item in capabilities if item.id is Capability.SERVICE)
+    assert service.status is RunStatus.FAIL
+    assert service.duration_ms == (0 if completed_status is None else 29)
+    assert service.peak_owned_mib == (0 if completed_status is None else 7)
+    assert service.artifacts == (() if completed_status is None else ("test-results/service.log",))
+    assert service.detail == (
+        "original service assertion failed; owned runtime cleanup failed"
+        if completed_status is RunStatus.FAIL
+        else "owned runtime cleanup failed"
+    )
+    assert all(
+        item.status is RunStatus.NOT_RUN
+        for item in capabilities
+        if item.id not in {Capability.POLICY, Capability.SERVICE}
     )

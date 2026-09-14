@@ -1,0 +1,12 @@
+diff --git a/python/nexus/api/read_admission.py b/python/nexus/api/read_admission.py
+--- a/python/nexus/api/read_admission.py
++++ b/python/nexus/api/read_admission.py
+@@ -76,7 +76,7 @@
+                 # Outer middleware owns this request's DB-session cleanup.
+                 # Even repeated caller cancellation cannot unwind it while the
+                 # synchronous worker or response still uses those resources.
+-                cancelled = True
++                raise
+         if expired and task.cancelled():
+             # justify-defect: the deadline is a qualified limit this deployment is
+             # provisioned to meet, so exceeding it is a capacity or wedged-transfer

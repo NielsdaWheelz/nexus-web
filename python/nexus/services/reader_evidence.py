@@ -15,6 +15,7 @@ from nexus.schemas.highlights import HIGHLIGHT_COLORS, TypedHighlightOut
 from nexus.schemas.media import DocumentEmbedOut, MediaNavigationOut
 from nexus.schemas.presence import Presence, absent, present
 from nexus.schemas.reader_apparatus import (
+    READER_APPARATUS_FORWARD_RELATIONS,
     ReaderApparatusConfidence,
     ReaderApparatusEdgeOut,
     ReaderApparatusItemKind,
@@ -62,16 +63,6 @@ from nexus.services.reader_locations import (
 )
 from nexus.services.resource_items.routing import route_for_visible_apparatus_item
 
-_APPARATUS_FORWARD_RELATIONS = frozenset(
-    {
-        "points_to_note",
-        "points_to_endnote",
-        "points_to_sidenote",
-        "points_to_margin_note",
-        "cites_bibliography_entry",
-        "contains_reference",
-    }
-)
 _ITEM_KIND_ORDER = {
     "Highlight": 0,
     "SourceReference": 1,
@@ -544,7 +535,7 @@ def _compose_apparatus(
     outgoing: dict[str, list[ReaderApparatusEdgeOut]] = defaultdict(list)
     targeted_keys: set[str] = set()
     for edge in sorted(apparatus_edges, key=lambda value: value.sort_key):
-        if edge.relation not in _APPARATUS_FORWARD_RELATIONS:
+        if edge.relation not in READER_APPARATUS_FORWARD_RELATIONS:
             continue
         outgoing[edge.from_stable_key].append(edge)
         targeted_keys.add(edge.to_stable_key)

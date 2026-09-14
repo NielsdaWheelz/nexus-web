@@ -9,8 +9,10 @@ import {
 import { requestWithRetry } from "@/lib/api/retryPolicy";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
-import { fetchHighlights } from "@/lib/highlights/api";
+import { fetchHighlight, fetchHighlights, upsertHighlightSorted } from "@/lib/highlights/api";
 import type { Highlight } from "@/lib/highlights/highlightContract";
+
+export interface TextHighlightDefect { readonly key: string; readonly error: unknown; readonly retry: () => void }
 
 export type HostedTextHighlightStatus =
   | "idle"
@@ -33,6 +35,7 @@ interface TextHighlightMutationSession {
 
 interface HostedTextHighlights {
   readonly highlights: Highlight[];
+  readonly selectedHighlight: Highlight | null;
   readonly status: HostedTextHighlightStatus;
   readonly error: ApiError | null;
   readonly initialLoading: boolean;
@@ -43,6 +46,10 @@ interface HostedTextHighlights {
     session: TextHighlightMutationSession,
     transform: (highlights: Highlight[]) => Highlight[],
   ) => boolean;
+  readonly readMutationHighlight: (
+    session: TextHighlightMutationSession,
+    highlightId: string,
+  ) => Promise<Highlight | null>;
   readonly reconcileMutation: (
     session: TextHighlightMutationSession,
   ) => Promise<Highlight[] | null>;
@@ -58,20 +65,31 @@ function emptyProjection(
 /**
  * Owns the active reflowable reader's hosted Highlight projection.
  *
- * Reads are keyed by media + fragment, use the shared browser retry policy,
- * and are latest-wins with real request cancellation. Empty is a successful
+ * Fragment paint reads use media + fragment; addressed detail uses media +
+ * highlight identity independently of viewport membership. Both share retry,
+ * cancellation and latest-request ownership. Empty is a successful
  * projection. Mutation sessions let the route project an authoritative write
  * only while its source is still active, then reconcile through this same
  * read owner.
  */
 export function useHostedTextHighlights({
   mediaId,
-  fragmentId,
+  source,
+  onDefect,
 }: {
   readonly mediaId: string;
-  readonly fragmentId: string | null;
+  readonly onDefect?: (defect: TextHighlightDefect | null) => void;
+  readonly source:
+    | { readonly kind: "Fragment"; readonly fragmentId: string }
+    | { readonly kind: "Detail"; readonly fragmentId: string | null; readonly highlightId: string | null }
+    | null;
 }): HostedTextHighlights {
-  const key = fragmentId === null ? null : `${mediaId}:${fragmentId}`;
+  const fragmentId = source?.fragmentId ?? null;
+  const sourceKind = source?.kind ?? null;
+  const selectedId = source?.kind === "Detail" ? source.highlightId : null;
+  const loadFragmentId = sourceKind === "Fragment" ? fragmentId : null;
+  const key = sourceKind === "Detail" ? `${mediaId}:Detail:${selectedId ?? ""}`
+    : fragmentId === null ? null : `${mediaId}:${fragmentId}:Fragment`;
   const keyRef = useRef(key);
   keyRef.current = key;
   const generationRef = useRef(0);
@@ -95,8 +113,9 @@ export function useHostedTextHighlights({
   const load = useCallback(
     async (
       requiredSession: TextHighlightMutationSession | null = null,
+      highlightId: string | null = selectedId,
     ): Promise<Highlight[] | null> => {
-      if (key === null || fragmentId === null) return null;
+      if (key === null) return null;
       if (requiredSession !== null && !isCurrentSession(requiredSession)) {
         return null;
       }
@@ -116,7 +135,12 @@ export function useHostedTextHighlights({
 
       try {
         const highlights = await requestWithRetry(
-          (signal) => fetchHighlights(fragmentId, signal),
+          async (signal) => {
+            if (highlightId === null) return loadFragmentId !== null ? fetchHighlights(loadFragmentId, signal) : [];
+            const highlight = await fetchHighlight(highlightId, signal);
+            if (highlight.anchor.type !== "fragment_offsets") throw new TypeError("Text highlight detail returned PDF geometry");
+            return [{ ...highlight, anchor: highlight.anchor }];
+          },
           controller.signal,
         );
         if (
@@ -126,13 +150,22 @@ export function useHostedTextHighlights({
         ) {
           return null;
         }
-        setState({
+        if (highlights.some((highlight) => highlight.anchor.media_id !== mediaId)) {
+          throw new TypeError("Highlight projection returned another media");
+        }
+        setState((current) => ({
           key,
-          highlights,
+          highlights: sourceKind === "Detail"
+            ? highlights
+            : highlightId === null ? highlights : highlights.reduce(
+            (rows, highlight) => highlight.anchor.fragment_id === loadFragmentId
+              ? upsertHighlightSorted(rows, highlight) : rows,
+            current.key === key ? current.highlights : [],
+          ),
           status: "ready",
           error: null,
           settled: true,
-        });
+        }));
         return highlights;
       } catch (error) {
         if (
@@ -159,7 +192,10 @@ export function useHostedTextHighlights({
       }
     },
     [
-      fragmentId,
+      loadFragmentId,
+      mediaId,
+      selectedId,
+      sourceKind,
       handleUnauthenticatedApiError,
       isCurrentSession,
       key,
@@ -212,9 +248,10 @@ export function useHostedTextHighlights({
       if (!isCurrentSession(session)) return false;
       setState((current) => {
         if (current.key !== session.key) return current;
+        const projected = transform(current.highlights);
         return {
           key: session.key,
-          highlights: transform(current.highlights),
+          highlights: sourceKind === "Detail" ? projected.filter((highlight) => highlight.id === selectedId) : projected,
           status: "ready",
           error: null,
           settled: true,
@@ -222,7 +259,15 @@ export function useHostedTextHighlights({
       });
       return true;
     },
-    [isCurrentSession],
+    [isCurrentSession, selectedId, sourceKind],
+  );
+
+  const readMutationHighlight = useCallback(
+    async (session: TextHighlightMutationSession, highlightId: string) => {
+      const rows = await load(session, highlightId);
+      return rows?.[0] ?? null;
+    },
+    [load],
   );
 
   const reconcileMutation = useCallback(
@@ -230,14 +275,21 @@ export function useHostedTextHighlights({
     [load],
   );
 
-  if (defect?.key === key) throw defect.error;
+  useEffect(() => {
+    if (onDefect === undefined) return;
+    onDefect(defect?.key === key ? { key: `highlight:${key}`, error: defect.error,
+      retry: () => { if (keyRef.current === key) void load(); } } : null);
+  }, [defect, key, load, onDefect]);
+
+  if (onDefect === undefined && defect?.key === key) throw defect.error;
 
   const current =
     state.key === key
       ? state
       : emptyProjection(key, key === null ? "idle" : "loading");
   return {
-    highlights: current.highlights,
+    highlights: sourceKind === "Detail" ? current.highlights.filter((highlight) => highlight.anchor.fragment_id === fragmentId) : current.highlights,
+    selectedHighlight: selectedId === null ? null : current.highlights.find((highlight) => highlight.id === selectedId) ?? null,
     status: current.status,
     error: current.error,
     initialLoading: current.status === "loading" && !current.settled,
@@ -245,6 +297,7 @@ export function useHostedTextHighlights({
     reload: retry,
     beginMutation,
     projectMutation,
+    readMutationHighlight,
     reconcileMutation,
   };
 }

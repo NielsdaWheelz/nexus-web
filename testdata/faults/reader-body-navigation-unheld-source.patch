@@ -1,0 +1,11 @@
+diff --git a/apps/web/src/lib/reader/publicationApparatus.ts b/apps/web/src/lib/reader/publicationApparatus.ts
+--- a/apps/web/src/lib/reader/publicationApparatus.ts
++++ b/apps/web/src/lib/reader/publicationApparatus.ts
+@@ -71,7 +71,6 @@
+       if (completion.kind !== "Ready") return completion.kind === "Capacity" ? completion : { kind: "Unavailable" };
+       if (!completion.isCurrent()) return { kind: "Unavailable" };
+       lease = completion.item.lease;
+-      releaseNavigation = lease.holdNavigation();
+       if (requestedRange !== null) range = requestedRange;
+       else if (embed !== undefined) {
+         const occurrence = completion.item.unit.document_embeds.find((item) => item.id === embed.id && item.occurrence_key === embed.occurrence_key && item.ordinal === embed.ordinal);

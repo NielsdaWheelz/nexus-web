@@ -1,58 +1,65 @@
 "use client";
 
-import {
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
-} from "react";
-import type { ReaderDocumentMapMarker } from "@/lib/reader/documentMap";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useId, type CSSProperties } from "react";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isAbortError } from "@/lib/errors";
+import { createRandomId } from "@/lib/createRandomId";
+import type { DocumentReaderSession, ReaderOverlayLease, ReaderDomLease, ReaderViewCapacity } from "@/lib/reader/DocumentReaderSession";
+import { readerCapacityNotice } from "@/lib/reader/readerCapacity";
+import type { ReaderPublicationEvidenceMarker, ReaderPublicationEvidenceMarkerCounts, ReaderPublicationEvidenceMarkerKind, ReaderPublicationEvidenceMarkerPreview } from "@/lib/reader/readerPublicationOverlays";
+import type { EvidenceFilterState } from "@/lib/reader/useEvidenceFilters";
 import type { ReaderDocumentOverviewRange } from "@/lib/reader/readerDocumentPosition";
+import type { ReaderContentDefect } from "./ReaderContentBoundary";
 import { cx } from "@/lib/ui/cx";
 import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
 import styles from "./ReaderDocumentMapOverviewRail.module.css";
 
 const MARKER_TARGET_SIZE_PX = 24;
-/* Must equal `.rail`'s width in the module stylesheet: the marginalia viewBox
-   is authored in CSS pixels so the vine is drawn 1:1 and its stroke needs no
-   non-scaling-stroke correction. */
 const RAIL_WIDTH_PX = 28;
-
-interface ReaderDocumentMapOverviewRailProps {
-  markers: ReaderDocumentMapMarker[];
-  visibleRange: ReaderDocumentOverviewRange;
-  onActivateMarker: (marker: ReaderDocumentMapMarker) => void;
-  /* Keys the local marginalia store. Omitted, the rail still draws a vine to
-     the furthest point of this sitting but remembers nothing between them. */
-  resourceId?: string;
-}
-
-interface MarkerCluster {
-  key: string;
-  position: number;
-  members: ReaderDocumentMapMarker[];
-}
-
-type PositionedStyle = CSSProperties & { "--position": string };
+const KINDS: readonly ReaderPublicationEvidenceMarkerKind[] = ["Contents", "Embed", "Highlight", "SourceReference", "GeneratedCitation", "Link", "Synapse"];
 type VineStyle = CSSProperties & { "--vine-reach": string };
 
-export default function ReaderDocumentMapOverviewRail({
-  markers,
-  visibleRange,
-  onActivateMarker,
-  resourceId,
-}: ReaderDocumentMapOverviewRailProps) {
+/** Finite overview bins; one explicitly opened member page owns its source rows and DOM. */
+export default function ReaderDocumentMapOverviewRail({ session, refreshToken, visibleRange, onActivateMarker, onDefect, resourceId, marginFilters, onHasMarginFacts }: {
+  readonly marginFilters: EvidenceFilterState;
+  readonly onHasMarginFacts: (present: boolean | null) => void;
+  readonly session: DocumentReaderSession;
+  readonly refreshToken: number;
+  readonly visibleRange: ReaderDocumentOverviewRange;
+  readonly onActivateMarker: (marker: ReaderPublicationEvidenceMarker, signal: AbortSignal) => Promise<{ readonly kind: "Located" | "Unavailable" } | ReaderViewCapacity>;
+  readonly onDefect: (defect: ReaderContentDefect | null) => void;
+  readonly resourceId: string;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const buttonsRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const previewId = useId();
   const listId = useId();
-  const trackRef = useRef<HTMLDivElement | null>(null);
-  const railButtonsRef = useRef<Array<HTMLButtonElement | null>>([]);
-  const firstListButtonRef = useRef<HTMLButtonElement | null>(null);
   const [trackHeight, setTrackHeight] = useState(0);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [openClusterKey, setOpenClusterKey] = useState<string | null>(null);
+  const [bucket, setBucket] = useState<{ index: number; after: string | null } | null>(null);
+  /* Focus follows the reader's own opening or page turn; a reload the reader
+     did not ask for (a mutation refresh, a resize) must leave the caret alone. */
+  const bucketRef = useRef<{ index: number; after: string | null } | null>(null);
+  const focusFirstDestination = useRef(false);
+  bucketRef.current = bucket;
+  const [next, setNext] = useState<string | null>(null);
+  const [overviewAttempt, setOverviewAttempt] = useState(0);
+  const [pageAttempt, setPageAttempt] = useState(0);
+  const [overviewStatus, setOverviewStatus] = useState<{ readonly kind: "Loading" | "Ready" | "Failed" } | ReaderViewCapacity>({ kind: "Loading" });
+  const [pageStatus, setPageStatus] = useState<{ readonly kind: "Loading" | "Ready" | "Failed" } | ReaderViewCapacity>({ kind: "Loading" });
+  const [actionStatus, setActionStatus] = useState<{ readonly kind: "Idle" | "Loading" | "Unavailable" | "Failed" } | ReaderViewCapacity>({ kind: "Idle" });
+  const [unavailable, setUnavailable] = useState(0);
+  const [positionedFacts, setPositionedFacts] = useState<{ highlight: number; citation: number; link: number; synapse: number } | null>(null);
+  useEffect(() => {
+    if (positionedFacts === null) { onHasMarginFacts(null); return; }
+    const present = Object.entries(positionedFacts).some(([kind, count]) => count > 0 && marginFilters[kind as keyof EvidenceFilterState]);
+    // Link-only mode can still show highlight stances. The overview does not
+    // count those associations, so absence is unknown in that one case.
+    onHasMarginFacts(present ? true : marginFilters.link && positionedFacts.highlight > 0 ? null : false);
+  }, [positionedFacts, marginFilters, onHasMarginFacts]);
+  const callbacks = useRef({ onActivateMarker, onDefect });
+  callbacks.current = { onActivateMarker, onDefect };
   const [storedFurthest, setStoredFurthest] = useState(0);
   const [wornStrokes, setWornStrokes] = useState<WornStroke[]>([]);
   /* The dwell clock reads the reading position off refs so that scrolling —
@@ -156,66 +163,182 @@ export default function ReaderDocumentMapOverviewRail({
     };
   }, [resourceId]);
 
-  const clusters = useMemo(
-    () => clusterMarkers(markers, trackHeight),
-    [markers, trackHeight],
-  );
+  const hasTrackHeight = trackHeight > 0;
+  const bucketCount = Math.min(512, Math.max(1, Math.floor(trackHeight / MARKER_TARGET_SIZE_PX)));
   const vineD = useMemo(() => vinePath(trackHeight), [trackHeight]);
   const vineReach = Math.max(storedFurthest, clampUnit(visibleRange.end));
   const budY = clampUnit(visibleRange.start) * trackHeight;
-  const rovingIndex = activeIndex < clusters.length ? activeIndex : 0;
-  const openClusterIndex = clusters.findIndex(
-    (cluster) => cluster.key === openClusterKey,
-  );
-  const openCluster =
-    openClusterIndex >= 0 ? clusters[openClusterIndex]! : null;
-
-  useLayoutEffect(() => {
-    if (openClusterKey !== null) firstListButtonRef.current?.focus();
-  }, [openClusterKey]);
-
-  function activate(marker: ReaderDocumentMapMarker) {
-    setOpenClusterKey(null);
-    onActivateMarker(marker);
-  }
-
-  function handleRailKeyDown(
-    event: ReactKeyboardEvent<HTMLButtonElement>,
-    index: number,
-  ) {
-    const nextIndex = nextRovingIndexForKey({
-      key: event.key,
-      currentIndex: index,
-      itemCount: clusters.length,
-      orientation: "vertical",
+  useEffect(() => {
+    const root = buttonsRef.current;
+    if (root === null || !hasTrackHeight) return;
+    const controller = new AbortController();
+    let lease: ReaderOverlayLease | null = null;
+    let dom: ReaderDomLease | null = null;
+    const retire = () => { root.replaceChildren(); lease?.release(); lease = null; dom?.release(); dom = null; };
+    setOverviewStatus({ kind: "Loading" }); setBucket(null); setPositionedFacts(null); callbacks.current.onDefect(null);
+    void (async () => {
+      if (session.overlays === null) throw new Error("Hosted overview capability is unavailable");
+      const result = await session.overlays({ kind: "EvidenceOverview", request: { bucket_count: bucketCount, kinds: KINDS } }, controller.signal);
+      if (result.kind === "Capacity") { if (!controller.signal.aborted) setOverviewStatus(result); return; }
+      if (controller.signal.aborted) { result.lease.release(); return; }
+      lease = result.lease;
+      if (lease.result.kind !== "EvidenceOverview") throw new Error("Overview received another query result");
+      dom = session.reserveDomNodes(24 + lease.result.page.buckets.length * 4);
+      if (dom === null) { retire(); setOverviewStatus({ kind: "Capacity", reason: "Dom" }); return; }
+      const missing = Object.values(lease.result.page.unavailable_counts).reduce((sum, value) => sum + value, 0);
+      setUnavailable(missing);
+      // The old plaque depends on locatable, filtered margin facts. Unavailable
+      // facts were excluded by buildMarginItems, as were Contents and Embeds.
+      const positioned = { highlight: 0, citation: 0, link: 0, synapse: 0 };
+      for (const { counts } of lease.result.page.buckets) {
+        positioned.highlight += counts.highlights; positioned.citation += counts.source_references + counts.generated_citations;
+        positioned.link += counts.links; positioned.synapse += counts.synapses;
+      }
+      setPositionedFacts(positioned);
+      for (const entry of lease.result.page.buckets) {
+        const count = Object.values(entry.counts).reduce((sum, value) => sum + value, 0);
+        if (count === 0) continue;
+        const index = entry.index;
+        const position = (index + 0.5) / bucketCount;
+        const slot = document.createElement("div"); slot.className = styles.markerSlot;
+        slot.style.setProperty("--position", `${position * 100}%`);
+        const button = document.createElement("button"); button.type = "button"; button.className = styles.markerButton;
+        button.dataset.bucket = String(index); button.tabIndex = root.childElementCount === 0 ? 0 : -1;
+        button.setAttribute("aria-label", bucketAccessibleName(entry.counts, count, position));
+        button.setAttribute("aria-expanded", "false");
+        const label = document.createElement("span"); label.className = styles.clusterCount; label.setAttribute("aria-hidden", "true"); label.textContent = String(count);
+        button.append(label); slot.append(button); root.append(slot);
+        button.onclick = () => {
+          const opening = bucketRef.current?.index !== index;
+          focusFirstDestination.current = opening;
+          setBucket(opening ? { index, after: null } : null);
+        };
+        button.onfocus = () => {
+          for (const other of root.querySelectorAll<HTMLButtonElement>("button")) other.tabIndex = other === button ? 0 : -1;
+        };
+        button.onkeydown = (event) => {
+          const buttons = Array.from(root.querySelectorAll<HTMLButtonElement>("button"));
+          const nextIndex = nextRovingIndexForKey({ key: event.key, currentIndex: buttons.indexOf(button), itemCount: buttons.length, orientation: "vertical" });
+          if (nextIndex === null) return;
+          event.preventDefault(); buttons[nextIndex]?.focus();
+        };
+      }
+      setOverviewStatus({ kind: "Ready" });
+    })().catch((error: unknown) => {
+      if (controller.signal.aborted || isAbortError(error)) return;
+      retire(); setOverviewStatus({ kind: "Failed" });
+      if (!isApiError(error) || isSameSystemApiDefect(error)) callbacks.current.onDefect({ key: createRandomId("overview"), error,
+        retry: () => { if (!controller.signal.aborted) setOverviewAttempt((value) => value + 1); } });
     });
-    if (nextIndex === null) return;
-
-    event.preventDefault();
-    setActiveIndex(nextIndex);
-    railButtonsRef.current[nextIndex]?.focus();
-  }
-
-  function closeCluster() {
-    if (openClusterIndex < 0) return;
-    railButtonsRef.current[openClusterIndex]?.focus();
-    setOpenClusterKey(null);
-  }
-
-  return (
-    <div
-      className={styles.rail}
-      data-testid="reader-document-map-overview-rail"
-      role="region"
-      aria-label="Document Map overview"
-    >
-      <div
-        ref={trackRef}
-        className={styles.track}
-        role="toolbar"
-        aria-orientation="vertical"
-        aria-label="Document Map destinations"
-      >
+    return () => { controller.abort(); retire(); };
+  }, [session, refreshToken, bucketCount, overviewAttempt, hasTrackHeight]);
+  useEffect(() => {
+    for (const button of buttonsRef.current?.querySelectorAll<HTMLButtonElement>("button[data-bucket]") ?? []) {
+      const expanded = Number(button.dataset.bucket) === bucket?.index;
+      button.setAttribute("aria-expanded", String(expanded));
+      if (expanded) button.setAttribute("aria-controls", listId);
+      else button.removeAttribute("aria-controls");
+    }
+  }, [bucket, listId]);
+  useEffect(() => {
+    const root = listRef.current;
+    if (root === null || bucket === null) return;
+    const controller = new AbortController();
+    let lease: ReaderOverlayLease | null = null;
+    let dom: ReaderDomLease | null = null;
+    let pendingAction = false;
+    const previewRoot = previewRef.current;
+    let previewController: AbortController | null = null;
+    let previewMarkerId: string | null = null;
+    let previewLease: ReaderOverlayLease | null = null;
+    let previewDom: ReaderDomLease | null = null;
+    const retirePreview = () => {
+      previewController?.abort(); previewController = null; previewMarkerId = null;
+      previewRoot?.replaceChildren(); previewLease?.release(); previewLease = null; previewDom?.release(); previewDom = null;
+      for (const button of root.querySelectorAll("[aria-describedby]")) button.removeAttribute("aria-describedby");
+    };
+    const release = () => { lease?.release(); lease = null; dom?.release(); dom = null; };
+    const retire = () => { root.replaceChildren(); if (!pendingAction) release(); };
+    const fail = (error: unknown) => {
+      if (controller.signal.aborted || isAbortError(error)) return;
+      if (!isApiError(error) || isSameSystemApiDefect(error)) callbacks.current.onDefect({ key: createRandomId("overview-members"), error,
+        retry: () => { if (!controller.signal.aborted) setPageAttempt((value) => value + 1); } });
+    };
+    const showPreview = (markerId: string) => {
+      if (previewMarkerId === markerId) return;
+      retirePreview();
+      if (previewRoot === null || controller.signal.aborted) return;
+      const request = new AbortController(); previewController = request; previewMarkerId = markerId;
+      previewRoot.textContent = "Loading destination…";
+      void (async () => {
+        if (session.overlays === null) throw new Error("Hosted overview capability is unavailable");
+        const result = await session.overlays({ kind: "EvidenceMarkerPreview", request: { marker_id: markerId } }, request.signal);
+        if (result.kind === "Capacity") { if (previewController === request) previewRoot.textContent = readerCapacityNotice(result.reason).message; return; }
+        if (previewController !== request || request.signal.aborted) { result.lease.release(); return; }
+        previewLease = result.lease;
+        if (previewLease.result.kind !== "EvidenceMarkerPreview") throw new Error("Overview preview received another query result");
+        previewDom = session.reserveDomNodes(10);
+        if (previewDom === null) { retirePreview(); previewRoot.textContent = readerCapacityNotice("Dom").message; return; }
+        const value = previewLease.result.page;
+        const label = document.createElement("strong"); label.textContent = value.tone === "Warning" ? `Source uncertain: ${value.label_excerpt}` : value.label_excerpt;
+        const excerpt = document.createElement("p"); excerpt.textContent = value.excerpt ?? "";
+        previewRoot.replaceChildren(markerGlyph(value.kind, value.tone), label, excerpt);
+      })().catch((error: unknown) => {
+        if (previewController !== request || request.signal.aborted || isAbortError(error)) return;
+        retirePreview(); previewRoot.textContent = "Destination preview could not be loaded."; fail(error);
+      });
+    };
+    setPageStatus({ kind: "Loading" }); setNext(null); setActionStatus({ kind: "Idle" });
+    void (async () => {
+      if (session.overlays === null) throw new Error("Hosted overview capability is unavailable");
+      const result = await session.overlays({ kind: "EvidenceBucket", request: { bucket_count: bucketCount, kinds: KINDS, index: bucket.index, after: bucket.after, limit: 24 } }, controller.signal);
+      if (result.kind === "Capacity") { if (!controller.signal.aborted) setPageStatus(result); return; }
+      if (controller.signal.aborted) { result.lease.release(); return; }
+      lease = result.lease;
+      if (lease.result.kind !== "EvidenceBucket") throw new Error("Overview members received another query result");
+      dom = session.reserveDomNodes(16 + lease.result.page.items.length * 8);
+      if (dom === null) { retire(); setPageStatus({ kind: "Capacity", reason: "Dom" }); return; }
+      for (const marker of lease.result.page.items) {
+        const item = document.createElement("li");
+        const button = document.createElement("button"); button.type = "button";
+        const label = `${marker.kind === "SourceReference" || marker.kind === "GeneratedCitation" ? "Citation" : marker.kind}, ${Math.round(marker.position * 100)}% through document`;
+        button.append(markerGlyph(marker.kind, marker.kind === "SourceReference" || marker.kind === "GeneratedCitation" ? "Citation" : marker.kind === "Contents" || marker.kind === "Embed" ? "Neutral" : marker.kind), document.createTextNode(label));
+        const markerId = marker.id;
+        button.onmouseenter = button.onfocus = () => { showPreview(markerId); button.setAttribute("aria-describedby", previewId); };
+        button.onmouseleave = () => { if (document.activeElement !== button) retirePreview(); };
+        button.onblur = retirePreview;
+        button.onclick = () => {
+          if (pendingAction || controller.signal.aborted) return;
+          pendingAction = true; setActionStatus({ kind: "Loading" });
+          void callbacks.current.onActivateMarker(marker, controller.signal).then((result) => {
+            if (controller.signal.aborted) return;
+            if (result.kind === "Located") setBucket(null);
+            else setActionStatus(result.kind === "Capacity" ? result : { kind: "Unavailable" });
+          }).catch((error: unknown) => { if (!controller.signal.aborted && !isAbortError(error)) { setActionStatus({ kind: "Failed" }); fail(error); } })
+            .finally(() => { pendingAction = false; if (controller.signal.aborted) release(); });
+        };
+        item.append(button); root.append(item);
+      }
+      setNext(lease.result.page.next_cursor); setPageStatus({ kind: "Ready" });
+      if (focusFirstDestination.current) {
+        focusFirstDestination.current = false;
+        root.querySelector<HTMLButtonElement>("button")?.focus();
+      }
+    })().catch((error: unknown) => {
+      if (controller.signal.aborted || isAbortError(error)) return;
+      retire(); setPageStatus({ kind: "Failed" }); fail(error);
+    });
+    return () => { controller.abort(); retirePreview(); retire(); };
+  }, [session, refreshToken, bucketCount, bucket, pageAttempt, previewId]);
+  const overviewNotice = overviewStatus.kind === "Capacity" ? readerCapacityNotice(overviewStatus.reason) : null;
+  const pageNotice = pageStatus.kind === "Capacity" ? readerCapacityNotice(pageStatus.reason) : null;
+  const actionNotice = actionStatus.kind === "Capacity" ? readerCapacityNotice(actionStatus.reason) : null;
+  const closeBucket = () => {
+    if (bucket !== null) buttonsRef.current?.querySelector<HTMLButtonElement>(`button[data-bucket="${bucket.index}"]`)?.focus();
+    setBucket(null);
+  };
+  return <div className={styles.rail} data-testid="reader-document-map-overview-rail" role="region" aria-label="Document Map overview">
+    <div ref={trackRef} className={styles.track} role="toolbar" aria-orientation="vertical" aria-label="Document Map destinations">
         {trackHeight > 0 ? (
           <svg
             className={styles.marginalia}
@@ -259,106 +382,26 @@ export default function ReaderDocumentMapOverviewRail({
           }}
         />
 
-        {clusters.map((cluster, index) => {
-          const expanded = cluster.key === openCluster?.key;
-          const previewId = `${listId}-preview-${index}`;
-          const positionStyle: PositionedStyle = {
-            "--position": `${cluster.position * 100}%`,
-          };
-          const placementClass = positionPlacementClass(cluster.position);
-
-          return (
-            <div
-              key={cluster.key}
-              className={styles.markerSlot}
-              style={positionStyle}
-            >
-              <button
-                ref={(button) => {
-                  railButtonsRef.current[index] = button;
-                }}
-                type="button"
-                className={styles.markerButton}
-                tabIndex={index === rovingIndex ? 0 : -1}
-                aria-label={clusterAccessibleName(cluster)}
-                aria-describedby={previewId}
-                aria-expanded={
-                  cluster.members.length > 1 ? expanded : undefined
-                }
-                aria-controls={
-                  cluster.members.length > 1 && expanded
-                    ? `${listId}-destinations`
-                    : undefined
-                }
-                onFocus={() => setActiveIndex(index)}
-                onKeyDown={(event) => handleRailKeyDown(event, index)}
-                onClick={() => {
-                  if (cluster.members.length === 1) {
-                    activate(cluster.members[0]!);
-                    return;
-                  }
-                  setOpenClusterKey(expanded ? null : cluster.key);
-                }}
-              >
-                {cluster.members.length === 1 ? (
-                  <MarkerGlyph marker={cluster.members[0]!} />
-                ) : (
-                  <span className={styles.clusterCount} aria-hidden="true">
-                    {cluster.members.length}
-                  </span>
-                )}
-              </button>
-              <div
-                id={previewId}
-                className={cx(styles.preview, placementClass)}
-                role="tooltip"
-              >
-                {cluster.members.map((marker) => (
-                  <DestinationContent key={marker.id} marker={marker} />
-                ))}
-              </div>
-            </div>
-          );
-        })}
-
-        {openCluster ? (
-          <ul
-            id={`${listId}-destinations`}
-            className={cx(
-              styles.destinationList,
-              positionPlacementClass(openCluster.position),
-            )}
-            style={
-              {
-                "--position": `${openCluster.position * 100}%`,
-              } as PositionedStyle
-            }
-            aria-label={clusterAccessibleName(openCluster)}
-            onKeyDown={(event) => {
-              if (event.key !== "Escape") return;
-              event.preventDefault();
-              event.stopPropagation();
-              closeCluster();
-            }}
-          >
-            {openCluster.members.map((marker, index) => (
-              <li key={marker.id}>
-                <button
-                  ref={index === 0 ? firstListButtonRef : undefined}
-                  type="button"
-                  aria-label={destinationAccessibleName(marker)}
-                  onClick={() => activate(marker)}
-                >
-                  <MarkerGlyph marker={marker} />
-                  <DestinationContent marker={marker} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </div>
+        <div ref={buttonsRef} aria-busy={overviewStatus.kind === "Loading"} />
+        {overviewStatus.kind === "Loading" ? <span role="status">Loading overview…</span> : null}
+        {overviewNotice !== null ? <span role="status">{overviewNotice.message}</span> : null}
+        {(overviewNotice !== null && overviewNotice.retryable) || overviewStatus.kind === "Failed" ? <button type="button" onClick={() => setOverviewAttempt((value) => value + 1)}>Retry overview</button> : null}
+        {unavailable > 0 ? <span role="status">{unavailable === 1 ? "1 destination has" : `${unavailable} destinations have`} no source position.</span> : null}
+        {bucket !== null ? <div className={cx(styles.destinationList, positionPlacementClass((bucket.index + 0.5) / bucketCount))}
+          style={{ "--position": `${((bucket.index + 0.5) / bucketCount) * 100}%` } as CSSProperties}
+          onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeBucket(); } }}>
+          <button type="button" onClick={closeBucket}>Close destinations</button>
+          <div ref={previewRef} id={previewId} role="tooltip" />
+          <ul ref={listRef} id={listId} aria-label="Destinations in this part" aria-busy={pageStatus.kind === "Loading"} />
+          {pageStatus.kind === "Loading" ? <p role="status">Loading destinations…</p> : null}
+          {pageNotice !== null ? <p role="status">{pageNotice.message}</p> : null}
+          {(pageNotice !== null && pageNotice.retryable) || pageStatus.kind === "Failed" ? <button type="button" onClick={() => setPageAttempt((value) => value + 1)}>Retry destinations</button> : null}
+          {actionStatus.kind !== "Idle" ? <p role="status">{actionStatus.kind === "Loading" ? "Opening destination…" : actionNotice?.message ?? "Destination is unavailable."}</p> : null}
+          <button type="button" onClick={() => { focusFirstDestination.current = true; setBucket({ index: bucket.index, after: null }); }}>First destinations</button>
+          {next !== null ? <button type="button" onClick={() => { focusFirstDestination.current = true; setBucket({ index: bucket.index, after: next }); }}>Next destinations</button> : null}
+        </div> : null}
     </div>
-  );
+  </div>;
 }
 
 /* === Living marginalia (final-direction §10, wildcard 1) ===
@@ -580,71 +623,14 @@ function clampUnit(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-function clusterMarkers(
-  markers: ReaderDocumentMapMarker[],
-  trackHeight: number,
-): MarkerCluster[] {
-  if (trackHeight === 0) return [];
-
-  const groups: ReaderDocumentMapMarker[][] = [];
-  for (const marker of markers) {
-    const members = groups[groups.length - 1];
-    const previous = members?.[members.length - 1];
-    if (
-      previous &&
-      (marker.position - previous.position) * trackHeight <
-        MARKER_TARGET_SIZE_PX
-    ) {
-      members.push(marker);
-    } else {
-      groups.push([marker]);
-    }
-  }
-
-  return groups.map((members) => ({
-    key: JSON.stringify(members.map((marker) => marker.id)),
-    position: medianPosition(members),
-    members,
-  }));
-}
-
-function medianPosition(members: ReaderDocumentMapMarker[]): number {
-  const middle = Math.floor(members.length / 2);
-  if (members.length % 2 === 1) return members[middle]!.position;
-  return (members[middle - 1]!.position + members[middle]!.position) / 2;
-}
-
-function destinationType(marker: ReaderDocumentMapMarker): string {
-  switch (marker.kind) {
-    case "Contents":
-      return "Contents";
-    case "Embed":
-      return "Embed";
-    case "Highlight":
-      return "Highlight";
-    case "SourceReference":
-    case "GeneratedCitation":
-      return "Citation";
-    case "Link":
-      return "Link";
-    case "Synapse":
-      return "Synapse";
-  }
-}
-
-function destinationAccessibleName(marker: ReaderDocumentMapMarker): string {
-  return `${destinationType(marker)}: ${marker.label}, ${documentPercentage(marker.position)}% through document`;
-}
-
-function clusterAccessibleName(cluster: MarkerCluster): string {
-  if (cluster.members.length === 1) {
-    return destinationAccessibleName(cluster.members[0]!);
-  }
-  return `${cluster.members.length} destinations near ${documentPercentage(cluster.position)}% through document`;
-}
-
-function documentPercentage(position: number): number {
-  return Math.round(position * 100);
+/* A bucket of one is named by its destination: the kind is already in hand from
+   the overview counts, so the reader need not open the list to learn what it is. */
+function bucketAccessibleName(counts: ReaderPublicationEvidenceMarkerCounts, count: number, position: number): string {
+  const percent = Math.round(position * 100);
+  if (count !== 1) return `${count} destinations near ${percent}% through document`;
+  const kind = counts.contents === 1 ? "Contents" : counts.embeds === 1 ? "Embed" : counts.highlights === 1 ? "Highlight"
+    : counts.source_references === 1 || counts.generated_citations === 1 ? "Citation" : counts.links === 1 ? "Link" : "Synapse";
+  return `${kind} near ${percent}% through document`;
 }
 
 function positionPlacementClass(position: number): string | false {
@@ -653,68 +639,15 @@ function positionPlacementClass(position: number): string | false {
   return false;
 }
 
-function MarkerGlyph({ marker }: { marker: ReaderDocumentMapMarker }) {
-  return (
-    <span
-      className={cx(
-        styles.markerGlyph,
-        markerShapeClass(marker),
-        marker.tone === "Warning" && styles.markerWarning,
-      )}
-      style={{ "--marker-color": markerColor(marker) } as CSSProperties}
-      aria-hidden="true"
-    />
-  );
-}
-
-function markerShapeClass(marker: ReaderDocumentMapMarker): string {
-  switch (marker.kind) {
-    case "Contents":
-      return styles.markerContents;
-    case "Embed":
-      return styles.markerEmbed;
-    case "Highlight":
-      return styles.markerHighlight;
-    case "SourceReference":
-    case "GeneratedCitation":
-      return styles.markerCitation;
-    case "Link":
-    case "Synapse":
-      return styles.markerConnection;
-  }
-}
-
-function markerColor(marker: ReaderDocumentMapMarker): string {
-  switch (marker.tone) {
-    case "Highlight":
-      return "var(--highlight-yellow)";
-    case "Citation":
-      return "var(--highlight-purple)";
-    case "Link":
-      return "var(--highlight-blue)";
-    case "Synapse":
-      return "var(--highlight-green)";
-    case "Warning":
-      return "var(--highlight-pink)";
-    case "Neutral":
-      return "var(--edge-strong)";
-  }
-}
-
-function DestinationContent({ marker }: { marker: ReaderDocumentMapMarker }) {
-  return (
-    <span className={styles.destinationContent}>
-      <strong>
-        {destinationType(marker)}: {marker.label}
-      </strong>
-      {marker.preview.kind === "Present" ? (
-        <span className={styles.destinationExcerpt}>
-          {marker.preview.value}
-        </span>
-      ) : null}
-      <span className={styles.destinationPosition}>
-        {documentPercentage(marker.position)}% through document
-      </span>
-    </span>
-  );
+function markerGlyph(kind: ReaderPublicationEvidenceMarkerKind, tone: ReaderPublicationEvidenceMarkerPreview["tone"]): HTMLSpanElement {
+  const shape = kind === "Contents" ? styles.markerContents : kind === "Embed" ? styles.markerEmbed
+    : kind === "Highlight" ? styles.markerHighlight : kind === "SourceReference" || kind === "GeneratedCitation" ? styles.markerCitation : styles.markerConnection;
+  const color = tone === "Highlight" ? "var(--highlight-yellow)" : tone === "Citation" ? "var(--highlight-purple)"
+    : tone === "Link" ? "var(--highlight-blue)" : tone === "Synapse" ? "var(--highlight-green)"
+    : tone === "Warning" ? "var(--highlight-pink)" : "var(--edge-strong)";
+  const glyph = document.createElement("span");
+  glyph.className = cx(styles.markerGlyph, shape, tone === "Warning" && styles.markerWarning);
+  glyph.style.setProperty("--marker-color", color);
+  glyph.setAttribute("aria-hidden", "true");
+  return glyph;
 }

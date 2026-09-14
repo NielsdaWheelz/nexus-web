@@ -11,6 +11,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import okhttp3.ResponseBody
 import java.io.IOException
 import java.net.Proxy
 import java.time.Duration
@@ -89,7 +90,7 @@ internal object OfflineReadingHttpSessionFactory {
             .followSslRedirects(false)
             .connectTimeout(OFFLINE_READING_CONNECT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
             .readTimeout(OFFLINE_READING_READ_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
-            .callTimeout(0, TimeUnit.MILLISECONDS)
+            .callTimeout(OFFLINE_READING_READ_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
             .build()
         return OfflineReadingHttpSession(client, hostedOrigin, cookieStore)
     }
@@ -109,11 +110,25 @@ internal fun Request.Builder.offlineReadingOwnedOrigin(origin: HttpUrl): Request
 internal val OFFLINE_READING_CONNECT_TIMEOUT: Duration = Duration.ofSeconds(20)
 internal val OFFLINE_READING_READ_TIMEOUT: Duration = Duration.ofSeconds(60)
 internal val OFFLINE_READING_PACKAGE_READ_TIMEOUT: Duration = Duration.ofSeconds(3_600)
+// Candidate observation bound; qualification must include the slowest supported archive preparation.
+internal val OFFLINE_READING_PREPARATION_MAX_AGE: Duration = Duration.ofHours(1)
 
 internal fun offlineReadingPackageClient(base: OkHttpClient): OkHttpClient = base.newBuilder()
     .readTimeout(OFFLINE_READING_PACKAGE_READ_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
+    .callTimeout(OFFLINE_READING_PACKAGE_READ_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
     .build()
 internal const val OFFLINE_READING_JSON_RESPONSE_LIMIT_BYTES = 1024 * 1024
+
+internal fun ResponseBody.readBoundedJson(
+    maximumBytes: Long = OFFLINE_READING_JSON_RESPONSE_LIMIT_BYTES.toLong(),
+): ByteArray {
+    require(contentLength() <= maximumBytes)
+    val source = source()
+    require(!source.request(maximumBytes + 1)) {
+        "offline reader JSON exceeds its byte limit"
+    }
+    return source.readByteArray()
+}
 
 internal class OfflineReadingCookieUnavailableException : RuntimeException()
 private const val OFFLINE_READING_COOKIE_ACK_TIMEOUT_SECONDS = 20L

@@ -1,0 +1,243 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "value": "oklch(62.5% .17 230 / .7)",
+      "expected": {
+        "kind": "Literal",
+        "value": "oklch(62.5% .17 230 / .7)"
+      }
+    },
+    {
+      "value": "color-mix(in oklch, var(--accent), #fff 12.50%)",
+      "expected": {
+        "kind": "Literal",
+        "value": "color-mix(in oklch, var(--accent), #fff 12.50%)"
+      }
+    },
+    {
+      "value": "\"url(https://example.invalid/art)\"",
+      "expected": {
+        "kind": "Literal",
+        "value": "\"url(https://example.invalid/art)\""
+      }
+    },
+    {
+      "value": "/* only a comment */",
+      "expected": {
+        "kind": "Literal",
+        "value": "/* only a comment */"
+      }
+    },
+    {
+      "value": "url(#gradient) color(display-p3 .1 .2 .3 / .5)",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "gradient",
+        "fallback": "color(display-p3 .1 .2 .3 / .5)"
+      }
+    },
+    {
+      "value": "u\\72l(\"#\\1f9e0\")",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "🧠",
+        "fallback": null
+      }
+    },
+    {
+      "value": "url(\"#\\e000\")",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "",
+        "fallback": null
+      }
+    },
+    {
+      "value": "url(\"#\\378\")",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "͸",
+        "fallback": null
+      }
+    },
+    {
+      "value": "url(\"#\\01f9e0 cat\")",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "🧠cat",
+        "fallback": null
+      }
+    },
+    {
+      "value": "url(\"#\\1f9e0\tcat\")",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "🧠cat",
+        "fallback": null
+      }
+    },
+    {
+      "value": "url(#a\\)b)",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "a)b",
+        "fallback": null
+      }
+    },
+    {
+      "value": "url(\"#a\\\"b\")",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "a\"b",
+        "fallback": null
+      }
+    },
+    {
+      "value": "url(\"#caf%C3%A9+one\")",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "café+one",
+        "fallback": null
+      }
+    },
+    {
+      "value": "/* url(https://example.invalid) */ url('#g') rgb(1 2 3 / .50)",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "g",
+        "fallback": "rgb(1 2 3 / .50)"
+      }
+    },
+    {
+      "value": "url(\"#a\\\r\nb\")",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "ab",
+        "fallback": null
+      }
+    },
+    {
+      "value": "url(\"#\\0x\")",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "�x",
+        "fallback": null
+      }
+    },
+    {
+      "value": "url(\"#\\110000x\")",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "�x",
+        "fallback": null
+      }
+    },
+    {
+      "value": "url(\"#\\d800x\")",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "�x",
+        "fallback": null
+      }
+    },
+    {
+      "value": "url(https://example.invalid/art)",
+      "expected": {
+        "kind": "Reject"
+      }
+    },
+    {
+      "value": "url(//example.invalid/art)",
+      "expected": {
+        "kind": "Reject"
+      }
+    },
+    {
+      "value": "url(data:image/png;base64,AA)",
+      "expected": {
+        "kind": "Reject"
+      }
+    },
+    {
+      "value": "url(#)",
+      "expected": {
+        "kind": "Reject"
+      }
+    },
+    {
+      "value": "url(#id) var(--fallback, url(https://example.invalid/art))",
+      "expected": {
+        "kind": "Reject"
+      }
+    },
+    {
+      "value": "var(--fallback, u\\72l(\"#id\"))",
+      "expected": {
+        "kind": "Reject"
+      }
+    },
+    {
+      "value": "\"url(#id)\" url(#other)",
+      "expected": {
+        "kind": "Reject"
+      }
+    },
+    {
+      "value": "url(#bad name)",
+      "expected": {
+        "kind": "Reject"
+      }
+    },
+    {
+      "value": "url(\"#bad\nname\")",
+      "expected": {
+        "kind": "Reject"
+      }
+    },
+    {
+      "value": "url(\"#unterminated)",
+      "expected": {
+        "kind": "Reject"
+      }
+    },
+    {
+      "value": "rgb(1 2 3",
+      "expected": {
+        "kind": "Literal",
+        "value": "rgb(1 2 3"
+      }
+    },
+    {
+      "value": "[red",
+      "expected": {
+        "kind": "Literal",
+        "value": "[red"
+      }
+    },
+    {
+      "value": "url(\"#id\"",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "id",
+        "fallback": null
+      }
+    },
+    {
+      "value": "url(#id",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "id",
+        "fallback": null
+      }
+    },
+    {
+      "value": "u\\72l(\"#id\"",
+      "expected": {
+        "kind": "LocalFragment",
+        "fragment_id": "id",
+        "fallback": null
+      }
+    }
+  ]
+}

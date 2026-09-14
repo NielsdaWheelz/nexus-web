@@ -50,6 +50,7 @@ export class ApiError extends Error {
   readonly code: string;
   readonly requestId?: string;
   readonly details?: Record<string, unknown>;
+  readonly retryAfterMs?: number;
 
   constructor(
     status: number,
@@ -57,6 +58,7 @@ export class ApiError extends Error {
     message: string,
     requestId?: string,
     details?: Record<string, unknown>,
+    retryAfterMs?: number,
   ) {
     super(message);
     this.name = "ApiError";
@@ -64,6 +66,7 @@ export class ApiError extends Error {
     this.code = code;
     this.requestId = requestId;
     this.details = details;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -160,29 +163,87 @@ function isErrorResponse(body: unknown): body is ErrorResponse {
   );
 }
 
-/** Decode the common API error envelope without flattening its closed code. */
-export async function apiErrorFromResponse(
-  response: Response,
-): Promise<ApiError> {
+/**
+ * An owned envelope is a handful of fields. This branch exists precisely for the
+ * case where something other than our API answered, so the body it returns is
+ * never assumed to be small: past the ceiling the stream is cancelled and the
+ * status-derived envelope stands.
+ */
+const ERROR_ENVELOPE_MAX_BYTES = 16_384;
+
+/** The envelope text, or none when there is no body, it fails mid-stream, or it exceeds the ceiling. */
+async function readErrorEnvelopeText(response: Response): Promise<string | null> {
+  if (response.body === null) return null;
+  const reader = response.body.getReader();
+  const parts: Uint8Array[] = [];
+  let size = 0;
   try {
-    const body: unknown = await response.json();
-    if (isErrorResponse(body)) {
-      return new ApiError(
-        response.status,
-        body.error.code,
-        body.error.message,
-        body.error.request_id,
-        body.error.details,
-      );
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      size += part.value.byteLength;
+      if (size > ERROR_ENVELOPE_MAX_BYTES) return null;
+      parts.push(part.value);
     }
   } catch (error) {
     if (isAbortError(error)) throw error;
+    return null;
+  } finally {
+    // A failed stream can also reject cancellation; retain its original outcome.
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
-  return new ApiError(
-    response.status,
-    "E_UNKNOWN",
-    `Request failed with status ${response.status}`,
-  );
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const part of parts) {
+    bytes.set(part, offset);
+    offset += part.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+/** Preserve owned envelopes; normalize only transport responses lacking one. */
+export async function apiErrorEnvelopeFromResponse(
+  response: Response,
+): Promise<ErrorResponse> {
+  const text = await readErrorEnvelopeText(response);
+  if (text !== null) {
+    let body: unknown = null;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      // A body that will not parse is not an owned envelope.
+      body = null;
+    }
+    if (isErrorResponse(body)) {
+      return body;
+    }
+  }
+  return { error: {
+    code: response.status === 504
+      ? "E_UPSTREAM_TIMEOUT"
+      : response.status === 502 || response.status === 503
+        ? "E_UPSTREAM"
+        : "E_UNKNOWN",
+    message: `Request failed with status ${response.status}`,
+  } };
+}
+
+/** Decode the common API error envelope without flattening its closed code. */
+export async function apiErrorFromResponse(response: Response): Promise<ApiError> {
+  const { error } = await apiErrorEnvelopeFromResponse(response);
+  const retryAfter = response.headers.get("retry-after");
+  let retryAfterMs: number | undefined;
+  if (retryAfter !== null) {
+    if (/^[0-9]+$/.test(retryAfter)) retryAfterMs = Number(retryAfter) * 1_000;
+    else {
+      const at = Date.parse(retryAfter);
+      if (Number.isFinite(at)) retryAfterMs = Math.max(0, at - Date.now());
+    }
+  }
+  return new ApiError(response.status, error.code, error.message,
+    error.request_id ?? response.headers.get("x-request-id") ?? undefined,
+    error.details, retryAfterMs);
 }
 
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
@@ -235,7 +296,7 @@ function isPlainGetRequest(options: RequestInit): boolean {
  * failure. Parsing and contract decoders run outside this boundary so defects
  * cannot be relabeled as connectivity problems or enter the retry schedule.
  */
-async function fetchApiResponse(
+export async function fetchApiResponse(
   path: ApiPath,
   init: RequestInit,
 ): Promise<Response> {
@@ -247,47 +308,32 @@ async function fetchApiResponse(
   }
 }
 
-async function parseApiResponse<T>(response: Response): Promise<T> {
-  let body: unknown;
+export async function parseApiResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) throw await apiErrorFromResponse(response);
+  // Reading the bytes and decoding them are separate failures: a connection that
+  // drops after the status line is an availability failure that may be retried,
+  // while a complete body that will not parse is a same-system defect that must
+  // not be. Only `text()` can fail for the first reason and only `JSON.parse`
+  // for the second, so each is attributed to the step that produced it.
+  let text: string;
   try {
-    body = await response.json();
+    text = await response.text();
   } catch (err) {
     if (isAbortError(err)) throw err;
-    if (!response.ok) {
-      throw new ApiError(
-        response.status,
-        "E_UNKNOWN",
-        `Request failed with status ${response.status}`,
-      );
-    }
-    if (response.status === 204 || response.status === 205) {
-      return undefined as T;
-    }
+    throw new ApiError(0, "E_NETWORK", "Response stream failed");
+  }
+  if (response.status === 204 || response.status === 205) {
+    return undefined as T;
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
     throw new ApiError(
       response.status,
       "E_INVALID_RESPONSE",
       "API returned a non-JSON response",
     );
   }
-
-  if (!response.ok) {
-    if (isErrorResponse(body)) {
-      throw new ApiError(
-        response.status,
-        body.error.code,
-        body.error.message,
-        body.error.request_id,
-        body.error.details,
-      );
-    }
-    throw new ApiError(
-      response.status,
-      "E_UNKNOWN",
-      `Request failed with status ${response.status}`,
-    );
-  }
-
-  return body as T;
 }
 
 /**

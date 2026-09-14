@@ -6,14 +6,27 @@
  * composition (`app/(authenticated)/media/[id]/hostedPdfReaderDecorations.ts`);
  * offline supplies no decoration implementation.
  */
+import { publicationPayloadBytes } from "@/lib/api/resourceCache";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
+import type { ReaderPdfPaintLease, ReaderViewCapacity } from "./DocumentReaderSession";
+
+/** Paint carries source geometry and identity; authored details have a separate read owner. */
+export interface PdfHighlightPaint {
+  readonly id: string;
+  readonly color: HighlightColor;
+  readonly created_at: string;
+  readonly author_user_id: string;
+  readonly is_owner: boolean;
+  readonly quads: readonly PdfHighlightQuad[];
+}
 
 export interface PdfHighlightOut {
   readonly id: string;
   readonly anchor: {
     readonly type: "pdf_page_geometry";
     readonly media_id: string;
+    readonly source_sha256: string | null;
     readonly page_number: number;
     readonly quads: PdfHighlightQuad[];
   };
@@ -43,15 +56,32 @@ export interface PdfHighlightWrite {
 }
 
 export interface PdfReaderDecorations {
-  loadPageHighlights(
-    pageNumber: number,
-    signal: AbortSignal,
-  ): Promise<readonly PdfHighlightOut[]>;
+  adoptHighlightPaint(highlight: PdfHighlightOut): { readonly kind: "Acquired"; readonly lease: ReaderPdfPaintLease } | ReaderViewCapacity;
   createHighlight(
     input: PdfHighlightWrite & { readonly color: HighlightColor },
   ): Promise<PdfHighlightOut>;
   updateHighlight(
     highlightId: string,
     input: PdfHighlightWrite,
-  ): Promise<void>;
+  ): Promise<PdfHighlightOut>;
+}
+
+export const PDF_PULSE_KEY_PREFIX = "reader-pulse-";
+
+export interface PdfHighlightRectangle {
+  readonly highlightId: string;
+  readonly color: HighlightColor;
+  readonly index: number;
+  readonly isTemporary: boolean;
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Both retiring and replacement rect payloads; node/allocator cost is separate. */
+export function pdfHighlightProjectionPayloadBytes(highlightId: string, color: HighlightColor, quadCount: number): number {
+  const rectangle: PdfHighlightRectangle = { highlightId, color, index: 0, isTemporary: false,
+    left: 0, top: 0, width: 0, height: 0 };
+  return 2 * quadCount * publicationPayloadBytes(rectangle);
 }

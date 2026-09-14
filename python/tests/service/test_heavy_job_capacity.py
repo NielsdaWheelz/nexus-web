@@ -37,6 +37,7 @@ from tests.testkit.unreachable_state import (
     expire_heavy_job_claim,
     release_heavy_capacity_row,
 )
+from tests.testkit.worker import wait_for_backend_lock
 
 # Every synthetic queue kind this module enqueues. Teardown removes exactly these
 # rows, so a new scenario must add its kind here.
@@ -99,19 +100,6 @@ def _capacity_holder(engine: Engine) -> tuple[object, ...]:
                 )
             ).one()
         )
-
-
-def _wait_for_backend_lock(engine: Engine, backend_pid: int) -> None:
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        with engine.connect() as connection:
-            wait_event_type = connection.execute(
-                text("SELECT wait_event_type FROM pg_stat_activity WHERE pid = :pid"),
-                {"pid": backend_pid},
-            ).scalar_one_or_none()
-        if wait_event_type == "Lock":
-            return
-    raise AssertionError(f"backend {backend_pid} did not reach its expected lock wait")
 
 
 def _wait_for_backend_blocked_by(
@@ -316,7 +304,7 @@ def test_heavy_claim_and_completion_cannot_form_an_inverse_lock_cycle(engine: En
         claim_thread = threading.Thread(target=claim_candidate)
         claim_thread.start()
         assert claim_backend_ready.wait(timeout=5)
-        _wait_for_backend_lock(engine, claim_backend_pid[0])
+        wait_for_backend_lock(engine, claim_backend_pid[0])
         complete_now.set()
         assert completion_done.wait(timeout=5), (
             "completion blocked behind capacity held before the candidate job lock"
@@ -399,11 +387,11 @@ def test_revoke_serializes_before_claim_and_clears_any_new_heavy_holder(engine: 
         claim_thread = threading.Thread(target=claim_target)
         claim_thread.start()
         assert claim_backend_ready.wait(timeout=5)
-        _wait_for_backend_lock(engine, claim_backend_pid[0])
+        wait_for_backend_lock(engine, claim_backend_pid[0])
         revoke_thread = threading.Thread(target=revoke_target)
         revoke_thread.start()
         assert revoke_backend_ready.wait(timeout=5)
-        _wait_for_backend_lock(engine, revoke_backend_pid[0])
+        wait_for_backend_lock(engine, revoke_backend_pid[0])
         blocker.commit()
 
     claim_thread.join(timeout=5)
@@ -828,7 +816,7 @@ def test_open_heavy_publication_retains_capacity_until_its_commit(engine: Engine
         admission_thread = threading.Thread(target=admit_candidate)
         admission_thread.start()
         assert backend_ready.wait(timeout=5)
-        _wait_for_backend_lock(engine, backend_pid[0])
+        wait_for_backend_lock(engine, backend_pid[0])
         with engine.connect() as oracle:
             assert oracle.execute(
                 text(

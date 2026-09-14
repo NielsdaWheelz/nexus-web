@@ -43,6 +43,12 @@ type EvidenceScope = "passages" | "document";
 export type EvidencePaneProjection =
   | { kind: "Processing"; source: "media" | "evidence" }
   | { kind: "IngestFailed"; feedback: FeedbackContent }
+  /**
+   * The read this surface is built from did not answer. `retry` is absent when
+   * the refusal is terminal for this source, so no unsatisfiable control is
+   * offered.
+   */
+  | { kind: "Unavailable"; feedback: FeedbackContent; retry: (() => void) | null }
   | { kind: "Empty" }
   | {
       kind: "Ready";
@@ -312,6 +318,16 @@ export default function EvidencePaneSurface({
     );
   } else if (projection.kind === "IngestFailed") {
     content = <FeedbackNotice content={projection.feedback} announcement="Assertive" />;
+  } else if (projection.kind === "Unavailable") {
+    content = (
+      <FeedbackNotice
+        content={projection.feedback}
+        announcement="Assertive"
+        {...(projection.retry === null
+          ? {}
+          : { actions: [{ label: "Retry evidence", onClick: projection.retry }] })}
+      />
+    );
   } else if (projection.kind === "Empty" || totalFacts === 0) {
     content = (
       <FeedbackNotice

@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/playback/NexusArtwork.kt b/apps/android/app/src/main/java/app/nexus/android/playback/NexusArtwork.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/playback/NexusArtwork.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/playback/NexusArtwork.kt
+@@ -192,7 +192,7 @@
+ 
+     fun retry(accountId: UUID, sessionKey: UUID?) {
+         val entry = current ?: return
+-        if (entry.accountId == accountId && entry.sessionKey == sessionKey && entry.failed) load(entry)
++        if (entry.accountId == accountId && entry.sessionKey == sessionKey && entry.failed) return
+     }
+ 
+     fun clear() {

@@ -1,0 +1,21 @@
+diff --git a/apps/web/src/lib/reader/publicationFind.ts b/apps/web/src/lib/reader/publicationFind.ts
+--- a/apps/web/src/lib/reader/publicationFind.ts
++++ b/apps/web/src/lib/reader/publicationFind.ts
+@@ -179,16 +179,7 @@ export function createPublicationFindAdapter({ session, descriptor, window, getR
+       assertPreview();
+       if (first.kind !== "Rendered") return rejected(first.kind === "Capacity" ? first : { kind: "RequestUnavailable" });
+       activeKey = request.key;
+-      while (!publish()) {
+-        const next = await window.loadNeighbor("Next");
+-        assertPreview();
+-        if (next?.kind === "Superseded") throw new DOMException("Reader Find preview superseded", "AbortError");
+-        if (next?.kind !== "Ready") return rejected(next?.kind === "Capacity" ? next : { kind: "RequestUnavailable" });
+-        if (next.item.unit.fragment_id !== match.fragmentId) throw new Error("Reader Find range escaped its retained fragment");
+-        const neighbor = await waitForUnit(next.item, request.signal);
+-        assertPreview();
+-        if (neighbor.kind !== "Rendered") return rejected(neighbor.kind === "Capacity" ? neighbor : { kind: "RequestUnavailable" });
+-      }
++      return rejected({ kind: "RequestUnavailable" });
+       const rendered = getRendered();
+       const anchor = rendered?.parts.find(({ item }) => item.lease === completion.item.lease);
+       if (rendered === null || anchor === undefined) throw new Error("Reader Find lost its admitted preview before positioning");

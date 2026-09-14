@@ -10,11 +10,8 @@ demonstrated-red sensitivity owner.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
-from dataclasses import dataclass
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -24,75 +21,20 @@ from sqlalchemy.orm import Session
 
 from nexus.app import add_request_id_middleware, create_app
 from nexus.auth.middleware import AuthMiddleware
-from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus, ReaderPublication
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.ids import new_uuid7
-from nexus.schemas.offline_reader_progress import OfflineReaderWrite
-from nexus.schemas.reader import (
-    CursorWrite,
-    ReaderFragmentTarget,
-    ReaderQuoteContext,
-    ReaderTextLocations,
-    WebReaderResumeState,
-)
-from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.consumption import offline_reader_progress
+from nexus.services import reader_publication
+from nexus.services.consumption import reader_progress
 from nexus.services.consumption import service as consumption
-from nexus.services.library_entries import ensure_media_in_default_library
 from tests.testkit.auth import StaticTokenVerifier
-
-_PUBLISHED_GENERATION = 5
-
-
-@dataclass(frozen=True, slots=True)
-class _PublishedArticle:
-    viewer_id: UUID
-    email: str
-    media_id: UUID
-    fragment_id: UUID
+from tests.testkit.reader_progress import (
+    PublishedArticle,
+    committed_published_article,
+    reader_cursor,
+    reader_write,
+)
 
 
-@contextmanager
-def _committed_published_article(engine: Engine) -> Iterator[_PublishedArticle]:
-    viewer_id = uuid4()
-    media_id = uuid4()
-    fragment_id = uuid4()
-    email = f"offline-account-fence-{viewer_id}@example.invalid"
-    with Session(engine) as db:
-        ensure_user_and_default_library(db, viewer_id, email)
-        db.add(
-            Media(
-                id=media_id,
-                kind=MediaKind.web_article.value,
-                title="Offline account fence proof",
-                processing_status=ProcessingStatus.ready_for_reading,
-                created_by_user_id=viewer_id,
-            )
-        )
-        db.add(
-            Fragment(
-                id=fragment_id,
-                media_id=media_id,
-                idx=0,
-                canonical_text="Account-fenced progress.",
-                html_sanitized="<p>Account-fenced progress.</p>",
-            )
-        )
-        db.add(
-            ReaderPublication(
-                id=new_uuid7(),
-                media_id=media_id,
-                generation=_PUBLISHED_GENERATION,
-            )
-        )
-        db.flush()
-        ensure_media_in_default_library(db, viewer_id, media_id)
-        db.commit()
-
-    yield _PublishedArticle(viewer_id, email, media_id, fragment_id)
-
-
-def _reader_media_state_row(article: _PublishedArticle, engine: Engine) -> dict[str, Any]:
+def _reader_media_state_row(article: PublishedArticle, engine: Engine) -> dict[str, Any]:
     """The stored row itself, including the tuple header a rolled-back write marks.
 
     A refused write must never reach the row: after a mutate-then-rollback the
@@ -122,26 +64,7 @@ def _reader_media_state_row(article: _PublishedArticle, engine: Engine) -> dict[
         )
 
 
-def _cursor(fragment_id: UUID, *, offset: int) -> WebReaderResumeState:
-    progression = offset / 100
-    return WebReaderResumeState(
-        kind="web",
-        target=ReaderFragmentTarget(fragment_id=str(fragment_id)),
-        locations=ReaderTextLocations(
-            text_offset=offset,
-            progression=progression,
-            total_progression=progression,
-            position=1,
-        ),
-        text=ReaderQuoteContext(
-            quote="progress",
-            quote_prefix="Account-fenced ",
-            quote_suffix=".",
-        ),
-    )
-
-
-def _progress_client(article: _PublishedArticle) -> TestClient:
+def _progress_client(article: PublishedArticle) -> TestClient:
     """A client on the production FastAPI stack authenticated as the article's viewer.
 
     Only external token verification is controlled; the route, its account fence,
@@ -165,33 +88,43 @@ def test_a_foreign_expected_account_is_refused_at_every_offline_progress_entry(
     engine: Engine,
 ) -> None:
     """Read and write both refuse, and the canonical row is never touched."""
-    with _committed_published_article(engine) as article:
-        accepted = _cursor(article.fragment_id, offset=10)
-        rejected = _cursor(article.fragment_id, offset=80)
-        canonical = consumption.put_reader_cursor(
-            article.viewer_id,
-            article.media_id,
-            CursorWrite(locator=accepted, base_revision=0),
-        )
-        before = _reader_media_state_row(article, engine)
+    with committed_published_article(engine) as article:
+        accepted = reader_cursor(article.fragment_id, offset=10)
+        rejected = reader_cursor(article.fragment_id, offset=80)
         foreign_account_id = uuid4()
+        with Session(engine) as db:
+            published_generation = reader_publication.read_publication_generation(
+                db, media_id=article.media_id
+            )
+        assert published_generation is not None
+        # The baseline is installed through the one writer every real client uses,
+        # so the fence is proved against a cursor that carries real provenance.
+        canonical = reader_progress.put(
+            viewer_id=article.viewer_id,
+            expected_account_id=article.viewer_id,
+            media_id=article.media_id,
+            write=reader_write(
+                generation=published_generation,
+                base_revision=0,
+                locator=accepted,
+            ),
+        ).cursor
+        before = _reader_media_state_row(article, engine)
 
         with pytest.raises(ApiError) as refused_write:
-            offline_reader_progress.put(
+            reader_progress.put(
                 viewer_id=article.viewer_id,
                 expected_account_id=foreign_account_id,
                 media_id=article.media_id,
-                write=OfflineReaderWrite.model_validate(
-                    {
-                        "expectedReaderGeneration": _PUBLISHED_GENERATION,
-                        "baseRevision": canonical.revision,
-                        "locator": rejected.model_dump(mode="json"),
-                    }
+                write=reader_write(
+                    generation=published_generation,
+                    base_revision=canonical.revision,
+                    locator=rejected,
                 ),
             )
 
         with Session(engine) as db, pytest.raises(ApiError) as refused_read:
-            offline_reader_progress.get(
+            reader_progress.get(
                 db,
                 viewer_id=article.viewer_id,
                 expected_account_id=foreign_account_id,
@@ -206,7 +139,7 @@ def test_a_foreign_expected_account_is_refused_at_every_offline_progress_entry(
                 path,
                 headers={"X-Nexus-Expected-Account-Id": str(foreign_account_id)},
                 json={
-                    "expectedReaderGeneration": _PUBLISHED_GENERATION,
+                    "expectedReaderGeneration": published_generation,
                     "baseRevision": canonical.revision,
                     "locator": rejected.model_dump(mode="json"),
                 },
@@ -218,7 +151,7 @@ def test_a_foreign_expected_account_is_refused_at_every_offline_progress_entry(
         after_route = _reader_media_state_row(article, engine)
 
         with Session(engine) as db:
-            observed = consumption.get_reader_cursor(db, article.viewer_id, article.media_id)
+            observed = consumption.get_reader_cursor(db, article.viewer_id, article.media_id).cursor
 
     assert refused_write.value.code == ApiErrorCode.E_FORBIDDEN
     assert refused_read.value.code == ApiErrorCode.E_FORBIDDEN

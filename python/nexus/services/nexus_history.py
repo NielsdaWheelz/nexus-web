@@ -5,7 +5,7 @@ from typing import cast
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NexusUsage
@@ -13,6 +13,7 @@ from nexus.db.retries import retry_serializable
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.nexus_history import (
     NexusHistoryOut,
+    NexusHistoryQuery,
     NexusHistoryRecentOut,
     NexusHistorySource,
     NexusSelectionRecordOut,
@@ -34,40 +35,63 @@ NEXUS_SELECTION_RECORD_SCOPE = "Nexus.SelectionRecord"
 def get_history_for_viewer(
     db: Session,
     viewer_id: UUID,
-    query: str | None = None,
+    *,
+    request: NexusHistoryQuery,
 ) -> NexusHistoryOut:
     """Return recent targets and bounded frecency for the current viewer."""
-    query_normalized = _normalize_query(query)
-    destination_rows = (
-        db.execute(
-            select(NexusUsage)
-            .where(NexusUsage.user_id == viewer_id)
-            .order_by(NexusUsage.last_used_at.desc(), NexusUsage.id.desc())
-        )
-        .scalars()
-        .all()
-    )
+    query_normalized = _normalize_query(request.query)
+    # Scoring filter, not an authoring command: a candidate this service cannot
+    # canonicalize simply has no history, and omission is the wire's "no score".
+    targets: dict[str, str] = {}
+    for href in request.target_hrefs:
+        canonical = _canonical_target_href(href)
+        if canonical is not None:
+            targets[href] = canonical
 
-    recent: list[NexusHistoryRecentOut] = []
-    seen_recent_hrefs: set[str] = set()
-    for row in destination_rows:
-        if row.target_href in seen_recent_hrefs:
-            continue
-        seen_recent_hrefs.add(row.target_href)
-        recent.append(
-            NexusHistoryRecentOut(
-                target_href=row.target_href,
-                label_snapshot=row.label_snapshot,
-                source=cast(NexusHistorySource, row.source),
-                last_used_at=row.last_used_at,
-            )
+    # One snapshot, at most five index seeks. The cursor skips prefixes already
+    # examined; repeated query rows for one target can still require a long scan.
+    recent = [
+        NexusHistoryRecentOut(
+            target_href=row.target_href,
+            label_snapshot=row.label_snapshot,
+            source=cast(NexusHistorySource, row.source),
+            last_used_at=row.last_used_at,
         )
-        if len(recent) == MAX_NEXUS_RECENT_TARGETS:
-            break
+        for row in db.execute(
+            text("""
+                WITH RECURSIVE recent AS (
+                    (SELECT target_href, label_snapshot, source, last_used_at, id,
+                        ARRAY[target_href] AS seen, 1 AS ordinal
+                     FROM nexus_usages
+                     WHERE user_id = :viewer_id
+                     ORDER BY last_used_at DESC, id DESC
+                     LIMIT 1)
+                    UNION ALL
+                    SELECT following.target_href, following.label_snapshot, following.source,
+                        following.last_used_at, following.id,
+                        array_append(prior.seen, following.target_href), prior.ordinal + 1
+                    FROM recent prior
+                    CROSS JOIN LATERAL (
+                        SELECT target_href, label_snapshot, source, last_used_at, id
+                        FROM nexus_usages
+                        WHERE user_id = :viewer_id
+                          AND (last_used_at, id) < (prior.last_used_at, prior.id)
+                          AND target_href <> ALL(prior.seen)
+                        ORDER BY last_used_at DESC, id DESC
+                        LIMIT 1
+                    ) following
+                    WHERE prior.ordinal < :limit
+                )
+                SELECT target_href, label_snapshot, source, last_used_at
+                FROM recent ORDER BY ordinal
+            """),
+            {"viewer_id": viewer_id, "limit": MAX_NEXUS_RECENT_TARGETS},
+        ).all()
+    ]
 
     now = db.execute(select(func.now())).scalar_one()
     raw_frecency_by_href: dict[str, float] = {}
-    for row in _load_frecency_rows(db, viewer_id, query_normalized):
+    for row in _load_frecency_rows(db, viewer_id, query_normalized, set(targets.values())):
         contribution = _calculate_frecency(row, now)
         if query_normalized and row.query_normalized == "":
             contribution *= TARGET_ONLY_QUERY_WEIGHT
@@ -79,7 +103,9 @@ def get_history_for_viewer(
     return NexusHistoryOut(
         recent=recent,
         frecency_by_href={
-            href: round(raw / (raw + 100), 6) for href, raw in raw_frecency_by_href.items()
+            href: round(raw / (raw + 100), 6)
+            for href, target in targets.items()
+            if (raw := raw_frecency_by_href.get(target, 0)) > 0
         },
     )
 
@@ -93,7 +119,7 @@ def record_selection_for_viewer(
     """Record one accepted internal Nexus selection exactly once."""
     request_bytes = canonical_json_bytes(request.model_dump(mode="json"))
     query_normalized = _normalize_query(request.query)
-    target_href = _canonicalize_target_href(request.target_href)
+    target_href = _require_canonical_target_href(request.target_href)
     label_snapshot = _normalize_label_snapshot(request.label_snapshot)
 
     def op() -> NexusSelectionRecordOut:
@@ -162,7 +188,10 @@ def _load_frecency_rows(
     db: Session,
     viewer_id: UUID,
     query_normalized: str,
+    target_hrefs: set[str],
 ) -> list[NexusUsage]:
+    if not target_hrefs:
+        return []
     query_filter = (
         NexusUsage.query_normalized.in_([query_normalized, ""])
         if query_normalized
@@ -173,6 +202,7 @@ def _load_frecency_rows(
             select(NexusUsage).where(
                 NexusUsage.user_id == viewer_id,
                 query_filter,
+                NexusUsage.target_href.in_(target_hrefs),
             )
         )
         .scalars()
@@ -238,25 +268,37 @@ def _frecency_bucket_points(now: datetime, timestamp: datetime) -> int:
     return 0
 
 
-def _canonicalize_target_href(href: str) -> str:
+def _require_canonical_target_href(href: str) -> str:
+    """Authoring rule: a recorded row must name a destination Nexus can reopen."""
+    canonical = _canonical_target_href(href)
+    if canonical is None:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Nexus target")
+    return canonical
+
+
+def _canonical_target_href(href: str) -> str | None:
+    """The one Nexus target grammar: the stored identity of an in-app href, or
+    None when the href names no Nexus destination."""
     parsed = urlsplit(href.strip())
     if parsed.scheme or parsed.netloc:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Nexus target")
+        return None
 
     canonical_path = parsed.path
     if len(canonical_path) > 1 and canonical_path.endswith("/"):
         canonical_path = canonical_path.rstrip("/")
     if not canonical_path.startswith("/"):
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Nexus target")
+        return None
 
     segments = canonical_path.split("/")[1:]
     if not segments or any(segment == "" for segment in segments):
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Nexus target")
+        return None
 
     if len(segments) == 1:
         if segments[0] in {
+            "daily",
             "lectern",
             "libraries",
+            "browse",
             "podcasts",
             "conversations",
             "search",
@@ -268,7 +310,7 @@ def _canonicalize_target_href(href: str) -> str:
             "oracle",
         }:
             return _with_semantic_target_state(canonical_path, parsed.query, parsed.fragment)
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Nexus target")
+        return None
 
     if segments[0] == "settings" and len(segments) == 2:
         if segments[1] in {
@@ -281,7 +323,7 @@ def _canonicalize_target_href(href: str) -> str:
             "keybindings",
         }:
             return _with_semantic_target_state(canonical_path, parsed.query, parsed.fragment)
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Nexus target")
+        return None
 
     if segments[0] in {"libraries", "media", "pages", "authors", "notes", "oracle"}:
         if len(segments) == 2:
@@ -297,7 +339,7 @@ def _canonicalize_target_href(href: str) -> str:
         if segments[1] != "subscriptions":
             return _with_semantic_target_state(canonical_path, parsed.query, parsed.fragment)
 
-    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Nexus target")
+    return None
 
 
 def _with_semantic_target_state(path: str, query: str, fragment: str) -> str:

@@ -1,0 +1,11 @@
+diff --git a/python/nexus/services/epub_ingest.py b/python/nexus/services/epub_ingest.py
+--- a/python/nexus/services/epub_ingest.py
++++ b/python/nexus/services/epub_ingest.py
+@@ -209,7 +209,6 @@
+         "a",
+         "img",
+         "table",
+-        "caption",
+         "thead",
+         "tbody",
+         "tfoot",

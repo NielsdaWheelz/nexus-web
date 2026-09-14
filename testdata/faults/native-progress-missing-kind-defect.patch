@@ -1,0 +1,21 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStateCodec.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStateCodec.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStateCodec.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStateCodec.kt
+@@ -25,7 +25,7 @@
+         ?: error("reader progress view must be an object")
+     // Every renderer-supplied key is absent until proven present: Map.getValue would
+     // raise NoSuchElementException, which is not this module's malformed-input signal.
+-    val kind = value.fields["kind"]?.requireString() ?: error("reader progress view is missing kind")
++    val kind = value.fields.getValue("kind").requireString()
+     val snapshotKey = when (kind) {
+         "Canonical" -> "snapshot"
+         "Conflict" -> "canonical"
+@@ -38,7 +38,7 @@
+     if (kind != "Canonical") {
+         OfflineReaderStateValidator.requireLocator(fields.getValue("device").toJson())
+         val source = fields.getValue("source") as? StrictJson.ObjectValue ?: error("invalid reader source")
+-        when (source.fields["kind"]?.requireString() ?: error("reader source is missing kind")) {
++        when (source.fields.getValue("kind").requireString()) {
+             "Publication" -> require(source.requireObject(setOf("kind", "reader_generation"))
+                 .getValue("reader_generation").requireLong() > 0)
+             "Unresolved" -> {

@@ -16,6 +16,14 @@ from nexus.schemas.reader_document_map import (
 )
 from nexus.services.reader_locations import locator_fraction, locator_json
 
+READER_EVIDENCE_MARKER_TONES: dict[str, ReaderDocumentMapMarkerTone] = {
+    "Highlight": "Highlight",
+    "SourceReference": "Citation",
+    "GeneratedCitation": "Citation",
+    "Link": "Link",
+    "Synapse": "Synapse",
+}
+
 
 def build_markers(
     *,
@@ -83,13 +91,6 @@ def build_markers(
                 preview=embed.display.description or None,
             )
         )
-    tones: dict[str, ReaderDocumentMapMarkerTone] = {
-        "Highlight": "Highlight",
-        "SourceReference": "Citation",
-        "GeneratedCitation": "Citation",
-        "Link": "Link",
-        "Synapse": "Synapse",
-    }
     for group in groups:
         if not isinstance(group.resolution, ReaderEvidenceResolvedOut):
             continue
@@ -109,7 +110,7 @@ def build_markers(
                     kind=cast(ReaderDocumentMapMarkerKind, item.kind),
                     item_id=item.id,
                     position=fraction,
-                    tone=tones[item.kind],
+                    tone=READER_EVIDENCE_MARKER_TONES[item.kind],
                     label=item.label,
                     preview=preview,
                 )

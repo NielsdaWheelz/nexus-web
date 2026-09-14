@@ -143,6 +143,47 @@ DocumentEmbedSourceShape = Literal[
 DocumentEmbedResolutionStatus = Literal["pending", "resolving", "resolved", "unsupported", "failed"]
 
 
+class DocumentEmbedTargetMaterialized(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    media_id: UUID
+    kind: Literal["materialized"] = "materialized"
+
+
+class DocumentEmbedTargetTerminal(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    status: Literal["unsupported", "failed"]
+    error_code: str | None
+    error_message: str | None
+    kind: Literal["terminal"] = "terminal"
+
+
+class DocumentEmbedSourceFields(BaseModel):
+    """Authored occurrence facts; no current access, child state, or command authority."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    id: UUID
+    ordinal: int = Field(ge=0)
+    occurrence_key: str = Field(min_length=1)
+    provider: DocumentEmbedProvider
+    embed_kind: DocumentEmbedKind
+    source_shape: DocumentEmbedSourceShape
+    source_url: str | None
+    canonical_source_url: str | None
+    provider_target_ref: str | None
+    title: str | None
+    authored_text: str | None
+    placeholder_text: str
+    canonical_start_offset: int | None = Field(ge=0)
+    canonical_end_offset: int | None = Field(ge=0)
+
+
+class DocumentEmbedSource(DocumentEmbedSourceFields):
+    target: Annotated[
+        DocumentEmbedTargetMaterialized | DocumentEmbedTargetTerminal,
+        Field(discriminator="kind"),
+    ]
+
+
 class DocumentEmbedSummaryOut(BaseModel):
     status: DocumentEmbedAggregateStatus
     total_count: int = Field(ge=0)
@@ -207,7 +248,7 @@ class DocumentEmbedDisplayActionOut(BaseModel):
 
 
 class DocumentEmbedDisplayOut(BaseModel):
-    mode: Literal["resolved", "pending", "unsupported", "failed"]
+    mode: Literal["resolved", "pending", "unsupported", "failed", "forbidden", "missing"]
     label: str
     description: str
     actions: list[DocumentEmbedDisplayActionOut] = Field(default_factory=list)
@@ -908,13 +949,12 @@ class ReaderNavigationFragmentOut(BaseModel):
     char_count: int = Field(ge=0)
 
 
-class ReaderNavigationSectionOut(BaseModel):
+class ReaderNavigationSectionFields(BaseModel):
     """Canonical reader navigation section target."""
 
     section_id: str
     label: str
     ordinal: int = Field(ge=0)
-    fragment_id: UUID
     fragment_idx: int = Field(ge=0)
     level: int | None = None
     depth: int | None = None
@@ -923,6 +963,10 @@ class ReaderNavigationSectionOut(BaseModel):
     href_path: str | None = None
     href_fragment: str | None = None
     anchor_id: str | None = None
+
+
+class ReaderNavigationSectionOut(ReaderNavigationSectionFields):
+    fragment_id: UUID
 
 
 class ReaderNavigationTocNodeOut(BaseModel):

@@ -1,0 +1,20 @@
+diff --git a/apps/web/src/components/SelectionPopover.tsx b/apps/web/src/components/SelectionPopover.tsx
+--- a/apps/web/src/components/SelectionPopover.tsx
++++ b/apps/web/src/components/SelectionPopover.tsx
+@@ -80,15 +80,7 @@
+   useHistoryDismiss(
+     true,
+     () => {
+-      const selection = window.getSelection();
+-      const root = containerRef.current;
+-      if (selection !== null && root !== null && selection.rangeCount > 0) {
+-        let owned = true;
+-        for (let index = 0; index < selection.rangeCount; index += 1) {
+-          if (!root.contains(selection.getRangeAt(index).commonAncestorContainer)) owned = false;
+-        }
+-        if (owned) selection.removeAllRanges();
+-      }
++      window.getSelection()?.removeAllRanges();
+       onDismiss();
+     },
+     { isTopmost: modalIsTopmost },

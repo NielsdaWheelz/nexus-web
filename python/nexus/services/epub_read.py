@@ -2,23 +2,47 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media as _can_read_media
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.media import (
-    EpubSectionOut,
     MediaNavigationOut,
     ReaderNavigationFragmentOut,
     ReaderNavigationLocationOut,
     ReaderNavigationSectionOut,
     ReaderNavigationTocNodeOut,
 )
+from nexus.schemas.reader import ReaderEpubTarget
 from nexus.services.capabilities import is_document_status_ready
+
+
+def epub_fragment_resume_targets(navigation: MediaNavigationOut) -> dict[UUID, ReaderEpubTarget]:
+    """Reuse the first authored navigation section for each source fragment."""
+    if navigation.kind != "epub":
+        return {}
+    targets: dict[UUID, ReaderEpubTarget] = {}
+    for section in navigation.sections:
+        if section.href_path is None:
+            raise ValueError("EPUB navigation section has no source path")
+        targets.setdefault(
+            section.fragment_id,
+            ReaderEpubTarget(
+                section_id=section.section_id,
+                href_path=section.href_path,
+                anchor_id=section.anchor_id,
+            ),
+        )
+    if targets.keys() != {fragment.fragment_id for fragment in navigation.fragments}:
+        raise ValueError("EPUB source fragment has no existing navigation target")
+    return targets
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,6 +248,31 @@ def get_epub_navigation_for_viewer(
     landmark_rows = _load_navigation_locations(db, media_id, "landmarks")
     page_rows = _load_navigation_locations(db, media_id, "page_list")
 
+    return build_epub_navigation_projection(
+        media_id=media_id,
+        fragment_rows=fragment_rows,
+        section_rows=section_rows,
+        toc_rows=toc_rows,
+        landmark_rows=landmark_rows,
+        page_rows=page_rows,
+    )
+
+
+def build_epub_navigation_projection(
+    *,
+    media_id: UUID,
+    fragment_rows: Sequence[Mapping[str, Any] | RowMapping],
+    section_rows: Sequence[Mapping[str, Any] | RowMapping],
+    toc_rows: Sequence[tuple],
+    landmark_rows: Sequence[tuple],
+    page_rows: Sequence[tuple],
+) -> MediaNavigationOut:
+    """One projection policy for persisted rows and the prepared extraction plan.
+
+    Inputs use the exact named/positional row shapes selected immediately above;
+    prepared plans supply these same facts before their database installation.
+    """
+
     fragment_by_idx = {int(row["idx"]): row for row in fragment_rows}
     section_rows_by_fragment: dict[int, list] = {}
     for row in section_rows:
@@ -334,87 +383,4 @@ def get_epub_navigation_for_viewer(
             )
             for idx, row in enumerate(page_rows)
         ],
-    )
-
-
-def get_epub_section_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    section_id: str,
-) -> EpubSectionOut:
-    """Return canonical EPUB section content by persisted section id."""
-    if not section_id:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "section_id is required")
-
-    require_readable_epub(db, viewer_id, media_id)
-
-    row = db.execute(
-        text("""
-            WITH ordered_sections AS (
-                SELECT n.location_id,
-                       n.label,
-                       n.fragment_idx,
-                       n.href_path,
-                       n.href_fragment,
-                       n.source_node_id,
-                       n.source,
-                       n.ordinal,
-                       LAG(n.location_id) OVER (ORDER BY n.ordinal) AS prev_section_id,
-                       LEAD(n.location_id) OVER (ORDER BY n.ordinal) AS next_section_id,
-                       f.id AS fragment_id,
-                       f.html_sanitized,
-                       f.canonical_text,
-                       f.canonical_text_word_count,
-                       COALESCE(
-                           (
-                               SELECT SUM(prior.canonical_text_word_count)
-                               FROM fragments prior
-                               WHERE prior.media_id = f.media_id
-                                 AND prior.idx < f.idx
-                           ),
-                           0
-                       ) AS document_word_start,
-                       f.created_at
-                FROM epub_nav_locations n
-                JOIN fragments f
-                  ON f.media_id = n.media_id
-                 AND f.idx = n.fragment_idx
-                WHERE n.media_id = :mid
-            )
-            SELECT location_id, label, fragment_id, fragment_idx, href_path,
-                   href_fragment, source_node_id, source, ordinal,
-                   prev_section_id, next_section_id,
-                   html_sanitized, canonical_text,
-                   canonical_text_word_count, document_word_start, created_at
-            FROM ordered_sections
-            WHERE location_id = :section_id
-        """),
-        {"mid": media_id, "section_id": section_id},
-    ).fetchone()
-    if row is None:
-        raise NotFoundError(
-            ApiErrorCode.E_CHAPTER_NOT_FOUND,
-            f"Section '{section_id}' not found",
-        )
-
-    canonical_text = row[12]
-    return EpubSectionOut(
-        section_id=row[0],
-        label=row[1],
-        fragment_id=row[2],
-        fragment_idx=row[3],
-        href_path=row[4],
-        anchor_id=row[5],
-        source_node_id=row[6],
-        source=row[7],
-        ordinal=row[8],
-        prev_section_id=row[9],
-        next_section_id=row[10],
-        html_sanitized=row[11],
-        canonical_text=canonical_text,
-        char_count=len(canonical_text),
-        word_count=int(row[13]),
-        document_word_start=int(row[14]),
-        created_at=row[15],
     )

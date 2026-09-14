@@ -624,9 +624,12 @@ export function offlineReadingPackageMediaKind(
   mediaKind: "web_article" | "epub" | "pdf",
 ): "WebArticle" | "Epub" | "Pdf" {
   switch (mediaKind) {
-    case "web_article": return "WebArticle";
-    case "epub": return "Epub";
-    case "pdf": return "Pdf";
+    case "web_article":
+      return "WebArticle";
+    case "epub":
+      return "Epub";
+    case "pdf":
+      return "Pdf";
   }
 }
 
@@ -669,7 +672,10 @@ export type ResourceActionIntent =
   | { readonly kind: "OfflineRemove"; readonly owner: "Audio" | "Reading" }
   | { readonly kind: "LibraryPlacement" }
   | { readonly kind: "AddToLectern" }
-  | { readonly kind: "RemoveFromLectern"; readonly lecternItemId: LecternItemId }
+  | {
+      readonly kind: "RemoveFromLectern";
+      readonly lecternItemId: LecternItemId;
+    }
   | { readonly kind: "Subscribe" }
   | { readonly kind: "Unsubscribe" }
   | { readonly kind: "Chat" }
@@ -727,17 +733,20 @@ export interface PlannedResourceAction {
 const COMMAND = Object.freeze({ kind: "Command" } as const);
 const AVAILABLE = Object.freeze({ kind: "Available" } as const);
 
-const GROUP_INDEX: Readonly<Record<ResourceActionGroup, number>> = Object.freeze({
-  Navigate: 0,
-  Consume: 1,
-  Organize: 2,
-  CreateTransform: 3,
-  ShareExport: 4,
-  Manage: 5,
-  Danger: 6,
-});
+const GROUP_INDEX: Readonly<Record<ResourceActionGroup, number>> =
+  Object.freeze({
+    Navigate: 0,
+    Consume: 1,
+    Organize: 2,
+    CreateTransform: 3,
+    ShareExport: 4,
+    Manage: 5,
+    Danger: 6,
+  });
 
-function blocked(reason: ResourceActionBlockedReason): ResourceActionAvailability {
+function blocked(
+  reason: ResourceActionBlockedReason,
+): ResourceActionAvailability {
   return Object.freeze({ kind: "Blocked" as const, reason });
 }
 
@@ -842,46 +851,66 @@ function deriveOfflineAction(
 ): PlannedResourceAction {
   const id = "ResourceOperation.Media.Offline";
   const states = RESOURCE_ACTION_CATALOG[id].states;
-  const offline = owner === "Reading"
-    ? environment.offlineReading ?? { kind: "Unavailable" as const }
-    : environment.offline;
+  const offline =
+    owner === "Reading"
+      ? (environment.offlineReading ?? { kind: "Unavailable" as const })
+      : environment.offline;
   if (environment.platform === "Web") {
-    return planned(id, availability, busyIds, { kind: "OfflineDownload", owner, requestedTitle, mediaKind }, {
-      ...states.Absent,
-      control: toggle(false),
-      clientBlockedReason: "UnsupportedOnDevice",
-    });
+    return planned(
+      id,
+      availability,
+      busyIds,
+      { kind: "OfflineDownload", owner, requestedTitle, mediaKind },
+      {
+        ...states.Absent,
+        control: toggle(false),
+        clientBlockedReason: "UnsupportedOnDevice",
+      },
+    );
   }
 
   if (offline.kind === "Loading") {
-    return planned(id, availability, busyIds, { kind: "OfflineDownload", owner, requestedTitle, mediaKind }, {
-      ...states.Absent,
-      control: toggle(false),
-      clientBlockedReason: "Loading",
-    });
+    return planned(
+      id,
+      availability,
+      busyIds,
+      { kind: "OfflineDownload", owner, requestedTitle, mediaKind },
+      {
+        ...states.Absent,
+        control: toggle(false),
+        clientBlockedReason: "Loading",
+      },
+    );
   }
   if (offline.kind === "Unavailable") {
-    return planned(id, availability, busyIds, { kind: "OfflineDownload", owner, requestedTitle, mediaKind }, {
-      ...states.Absent,
-      control: toggle(false),
-      clientBlockedReason: "UnsupportedOnDevice",
-    });
+    return planned(
+      id,
+      availability,
+      busyIds,
+      { kind: "OfflineDownload", owner, requestedTitle, mediaKind },
+      {
+        ...states.Absent,
+        control: toggle(false),
+        clientBlockedReason: "UnsupportedOnDevice",
+      },
+    );
   }
 
   const local = offline.byRef.get(ref);
   if (local === undefined) {
-    return planned(id, availability, busyIds, { kind: "OfflineDownload", owner, requestedTitle, mediaKind }, {
-      control: toggle(false),
-      confirmation: owner === "Reading" && mediaKind === "web_article"
-        ? requiredConfirmation(
-            "Download text-only copy?",
-            "Downloaded web articles include readable text but not images.",
-            "Download text-only copy",
-          )
-        : undefined,
-      clientBlockedReason:
-        environment.connectivity === "Offline" ? "RequiresOnline" : undefined,
-    });
+    return planned(
+      id,
+      availability,
+      busyIds,
+      { kind: "OfflineDownload", owner, requestedTitle, mediaKind },
+      {
+        label:
+          owner === "Reading" ? "Download current copy" : states.Absent.label,
+        control: toggle(false),
+        clientBlockedReason:
+          environment.connectivity === "Offline" ? "RequiresOnline" : undefined,
+      },
+    );
   }
 
   switch (local.kind) {
@@ -889,36 +918,75 @@ function deriveOfflineAction(
     case "Queued":
     case "Downloading":
     case "Restarting":
-      return planned(id, availability, busyIds, { kind: "OfflineCancel", owner }, {
-        ...states.Downloading,
-        control: toggle(false),
-      });
+      return planned(
+        id,
+        availability,
+        busyIds,
+        { kind: "OfflineCancel", owner },
+        {
+          ...states.Downloading,
+          control: toggle(false),
+        },
+      );
     case "Ready":
-      return planned(id, availability, busyIds, { kind: "OfflineRemove", owner }, {
-        ...states.Ready,
-        control: toggle(true),
-        confirmation:
-          owner === "Reading" && "hasDevicePosition" in local && local.hasDevicePosition
-            ? requiredConfirmation(
-                OFFLINE_READING_COPY.removeConfirmationTitle,
-                OFFLINE_READING_COPY.pendingRemoveConfirmation,
-                OFFLINE_READING_COPY.removeConfirmAction,
-              )
-            : undefined,
-      });
+      return planned(
+        id,
+        availability,
+        busyIds,
+        { kind: "OfflineRemove", owner },
+        {
+          ...states.Ready,
+          control: toggle(true),
+          confirmation:
+            owner === "Reading" &&
+            "hasDevicePosition" in local &&
+            local.hasDevicePosition
+              ? requiredConfirmation(
+                  OFFLINE_READING_COPY.removeConfirmationTitle,
+                  OFFLINE_READING_COPY.pendingRemoveConfirmation,
+                  OFFLINE_READING_COPY.removeConfirmAction,
+                )
+              : undefined,
+        },
+      );
+    case "UpgradeRequired":
+      return planned(
+        id,
+        availability,
+        busyIds,
+        { kind: "OfflineRetry", owner },
+        {
+          label: "Update saved copy",
+          control: toggle(false),
+        },
+      );
     case "Failed":
-      return planned(id, availability, busyIds, { kind: "OfflineRetry", owner }, {
-        ...states.Failed,
-        control: toggle(false),
-        clientBlockedReason:
-          environment.connectivity === "Offline" ? "RequiresOnline" : undefined,
-      });
+      return planned(
+        id,
+        availability,
+        busyIds,
+        { kind: "OfflineRetry", owner },
+        {
+          ...states.Failed,
+          control: toggle(false),
+          clientBlockedReason:
+            environment.connectivity === "Offline"
+              ? "RequiresOnline"
+              : undefined,
+        },
+      );
     case "Removing":
-      return planned(id, availability, busyIds, { kind: "OfflineRemove", owner }, {
-        ...states.Ready,
-        control: toggle(true),
-        clientBlockedReason: "Busy",
-      });
+      return planned(
+        id,
+        availability,
+        busyIds,
+        { kind: "OfflineRemove", owner },
+        {
+          ...states.Ready,
+          control: toggle(true),
+          clientBlockedReason: "Busy",
+        },
+      );
     default: {
       const exhaustive: never = local;
       throw new Error(
@@ -929,7 +997,10 @@ function deriveOfflineAction(
 }
 
 function planTranscript(
-  capability: Extract<ResourceActionCapability, { readonly kind: "Transcript" }>,
+  capability: Extract<
+    ResourceActionCapability,
+    { readonly kind: "Transcript" }
+  >,
   ref: CanonicalResourceRef,
   busyIds: ReadonlySet<ResourceActionId>,
 ): PlannedResourceAction {
@@ -937,40 +1008,76 @@ function planTranscript(
   const states = RESOURCE_ACTION_CATALOG[id].states;
   switch (capability.state) {
     case "NotRequested":
-      return planned(id, capability.availability, busyIds, {
-        kind: "RequestTranscript",
-        resourceRef: ref,
-      }, states.NotRequested);
+      return planned(
+        id,
+        capability.availability,
+        busyIds,
+        {
+          kind: "RequestTranscript",
+          resourceRef: ref,
+        },
+        states.NotRequested,
+      );
     case "Queued":
-      return planned(id, capability.availability, busyIds, {
-        kind: "OpenTranscript",
-        resourceRef: ref,
-      }, { ...states.Queued, clientBlockedReason: "Processing" });
+      return planned(
+        id,
+        capability.availability,
+        busyIds,
+        {
+          kind: "OpenTranscript",
+          resourceRef: ref,
+        },
+        { ...states.Queued, clientBlockedReason: "Processing" },
+      );
     case "Running":
-      return planned(id, capability.availability, busyIds, {
-        kind: "OpenTranscript",
-        resourceRef: ref,
-      }, { ...states.Running, clientBlockedReason: "Processing" });
+      return planned(
+        id,
+        capability.availability,
+        busyIds,
+        {
+          kind: "OpenTranscript",
+          resourceRef: ref,
+        },
+        { ...states.Running, clientBlockedReason: "Processing" },
+      );
     case "Ready":
     case "Partial":
-      return planned(id, capability.availability, busyIds, {
-        kind: "OpenTranscript",
-        resourceRef: ref,
-      }, states[capability.state]);
+      return planned(
+        id,
+        capability.availability,
+        busyIds,
+        {
+          kind: "OpenTranscript",
+          resourceRef: ref,
+        },
+        states[capability.state],
+      );
     case "Unavailable":
-      return planned(id, capability.availability, busyIds, {
-        kind: "RequestTranscript",
-        resourceRef: ref,
-      }, {
-        ...states.Unavailable,
-        clientBlockedReason: "TemporarilyUnavailable",
-      });
+      return planned(
+        id,
+        capability.availability,
+        busyIds,
+        {
+          kind: "RequestTranscript",
+          resourceRef: ref,
+        },
+        {
+          ...states.Unavailable,
+          clientBlockedReason: "TemporarilyUnavailable",
+        },
+      );
     case "FailedQuota":
     case "FailedProvider":
-      return planned(id, capability.availability, busyIds, {
-        kind: "RetryTranscript",
-        resourceRef: ref,
-      }, states[capability.state]);
+      return planned(
+        id,
+        capability.availability,
+        busyIds,
+        {
+          kind: "RetryTranscript",
+          resourceRef: ref,
+        },
+        states[capability.state],
+      );
     default: {
       const exhaustive: never = capability.state;
       throw new Error(`Unsupported transcript state: ${exhaustive}`);
@@ -1056,9 +1163,10 @@ function planCapability(
       );
     case "Consumption": {
       const finished = capability.state === "Finished";
-      const state = RESOURCE_ACTION_CATALOG[
-        "ResourceOperation.Media.Consumption"
-      ].states[finished ? "DocumentFinished" : "DocumentIncomplete"];
+      const state =
+        RESOURCE_ACTION_CATALOG["ResourceOperation.Media.Consumption"].states[
+          finished ? "DocumentFinished" : "DocumentIncomplete"
+        ];
       return planned(
         "ResourceOperation.Media.Consumption",
         availability,
@@ -1073,9 +1181,10 @@ function planCapability(
     }
     case "EpisodeConsumption": {
       const played = capability.state === "Played";
-      const state = RESOURCE_ACTION_CATALOG[
-        "ResourceOperation.Media.Consumption"
-      ].states[played ? "EpisodePlayed" : "EpisodeUnplayed"];
+      const state =
+        RESOURCE_ACTION_CATALOG["ResourceOperation.Media.Consumption"].states[
+          played ? "EpisodePlayed" : "EpisodeUnplayed"
+        ];
       return planned(
         "ResourceOperation.Media.Consumption",
         availability,
@@ -1101,12 +1210,19 @@ function planCapability(
     case "Transcript":
       return planTranscript(capability, ref, busyIds);
     case "OfflineAudio":
-      return deriveOfflineAction(availability, environment, ref, busyIds, "Audio");
+      return deriveOfflineAction(
+        availability,
+        environment,
+        ref,
+        busyIds,
+        "Audio",
+      );
     case "OfflineReading":
       if (
         environment.platform !== "Android" ||
         environment.offlineReading?.kind !== "Ready"
-      ) return null;
+      )
+        return null;
       return deriveOfflineAction(
         availability,
         environment,
@@ -1117,13 +1233,17 @@ function planCapability(
         capability.mediaKind,
       );
     case "LibraryPlacement":
-      return planned("RelationshipAction.LibraryPlacement", availability, busyIds, {
-        kind: "LibraryPlacement",
-      });
+      return planned(
+        "RelationshipAction.LibraryPlacement",
+        availability,
+        busyIds,
+        {
+          kind: "LibraryPlacement",
+        },
+      );
     case "LecternMembership": {
-      const states = RESOURCE_ACTION_CATALOG[
-        "RelationshipAction.LecternMembership"
-      ].states;
+      const states =
+        RESOURCE_ACTION_CATALOG["RelationshipAction.LecternMembership"].states;
       if (capability.state === "Present") {
         return planned(
           "RelationshipAction.LecternMembership",
@@ -1154,9 +1274,9 @@ function planCapability(
     }
     case "PodcastSubscription": {
       const subscribed = capability.state === "Subscribed";
-      const state = RESOURCE_ACTION_CATALOG[
-        "RelationshipAction.PodcastSubscription"
-      ].states[subscribed ? "Subscribed" : "Unsubscribed"];
+      const state =
+        RESOURCE_ACTION_CATALOG["RelationshipAction.PodcastSubscription"]
+          .states[subscribed ? "Subscribed" : "Unsubscribed"];
       return planned(
         "RelationshipAction.PodcastSubscription",
         availability,
@@ -1169,16 +1289,24 @@ function planCapability(
       );
     }
     case "Chat":
-      return planned("ResourceAction.Chat", availability, busyIds, { kind: "Chat" });
-    case "EditHighlight":
-      return planned("ResourceOperation.Highlight.Edit", availability, busyIds, {
-        kind: "EditHighlight",
+      return planned("ResourceAction.Chat", availability, busyIds, {
+        kind: "Chat",
       });
+    case "EditHighlight":
+      return planned(
+        "ResourceOperation.Highlight.Edit",
+        availability,
+        busyIds,
+        {
+          kind: "EditHighlight",
+        },
+      );
     case "HighlightNote": {
       const present = capability.state === "Present";
-      const state = RESOURCE_ACTION_CATALOG[
-        "ResourceOperation.Highlight.Note"
-      ].states[present ? "Present" : "Absent"];
+      const state =
+        RESOURCE_ACTION_CATALOG["ResourceOperation.Highlight.Note"].states[
+          present ? "Present" : "Absent"
+        ];
       return planned(
         "ResourceOperation.Highlight.Note",
         availability,
@@ -1190,13 +1318,23 @@ function planCapability(
       );
     }
     case "LinkHighlight":
-      return planned("ResourceOperation.Highlight.Link", availability, busyIds, {
-        kind: "LinkHighlight",
-      });
+      return planned(
+        "ResourceOperation.Highlight.Link",
+        availability,
+        busyIds,
+        {
+          kind: "LinkHighlight",
+        },
+      );
     case "LearnHighlight":
-      return planned("ResourceOperation.Highlight.Learn", availability, busyIds, {
-        kind: "LearnHighlight",
-      });
+      return planned(
+        "ResourceOperation.Highlight.Learn",
+        availability,
+        busyIds,
+        {
+          kind: "LearnHighlight",
+        },
+      );
     case "EditHighlightBounds":
       return planned(
         "ResourceOperation.Highlight.EditBounds",
@@ -1227,13 +1365,23 @@ function planCapability(
         { kind: "RegenerateMessage" },
       );
     case "EditPageTitle":
-      return planned("ResourceOperation.Page.EditTitle", availability, busyIds, {
-        kind: "EditPageTitle",
-      });
+      return planned(
+        "ResourceOperation.Page.EditTitle",
+        availability,
+        busyIds,
+        {
+          kind: "EditPageTitle",
+        },
+      );
     case "EditNoteBody":
-      return planned("ResourceOperation.NoteBlock.EditBody", availability, busyIds, {
-        kind: "EditNoteBody",
-      });
+      return planned(
+        "ResourceOperation.NoteBlock.EditBody",
+        availability,
+        busyIds,
+        {
+          kind: "EditNoteBody",
+        },
+      );
     case "RenameContributor":
       return planned(
         "ResourceOperation.Contributor.Rename",
@@ -1256,7 +1404,9 @@ function planCapability(
         { kind: "MakeArtifactRevisionCurrent" },
       );
     case "Share":
-      return planned("ResourceAction.Share", availability, busyIds, { kind: "Share" });
+      return planned("ResourceAction.Share", availability, busyIds, {
+        kind: "Share",
+      });
     case "DownloadOriginal":
       return planned(
         "ResourceOperation.Media.DownloadOriginal",
@@ -1327,17 +1477,32 @@ function planCapability(
         { kind: "EditAuthors" },
       );
     case "LibrarySettings":
-      return planned("ResourceOperation.Library.Settings", availability, busyIds, {
-        kind: "LibrarySettings",
-      });
+      return planned(
+        "ResourceOperation.Library.Settings",
+        availability,
+        busyIds,
+        {
+          kind: "LibrarySettings",
+        },
+      );
     case "PodcastSettings":
-      return planned("ResourceOperation.Podcast.Settings", availability, busyIds, {
-        kind: "PodcastSettings",
-      });
+      return planned(
+        "ResourceOperation.Podcast.Settings",
+        availability,
+        busyIds,
+        {
+          kind: "PodcastSettings",
+        },
+      );
     case "RefreshPodcast":
-      return planned("ResourceOperation.Podcast.Refresh", availability, busyIds, {
-        kind: "RefreshPodcast",
-      });
+      return planned(
+        "ResourceOperation.Podcast.Refresh",
+        availability,
+        busyIds,
+        {
+          kind: "RefreshPodcast",
+        },
+      );
     case "RetryPodcastBackfill":
       return planned(
         "ResourceOperation.Podcast.RetryBackfill",
@@ -1350,9 +1515,14 @@ function planCapability(
         kind: "RemoveMedia",
       });
     case "DeleteLibrary":
-      return planned("ResourceOperation.Library.Delete", availability, busyIds, {
-        kind: "DeleteLibrary",
-      });
+      return planned(
+        "ResourceOperation.Library.Delete",
+        availability,
+        busyIds,
+        {
+          kind: "DeleteLibrary",
+        },
+      );
     case "DeleteConversation":
       return planned(
         "ResourceOperation.Conversation.Delete",
@@ -1361,13 +1531,23 @@ function planCapability(
         { kind: "DeleteConversation" },
       );
     case "DeleteMessage":
-      return planned("ResourceOperation.Message.Delete", availability, busyIds, {
-        kind: "DeleteMessage",
-      });
+      return planned(
+        "ResourceOperation.Message.Delete",
+        availability,
+        busyIds,
+        {
+          kind: "DeleteMessage",
+        },
+      );
     case "DeleteHighlight":
-      return planned("ResourceOperation.Highlight.Delete", availability, busyIds, {
-        kind: "DeleteHighlight",
-      });
+      return planned(
+        "ResourceOperation.Highlight.Delete",
+        availability,
+        busyIds,
+        {
+          kind: "DeleteHighlight",
+        },
+      );
     case "DeletePage":
       return planned("ResourceOperation.Page.Delete", availability, busyIds, {
         kind: "DeletePage",

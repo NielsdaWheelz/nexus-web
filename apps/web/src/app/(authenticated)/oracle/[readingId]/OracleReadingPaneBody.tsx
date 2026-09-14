@@ -16,11 +16,8 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { useGenerationRun } from "@/lib/api/useGenerationRun";
 import { toReaderCitationData } from "@/lib/conversations/citations";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
-import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
-import {
-  activateResource,
-  type ResourceActivation,
-} from "@/lib/resources/activation";
+import { useReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import { createRandomId } from "@/lib/createRandomId";
 import { toRoman } from "@/lib/toRoman";
 import { useResource } from "@/lib/api/useResource";
@@ -421,6 +418,7 @@ export function oracleFailureFeedback(
 }
 
 export default function OracleReadingPaneBody() {
+  const handleReaderSource = useReaderSourceActivation();
   const readingId = usePaneParam("readingId");
   const paneRuntime = requirePaneRuntime(
     usePaneRuntime(),
@@ -577,18 +575,16 @@ export default function OracleReadingPaneBody() {
       target: ReaderSourceTarget | null,
       event?: React.MouseEvent,
     ) => {
-      if (target) dispatchReaderSourceActivation(target);
       if (event?.defaultPrevented) return;
-      const activated = activateResource(activation, {
-        labelHint: target?.label,
+      const handled = handleReaderSource(activation, target, {
         activateTarget: paneRuntime.activateTarget,
         disposition: event
           ? workspaceTargetClickIntent(event).disposition
           : { kind: "Follow" },
       });
-      if (activated) event?.preventDefault();
+      if (handled) event?.preventDefault();
     },
-    [paneRuntime],
+    [handleReaderSource, paneRuntime],
   );
 
   usePanePrimaryChrome({

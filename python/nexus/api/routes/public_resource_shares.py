@@ -31,7 +31,7 @@ def _raise_validation(exc: public_resource_sharing.PublicRequestValidation) -> N
 
 
 def _apply_public_headers(response: Response) -> None:
-    apply_public_resource_share_headers(response)
+    apply_public_resource_share_headers(response.headers)
 
 
 @router.get("")
@@ -135,7 +135,7 @@ def get_public_resource_share_asset(
             "Content-Length": str(len(result.data)),
         },
     )
-    apply_public_resource_share_headers(response)
+    apply_public_resource_share_headers(response.headers)
     return response
 
 
@@ -167,7 +167,7 @@ def get_public_resource_share_file(
                 "Content-Range": f"bytes */{exc.size_bytes}",
             },
         )
-        apply_public_resource_share_headers(response)
+        apply_public_resource_share_headers(response.headers)
         return response
     headers = {
         "Accept-Ranges": "bytes",
@@ -184,5 +184,5 @@ def get_public_resource_share_file(
         media_type="application/pdf",
         headers=headers,
     )
-    apply_public_resource_share_headers(response)
+    apply_public_resource_share_headers(response.headers)
     return response

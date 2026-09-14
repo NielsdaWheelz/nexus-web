@@ -6,6 +6,8 @@ import java.security.MessageDigest
 import java.util.UUID
 import java.util.zip.CRC32
 import java.util.zip.Deflater
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Test-only fixture plumbing: assembles the server's canonical deterministic ZIP encoding
@@ -112,53 +114,46 @@ internal data class BuiltOfflineReadingPackage(
     val readerGeneration: Long,
     val expandedBytes: Long,
     val packageSha256: String,
-    val readerJson: ByteArray,
-    val manifestJson: ByteArray,
+    val members: List<CanonicalZipMember>,
 )
 
-/**
- * Builds a minimal valid WebArticle package (manifest.json + reader.json) in the
- * canonical archive encoding. The revision key is computed with the production
- * algorithm, which is itself proven against the independently reviewed shared vector.
- */
+/** External schema-2 bytes; source identity/coordinates remain independently declared. */
 internal fun buildWebArticleReadingPackage(
     mediaId: UUID,
     title: String,
     readerGeneration: Long = 7,
 ): BuiltOfflineReadingPackage {
-    val readerJson = (
-        """{"readerContractVersion":1,"mediaId":"$mediaId","mediaKind":"WebArticle",""" +
-            """"title":"$title","navigation":[],"fragments":[{"fragmentId":"intro",""" +
-            """"ordinal":0,"htmlSanitized":"<p>reader</p>","canonicalText":"reader"}]}"""
-        ).toByteArray()
-    val entry = OfflineReadingManifestEntry(
-        "reader.json",
-        "application/json",
-        readerJson.size.toLong(),
-        sha256Hex(readerJson),
-    )
-    val revision = OfflineReadingRevision.compute(readerGeneration, listOf(entry))
-    val manifestJson = (
-        """{"packageSchemaVersion":1,"readerContractVersion":1,"minimumReaderBundleVersion":1,""" +
-            """"mediaId":"$mediaId","mediaKind":"WebArticle","title":"$title",""" +
-            """"readerGeneration":$readerGeneration,"readerRevisionKey":"$revision",""" +
-            """"entries":[{"path":"reader.json","mediaType":"application/json",""" +
-            """"sizeBytes":${entry.sizeBytes},"sha256":"${entry.sha256}"}]}"""
-        ).toByteArray()
-    val archive = encodeCanonicalOfflineReadingZip(
-        listOf(
-            CanonicalZipMember("manifest.json", manifestJson),
-            CanonicalZipMember("reader.json", readerJson),
-        )
-    )
-    return BuiltOfflineReadingPackage(
-        archiveBytes = archive,
-        readerGeneration = readerGeneration,
-        expandedBytes = entry.sizeBytes,
-        packageSha256 = sha256Hex(archive),
-        readerJson = readerJson,
-        manifestJson = manifestJson,
-    )
+    val bodies = sortedMapOf<String, ByteArray>()
+    fun reference(path: String) = JSONObject().put("key", path)
+        .put("bytes", bodies.getValue(path).size).put("sha256", sha256Hex(bodies.getValue(path)))
+    bodies["units/intro.json"] = JSONObject("""{
+      "fragment_id":"intro","fragment_idx":0,"fragment_document_start_cp":0,"fragment_length_cp":6,
+      "document_word_start":0,"starts_in_word":false,"start_cp":0,"end_cp":6,
+      "render_start_cp":0,"render_end_cp":6,"canonical_text":"reader","word_boundaries":[0,6],
+      "render_nodes":[{"kind":"Element","parent":null,"namespace":"html","name":"p","attributes":[]},
+        {"kind":"Text","parent":0,"text":"reader"}],
+      "assets":[],"table_contexts":[],"epub_target":null,"document_embeds":[]
+    }""").toString().toByteArray()
+    val unit = reference("units/intro.json")
+    bodies["index/0.json"] = JSONObject("""{
+      "units":[],"sections":[],"toc":[],"landmarks":[],"page_list":[],"table_metadata":[],"anchors":[],"next_ref":null
+    }""").put("units", JSONArray().put(JSONObject().put("member", unit).put("ordinal", 0)
+        .put("fragment_id", "intro").put("fragment_idx", 0).put("start_cp", 0).put("end_cp", 6)))
+        .toString().toByteArray()
+    bodies["descriptor.json"] = JSONObject().put("media_id", mediaId.toString())
+        .put("reader_generation", readerGeneration).put("kind", "web_article").put("title", title)
+        .put("reader_contract_version", 1).put("first_unit_ref", unit).put("index_ref", reference("index/0.json"))
+        .put("contents_ref", JSONObject.NULL).put("table_metadata_ref", JSONObject.NULL).put("unit_count", 1).put("canonical_length", 6).toString().toByteArray()
+    val entries = bodies.map { (path, bytes) -> OfflineReadingManifestEntry(path, "application/json", bytes.size.toLong(), sha256Hex(bytes)) }
+    val manifest = JSONObject().put("packageSchemaVersion", 2).put("readerContractVersion", 1)
+        .put("minimumReaderBundleVersion", 2).put("mediaId", mediaId.toString()).put("mediaKind", "WebArticle")
+        .put("title", title).put("readerGeneration", readerGeneration)
+        .put("readerRevisionKey", OfflineReadingRevision.compute(readerGeneration, entries))
+        .put("entries", JSONArray(entries.map { entry -> JSONObject().put("path", entry.path).put("mediaType", entry.mediaType)
+            .put("sizeBytes", entry.sizeBytes).put("sha256", entry.sha256) })).toString().toByteArray()
+    val members = listOf(CanonicalZipMember("manifest.json", manifest)) + bodies.map { (path, bytes) -> CanonicalZipMember(path, bytes) }
+    val archive = encodeCanonicalOfflineReadingZip(members)
+    return BuiltOfflineReadingPackage(archive, readerGeneration, entries.sumOf { it.sizeBytes }, sha256Hex(archive), members)
 }
 
 /** Writes the built package into [archive] and returns the production-shaped artifact. */

@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/reader/DocumentReaderSession.ts b/apps/web/src/lib/reader/DocumentReaderSession.ts
+--- a/apps/web/src/lib/reader/DocumentReaderSession.ts
++++ b/apps/web/src/lib/reader/DocumentReaderSession.ts
+@@ -410,7 +410,7 @@
+           return () => {
+             if (!held) return;
+             held = false;
+-            entry.navigationHolds -= 1;
++            entry.navigationHolds = 0;
+             if (closed) entry.lease.release();
+           };
+         },

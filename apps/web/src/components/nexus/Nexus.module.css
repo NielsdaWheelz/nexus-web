@@ -151,3 +151,17 @@
   border-inline-end: 0;
   border-radius: 0;
 }
+.failure {
+  position: fixed;
+  z-index: var(--z-nexus);
+  right: max(var(--space-4), var(--viewport-safe-right));
+  bottom: max(var(--space-4), var(--viewport-safe-bottom));
+  display: grid;
+  gap: var(--space-3);
+  width: min(28rem, calc(100vw - 2 * var(--space-4)));
+  padding: var(--space-4);
+  border: 1px solid var(--edge-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  color: var(--ink);
+}

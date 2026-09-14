@@ -13,7 +13,7 @@ import {
   test,
   webOrigin,
 } from "../fixtures";
-import { matchesResponse, pageRequest } from "../request";
+import { matchesResponse, pageRequest, type ExactOriginRequest } from "../request";
 
 test.use({ journeyId: "reader-progress-resume" });
 
@@ -42,29 +42,59 @@ interface EpubReaderLocator {
   };
 }
 
+interface PublicationCursorSource {
+  kind: "Publication";
+  reader_generation: number;
+}
+
 interface PositionedEpubReaderSnapshot {
   state: "Positioned";
   revision: number;
   locator: EpubReaderLocator;
+  source: PublicationCursorSource;
 }
 
-function matchesReaderStateWrite(request: Request, mediaId: string): boolean {
+interface ReaderProgressState {
+  accountId: string;
+  readerGeneration: number | null;
+  cursor: { state: "Empty"; revision: number } | PositionedEpubReaderSnapshot;
+}
+
+interface PublicationSection {
+  section_id: string;
+  label: string;
+  href_path: string | null;
+  start_offset: number;
+  end_offset: number | null;
+}
+
+interface PublicationIndexPage {
+  sections: PublicationSection[];
+  next_ref: { key: string } | null;
+}
+
+function progressPath(mediaId: string): string {
+  return `/api/media/${mediaId}/offline-reader-state`;
+}
+
+/** The one durable progress write: account-bound, generation-fenced. */
+function matchesReaderProgressWrite(request: Request, mediaId: string): boolean {
   const url = new URL(request.url());
   return (
     url.origin === webOrigin &&
     request.method() === "PUT" &&
-    url.pathname === `/api/media/${mediaId}/reader-state`
+    url.pathname === progressPath(mediaId)
   );
 }
 
-async function waitForReaderStateWrite(
+async function waitForReaderProgressWrite(
   page: Page,
   mediaId: string,
   timeout: number,
 ): Promise<Request | null> {
   try {
     return await page.waitForRequest(
-      (request) => matchesReaderStateWrite(request, mediaId),
+      (request) => matchesReaderProgressWrite(request, mediaId),
       { timeout },
     );
   } catch (error) {
@@ -72,6 +102,57 @@ async function waitForReaderStateWrite(
       return null;
     }
     throw error;
+  }
+}
+
+async function readerProgress(
+  api: ExactOriginRequest,
+  mediaId: string,
+  accountId: string,
+): Promise<ReaderProgressState> {
+  const response = await api.get(progressPath(mediaId), {
+    headers: { "X-Nexus-Expected-Account-Id": accountId },
+  });
+  const text = await response.text();
+  expect(
+    response.ok(),
+    `Reader progress for ${mediaId} failed: ${response.status()} ${text.slice(0, 500)}`,
+  ).toBeTruthy();
+  return (JSON.parse(text) as { data: ReaderProgressState }).data;
+}
+
+function positionedCursor(
+  progress: ReaderProgressState,
+  message: string,
+): PositionedEpubReaderSnapshot {
+  if (progress.cursor.state !== "Positioned") {
+    throw new Error(`${message}: ${JSON.stringify(progress.cursor)}`);
+  }
+  return progress.cursor;
+}
+
+/** Every published section, following the index member chain the reader follows. */
+async function publicationSections(
+  api: ExactOriginRequest,
+  mediaId: string,
+  generation: number,
+): Promise<PublicationSection[]> {
+  const sections: PublicationSection[] = [];
+  let after: string | null = null;
+  for (;;) {
+    const response = await api.get(
+      `/api/media/${mediaId}/reader-publications/${generation}/index`
+        + (after === null ? "" : `?after=${encodeURIComponent(after)}`),
+    );
+    const text = await response.text();
+    expect(
+      response.ok(),
+      `Reader publication index for ${mediaId} failed: ${response.status()} ${text.slice(0, 500)}`,
+    ).toBeTruthy();
+    const indexPage = JSON.parse(text) as PublicationIndexPage;
+    sections.push(...indexPage.sections);
+    if (indexPage.next_ref === null) return sections;
+    after = indexPage.next_ref.key;
   }
 }
 
@@ -116,27 +197,15 @@ test("reader progress resumes, completes, and resets through its product actions
   await signIn(page, journeyUser);
   const api = pageRequest(page, webOrigin);
   const mediaId = await uploadCanonicalEpub(page, journeyUser.id);
-  const navigationResponse = await api.get(
-    `/api/media/${mediaId}/navigation`,
-  );
-  const navigationText = await navigationResponse.text();
+  const published = await readerProgress(api, mediaId, journeyUser.id);
   expect(
-    navigationResponse.ok(),
-    `EPUB navigation for ${mediaId} failed: ${navigationResponse.status()} ${navigationText.slice(0, 500)}`,
-  ).toBeTruthy();
+    published.readerGeneration,
+    `EPUB ${mediaId} exposed no reader publication to take a position against.`,
+  ).not.toBeNull();
+  const generation = published.readerGeneration!;
   const sections = (
-    JSON.parse(navigationText) as {
-      data: {
-        sections: Array<{
-          section_id: string;
-          label: string;
-          href_path: string | null;
-          start_offset: number;
-          end_offset: number | null;
-        }>;
-      };
-    }
-  ).data.sections.filter((section) => section.href_path !== null);
+    await publicationSections(api, mediaId, generation)
+  ).filter((section) => section.href_path !== null);
   const target = sections.find(
     (section) => section.label === "Second",
   );
@@ -161,24 +230,9 @@ test("reader progress resumes, completes, and resets through its product actions
   await expect
     .poll(
       async () => {
-        const response = await api.get(
-          `/api/media/${mediaId}/reader-state`,
-        );
-        if (!response.ok()) return `http-${response.status()}`;
-        const snapshot = (await response.json()) as {
-          data:
-            | { state: "Empty" }
-            | {
-                state: "Positioned";
-                locator: {
-                  kind: string;
-                  target?: { section_id?: string };
-                };
-              };
-        };
-        return snapshot.data.state === "Positioned" &&
-          snapshot.data.locator.kind === "epub"
-          ? snapshot.data.locator.target?.section_id
+        const cursor = (await readerProgress(api, mediaId, journeyUser.id)).cursor;
+        return cursor.state === "Positioned"
+          ? cursor.locator.target.section_id
           : null;
       },
       {
@@ -198,17 +252,10 @@ test("reader progress resumes, completes, and resets through its product actions
     `EPUB ${mediaId} section ${target!.section_id} has no interior canonical cursor between ${target!.start_offset} and ${target!.end_offset}.`,
   ).toBeGreaterThan(target!.start_offset);
 
-  const persistedResponse = await api.get(
-    `/api/media/${mediaId}/reader-state`,
+  const persisted = positionedCursor(
+    await readerProgress(api, mediaId, journeyUser.id),
+    `Reader cursor for ${mediaId} was not positioned after Chromium selected a section`,
   );
-  const persistedText = await persistedResponse.text();
-  expect(
-    persistedResponse.ok(),
-    `Persisted reader snapshot for ${mediaId} failed: ${persistedResponse.status()} ${persistedText.slice(0, 500)}`,
-  ).toBeTruthy();
-  const persisted = (JSON.parse(persistedText) as {
-    data: PositionedEpubReaderSnapshot;
-  }).data;
   expect(
     persisted,
     `Reader snapshot for ${mediaId} was not the exact positioned EPUB cursor selected through Chromium.`,
@@ -219,6 +266,7 @@ test("reader progress resumes, completes, and resets through its product actions
       kind: "epub",
       target: { section_id: target!.section_id },
     },
+    source: { kind: "Publication", reader_generation: generation },
   });
   expect(persisted.revision).toBeGreaterThan(0);
   expect(
@@ -240,24 +288,29 @@ test("reader progress resumes, completes, and resets through its product actions
       quote_suffix: null,
     },
   };
-  const interiorWriteResponse = await api.put(
-    `/api/media/${mediaId}/reader-state`,
-    {
-      headers: { origin: webOrigin },
-      data: {
-        locator: interiorLocator,
-        base_revision: persisted.revision,
-      },
+  const interiorWriteResponse = await api.put(progressPath(mediaId), {
+    headers: {
+      origin: webOrigin,
+      "X-Nexus-Expected-Account-Id": journeyUser.id,
     },
-  );
+    data: {
+      expectedReaderGeneration: generation,
+      baseRevision: persisted.revision,
+      locator: interiorLocator,
+    },
+  });
   const interiorWriteText = await interiorWriteResponse.text();
   expect(
     interiorWriteResponse.ok(),
     `Interior reader cursor for ${mediaId} failed: ${interiorWriteResponse.status()} ${interiorWriteText.slice(0, 500)}`,
   ).toBeTruthy();
+  expect(
+    interiorWriteResponse.headers()["nexus-reader-generation"],
+    `Interior reader cursor for ${mediaId} was not attested against the generation it was taken from.`,
+  ).toBe(String(generation));
   const interiorSnapshot = (JSON.parse(interiorWriteText) as {
-    data: PositionedEpubReaderSnapshot;
-  }).data;
+    data: ReaderProgressState;
+  }).data.cursor;
   expect(
     interiorSnapshot,
     `Reader BFF did not durably install the interior cursor for ${mediaId}.`,
@@ -265,32 +318,28 @@ test("reader progress resumes, completes, and resets through its product actions
     state: "Positioned",
     revision: persisted.revision + 1,
     locator: interiorLocator,
+    source: { kind: "Publication", reader_generation: generation },
   });
 
   let resumedDocumentCommitted = false;
-  const resumedReaderStateWriteRequests: Request[] = [];
-  const resumedReaderStateWriteFingerprints: string[] = [];
+  const resumedProgressWriteRequests: Request[] = [];
+  const resumedProgressWriteFingerprints: string[] = [];
   page.once("framenavigated", (frame) => {
     if (frame === page.mainFrame()) {
       resumedDocumentCommitted = true;
     }
   });
   page.on("request", (request) => {
-    if (resumedDocumentCommitted && matchesReaderStateWrite(request, mediaId)) {
-      resumedReaderStateWriteRequests.push(request);
+    if (resumedDocumentCommitted && matchesReaderProgressWrite(request, mediaId)) {
+      resumedProgressWriteRequests.push(request);
     }
   });
   page.on("response", (response) => {
     if (
       resumedDocumentCommitted &&
-      matchesResponse(
-        response,
-        webOrigin,
-        "PUT",
-        `/api/media/${mediaId}/reader-state`,
-      )
+      matchesResponse(response, webOrigin, "PUT", progressPath(mediaId))
     ) {
-      resumedReaderStateWriteFingerprints.push(
+      resumedProgressWriteFingerprints.push(
         `PUT ${new URL(response.url()).pathname} -> ${response.status()}`,
       );
     }
@@ -307,16 +356,16 @@ test("reader progress resumes, completes, and resets through its product actions
     `Fresh reader document for ${mediaId} resumed the label but not the Second passage.`,
   ).toBeVisible();
 
-  const awaitedRestoreWrite = await waitForReaderStateWrite(
+  const awaitedRestoreWrite = await waitForReaderProgressWrite(
     page,
     mediaId,
     RESTORE_WRITE_QUIET_WINDOW_MS,
   );
   const unexpectedRestoreWrite =
-    resumedReaderStateWriteRequests[0] ?? awaitedRestoreWrite;
+    resumedProgressWriteRequests[0] ?? awaitedRestoreWrite;
   expect(
     unexpectedRestoreWrite,
-    `Programmatic restore for ${mediaId} echoed a reader-state write within the ${RESTORE_WRITE_QUIET_WINDOW_MS}ms detection window: ${resumedReaderStateWriteFingerprints.join(", ")}.`,
+    `Programmatic restore for ${mediaId} echoed a reader-state write within the ${RESTORE_WRITE_QUIET_WINDOW_MS}ms detection window: ${resumedProgressWriteFingerprints.join(", ")}.`,
   ).toBeNull();
 
   const targetIndex = sections.findIndex(
@@ -328,7 +377,7 @@ test("reader progress resumes, completes, and resets through its product actions
     `EPUB ${mediaId} did not expose a section before ${target!.section_id} for genuine navigation.`,
   ).toBeDefined();
   const genuineWriteRequestPromise = page.waitForRequest((request) =>
-    matchesReaderStateWrite(request, mediaId),
+    matchesReaderProgressWrite(request, mediaId),
   );
   await page
     .getByRole("button", { name: "Previous section", exact: true })
@@ -351,6 +400,20 @@ test("reader progress resumes, completes, and resets through its product actions
     genuineWrite!.ok(),
     `Genuine reader navigation for ${mediaId} failed to persist: ${genuineWrite!.status()} ${genuineWriteText}`,
   ).toBeTruthy();
+  // The product's own write must carry the fence, not just reach the endpoint.
+  expect(
+    genuineWriteRequest.headers()["x-nexus-expected-account-id"],
+    `Genuine reader navigation for ${mediaId} wrote without binding its account.`,
+  ).toBe(journeyUser.id);
+  expect(
+    (genuineWriteRequest.postDataJSON() as { expectedReaderGeneration: number })
+      .expectedReaderGeneration,
+    `Genuine reader navigation for ${mediaId} wrote against another generation.`,
+  ).toBe(generation);
+  expect(
+    (await genuineWrite!.headerValue("nexus-reader-generation")),
+    `Genuine reader navigation for ${mediaId} was not attested against its generation.`,
+  ).toBe(String(generation));
 
   await page.getByRole("button", { name: "More", exact: true }).click();
   await expect(
@@ -400,11 +463,7 @@ test("reader progress resumes, completes, and resets through its product actions
     `Reset command for ${mediaId} failed: ${resetResponse.status()} ${await resetResponse.text()}`,
   ).toBeTruthy();
   await expect
-    .poll(async () => {
-      const response = await api.get(`/api/media/${mediaId}/reader-state`);
-      if (!response.ok()) return `http-${response.status()}`;
-      return ((await response.json()) as { data: { state: string } }).data.state;
-    })
+    .poll(async () => (await readerProgress(api, mediaId, journeyUser.id)).cursor.state)
     .toBe("Empty");
 
   await gotoWithStrictCsp(page, `/media/${mediaId}`);

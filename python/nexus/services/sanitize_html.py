@@ -54,6 +54,7 @@ ALLOWED_TAGS = frozenset(
         "a",
         "img",
         "table",
+        "caption",
         "thead",
         "tbody",
         "tr",
@@ -80,7 +81,9 @@ ALLOWED_TAGS = frozenset(
 ALLOWED_ATTRS = {
     "a": {"href", "title"},
     "img": {"src", "alt"},
-    "th": {"colspan", "rowspan"},
+    "ol": {"start", "reversed"},
+    "li": {"value"},
+    "th": {"colspan", "rowspan", "scope"},
     "td": {"colspan", "rowspan"},
 }
 READER_APPARATUS_ATTRS = frozenset(

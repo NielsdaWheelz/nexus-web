@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/resource_graph/resolve.py b/python/nexus/services/resource_graph/resolve.py
+--- a/python/nexus/services/resource_graph/resolve.py
++++ b/python/nexus/services/resource_graph/resolve.py
+@@ -1653,7 +1653,7 @@
+             summary=summary,
+             inline_body=None,
+             fetch_hint=fetch_hint,
+-            document_reader=loaded.media_kind in {"web_article", "epub", "pdf"},
++            document_reader=True,
+         )
+     if scheme == "library":
+         name = loaded.title or ""

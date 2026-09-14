@@ -4,7 +4,7 @@ import json
 import os
 import subprocess
 import sys
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from importlib.util import find_spec
 from io import StringIO
@@ -23,6 +23,7 @@ from nexus_test_control.model import (
     RunStatus,
     Selection,
     SelectionReason,
+    SensitivityMethod,
     Workflow,
 )
 from nexus_test_control.process import CommandInterrupted
@@ -36,7 +37,13 @@ from nexus_test_control.runner import (
     run_workflow,
     stream_first_failure,
 )
-from nexus_test_control.runtime import RuntimeContractError
+from nexus_test_control.runtime import (
+    RuntimeContractError,
+    RuntimePorts,
+    claim_run,
+    initialize_runtime,
+)
+from nexus_test_control.sensitivity import prove
 from nexus_test_control.services import (
     StartedProcess,
     SupabaseCredentials,
@@ -978,6 +985,52 @@ def test_changed_static_treats_a_deleted_source_as_no_remaining_input(tmp_path: 
     assert not (tmp_path / "commands.jsonl").exists()
 
 
+def test_unselected_heavy_capability_does_not_lock_a_selected_kernel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fcntl
+
+    _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
+    (tmp_path / "python/.venv").mkdir()
+    _write(
+        tmp_path / "python/tests/kernel/test_owned.py", "def test_owned():\n    assert 2 + 2 == 4\n"
+    )
+    _write(tmp_path / "apps/web/package.json", "{}\n")
+    _write(tmp_path / "apps/web/src/owned.ts", "export const owned = 1;\n")
+    environment = _stub_tools(tmp_path, "uv", "bun")
+    operations: list[int] = []
+
+    def observe_flock(_descriptor: int, operation: int) -> None:
+        operations.append(operation)
+
+    monkeypatch.setattr(fcntl, "flock", observe_flock)
+    kernel_context = _changed_context(
+        tmp_path,
+        Selection(
+            "python/tests/kernel/test_owned.py",
+            Capability.KERNEL_PYTHON,
+            SelectionReason.EXPLICIT_FOCUS,
+            "pytest:python/tests/kernel/test_owned.py",
+        ),
+    )
+    kernel = run_capability(kernel_context, Capability.KERNEL_PYTHON, environment)
+    unselected = run_capability(kernel_context, Capability.STATIC_WEB, environment)
+    assert kernel.evidence.status is RunStatus.PASS
+    assert unselected.evidence.status is RunStatus.PASS
+    assert operations == [], "unselected heavy capability locked the selected kernel"
+
+    web_context = _changed_context(
+        tmp_path,
+        Selection("apps/web/src/owned.ts", Capability.COMPONENT, SelectionReason.CHANGED_TEST),
+    )
+    (tmp_path / "apps/web/node_modules").mkdir()
+    selected = run_capability(web_context, Capability.STATIC_WEB, environment)
+    assert selected.evidence.status is RunStatus.PASS
+    assert operations == [fcntl.LOCK_EX, fcntl.LOCK_UN], (
+        "selected heavy capability escaped its lock"
+    )
+
+
 def test_complete_fast_commands_are_fixed_to_their_final_owners(tmp_path: Path) -> None:
     _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
     _write(
@@ -1180,10 +1233,15 @@ def test_provider_runtime_requires_the_exact_pin_then_runs_its_deterministic_sui
     checkout = repo_root / ".nexus-test/provider-runtime" / expected
     (checkout / ".venv").mkdir(parents=True)
     _write(checkout / ".nexus-provider-runtime-revision", expected + "\n")
+    kernel_revision = "b" * 40
+    kernel = repo_root / ".nexus-test/llm-agent-kernel" / kernel_revision
+    (kernel / ".venv").mkdir(parents=True)
+    _write(kernel / ".nexus-llm-agent-kernel-revision", kernel_revision + "\n")
     _write(
         repo_root / "python/pyproject.toml",
         "[tool.uv.sources]\n"
-        f'provider-runtime = {{ git = "https://example.invalid/runtime", rev = "{expected}" }}\n',
+        f'provider-runtime = {{ git = "https://example.invalid/runtime", rev = "{expected}" }}\n'
+        f'llm-agent-kernel = {{ git = "https://example.invalid/kernel", rev = "{kernel_revision}" }}\n',
     )
     environment = _stub_tools(repo_root, "uv")
     context = CapabilityContext(repo_root, Workflow.FULL, ())
@@ -1192,7 +1250,7 @@ def test_provider_runtime_requires_the_exact_pin_then_runs_its_deterministic_sui
 
     assert result.evidence.status is RunStatus.PASS
     commands = _commands(repo_root)
-    assert [command["tool"] for command in commands] == ["uv"] * 5
+    assert [command["tool"] for command in commands[:5]] == ["uv"] * 5
     assert commands[0]["argv"] == [
         "run",
         "--frozen",
@@ -1203,7 +1261,7 @@ def test_provider_runtime_requires_the_exact_pin_then_runs_its_deterministic_sui
         "no:randomly",
         "./tests/contract/test_protocol.py",
     ]
-    assert commands[-1]["argv"] == [
+    assert commands[4]["argv"] == [
         "run",
         "--frozen",
         "--no-sync",
@@ -1213,6 +1271,14 @@ def test_provider_runtime_requires_the_exact_pin_then_runs_its_deterministic_sui
         "-p",
         "no:randomly",
     ]
+
+    assert [command["cwd"] for command in commands[1:5]] == [str(checkout)] * 4
+    assert [command["tool"] for command in commands[5:]] == ["uv"] * 5
+    assert [command["cwd"] for command in commands[5:]] == [str(kernel)] * 5
+    assert [command["argv"] for command in commands[5:9]] == [
+        command["argv"] for command in commands[1:5]
+    ]
+    assert commands[9]["argv"] == ["build", "--no-sources", "--offline"]
 
 
 def test_exact_provider_protocol_proof_runs_only_its_local_contract_node(
@@ -1267,6 +1333,7 @@ def test_exact_release_artifact_proof_materializes_an_owned_worker_image(
         "def test_other_release_artifact_contract():\n    assert True\n",
     )
     (repo_root / "python/.venv").mkdir(parents=True)
+    _initialize_local_runtime(repo_root)
     environment = _stub_tools(
         repo_root,
         "uv",
@@ -1352,6 +1419,7 @@ def test_release_artifact_runs_its_python_proofs_before_staging_android_evidence
     _write(apk, "signed release bytes\n")
     sha256 = runner._sha256_file(apk)
     signer = "ab" * 32
+    _initialize_local_runtime(repo_root)
     corpus = repo_root / "testdata/android/player-protocol.json"
     _write(corpus, '{"version": 2}\n')
     player_protocol = runner._android_player_protocol_identity(repo_root)
@@ -1414,7 +1482,7 @@ def test_release_artifact_runs_its_python_proofs_before_staging_android_evidence
     result = runner._run_release_artifact(
         CapabilityContext(repo_root, Workflow.RELEASE, ()),
         environment,
-        SimpleNamespace(run_id=run_id, ports=_LocalDockerPorts()),
+        SimpleNamespace(run_id=run_id, run=None, ports=_LocalDockerPorts()),
     )
 
     assert result.evidence.status is RunStatus.PASS
@@ -1442,6 +1510,7 @@ def test_release_artifact_image_build_failure_is_setup_and_skips_pytest(
     proof_path = "python/tests/release_artifact/test_image_binding.py"
     _write(repo_root / proof_path, "def test_image_binding():\n    assert True\n")
     (repo_root / "python/.venv").mkdir(parents=True)
+    _initialize_local_runtime(repo_root)
     environment = _stub_tools(repo_root, "uv", git_stdout="a" * 40)
     _write_passthrough_env(repo_root / "bin/env")
     _write_release_artifact_docker(
@@ -1461,6 +1530,268 @@ def test_release_artifact_image_build_failure_is_setup_and_skips_pytest(
     assert result.evidence.status is RunStatus.FAIL
     assert result.detail.startswith("proof_result=setup_or_execution_failure|")
     assert [command["tool"] for command in _commands(repo_root)] == ["git", "docker"]
+
+
+def test_release_artifact_reports_not_run_when_the_local_runtime_is_uninitialized(
+    tmp_path: Path,
+) -> None:
+    """A fresh host has no runtime state; the proof must report it, not raise."""
+
+    repo_root = tmp_path / "nexus"
+    proof_path = "python/tests/release_artifact/test_image_binding.py"
+    _write(repo_root / proof_path, "def test_image_binding():\n    assert True\n")
+    (repo_root / "python/.venv").mkdir(parents=True)
+    environment = _stub_tools(repo_root, "uv", git_stdout="a" * 40)
+    _write_passthrough_env(repo_root / "bin/env")
+    _write_release_artifact_docker(repo_root / "bin/docker")
+
+    result = run_proof(
+        CapabilityContext(repo_root, Workflow.RELEASE, ()),
+        f"pytest:{proof_path}::test_image_binding",
+        environment,
+        _ports=_LocalDockerPorts(),
+        _available_memory=lambda: 8192,
+    )
+
+    assert result.evidence.status is RunStatus.NOT_RUN
+    assert "candidate worker image setup is unavailable" in result.detail
+    assert [command["tool"] for command in _commands(repo_root)] == ["git"]
+
+
+def test_changed_capacity_proof_file_runs_its_candidate_nodes_and_never_an_incident_baseline(
+    tmp_path: Path,
+) -> None:
+    """`changed` selects a capacity proof file, never a node, so the file must
+    stand for the candidate proofs it owns; the historical incident baselines
+    measure a published image and are qualification inputs, not candidates."""
+
+    repo_root = tmp_path / "nexus"
+    _write_api_capacity_repository(repo_root)
+    _write_capacity_git(repo_root / "bin/git", sha=_CANDIDATE_SHA, porcelain="")
+    environment = _stub_tools(
+        repo_root,
+        "uv",
+        "supabase",
+        exit_status=1,
+        diagnostic="FAILED candidate reader admission - AssertionError: admission exhausted",
+    )
+    _write_passthrough_env(repo_root / "bin/env")
+    _write_release_artifact_docker(repo_root / "bin/docker")
+    ports = _ApiCapacityPorts()
+
+    result = run_proof(
+        CapabilityContext(repo_root, Workflow.CHANGED, ()),
+        "pytest:python/tests/capacity/test_api_reader_capacity.py",
+        environment,
+        _ports=ports,
+        _available_memory=lambda: 8192,
+    )
+
+    assert result.evidence.status is RunStatus.FAIL
+    commands = _commands(repo_root)
+    assert [command["tool"] for command in commands] == [
+        "git",
+        "git",
+        "docker",
+        "docker",
+        "uv",
+    ]
+    proof = commands[-1]
+    assert proof["argv"][proof["argv"].index("no:randomly") + 1 :] == [
+        "tests/capacity/test_api_reader_capacity.py"
+        "::test_candidate_reader_admission_under_incident_overlap",
+        "tests/capacity/test_api_reader_capacity.py::test_candidate_artwork_overlap",
+        "tests/capacity/test_api_reader_capacity.py::test_candidate_metadata_overlap",
+        "tests/capacity/test_api_reader_capacity.py::test_candidate_background_worker_overlap",
+    ]
+    # The candidate worker proof is selected with the file, so its image is built
+    # and its owned run holds the migration database that proof requires.
+    assert [build["argv"][6] for build in commands[2:4]] == ["api", "worker"]
+    assert ports.migration_databases == [True]
+    identity = json.loads(
+        (repo_root / "test-results/runs" / ports.run_ids[0] / "api-build-inputs.json").read_text()
+    )
+    assert identity["build_targets"] == ["api", "worker"]
+    assert identity["source_sha_label"] == _CANDIDATE_SHA
+    assert identity["dirty_worktree"] is False
+    assert [arguments[:2] for arguments in ports.docker] == [
+        ("image", "ls"),
+        ("image", "rm"),
+        ("image", "ls"),
+        ("image", "rm"),
+    ]
+    removed = [arguments[2] for arguments in ports.docker if arguments[1] == "rm"]
+    assert removed[0].startswith("nexus-test-capacity-worker-")
+    assert removed[1].startswith("nexus-test-api-")
+    assert all(tag.endswith(f":{ports.run_ids[0]}") for tag in removed)
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_workflow_capacity_exception_retains_completed_evidence(
+    tmp_path: Path, cleanup_fails: bool
+) -> None:
+    _write_api_capacity_repository(tmp_path)
+    _write(
+        tmp_path / "python/tests/capacity/test_api_reader_capacity.py",
+        "from pathlib import Path\n\n"
+        "def test_candidate_metadata_overlap():\n"
+        "    assert Path(__file__).is_file()\n",
+    )
+    _write(tmp_path / "apps/web/package.json", "{}\n")
+    (tmp_path / "apps/web/node_modules").mkdir()
+    _write_capacity_git(tmp_path / "bin/git", sha=_CANDIDATE_SHA, porcelain="")
+    environment = _stub_tools(tmp_path, "uv", "supabase", "docker")
+    cleaned: list[str] = []
+
+    class Ports(_ApiCapacityPorts):
+        def local_docker_host(self) -> str:
+            raise OSError(28, "capacity fixture exhausted storage")
+
+        def clean_run(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            run_id: str,
+            *,
+            supabase: SupabaseCredentials,
+        ) -> None:
+            del supabase
+            cleaned.append(run_id)
+            if cleanup_fails:
+                raise RuntimeError("capacity fixture cleanup failed")
+
+    path = "python/tests/capacity/test_api_reader_capacity.py"
+    selection = Selection(
+        path,
+        Capability.API_CAPACITY,
+        SelectionReason.CHANGED_TEST,
+        f"pytest:{path}::test_candidate_metadata_overlap",
+    )
+    sampler = memory.OwnedMemorySampler(
+        tmp_path,
+        include_containers=False,
+        process_reader=lambda _pid: 2 * 1024 * 1024,
+        container_reader=lambda _repo_root: 0,
+    )
+    with pytest.raises(Exception) as raised:
+        outcome = run_workflow(
+            CapabilityContext(tmp_path, Workflow.CHANGED, (selection,)),
+            StringIO(),
+            environment,
+            run_id="0123456789abcdef",
+            _ports=Ports(),
+            _available_memory=lambda: 8192,
+            _memory_sampler=sampler,
+        )
+        pytest.fail(f"capacity fixture did not reach its external fault: {outcome.capabilities}")
+
+    error = raised.value
+    assert getattr(error, "owner", None) is Capability.API_CAPACITY, (
+        "workflow exception lost the active capacity owner"
+    )
+    completed = getattr(error, "completed", ())
+    assert completed, "workflow exception lost completed evidence"
+    assert completed[0].id is Capability.POLICY
+    assert completed[0].status is RunStatus.PASS
+    assert all(item.status is RunStatus.PASS for item in completed)
+    assert completed[-1].id is Capability.JOURNEYS_ALL
+    assert "capacity fixture exhausted storage" in str(error)
+    if cleanup_fails:
+        assert "capacity fixture cleanup failed" in str(error)
+        assert isinstance(error.__cause__, RuntimeError)
+        assert isinstance(error.__cause__.__context__, OSError)
+    else:
+        assert isinstance(error.__cause__, OSError)
+    assert cleaned == ["0123456789abcdef"]
+
+
+def test_api_capacity_refuses_a_dirty_worktree_before_labelling_a_candidate_image(
+    tmp_path: Path,
+) -> None:
+    """SOURCE_SHA becomes the image revision label and the runtime identity the
+    API serves, so a candidate built from uncommitted work would attest a commit
+    it does not contain."""
+
+    repo_root = tmp_path / "nexus"
+    _write_api_capacity_repository(repo_root)
+    _write_capacity_git(
+        repo_root / "bin/git",
+        sha=_CANDIDATE_SHA,
+        porcelain=" M python/nexus/api/read_admission.py\n",
+    )
+    environment = _stub_tools(repo_root, "uv", "supabase")
+    _write_passthrough_env(repo_root / "bin/env")
+    _write_release_artifact_docker(repo_root / "bin/docker")
+    ports = _ApiCapacityPorts()
+
+    result = run_proof(
+        CapabilityContext(repo_root, Workflow.CHANGED, ()),
+        "pytest:python/tests/capacity/test_api_reader_capacity.py",
+        environment,
+        _ports=ports,
+        _available_memory=lambda: 8192,
+    )
+
+    assert result.evidence.status is RunStatus.FAIL
+    assert "clean committed candidate" in result.detail
+    assert [command["tool"] for command in _commands(repo_root)] == ["git", "git"]
+    assert ports.docker == []
+    relative = f"test-results/runs/{ports.run_ids[0]}/api-build-inputs.json"
+    assert result.evidence.artifacts == (relative,)
+    identity = json.loads((repo_root / relative).read_text())
+    assert identity["dirty_worktree"] is True
+    assert identity["source_sha_label"] == _CANDIDATE_SHA
+
+
+def test_capacity_receipt_is_retained_only_when_it_measured_this_run_s_build(
+    tmp_path: Path,
+) -> None:
+    """A receipt is the qualification evidence, so it must name the image this
+    run built and the inputs that image was built from."""
+
+    run_id = "0123456789abcdef"
+    image_id = "sha256:" + "c" * 64
+    digest = "d" * 64
+    receipt = tmp_path / "test-results/runs" / run_id / "api-capacity-candidate-reader.json"
+    selected = (runner.API_CAPACITY_CANDIDATE_READER_PROOF,)
+    passed = CapabilityResult(
+        CapabilityEvidence(Capability.API_CAPACITY, RunStatus.PASS, 1, 0),
+        "candidate reader admission",
+    )
+
+    def retain(measured_image: str, measured_digest: str) -> CapabilityResult:
+        _write(
+            receipt,
+            json.dumps(
+                {
+                    "image": measured_image,
+                    "build_inputs": {"build_input_digest": measured_digest},
+                    "samples": [{"phase": "admitted"}],
+                }
+            ),
+        )
+        return runner._retain_api_capacity_evidence(
+            tmp_path,
+            run_id,
+            selected,
+            passed,
+            build=runner._ApiCapacityBuild(image_id, digest),
+        )
+
+    retained = retain(image_id, digest)
+    assert retained.evidence.status is RunStatus.PASS
+    assert retained.evidence.artifacts == (
+        f"test-results/runs/{run_id}/api-build-inputs.json",
+        f"test-results/runs/{run_id}/api-capacity-candidate-reader.json",
+    )
+
+    foreign_image = retain("sha256:" + "e" * 64, digest)
+    assert foreign_image.evidence.status is RunStatus.NOT_RUN
+    assert "measured another image" in foreign_image.detail
+
+    foreign_inputs = retain(image_id, "f" * 64)
+    assert foreign_inputs.evidence.status is RunStatus.NOT_RUN
+    assert "omits this build's input digest" in foreign_inputs.detail
 
 
 def test_android_host_discovers_the_sdk_and_uses_the_fixed_host_contract(
@@ -1487,6 +1818,175 @@ def test_android_host_discovers_the_sdk_and_uses_the_fixed_host_contract(
     assert command["argv"] == ["--no-daemon", ":app:testDebugUnitTest"]
     assert "ANDROID_HOME" in command["environment"]
     assert command["google_client_id"] == "nexus-test.apps.googleusercontent.com"
+
+
+def test_exact_android_host_proof_selects_only_its_class(tmp_path: Path) -> None:
+    android_root = tmp_path / "apps/android"
+    (tmp_path / "Android/Sdk").mkdir(parents=True)
+    proof = "apps/android/app/src/test/java/app/nexus/SampleTest.kt"
+    _write(tmp_path / proof, "package app.nexus\nclass SampleTest\n")
+    _stub_tools(tmp_path, "java")
+    _write_host_gradle(
+        android_root / "gradlew",
+        '<testsuite name="app.nexus.SampleTest" tests="1" failures="0" errors="0" skipped="0">'
+        '<testcase classname="app.nexus.SampleTest" name="selected case"/>'
+        "<system-out>geometry rows=65536 bytes=4194304</system-out></testsuite>",
+    )
+
+    result = run_proof(
+        CapabilityContext(tmp_path, Workflow.FULL, ()),
+        f"gradle:{proof}",
+        _tool_environment(tmp_path),
+        _available_memory=lambda: 8192,
+    )
+
+    assert result.evidence.status is RunStatus.PASS
+    assert _commands(tmp_path)[0]["argv"] == [
+        "--no-daemon",
+        ":app:testDebugUnitTest",
+        "--tests",
+        "app.nexus.SampleTest",
+    ], "exact native proof silently ran unrelated classes"
+
+    retained = json.loads((tmp_path / result.evidence.artifacts[-1]).read_text())
+    assert retained.get("system_out") == "geometry rows=65536 bytes=4194304", (
+        "fresh native measurement output was discarded"
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "assertion",
+        "array",
+        "nested",
+        "runtime",
+        "nested_runtime",
+        "foreign",
+        "lookalike",
+        "foreign_nested",
+        "message_only",
+        "stale",
+    ],
+)
+def test_exact_android_host_red_requires_fresh_owned_junit_assertion(
+    tmp_path: Path, case: str
+) -> None:
+    android_root = tmp_path / "apps/android"
+    (tmp_path / "Android/Sdk").mkdir(parents=True)
+    proof = "apps/android/app/src/test/java/app/nexus/SampleTest.kt"
+    _write(tmp_path / proof, "package app.nexus\nclass SampleTest\n")
+    _stub_tools(tmp_path, "java")
+    failure_type = {
+        "runtime": "java.lang.IllegalStateException",
+        "nested_runtime": "java.lang.IllegalStateException",
+        "array": "org.junit.internal.ArrayComparisonFailure",
+    }.get(case, "java.lang.AssertionError")
+    owner = "app.nexus.ForeignTest" if case == "foreign" else "app.nexus.SampleTest"
+    # Kotlin suspend assertions may retain only an owned compiled closure
+    # frame across the coroutine boundary, as native receipt a0c1a26c63550a55 does.
+    frame_owner = {
+        "nested": "app.nexus.SampleTest$source is distinct$1$2",
+        "nested_runtime": "app.nexus.SampleTest$source is distinct$1$2",
+        "lookalike": "app.nexus.SampleTestOther$1",
+        "foreign_nested": "foreign.app.nexus.SampleTest$1",
+        "message_only": "app.nexus.ForeignTest",
+    }.get(case, owner)
+    diagnostic = (
+        "diagnostic mentions at app.nexus.SampleTest.source and app.nexus.SampleTest$1\n"
+        if case == "message_only"
+        else ""
+    )
+    xml = (
+        f'<testsuite name="{owner}" tests="1" failures="1" errors="0" skipped="0">'
+        f'<testcase classname="{owner}" name="source is distinct">'
+        f'<failure type="{failure_type}" message="wrong source was acknowledged">'
+        f"{failure_type}: wrong source was acknowledged\n"
+        f"{diagnostic}\tat {frame_owner}.source is distinct(SampleTest.kt:23)"
+        "</failure></testcase></testsuite>"
+    )
+    report = android_root / "app/build/test-results/testDebugUnitTest/TEST-app.nexus.SampleTest.xml"
+    _write(report, xml)
+    _write_host_gradle(android_root / "gradlew", None if case == "stale" else xml, exit_status=1)
+
+    result = run_proof(
+        CapabilityContext(tmp_path, Workflow.FULL, ()),
+        f"gradle:{proof}",
+        _tool_environment(tmp_path),
+        _available_memory=lambda: 8192,
+    )
+
+    assert result.evidence.status is RunStatus.FAIL
+    behavioral = result.detail.startswith("proof_result=behavioral_assertion_failure|")
+    assert behavioral is (case in {"assertion", "array", "nested"}), (
+        "native red trusted stale or unrelated JUnit output"
+    )
+    if case in {"assertion", "array", "nested"}:
+        assert "wrong source was acknowledged" in result.detail
+        retained = json.loads((tmp_path / result.evidence.artifacts[-1]).read_text())
+        assert retained["cases"][0]["message"] == "wrong source was acknowledged"
+
+
+def test_native_sensitivity_retains_green_report_after_build_output_changes(tmp_path: Path) -> None:
+    android = tmp_path / "apps/android"
+    (tmp_path / "Android/Sdk").mkdir(parents=True)
+    (tmp_path / ".gitignore").write_text(
+        ".nexus-test\ntest-results\ncommands.jsonl\napps/android/app/build\n"
+    )
+    proof = "apps/android/app/src/test/java/app/nexus/SampleTest.kt"
+    _write(tmp_path / proof, "package app.nexus\nclass SampleTest\n")
+    environment = _stub_tools(tmp_path, "java")
+    _write_host_gradle(
+        android / "gradlew",
+        '<testsuite name="app.nexus.SampleTest" tests="1" failures="1" errors="0" skipped="0">'
+        '<testcase classname="app.nexus.SampleTest" name="geometry">'
+        '<failure type="java.lang.AssertionError" message="expected geometry rows">'
+        "java.lang.AssertionError: expected geometry rows\n"
+        "at app.nexus.SampleTest.geometry(SampleTest.kt:1)</failure></testcase></testsuite>",
+        exit_status=1,
+    )
+    for command in (
+        ("git", "init", "-q"),
+        ("git", "config", "user.email", "nexus-test@example.test"),
+        ("git", "config", "user.name", "Nexus Test"),
+        ("git", "add", "."),
+        ("git", "commit", "-qm", "external Gradle failing result"),
+    ):
+        subprocess.run(command, cwd=tmp_path, check=True)
+    base = subprocess.check_output(("git", "rev-parse", "HEAD"), cwd=tmp_path, text=True).strip()
+    _write_host_gradle(
+        android / "gradlew",
+        '<testsuite name="app.nexus.SampleTest" tests="1" failures="0" errors="0" skipped="0">'
+        '<testcase classname="app.nexus.SampleTest" name="geometry"/>'
+        "<system-out>geometry rows=65536 bytes=4194304</system-out></testsuite>",
+    )
+    subprocess.run(("git", "add", "."), cwd=tmp_path, check=True)
+    subprocess.run(
+        ("git", "commit", "-qm", "external Gradle successful result"), cwd=tmp_path, check=True
+    )
+    run_id = "0123456789abcdef"
+    results = tmp_path / "test-results/runs" / run_id
+    results.mkdir(parents=True)
+    environment.update(
+        {"NEXUS_TEST_EVIDENCE_RUN_ID": run_id, "NEXUS_TEST_RESULTS_DIR": str(results)}
+    )
+    result = prove(
+        tmp_path,
+        proof=f"gradle:{proof}",
+        changed_paths=(proof,),
+        method=SensitivityMethod.BASE,
+        against=base,
+        environment=environment,
+    )
+    artifacts = [tmp_path / path for path in result.green.artifacts if path.endswith(".nexus.json")]
+    assert len(artifacts) == 1, "successful native evidence was omitted from its receipt"
+    build_report = (
+        android / "app/build/test-results/testDebugUnitTest/TEST-app.nexus.SampleTest.nexus.json"
+    )
+    build_report.write_text("later build replaced this output")
+    retained = json.loads(artifacts[0].read_text())
+    assert retained["cases"] == [{"name": "geometry", "status": "pass"}]
+    assert retained.get("system_out") == "geometry rows=65536 bytes=4194304"
 
 
 def test_android_host_does_not_mask_conflicting_sdk_roots_with_local_properties(
@@ -2642,6 +3142,7 @@ def _assert_release_artifact_retains_pinned_api_origin(tmp_path: Path, sdk: Path
         "def test_image_binding():\n    assert True\n",
     )
     (tmp_path / "python/.venv").mkdir(parents=True)
+    _initialize_local_runtime(tmp_path)
     _write_executable(tmp_path / "bin/uv")
     _write_passthrough_env(tmp_path / "bin/env")
     _write_release_artifact_docker(tmp_path / "bin/docker")
@@ -2887,11 +3388,85 @@ def test_workflow_interruption_closes_the_owned_run(tmp_path: Path) -> None:
             _ports=Ports(),
             _available_memory=lambda: 8192,
         )
-    except CommandInterrupted as error:
+    except runner.WorkflowExecutionError as error:
+        assert isinstance(error.__cause__, CommandInterrupted)
+        assert error.owner is Capability.SERVICE
         assert "SIGTERM" in str(error)
     else:
         pytest.fail(f"workflow did not propagate interruption: {evidence}")
 
+    assert cleaned == ["0123456789abcdef"]
+
+
+def test_workflow_cleanup_failure_replaces_the_passed_runtime_owner(tmp_path: Path) -> None:
+    (tmp_path / "python/.venv").mkdir(parents=True)
+    _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
+    path = "python/tests/service/test_owned.py"
+    _write(tmp_path / path, "def test_owned():\n    assert 2 + 2 == 4\n")
+    _write(tmp_path / "apps/web/package.json", "{}\n")
+    (tmp_path / "apps/web/node_modules").mkdir()
+    environment = _stub_tools(tmp_path, "docker", "supabase", "uv")
+    cleaned: list[str] = []
+
+    class Ports(_ReadyProtocolPorts):
+        def prepare_run(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            *,
+            run_id: str,
+            include_migration_database: bool,
+        ) -> OwnedTestRun:
+            assert run_id == "0123456789abcdef"
+            assert not include_migration_database
+            return _test_run(include_migration_database=False)
+
+        def run_environment(
+            self,
+            repo_root: Path,
+            environment: Mapping[str, str],
+            run: OwnedTestRun,
+        ) -> dict[str, str]:
+            return _stub_run_environment(repo_root, dict(environment), run)
+
+        def clean_run(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            run_id: str,
+            *,
+            supabase: SupabaseCredentials,
+        ) -> None:
+            del supabase
+            cleaned.append(run_id)
+            raise RuntimeError("completed service cleanup failed")
+
+    sampler = memory.OwnedMemorySampler(
+        tmp_path,
+        include_containers=False,
+        process_reader=lambda _pid: 2 * 1024 * 1024,
+        container_reader=lambda _repo_root: 0,
+    )
+    selection = Selection(path, Capability.SERVICE, SelectionReason.CHANGED_TEST, f"pytest:{path}")
+    with pytest.raises(runner.WorkflowExecutionError) as raised:
+        run_workflow(
+            CapabilityContext(tmp_path, Workflow.CHANGED, (selection,)),
+            StringIO(),
+            environment,
+            run_id="0123456789abcdef",
+            _ports=Ports(),
+            _available_memory=lambda: 8192,
+            _memory_sampler=sampler,
+        )
+
+    error = raised.value
+    assert error.owner is Capability.SERVICE
+    assert all(item.status is RunStatus.PASS for item in error.completed)
+    service = next(item for item in error.completed if item.id is Capability.SERVICE)
+    assert service.duration_ms > 0
+    assert service.peak_owned_mib == 2
+    assert isinstance(error.__cause__, RuntimeError)
+    assert "completed service cleanup failed" in str(error)
     assert cleaned == ["0123456789abcdef"]
 
 
@@ -4514,6 +5089,121 @@ def test_android_tool_versions_and_installed_release_version_are_exact(
     )
 
 
+class _ApiCapacityPorts(runner._RunnerPorts):
+    """Owns the capacity proof's local run and its Docker image boundary."""
+
+    def __init__(self) -> None:
+        self.run_ids: list[str] = []
+        self.migration_databases: list[bool] = []
+        self.docker: list[tuple[str, ...]] = []
+
+    def prepare_run(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        *,
+        run_id: str,
+        include_migration_database: bool,
+    ) -> OwnedTestRun:
+        del environment
+        self.run_ids.append(run_id)
+        self.migration_databases.append(include_migration_database)
+        claim_run(repo_root, {"NEXUS_ENV": "test"}, run_id)
+        database = f"postgresql+psycopg://127.0.0.1:54321/nexus_run_{run_id}"
+        migration = f"postgresql+psycopg://127.0.0.1:54321/nexus_migration_{run_id}"
+        credentials = "?user=postgres&password=postgres"
+        return OwnedTestRun(
+            run_id=run_id,
+            database_url=f"{database}{credentials}",
+            migration_database_url=(
+                f"{migration}{credentials}" if include_migration_database else None
+            ),
+            bucket=f"nexus-run-{run_id}",
+            supabase=SupabaseCredentials(
+                "http://127.0.0.1:54322",
+                "anon-test-key",
+                "admin-test-key",
+            ),
+        )
+
+    def run_environment(
+        self,
+        repo_root: Path,
+        environment: Mapping[str, str],
+        run: OwnedTestRun,
+    ) -> dict[str, str]:
+        return _stub_run_environment(repo_root, dict(environment), run)
+
+    def local_docker_host(self) -> str:
+        return "unix:///test/docker.sock"
+
+    def local_docker(self, arguments: Sequence[str]) -> str:
+        self.docker.append(tuple(arguments))
+        if tuple(arguments[:2]) == ("image", "ls"):
+            return arguments[3].removeprefix("reference=") + "\n"
+        return ""
+
+
+def _write_api_capacity_repository(repo_root: Path) -> None:
+    """The exact build inputs the capacity candidate image is digested from."""
+
+    (repo_root / "python/.venv").mkdir(parents=True)
+    _write(
+        repo_root / "python/tests/capacity/test_api_reader_capacity.py",
+        "def test_incident_reader_workload():\n    assert True\n\n"
+        "def test_incident_artwork_overlap():\n    assert True\n\n"
+        "def test_candidate_reader_admission_under_incident_overlap():\n    assert True\n\n"
+        "def test_candidate_artwork_overlap():\n    assert True\n\n"
+        "def test_candidate_metadata_overlap():\n    assert True\n\n"
+        "def test_candidate_background_worker_overlap():\n    assert True\n",
+    )
+    for relative in (
+        ".dockerignore",
+        "docker/Dockerfile.backend",
+        "python/pyproject.toml",
+        "python/uv.lock",
+        "python/README.md",
+        "python/nexus/api/read_admission.py",
+        "apps/api/main.py",
+        "apps/worker/main.py",
+        "apps/codex_agent/main.py",
+        "migrations/0001_initial.sql",
+        "scripts/oracle/manifest.json",
+        "node/ingest/package.json",
+        "node/ingest/bun.lock",
+        "node/ingest/ingest.mjs",
+        "node/ingest/accepted_url_egress.mjs",
+        "node/reader/word_boundaries.mjs",
+        "node/reader/epub_paths.mjs",
+    ):
+        _write(repo_root / relative, f"{relative}\n")
+    _initialize_local_runtime(repo_root)
+
+
+def _write_capacity_git(path: Path, *, sha: str, porcelain: str) -> None:
+    """Answer `rev-parse` with one commit and `status --porcelain` verbatim."""
+
+    _write(
+        path,
+        "#!/usr/bin/python3\n"
+        "import json\n"
+        "import os\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "record = {'tool': 'git', 'argv': sys.argv[1:], 'cwd': os.getcwd()}\n"
+        "with (Path(os.environ['HOME']) / 'commands.jsonl').open('a') as handle:\n"
+        "    handle.write(json.dumps(record, sort_keys=True) + '\\n')\n"
+        f"sys.stdout.write(({sha!r} + '\\n') if sys.argv[1] == 'rev-parse' else {porcelain!r})\n"
+        "raise SystemExit(0)\n",
+    )
+    path.chmod(0o755)
+
+
+def _initialize_local_runtime(repo_root: Path) -> None:
+    repo_root.mkdir(parents=True, exist_ok=True)
+    initialize_runtime(repo_root, {"NEXUS_ENV": "test"}, RuntimePorts(*range(21001, 21014)))
+
+
 def _changed_context(repo_root: Path, selection: Selection) -> CapabilityContext:
     return CapabilityContext(repo_root, Workflow.CHANGED, (selection,))
 
@@ -4541,6 +5231,17 @@ def _stub_tools(
             diagnostic=diagnostic if tool != "git" else "",
         )
     return _tool_environment(repo_root)
+
+
+def _write_host_gradle(path: Path, xml: str | None, *, exit_status: int = 0) -> None:
+    _write_executable(path, exit_status=exit_status)
+    if xml is not None:
+        output = (
+            "report = Path('app/build/test-results/testDebugUnitTest/TEST-app.nexus.SampleTest.xml')\n"
+            "report.parent.mkdir(parents=True, exist_ok=True)\n"
+            f"report.write_text({xml!r})\n"
+        )
+        path.write_text(path.read_text().replace("raise SystemExit(", output + "raise SystemExit("))
 
 
 def _write_executable(

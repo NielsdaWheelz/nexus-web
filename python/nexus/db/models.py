@@ -10,9 +10,11 @@ from enum import Enum as PyEnum
 from uuid import UUID
 
 from sqlalchemy import (
+    ARRAY,
     BigInteger,
     Boolean,
     CheckConstraint,
+    Computed,
     Date,
     Enum,
     Float,
@@ -2023,6 +2025,294 @@ class ReaderPublication(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
+    )
+
+
+class ReaderPublicationArtifact(Base):
+    """One verified immutable member of a retained reader generation."""
+
+    __tablename__ = "reader_publication_artifacts"
+
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media.id"), primary_key=True
+    )
+    generation: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    path: Mapped[str] = mapped_column(Text, primary_key=True)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    media_type: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    archive_expanded_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    pdf_page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
+    )
+
+    __table_args__ = (Index("ix_reader_publication_artifacts_storage", "storage_path"),)
+
+
+class ReaderPublicationUnit(Base):
+    """Frozen canonical coordinates and text; current fragments may be replaced."""
+
+    __tablename__ = "reader_publication_units"
+
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    generation: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    unit_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    fragment_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    fragment_idx: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_cp: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_cp: Mapped[int] = mapped_column(Integer, nullable=False)
+    canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
+    word_boundaries: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False)
+    embed_markers: Mapped[list[dict]] = mapped_column(JSONB, nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["media_id", "generation", "unit_key"],
+            [
+                "reader_publication_artifacts.media_id",
+                "reader_publication_artifacts.generation",
+                "reader_publication_artifacts.path",
+            ],
+            name="fk_reader_publication_units_member",
+        ),
+        UniqueConstraint(
+            "media_id", "generation", "ordinal", name="uq_reader_publication_unit_ordinal"
+        ),
+        Index(
+            "ix_reader_publication_nonempty_ordinal",
+            "media_id",
+            "generation",
+            "ordinal",
+            postgresql_where=text("end_cp > start_cp"),
+        ),
+        Index(
+            "ix_reader_publication_unit_fragment",
+            "media_id",
+            "generation",
+            "fragment_id",
+            "start_cp",
+            "ordinal",
+            postgresql_where=text("end_cp > start_cp"),
+        ),
+        # Retained-fragment ownership resolution constrains fragment_id alone and
+        # reads only the owning media. Not partial: a zero-text unit still proves
+        # its fragment belonged to that media.
+        Index("ix_reader_publication_unit_fragment_owner", "fragment_id", "media_id"),
+    )
+
+
+class ReaderPublicationSearchSource(Base):
+    """Worker-prepared normalized search text for one original source extent."""
+
+    __tablename__ = "reader_publication_search_sources"
+
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    generation: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source_ordinal: Mapped[int] = mapped_column(Integer, primary_key=True)
+    fragment_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    raw_codepoints: Mapped[int] = mapped_column(Integer, nullable=False)
+    normalized_codepoints: Mapped[int] = mapped_column(Integer, nullable=False)
+    normalized_text: Mapped[str] = mapped_column(Text, nullable=False, deferred=True)
+    canonical_text: Mapped[str | None] = mapped_column(Text, nullable=True, deferred=True)
+    pdf_page_spans: Mapped[list | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True, deferred=True
+    )
+    pdf_quote_text_ready: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    pdf_page_heights: Mapped[list[float | None] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True, deferred=True
+    )
+
+    __table_args__ = (ForeignKeyConstraint(["media_id"], ["media.id"]),)
+
+
+class ReaderPublicationSearchMap(Base):
+    """Bounded sparse normalized-to-original offset runs; PDF spans keep page identity."""
+
+    __tablename__ = "reader_publication_search_maps"
+
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    generation: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source_ordinal: Mapped[int] = mapped_column(Integer, primary_key=True)
+    normalized_start: Mapped[int] = mapped_column(Integer, primary_key=True)
+    normalized_end: Mapped[int] = mapped_column(Integer, nullable=False)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    run_starts: Mapped[list[int] | None] = mapped_column(
+        ARRAY(Integer), nullable=True, deferred=True
+    )
+    raw_deltas: Mapped[list[int] | None] = mapped_column(
+        ARRAY(Integer), nullable=True, deferred=True
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["media_id", "generation", "source_ordinal"],
+            [
+                "reader_publication_search_sources.media_id",
+                "reader_publication_search_sources.generation",
+                "reader_publication_search_sources.source_ordinal",
+            ],
+            name="fk_reader_search_map_source",
+        ),
+    )
+
+
+class ReaderPublicationTarget(Base):
+    """An immutable navigation point into a particular generation's unit."""
+
+    __tablename__ = "reader_publication_targets"
+
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    generation: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    target_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    unit_key: Mapped[str] = mapped_column(Text, nullable=False)
+    offset_cp: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_cp: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    href_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    href_pathname: Mapped[str | None] = mapped_column(Text, nullable=True)
+    anchor_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["media_id", "generation", "unit_key"],
+            [
+                "reader_publication_units.media_id",
+                "reader_publication_units.generation",
+                "reader_publication_units.unit_key",
+            ],
+            name="fk_reader_publication_targets_unit",
+        ),
+        Index(
+            "ix_reader_publication_target_order", "media_id", "generation", "ordinal", "target_id"
+        ),
+        Index("ix_reader_publication_target_pathname", "href_pathname", postgresql_using="hash"),
+    )
+
+
+class ReaderPublicationAnchor(Base):
+    """An authored EPUB href/id, separate from navigation section identity."""
+
+    __tablename__ = "reader_publication_anchors"
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    generation: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    anchor_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    href_path: Mapped[str] = mapped_column(Text, nullable=False)
+    anchor_id: Mapped[str] = mapped_column(Text, nullable=False)
+    unit_key: Mapped[str] = mapped_column(Text, nullable=False)
+    offset_cp: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["media_id", "generation", "unit_key"],
+            [
+                "reader_publication_units.media_id",
+                "reader_publication_units.generation",
+                "reader_publication_units.unit_key",
+            ],
+            name="fk_reader_publication_anchors_unit",
+        ),
+    )
+
+
+class ReaderPublicationApparatusItem(Base):
+    """An authored apparatus item frozen in one selected publication."""
+
+    __tablename__ = "reader_publication_apparatus_items"
+
+    media_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("media.id"), primary_key=True
+    )
+    generation: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    item_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    stable_key: Mapped[str] = mapped_column(Text, nullable=False)
+    sort_key: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    label_codepoints: Mapped[int | None] = mapped_column(
+        Integer, Computed("char_length(label)", persisted=True), nullable=True
+    )
+    body_codepoints: Mapped[int | None] = mapped_column(
+        Integer, Computed("char_length(body_text)", persisted=True), nullable=True
+    )
+    locator: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    locator_status: Mapped[str] = mapped_column(Text, nullable=False)
+    location: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True),
+        Computed(
+            "locator - ARRAY['exact', 'prefix', 'suffix', 'text_quote_selector']::text[]",
+            persisted=True,
+        ),
+        nullable=True,
+    )
+    confidence: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "media_id", "generation", "ordinal", name="uq_reader_publication_apparatus_order"
+        ),
+        Index("ix_reader_publication_apparatus_identity", "item_id", "generation"),
+    )
+
+
+class ReaderPublicationApparatusEdge(Base):
+    """A directed source relationship with endpoints in the same publication."""
+
+    __tablename__ = "reader_publication_apparatus_edges"
+
+    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    generation: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    edge_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    from_item_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    to_item_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    relation: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["media_id", "generation", "from_item_id"],
+            [
+                "reader_publication_apparatus_items.media_id",
+                "reader_publication_apparatus_items.generation",
+                "reader_publication_apparatus_items.item_id",
+            ],
+            name="fk_reader_publication_apparatus_from",
+        ),
+        ForeignKeyConstraint(
+            ["media_id", "generation", "to_item_id"],
+            [
+                "reader_publication_apparatus_items.media_id",
+                "reader_publication_apparatus_items.generation",
+                "reader_publication_apparatus_items.item_id",
+            ],
+            name="fk_reader_publication_apparatus_to",
+        ),
+        UniqueConstraint(
+            "media_id", "generation", "ordinal", name="uq_reader_publication_apparatus_edge_order"
+        ),
+        Index(
+            "ix_reader_publication_apparatus_from",
+            "media_id",
+            "generation",
+            "from_item_id",
+            "ordinal",
+        ),
+        Index(
+            "ix_reader_publication_apparatus_to",
+            "media_id",
+            "generation",
+            "to_item_id",
+            "ordinal",
+        ),
     )
 
 
@@ -4361,6 +4651,7 @@ class HighlightPdfAnchor(Base):
         nullable=False,
     )
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
     sort_top: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
     sort_left: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
     plain_text_match_status: Mapped[str] = mapped_column(
@@ -6635,6 +6926,7 @@ class ReaderMediaState(Base):
         nullable=False,
     )
     locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    source: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     revision: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,

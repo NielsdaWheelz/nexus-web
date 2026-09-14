@@ -23,6 +23,7 @@ export interface RetainedReaderSelectionController<
   T extends RetainedReaderSelectionSnapshot,
 > {
   readonly visible: T | null;
+  readonly hasCaptured: boolean;
   readonly capture: (input: {
     readonly snapshot: T;
     readonly publication: RetainedReaderSelectionPublication;
@@ -62,7 +63,7 @@ export function useRetainedReaderSelection<
 >(input: {
   readonly sameSemanticSelection: (left: T, right: T) => boolean;
 }): RetainedReaderSelectionController<T> {
-  const [visible, setVisible] = useState<T | null>(null);
+  const [{ visible, hasCaptured }, setPublication] = useState<{ visible: T | null; hasCaptured: boolean }>({ visible: null, hasCaptured: false });
   const capturedRef = useRef<T | null>(null);
   const visibleRef = useRef<T | null>(null);
   const stabilizationTimerRef = useRef<number | null>(null);
@@ -86,7 +87,9 @@ export function useRetainedReaderSelection<
 
   const publish = useCallback((snapshot: T | null) => {
     visibleRef.current = snapshot;
-    setVisible(snapshot);
+    const captured = capturedRef.current !== null;
+    setPublication((current) => current.visible === snapshot && current.hasCaptured === captured
+      ? current : { visible: snapshot, hasCaptured: captured });
   }, []);
 
   const clear = useCallback(() => {
@@ -190,6 +193,7 @@ export function useRetainedReaderSelection<
   return useMemo(
     () => ({
       visible,
+      hasCaptured,
       capture,
       clear,
       retainVisibleOrClear,
@@ -203,6 +207,7 @@ export function useRetainedReaderSelection<
       refreshCaptured,
       retainVisibleOrClear,
       visible,
+      hasCaptured,
     ],
   );
 }

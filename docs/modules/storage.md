@@ -72,7 +72,8 @@ Three durable task modules own all teardown/lifecycle storage deletion
   idempotent and failure retries.
 - **`storage_object_cleanup.py`** — the browser-direct-upload backstop. Every
   in-process object write (`media_source_ingest.py`, `email_ingest_service.py`,
-  `epub_ingest.py`) and each verification-token-fenced candidate copy in
+  `epub_ingest.py`, `reader_publication_artifacts.py`) and each
+  verification-token-fenced candidate copy in
   `media_upload_sessions.py` first locks its owner and reserves at most one
   nonterminal `StorageObjectCleanupJob` per `(owner, storagePath)` before the bounded
   external call: `Armed` -> `Retained` (a short post-write transaction rechecks
@@ -86,7 +87,11 @@ Three durable task modules own all teardown/lifecycle storage deletion
   copies to an immutable verification-token candidate, then persists that winning
   path with the media, source attempt, final object owner, and exact queue job
   atomically. Retry mints a new generation; explicit removal reserves cleanup. A
-  candidate's reservation is keyed to the lease token and its `retainUntil` trails
+  reservation may carry an exact `retainUntil` of its own (reader-publication
+  members set wall-timeout plus grace, which is wider than the write window), so
+  the delete fence is `max(writeMayLandUntil, retainUntil)`; `media_teardown`
+  takes that max over both keys of every armed writer rather than the write
+  window alone. A candidate's reservation is keyed to the lease token and its `retainUntil` trails
   every lease renewal by the write window, so the sweep cannot reclaim bytes a live
   verifier still owns. The reservation CAS reports one owner-agnostic
   in-flight-cleanup condition rather than constructing a domain error: `Media` maps

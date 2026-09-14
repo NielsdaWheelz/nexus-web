@@ -38,7 +38,7 @@ from nexus.schemas.highlights import (
     TypedHighlightOut,
     UpdateHighlightRequest,
 )
-from nexus.schemas.reader import ResolvedHighlightReaderTarget
+from nexus.schemas.reader import ResolvedHighlightReaderTarget, UnresolvedSourceTargetOut
 from nexus.services import locator_resolver, text_quote
 from nexus.services.capabilities import is_text_document_ready
 from nexus.services.highlight_access import (
@@ -103,7 +103,7 @@ def highlight_action_facts(
     return {
         UUID(str(row["id"])): HighlightActionFacts(
             is_owner=UUID(str(row["user_id"])) == viewer_id,
-            edit_bounds_applicable=row["anchor_kind"] == "fragment_offsets",
+            edit_bounds_applicable=row["anchor_kind"] in ("fragment_offsets", "pdf_page_geometry"),
             learn_applicable=bool(str(row["exact"] or "").strip()),
             note_block_id=(
                 notes[UUID(str(row["id"]))][0].id if notes.get(UUID(str(row["id"]))) else None
@@ -396,6 +396,7 @@ def project_highlight(highlight: Highlight, viewer_id: UUID) -> TypedHighlightOu
         anchor = PdfAnchorOut(
             type="pdf_page_geometry",
             media_id=pdf_anchor.media_id,
+            source_sha256=pdf_anchor.source_sha256,
             page_number=pdf_anchor.page_number,
             quads=quads_out,
         )
@@ -451,7 +452,7 @@ def project_highlight_with_links(
     return project_highlights_with_links(db, viewer_id, [highlight])[0]
 
 
-def _fragment_highlight_span_conflict_exists(
+def _fragment_highlight_span_conflict(
     db: Session,
     *,
     viewer_id: UUID,
@@ -459,7 +460,7 @@ def _fragment_highlight_span_conflict_exists(
     start_offset: int,
     end_offset: int,
     highlight_id: UUID | None = None,
-) -> bool:
+) -> UUID | None:
     statement = (
         select(Highlight.id)
         .join(HighlightFragmentAnchor, Highlight.id == HighlightFragmentAnchor.highlight_id)
@@ -474,7 +475,7 @@ def _fragment_highlight_span_conflict_exists(
     )
     if highlight_id is not None:
         statement = statement.where(Highlight.id != highlight_id)
-    return db.execute(statement).scalar_one_or_none() is not None
+    return db.execute(statement).scalar_one_or_none()
 
 
 # =============================================================================
@@ -586,14 +587,19 @@ def _build_fragment_highlight(
     # Serialize duplicate-span checks on the fragment row before anchor writes.
     _lock_fragment_row_for_highlight_write_or_404(db, fragment_id)
     validate_offsets_or_400(fragment.canonical_text, start_offset, end_offset)
-    if _fragment_highlight_span_conflict_exists(
+    conflict_id = _fragment_highlight_span_conflict(
         db,
         viewer_id=viewer_id,
         fragment_id=fragment_id,
         start_offset=start_offset,
         end_offset=end_offset,
-    ):
-        raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight already exists at this range")
+    )
+    if conflict_id is not None:
+        raise ApiError(
+            ApiErrorCode.E_HIGHLIGHT_CONFLICT,
+            "Highlight already exists at this range",
+            details={"existing_highlight_id": str(conflict_id)},
+        )
 
     exact, prefix, suffix = derive_exact_prefix_suffix(
         fragment.canonical_text, start_offset, end_offset
@@ -878,16 +884,23 @@ def get_highlight_reader_target(
     viewer_id: UUID,
     highlight_id: UUID,
 ) -> ResolvedHighlightReaderTarget:
-    """Return the exact current reader target through one masked read boundary."""
+    """Return the exact current reader target through one masked read boundary.
+
+    A readable highlight whose PDF geometry no published binary accounts for is
+    reported as ``UnresolvedSource``, not as a missing highlight: the record
+    exists and the reader owns the explicit reanchoring choice for it.
+    """
     if not can_read_highlight(db, viewer_id, highlight_id):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Highlight unavailable")
-    target = locator_resolver.resolve_highlight_reader_target(
+    resolution = locator_resolver.resolve_highlight_reader_target_disposition(
         db,
         highlight_id=highlight_id,
     )
-    if target is None:
+    if resolution.status == "source_unverified":
+        return UnresolvedSourceTargetOut()
+    if resolution.target is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Highlight unavailable")
-    return target
+    return resolution.target
 
 
 def update_highlight(
@@ -924,6 +937,7 @@ def update_highlight(
             viewer_id,
             highlight,
             PdfBoundsUpdate(
+                reader_generation=anchor_update.reader_generation,
                 page_number=anchor_update.page_number,
                 quads=anchor_update.quads,
                 exact=req.exact or "",
@@ -989,15 +1003,21 @@ def update_highlight(
     if color_changed:
         update_values["color"] = final_color
 
-    if offsets_changed and _fragment_highlight_span_conflict_exists(
-        db,
-        viewer_id=viewer_id,
-        fragment_id=fragment_anchor.fragment_id,
-        start_offset=final_start,
-        end_offset=final_end,
-        highlight_id=highlight_id,
-    ):
-        raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Highlight already exists at this range")
+    if offsets_changed:
+        conflict_id = _fragment_highlight_span_conflict(
+            db,
+            viewer_id=viewer_id,
+            fragment_id=fragment_anchor.fragment_id,
+            start_offset=final_start,
+            end_offset=final_end,
+            highlight_id=highlight_id,
+        )
+        if conflict_id is not None:
+            raise ApiError(
+                ApiErrorCode.E_HIGHLIGHT_CONFLICT,
+                "Highlight already exists at this range",
+                details={"existing_highlight_id": str(conflict_id)},
+            )
 
     try:
         stmt = update(Highlight).where(Highlight.id == highlight_id).values(**update_values)

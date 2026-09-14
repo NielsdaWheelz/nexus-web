@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.orm import Session
 
+from nexus.api.read_admission import AdmittedImageRoute
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_session_factory
 from nexus.responses import ok
@@ -16,9 +17,23 @@ from nexus.schemas.oracle import (
 )
 from nexus.services import oracle as oracle_service
 from nexus.services import oracle_corpus, oracle_plates
-from nexus.services.image_proxy import etags_match
 
 router = APIRouter(tags=["oracle"])
+# Plate reads materialize whole image bytes in the API process exactly as the
+# media image routes do, so they draw on the same qualified image budget.
+plates = APIRouter(tags=["oracle"], route_class=AdmittedImageRoute)
+
+
+def etags_match(if_none_match: str, cached_etag: str) -> bool:
+    """Compare the immutable plate validator with an HTTP If-None-Match list."""
+    cached_unquoted = cached_etag.strip('"')
+    for tag in if_none_match.split(","):
+        tag = tag.strip()
+        if tag.startswith("W/"):
+            tag = tag[2:]
+        if tag.strip('"') in (cached_unquoted, "*"):
+            return True
+    return False
 
 
 @router.post("/oracle/readings", status_code=200)
@@ -102,7 +117,7 @@ def get_oracle_reading(
     return ok(detail)
 
 
-@router.get("/oracle/plates/{image_id}")
+@plates.get("/oracle/plates/{image_id}")
 def get_oracle_plate(image_id: UUID, request: Request) -> Response:
     inm = request.headers.get("If-None-Match")
     metadata = oracle_plates.get_oracle_plate_metadata(
@@ -121,3 +136,6 @@ def get_oracle_plate(image_id: UUID, request: Request) -> Response:
             "ETag": plate.etag,
         },
     )
+
+
+router.include_router(plates)

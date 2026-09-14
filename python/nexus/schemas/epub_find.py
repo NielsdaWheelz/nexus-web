@@ -1,10 +1,15 @@
-"""Strict request and response contracts for EPUB Find."""
+"""Strict scope, literal-query and occurrence contracts shared by reader Find.
+
+Each Find surface declares its own `scope` field: publication scopes carry
+publication section ids, a different type from the EPUB scope, so a shared query
+base deliberately stops short of the scope rather than being overridden with an
+incompatible one.
+"""
 
 from __future__ import annotations
 
 import unicodedata
 from typing import Annotated, Literal
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -22,28 +27,12 @@ class EpubFindSectionScopeIn(_EpubFindModel):
     section_id: Annotated[str, Field(min_length=1, max_length=255)]
 
 
-EpubFindScopeIn = Annotated[
-    EpubFindEntireResourceScopeIn | EpubFindSectionScopeIn,
-    Field(discriminator="kind"),
-]
+class ReaderLiteralFindQueryFields(_EpubFindModel):
+    """The literal query text and matching options, without a scope."""
 
-
-class EpubFindRequest(_EpubFindModel):
-    source_witness_fragment_id: UUID
     query: Annotated[str, Field(min_length=1, max_length=256)]
     match_case: bool
     whole_word: bool
-    scope: EpubFindScopeIn
-
-    @field_validator("source_witness_fragment_id", mode="before")
-    @classmethod
-    def parse_source_witness_fragment_id(cls, value: object) -> object:
-        if not isinstance(value, str):
-            return value
-        try:
-            return UUID(value)
-        except ValueError:
-            return value
 
     @field_validator("query", mode="before")
     @classmethod
@@ -61,40 +50,14 @@ class EpubFindSnippetSegmentOut(_EpubFindModel):
     emphasized: bool
 
 
-class EpubFindOccurrenceOut(_EpubFindModel):
-    section_id: Annotated[str, Field(min_length=1, max_length=255)]
-    section_label: Annotated[str, Field(min_length=1, max_length=512)]
-    fragment_id: UUID
+class ReaderLiteralFindOccurrenceFields(_EpubFindModel):
     fragment_idx: Annotated[int, Field(ge=0)]
     start_offset: Annotated[int, Field(ge=0)]
     end_offset: Annotated[int, Field(gt=0)]
     snippet: Annotated[list[EpubFindSnippetSegmentOut], Field(min_length=1, max_length=3)]
 
     @model_validator(mode="after")
-    def validate_range(self) -> EpubFindOccurrenceOut:
+    def validate_range(self) -> ReaderLiteralFindOccurrenceFields:
         if self.end_offset <= self.start_offset:
             raise ValueError("end_offset must be greater than start_offset")
         return self
-
-
-class EpubFindReadyOut(_EpubFindModel):
-    kind: Literal["Ready"] = "Ready"
-    source_witness_fragment_id: UUID
-    occurrences: Annotated[list[EpubFindOccurrenceOut], Field(min_length=1, max_length=2000)]
-
-
-class EpubFindNoMatchesOut(_EpubFindModel):
-    kind: Literal["NoMatches"] = "NoMatches"
-    source_witness_fragment_id: UUID
-
-
-class EpubFindTooManyMatchesOut(_EpubFindModel):
-    kind: Literal["TooManyMatches"] = "TooManyMatches"
-    source_witness_fragment_id: UUID
-    threshold: Literal[2000] = 2000
-
-
-EpubFindResultOut = Annotated[
-    EpubFindReadyOut | EpubFindNoMatchesOut | EpubFindTooManyMatchesOut,
-    Field(discriminator="kind"),
-]

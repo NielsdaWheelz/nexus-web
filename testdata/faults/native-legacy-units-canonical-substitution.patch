@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyUnits.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyUnits.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyUnits.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyUnits.kt
+@@ -136,7 +136,7 @@
+                         .put("start_cp", canonicalPosition).put("end_cp", canonicalPosition + codePoints)
+                         .put("render_start_cp", canonicalPosition + canonical.codePointCount(0, renderStart - utf16Position))
+                         .put("render_end_cp", canonicalPosition + canonical.codePointCount(0, renderEnd - utf16Position))
+-                        .put("render_nodes", crop.nodes).put("canonical_text", canonical).put("word_boundaries", JSONObject.NULL)
++                        .put("render_nodes", crop.nodes).put("canonical_text", canonical.replace('\n', ' ')).put("word_boundaries", JSONObject.NULL)
+                         .put("assets", JSONArray(references.values)).put("epub_target", epubTarget)
+                         .put("table_contexts", tables).put("document_embeds", JSONArray())
+                     return if (unit.toString().toByteArray().size <= OFFLINE_READING_MAX_PUBLICATION_MEMBER_BYTES) Candidate(crop, mapped, unit, renderStart) else null

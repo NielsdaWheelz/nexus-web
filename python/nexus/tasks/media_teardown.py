@@ -195,9 +195,13 @@ def _compute_cleanup_not_before(db: Session, media_id: UUID, armed: list[JobRow]
     # Floor: always wait at least the object-store clock-skew grace.
     candidates = [now + grace]
     for writer in armed:
-        wmlu = writer.payload.get("writeMayLandUntil")
-        if isinstance(wmlu, str):
-            candidates.append(_parse_iso(wmlu))
+        # Match the reservation's own delete fence exactly: a writer whose committed
+        # owner lands after the write window carries ``retainUntil``, and deleting
+        # before it would race the preparation that is still allowed to publish.
+        for key in ("writeMayLandUntil", "retainUntil"):
+            deadline = writer.payload.get(key)
+            if isinstance(deadline, str):
+                candidates.append(_parse_iso(deadline))
     return max(candidates)
 
 

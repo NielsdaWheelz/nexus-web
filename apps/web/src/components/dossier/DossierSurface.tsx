@@ -18,7 +18,6 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import MachineText from "@/components/ui/MachineText";
 import { toReaderCitationData } from "@/lib/conversations/citations";
-import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import {
@@ -54,9 +53,8 @@ export type DossierCitationActivate = (
 interface DossierSurfaceProps {
   store: DossierControllerStore;
   onViewMediaEvidence: () => void;
-  /** Wired by the pane/controller to route citation clicks through the pane
-   * router; defaults to reader-source dispatch for in-document targets. */
-  onCitationActivate?: DossierCitationActivate;
+  /** The pane/controller owns destination activation and exact source delivery. */
+  onCitationActivate: DossierCitationActivate;
   /** Relays the exact rendered revision's frame-owned Find capability. */
   onFindCapabilityChange?: (
     capability: DossierDocumentFindCapability | null,
@@ -68,14 +66,6 @@ interface DossierSurfaceProps {
   onRevisionSelect?: (revisionRef: string | null) => void;
 }
 
-const defaultCitationActivate: DossierCitationActivate = (
-  _activation,
-  target,
-  _disposition,
-) => {
-  if (target) dispatchReaderSourceActivation(target);
-};
-
 const ignoreFindCapability = (
   _capability: DossierDocumentFindCapability | null,
 ) => {};
@@ -84,7 +74,7 @@ const ignoreFindRequest = () => {};
 export default function DossierSurface({
   store,
   onViewMediaEvidence,
-  onCitationActivate = defaultCitationActivate,
+  onCitationActivate,
   onFindCapabilityChange = ignoreFindCapability,
   onFindRequested = ignoreFindRequest,
   onRevisionSelect,

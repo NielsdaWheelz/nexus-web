@@ -14,6 +14,43 @@ import java.util.UUID
 
 class NexusOriginClientTest {
     @Test
+    fun `preview artwork uses the fixed owned proxy and retains capacity retry guidance`() = runBlocking {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(503).addHeader("Retry-After", "2"))
+        server.start()
+        val cookies = FakeCookieStore("session=owned")
+        try {
+            val client = NexusOriginClient(server.url("/").toString(), cookies)
+            val source = "https://images.example/cover.jpg?edition=2&size=large"
+            val response = client.getArtwork(source, NEXUS_ORIGIN_CALL_DEADLINE_MS)
+            val request = server.takeRequest()
+            assertEquals("/api/media/image", request.requestUrl!!.encodedPath)
+            assertEquals(source, request.requestUrl!!.queryParameter("url"))
+            assertEquals("session=owned", request.getHeader("Cookie"))
+            assertEquals(server.url("/").toString().removeSuffix("/"), request.getHeader("Origin"))
+            assertEquals("identity", request.getHeader("Accept-Encoding"))
+            assertEquals(NexusArtworkResponse.Rejected(503, 2000), response)
+        } finally { server.shutdown() }
+    }
+
+    @Test
+    fun `artwork advertised over the encoded limit is rejected before its absent body is read`() = runBlocking {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(200)
+            .addHeader("Content-Type", "image/png")
+            .addHeader("X-Nexus-Image-Width", "1")
+            .addHeader("X-Nexus-Image-Height", "1")
+            .setHeader("Content-Length", MAX_ARTWORK_ENCODED_BYTES + 1))
+        server.start()
+        try {
+            val client = NexusOriginClient(server.url("/").toString(), FakeCookieStore(null))
+            val failure = runCatching { client.getArtwork("https://images.example/cover.png", NEXUS_ORIGIN_CALL_DEADLINE_MS) }.exceptionOrNull()
+            assertTrue("advertised artwork limit did not fail at its header boundary", failure is IllegalArgumentException)
+            assertEquals("artwork advertised more than the encoded byte limit", failure?.message)
+        } finally { server.shutdown() }
+    }
+
+    @Test
     fun `listening request uses only fixed owned path origin and WebView cookies`() =
         runBlocking {
             val server = MockWebServer()

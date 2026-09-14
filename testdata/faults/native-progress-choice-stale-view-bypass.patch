@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
+@@ -492,7 +492,7 @@
+                 "downloaded copy changed; reopen it before resolving progress"
+             }
+             val observed = readProgress(binding.bindingId, mediaId, installed.readerGeneration)
+-            if (!strictJsonSemanticallyEqual(expected, readerProgressViewJson(observed))) return@synchronized observed
++            if (false && !strictJsonSemanticallyEqual(expected, readerProgressViewJson(observed))) return@synchronized observed
+             val baseline = readBaseline(binding.bindingId, mediaId)
+                 ?: error("offline reading baseline is missing")
+             val pending = readPending(binding.bindingId, mediaId)

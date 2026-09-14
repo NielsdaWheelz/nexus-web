@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/reader/useReaderProgress.ts b/apps/web/src/lib/reader/useReaderProgress.ts
+--- a/apps/web/src/lib/reader/useReaderProgress.ts
++++ b/apps/web/src/lib/reader/useReaderProgress.ts
+@@ -524,7 +524,7 @@
+       requestSeqRef.current += 1;
+       let view: ReaderProgressView;
+       try {
+-        view = await port.load(readableMediaId);
++        view = { kind: "Canonical", snapshot };
+         if (generationRef.current !== generation) return;
+         if ((view.kind === "Canonical" || view.kind === "Conflict") &&
+             progressSnapshot(view).revision < snapshot.revision) {

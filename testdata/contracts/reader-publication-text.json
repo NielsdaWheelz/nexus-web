@@ -1,0 +1,44 @@
+{
+  "contractVersion": 1,
+  "boundaryPolicy": "regex.V0|regex.WORD on full canonical fragment",
+  "cases": [
+    {
+      "name": "format-inside-word",
+      "html": "<p>a⁠b</p>",
+      "canonical": "a⁠b",
+      "wordBoundaries": [
+        0,
+        3
+      ]
+    },
+    {
+      "name": "regional-indicator-pairs",
+      "html": "<p>🇺🇸🇨🇦</p>",
+      "canonical": "🇺🇸🇨🇦",
+      "wordBoundaries": [
+        0,
+        2,
+        4
+      ]
+    },
+    {
+      "name": "nfc-across-inline-nodes",
+      "html": "<p>e<span>́</span></p>",
+      "canonical": "é",
+      "wordBoundaries": [
+        0,
+        1
+      ]
+    },
+    {
+      "name": "astral-before-letter",
+      "html": "<p>🧠x</p>",
+      "canonical": "🧠x",
+      "wordBoundaries": [
+        0,
+        1,
+        2
+      ]
+    }
+  ]
+}

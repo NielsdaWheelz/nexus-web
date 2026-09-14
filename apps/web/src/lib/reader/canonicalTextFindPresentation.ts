@@ -24,13 +24,27 @@ export interface CanonicalTextFindPresentationInput {
   readonly activeKey: PaneFindResultKey | null;
 }
 
+export interface CanonicalTextFindWindowInput {
+  readonly parts: readonly {
+    readonly fragmentId: string;
+    readonly startCp: number;
+    readonly endCp: number;
+    readonly renderStartCp: number;
+    readonly cursor: CanonicalCursorResult;
+  }[];
+  readonly viewport: HTMLElement;
+  readonly targets: readonly CanonicalTextFindPresentationTarget[];
+  readonly activeKey: PaneFindResultKey | null;
+}
+
 export interface CanonicalTextFindPresentationOwner {
   publish(input: CanonicalTextFindPresentationInput): void;
+  publishWindow(input: CanonicalTextFindWindowInput): { readonly activeComplete: boolean };
   clear(): void;
 }
 
 function resolveVisibleTarget(
-  input: CanonicalTextFindPresentationInput,
+  input: Pick<CanonicalTextFindPresentationInput, "cursor" | "viewport">,
   target: CanonicalTextFindPresentationTarget,
 ): Range[] {
   const ranges = resolveCanonicalTextRanges(
@@ -72,6 +86,30 @@ export function createCanonicalTextFindPresentationOwner(): CanonicalTextFindPre
         }
       }
       registry.publish({ all, active });
+    },
+    publishWindow(input) {
+      const all: Range[] = [];
+      const active: Range[] = [];
+      const activeTarget = input.targets.find((target) => target.key === input.activeKey);
+      let covered = activeTarget?.startCp ?? 0;
+      for (const part of input.parts) {
+        if (activeTarget?.fragmentId === part.fragmentId && part.startCp <= covered) {
+          covered = Math.max(covered, Math.min(part.endCp, activeTarget.endCp));
+        }
+        for (const target of input.targets) {
+          if (target.fragmentId !== part.fragmentId) continue;
+          const start = Math.max(target.startCp, part.renderStartCp);
+          const end = Math.min(target.endCp, part.renderStartCp + part.cursor.length);
+          if (end <= start) continue;
+          const ranges = resolveVisibleTarget({ cursor: part.cursor, viewport: input.viewport }, {
+            ...target, startCp: start - part.renderStartCp, endCp: end - part.renderStartCp,
+          });
+          all.push(...ranges);
+          if (target.key === input.activeKey) active.push(...ranges);
+        }
+      }
+      registry.publish({ all, active });
+      return { activeComplete: activeTarget !== undefined && covered === activeTarget.endCp };
     },
     clear() {
       registry.clear();

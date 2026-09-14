@@ -7,13 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
+from nexus.config import get_settings
 from nexus.errors import ApiErrorCode
 from nexus.services.url_normalize import MAX_URL_LENGTH
-
-_PRODUCTION_NODE_EXECUTABLE = "/usr/local/bin/node"
-_PRODUCTION_NODE_INGEST_SCRIPT = Path("/app/node/ingest/ingest.mjs")
-_LOCAL_NODE_EXECUTABLE = "node"
-_LOCAL_NODE_INGEST_SCRIPT = Path(__file__).resolve().parents[3] / "node/ingest/ingest.mjs"
 
 DEFAULT_NODE_TIMEOUT_MS = 30_000
 SUBPROCESS_TIMEOUT_S = 40
@@ -81,29 +77,26 @@ class NodeIngestProtocolDefect(RuntimeError):
     """The owned Node process violated its closed result contract."""
 
 
-def local_node_ingest_command() -> NodeIngestCommand:
-    """Resolve the checked-out ingress command for local and test composition."""
-    executable = shutil.which(_LOCAL_NODE_EXECUTABLE)
-    if executable is None:
-        raise NodeIngestProtocolDefect("local Node.js executable is unavailable")
-    return NodeIngestCommand(
-        executable=Path(executable).resolve(strict=True).as_posix(),
-        script=_LOCAL_NODE_INGEST_SCRIPT,
-    )
-
-
 def run_node_ingest(
     url: str,
     timeout_ms: int = DEFAULT_NODE_TIMEOUT_MS,
     *,
     command: NodeIngestCommand | None = None,
 ) -> IngestResult | IngestError:
-    """Run the image-baked production ingress or an explicit local/test seam."""
-    resolved_command = command or NodeIngestCommand(
-        executable=_PRODUCTION_NODE_EXECUTABLE,
-        script=_PRODUCTION_NODE_INGEST_SCRIPT,
-    )
-    script = resolved_command.script
+    """Run the explicitly configured ingress through its closed subprocess protocol."""
+    if command is None:
+        executable = shutil.which("node")
+        if executable is None:
+            # justify-defect: the worker's composed runtime requires Node.
+            raise NodeIngestProtocolDefect("Node.js executable is unavailable")
+        command = NodeIngestCommand(
+            executable=Path(executable).resolve(strict=True).as_posix(),
+            script=get_settings().node_ingest_script,
+        )
+    script = command.script
+    if not script.is_absolute():
+        # justify-defect: runtime composition must name one absolute entrypoint.
+        raise NodeIngestProtocolDefect("Node ingest script must be an absolute path")
     if not script.is_file():
         # justify-defect: the deployed owned script is required infrastructure.
         raise NodeIngestProtocolDefect("Node ingest script is unavailable")
@@ -112,7 +105,7 @@ def run_node_ingest(
 
     try:
         proc = subprocess.Popen(
-            [resolved_command.executable, str(script)],
+            [command.executable, str(script)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

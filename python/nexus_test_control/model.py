@@ -94,11 +94,54 @@ class Capability(StrEnum):
     ANDROID_DEVICE = "android-device"
     ANDROID_RELEASE = "android-release"
     RELEASE_ARTIFACT = "release-artifact"
+    API_CAPACITY = "api-capacity"
     DOCTOR = "doctor"
     ANDROID_VISUAL = "android-visual"
 
 
 PRIORITY_RISK_DIRECT_CAPABILITY_OWNERS = frozenset({Capability.STATIC_PLATFORM})
+
+API_CAPACITY_BASELINE_PROOF = "python/tests/capacity/test_api_capacity.py::test_incident_baseline"
+API_CAPACITY_BASELINE_READER_PROOF = (
+    "python/tests/capacity/test_api_reader_capacity.py::test_incident_reader_workload"
+)
+API_CAPACITY_CANDIDATE_READER_PROOF = "python/tests/capacity/test_api_reader_capacity.py::test_candidate_reader_admission_under_incident_overlap"
+API_CAPACITY_BASELINE_ARTWORK_PROOF = (
+    "python/tests/capacity/test_api_reader_capacity.py::test_incident_artwork_overlap"
+)
+API_CAPACITY_CANDIDATE_ARTWORK_PROOF = (
+    "python/tests/capacity/test_api_reader_capacity.py::test_candidate_artwork_overlap"
+)
+API_CAPACITY_CANDIDATE_METADATA_PROOF = (
+    "python/tests/capacity/test_api_reader_capacity.py::test_candidate_metadata_overlap"
+)
+API_CAPACITY_CANDIDATE_WORKER_PROOF = (
+    "python/tests/capacity/test_api_reader_capacity.py::test_candidate_background_worker_overlap"
+)
+API_CAPACITY_CANDIDATE_EPUB_WORKER_PROOF = "python/tests/capacity/test_api_reader_capacity.py::test_candidate_epub_background_worker_overlap"
+API_CAPACITY_CANDIDATE_DENSE_EPUB_WORKER_PROOF = "python/tests/capacity/test_api_reader_capacity.py::test_candidate_dense_epub_background_worker_overlap"
+API_CAPACITY_DATABASE_PROOFS = frozenset(
+    {
+        API_CAPACITY_BASELINE_READER_PROOF,
+        API_CAPACITY_BASELINE_ARTWORK_PROOF,
+        API_CAPACITY_CANDIDATE_READER_PROOF,
+        API_CAPACITY_CANDIDATE_ARTWORK_PROOF,
+        API_CAPACITY_CANDIDATE_METADATA_PROOF,
+        API_CAPACITY_CANDIDATE_WORKER_PROOF,
+        API_CAPACITY_CANDIDATE_EPUB_WORKER_PROOF,
+        API_CAPACITY_CANDIDATE_DENSE_EPUB_WORKER_PROOF,
+    }
+)
+API_CAPACITY_COMPLETE_PROOFS = (
+    "python/tests/capacity/test_api_capacity.py::test_candidate_import_envelope",
+    API_CAPACITY_CANDIDATE_READER_PROOF,
+    API_CAPACITY_CANDIDATE_ARTWORK_PROOF,
+    API_CAPACITY_CANDIDATE_METADATA_PROOF,
+    API_CAPACITY_CANDIDATE_WORKER_PROOF,
+    API_CAPACITY_CANDIDATE_EPUB_WORKER_PROOF,
+    API_CAPACITY_CANDIDATE_DENSE_EPUB_WORKER_PROOF,
+    "python/tests/capacity/test_capacity_container_cleanup.py::test_container_cleanup_preserves_foreign_owners",
+)
 
 
 class PriorityRiskId(StrEnum):
@@ -127,7 +170,7 @@ class PriorityRiskId(StrEnum):
 
 
 PRIORITY_RISK_FLOOR = frozenset(PriorityRiskId)
-PRIORITY_RISK_OWNERSHIP_SHA256 = "abc80697ccb7343b9b09eea5f1e9a4d768e86975777b088780d6d5dd30a365d9"
+PRIORITY_RISK_OWNERSHIP_SHA256 = "add57541fb7791ac5f4556c8a8d44eb4e0debb63005663c460d07e3fee26ee00"
 
 
 class ResourceKind(StrEnum):
@@ -141,6 +184,7 @@ class ResourceKind(StrEnum):
     CODEX_GENERATION_PEER = "codex-generation-peer"
     PROVIDER_API_PEER = "provider-api-peer"
     PROCESS = "process"
+    CONTAINER = "container"
     EXTENSION_PROFILE = "extension-profile"
     BUILD_ARTIFACT = "build-artifact"
     LOCK = "lock"
@@ -382,6 +426,7 @@ _FULL_NON_BROWSER = (
     Capability.LLM_TOOLS,
     Capability.INGEST_NODE,
     Capability.LLM_EVAL,
+    Capability.API_CAPACITY,
     Capability.ANDROID_HOST,
 )
 
@@ -399,6 +444,7 @@ _CHANGED_AFFECTED = (
     Capability.COMPONENT,
     Capability.MIGRATIONS,
     Capability.JOURNEYS_ALL,
+    Capability.API_CAPACITY,
 )
 
 WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
@@ -496,6 +542,10 @@ DEFERRED_CAPABILITY_OWNER: Mapping[Capability, Workflow] = MappingProxyType(
 
 _TEST_ROUTING_CONTRACT = "\n".join(
     (
+        f"qualification|api-capacity|{API_CAPACITY_BASELINE_PROOF}",
+        f"qualification|api-capacity|{API_CAPACITY_BASELINE_READER_PROOF}",
+        f"qualification|api-capacity|{API_CAPACITY_BASELINE_ARTWORK_PROOF}",
+        *(f"complete-proof|api-capacity|{proof}" for proof in API_CAPACITY_COMPLETE_PROOFS),
         *(
             f"workflow|{workflow.value}|{requirement.capability.value}|{requirement.scope.value}"
             for workflow, definition in WORKFLOW_REGISTRY.items()

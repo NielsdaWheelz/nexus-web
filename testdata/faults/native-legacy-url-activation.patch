@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyUnits.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyUnits.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyUnits.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyUnits.kt
+@@ -108,7 +108,7 @@
+                             val attribute = attributes.getJSONObject(item)
+                             val historicalName = (if (attribute.isNull("namespace")) attribute.getString("name")
+                                 else "${attribute.getString("namespace")}:${attribute.getString("name")}").lowercase(Locale.ROOT)
+-                            if (historicalName in LEGACY_URL_ATTRIBUTES) {
++                            if (false && historicalName in LEGACY_URL_ATTRIBUTES) {
+                                 val value = attribute.getString("value")
+                                 require(!LEGACY_REMOTE_URL.containsMatchIn(value))
+                                 require((tag == "a" && historicalName == "href" && value.startsWith('#')) ||

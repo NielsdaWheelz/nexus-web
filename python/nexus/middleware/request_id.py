@@ -17,8 +17,9 @@ import re
 import time
 import uuid
 
-from fastapi import Request, Response
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from fastapi import Request
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from nexus.logging import clear_request_context, get_logger, set_request_context
 from nexus.services.redact import safe_kv
@@ -85,7 +86,7 @@ def generate_request_id() -> str:
     return str(uuid.uuid4())
 
 
-class RequestIDMiddleware(BaseHTTPMiddleware):
+class RequestIDMiddleware:
     """Middleware for X-Request-ID handling and access logging.
 
     This middleware:
@@ -101,12 +102,16 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         log_requests: If True, log access entries for each request.
     """
 
-    def __init__(self, app, log_requests: bool = True):
-        super().__init__(app)
+    def __init__(self, app: ASGIApp, log_requests: bool = True):
+        self.app = app
         self.log_requests = log_requests
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Process request with request ID handling."""
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        request = Request(scope, receive)
         start_time = time.monotonic()
 
         # Extract and validate request ID from header
@@ -126,10 +131,14 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             method=request.method,
         )
 
-        try:
-            # Process request through the rest of the middleware stack
-            response = await call_next(request)
+        status_code = 500
 
+        async def correlated_send(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] != "http.response.start":
+                await send(message)
+                return
+            status_code = message["status"]
             # Get user_id if auth middleware ran (set on request.state.viewer)
             viewer = getattr(request.state, "viewer", None)
             user_id = str(viewer.user_id) if viewer else None
@@ -137,25 +146,28 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
                 set_request_context(request_id, user_id)
 
             # Always echo request ID in response
-            response.headers[REQUEST_ID_HEADER] = request_id
+            headers = MutableHeaders(scope=message)
+            headers[REQUEST_ID_HEADER] = request_id
             duration_ms = (time.monotonic() - start_time) * 1000
-            downstream_timings = response.headers.getlist("Server-Timing")
+            downstream_timings = headers.getlist("Server-Timing")
             api_timing = f"nexus_api;dur={duration_ms:.2f}"
-            response.headers["Server-Timing"] = (
+            headers["Server-Timing"] = (
                 ", ".join((api_timing, *downstream_timings)) if downstream_timings else api_timing
             )
+            await send(message)
+
+        try:
+            await self.app(scope, receive, correlated_send)
 
             # Log access entry.
             if self.log_requests:
                 logger.info(
                     "http.request.completed",
                     **safe_kv(
-                        status_code=response.status_code,
-                        duration_ms=round(duration_ms, 2),
+                        status_code=status_code,
+                        duration_ms=round((time.monotonic() - start_time) * 1000, 2),
                     ),
                 )
-
-            return response
 
         # justify-ignore-error: middleware observability boundary logs context
         # and re-raises for the global unhandled-exception handler.

@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyText.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyText.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyText.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyText.kt
+@@ -52,7 +52,7 @@
+             }
+             page.flip()
+         }
+-        return page.getChar((index - pageStart) * 2)
++        return 'x'
+     }
+ 
+     fun iterator(): CharacterIterator = Cursor(0)

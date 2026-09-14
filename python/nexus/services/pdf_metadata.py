@@ -13,6 +13,13 @@ from nexus.services.contributor_taxonomy import (
 from nexus.services.pdf_ingest import PdfExtractionResult
 
 
+def pdf_publication_title(current_title: str, result: PdfExtractionResult) -> str:
+    """Use embedded titles only when the current name is still a PDF filename."""
+    if result.pdf_title and current_title and ".pdf" in current_title.lower():
+        return result.pdf_title[:255]
+    return current_title
+
+
 def persist_pdf_metadata(db: Session, media: Media, result: PdfExtractionResult) -> None:
     """Persist PDF document metadata (title/description/date) — never credits.
 
@@ -20,8 +27,7 @@ def persist_pdf_metadata(db: Session, media: Media, result: PdfExtractionResult)
     typed observation (:func:`build_pdf_author_observation`) that the ingest
     runner applies through the author facade in a fresh session (spec 2.4).
     """
-    if result.pdf_title and media.title and ".pdf" in media.title.lower():
-        media.title = result.pdf_title[:255]
+    media.title = pdf_publication_title(media.title, result)
 
     if result.pdf_subject and not media.description:
         media.description = result.pdf_subject[:2000]

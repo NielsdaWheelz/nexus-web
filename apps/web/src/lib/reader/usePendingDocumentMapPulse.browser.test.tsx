@@ -6,6 +6,7 @@ import { usePendingDocumentMapPulse } from "./usePendingDocumentMapPulse";
 
 function pulseTarget(highlightId: string): ReaderPulseTarget {
   return {
+    paneId: "reader-pane",
     mediaId: "media-1",
     highlightId,
     locator: {

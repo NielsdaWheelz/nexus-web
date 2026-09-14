@@ -8,7 +8,7 @@ from typing import Literal, assert_never, cast
 from uuid import UUID
 
 from sqlalchemy import delete, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.auth.permissions import can_read_media
 from nexus.db.models import (
@@ -29,9 +29,13 @@ from nexus.schemas.media import (
     DocumentEmbedProvider,
     DocumentEmbedProviderRefOut,
     DocumentEmbedResolutionStatus,
+    DocumentEmbedSource,
+    DocumentEmbedSourceFields,
     DocumentEmbedSourceShape,
     DocumentEmbedSummaryOut,
+    DocumentEmbedTargetMaterialized,
     DocumentEmbedTargetOut,
+    DocumentEmbedTargetTerminal,
     DocumentEmbedTextOut,
     DocumentEmbedUrlOut,
 )
@@ -40,6 +44,7 @@ from nexus.services.playback_source import derive_playback_source
 from nexus.services.resource_graph.edges import replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import EdgeCreate
+from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,42 +53,26 @@ class DocumentEmbedTargetAcceptSource:
     kind: Literal["accept_source"] = field(default="accept_source", init=False)
 
 
-@dataclass(frozen=True, slots=True)
-class DocumentEmbedTargetMaterialized:
-    media_id: UUID
-    kind: Literal["materialized"] = field(default="materialized", init=False)
-
-
-@dataclass(frozen=True, slots=True)
-class DocumentEmbedTargetTerminal:
-    status: Literal["unsupported", "failed"]
-    error_code: str | None
-    error_message: str | None
-    kind: Literal["terminal"] = field(default="terminal", init=False)
-
-
 type DocumentEmbedTargetOutcome = (
     DocumentEmbedTargetAcceptSource | DocumentEmbedTargetMaterialized | DocumentEmbedTargetTerminal
 )
 
 
-@dataclass(frozen=True, slots=True)
-class DocumentEmbedArtifactOccurrence:
+class DocumentEmbedArtifactOccurrence(DocumentEmbedSourceFields):
     fragment_id: UUID
-    ordinal: int
-    occurrence_key: str
-    provider: DocumentEmbedProvider
-    embed_kind: DocumentEmbedKind
-    source_shape: DocumentEmbedSourceShape
-    source_url: str | None
-    canonical_source_url: str | None
-    provider_target_ref: str | None
-    title: str | None
-    authored_text: str | None
-    placeholder_text: str
-    canonical_start_offset: int | None
-    canonical_end_offset: int | None
     target: DocumentEmbedTargetOutcome
+
+
+class _EmbedProjection(DocumentEmbedSourceFields):
+    media_id: UUID
+    fragment_id: UUID | None
+    resolution_status: DocumentEmbedResolutionStatus
+    target_media_id: UUID | None
+    error_code: str | None
+    error_message: str | None
+    description: str | None
+    thumbnail_url: str | None
+    document_order_key: str
 
 
 class DocumentEmbedLockSetChanged(Exception):
@@ -92,6 +81,107 @@ class DocumentEmbedLockSetChanged(Exception):
     def __init__(self, media_id: UUID) -> None:
         super().__init__(str(media_id))
         self.media_id = media_id
+
+
+def prepare_document_embed_sources(
+    session_factory: sessionmaker[Session],
+    *,
+    media_id: UUID,
+    owner_user_id: UUID,
+    fence: SourcePublicationFence,
+    occurrences: Sequence[DocumentEmbedArtifactOccurrence],
+    request_id: str | None,
+) -> tuple[tuple[DocumentEmbedArtifactOccurrence, ...], frozenset[UUID]]:
+    """Commit child acceptance and dispatch before freezing the parent members.
+
+    A valid child can survive failed parent preparation. Its existing durable
+    source attempt remains the sole retry owner; no publication read fetches it.
+    """
+    from nexus.services.media_source_ingest import (
+        accept_embedded_source,
+        enqueue_accepted_source_attempt_in_transaction,
+        reusable_embedded_source_media_ids,
+    )
+
+    if not occurrences:
+        return (), frozenset()
+    urls = [
+        occurrence.target.canonical_url
+        for occurrence in occurrences
+        if isinstance(occurrence.target, DocumentEmbedTargetAcceptSource)
+    ]
+    locked_ids: set[UUID] = {
+        occurrence.target.media_id
+        for occurrence in occurrences
+        if isinstance(occurrence.target, DocumentEmbedTargetMaterialized)
+    }
+    for _lock_set_attempt in range(3):
+        with session_factory() as db:
+            locked_ids.update(
+                reusable_embedded_source_media_ids(db, viewer_id=owner_user_id, urls=urls)
+            )
+
+        def accept(db: Session, _attempt: object) -> tuple[DocumentEmbedArtifactOccurrence, ...]:
+            library_ids = library_entries.admin_non_default_library_ids_for_media(
+                db, viewer_id=owner_user_id, media_id=media_id
+            )
+            accepted_ids: set[UUID] = set()
+            sources: list[DocumentEmbedArtifactOccurrence] = []
+            for occurrence in occurrences:
+                if not isinstance(occurrence.target, DocumentEmbedTargetAcceptSource):
+                    sources.append(occurrence)
+                    continue
+                try:
+                    accepted = accept_embedded_source(
+                        db=db,
+                        viewer_id=owner_user_id,
+                        url=occurrence.target.canonical_url,
+                        parent_media_id=media_id,
+                        document_embed_key=occurrence.occurrence_key,
+                        library_ids=library_ids,
+                        request_id=request_id,
+                    )
+                except InvalidRequestError as exc:
+                    target = DocumentEmbedTargetTerminal(
+                        status="failed", error_code=exc.code.value, error_message=exc.message
+                    )
+                else:
+                    if (
+                        not accepted.needs_enqueue
+                        and accepted.media_id not in accepted_ids
+                        and accepted.media_id not in locked_ids
+                    ):
+                        raise DocumentEmbedLockSetChanged(accepted.media_id)
+                    if accepted.needs_enqueue:
+                        enqueue_accepted_source_attempt_in_transaction(
+                            db,
+                            media_id=accepted.media_id,
+                            attempt_id=accepted.source_attempt_id,
+                            actor_user_id=owner_user_id,
+                            request_id=request_id,
+                        )
+                    accepted_ids.add(accepted.media_id)
+                    target = DocumentEmbedTargetMaterialized(media_id=accepted.media_id)
+                sources.append(occurrence.model_copy(update={"target": target}))
+            return tuple(sources)
+
+        try:
+            sources = run_source_publication_phase(
+                session_factory=session_factory,
+                label="accept_document_embed_sources",
+                fence=fence,
+                media_ids=(media_id, *locked_ids),
+                mutate=accept,
+            )
+            locked_ids.update(
+                source.target.media_id
+                for source in sources
+                if isinstance(source.target, DocumentEmbedTargetMaterialized)
+            )
+            return sources, frozenset(locked_ids)
+        except DocumentEmbedLockSetChanged as exc:
+            locked_ids.add(exc.media_id)
+    raise AssertionError("document embed source lock set did not stabilize")
 
 
 def delete_document_embed_artifacts(db: Session, *, owner_user_id: UUID, media_id: UUID) -> None:
@@ -132,14 +222,9 @@ def replace_document_embed_artifact(
     extraction_error_message: str | None,
     request_id: str | None,
     locked_existing_target_media_ids: frozenset[UUID],
-) -> list[tuple[UUID, UUID]]:
+) -> None:
     edge_viewer_ids = {*_document_embed_edge_viewer_ids(db, media_id=media_id), owner_user_id}
     delete_document_embed_artifacts(db, owner_user_id=owner_user_id, media_id=media_id)
-    queued_children: list[tuple[UUID, UUID]] = []
-    accepted_target_media_ids: set[UUID] = set()
-    library_ids = library_entries.admin_non_default_library_ids_for_media(
-        db, viewer_id=owner_user_id, media_id=media_id
-    )
     rows: list[DocumentEmbed] = []
     for occurrence in occurrences:
         target_media_id: UUID | None = None
@@ -148,42 +233,25 @@ def replace_document_embed_artifact(
         diagnostics: dict[str, object] = {}
         target = occurrence.target
         if isinstance(target, DocumentEmbedTargetAcceptSource):
-            from nexus.services.media_source_ingest import accept_embedded_source
-
-            try:
-                accepted = accept_embedded_source(
-                    db=db,
-                    viewer_id=owner_user_id,
-                    url=target.canonical_url,
-                    parent_media_id=media_id,
-                    document_embed_key=occurrence.occurrence_key,
-                    library_ids=library_ids,
-                    request_id=request_id,
-                )
-            except InvalidRequestError as exc:
-                resolution_status = "failed"
-                error_code = exc.code.value
-                error_message = exc.message
-            else:
-                target_media_id = accepted.media_id
-                if (
-                    not accepted.needs_enqueue
-                    and target_media_id not in accepted_target_media_ids
-                    and target_media_id not in locked_existing_target_media_ids
-                ):
-                    raise DocumentEmbedLockSetChanged(target_media_id)
-                diagnostics["child_source_attempt_id"] = str(accepted.source_attempt_id)
-                resolution_status = _resolution_from_child(
-                    accepted.processing_status, accepted.source_attempt_status
-                )
-                if accepted.needs_enqueue:
-                    accepted_target_media_ids.add(accepted.media_id)
-                    queued_children.append((accepted.media_id, accepted.source_attempt_id))
+            raise AssertionError("Parent publication requires already accepted embed sources")
         elif isinstance(target, DocumentEmbedTargetMaterialized):
             target_media_id = target.media_id
-            resolution_status = "resolved"
-            error_code = None
-            error_message = None
+            if target_media_id not in locked_existing_target_media_ids:
+                raise AssertionError("Parent publication lacks its accepted child media fence")
+            child = db.get(Media, target_media_id)
+            if child is None:
+                from nexus.services.reader_publication import ReaderPublicationBusy
+
+                raise ReaderPublicationBusy()
+            resolution_status = (
+                "resolved"
+                if child.processing_status == ProcessingStatus.ready_for_reading
+                else "failed"
+                if child.processing_status == ProcessingStatus.failed
+                else "resolving"
+            )
+            error_code = child.last_error_code if resolution_status == "failed" else None
+            error_message = child.last_error_message if resolution_status == "failed" else None
         elif isinstance(target, DocumentEmbedTargetTerminal):
             resolution_status = target.status
             error_code = target.error_code
@@ -193,6 +261,7 @@ def replace_document_embed_artifact(
 
         rows.append(
             DocumentEmbed(
+                id=occurrence.id,
                 media_id=media_id,
                 fragment_id=occurrence.fragment_id,
                 source_attempt_id=source_attempt_id,
@@ -229,7 +298,6 @@ def replace_document_embed_artifact(
     )
     for viewer_id in sorted(edge_viewer_ids):
         _replace_graph_edges(db, viewer_id=viewer_id, media_id=media_id, rows=rows)
-    return queued_children
 
 
 def document_embed_summaries_for_media(
@@ -309,6 +377,34 @@ def list_document_embeds_for_fragments(
             continue
         out.setdefault(row.fragment_id, []).append(_embed_out(db, viewer_id=viewer_id, row=row))
     return out
+
+
+def capture_document_embed_sources(
+    db: Session, *, media_id: UUID
+) -> dict[UUID, tuple[DocumentEmbedSource, ...]]:
+    """Worker-only source capture in the same snapshot as the canonical fragments."""
+    fragments: dict[UUID, list[DocumentEmbedSource]] = {}
+    for row in db.scalars(
+        select(DocumentEmbed)
+        .where(DocumentEmbed.media_id == media_id, DocumentEmbed.fragment_id.is_not(None))
+        .order_by(DocumentEmbed.fragment_id, DocumentEmbed.ordinal, DocumentEmbed.id)
+    ):
+        if row.fragment_id is None:
+            continue
+        target = (
+            DocumentEmbedTargetMaterialized(media_id=row.target_media_id)
+            if row.target_media_id is not None
+            else DocumentEmbedTargetTerminal(
+                status="unsupported" if row.resolution_status == "unsupported" else "failed",
+                error_code=row.error_code,
+                error_message=row.error_message,
+            )
+        )
+        fields = DocumentEmbedSourceFields.model_validate(row, from_attributes=True)
+        fragments.setdefault(row.fragment_id, []).append(
+            DocumentEmbedSource(**fields.model_dump(), target=target)
+        )
+    return {key: tuple(sources) for key, sources in fragments.items()}
 
 
 def list_document_embeds_for_media(
@@ -530,16 +626,6 @@ def _document_embed_edge_viewer_ids(db: Session, *, media_id: UUID) -> set[UUID]
     )
 
 
-def _resolution_from_child(
-    processing_status: str, source_attempt_status: str
-) -> Literal["resolving", "resolved", "failed"]:
-    if processing_status == "ready_for_reading":
-        return "resolved"
-    if processing_status == "failed" or source_attempt_status == "failed":
-        return "failed"
-    return "resolving"
-
-
 def _summary_out(row: DocumentEmbedArtifactState) -> DocumentEmbedSummaryOut:
     return DocumentEmbedSummaryOut(
         status=cast(DocumentEmbedAggregateStatus, row.status),
@@ -551,6 +637,61 @@ def _summary_out(row: DocumentEmbedArtifactState) -> DocumentEmbedSummaryOut:
 
 
 def _embed_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentEmbedOut:
+    return _project_embed(
+        db, viewer_id=viewer_id, row=_EmbedProjection.model_validate(row, from_attributes=True)
+    )
+
+
+def project_document_embed_source(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+    fragment_id: UUID,
+    source: DocumentEmbedSource,
+) -> DocumentEmbedOut:
+    """Project a retained occurrence against current access and child state.
+
+    The retained occurrence id is descriptive, not a live retry command owner.
+    Current cards expose no enabled occurrence retry; adding one requires an
+    explicit command that can address retained source occurrences.
+    """
+    target_id = None
+    error_code = error_message = None
+    if isinstance(source.target, DocumentEmbedTargetTerminal):
+        status = source.target.status
+        error_code, error_message = source.target.error_code, source.target.error_message
+    else:
+        target_id = source.target.media_id
+        child = db.get(Media, target_id) if can_read_media(db, viewer_id, target_id) else None
+        if child is None:
+            status = "resolved"
+        elif child.processing_status == ProcessingStatus.ready_for_reading:
+            status = "resolved"
+        elif child.processing_status == ProcessingStatus.failed:
+            status = "failed"
+            error_code, error_message = child.last_error_code, child.last_error_message
+        else:
+            status = "resolving"
+    return _project_embed(
+        db,
+        viewer_id=viewer_id,
+        row=_EmbedProjection(
+            **source.model_dump(exclude={"target"}),
+            media_id=media_id,
+            fragment_id=fragment_id,
+            resolution_status=status,
+            target_media_id=target_id,
+            error_code=error_code,
+            error_message=error_message,
+            description=None,
+            thumbnail_url=None,
+            document_order_key=f"{source.ordinal:06d}",
+        ),
+    )
+
+
+def _project_embed(db: Session, *, viewer_id: UUID, row: _EmbedProjection) -> DocumentEmbedOut:
     target = _target_out(db, viewer_id=viewer_id, row=row)
     return DocumentEmbedOut(
         id=row.id,
@@ -591,7 +732,7 @@ def _embed_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentE
     )
 
 
-def _target_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentEmbedTargetOut:
+def _target_out(db: Session, *, viewer_id: UUID, row: _EmbedProjection) -> DocumentEmbedTargetOut:
     if row.target_media_id is None:
         if row.resolution_status == "unsupported":
             return DocumentEmbedTargetOut(status="unsupported")
@@ -638,29 +779,33 @@ def _url(
     return DocumentEmbedUrlOut(status="absent", value=None, reason="not_in_source")
 
 
-def _provider_ref(row: DocumentEmbed) -> DocumentEmbedProviderRefOut:
+def _provider_ref(row: _EmbedProjection) -> DocumentEmbedProviderRefOut:
     if row.provider_target_ref:
         return DocumentEmbedProviderRefOut(kind="present", value=row.provider_target_ref)
     reason = "unsupported_provider" if row.resolution_status == "unsupported" else "unparseable"
     return DocumentEmbedProviderRefOut(kind="absent", reason=reason)
 
 
-def _display(row: DocumentEmbed, target: DocumentEmbedTargetOut) -> DocumentEmbedDisplayOut:
-    if row.resolution_status == "resolved" and target.href:
-        mode = "resolved"
-        description = target.title or "Saved in Nexus"
+def _display(row: _EmbedProjection, target: DocumentEmbedTargetOut) -> DocumentEmbedDisplayOut:
+    if row.resolution_status == "resolved":
+        if target.href:
+            mode = "resolved"
+            description = target.title or "Saved in Nexus"
+        elif target.status == "forbidden":
+            mode = "forbidden"
+            description = "You do not have access to this item"
+        else:
+            mode = "missing"
+            description = "This item is no longer available"
     elif row.resolution_status in {"pending", "resolving"}:
         mode = "pending"
         description = "Resolving embedded media"
     elif row.resolution_status == "failed":
         mode = "failed"
         description = row.error_message or "Embedded media could not be saved"
-    elif row.resolution_status == "unsupported":
+    else:
         mode = "unsupported"
         description = "Unsupported embedded provider"
-    else:
-        mode = "pending"
-        description = "Resolving embedded media"
     actions: list[DocumentEmbedDisplayActionOut] = []
     if target.href:
         actions.append(

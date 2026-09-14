@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/components/reader/MarginRail.tsx b/apps/web/src/components/reader/MarginRail.tsx
+--- a/apps/web/src/components/reader/MarginRail.tsx
++++ b/apps/web/src/components/reader/MarginRail.tsx
+@@ -94,7 +94,7 @@ export default function MarginRail({ session, contentRef, layoutKey, readTextPar
+       let pendingAction = false;
+       const release = () => { lease?.release(); lease = null; dom?.release(); dom = null; };
+       withdraw = () => {
+-        presentation?.host.replaceChildren(); presentation = null;
++        presentation?.host.replaceChildren();
+         if (!pendingAction) release();
+       };
+       setStatus({ kind: "Loading" }); setNext(null); setRemaining(0); setActionStatus({ kind: "Idle" }); callbacks.current.onDefect(null);

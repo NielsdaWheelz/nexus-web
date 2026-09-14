@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/reader/DocumentReaderSession.ts b/apps/web/src/lib/reader/DocumentReaderSession.ts
+--- a/apps/web/src/lib/reader/DocumentReaderSession.ts
++++ b/apps/web/src/lib/reader/DocumentReaderSession.ts
+@@ -737,7 +737,7 @@
+       for (const entry of reads) {
+         entry.controller.abort();
+         // Published results belong to their actual consumers through DOM/row retirement.
+-        if (!entry.published) entry.release();
++        entry.release();
+       }
+     },
+   };

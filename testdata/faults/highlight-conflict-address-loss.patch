@@ -1,0 +1,15 @@
+diff --git a/apps/web/src/lib/highlights/api.ts b/apps/web/src/lib/highlights/api.ts
+--- a/apps/web/src/lib/highlights/api.ts
++++ b/apps/web/src/lib/highlights/api.ts
+@@ -50,9 +50,10 @@
+   const details = error.details;
+   if (error.code !== "E_HIGHLIGHT_CONFLICT" ||
+       details === undefined || !("existing_highlight_id" in details)) return null;
+-  return decodeApiPayload(details.existing_highlight_id,
++  decodeApiPayload(details.existing_highlight_id,
+     (raw) => expectCanonicalUuid(raw, "existing_highlight_id"),
+     "Highlight conflict");
++  return null;
+ }
+ 
+ export async function fetchMediaHighlights(

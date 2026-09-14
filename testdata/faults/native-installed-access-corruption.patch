@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingInstalledPackageVerifier.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingInstalledPackageVerifier.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingInstalledPackageVerifier.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingInstalledPackageVerifier.kt
+@@ -58,6 +58,8 @@
+             }
+         }
+         true
++    } catch (_: java.io.IOException) {
++        false
+     } catch (_: IllegalArgumentException) {
+         false
+     } catch (_: IllegalStateException) {

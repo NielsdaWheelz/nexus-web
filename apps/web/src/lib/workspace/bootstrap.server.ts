@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cookies, headers } from "next/headers";
-import { isApiError } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { callFastAPI } from "@/lib/api/server";
 import { PREFETCH_OPTS } from "@/lib/api/resourceTransport";
 import { serverResourceFetcher } from "@/lib/api/resourceTransport.server";
@@ -13,7 +13,6 @@ import {
 import { REQUEST_PATH_HEADER } from "@/lib/auth/requestPath";
 import { readDeviceId } from "@/lib/auth/deviceCookie";
 import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
-import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
 import { parseReaderProfile } from "@/lib/reader/readerProfileSync";
 import type { ReaderProfile } from "@/lib/reader/types";
@@ -21,7 +20,6 @@ import { expectExactRecord, expectString } from "@/lib/validation";
 import { estimatePrimaryWidthPx } from "@/lib/workspace/paneSizing";
 import {
   createDefaultWorkspaceState,
-  getWorkspacePrimaryPanes,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
 import {
@@ -108,14 +106,7 @@ async function loadSession(
       PREFETCH_OPTS,
     );
   } catch (error) {
-    if (
-      isApiError(error) &&
-      error.code === "E_INVALID_RESPONSE" &&
-      error.status >= 200 &&
-      error.status < 300
-    ) {
-      throw error;
-    }
+    if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
     // justify-ignore-error: best-effort restore; on failure the deep-link/default stands.
     return null;
   }
@@ -151,14 +142,13 @@ async function loadSession(
 }
 
 // The authenticated shell's single server data root: the middleware-stamped entry intent,
-// reader profile, server-restored workspace, and hydration cache of every restored visible
-// pane's data — so the first paint shows the right panes, with their data, and no client
-// round-trip.
+// reader profile, server-restored workspace, and one selected pane seed. Other bodies load after viewport admission.
 export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
   account: AuthenticatedAccount;
   readerProfile: ReaderProfile;
   initialState: WorkspaceState;
   resources: DehydratedResources;
+  entryHref: string | null;
 }> {
   const entryIntent = parseWorkspaceEntryIntent(
     (await headers()).get(REQUEST_PATH_HEADER),
@@ -216,34 +206,16 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
     }
   }
 
-  // Wave 2 — seed the remaining restored visible panes, concurrent, deduped by resource. The
-  // URL pane is pre-marked as seeded only when its wave-1 seed actually succeeded; if that seed
-  // failed (timeout/throw), it stays eligible here so the active pane still gets a second shot.
+  // The server cannot know the actual viewport. Seed only its selected pane;
+  // other displayed bodies load after the client establishes visibility. A
+  // failed Navigate seed is not immediately duplicated during bootstrap.
   const resources: DehydratedResources = {};
-  if (urlSeed) {
-    resources[urlSeed.cacheKey] = urlSeed.data;
-  }
-  const seededRouteKeys = new Set(
-    entryIntent.kind === "Navigate" && urlSeed
-      ? [resolvePaneRouteIdentity(entryIntent.href).routeKey]
-      : [],
-  );
-  const extraHrefs = getWorkspacePrimaryPanes(initialState)
-    .filter((pane) => pane.visibility === "visible")
-    .map((pane) => pane.currentVisit.href)
-    .filter((href) => {
-      const routeKey = resolvePaneRouteIdentity(href).routeKey;
-      if (seededRouteKeys.has(routeKey)) {
-        return false;
-      }
-      seededRouteKeys.add(routeKey);
-      return true;
-    });
-  for (const seed of await Promise.all(extraHrefs.map(seedPane))) {
-    if (seed) {
-      resources[seed.cacheKey] = seed.data;
-    }
-  }
+  const activeSeed = entryIntent.kind === "Resume"
+    ? await seedPane(initialState.primaryPanesById[initialState.activePrimaryPaneId].currentVisit.href)
+    : urlSeed;
+  if (activeSeed) resources[activeSeed.cacheKey] = activeSeed.data;
 
-  return { account, readerProfile, initialState, resources };
+  return { account, readerProfile, initialState, resources,
+    entryHref: entryIntent.kind === "Navigate" ? entryIntent.href : null,
+  };
 }

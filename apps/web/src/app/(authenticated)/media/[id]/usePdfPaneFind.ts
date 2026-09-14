@@ -303,24 +303,27 @@ export function createPdfFindAdapter({
       preparedPageNumber =
         captured.kind === "Captured" ? captured.value.pageNumber : null;
       return {
-        sessionId: request.sessionId,
-        sourceKey,
-        scopes: [
-          {
-            kind: "EntireResource",
-            id: ENTIRE_PDF_SCOPE_ID,
-            label: "Entire PDF",
-          },
-          ...(preparedPageNumber === null
-            ? []
-            : [
-                {
-                  kind: "Narrow" as const,
-                  id: `${PAGE_SCOPE_PREFIX}${preparedPageNumber}`,
-                  label: `This page (${preparedPageNumber})`,
-                },
-              ]),
-        ],
+        kind: "Prepared",
+        session: {
+          sessionId: request.sessionId,
+          sourceKey,
+          scopes: [
+            {
+              kind: "EntireResource",
+              id: ENTIRE_PDF_SCOPE_ID,
+              label: "Entire PDF",
+            },
+            ...(preparedPageNumber === null
+              ? []
+              : [
+                  {
+                    kind: "Narrow" as const,
+                    id: `${PAGE_SCOPE_PREFIX}${preparedPageNumber}`,
+                    label: `This page (${preparedPageNumber})`,
+                  },
+                ]),
+          ],
+        },
       };
     },
     async find(request) {
@@ -515,6 +518,7 @@ export function createPdfFindAdapter({
           }
           return {
             kind: "Rejected",
+            returnAvailable: false,
             ...responseBase(request),
             key: request.key,
             error: { kind: "OriginUnavailable" },
@@ -569,6 +573,7 @@ export function createPdfFindAdapter({
           }
           return {
             kind: "Rejected",
+            returnAvailable: false,
             ...responseBase(request),
             key: request.key,
             error: { kind: "RuntimeUnavailable" },
@@ -617,7 +622,7 @@ export function createPdfFindAdapter({
       if (request.signal.aborted) {
         throwAbort("PDF Find Return was cancelled.");
       }
-      if (origin.kind !== "Committed") return;
+      if (origin.kind !== "Committed") return { kind: "Returned" };
       invalidatePreview();
       const captured = origin.value;
       previewLease.acquire();
@@ -654,6 +659,7 @@ export function createPdfFindAdapter({
       focusReaderViewport();
       previewLease.armNextCaptureSuppression();
       previewLease.completeReturn();
+      return { kind: "Returned" };
     },
     errorMessage: pdfFindErrorMessage,
     dispose() {

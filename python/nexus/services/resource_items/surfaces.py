@@ -161,6 +161,14 @@ def execute_surface_command(
 
 
 def resource_item_out(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> ResourceItemOut:
+    item, _document_reader = resource_item_resolution(db, viewer_id=viewer_id, ref=ref)
+    return item
+
+
+def resource_item_resolution(
+    db: Session, *, viewer_id: UUID, ref: ResourceRef
+) -> tuple[ResourceItemOut, bool]:
+    """One authorized load supplies item chrome and the concrete document-body capability."""
     resolved = resolve_refs(db, viewer_id=viewer_id, refs=[ref])[0]
     activation = resource_activation_for_ref(
         db,
@@ -168,12 +176,14 @@ def resource_item_out(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> Reso
         ref=ref,
         missing=resolved.missing,
     )
-    return _resource_item_out(
+    item = _resource_item_out(
         ref=ref,
         resolved=resolved,
         activation=activation,
         version_by_lane=versions.versions_for_ref(db, viewer_id=viewer_id, ref=ref),
     )
+
+    return item, resolved.document_reader
 
 
 def _apply_command(

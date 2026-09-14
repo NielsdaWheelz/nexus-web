@@ -6,6 +6,7 @@ import hashlib
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from nexus.db.models import (
@@ -18,6 +19,8 @@ from nexus.db.models import (
 )
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.library_entries import ensure_media_in_default_library
+from nexus.services.locator_resolver import resolve_highlight_reader_target_disposition
+from nexus.services.public_resource_sharing import highlight_target_available
 from nexus.services.resource_grants import (
     LinkGrantAudience,
     UserGrantAudience,
@@ -28,6 +31,7 @@ from nexus.services.resource_graph.refs import ResourceRef
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_storage_path
 from tests.testkit.auth import UserRecord
+from tests.testkit.reader_pdf import published_pdf_sources
 
 
 def _seed_pdf(
@@ -213,3 +217,26 @@ def test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subjec
     finally:
         storage.delete_object(first_path)
         storage.delete_object(second_path)
+
+
+def test_unattributable_pdf_provenance_is_never_publicly_projectable(engine: Engine) -> None:
+    """Only the ``resolved`` disposition reaches a public audience.
+
+    A highlight whose geometry belongs to a superseded binary is readable and
+    reattachable to its owner, but painting it for an anonymous reader would put
+    old geometry over different bytes. Public projection therefore selects the
+    disposition explicitly instead of inferring it from an absent target.
+    """
+    with published_pdf_sources(engine) as fixture:
+        with fixture.factory() as db:
+            superseded, current = fixture.highlights[0], fixture.highlights[1]
+            assert (
+                resolve_highlight_reader_target_disposition(db, highlight_id=superseded).status
+                == "source_unverified"
+            ), "fixture no longer produces an unattributable PDF highlight"
+            assert not highlight_target_available(db, highlight_id=superseded), (
+                "unattributable PDF provenance became publicly projectable"
+            )
+            assert highlight_target_available(db, highlight_id=current), (
+                "public projection refused a highlight the published binary still owns"
+            )

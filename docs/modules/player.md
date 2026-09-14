@@ -70,9 +70,10 @@ split by storage and query concern:
   has occurred. Pre-fencing, completed, and post-reset zero-position rows remain
   absent because their timestamp is ambiguous.
 - `_reader_cursor_store.py` — sole DML owner of `reader_media_state`: one
-  revision-fenced `Empty` or `Positioned` cursor per viewer/media. A persisted
-  `Empty` tombstone fences stale pre-reset saves without exposing a null-clear
-  reader-state API.
+  revision-fenced `Empty` or `Positioned` cursor per viewer/media, written only
+  through the account-bound, generation-fenced progress owner
+  (`consumption/reader_progress.py`). A persisted `Empty` tombstone fences
+  stale pre-reset saves without exposing a null-clear progress API.
 - `_reader_engagement_store.py` — sole DML owner of `reader_engagement_states`:
   one current-state row per (viewer, media) carrying `last_engaged_at`
   recency and, for non-PDF locators, a monotonic `max_total_progression`

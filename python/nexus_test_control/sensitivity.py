@@ -245,7 +245,13 @@ def prove_many(
                     )
                     green_duration_ms = (time.monotonic_ns() - green_started) // 1_000_000
                     green_memory = _finish_attempt(memory_sampler)
-                    current_artifacts = green_result.evidence.artifacts
+                    current_artifacts = _retain_attempt_artifacts(
+                        root,
+                        proof_environment,
+                        item.request.proof,
+                        "green",
+                        green_result.evidence.artifacts,
+                    )
                     if green_result.evidence.status is not RunStatus.PASS:
                         raise SensitivityError(
                             "current proof did not pass at its intended boundary: "
@@ -272,6 +278,7 @@ def prove_many(
                                     current_sha,
                                     green_duration_ms,
                                     green_memory,
+                                    artifacts=current_artifacts,
                                 ),
                             ),
                         )
@@ -498,10 +505,8 @@ def workflow_sensitivity_request(
     fault_id = declared_fault_for_proof(repo_root, proof)
     if fault_id is not None:
         fault = fault_definition(repo_root, fault_id, proof)
-        if (
-            fault.changed_owner_red is ChangedOwnerRedStrategy.COHERENT_FAULT
-            and _valid_exact_python_owner(repo_root, proof)
-        ):
+        # fault_definition has already validated canonical ownership and its digest.
+        if fault.changed_owner_red is ChangedOwnerRedStrategy.COHERENT_FAULT:
             try:
                 _git_sha(repo_root, base_sha)
             except SensitivityError:
@@ -533,18 +538,6 @@ def workflow_sensitivity_request(
         method=SensitivityMethod.FAULT if fault_id else SensitivityMethod.BASE,
         against=fault_id or base_sha,
     )
-
-
-def _valid_exact_python_owner(repo_root: Path, proof: str) -> bool:
-    runner, _, identity = proof.partition(":")
-    path, separator, node = identity.partition("::")
-    if runner != "pytest" or not separator or not node:
-        return False
-    try:
-        source = (repo_root / path).read_text(encoding="utf-8")
-        return python_exact_proof_owner(source, node) is not None
-    except (OSError, UnicodeError, SyntaxError):
-        return False
 
 
 def _proof_owner_materially_changed(repo_root: Path, proof: str, base_sha: str) -> bool:
@@ -654,10 +647,22 @@ def _base_overlays(proof_path: str) -> tuple[str, ...]:
                 "apps/web/e2e/runtime.ts",
                 "apps/web/vitest.browser-setup.ts",
                 "apps/web/vitest.config.ts",
+                "apps/web/pdfLoadingFixture.ts",
+                "apps/web/browserMemoryCommand.ts",
                 "apps/web/package.json",
                 "apps/web/bun.lock",
             )
         )
+        if proof_path in (
+            "apps/web/src/components/PdfReaderLoading.browser.test.tsx",
+            "apps/web/src/components/PdfReaderOpeningCancellation.browser.test.tsx",
+        ):
+            shared.extend(
+                (
+                    "apps/web/src/components/__tests__/pdfLoading.tsx",
+                    "apps/web/src/components/__tests__/browserMemory.ts",
+                )
+            )
         if proof_path in (
             "apps/web/src/lib/workspace/store.browser.test.tsx",
             "apps/web/src/lib/workspace/adjacentPaneKeybindings.browser.test.tsx",

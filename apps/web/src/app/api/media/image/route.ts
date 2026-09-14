@@ -1,7 +1,7 @@
-import { proxyToFastAPI } from "@/lib/api/proxy";
+import { proxyCacheableMediaAssetToFastAPI } from "@/lib/api/proxy";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  return proxyToFastAPI(req, "/media/image");
+  return proxyCacheableMediaAssetToFastAPI(req, "/media/image");
 }

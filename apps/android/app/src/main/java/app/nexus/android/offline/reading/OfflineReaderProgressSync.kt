@@ -45,6 +45,9 @@ internal interface OfflineReaderProgressRepository {
     fun recordContentChanged(candidate: ReaderProgressSyncCandidate)
     fun recordSourceUnavailable(candidate: ReaderProgressSyncCandidate)
     fun recordAuthorizationRequired(candidate: ReaderProgressSyncCandidate)
+
+    /** Record a broken protocol invariant for one media; never cursor content. */
+    fun reportDefect(mediaId: UUID, defect: Throwable)
 }
 
 internal class OfflineReaderProgressSynchronizer(
@@ -53,7 +56,18 @@ internal class OfflineReaderProgressSynchronizer(
 ) {
     fun synchronize(mediaId: UUID? = null) {
         try {
-            repository.pendingSyncCandidates(mediaId).forEach(::synchronizeCandidate)
+            repository.pendingSyncCandidates(mediaId).forEach { candidate ->
+                try {
+                    synchronizeCandidate(candidate)
+                } catch (denial: StopProgressSyncAfterAuthorizationDenial) {
+                    throw denial
+                } catch (defect: Exception) {
+                    // justify-ignore-error: one media's broken invariant may not abandon the
+                    // other pending writes of this pass. Its row keeps its exact pending
+                    // intent, the next pass retries it, and the defect stays loud.
+                    repository.reportDefect(candidate.mediaId, defect)
+                }
+            }
         } catch (_: StopProgressSyncAfterAuthorizationDenial) {
             // One denial fences the account; no later candidate may issue remote work.
         }
@@ -78,7 +92,7 @@ internal class OfflineReaderProgressSynchronizer(
             repository.recordContentChanged(candidate)
             return
         }
-        if (canonical.locatorEquals(candidate.locatorJson)) {
+        if (canonical.matches(candidate)) {
             repository.acceptCanonical(candidate, canonical)
             return
         }
@@ -101,10 +115,20 @@ internal class OfflineReaderProgressSynchronizer(
         when (val result = writeResult) {
             is RemoteReaderWriteResult.Accepted -> {
                 require(result.state.accountId == candidate.accountId)
-                if (result.state.readerGeneration == candidate.readerGeneration) {
+                if (result.state.readerGeneration != candidate.readerGeneration) {
+                    repository.recordContentChanged(candidate)
+                } else if (result.state.matches(candidate)) {
                     repository.acceptCanonical(candidate, result.state)
                 } else {
-                    repository.recordContentChanged(candidate)
+                    // The write was accepted but the attested cursor is not the one we
+                    // submitted. Never acknowledge it: install the attested state as the
+                    // baseline and expose the existing conflict choice, and keep the
+                    // protocol defect visible.
+                    repository.reportDefect(
+                        candidate.mediaId,
+                        UnrecognizedReaderAcknowledgment(candidate.mediaId),
+                    )
+                    repository.recordConflict(candidate, result.state)
                 }
             }
             RemoteReaderWriteResult.Conflict -> {
@@ -120,10 +144,13 @@ internal class OfflineReaderProgressSynchronizer(
                     }
                     return
                 }
-                if (racedCanonical.readerGeneration == candidate.readerGeneration) {
-                    repository.recordConflict(candidate, racedCanonical)
-                } else {
+                require(racedCanonical.accountId == candidate.accountId)
+                if (racedCanonical.readerGeneration != candidate.readerGeneration) {
                     repository.recordContentChanged(candidate)
+                } else if (racedCanonical.matches(candidate)) {
+                    repository.acceptCanonical(candidate, racedCanonical)
+                } else {
+                    repository.recordConflict(candidate, racedCanonical)
                 }
             }
             RemoteReaderWriteResult.ContentChanged -> repository.recordContentChanged(candidate)
@@ -139,12 +166,20 @@ internal class OfflineReaderProgressSynchronizer(
 
 private class StopProgressSyncAfterAuthorizationDenial : RuntimeException()
 
-private fun AttestedRemoteReaderState.locatorEquals(locatorJson: String): Boolean {
+/** The origin accepted a write and attested a cursor that is not the submitted one. */
+internal class UnrecognizedReaderAcknowledgment(mediaId: UUID) : IllegalStateException(
+    "reader acknowledgment does not match the submitted source and locator for media $mediaId"
+)
+
+private fun AttestedRemoteReaderState.matches(candidate: ReaderProgressSyncCandidate): Boolean {
     val root = StrictJson.parse(snapshotJson.toByteArray()) as StrictJson.ObjectValue
     if (root.fields["state"]?.requireString() != "Positioned") return false
+    val source = root.fields.getValue("source") as StrictJson.ObjectValue
+    if (source.fields.getValue("kind").requireString() != "Publication") return false
+    if (source.fields.getValue("reader_generation").requireLong() != candidate.readerGeneration) return false
     return strictJsonSemanticallyEqual(
         root.fields.getValue("locator"),
-        StrictJson.parse(locatorJson.toByteArray()),
+        StrictJson.parse(candidate.locatorJson.toByteArray()),
     )
 }
 

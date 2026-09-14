@@ -1,5 +1,6 @@
 "use client";
 
+import { clearPendingReaderPulse } from "@/lib/reader/pulseEvent";
 import {
   createContext,
   useCallback,
@@ -76,7 +77,6 @@ import {
   type WorkspaceTargetActivationRequest,
   type WorkspaceTargetActivationResult,
 } from "./targetActivation";
-import { useWorkspaceSession } from "./useWorkspaceSession";
 import {
   usePaneReturnMementoCommands,
   type PaneNavigationModality,
@@ -853,7 +853,12 @@ export function WorkspaceStoreProvider({
   const state = reducerState.workspace;
   const recentlyClosedPanes = reducerState.recentlyClosedPanes;
   const dispatch = useCallback(
-    (action: WorkspaceAction) => dispatchStoreAction(action),
+    (action: WorkspaceAction) => {
+      if (action.type === "navigate_pane" || action.type === "go_back_pane" || action.type === "go_forward_pane" || action.type === "close_pane") {
+        clearPendingReaderPulse(action.paneId);
+      }
+      dispatchStoreAction(action);
+    },
     [],
   );
   const [runtimeLabelByPaneId, setRuntimeLabelByPaneId] = useState<
@@ -895,8 +900,6 @@ export function WorkspaceStoreProvider({
   );
   const returnMemento = usePaneReturnMementoCommands();
   const feedback = useFeedback();
-
-  useWorkspaceSession(state, mounted);
 
   useLayoutEffect(() => {
     returnMemento.reconcileVisitTopology(paneReturnTopology(state));

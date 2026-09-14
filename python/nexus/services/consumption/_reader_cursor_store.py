@@ -23,55 +23,64 @@ from nexus.schemas.reader import (
     ReaderCursorEmpty,
     ReaderCursorPositioned,
     ReaderCursorSnapshot,
+    ReaderCursorSource,
     ReaderResumeState,
+    TimelineCursorSource,
 )
 
-READER_MEDIA_STATE_MEDIA_FK = "fk_reader_media_state_media"
+_EXPECTED_LOCATOR_KINDS = {
+    MediaKind.pdf.value: "pdf",
+    MediaKind.epub.value: "epub",
+    MediaKind.web_article.value: "web",
+    MediaKind.video.value: "transcript",
+    MediaKind.podcast_episode.value: "transcript",
+}
 _READER_RESUME_STATE_ADAPTER = TypeAdapter(ReaderResumeState)
+_READER_CURSOR_SOURCE_ADAPTER = TypeAdapter(ReaderCursorSource)
 _SELECT_CURSOR_SQL = text("""
-    SELECT id, locator, revision
+    SELECT id, locator, revision, source
     FROM reader_media_state
     WHERE user_id = :viewer_id AND media_id = :media_id
 """)
 _INSERT_CURSOR_SQL = text("""
-    INSERT INTO reader_media_state (user_id, media_id, locator, revision)
-    VALUES (:viewer_id, :media_id, CAST(:locator AS jsonb), 1)
-""").bindparams(bindparam("locator", type_=JSONB))
+    INSERT INTO reader_media_state (user_id, media_id, locator, revision, source)
+    VALUES (:viewer_id, :media_id, CAST(:locator AS jsonb), 1, CAST(:source AS jsonb))
+""").bindparams(bindparam("locator", type_=JSONB), bindparam("source", type_=JSONB))
 _INSERT_EMPTY_CURSOR_SQL = text("""
     INSERT INTO reader_media_state (user_id, media_id, locator, revision)
     VALUES (:viewer_id, :media_id, NULL, 1)
 """)
 _UPDATE_CURSOR_SQL = text("""
     UPDATE reader_media_state
-    SET locator = CAST(:locator AS jsonb), revision = revision + 1, updated_at = now()
+    SET locator = CAST(:locator AS jsonb), source = CAST(:source AS jsonb),
+        revision = revision + 1, updated_at = now()
     WHERE id = :state_id AND revision = :base_revision
-""").bindparams(bindparam("locator", type_=JSONB))
+""").bindparams(bindparam("locator", type_=JSONB), bindparam("source", type_=JSONB))
 _RESET_CURSOR_SQL = text("""
     UPDATE reader_media_state
-    SET locator = NULL, revision = revision + 1, updated_at = now()
+    SET locator = NULL, source = NULL, revision = revision + 1, updated_at = now()
     WHERE id = :state_id AND revision = :base_revision
 """)
 
 
 def supports_media_kind(media_kind: str) -> bool:
-    return media_kind in {
-        MediaKind.pdf.value,
-        MediaKind.epub.value,
-        MediaKind.web_article.value,
-        MediaKind.video.value,
-        MediaKind.podcast_episode.value,
-    }
+    return media_kind in _EXPECTED_LOCATOR_KINDS
 
 
-def validate_locator_for_media(media_kind: str, locator: ReaderResumeState) -> None:
-    """Reject a cursor locator whose one supported kind mismatches its media."""
-    expected_kind = _expected_locator_kind(media_kind)
-    if expected_kind is None:
+def expected_locator_kind(media_kind: str) -> str:
+    """The one locator kind a supported reader media may carry."""
+    locator_kind = _EXPECTED_LOCATOR_KINDS.get(media_kind)
+    if locator_kind is None:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             f"Reader state is not supported for media kind '{media_kind}'",
         )
-    if locator.kind != expected_kind:
+    return locator_kind
+
+
+def validate_locator_for_media(media_kind: str, locator: ReaderResumeState) -> None:
+    """Reject a cursor locator whose one supported kind mismatches its media."""
+    if locator.kind != expected_locator_kind(media_kind):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             f"Reader state kind '{locator.kind}' does not match media kind '{media_kind}'",
@@ -99,6 +108,7 @@ def load_snapshot(
     return _snapshot_from_row(
         row["locator"],
         int(row["revision"]),
+        row["source"],
         media_kind=media_kind,
     )
 
@@ -110,9 +120,11 @@ def put_in_txn(
     media_id: UUID,
     media_kind: str,
     write: CursorWrite,
+    source: ReaderCursorSource,
 ) -> ReaderCursorPositioned:
     """CAS-replace a positioned cursor within the caller's transaction."""
     validate_locator_for_media(media_kind, write.locator)
+    _validate_source_for_locator(source, write.locator)
     row = (
         db.execute(
             _SELECT_CURSOR_SQL,
@@ -130,16 +142,22 @@ def put_in_txn(
                 "viewer_id": viewer_id,
                 "media_id": media_id,
                 "locator": write.locator.model_dump(mode="json"),
+                "source": source.model_dump(mode="json"),
             },
         )
-        return ReaderCursorPositioned(revision=1, locator=write.locator)
+        return ReaderCursorPositioned(revision=1, locator=write.locator, source=source)
 
     current = _snapshot_from_row(
         row["locator"],
         int(row["revision"]),
+        row["source"],
         media_kind=media_kind,
     )
-    if isinstance(current, ReaderCursorPositioned) and current.locator == write.locator:
+    if (
+        isinstance(current, ReaderCursorPositioned)
+        and current.locator == write.locator
+        and current.source == source
+    ):
         return current
     if write.base_revision != current.revision:
         raise _cursor_conflict(current)
@@ -151,13 +169,16 @@ def put_in_txn(
                 "state_id": row["id"],
                 "base_revision": current.revision,
                 "locator": write.locator.model_dump(mode="json"),
+                "source": source.model_dump(mode="json"),
             },
         ),
     )
     # justify-defect: the caller serializes this viewer and this transaction
     # already read the exact revision that the CAS replaces.
     assert result.rowcount == 1
-    return ReaderCursorPositioned(revision=current.revision + 1, locator=write.locator)
+    return ReaderCursorPositioned(
+        revision=current.revision + 1, locator=write.locator, source=source
+    )
 
 
 def reset_in_txn(
@@ -186,6 +207,7 @@ def reset_in_txn(
     current = _snapshot_from_row(
         row["locator"],
         int(row["revision"]),
+        row["source"],
         media_kind=media_kind,
     )
     result = cast(
@@ -212,34 +234,34 @@ def delete_all_users_in_txn(db: Session, *, media_id: UUID) -> None:
     )
 
 
-def _expected_locator_kind(media_kind: str) -> str | None:
-    if media_kind == MediaKind.pdf.value:
-        return "pdf"
-    if media_kind == MediaKind.epub.value:
-        return "epub"
-    if media_kind == MediaKind.web_article.value:
-        return "web"
-    if media_kind in {MediaKind.video.value, MediaKind.podcast_episode.value}:
-        return "transcript"
-    return None
-
-
 def _snapshot_from_row(
     locator_payload: object | None,
     revision: int,
+    source_payload: object | None,
     *,
     media_kind: str,
 ) -> ReaderCursorSnapshot:
     if revision < 1:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Stored reader state revision is invalid")
     if locator_payload is None:
+        if source_payload is not None:
+            raise ApiError(ApiErrorCode.E_INTERNAL, "Empty reader state has a source")
         return ReaderCursorEmpty(revision=revision)
     try:
         locator = _READER_RESUME_STATE_ADAPTER.validate_python(locator_payload)
+        source = _READER_CURSOR_SOURCE_ADAPTER.validate_python(source_payload)
         validate_locator_for_media(media_kind, locator)
+        _validate_source_for_locator(source, locator)
     except (ValidationError, InvalidRequestError) as exc:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Stored reader state is invalid") from exc
-    return ReaderCursorPositioned(revision=revision, locator=locator)
+    return ReaderCursorPositioned(revision=revision, locator=locator, source=source)
+
+
+def _validate_source_for_locator(source: ReaderCursorSource, locator: ReaderResumeState) -> None:
+    if isinstance(source, TimelineCursorSource) != (locator.kind == "transcript"):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Reader cursor source does not match its locator"
+        )
 
 
 def _cursor_conflict(current: ReaderCursorSnapshot) -> ConflictError:

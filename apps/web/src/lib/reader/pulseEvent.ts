@@ -1,12 +1,13 @@
 "use client";
 
+import type { ResourceCache, ReaderSourceInputLease } from "@/lib/api/resourceCache";
 import { isRetrievalLocator, type RetrievalLocator } from "@/lib/api/sse/locators";
 import { isRecord } from "@/lib/validation";
 import { createWindowEventChannel } from "@/lib/windowEventChannel";
 
 export const READER_PULSE_HIGHLIGHT = "nexus:reader-pulse-highlight";
 
-export interface ReaderPulseTarget {
+export interface ReaderPulseInput {
   mediaId: string;
   highlightId?: string;
   evidenceSpanId?: string;
@@ -16,6 +17,10 @@ export interface ReaderPulseTarget {
   focusBehavior: "scroll_into_view";
 }
 
+export interface ReaderPulseTarget extends ReaderPulseInput {
+  paneId: string;
+}
+
 function isOptionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
 }
@@ -23,6 +28,7 @@ function isOptionalString(value: unknown): boolean {
 export function isReaderPulseTarget(value: unknown): value is ReaderPulseTarget {
   if (!isRecord(value)) return false;
   return (
+    typeof value.paneId === "string" && value.paneId.length > 0 &&
     typeof value.mediaId === "string" &&
     isOptionalString(value.highlightId) &&
     isOptionalString(value.evidenceSpanId) &&
@@ -40,25 +46,93 @@ const readerPulseChannel = createWindowEventChannel({
 });
 
 // Reader-source activations can precede the destination pane mount. Keep the
-// latest target per media identity until useReaderTarget acknowledges it; the
+// latest target per pane/media identity until the addressed reader acknowledges it; the
 // window event remains the immediate path for an already-mounted reader.
-const pendingReaderPulseByMediaId = new Map<string, ReaderPulseTarget>();
+interface PendingReaderPulse {
+  readonly target: ReaderPulseTarget;
+  readonly input: ReaderSourceInputLease;
+  retire: (() => void | Promise<void>) | null;
+}
+const pendingReaderPulseByPane = new Map<string, PendingReaderPulse>();
 
-export function dispatchReaderPulse(target: ReaderPulseTarget): void {
-  pendingReaderPulseByMediaId.set(target.mediaId, target);
+function retireDelivery({ input, retire }: PendingReaderPulse): void {
+  const settled = retire?.();
+  if (settled === undefined) input.release();
+  else void settled.finally(() => input.release());
+}
+
+export function dispatchReaderPulse(target: ReaderPulseTarget, input: ReaderSourceInputLease): void {
+  const key = `${target.paneId}:${target.mediaId}`;
+  const previous = pendingReaderPulseByPane.get(key);
+  pendingReaderPulseByPane.delete(key);
+  if (previous !== undefined) retireDelivery(previous);
+  pendingReaderPulseByPane.set(key, { target, input, retire: null });
   readerPulseChannel.dispatch(target);
 }
 
+export function readPendingReaderPulse(paneId: string, mediaId: string): ReaderPulseTarget | null {
+  return pendingReaderPulseByPane.get(`${paneId}:${mediaId}`)?.target ?? null;
+}
+
+/** Actual workspace navigation/close withdraws undelivered source payloads. */
+export function clearPendingReaderPulse(paneId: string): void {
+  for (const [key, entry] of pendingReaderPulseByPane) {
+    if (entry.target.paneId !== paneId) continue;
+    pendingReaderPulseByPane.delete(key);
+    retireDelivery(entry);
+  }
+}
+
+/** Account withdrawal uses the same exact pending-delivery owner as pane closure. */
+export function clearPendingReaderPulsesForCache(cache: ResourceCache): void {
+  for (const [key, entry] of pendingReaderPulseByPane) {
+    if (entry.input.cache !== cache) continue;
+    pendingReaderPulseByPane.delete(key);
+    retireDelivery(entry);
+  }
+}
+
+export function retryPendingReaderPulse(paneId: string, mediaId: string): void {
+  const pending = pendingReaderPulseByPane.get(`${paneId}:${mediaId}`);
+  if (pending !== undefined) readerPulseChannel.dispatch(pending.target);
+}
+
+/** A new command withdraws the previous admission before reusing this input. */
+export function withdrawPendingReaderPulseAdmission(target: ReaderPulseTarget): void | Promise<void> {
+  const pending = pendingReaderPulseByPane.get(`${target.paneId}:${target.mediaId}`);
+  if (pending?.target !== target) return;
+  const retire = pending.retire;
+  pending.retire = null;
+  return retire?.();
+}
+
+/** The one admitted command remains charged while this delivery waits for retry. */
+export function retainPendingReaderPulse(target: ReaderPulseTarget, retire: () => void | Promise<void>): boolean {
+  const pending = pendingReaderPulseByPane.get(`${target.paneId}:${target.mediaId}`);
+  if (pending?.target !== target) return false;
+  if (pending.retire !== null) throw new Error("Reader source delivery already has an admitted command");
+  pending.retire = retire;
+  return true;
+}
+
 export function consumePendingReaderPulse(
+  paneId: string,
   mediaId: string,
   expected?: ReaderPulseTarget,
 ): ReaderPulseTarget | null {
-  const pending = pendingReaderPulseByMediaId.get(mediaId);
-  if (!pending || (expected !== undefined && pending !== expected)) {
+  const key = `${paneId}:${mediaId}`;
+  const pending = pendingReaderPulseByPane.get(key);
+  if (!pending || (expected !== undefined && pending.target !== expected)) {
     return null;
   }
-  pendingReaderPulseByMediaId.delete(mediaId);
-  return pending;
+  pendingReaderPulseByPane.delete(key);
+  retireDelivery(pending);
+  return pending.target;
+}
+
+/** Mounted transcript content retains its own source until its immediate pulse returns. */
+export function dispatchMountedReaderPulse(target: ReaderPulseTarget): void {
+  readerPulseChannel.dispatch(target);
 }
 
 export function useReaderPulseHighlight(

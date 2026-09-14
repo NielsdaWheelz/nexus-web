@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/offlineReading/runtime.ts b/apps/web/src/lib/offlineReading/runtime.ts
+--- a/apps/web/src/lib/offlineReading/runtime.ts
++++ b/apps/web/src/lib/offlineReading/runtime.ts
+@@ -317,7 +317,7 @@
+       return;
+     }
+     if (message.kind === "OpenReadingRequested") {
+-      if (this.#openRequestListeners.size === 0)
++      if (this.#openRequestListeners.size > 0)
+         this.#pendingOpenRequest = message.mediaId;
+       for (const listener of this.#openRequestListeners)
+         listener(message.mediaId);

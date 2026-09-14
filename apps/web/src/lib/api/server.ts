@@ -1,29 +1,13 @@
 import "server-only";
 
 import { cookies } from "next/headers";
-import { ApiError } from "@/lib/api/client";
+import { ApiError, parseApiResponse } from "@/lib/api/client";
 import { getEnv } from "@/lib/env";
 import { readSupabaseSessionCookie } from "@/lib/auth/session-cookie";
 import { createRandomId } from "@/lib/createRandomId";
-import { isRecord } from "@/lib/validation";
+import { isAbortError } from "@/lib/errors";
 
 const FASTAPI_FETCH_TIMEOUT_MS = 30_000;
-
-function readApiErrorBody(body: unknown): {
-  code?: string;
-  message?: string;
-  requestId?: string;
-} {
-  if (!isRecord(body) || !isRecord(body.error)) {
-    return {};
-  }
-  return {
-    code: typeof body.error.code === "string" ? body.error.code : undefined,
-    message: typeof body.error.message === "string" ? body.error.message : undefined,
-    requestId:
-      typeof body.error.request_id === "string" ? body.error.request_id : undefined,
-  };
-}
 
 /**
  * Server-side equivalent of `apiFetch`: reads the Supabase session cookie,
@@ -53,51 +37,31 @@ export async function callFastAPI<T>(
   const requestId = createRandomId();
   headers["X-Request-ID"] = requestId;
   const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    options?.timeoutMs ?? FASTAPI_FETCH_TIMEOUT_MS,
+  const timeoutMs = options?.timeoutMs ?? FASTAPI_FETCH_TIMEOUT_MS;
+  const deadline = performance.now() + timeoutMs;
+  const timeoutError = () => new ApiError(
+    504, "E_UPSTREAM_TIMEOUT", "Backend service timed out", requestId,
   );
-  let response: Response;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    response = await fetch(`${config.fastApiBaseUrl}${path}`, {
-      headers,
-      cache: "no-store",
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw new ApiError(
-        504,
-        "E_UPSTREAM_TIMEOUT",
-        "Backend service timed out",
-        requestId,
-      );
+    let response: Response;
+    try {
+      response = await fetch(`${config.fastApiBaseUrl}${path}`, {
+        headers,
+        cache: "no-store",
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      throw new ApiError(0, "E_NETWORK", "Backend request failed", requestId);
     }
+    const body = await parseApiResponse<T>(response);
+    if (performance.now() >= deadline) throw timeoutError();
+    return body;
+  } catch (error) {
+    if (controller.signal.aborted && isAbortError(error)) throw timeoutError();
     throw error;
   } finally {
     clearTimeout(timeout);
   }
-  if (response.status === 204 || response.status === 205) {
-    return undefined as T;
-  }
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    throw new ApiError(
-      response.status,
-      "E_INVALID_RESPONSE",
-      "API returned a non-JSON response",
-    );
-  }
-  if (!response.ok) {
-    const err = readApiErrorBody(body);
-    throw new ApiError(
-      response.status,
-      err.code ?? "E_UNKNOWN",
-      err.message ?? `Request failed with status ${response.status}`,
-      err.requestId,
-    );
-  }
-  return body as T;
 }

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "image": "ghcr.io/nielsdawheelz/nexus-api@sha256:8564b8ec84376772c7cad8dc8c91f29892e4bb3b325a2520a6835a10f6ed456c",
+  "source_sha": "7e8fd48244b3b436965037738e05785bb4931be1",
+  "memory_bytes": 335544320,
+  "evidence": "docs/tickets/second-tab-production-api-restarts.md",
+  "reader_source_shape": {
+    "fragments": 977,
+    "html_bytes": 3720452,
+    "canonical_text_bytes": 2923318,
+    "largest_fragment_combined_bytes": 419953
+  }
+}

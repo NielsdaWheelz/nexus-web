@@ -8,6 +8,7 @@ const routeModules = import.meta.glob<typeof import("./route")>("./route.ts");
 const originalEnvironment = { ...process.env };
 const release = "a".repeat(40);
 const report = {
+  scope: "Pane",
   pane_id: "pane",
   visit_id: "visit",
   phase: "Render",

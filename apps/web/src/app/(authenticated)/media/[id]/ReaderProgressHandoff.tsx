@@ -17,6 +17,8 @@ interface ReaderProgressHandoffProps {
   /** Polite auto-adoption announcement from the coordinator. */
   announcement: string;
   saveFailed: boolean;
+  syncPending: boolean;
+  sourceStatus: "ContentChanged" | "SourceUnavailable" | null;
   onAccept: () => void;
   onStay: () => void;
   onRetrySave: () => void;
@@ -27,6 +29,8 @@ export default function ReaderProgressHandoff({
   handoff,
   announcement,
   saveFailed,
+  syncPending,
+  sourceStatus,
   onAccept,
   onStay,
   onRetrySave,
@@ -73,7 +77,7 @@ export default function ReaderProgressHandoff({
             <button
               type="button"
               className={styles.readerProgressHandoffButton}
-              disabled={handoff.busy}
+              disabled={handoff.busy || !handoff.canApply}
               onClick={() => {
                 resolvedByButtonRef.current = true;
                 onAccept();
@@ -98,9 +102,22 @@ export default function ReaderProgressHandoff({
           </div>
         </div>
       )}
+      {sourceStatus !== null && (
+        <div role="status" className={styles.readerProgressSyncError}>
+          {sourceStatus === "ContentChanged"
+            ? "The saved position belongs to different or unknown content. It has not been applied here."
+            : "The original source is unavailable. Its saved position has not been applied here."}
+        </div>
+      )}
+      {syncPending && sourceStatus === null && (
+        <div role="status" className={styles.readerProgressSyncError}>
+          <span>Position saved on this device; sync is pending.</span>
+          <button type="button" className={styles.readerProgressHandoffButton} onClick={onRetrySave}>Retry sync</button>
+        </div>
+      )}
       {saveFailed && (
         <div className={styles.readerProgressSyncError} data-testid="reader-progress-sync-error">
-          <span>Progress not synced</span>
+          <span>Position could not be saved. Keep this view open and retry.</span>
           <span aria-hidden="true" className={styles.readerProgressHandoffDivider}>
             ·
           </span>

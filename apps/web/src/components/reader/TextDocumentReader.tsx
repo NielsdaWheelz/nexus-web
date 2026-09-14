@@ -24,23 +24,9 @@ export type ReaderViewportSnapshot = {
 
 export type TrustedScrollDirection = "forward" | "backward";
 
-/**
- * The hosted decoration port. The leaf's `renderedHtml` input is undecorated
- * canonical HTML; a hosted composition supplies this port to layer highlights
- * and inert embed projections over it after load. Offline (and any host that
- * omits the port) renders the canonical HTML as-is.
- */
-export interface TextReaderContentDecorator {
-  decorate(canonicalHtml: string): string;
-}
-
 type TextDocumentContentState =
   | {
       status: "loading";
-      message: string;
-    }
-  | {
-      status: "empty";
       message: string;
     }
   | {
@@ -51,8 +37,13 @@ type TextDocumentContentState =
     }
   | {
       status: "ready";
-      /** Undecorated canonical HTML; decoration is applied via `decorator`. */
       renderedHtml: string;
+      preparedRoots?: never;
+    }
+  | {
+      status: "ready";
+      renderedHtml?: never;
+      preparedRoots: readonly { key: string; root: HTMLElement }[];
     };
 
 export default function TextDocumentReader({
@@ -69,7 +60,7 @@ export default function TextDocumentReader({
   focusMode,
   hyphenation,
   contentState,
-  decorator,
+  busy = false,
   onViewportReady,
   onViewportScroll,
   onTrustedScrollIntent,
@@ -97,8 +88,8 @@ export default function TextDocumentReader({
   focusMode: string;
   hyphenation: string;
   contentState: TextDocumentContentState;
-  /** Hosted decoration over canonical HTML; omitted hosts render undecorated. */
-  decorator?: TextReaderContentDecorator;
+  /** A source request can remain pending while existing content is readable. */
+  busy?: boolean;
   onViewportReady: (snapshot: ReaderViewportSnapshot) => void;
   onViewportScroll: (snapshot: ReaderViewportSnapshot) => void;
   onTrustedScrollIntent: (direction: TrustedScrollDirection) => void;
@@ -108,7 +99,7 @@ export default function TextDocumentReader({
   onContentPointerOut: (event: PointerEvent<HTMLDivElement>) => void;
   onContentFocus: (event: FocusEvent<HTMLDivElement>) => void;
   onContentBlur: (event: FocusEvent<HTMLDivElement>) => void;
-  onInternalLinkClick?: (href: string | null) => boolean;
+  onInternalLinkClick?: (href: string | null, anchor: HTMLAnchorElement) => boolean;
   onCanonicalPosition?: (offset: number) => void;
   canonicalLength?: number;
   initialCanonicalOffset?: number;
@@ -119,17 +110,6 @@ export default function TextDocumentReader({
         ? composeRefs<HTMLDivElement>(textViewportRef, additionalViewportRef)
         : textViewportRef,
     [additionalViewportRef, textViewportRef],
-  );
-  const canonicalHtml =
-    contentState.status === "ready" ? contentState.renderedHtml : null;
-  const presentedHtml = useMemo(
-    () =>
-      canonicalHtml === null
-        ? null
-        : decorator === undefined
-          ? canonicalHtml
-          : decorator.decorate(canonicalHtml),
-    [canonicalHtml, decorator],
   );
   const onViewportReadyRef = useRef(onViewportReady);
   const onViewportScrollRef = useRef(onViewportScroll);
@@ -280,7 +260,7 @@ export default function TextDocumentReader({
         const anchorEl = target.closest("a[href]");
         if (
           anchorEl instanceof HTMLAnchorElement &&
-          onInternalLinkClick(anchorEl.getAttribute("href"))
+          onInternalLinkClick(anchorEl.getAttribute("href"), anchorEl)
         ) {
           event.preventDefault();
           return;
@@ -304,6 +284,7 @@ export default function TextDocumentReader({
         data-initial-canonical-offset={initialCanonicalOffset ?? undefined}
         data-pane-content="true"
         tabIndex={0}
+        aria-busy={busy || contentState.status === "loading"}
         role="region"
         aria-label="Document reading area"
         onWheel={handleWheel}
@@ -342,10 +323,6 @@ export default function TextDocumentReader({
               </div>
             ) : contentState.status === "loading" ? (
               <div className={styles.loading}>{contentState.message}</div>
-            ) : contentState.status === "empty" ? (
-              <div className={styles.empty}>
-                <p>{contentState.message}</p>
-              </div>
             ) : (
               <div
                 ref={contentRef}
@@ -356,13 +333,23 @@ export default function TextDocumentReader({
                 onFocus={onContentFocus}
                 onBlur={onContentBlur}
               >
-                <HtmlRenderer
-                  htmlSanitized={presentedHtml ?? ""}
-                  className={styles.fragment}
-                  mediaId={mediaId}
-                  scrollPositioner={scrollPositioner}
-                  headingLevelOffset={1}
-                />
+                {contentState.preparedRoots !== undefined ? contentState.preparedRoots.map(({ key, root }) => (
+                  <HtmlRenderer
+                    key={key}
+                    preparedRoot={root}
+                    className={styles.fragment}
+                    mediaId={mediaId}
+                    scrollPositioner={scrollPositioner}
+                  />
+                )) : (
+                  <HtmlRenderer
+                    htmlSanitized={contentState.renderedHtml}
+                    className={styles.fragment}
+                    mediaId={mediaId}
+                    scrollPositioner={scrollPositioner}
+                    headingLevelOffset={1}
+                  />
+                )}
               </div>
             )}
             {contentState.status === "ready" ? (

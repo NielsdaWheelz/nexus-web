@@ -30,6 +30,16 @@ ReaderApparatusRelation = Literal[
     "backlink_to_marker",
     "contains_reference",
 ]
+READER_APPARATUS_FORWARD_RELATIONS = frozenset(
+    {
+        "points_to_note",
+        "points_to_endnote",
+        "points_to_sidenote",
+        "points_to_margin_note",
+        "cites_bibliography_entry",
+        "contains_reference",
+    }
+)
 ReaderApparatusConfidence = Literal["exact", "strong", "probable"]
 ReaderApparatusLocatorStatus = Literal["exact", "container", "missing"]
 

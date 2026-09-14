@@ -7,6 +7,7 @@ import io
 import zipfile
 from uuid import uuid4
 
+from lxml import html
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
@@ -26,6 +27,7 @@ from nexus.services.epub_ingest import (
     publish_epub_extraction_plan,
 )
 from nexus.services.library_entries import ensure_media_in_default_library
+from nexus.services.parser_temp import parser_attempt_directory
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_storage_path
 
@@ -84,6 +86,11 @@ def _structural_anchor_epub() -> bytes:
     <pagebreak id="page-target"></pagebreak>
     <p id="late">Later.</p>
     <p>Tail.</p>
+    <svg xmlns="http://www.w3.org/2000/svg">
+      <defs><linearGradient id="local-paint"><stop offset="0" stop-color="red"/></linearGradient></defs>
+      <rect id="paint" width="10" height="10" fill="\\75rl(https://outside.example/paint.svg)"
+            stroke="u\\72l(&quot;#local-paint&quot;)"/>
+    </svg>
   </body>
 </html>
 """,
@@ -140,59 +147,67 @@ def test_epub_ingest_repairs_structural_anchors_without_reordering_intervals(
 
     storage.put_object(storage_path, payload, "application/epub+zip")
     try:
-        plan = build_epub_extraction_plan(
-            session_factory=create_session_factory(engine),
-            media_id=media_id,
-            attempt_id=uuid4(),
-            storage_path=storage_path,
-            source_size_bytes=len(payload),
-            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-            storage_client=storage,
-            record_progress=lambda _completed, _total, _unit: None,
-        )
-        assert isinstance(plan, EpubExtractionPlan), (
-            f"structural-anchor EPUB did not produce an extraction plan: {plan!r}"
-        )
-
-        with Session(engine) as db:
-            publish_epub_extraction_plan(db, media_id=media_id, plan=plan)
-            media = db.get(Media, media_id)
-            assert media is not None
-            media.processing_status = ProcessingStatus.ready_for_reading
-            db.commit()
-
-        with Session(engine) as db:
-            fragment = db.scalar(select(Fragment).where(Fragment.media_id == media_id))
-            locations = list(
-                db.scalars(
-                    select(EpubNavLocation)
-                    .where(EpubNavLocation.media_id == media_id)
-                    .order_by(EpubNavLocation.ordinal)
-                )
+        attempt_id = uuid4()
+        with parser_attempt_directory(attempt_id) as attempt_directory:
+            plan = build_epub_extraction_plan(
+                attempt_directory=attempt_directory,
+                session_factory=create_session_factory(engine),
+                media_id=media_id,
+                attempt_id=attempt_id,
+                storage_path=storage_path,
+                source_size_bytes=len(payload),
+                expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+                storage_client=storage,
+                record_progress=lambda _completed, _total, _unit: None,
+            )
+            assert isinstance(plan, EpubExtractionPlan), (
+                f"structural-anchor EPUB did not produce an extraction plan: {plan!r}"
             )
 
-        assert fragment is not None, f"EPUB {media_id} did not persist its reader fragment"
-        assert '<span id="chapter-start"></span>' in fragment.html_sanitized
-        assert '<span id="center-target">Centered target.</span>' in fragment.html_sanitized
-        assert '<span id="page-target"></span>' in fragment.html_sanitized
-        assert "<center" not in fragment.html_sanitized
-        assert "<pagebreak" not in fragment.html_sanitized
-        assert "onclick" not in fragment.html_sanitized
-        assert "color:red" not in fragment.html_sanitized
-        assert 'class="layout"' not in fragment.html_sanitized
+            with Session(engine) as db:
+                publish_epub_extraction_plan(db, media_id=media_id, plan=plan)
+                media = db.get(Media, media_id)
+                assert media is not None
+                media.processing_status = ProcessingStatus.ready_for_reading
+                db.commit()
 
-        by_label = {location.label: location for location in locations}
-        assert [location.label for location in locations] == [
-            "Later",
-            "Chapter start",
-            "Centered",
-            "Early",
-            "Page marker",
-        ], f"EPUB {media_id} lost its authored TOC order: {locations!r}"
-        assert by_label["Later"].start_offset > by_label["Early"].start_offset
-        assert by_label["Early"].end_offset == by_label["Page marker"].start_offset
-        assert by_label["Later"].end_offset == len(fragment.canonical_text)
-        assert by_label["Chapter start"].start_offset == 0
-        assert by_label["Centered"].start_offset == 0
+            with Session(engine) as db:
+                fragment = db.scalar(select(Fragment).where(Fragment.media_id == media_id))
+                locations = list(
+                    db.scalars(
+                        select(EpubNavLocation)
+                        .where(EpubNavLocation.media_id == media_id)
+                        .order_by(EpubNavLocation.ordinal)
+                    )
+                )
+
+            assert fragment is not None, f"EPUB {media_id} did not persist its reader fragment"
+            assert '<span id="chapter-start"></span>' in fragment.html_sanitized
+            assert '<span id="center-target">Centered target.</span>' in fragment.html_sanitized
+            assert '<span id="page-target"></span>' in fragment.html_sanitized
+            assert "<center" not in fragment.html_sanitized
+            assert "<pagebreak" not in fragment.html_sanitized
+            assert "onclick" not in fragment.html_sanitized
+            assert "color:red" not in fragment.html_sanitized
+            assert 'class="layout"' not in fragment.html_sanitized
+            paint = html.fragment_fromstring(
+                fragment.html_sanitized, create_parent=True
+            ).get_element_by_id("paint")
+            assert paint.get("fill") is None, "escaped CSS must not load an undeclared resource"
+            assert "#local-paint" in paint.get("stroke", ""), "local SVG paint must remain readable"
+
+            by_label = {location.label: location for location in locations}
+            assert [location.label for location in locations] == [
+                "Later",
+                "Chapter start",
+                "Centered",
+                "Early",
+                "Page marker",
+            ], f"EPUB {media_id} lost its authored TOC order: {locations!r}"
+            assert by_label["Later"].start_offset > by_label["Early"].start_offset
+            assert by_label["Early"].end_offset == by_label["Page marker"].start_offset
+            assert by_label["Later"].end_offset == len(fragment.canonical_text)
+            assert by_label["Chapter start"].start_offset == 0
+            assert by_label["Centered"].start_offset == 0
     finally:
         storage.delete_object(storage_path)

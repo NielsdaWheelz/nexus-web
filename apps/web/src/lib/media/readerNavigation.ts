@@ -51,19 +51,15 @@ export interface ReaderNavigationLocation {
   section_id: string | null;
 }
 
-export interface MediaNavigationResponse {
-  data: {
-    media_id: string;
-    kind: "epub" | "web_article";
-    fragments: ReaderNavigationFragment[];
-    sections: ReaderNavigationSection[];
-    toc_nodes: ReaderNavigationTocNode[];
-    landmarks: ReaderNavigationLocation[];
-    page_list: ReaderNavigationLocation[];
-  };
+export interface MediaNavigation {
+  media_id: string;
+  kind: "epub" | "web_article";
+  fragments: ReaderNavigationFragment[];
+  sections: ReaderNavigationSection[];
+  toc_nodes: ReaderNavigationTocNode[];
+  landmarks: ReaderNavigationLocation[];
+  page_list: ReaderNavigationLocation[];
 }
-
-export type MediaNavigation = MediaNavigationResponse["data"];
 
 export function decodeMediaNavigation(
   raw: unknown,
@@ -227,16 +223,7 @@ function decodeNavigationFragment(
   };
 }
 
-export function decodeMediaNavigationResponse(
-  raw: unknown,
-): MediaNavigationResponse {
-  const value = expectExactRecord(raw, ["data"], "MediaNavigationResponse");
-  return {
-    data: decodeMediaNavigation(value.data, "MediaNavigationResponse.data"),
-  };
-}
-
-function decodeNavigationSection(
+export function decodeNavigationSection(
   raw: unknown,
   name: string,
 ): ReaderNavigationSection {
@@ -327,7 +314,7 @@ function decodeTocNode(raw: unknown, name: string): ReaderNavigationTocNode {
   };
 }
 
-function decodeNavigationLocation(
+export function decodeNavigationLocation(
   raw: unknown,
   name: string,
 ): ReaderNavigationLocation {
@@ -347,40 +334,4 @@ function decodeNavigationLocation(
     ),
     section_id: expectNullableString(value.section_id, `${name}.section_id`),
   };
-}
-
-export interface NormalizedNavigationTocNode extends ReaderNavigationTocNode {
-  navigable: boolean;
-  children: NormalizedNavigationTocNode[];
-}
-
-export function normalizeReaderNavigationToc(
-  nodes: ReaderNavigationTocNode[],
-  sectionIdSet: Set<string>,
-): NormalizedNavigationTocNode[] {
-  return nodes.map((node) => ({
-    ...node,
-    navigable: node.section_id !== null && sectionIdSet.has(node.section_id),
-    children: normalizeReaderNavigationToc(node.children, sectionIdSet),
-  }));
-}
-
-export function parseReaderNavigationHrefAnchorId(
-  href: string | null,
-): string | null {
-  if (!href || !href.includes("#")) {
-    return null;
-  }
-  const fragment = href.split("#", 2)[1];
-  if (!fragment) {
-    return null;
-  }
-  try {
-    return decodeURIComponent(fragment);
-  } catch (error) {
-    if (error instanceof URIError) {
-      return fragment;
-    }
-    throw error;
-  }
 }

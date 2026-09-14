@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from nexus.api.query_params import parse_comma_list
+from nexus.api.read_admission import AdmittedReadRoute
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
@@ -27,7 +28,7 @@ from nexus.services.search.query import build_search_query
 from nexus.services.search.scope import scope_from_uri
 from nexus.services.search.service import search as search_service
 
-router = APIRouter(tags=["search"])
+router = APIRouter(tags=["search"], route_class=AdmittedReadRoute)
 
 # Params removed by the search intent-model cutover. Stale links carrying any of
 # these must fail loud (400) rather than silently broaden to an all-kinds search.

@@ -38,6 +38,10 @@ internal data class OfflineReadingManifestEntry(
         requireSafePackagePath(path)
         require(sizeBytes in 0..OFFLINE_READING_MAX_ENTRY_BYTES)
         if (path == "reader.json") require(sizeBytes <= OFFLINE_READING_MAX_READER_JSON_BYTES)
+        if (path == "descriptor.json") require(sizeBytes <= OFFLINE_READING_MAX_DESCRIPTOR_BYTES)
+        if (path.startsWith("index/") || path.startsWith("units/")) {
+            require(sizeBytes <= OFFLINE_READING_MAX_PUBLICATION_MEMBER_BYTES)
+        }
         if (mediaType == "image/svg+xml") require(sizeBytes <= OFFLINE_READING_MAX_SVG_BYTES)
         require(mediaType.toByteArray(StandardCharsets.US_ASCII).size == mediaType.length)
         require(mediaType.length in 1..OFFLINE_READING_MAX_MEDIA_TYPE_BYTES)
@@ -53,6 +57,7 @@ internal data class OfflineReadingManifest(
     val readerGeneration: Long,
     val readerRevisionKey: String,
     val entries: List<OfflineReadingManifestEntry>,
+    val packageSchemaVersion: Int,
 ) {
     init {
         require(readerGeneration > 0)
@@ -61,8 +66,11 @@ internal data class OfflineReadingManifest(
         require(entries.isNotEmpty() && entries.size <= OFFLINE_READING_MAX_ENTRIES)
         require(entries.map { it.path } == entries.map { it.path }.sortedWith(UTF8_PATH_COMPARATOR))
         require(entries.map { it.path }.toSet().size == entries.size)
-        require(entries.any { it.path == "reader.json" })
-        require(entries.single { it.path == "reader.json" }.mediaType == "application/json")
+        require(packageSchemaVersion == 1 || packageSchemaVersion == 2)
+        val descriptorPath = if (packageSchemaVersion == 1) "reader.json" else "descriptor.json"
+        require(entries.any { it.path == descriptorPath })
+        require(entries.single { it.path == descriptorPath }.mediaType == "application/json")
+        if (packageSchemaVersion == 2) require(entries.none { it.path == "reader.json" })
         require(entries.fold(0L) { total, entry -> Math.addExact(total, entry.sizeBytes) } <=
             OFFLINE_READING_MAX_EXPANDED_BYTES)
     }
@@ -86,10 +94,11 @@ internal object OfflineReadingManifestParser {
                 "entries",
             )
         )
+        val schema = root.getValue("packageSchemaVersion").requireLong()
         if (
-            root.getValue("packageSchemaVersion").requireLong() != 1L ||
+            schema !in 1L..2L ||
             root.getValue("readerContractVersion").requireLong() != 1L ||
-            root.getValue("minimumReaderBundleVersion").requireLong() != 1L
+            root.getValue("minimumReaderBundleVersion").requireLong() != schema
         ) {
             throw UnsupportedOfflineReadingPackageException()
         }
@@ -116,6 +125,7 @@ internal object OfflineReadingManifestParser {
             readerGeneration = root.getValue("readerGeneration").requireLong(),
             readerRevisionKey = root.getValue("readerRevisionKey").requireString(),
             entries = entries,
+            packageSchemaVersion = schema.toInt(),
         )
     }
 }

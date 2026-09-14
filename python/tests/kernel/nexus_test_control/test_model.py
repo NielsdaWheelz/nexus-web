@@ -100,6 +100,7 @@ def test_changed_owns_only_directly_affected_edit_loop_proofs() -> None:
         Capability.SERVICE,
         Capability.COMPONENT,
         Capability.MIGRATIONS,
+        Capability.API_CAPACITY,
         Capability.JOURNEYS_ALL,
     }
 

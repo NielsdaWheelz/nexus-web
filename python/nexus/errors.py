@@ -51,6 +51,7 @@ class ApiErrorCode(str, Enum):
 
     # Validation errors (400)
     E_INVALID_REQUEST = "E_INVALID_REQUEST"
+    E_REQUEST_TOO_LARGE = "E_REQUEST_TOO_LARGE"  # 413 - body exceeds the qualified read profile
     E_NAME_INVALID = "E_NAME_INVALID"
     E_INVALID_KIND = "E_INVALID_KIND"
     E_INVALID_CONTENT_TYPE = "E_INVALID_CONTENT_TYPE"
@@ -83,8 +84,6 @@ class ApiErrorCode(str, Enum):
     E_READER_STATE_CONFLICT = "E_READER_STATE_CONFLICT"
     E_READER_CONTENT_CHANGED = "E_READER_CONTENT_CHANGED"
     E_READER_PUBLICATION_BUSY = "E_READER_PUBLICATION_BUSY"
-    E_OFFLINE_READING_PACKAGE_TIMEOUT = "E_OFFLINE_READING_PACKAGE_TIMEOUT"
-    E_OFFLINE_READING_PACKAGE_BUSY = "E_OFFLINE_READING_PACKAGE_BUSY"  # 503 retryable capacity
     E_ACTIVITY_CAPTURE_CONFLICT = "E_ACTIVITY_CAPTURE_CONFLICT"
     E_MEDIA_LAST_REFERENCE = "E_MEDIA_LAST_REFERENCE"
     E_DOSSIER_GENERATION_IN_PROGRESS = "E_DOSSIER_GENERATION_IN_PROGRESS"
@@ -156,9 +155,7 @@ class ApiErrorCode(str, Enum):
     E_REGENERATION_NOT_ALLOWED = (
         "E_REGENERATION_NOT_ALLOWED"  # 409 - completed answer not regeneratable
     )
-    E_CHAPTER_NOT_FOUND = "E_CHAPTER_NOT_FOUND"  # 404
     E_ARCHIVE_UNSAFE = "E_ARCHIVE_UNSAFE"  # 400
-    E_EPUB_FIND_SOURCE_CHANGED = "E_EPUB_FIND_SOURCE_CHANGED"  # 409
 
     # Podcast provider errors
     E_BROWSE_PROVIDER_UNAVAILABLE = "E_BROWSE_PROVIDER_UNAVAILABLE"  # 503 upstream unavailable
@@ -223,8 +220,14 @@ class ApiErrorCode(str, Enum):
     E_SOURCE_FETCH_FAILED = "E_SOURCE_FETCH_FAILED"  # 502 - feed-controlled fetch failed
     E_SOURCE_TOO_LARGE = "E_SOURCE_TOO_LARGE"  # 413 - response exceeded streamed size cap
 
+    # Reader capacity errors (422)
+    # 422 - retained content exceeds a qualified reader limit
+    E_READER_CONTENT_TOO_LARGE = "E_READER_CONTENT_TOO_LARGE"
+
     # Server errors (500/503)
     E_AUTH_UNAVAILABLE = "E_AUTH_UNAVAILABLE"  # 503
+    # 503 - foreground read admission exhausted (read_admission.py only)
+    E_READ_CAPACITY = "E_READ_CAPACITY"
     E_INTERNAL = "E_INTERNAL"  # 500
     E_SIGN_UPLOAD_FAILED = "E_SIGN_UPLOAD_FAILED"  # 500
     E_SIGN_DOWNLOAD_FAILED = "E_SIGN_DOWNLOAD_FAILED"  # 500
@@ -262,6 +265,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_IMPORT_NOT_FOUND: 404,
     # Validation errors
     ApiErrorCode.E_INVALID_REQUEST: 400,
+    ApiErrorCode.E_REQUEST_TOO_LARGE: 413,
     ApiErrorCode.E_NAME_INVALID: 400,
     ApiErrorCode.E_INVALID_KIND: 400,
     ApiErrorCode.E_INVALID_CONTENT_TYPE: 400,
@@ -293,8 +297,6 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_READER_STATE_CONFLICT: 409,
     ApiErrorCode.E_READER_CONTENT_CHANGED: 409,
     ApiErrorCode.E_READER_PUBLICATION_BUSY: 409,
-    ApiErrorCode.E_OFFLINE_READING_PACKAGE_TIMEOUT: 504,
-    ApiErrorCode.E_OFFLINE_READING_PACKAGE_BUSY: 503,
     ApiErrorCode.E_ACTIVITY_CAPTURE_CONFLICT: 409,
     ApiErrorCode.E_MEDIA_LAST_REFERENCE: 409,
     ApiErrorCode.E_DOSSIER_GENERATION_IN_PROGRESS: 409,
@@ -353,9 +355,7 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_RETRY_NOT_ALLOWED: 409,
     ApiErrorCode.E_REPAIR_NOT_ALLOWED: 409,
     ApiErrorCode.E_REGENERATION_NOT_ALLOWED: 409,
-    ApiErrorCode.E_CHAPTER_NOT_FOUND: 404,
     ApiErrorCode.E_ARCHIVE_UNSAFE: 400,
-    ApiErrorCode.E_EPUB_FIND_SOURCE_CHANGED: 409,
     # Podcast provider errors
     ApiErrorCode.E_BROWSE_PROVIDER_UNAVAILABLE: 503,
     ApiErrorCode.E_BROWSE_PROVIDER_RATE_LIMITED: 429,
@@ -410,8 +410,11 @@ ERROR_CODE_TO_STATUS: dict[ApiErrorCode, int] = {
     ApiErrorCode.E_IMAGE_TOO_LARGE: 413,
     ApiErrorCode.E_SOURCE_FETCH_FAILED: 502,
     ApiErrorCode.E_SOURCE_TOO_LARGE: 413,
+    # Reader capacity errors
+    ApiErrorCode.E_READER_CONTENT_TOO_LARGE: 422,
     # Server errors
     ApiErrorCode.E_AUTH_UNAVAILABLE: 503,
+    ApiErrorCode.E_READ_CAPACITY: 503,
     ApiErrorCode.E_INTERNAL: 500,
     ApiErrorCode.E_SIGN_UPLOAD_FAILED: 500,
     ApiErrorCode.E_SIGN_DOWNLOAD_FAILED: 500,
@@ -491,6 +494,43 @@ class ResourceLimitError(ApiError):
     def __init__(self, message: str, *, dimension: ResourceFailureDimension) -> None:
         super().__init__(ApiErrorCode.E_RESOURCE_LIMIT, message)
         self.dimension: ResourceFailureDimension = dimension
+
+
+type ReaderCapacityDimension = Literal[
+    "descriptor_bytes", "index_bytes", "unit_bytes", "unit_codepoints", "unit_dom_nodes"
+]
+"""Which field of the qualified ``ReaderPublicationLimits`` profile the content broke."""
+
+
+class ReaderContentTooLargeError(ApiError):
+    """Retained content that cannot be served inside the qualified reader profile.
+
+    Deterministic and permanent for a ``(media_id, reader_generation)`` under the
+    current profile, so it carries no ``Retry-After`` and the browser must not
+    retry it. Distinct from ``E_READ_CAPACITY``, which the read admission owner
+    alone raises when the foreground pool is momentarily full.
+
+    ``measured`` is the size the content actually reached against ``limit``. A
+    site that refuses content without producing one number — a split search that
+    admits no unit at all — passes ``None`` and the key is omitted rather than
+    reporting an invented figure.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        limit: ReaderCapacityDimension,
+        limit_value: int,
+        measured: int | None,
+    ) -> None:
+        details: dict[str, Any] = {"limit": limit, "limit_value": limit_value}
+        if measured is not None:
+            details["measured"] = measured
+        super().__init__(ApiErrorCode.E_READER_CONTENT_TOO_LARGE, message, details=details)
+        self.limit: ReaderCapacityDimension = limit
+        self.limit_value = limit_value
+        self.measured = measured
 
 
 class ConflictError(ApiError):

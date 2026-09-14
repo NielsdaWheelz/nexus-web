@@ -1,0 +1,11 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt
+@@ -132,7 +132,6 @@
+         require(raw.flags and 0x1 == 0)
+         require(raw.extraLength == 0 && raw.commentLength == 0)
+         require(raw.createSystem == 3)
+-        require(raw.unixMode and 0xf000 == 0x8000)
+         require(raw.unixMode and 0x0fff == 0x1a4)
+         if (entry.name != "manifest.json") {
+             requireSafePackagePath(entry.name)

@@ -59,6 +59,7 @@ export interface PdfHighlight extends Omit<Highlight, "anchor"> {
   anchor: {
     type: "pdf_page_geometry";
     media_id: string;
+    source_sha256: string | null;
     page_number: number;
     quads: PdfHighlightQuad[];
   };
@@ -198,13 +199,18 @@ export function decodeMediaHighlight(
   if (anchor.type === "pdf_page_geometry") {
     const decodedAnchor = expectExactRecord(
       anchor,
-      ["type", "media_id", "page_number", "quads"],
+      ["type", "media_id", "source_sha256", "page_number", "quads"],
       `${name}.anchor`,
     );
+    const sourceSha256 = expectNullableString(decodedAnchor.source_sha256, `${name}.anchor.source_sha256`);
+    if (sourceSha256 !== null && !/^[a-f0-9]{64}$/.test(sourceSha256)) {
+      throw new TypeError(`${name}.anchor.source_sha256 must be a SHA-256 digest`);
+    }
     return {
       ...common,
       anchor: {
         type: "pdf_page_geometry",
+        source_sha256: sourceSha256,
         media_id: expectString(
           decodedAnchor.media_id,
           `${name}.anchor.media_id`,

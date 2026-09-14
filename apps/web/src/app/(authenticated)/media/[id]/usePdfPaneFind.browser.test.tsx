@@ -81,7 +81,8 @@ async function prepare(
     sourceKey: adapter.sourceKey,
     signal,
   });
-  return { session, signal };
+  if (session.kind !== "Prepared") throw new Error("PDF preparation failed");
+  return { session: session.session, signal };
 }
 
 describe("PDF Pane Find adapter", () => {
@@ -169,11 +170,13 @@ describe("PDF Pane Find adapter", () => {
         key: response.rows[0]!.key,
       }),
     ).resolves.toMatchObject({ kind: "Previewed" });
-    await adapter.returnToReadingPosition({
-      sessionId: 1,
-      sourceKey: adapter.sourceKey,
-      signal,
-    });
+    await expect(
+      adapter.returnToReadingPosition({
+        sessionId: 1,
+        sourceKey: adapter.sourceKey,
+        signal,
+      }),
+    ).resolves.toEqual({ kind: "Returned" });
 
     expect(runtime.activate).toHaveBeenCalledWith(
       {
@@ -233,11 +236,13 @@ describe("PDF Pane Find adapter", () => {
     });
     const initialClearCount = initialRuntime.clearPresentation.mock.calls.length;
 
-    await adapter.returnToReadingPosition({
-      sessionId: 1,
-      sourceKey: adapter.sourceKey,
-      signal,
-    });
+    await expect(
+      adapter.returnToReadingPosition({
+        sessionId: 1,
+        sourceKey: adapter.sourceKey,
+        signal,
+      }),
+    ).resolves.toEqual({ kind: "Returned" });
 
     expect(initialRuntime.restoreOrigin).toHaveBeenCalledWith(
       pdfOrigin(3, 24),
@@ -348,11 +353,13 @@ describe("PDF Pane Find adapter", () => {
       signal,
       key: response.rows[0]!.key,
     });
-    await adapter.returnToReadingPosition({
-      sessionId: 1,
-      sourceKey: adapter.sourceKey,
-      signal,
-    });
+    await expect(
+      adapter.returnToReadingPosition({
+        sessionId: 1,
+        sourceKey: adapter.sourceKey,
+        signal,
+      }),
+    ).resolves.toEqual({ kind: "Returned" });
 
     expect(runtime.restoreOrigin).toHaveBeenCalledWith(liveOrigin, signal);
   });
@@ -447,11 +454,13 @@ describe("PDF Pane Find adapter", () => {
     expect(runtime.clearPresentation).toHaveBeenCalledTimes(1);
     expect(previewLease.isActive()).toBe(true);
 
-    await adapter.returnToReadingPosition({
-      sessionId: 1,
-      sourceKey: adapter.sourceKey,
-      signal,
-    });
+    await expect(
+      adapter.returnToReadingPosition({
+        sessionId: 1,
+        sourceKey: adapter.sourceKey,
+        signal,
+      }),
+    ).resolves.toEqual({ kind: "Returned" });
     expect(runtime.restoreOrigin).toHaveBeenCalledWith(
       pdfOrigin(3, 24),
       signal,
@@ -538,11 +547,13 @@ describe("PDF Pane Find adapter", () => {
     expect(runtime.restoreOrigin).not.toHaveBeenCalled();
     expect(previewLease.isActive()).toBe(false);
 
-    await adapter.returnToReadingPosition({
-      sessionId: 1,
-      sourceKey: adapter.sourceKey,
-      signal,
-    });
+    await expect(
+      adapter.returnToReadingPosition({
+        sessionId: 1,
+        sourceKey: adapter.sourceKey,
+        signal,
+      }),
+    ).resolves.toEqual({ kind: "Returned" });
     expect(runtime.restoreOrigin).not.toHaveBeenCalled();
   });
 
@@ -622,11 +633,13 @@ describe("PDF Pane Find adapter", () => {
     });
     await expect(second).rejects.toMatchObject({ name: "AbortError" });
 
-    await adapter.returnToReadingPosition({
-      sessionId: 1,
-      sourceKey: adapter.sourceKey,
-      signal,
-    });
+    await expect(
+      adapter.returnToReadingPosition({
+        sessionId: 1,
+        sourceKey: adapter.sourceKey,
+        signal,
+      }),
+    ).resolves.toEqual({ kind: "Returned" });
     expect(runtime.restoreOrigin).toHaveBeenCalledWith(
       pdfOrigin(3, 24),
       signal,

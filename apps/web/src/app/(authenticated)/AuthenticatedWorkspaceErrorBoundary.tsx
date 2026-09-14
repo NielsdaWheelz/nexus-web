@@ -1,8 +1,9 @@
 "use client";
 
-import { Component, useEffect, useRef, useTransition, type ReactNode } from "react";
+import { Component, useEffect, useRef, useTransition, type ErrorInfo, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
+import { reportClientDefect } from "@/lib/telemetry/clientDefects";
 import styles from "./AuthenticatedWorkspaceErrorBoundary.module.css";
 
 /**
@@ -44,7 +45,7 @@ function WorkspaceBootstrapError({ onReset }: { onReset: () => void }) {
         The workspace couldn’t load
       </h2>
       <p className={styles.body}>
-        Something went wrong while loading your workspace. Your data is safe.
+        Something went wrong while loading your workspace. Retry to load it again.
       </p>
       <Button onClick={retry} disabled={retrying}>
         {retrying ? "Retrying…" : "Retry"}
@@ -67,8 +68,8 @@ export class AuthenticatedWorkspaceErrorBoundary extends Component<
     return { hasError: true };
   }
 
-  componentDidCatch(error: unknown) {
-    console.error("Authenticated workspace bootstrap failed:", error);
+  componentDidCatch(error: unknown, info: ErrorInfo) {
+    reportClientDefect(error, { scope: "Workspace", componentStack: info.componentStack ?? "" });
   }
 
   render() {

@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/components/workspace/WorkspaceHost.tsx b/apps/web/src/components/workspace/WorkspaceHost.tsx
+--- a/apps/web/src/components/workspace/WorkspaceHost.tsx
++++ b/apps/web/src/components/workspace/WorkspaceHost.tsx
+@@ -456,7 +456,7 @@
+   readonly dragging: boolean;
+   readonly children: React.ReactNode;
+ }) {
+-  const [mounted, setMounted] = useState(documentReader === false || displayed);
++  const [mounted, setMounted] = useState(true);
+   const [canSuspend, setCanSuspend] = useState<boolean | null>(null);
+   const currentCanSuspend = useRef<boolean | null>(null);
+   const publishCanSuspend = useCallback((value: boolean | null) => {

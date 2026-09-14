@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
 from nexus.job_topology import MAINTENANCE_JOB_KINDS
@@ -143,6 +143,47 @@ type GenerationApiProvider = Literal[
 ]
 
 
+class ReadAdmissionLimits(BaseModel):
+    """Explicit foreground capacity profile; release qualification owns the values.
+
+    Each permit covers execution, serialization and body transfer, so every pool
+    also carries the deadline after which holding the permit would remove
+    foreground capacity instead of serving a read. ``request_bytes`` is the other
+    end of the same permit: the largest request body an admitted route may make
+    the process hold, which is a transport bound and not the ``index_bytes``
+    response-page budget.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    max_concurrency: int = Field(gt=0)
+    max_image_concurrency: int = Field(gt=0)
+    max_package_transfer_concurrency: int = Field(gt=0)
+    retry_after_seconds: int = Field(gt=0)
+    work_deadline_seconds: int = Field(gt=0)
+    package_transfer_deadline_seconds: int = Field(gt=0)
+    request_bytes: int = Field(gt=0)
+
+
+class ImageDecoderLimits(BaseModel):
+    """Required Linux foreground child profile; qualification owns its values."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    address_space_bytes: int = Field(gt=0)
+    cpu_seconds: int = Field(ge=2)
+    wall_seconds: int = Field(gt=0)
+
+
+class ReaderPublicationLimits(BaseModel):
+    """Explicit preparation profile; release qualification owns the values."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    unit_bytes: int = Field(gt=0)
+    unit_codepoints: int = Field(gt=0)
+    unit_dom_nodes: int = Field(gt=0)
+    index_bytes: int = Field(gt=0)
+    descriptor_bytes: int = Field(gt=0)
+
+
 class Settings(BaseSettings):
     """Application configuration.
 
@@ -253,6 +294,15 @@ class Settings(BaseSettings):
     # Storage limits
     max_pdf_bytes: int = Field(default=100 * 1024 * 1024, alias="MAX_PDF_BYTES")  # 100 MB
     max_epub_bytes: int = Field(default=50 * 1024 * 1024, alias="MAX_EPUB_BYTES")  # 50 MB
+    reader_publication_limits: ReaderPublicationLimits | None = Field(
+        default=None, alias="READER_PUBLICATION_LIMITS"
+    )
+    api_read_admission_limits: ReadAdmissionLimits | None = Field(
+        default=None, alias="API_READ_ADMISSION_LIMITS"
+    )
+    image_decoder_limits: ImageDecoderLimits | None = Field(
+        default=None, alias="IMAGE_DECODER_LIMITS"
+    )
     max_arxiv_source_bytes: int = Field(
         default=50 * 1024 * 1024,
         alias="MAX_ARXIV_SOURCE_BYTES",
@@ -339,6 +389,9 @@ class Settings(BaseSettings):
         default=1800, alias="INGEST_SEMANTIC_FAILED_RETRY_SECONDS"
     )
     parser_temp_root: Path = Field(default=Path("/tmp/nexus-parser-tmp"), alias="PARSER_TEMP_ROOT")
+    node_ingest_script: Path = Field(
+        default=Path("/app/node/ingest/ingest.mjs"), alias="NEXUS_NODE_INGEST_SCRIPT"
+    )
 
     # Worker runtime. Normal workers use one fixed lane. A raw allowlist is
     # accepted only for a gated, bounded maintenance invocation.
@@ -554,7 +607,9 @@ class Settings(BaseSettings):
     rate_limit_rpm: int = Field(default=20, alias="RATE_LIMIT_RPM")  # Requests per minute
 
     # Transcript semantic embedding settings
-    transcript_embedding_model_openai: str = Field(
+    transcript_embedding_model_openai: Literal[
+        "text-embedding-3-small", "text-embedding-3-large"
+    ] = Field(
         default="text-embedding-3-small",
         alias="TRANSCRIPT_EMBEDDING_MODEL_OPENAI",
     )
@@ -1245,3 +1300,18 @@ def get_settings() -> Settings:
 def clear_settings_cache() -> None:
     """Clear the settings cache. Useful for testing."""
     get_settings.cache_clear()
+
+
+def require_reader_publication_limits() -> ReaderPublicationLimits:
+    """Use one qualified profile for preparation and bounded publication reads."""
+    limits = get_settings().reader_publication_limits
+    if limits is None:
+        raise RuntimeError("READER_PUBLICATION_LIMITS is required for reader publications")
+    return limits
+
+
+def require_image_decoder_limits() -> ImageDecoderLimits:
+    limits = get_settings().image_decoder_limits
+    if limits is None:
+        raise RuntimeError("IMAGE_DECODER_LIMITS requires a qualified foreground profile")
+    return limits

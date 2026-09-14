@@ -8,12 +8,13 @@ import {
   samePaneResourceLocator,
   type PaneResourceLocator,
 } from "@/lib/panes/paneResourceLocator";
-import { expectExactRecord } from "@/lib/validation";
+import { expectBoolean, expectExactRecord } from "@/lib/validation";
 
 export interface ResourceLocatorResolution {
   locator: PaneResourceLocator;
   resourceItem: ResourceItem;
   canonicalHref: string | null;
+  documentReader: boolean;
 }
 
 export function decodeResourceLocatorResolutions(
@@ -39,7 +40,7 @@ export function decodeResourceLocatorResolutions(
   return data.resolutions.map((rawResolution, index) => {
     const row = expectExactRecord(
       rawResolution,
-      ["locator", "resourceItem", "canonicalHref"],
+      ["locator", "resourceItem", "canonicalHref", "documentReader"],
       "resource locator resolution",
     );
     const locator = decodePaneResourceLocator(row.locator);
@@ -64,7 +65,11 @@ export function decodeResourceLocatorResolutions(
         "resource locator resolution.canonicalHref must match resource item.route",
       );
     }
-    return { locator, resourceItem, canonicalHref };
+    const documentReader = expectBoolean(row.documentReader, "resource locator resolution.documentReader");
+    if (documentReader && (resourceItem.scheme !== "media" || resourceItem.missing)) {
+      throw new TypeError("Document reader capability requires an available media resource");
+    }
+    return { locator, resourceItem, canonicalHref, documentReader };
   });
 }
 

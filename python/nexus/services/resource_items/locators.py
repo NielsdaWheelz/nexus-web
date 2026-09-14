@@ -55,9 +55,10 @@ def resolve_resource_locator(
     else:
         raise AssertionError(f"unhandled resource locator kind: {locator.kind}")
 
-    item = surfaces.resource_item_out(db, viewer_id=viewer_id, ref=ref)
+    item, document_reader = surfaces.resource_item_resolution(db, viewer_id=viewer_id, ref=ref)
     return ResourceLocatorResolutionOut(
         locator=locator,
         resource_item=item,
         canonical_href=item.route,
+        document_reader=document_reader,
     )

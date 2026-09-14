@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/readingweb/OfflineReadingRequestRouter.kt b/apps/android/app/src/main/java/app/nexus/android/offline/readingweb/OfflineReadingRequestRouter.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/readingweb/OfflineReadingRequestRouter.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/readingweb/OfflineReadingRequestRouter.kt
+@@ -165,7 +165,7 @@
+ 
+     private fun serveEntry(member: OfflineReadingLeaseMember, rangeHeader: String?): WebResourceResponse {
+         val file = member.file
+-        val mimeType = member.mediaType
++        val mimeType = if (file.extension == "pdf") "application/pdf" else "application/octet-stream"
+         // The packaged PDF.js decides range capability from the first response:
+         // without an exact `Accept-Ranges: bytes` there it streams the whole
+         // package PDF instead of seeking.

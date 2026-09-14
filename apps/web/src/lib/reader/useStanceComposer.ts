@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { deleteStance, putStance } from "@/lib/resourceGraph/stances";
+import type { ReaderCapacityReason } from "./readerCapacity";
 
 export type StanceKind = "supports" | "contradicts";
 
@@ -35,11 +36,26 @@ export function useReaderKeyChord(args: {
   }, [args.enabled, args.key]);
 }
 
-export interface StanceEdgeRef {
-  sourceHighlightId: string;
-  kind: StanceKind;
-  stanceId: string;
-}
+/** What a stance press found to act on. */
+export type StanceTarget =
+  | { readonly kind: "Target"; readonly highlightId: string; readonly targetRef: string; readonly currentStanceId: string | null }
+  /** The reader refused the lookup it needed; the press wrote nothing. */
+  | { readonly kind: "Capacity"; readonly reason: ReaderCapacityReason }
+  /** No passage survived the press — its creation failed or the selection went. */
+  | { readonly kind: "Absent" };
+
+/**
+ * What one press did. The chord's owner routes `Failed` to the reader's failure
+ * publisher and `Capacity` to its capacity notice; the rest wrote nothing a
+ * reader must be told about beyond the mark itself.
+ */
+export type StanceOutcome =
+  | { readonly kind: "Saved" }
+  | { readonly kind: "Removed" }
+  | { readonly kind: "Superseded" }
+  | { readonly kind: "Capacity"; readonly reason: ReaderCapacityReason }
+  | { readonly kind: "Absent" }
+  | { readonly kind: "Failed"; readonly error: unknown };
 
 /**
  * Owns the two stance chords (Take a Side, §4.6): concede (`supports`) and doubt
@@ -49,41 +65,47 @@ export interface StanceEdgeRef {
  * again toggles the mark off through DELETE; the opposite key is ONE `putStance`
  * that transactionally replaces the single directed stance — never a client
  * delete-then-create (§ Stance).
+ *
+ * The composer owns one press at a time: a new press (and unmount) aborts the
+ * previous press's target resolution, and a superseded press writes nothing.
  */
 export function useStanceComposer({
   resolveTarget,
-  stanceEdges,
   onChanged,
 }: {
   /** Resolve the focused/created source highlight + its media-grain target ref. */
-  resolveTarget: () => Promise<{
-    highlightId: string;
-    targetRef: string;
-  } | null>;
-  /** Current user stance edges derived from canonical Evidence associations. */
-  stanceEdges: StanceEdgeRef[];
+  resolveTarget: (kind: StanceKind, signal: AbortSignal) => Promise<StanceTarget>;
   onChanged: () => void;
-}): { mintStance: (kind: StanceKind) => Promise<void> } {
-  const mintStance = useCallback(
-    async (kind: StanceKind) => {
-      const resolved = await resolveTarget();
-      if (!resolved) return;
-      const { highlightId, targetRef } = resolved;
+}): { mintStance: (kind: StanceKind) => Promise<StanceOutcome> } {
+  const pressRef = useRef<AbortController | null>(null);
+  useEffect(() => () => pressRef.current?.abort(), []);
 
-      const same = stanceEdges.find(
-        (edge) => edge.sourceHighlightId === highlightId && edge.kind === kind,
-      );
-      if (same) {
-        await deleteStance(same.stanceId);
+  const mintStance = useCallback(
+    async (kind: StanceKind): Promise<StanceOutcome> => {
+      pressRef.current?.abort();
+      const press = new AbortController();
+      pressRef.current = press;
+      try {
+        const resolved = await resolveTarget(kind, press.signal);
+        // A later press (or unmount) now owns the stance; this one writes nothing.
+        if (press.signal.aborted) return { kind: "Superseded" };
+        if (resolved.kind !== "Target") return resolved;
+
+        if (resolved.currentStanceId !== null) {
+          await deleteStance(resolved.currentStanceId);
+          onChanged();
+          return { kind: "Removed" };
+        }
+        // The opposite stance is one transactional putStance, never a client
+        // delete-then-create: putStance replaces the single directed stance.
+        await putStance({ sourceRef: `highlight:${resolved.highlightId}`, targetRef: resolved.targetRef, kind });
         onChanged();
-        return;
+        return { kind: "Saved" };
+      } catch (error) {
+        return press.signal.aborted ? { kind: "Superseded" } : { kind: "Failed", error };
       }
-      // The opposite stance is one transactional putStance, never a client
-      // delete-then-create: putStance replaces the single directed stance.
-      await putStance({ sourceRef: `highlight:${highlightId}`, targetRef, kind });
-      onChanged();
     },
-    [onChanged, resolveTarget, stanceEdges],
+    [onChanged, resolveTarget],
   );
 
   return { mintStance };

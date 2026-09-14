@@ -138,3 +138,74 @@ def test_embeddings_surface_transient_provider_failure() -> None:
     assert raised.value.failure.attempts == 1
     assert isinstance(raised.value.failure.cause, ProviderRateLimit)
     assert len(requests) == 1
+
+
+@pytest.mark.parametrize("large", [False, True])
+def test_embeddings_batch_within_the_conservative_byte_envelope(large: bool) -> None:
+    """The real HTTP boundary enforces byte upper bounds, not guessed token counts."""
+
+    async def run() -> None:
+        texts = (
+            [f"{index}:" + "🧠" * 2047 for index in range(70)]
+            if large
+            else [f"{index}:short" for index in range(64)]
+        )
+        received = []
+
+        def responder(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(request.content)
+            inputs = payload["input"]
+            sizes = [len(value.encode("utf-8")) for value in inputs]
+            received.append(inputs)
+            if any(size > 8191 for size in sizes) or sum(sizes) > 300_000:
+                return httpx.Response(
+                    400,
+                    request=request,
+                    json={
+                        "error": {
+                            "code": "context_length_exceeded",
+                            "message": "fixture byte envelope exceeded",
+                            "type": "invalid_request_error",
+                        }
+                    },
+                )
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "object": "list",
+                    "data": [
+                        {
+                            "object": "embedding",
+                            "embedding": [float(value.partition(":")[0]), 0.0, 1.0],
+                            "index": index,
+                        }
+                        for index, value in enumerate(inputs)
+                    ],
+                    "model": "text-embedding-3-small",
+                    "usage": {"prompt_tokens": 1, "total_tokens": 1},
+                },
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+            try:
+                vectors = await semantic_chunks._embed_with_openai_async(
+                    texts, dimensions=3, settings=_settings(), http_client=client
+                )
+            finally:
+                assert all(
+                    sum(len(value.encode("utf-8")) for value in batch) <= 300_000
+                    for batch in received
+                ), "embedding request exceeded its aggregate byte envelope"
+                assert all(
+                    len(value.encode("utf-8")) <= 8191 for batch in received for value in batch
+                ), "embedding request exceeded its per-input byte envelope"
+        assert vectors == [[float(index), 0.0, 1.0] for index in range(len(texts))]
+        assert [value for batch in received for value in batch] == texts
+        assert all(len(batch) <= 64 for batch in received)
+        if len(texts) == 64:
+            assert len(received) == 1, "ordinary embedding batch was needlessly split"
+        else:
+            assert len(received) > 1
+
+    asyncio.run(run())

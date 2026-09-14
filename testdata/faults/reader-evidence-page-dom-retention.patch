@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/components/reader/document-map/PublicationEvidence.tsx b/apps/web/src/components/reader/document-map/PublicationEvidence.tsx
+--- a/apps/web/src/components/reader/document-map/PublicationEvidence.tsx
++++ b/apps/web/src/components/reader/document-map/PublicationEvidence.tsx
+@@ -81,7 +81,7 @@
+     let lease: ReaderOverlayLease | null = null;
+     let dom: ReaderDomLease | null = null;
+     let actionPending = false;
+-    const retire = () => { root.replaceChildren(); lease?.release(); lease = null; dom?.release(); dom = null; };
++    const retire = () => { root.replaceChildren(); lease?.release(); lease = null; dom = null; };
+     const fail = (error: unknown) => {
+       if (controller.signal.aborted || isAbortError(error)) return;
+       if (!isApiError(error) || isSameSystemApiDefect(error)) callbacks.current.onDefect({

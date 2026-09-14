@@ -103,15 +103,31 @@ class TranscriptTextOffsetsTargetOut(ResolvedHighlightTargetModel):
 
 class PdfPageGeometryTargetOut(ResolvedHighlightTargetModel):
     kind: Literal["PdfPageGeometry"] = "PdfPageGeometry"
+    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     page_number: Annotated[int, Field(ge=1, le=2**31 - 1)]
     quads: Annotated[list[HighlightTargetPdfQuadOut], Field(min_length=1, max_length=512)]
+
+
+class UnresolvedSourceTargetOut(ResolvedHighlightTargetModel):
+    """An intact highlight whose geometry no published source binary accounts for.
+
+    Either no source digest was ever recorded against the anchor or the recorded
+    digest belongs to a superseded binary. The authored record is readable and
+    unchanged; only its reader target is withheld, because painting that geometry
+    over different bytes would substitute current content beneath an old locator.
+    Readers offer the explicit reanchoring choice for it. It is never a missing
+    highlight, so callers must not answer it with a not-found error.
+    """
+
+    kind: Literal["UnresolvedSource"] = "UnresolvedSource"
 
 
 ResolvedHighlightReaderTarget = Annotated[
     WebTextOffsetsTargetOut
     | EpubTextOffsetsTargetOut
     | TranscriptTextOffsetsTargetOut
-    | PdfPageGeometryTargetOut,
+    | PdfPageGeometryTargetOut
+    | UnresolvedSourceTargetOut,
     Field(discriminator="kind"),
 ]
 
@@ -342,6 +358,34 @@ class ReaderCursorEmpty(BaseModel):
     revision: int = Field(default=0, ge=0)
 
 
+class PublicationCursorSource(BaseModel):
+    """The immutable publication whose coordinates a locator describes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal["Publication"] = "Publication"
+    reader_generation: int = Field(ge=1)
+
+
+class TimelineCursorSource(BaseModel):
+    """A transcript locator under the existing timeline contract."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal["Timeline"] = "Timeline"
+
+
+class UnresolvedCursorSource(BaseModel):
+    """A retained locator whose source publication was never recorded."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal["Unresolved"] = "Unresolved"
+
+
+ReaderCursorSource = Annotated[
+    PublicationCursorSource | TimelineCursorSource | UnresolvedCursorSource,
+    Field(discriminator="kind"),
+]
+
+
 class ReaderCursorPositioned(BaseModel):
     """Snapshot of the one canonical cursor for a user/media pair."""
 
@@ -349,6 +393,7 @@ class ReaderCursorPositioned(BaseModel):
     state: Literal["Positioned"] = "Positioned"
     revision: int = Field(ge=1)
     locator: ReaderResumeState
+    source: ReaderCursorSource
 
 
 ReaderCursorSnapshot = ReaderCursorEmpty | ReaderCursorPositioned

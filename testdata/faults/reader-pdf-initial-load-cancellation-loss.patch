@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/PdfReader.tsx b/apps/web/src/components/PdfReader.tsx
+--- a/apps/web/src/components/PdfReader.tsx
++++ b/apps/web/src/components/PdfReader.tsx
+@@ -3030,8 +3030,7 @@
+ 
+     return () => {
+       active = false;
+-      void destroyPdfLoadingTask(pendingTask);
+-      pendingTask = null;
++      // Deliberate fault: unfinished initial HTTP task survives reader retirement.
+     };
+   }, [
+     attachDocumentToViewer,

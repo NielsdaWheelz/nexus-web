@@ -11,7 +11,12 @@ import hashlib
 from uuid import uuid4
 
 from nexus.config import get_settings
-from nexus.services.epub_ingest import EpubExtractionPlan, build_epub_extraction_plan
+from nexus.services.epub_ingest import (
+    EpubExtractionPlan,
+    build_epub_extraction_plan,
+    read_epub_fragment,
+)
+from nexus.services.parser_temp import parser_attempt_directory
 from tests.testkit.epub_fixtures import (
     EPUB2_NCX,
     ChunkedSourceStorage,
@@ -31,23 +36,26 @@ def test_epub2_public_doctype_and_named_entities_publish_readable_chapters() -> 
     )
     attempt_id = uuid4()
 
-    plan = build_epub_extraction_plan(
-        session_factory=lambda: ReservationSession(),
-        media_id=uuid4(),
-        attempt_id=attempt_id,
-        storage_path="sources/epub2-legacy.epub",
-        source_size_bytes=len(payload),
-        expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-        storage_client=ChunkedSourceStorage(payload),
-        record_progress=lambda _completed, _total, _unit: None,
-    )
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        plan = build_epub_extraction_plan(
+            attempt_directory=attempt_directory,
+            session_factory=lambda: ReservationSession(),
+            media_id=uuid4(),
+            attempt_id=attempt_id,
+            storage_path="sources/epub2-legacy.epub",
+            source_size_bytes=len(payload),
+            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+            storage_client=ChunkedSourceStorage(payload),
+            record_progress=lambda _completed, _total, _unit: None,
+        )
 
-    assert isinstance(plan, EpubExtractionPlan), f"EPUB 2 book was rejected: {plan!r}"
-    assert plan.result.chapter_count == 1
-    fragment = plan.fragment_specs[0][0]
-    assert "Call\u00a0me Ishmael\u2014some years ago." in fragment.html_sanitized
-    assert "Ishmael\u2014some years ago." in fragment.canonical_text
-    assert [node.label for node in plan.toc_nodes] == ["Chapter\u00a0One"], (
-        f"the NCX table of contents was not read: {[node.label for node in plan.toc_nodes]!r}"
-    )
+        assert isinstance(plan, EpubExtractionPlan), f"EPUB 2 book was rejected: {plan!r}"
+        assert plan.result.chapter_count == 1
+        fragment = plan.fragments[0]
+        html_sanitized, canonical_text = read_epub_fragment(fragment)
+        assert "Call\u00a0me Ishmael\u2014some years ago." in html_sanitized
+        assert "Ishmael\u2014some years ago." in canonical_text
+        assert [node.label for node in plan.toc_nodes] == ["Chapter\u00a0One"], (
+            f"the NCX table of contents was not read: {[node.label for node in plan.toc_nodes]!r}"
+        )
     assert not (get_settings().parser_temp_root / str(attempt_id)).exists()

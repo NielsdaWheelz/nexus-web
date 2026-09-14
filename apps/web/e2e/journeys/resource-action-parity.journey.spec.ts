@@ -307,16 +307,40 @@ test("canonical resources yield identical dropdown semantics across surfaces and
   // reader UI performs asynchronously on open, so if it landed mid-journey a later
   // surface would legitimately read a DIFFERENT facts revision than the oracle and
   // fail parity for a non-regression reason. Do it deterministically up front
-  // through the SAME real endpoint the reader uses (PUT reader-state), keeping
-  // total progression far below the 0.95 finished threshold, then wait for the
-  // AUTHORITATIVE action-snapshot to project InProgress. Every surface below then
-  // reads this one stable fact — only an explicit Mark-as-finished (never invoked
-  // here) could move it on, and the reader opens below only GREATEST() this low
-  // progression, so it cannot drift.
+  // through the account-bound progress endpoint that owns this write: it records
+  // the coupled reader-engagement fact inside the same cursor transaction, so the
+  // fact is settled before any surface reads it. Keep total progression far below
+  // the 0.95 finished threshold, then wait for the AUTHORITATIVE action-snapshot
+  // to project InProgress. Every surface below then reads this one stable fact —
+  // only an explicit Mark-as-finished (never invoked here) could move it on, and
+  // the reader opens below only GREATEST() this low progression, so it cannot drift.
   const mediaRef = `media:${mediaId}`;
-  const readerState = await api.put(`/api/media/${mediaId}/reader-state`, {
-    headers: { origin: webOrigin },
+  const progressPath = `/api/media/${mediaId}/offline-reader-state`;
+  const accountHeaders = {
+    origin: webOrigin,
+    "X-Nexus-Expected-Account-Id": journeyUser.id,
+  };
+  const baselineResponse = await api.get(progressPath, {
+    headers: accountHeaders,
+  });
+  const baselineText = await baselineResponse.text();
+  expect(
+    baselineResponse.ok(),
+    `Reader progress baseline for media ${mediaId} failed: ${baselineResponse.status()} ${baselineText.slice(0, 500)}`,
+  ).toBeTruthy();
+  const baseline = (
+    JSON.parse(baselineText) as {
+      data: {
+        readerGeneration: number | null;
+        cursor: { revision: number };
+      };
+    }
+  ).data;
+  const readerState = await api.put(progressPath, {
+    headers: accountHeaders,
     data: {
+      expectedReaderGeneration: baseline.readerGeneration,
+      baseRevision: baseline.cursor.revision,
       locator: {
         kind: "web",
         target: { fragment_id: "p0" },
@@ -328,7 +352,6 @@ test("canonical resources yield identical dropdown semantics across surfaces and
         },
         text: { quote: null, quote_prefix: null, quote_suffix: null },
       },
-      base_revision: 0,
     },
   });
   const readerStateText = await readerState.text();

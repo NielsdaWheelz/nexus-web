@@ -248,6 +248,7 @@ function expectBottomGeometryInvariants(
 async function seedReaderPaneWithQueuedBrowse(
   page: Page,
   mediaId: string,
+  accountId: string,
 ): Promise<void> {
   const paneId = `pane-${randomUUID()}`;
   const visit = (href: string): SeededPaneVisit => ({
@@ -257,7 +258,7 @@ async function seedReaderPaneWithQueuedBrowse(
   const response = await pageRequest(page, webOrigin).put(
     "/api/me/workspace-session",
     {
-      headers: { origin: webOrigin },
+      headers: { origin: webOrigin, "X-Nexus-Expected-Account-Id": accountId },
       data: {
         state: {
           activePrimaryPaneId: paneId,
@@ -407,7 +408,7 @@ test("mobile reader bottom geometry places the ribbon, counts the flow Player on
     },
   ]);
   const mediaId = await captureReadableArticle(page, "mobile-reader-geometry");
-  await seedReaderPaneWithQueuedBrowse(page, mediaId);
+  await seedReaderPaneWithQueuedBrowse(page, mediaId, journeyUser.id);
 
   await gotoWithStrictCsp(page, "/");
   await openedMobileReader(page, mediaId);

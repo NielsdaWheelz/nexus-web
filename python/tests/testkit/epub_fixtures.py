@@ -46,11 +46,13 @@ class ReservationSession:
 
 
 def zip_payload(entries: dict[str, bytes]) -> bytes:
-    """Pack named entries into one stored-compression archive."""
+    """Pack named entries in order with fixed metadata and stored compression."""
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
         for path, content in entries.items():
-            archive.writestr(path, content)
+            entry = zipfile.ZipInfo(path, date_time=(1980, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_STORED
+            archive.writestr(entry, content)
     return output.getvalue()
 
 

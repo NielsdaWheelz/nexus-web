@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/pdf_highlights.py b/python/nexus/services/pdf_highlights.py
+--- a/python/nexus/services/pdf_highlights.py
++++ b/python/nexus/services/pdf_highlights.py
+@@ -559,7 +559,7 @@
+         .where(
+             HighlightPdfAnchor.media_id == media_id,
+             HighlightPdfAnchor.page_number == page_number,
+-            HighlightPdfAnchor.source_sha256 == source.sha256,
++            True,
+             Highlight.anchor_kind == "pdf_page_geometry",
+             Highlight.user_id == viewer_id
+             if mine_only

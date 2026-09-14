@@ -76,3 +76,23 @@ dimension: page, block, link, and line counts describe the document's shape
 produced output (`Output`). A stored object that does not match the media
 source's persisted digest is terminal `E_SOURCE_INTEGRITY`, refused before the
 document is opened.
+
+
+## retained passage search
+
+raw extracted pdf text need not be nfc. immutable publication preparation retains
+that exact raw text for literal geometry matching and separately prepares nfc,
+whitespace-normalized passage text. normalization spans whole grapheme clusters
+across staging cuts; the worker then stages bounded normalized chunks.
+
+normalized pdf matches expose the original beginning page, never invented exact
+raw offsets. nfc composition/reordering can have discontiguous raw contributors.
+a cluster must belong entirely to one original page to attest that page; otherwise
+location is unresolved. an exact quote may continue across pages, preserving the
+existing beginning-page navigation contract. prefix/suffix context is unrestricted
+by page boundaries. text publication matches retain their exact raw offset maps.
+
+raw and normalized pdf copies, page metadata, staging passes, and maximum cluster
+allocation increase worker/storage cost. database detoast/search memory and the
+largest supported normalization cluster require capacity qualification; bounded
+api responses do not establish those limits.

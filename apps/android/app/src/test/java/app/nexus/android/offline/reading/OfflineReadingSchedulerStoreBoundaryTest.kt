@@ -74,7 +74,7 @@ class OfflineReadingSchedulerStoreBoundaryTest {
             },
         )
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "Initial copy", OfflineReadingMediaKind.WebArticle)
+        store.enqueue(mediaId, "Initial copy", OfflineReadingMediaKind.WebArticle, 7)
         val jobs = context.getSystemService(android.app.job.JobScheduler::class.java)
         assertEquals(
             NetworkPolicy.UnmeteredOnly.name,
@@ -103,7 +103,7 @@ class OfflineReadingSchedulerStoreBoundaryTest {
             // Distinguish old JobInfo from a replacement through the persisted policy extra.
             OfflineNetworkPolicyStore(context).set(NetworkPolicy.AnyConnected)
             val enqueue = executor.submit {
-                store.enqueue(secondMediaId, "Successor copy", OfflineReadingMediaKind.Pdf)
+                store.enqueue(secondMediaId, "Successor copy", OfflineReadingMediaKind.Pdf, 7)
             }
             assertTrue(schedulerAdmissionAttempted.await(2, TimeUnit.SECONDS))
             permitJobFinish.countDown()
@@ -145,7 +145,7 @@ class OfflineReadingSchedulerStoreBoundaryTest {
             schedulerFactory = { owned -> OfflineReadingScheduler(context, owned) },
         )
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "Stopping copy", OfflineReadingMediaKind.WebArticle)
+        store.enqueue(mediaId, "Stopping copy", OfflineReadingMediaKind.WebArticle, 7)
         val jobs = context.getSystemService(android.app.job.JobScheduler::class.java)
         assertEquals(
             NetworkPolicy.UnmeteredOnly.name,
@@ -176,6 +176,7 @@ class OfflineReadingSchedulerStoreBoundaryTest {
                 UUID.fromString("028f2e74-5efc-7d0d-8a3a-142857142857"),
                 "Successor after Task Manager stop",
                 OfflineReadingMediaKind.Pdf,
+                7,
             )
 
             assertTrue(store.hasDurableTransferWork())
@@ -203,7 +204,7 @@ class OfflineReadingSchedulerStoreBoundaryTest {
             schedulerFactory = { owned -> OfflineReadingScheduler(context, owned) },
         )
         first.bindAccountAfterExternalPurge(accountId)
-        first.enqueue(mediaId, "Stale policy copy", OfflineReadingMediaKind.WebArticle)
+        first.enqueue(mediaId, "Stale policy copy", OfflineReadingMediaKind.WebArticle, 7)
         val jobs = context.getSystemService(android.app.job.JobScheduler::class.java)
         assertEquals(
             NetworkPolicy.UnmeteredOnly.name,
@@ -247,7 +248,7 @@ class OfflineReadingSchedulerStoreBoundaryTest {
             schedulerFactory = { owned -> OfflineReadingScheduler(context, owned) },
         )
         first.bindAccountAfterExternalPurge(accountId)
-        first.enqueue(mediaId, "Locked stale-policy copy", OfflineReadingMediaKind.WebArticle)
+        first.enqueue(mediaId, "Locked stale-policy copy", OfflineReadingMediaKind.WebArticle, 7)
         val jobs = context.getSystemService(android.app.job.JobScheduler::class.java)
         assertTrue(jobs.getPendingJob(OFFLINE_READING_JOB_ID) != null)
         firstDatabase.close()
@@ -274,17 +275,72 @@ class OfflineReadingSchedulerStoreBoundaryTest {
         }
     }
 
+    @Test
+    fun `preparing publication defers only its attempt while ready work and explicit retry remain runnable`() {
+        OfflineReadingScheduler.runnerStopped()
+        val database = OfflineReadingDatabase(context, databaseName)
+        var now = Instant.parse("2026-08-13T18:00:00Z")
+        val clock = object : Clock() {
+            override fun getZone() = ZoneOffset.UTC
+            override fun withZone(zone: java.time.ZoneId): Clock = Clock.fixed(now, zone)
+            override fun instant(): Instant = now
+        }
+        val store = store(database, clock = clock, schedulerFactory = { owned -> OfflineReadingScheduler(context, owned) })
+        store.bindAccountAfterExternalPurge(accountId)
+        store.enqueue(mediaId, "Preparing copy", OfflineReadingMediaKind.WebArticle, 7)
+        val first = store.nextRunnableTransfer()!!
+        assertTrue(store.awaitPackagePreparation(first.id, first.stagingName))
+        val deferred = setOf(first.id to first.stagingName)
+        val secondMediaId = UUID.fromString("028f2e74-5efc-7d0d-8a3a-142857142857")
+        now = now.plusSeconds(1)
+        store.enqueue(secondMediaId, "Ready copy", OfflineReadingMediaKind.Pdf, 8)
+        OfflineReadingScheduler.runnerStarted()
+        var finished = false
+        assertTrue(OfflineReadingScheduler.runnerCheckpoint(store, deferred) { finished = true })
+        val next = store.claimRunnableTransfer(NetworkPolicy.UnmeteredOnly, deferred)
+        assertTrue(next is OfflineReadingRunnableClaim.Run)
+        assertEquals("preparing publication blocked another transfer", secondMediaId,
+            (next as OfflineReadingRunnableClaim.Run).transfer.mediaId)
+        store.cancel(secondMediaId)
+        assertFalse(OfflineReadingScheduler.runnerCheckpoint(store, deferred) { finished = true })
+        assertTrue(finished)
+        assertTrue(store.hasDurableTransferWork())
+        database.close()
+
+        val reopenedDatabase = OfflineReadingDatabase(context, databaseName)
+        try {
+            val reopened = store(reopenedDatabase, schedulerFactory = { owned -> OfflineReadingScheduler(context, owned) })
+            val resumed = reopened.nextRunnableTransfer()!!
+            assertEquals(first.id, resumed.id)
+            assertEquals(7L, resumed.readerGeneration)
+            assertEquals(Instant.parse("2026-08-13T18:00:00Z"), resumed.preparationStartedAt)
+            assertTrue(reopened.updateTransferState(resumed.id, resumed.stagingName,
+                ReadingTransferState.Failed(ReadingFailureReason.Server)))
+            reopened.retry(mediaId)
+            val retried = reopened.nextRunnableTransfer(deferred)
+            assertTrue("an explicit retry was hidden by the deferred earlier attempt", retried != null)
+            assertEquals(first.id, retried!!.id)
+            assertTrue(retried.stagingName != first.stagingName)
+            assertEquals(7L, retried.readerGeneration)
+            assertEquals(null, retried.preparationStartedAt)
+        } finally {
+            OfflineReadingScheduler.runnerStopped()
+            reopenedDatabase.close()
+        }
+    }
+
     private fun store(
         database: OfflineReadingDatabase,
         integrityExecutor: Executor = Executor(Runnable::run),
         sealPort: OfflineReadingBindingSealPort = seal,
+        clock: Clock = Clock.fixed(Instant.parse("2026-08-13T18:00:00Z"), ZoneOffset.UTC),
         schedulerFactory: (OfflineReadingStore) -> OfflineReadingSchedulerPort,
     ) = OfflineReadingStore(
         context = context,
         database = database,
         seal = sealPort,
         ids = OfflineReadingIdSource { UUID.randomUUID() },
-        clock = Clock.fixed(Instant.parse("2026-08-13T18:00:00Z"), ZoneOffset.UTC),
+        clock = clock,
         packageVerifier = OfflineReadingPackageVerifier(),
         installedVerifier = OfflineReadingInstalledPackageVerifier(),
         rootDirectory = root,

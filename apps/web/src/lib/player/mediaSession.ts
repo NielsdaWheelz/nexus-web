@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, type RefObject } from "react";
-import { buildMediaImageProxySrc } from "@/lib/media/imageProxy";
+import {
+  buildMediaImageProxySrc,
+  parseMediaImageProxySrc,
+} from "@/lib/media/imageProxy";
+import { useArtworkReader } from "@/lib/media/ArtworkProvider";
 
 const POSITION_UPDATE_INTERVAL_MS = 1_000;
 
@@ -87,6 +91,7 @@ export function useMediaSessionAdapter(args: {
   basePlaybackRateRef: RefObject<number>;
   handlers: MediaSessionHandlers;
 }): { updatePositionState: (force?: boolean) => void } {
+  const artworkReader = useArtworkReader();
   const { track, isPlaying, positionEnabled } = args;
 
   const audioElementRef = useRef(args.audioElement);
@@ -181,33 +186,56 @@ export function useMediaSessionAdapter(args: {
       }
       return;
     }
-    const artist = normalize(track.podcast_title);
-    const init: MediaMetadataInit = {
-      title: track.title,
-      artist,
-      album: artist,
-      artwork: track.image
-        ? [
-            {
-              src:
-                track.image.kind === "Proxied"
-                  ? track.image.url
-                  : buildMediaImageProxySrc(track.image.url),
-            },
-          ]
-        : [],
-    };
-    try {
-      if (typeof window.MediaMetadata === "function") {
-        ms.metadata = new window.MediaMetadata(init);
-      } else {
-        // justify-type-assertion: clients without MediaMetadata constructor support still accept the init shape.
-        ms.metadata = init as unknown as MediaMetadata;
+    const lease = track.image
+      ? artworkReader.acquire(
+          track.image.kind === "Proxied"
+            ? parseMediaImageProxySrc(track.image.url)
+            : buildMediaImageProxySrc(track.image.url),
+          artworkReader.maxDimension,
+          artworkReader.maxDimension,
+        )
+      : null;
+    const publish = () => {
+      const artist = normalize(track.podcast_title);
+      const image = lease?.read();
+      const init: MediaMetadataInit = {
+        title: track.title,
+        artist,
+        album: artist,
+        artwork:
+          image?.kind === "Ready"
+            ? [
+                {
+                  src: image.url,
+                  sizes: `${image.width}x${image.height}`,
+                  type: "image/png",
+                },
+              ]
+            : [],
+      };
+      try {
+        if (typeof window.MediaMetadata === "function") {
+          ms.metadata = new window.MediaMetadata(init);
+        } else {
+          // justify-type-assertion: clients without MediaMetadata constructor support still accept the init shape.
+          ms.metadata = init as unknown as MediaMetadata;
+        }
+      } catch {
+        // Ignore metadata assignment failures on unsupported clients.
       }
-    } catch {
-      // Ignore metadata assignment failures on unsupported clients.
-    }
-  }, [track]);
+    };
+    const unsubscribe = lease?.subscribe(publish);
+    publish();
+    return () => {
+      unsubscribe?.();
+      try {
+        ms.metadata = null;
+      } catch {
+        /* Unsupported clients may reject metadata. */
+      }
+      lease?.release();
+    };
+  }, [track, artworkReader]);
 
   useEffect(() => {
     const ms = getMediaSession();

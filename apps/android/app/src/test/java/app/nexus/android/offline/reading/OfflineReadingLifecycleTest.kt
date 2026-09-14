@@ -124,22 +124,29 @@ class OfflineReadingLifecycleTest {
     }
 
     @Test
-    fun `publication busy and timeout are transient while exact generation conflict is content changed`() {
+    fun `publication busy is transient and admitted read capacity never becomes a failure`() {
         assertEquals(
-            ReadingFailureReason.Server,
-            offlineReadingFailureReason(409, "E_READER_PUBLICATION_BUSY"),
+            ReadingRefusal.Fail(ReadingFailureReason.Server),
+            offlineReadingRefusal(409, "E_READER_PUBLICATION_BUSY"),
+        )
+        // The admitted package-transfer route did no work at all: classifying this
+        // as any Failed reason strands a transfer the next attempt would complete.
+        assertEquals(
+            ReadingRefusal.Capacity,
+            offlineReadingRefusal(503, "E_READ_CAPACITY"),
         )
         assertEquals(
-            ReadingFailureReason.Server,
-            offlineReadingFailureReason(504, "E_OFFLINE_READING_PACKAGE_TIMEOUT"),
+            ReadingRefusal.Fail(ReadingFailureReason.ContentChanged),
+            offlineReadingRefusal(409, "E_READER_CONTENT_CHANGED"),
         )
         assertEquals(
-            ReadingFailureReason.ContentChanged,
-            offlineReadingFailureReason(409, "E_READER_CONTENT_CHANGED"),
+            ReadingRefusal.Fail(ReadingFailureReason.TooLarge),
+            offlineReadingRefusal(413, null),
         )
         assertEquals(
-            ReadingFailureReason.TooLarge,
-            offlineReadingFailureReason(413, null),
+            "a plain 503 without the capacity code is still a server failure",
+            ReadingRefusal.Fail(ReadingFailureReason.Server),
+            offlineReadingRefusal(503, null),
         )
     }
 
@@ -163,6 +170,22 @@ class OfflineReadingLifecycleTest {
                 "{\"kind\":\"Preparing\",\"reason\":\"Scheduler\"}"
             )
         }
+    }
+
+    @Test
+    fun `progress choices reject missing discriminators through the malformed-input contract`() {
+        val snapshot = """{"state":"Empty","revision":0}"""
+        val locator = """{"kind":"pdf","page":1,"page_progression":0.5,"zoom":1.25,"position":1}"""
+        requireReaderProgressViewJson("""{"kind":"Canonical","snapshot":$snapshot}""")
+        requireReaderProgressViewJson("""{"kind":"Pending","baseline":$snapshot,"device":$locator,"source":{"kind":"Publication","reader_generation":7}}""")
+        val absentView = assertThrows(IllegalStateException::class.java) {
+            requireReaderProgressViewJson("""{"snapshot":$snapshot}""")
+        }
+        assertEquals("reader progress view is missing kind", absentView.message)
+        val absentSource = assertThrows(IllegalStateException::class.java) {
+            requireReaderProgressViewJson("""{"kind":"Pending","baseline":$snapshot,"device":$locator,"source":{"reader_generation":7}}""")
+        }
+        assertEquals("reader source is missing kind", absentSource.message)
     }
 
     @Test
@@ -322,6 +345,7 @@ class OfflineReadingLifecycleTest {
                         "assets/test.svg",
                         "image/svg+xml",
                         file,
+                        1,
                     )
                 )
             } finally {
@@ -348,49 +372,6 @@ class OfflineReadingLifecycleTest {
 
 
     @Test
-    fun `web article permits URL prose but rejects remote URL attributes`() {
-        val mediaId = UUID.fromString("018f2e74-5efc-7d2f-8a3a-142857142857")
-        val entry = OfflineReadingManifestEntry(
-            "reader.json",
-            "application/json",
-            1,
-            "0".repeat(64),
-        )
-        val manifest = OfflineReadingManifest(
-            mediaId,
-            OfflineReadingMediaKind.WebArticle,
-            "Signal on the Train",
-            13,
-            OfflineReadingRevision.compute(13, listOf(entry)),
-            listOf(entry),
-        )
-        val prose = """
-            {"readerContractVersion":1,"mediaId":"$mediaId","mediaKind":"WebArticle","title":"Signal on the Train","navigation":[],"fragments":[{"fragmentId":"intro","ordinal":0,"htmlSanitized":"<article><p>Read https://example.com in prose.</p></article>","canonicalText":"Read https://example.com in prose."}]}
-        """.trimIndent().toByteArray()
-        OfflineReaderDocumentVerifier.verify(prose, manifest)
-
-        val remoteAttribute = prose.toString(Charsets.UTF_8)
-            .replace("<p>Read", "<p><a href=\\\"https://example.com\\\">Read</a>")
-            .toByteArray()
-        assertThrows(IllegalArgumentException::class.java) {
-            OfflineReaderDocumentVerifier.verify(remoteAttribute, manifest)
-        }
-        listOf(
-            "<a href=javascript:alert(1)>Read</a>",
-            "<a href=jav&#x61;script:alert(1)>Read</a>",
-            "<img src=//example.com/pixel.png>",
-            "<a\nhref=https://example.com>Read</a>",
-        ).forEach { mutation ->
-            val mutated = prose.toString(Charsets.UTF_8)
-                .replace("<p>Read https://example.com in prose.</p>", mutation)
-                .toByteArray()
-            assertThrows("expected $mutation to reject", IllegalArgumentException::class.java) {
-                OfflineReaderDocumentVerifier.verify(mutated, manifest)
-            }
-        }
-    }
-
-    @Test
     fun `manifest requires reader JSON to own application-json MIME`() {
         val mediaId = UUID.fromString("018f2e74-5efc-7d0d-8a3a-142857142857")
         assertThrows(IllegalArgumentException::class.java) {
@@ -408,6 +389,7 @@ class OfflineReadingLifecycleTest {
                         "1".repeat(64),
                     )
                 ),
+                packageSchemaVersion = 1,
             )
         }
     }

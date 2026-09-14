@@ -9,8 +9,11 @@ private resource assets.
   publication, plus remote EPUB URLs and browser-captured EPUB files.
 - `epub_ingest.py` / related reader services: extraction, fragments, TOC,
   navigation, resume data.
-- `epub_find.py`: bounded literal Find over current canonical fragments in one
-  repeatable-read snapshot.
+- `epub_find.py`: the shared Find snippet projection only. The whole-section
+  Find over current canonical fragments (`find_epub_for_viewer`) and the
+  whole-section read (`epub_read.get_epub_section_for_viewer`) are retired with
+  the `/epub-find`, `/sections/{id}` and `/navigation` routes and their BFF
+  proxies; publication find is the one Find owner.
 - `epub_assets.py`: private extracted resource asset reads.
 
 `ingest_media_source` is the only worker job kind that starts source processing.
@@ -45,10 +48,13 @@ not be added to Next Image `images.localPatterns`.
 ## Find
 
 Readable EPUB panes publish the shared pane-local `FindOccurrences`
-capability. `POST /media/{id}/epub-find` validates the current first-fragment
-witness, then scans one fragment at a time in spine order. It returns only
-ordered occurrence locators and plain-text snippets, stops at match 2,001, and
-uses no global search index.
+capability. `POST /media/{id}/reader-publications/{generation}/find` searches
+the immutable publication the pane already opened, one bounded unit at a time
+in reading order. It returns only ordered occurrence locators and plain-text
+snippets and uses no global search index; a page that fills the response
+budget returns a continuation cursor instead of truncating silently. Because
+the searched publication is the one the reader already holds, no
+first-fragment witness is needed: the generation in the path is the witness.
 
 Cross-section results render through an ephemeral preview override. The
 committed section, URL, restore session, reader progress, activity, and

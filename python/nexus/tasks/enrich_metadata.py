@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from nexus.config import require_reader_publication_limits
 from nexus.db.models import FailureStage, Media, ProcessingStatus
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
@@ -89,6 +90,13 @@ from nexus.services.metadata_enrichment import (
     metadata_enrichment_agent_definition,
     validate_structured_enrichment,
 )
+from nexus.services.reader_publication import read_publication_generation
+from nexus.services.reader_publication_artifacts import (
+    PreparedReaderTitleOutcome,
+    ReaderPublicationDescriptorUnprepared,
+    prepare_reader_publication_title,
+)
+from nexus.storage.client import get_storage_client
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
@@ -753,6 +761,45 @@ def _encode_metadata_failure(
     return encode_step_result(_failed_result(error_code=_failure_code(code), detail=detail))
 
 
+def _prepare_enriched_title(
+    factory: sessionmaker[Session],
+    *,
+    media_id: UUID,
+    title: str,
+) -> PreparedReaderTitleOutcome:
+    """Freeze the successor descriptor this enrichment's title would publish.
+
+    ``None`` means no descriptor has to be frozen and the merge writes the title
+    itself: the media owns no reader publication -- a podcast, a video, an
+    unpublished document -- or it already carries exactly this title, which the
+    publication owner refuses to republish. Reading the publication limits and the
+    object store is bound to the publication that needs them, so neither of those
+    media pays for either. ``ReaderPublicationDescriptorUnprepared`` means the
+    publication exists but has no descriptor to succeed yet; metadata enrichment
+    does not own reader publication, so it records that outcome and commits its
+    other fields instead of failing the whole merge.
+    """
+    with factory() as db:
+        if db.scalar(select(Media.title).where(Media.id == media_id)) == title:
+            return None
+        if read_publication_generation(db, media_id=media_id) is None:
+            return None
+    outcome = prepare_reader_publication_title(
+        factory,
+        get_storage_client(),
+        media_id=media_id,
+        title=title,
+        limits=require_reader_publication_limits(),
+    )
+    if isinstance(outcome, ReaderPublicationDescriptorUnprepared):
+        logger.info(
+            "metadata_title_deferred",
+            media_id=str(media_id),
+            reader_generation=outcome.generation,
+        )
+    return outcome
+
+
 def _publish_completed(
     factory: sessionmaker[Session],
     *,
@@ -761,6 +808,17 @@ def _publish_completed(
     request_fingerprint: str,
     completed: _CompletedMetadataResult,
 ) -> dict[str, object]:
+    title_owner: PreparedReaderTitleOutcome = None
+    if (
+        isinstance(completed, _CompletedSuccess)
+        and not isinstance(completed.publication_result, Present)
+        and completed.enrichment.title is not None
+    ):
+        title_owner = _prepare_enriched_title(
+            factory,
+            media_id=media_id,
+            title=completed.enrichment.title,
+        )
     db = factory()
     try:
         return retry_serializable(
@@ -772,6 +830,7 @@ def _publish_completed(
                 media_id=media_id,
                 request_fingerprint=request_fingerprint,
                 completed=completed,
+                title_owner=title_owner,
             ),
         )
     finally:
@@ -785,6 +844,7 @@ def _publish_completed_transaction(
     media_id: UUID,
     request_fingerprint: str,
     completed: _CompletedMetadataResult,
+    title_owner: PreparedReaderTitleOutcome,
 ) -> dict[str, object]:
     # Media row before queue rows: dispatch and the manual-retry lifecycle
     # both lock media first and job rows second, so publication must follow
@@ -867,10 +927,28 @@ def _publish_completed_transaction(
             ),
         )
 
-    merge_result = merge_enrichment(db, media, completed.enrichment)
+    if isinstance(title_owner, ReaderPublicationDescriptorUnprepared):
+        # The title is the publication's to write; the retained memo keeps the
+        # generated one, so a later attempt publishes it once the descriptor exists.
+        enrichment = completed.enrichment.model_copy(update={"title": None})
+        prepared_title = None
+    else:
+        enrichment, prepared_title = completed.enrichment, title_owner
+    merge_result = merge_enrichment(db, media, enrichment, prepared_title=prepared_title)
     if not merge_result.accepted_fields:
-        code = ApiErrorCode.E_GENERATION_INVALID_OUTPUT.value
-        detail = "generation returned no applicable metadata fields"
+        code, detail, reason = (
+            (
+                ApiErrorCode.E_MEDIA_NOT_READY.value,
+                "reader publication has no prepared descriptor for the enriched title",
+                "publication_unprepared",
+            )
+            if isinstance(title_owner, ReaderPublicationDescriptorUnprepared)
+            else (
+                ApiErrorCode.E_GENERATION_INVALID_OUTPUT.value,
+                "generation returned no applicable metadata fields",
+                "no_applicable_fields",
+            )
+        )
         _record_metadata_failure(media, code, detail)
         bump_all_collection_families(db, families=_COLLECTION_FAMILIES)
         return _commit_publication_result(
@@ -878,7 +956,7 @@ def _publish_completed_transaction(
             context=context,
             completed=completed,
             result=_FailedPublication(
-                reason="no_applicable_fields",
+                reason=reason,
                 error_code=code,
             ),
         )

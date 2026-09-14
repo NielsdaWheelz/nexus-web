@@ -106,6 +106,7 @@ class ResolvedResource:
     quote: LoadedQuote | None = None  # set for highlights → <quote> instead of <body>
     missing: bool = False
     resolved_revision_ref: str | None = None
+    document_reader: bool = False
 
 
 def resource_owner_rows_sql(endpoint_relation: str) -> str:
@@ -191,6 +192,26 @@ def resource_owner_rows_sql(endpoint_relation: str) -> str:
 
         UNION ALL
 
+        -- A replaced fragment is still owned by the media whose retained units
+        -- name it. Thousands of units share one fragment id, so this probes
+        -- ix_reader_publication_unit_fragment_owner (fragment_id, media_id) for a
+        -- single membership row instead of scanning and deduplicating them all.
+        SELECT endpoint.resource_scheme, endpoint.resource_id,
+               'media'::text AS owner_scheme, retained.media_id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN LATERAL (
+            SELECT unit.media_id
+            FROM reader_publication_units unit
+            WHERE endpoint.resource_scheme = 'fragment'
+              AND unit.fragment_id = endpoint.resource_id
+            LIMIT 1
+        ) retained ON TRUE
+        WHERE NOT EXISTS (
+            SELECT 1 FROM fragments current WHERE current.id = endpoint.resource_id
+        )
+
+        UNION ALL
+
         SELECT
             endpoint.resource_scheme,
             endpoint.resource_id,
@@ -239,6 +260,22 @@ def resource_owner_rows_sql(endpoint_relation: str) -> str:
         JOIN reader_apparatus_items rai
           ON endpoint.resource_scheme = 'reader_apparatus_item'
          AND rai.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT DISTINCT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            'media'::text AS owner_scheme,
+            retained.media_id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN reader_publication_apparatus_items retained
+          ON endpoint.resource_scheme = 'reader_apparatus_item'
+         AND retained.item_id = endpoint.resource_id
+        WHERE NOT EXISTS (
+            SELECT 1 FROM reader_apparatus_items current
+            WHERE current.id = endpoint.resource_id
+        )
     """
 
 
@@ -1611,7 +1648,12 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             f'nexus__search(scopes=["{loaded.uri}"], query=...) to search'
         )
         return ResolvedResource(
-            uri=loaded.uri, label=label, summary=summary, inline_body=None, fetch_hint=fetch_hint
+            uri=loaded.uri,
+            label=label,
+            summary=summary,
+            inline_body=None,
+            fetch_hint=fetch_hint,
+            document_reader=loaded.media_kind in {"web_article", "epub", "pdf"},
         )
     if scheme == "library":
         name = loaded.title or ""
@@ -1694,7 +1736,7 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
     if scheme == "conversation":
         return ResolvedResource(
             uri=loaded.uri,
-            label=loaded.title or "Untitled conversation",
+            label=(loaded.title or "").strip() or "Untitled conversation",
             summary=f"Chat history with {loaded.message_count or 0} messages.",
             inline_body=None,
             fetch_hint=f'nexus__resource__read("{loaded.uri}")',

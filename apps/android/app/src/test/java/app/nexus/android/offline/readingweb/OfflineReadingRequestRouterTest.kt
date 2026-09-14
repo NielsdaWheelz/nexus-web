@@ -49,6 +49,7 @@ class OfflineReadingRequestRouterTest {
             .put("mediaId", "018f2e74-5efc-7d1e-8a3a-142857142857")
             .put("requestedTitle", "Plane Notes")
             .put("mediaKind", "Epub")
+            .put("readerGeneration", 1)
         assertEquals(true, offlineReadingCommandIsValid(valid, "Enqueue"))
         listOf(
             JSONObject(valid.toString()).put("mediaKind", "Audio"),
@@ -327,7 +328,7 @@ class OfflineReadingRequestRouterTest {
         assertEquals(true, isOfflineReadingMainFrameUrl(Uri.parse(OFFLINE_READING_MAIN_URL)))
         assertEquals(
             false,
-            isOfflineReadingMainFrameUrl(Uri.parse("https://appassets.androidplatform.net/nexus-offline/lease/018f2e745efc7d8e8a3a142857142857/reader.json")),
+            isOfflineReadingMainFrameUrl(Uri.parse("https://appassets.androidplatform.net/nexus-offline/lease/018f2e745efc7d8e8a3a142857142857/descriptor.json")),
         )
     }
 
@@ -340,14 +341,14 @@ class OfflineReadingRequestRouterTest {
         assertEquals(
             OfflineReadingLocalPath.Lease(
                 "018f2e745efc7d8e8a3a142857142857",
-                "reader.json",
+                "descriptor.json",
             ),
             parseOfflineReadingLocalPath(
-                "/nexus-offline/lease/018f2e745efc7d8e8a3a142857142857/reader.json",
+                "/nexus-offline/lease/018f2e745efc7d8e8a3a142857142857/descriptor.json",
             ),
         )
-        assertNull(parseOfflineReadingLocalPath("/nexus-offline/lease/018F2E745EFC7D8E8A3A142857142857/reader.json"))
-        assertNull(parseOfflineReadingLocalPath("/nexus-offline/lease/018f2e745efc7d8e8a3a142857142857/../reader.json"))
+        assertNull(parseOfflineReadingLocalPath("/nexus-offline/lease/018F2E745EFC7D8E8A3A142857142857/descriptor.json"))
+        assertNull(parseOfflineReadingLocalPath("/nexus-offline/lease/018f2e745efc7d8e8a3a142857142857/../descriptor.json"))
         assertNull(parseOfflineReadingLocalPath("/nexus-offline/index.html/extra"))
     }
 
@@ -379,7 +380,7 @@ class OfflineReadingRequestRouterTest {
             // Owned host, but nothing the package serves.
             "https://appassets.androidplatform.net/nexus-offline/assets/missing-asset.js",
             "https://appassets.androidplatform.net/elsewhere",
-            "https://appassets.androidplatform.net/nexus-offline/lease/018f2e745efc7d8e8a3a142857142857/reader.json",
+            "https://appassets.androidplatform.net/nexus-offline/lease/018f2e745efc7d8e8a3a142857142857/descriptor.json",
         ).forEach { url ->
             val response = router.intercept(localRequest(url))
             assertEquals("$url must be answered locally", 404, response?.statusCode)
@@ -393,18 +394,20 @@ class OfflineReadingRequestRouterTest {
     }
 
     @Test
-    fun `a full PDF lease response advertises byte ranges so the packaged reader seeks`() {
+    fun `declared extensionless PDF MIME enables seeking and undeclared files remain private`() {
         val directory = createTempDirectory("offline-reading-lease").toFile()
         val bytes = ByteArray(64) { index -> (index + 1).toByte() }
-        File(directory, "document.pdf").writeBytes(bytes)
-        File(directory, "reader.json").writeText("{}")
+        File(directory, "assets").mkdir()
+        File(directory, "assets/document").writeBytes(bytes)
+        File(directory, "assets/undeclared").writeText("private")
+        File(directory, "descriptor.json").writeText("{}")
         val registry = OfflineReadingLeaseRegistry { }
         val capability = registry.publish(lease(directory))
         val router = OfflineReadingRequestRouter(
             RuntimeEnvironment.getApplication(),
             registry,
         )
-        val pdfUrl = "https://appassets.androidplatform.net/nexus-offline/lease/$capability/document.pdf"
+        val pdfUrl = "https://appassets.androidplatform.net/nexus-offline/lease/$capability/assets/document"
 
         val full = router.intercept(localRequest(pdfUrl))
         assertEquals(200, full?.statusCode)
@@ -414,6 +417,9 @@ class OfflineReadingRequestRouterTest {
             full?.responseHeaders?.get("Accept-Ranges"),
         )
 
+        assertEquals("application/pdf", full?.mimeType)
+        assertEquals(bytes.toList(), full?.data?.use { it.readBytes() }?.toList())
+        assertEquals(404, router.intercept(localRequest(pdfUrl.replace("assets/document", "assets/undeclared")))?.statusCode)
         val ranged = router.intercept(localRequest(pdfUrl, range = "bytes=8-11"))
         assertEquals(206, ranged?.statusCode)
         assertEquals("bytes 8-11/64", ranged?.responseHeaders?.get("Content-Range"))
@@ -424,14 +430,14 @@ class OfflineReadingRequestRouterTest {
 
         // A resource the lease serves whole must not claim range support it refuses.
         val descriptor = router.intercept(
-            localRequest("https://appassets.androidplatform.net/nexus-offline/lease/$capability/reader.json"),
+            localRequest("https://appassets.androidplatform.net/nexus-offline/lease/$capability/descriptor.json"),
         )
         assertEquals("none", descriptor?.responseHeaders?.get("Accept-Ranges"))
         assertEquals(
             416,
             router.intercept(
                 localRequest(
-                    "https://appassets.androidplatform.net/nexus-offline/lease/$capability/reader.json",
+                    "https://appassets.androidplatform.net/nexus-offline/lease/$capability/descriptor.json",
                     range = "bytes=0-1",
                 ),
             )?.statusCode,
@@ -622,6 +628,7 @@ class OfflineReadingRequestRouterTest {
         installedAt = Instant.EPOCH,
         progress = NativeReaderProgressView.Canonical("{}"),
         packageDirectory = directory,
+        memberMediaTypes = mapOf("descriptor.json" to "application/json", "assets/document" to "application/pdf"),
     )
 
     private fun localRequest(url: String, range: String? = null): WebResourceRequest =
@@ -631,7 +638,7 @@ class OfflineReadingRequestRouterTest {
         ) { _, method, _ ->
             when (method.name) {
                 "getUrl" -> Uri.parse(url)
-                "getRequestHeaders" -> range?.let { mapOf("Range" to it) } ?: emptyMap<String, String>()
+                "getRequestHeaders" -> range?.let { mapOf("range" to it) } ?: emptyMap<String, String>()
                 "isForMainFrame" -> false
                 "hasGesture" -> false
                 "getMethod" -> "GET"

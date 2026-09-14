@@ -5,16 +5,19 @@ import {
   Component,
   type ErrorInfo,
   type ReactNode,
-  StrictMode,
   useState,
 } from "react";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
+import { ResourceCacheProvider } from "@/lib/api/resourceCache";
 import PaneShell from "@/components/workspace/PaneShell";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
 import { LibraryPlacementControllerProvider } from "@/lib/libraries/placementController";
+import { ArtworkProvider } from "@/lib/media/ArtworkProvider";
+import { ARTWORK_CAPACITY } from "@/lib/media/artworkCapacity";
 import { resolvePaneRouteIdentity } from "@/lib/panes/paneIdentity";
 import { PaneRuntimeProvider } from "@/lib/panes/paneRuntime";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
+import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
@@ -305,6 +308,7 @@ function stubSubscriptionLifecycle({
   let episodeReads = 0;
   let streamOpens = 0;
   const initSignals: AbortSignal[] = [];
+  const detailSignals: (AbortSignal | null)[] = [];
   let blockedDetailSignal: AbortSignal | null = null;
   let blockedDetail:
     | {
@@ -384,6 +388,7 @@ function stubSubscriptionLifecycle({
       }
       if (url.pathname === `/api/podcasts/${PODCAST_ID}`) {
         detailReads += 1;
+        detailSignals.push(init?.signal ?? request?.signal ?? null);
         if (detailReads > 1 && canonicalFailure !== null) {
           return Response.json(
             {
@@ -474,6 +479,7 @@ function stubSubscriptionLifecycle({
 
   return {
     reads: () => ({ detail: detailReads, episodes: episodeReads }),
+    firstDetailAborted: () => detailSignals[0]?.aborted === true,
     streamOpens: () => streamOpens,
     streamAborted: () => initSignals.some((signal) => signal.aborted),
     deferNextDetail() {
@@ -636,6 +642,7 @@ function PodcastDetailPane({
                 onGoForwardPane={noop}
               >
                 <LecternProvider>
+                  <ArtworkProvider limits={ARTWORK_CAPACITY}>
                   <GlobalPlayerProvider>
                     <AuthenticatedAccountProvider
                       account={{
@@ -656,6 +663,7 @@ function PodcastDetailPane({
                       transport={null}
                     >
                     <ResourceOverlaysProvider>
+                    <ResourceCacheProvider value={{}} publicationLimits={READER_CAPACITY.cache}>
                     <ResourceActionRuntimeProvider>
                     <div data-pane-id="pane" data-active="true">
                       <PaneShell
@@ -690,12 +698,14 @@ function PodcastDetailPane({
                     </div>
                     <ResourceActionOverlays />
                     </ResourceActionRuntimeProvider>
+                    </ResourceCacheProvider>
                     </ResourceOverlaysProvider>
                     </OfflineMediaProvider>
                     </WorkspaceStoreProvider>
                     </KeybindingsProvider>
                     </AuthenticatedAccountProvider>
                   </GlobalPlayerProvider>
+                  </ArtworkProvider>
                 </LecternProvider>
               </PaneRuntimeProvider>
             </PaneReturnMementoProvider>
@@ -917,19 +927,21 @@ describe("Podcast episodes domain view", () => {
     });
 
     render(
-      <StrictMode>
-        <PodcastDetailPane
-          initialHref={`/podcasts/${PODCAST_ID}`}
-          replaced={[]}
-        />
-      </StrictMode>,
+      <PodcastDetailPane
+        initialHref={`/podcasts/${PODCAST_ID}`}
+        replaced={[]}
+      />,
+      { reactStrictMode: true },
     );
 
     await screen.findByRole("link", { name: "The Crew-4 Astronauts" });
     await screen.findByText("Podcast updates couldn’t be observed");
     await waitFor(() =>
-      expect(lifecycle.reads()).toEqual({ detail: 2, episodes: 2 }),
+      expect(lifecycle.reads()).toEqual({ detail: 3, episodes: 2 }),
     );
+    // Root Strict Mode withdraws the first setup before replaying it. Only the
+    // live detail read and the one canonical reconciliation reach episodes.
+    expect(lifecycle.firstDetailAborted()).toBe(true);
     expect(lifecycle.streamOpens()).toBe(1);
   });
 

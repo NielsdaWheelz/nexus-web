@@ -174,7 +174,7 @@ it("shows Waiting for Codex capacity with Cancel and the admitted selection read
   store = createDossierControllerStore({ kind: "Artifact", artifactRef: ARTIFACT_REF });
   render(
     withRenderEnvironment(
-      <DossierSurface store={store} onViewMediaEvidence={() => {}} />,
+      <DossierSurface store={store} onViewMediaEvidence={() => {}} onCitationActivate={() => {}} />,
     ),
   );
 

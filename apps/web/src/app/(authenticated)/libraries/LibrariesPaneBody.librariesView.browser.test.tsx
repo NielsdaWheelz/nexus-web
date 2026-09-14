@@ -1,3 +1,7 @@
+import { ArtworkProvider } from "@/lib/media/ArtworkProvider";
+import { ARTWORK_CAPACITY } from "@/lib/media/artworkCapacity";
+import { ResourceCacheProvider } from "@/lib/api/resourceCache";
+import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
@@ -216,40 +220,47 @@ function LibrariesPane({
                           transport={null}
                         >
                           <ResourceOverlaysProvider>
-                            <GlobalPlayerProvider>
-                              <ResourceActionRuntimeProvider>
-                                <div data-pane-id="pane" data-active="true">
-                                  <PaneShell
-                                    paneId="pane"
-                                    routeKey={routeKey}
-                                    routeHeader={{
-                                      kind: "Section",
-                                      destinationId: "libraries",
-                                      context: "None",
-                                    }}
-                                    label="Libraries"
-                                    returnMementoEnabled
-                                    queryNavigation="in-place"
-                                    sizing={{
-                                      primaryWidthPx: 720,
-                                      primaryMinWidthPx: 320,
-                                      primaryMaxWidthPx: 1_400,
-                                      renderedPrimarySlotWidthPx: 720,
-                                      renderedPrimarySlotMinWidthPx: 320,
-                                      renderedPrimarySlotMaxWidthPx: 1_400,
-                                      fixedChromeWidthPx: 0,
-                                      storedWidthCorrectionPx: null,
-                                    }}
-                                    bodyMode="standard"
-                                    onResizePrimaryPane={noop}
-                                    isActive
-                                  >
-                                    <LibrariesPaneBody />
-                                  </PaneShell>
-                                </div>
-                                <ResourceActionOverlays />
-                              </ResourceActionRuntimeProvider>
-                            </GlobalPlayerProvider>
+                            <ResourceCacheProvider
+                              value={{}}
+                              publicationLimits={READER_CAPACITY.cache}
+                            >
+                              <ArtworkProvider limits={ARTWORK_CAPACITY}>
+                                <GlobalPlayerProvider>
+                                  <ResourceActionRuntimeProvider>
+                                    <div data-pane-id="pane" data-active="true">
+                                      <PaneShell
+                                        paneId="pane"
+                                        routeKey={routeKey}
+                                        routeHeader={{
+                                          kind: "Section",
+                                          destinationId: "libraries",
+                                          context: "None",
+                                        }}
+                                        label="Libraries"
+                                        returnMementoEnabled
+                                        queryNavigation="in-place"
+                                        sizing={{
+                                          primaryWidthPx: 720,
+                                          primaryMinWidthPx: 320,
+                                          primaryMaxWidthPx: 1_400,
+                                          renderedPrimarySlotWidthPx: 720,
+                                          renderedPrimarySlotMinWidthPx: 320,
+                                          renderedPrimarySlotMaxWidthPx: 1_400,
+                                          fixedChromeWidthPx: 0,
+                                          storedWidthCorrectionPx: null,
+                                        }}
+                                        bodyMode="standard"
+                                        onResizePrimaryPane={noop}
+                                        isActive
+                                      >
+                                        <LibrariesPaneBody />
+                                      </PaneShell>
+                                    </div>
+                                    <ResourceActionOverlays />
+                                  </ResourceActionRuntimeProvider>
+                                </GlobalPlayerProvider>
+                              </ArtworkProvider>
+                            </ResourceCacheProvider>
                           </ResourceOverlaysProvider>
                         </OfflineMediaProvider>
                       </LecternProvider>

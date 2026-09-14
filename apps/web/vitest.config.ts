@@ -3,10 +3,19 @@ import react from "@vitejs/plugin-react";
 import { playwright } from "@vitest/browser-playwright";
 import { readFileSync } from "node:fs";
 import path from "path";
-import type { Plugin } from "vite";
+import { searchForWorkspaceRoot, type Plugin } from "vite";
 import { androidPlayerProtocolContractSha256 } from "./androidPlayerProtocolCorpus";
+import { servePdfLoadingFixture } from "./pdfLoadingFixture";
+import { readBrowserProcessMemory } from "./browserMemoryCommand";
 
 const playerProtocolContractSha256 = androidPlayerProtocolContractSha256();
+const evidenceDirectory = process.env.NEXUS_TEST_RESULTS_DIR;
+const evidenceRunId = process.env.NEXUS_TEST_EVIDENCE_RUN_ID;
+if (evidenceDirectory !== undefined &&
+    (evidenceRunId === undefined || !/^[0-9a-f]{16}$/.test(evidenceRunId) ||
+     evidenceDirectory !== path.resolve(__dirname, "../../test-results/runs", evidenceRunId))) {
+  throw new Error("Browser evidence requires the controller-owned run directory");
+}
 
 function serveVendoredPdfJs(): Plugin {
   const vendoredModules = new Map(
@@ -40,7 +49,22 @@ function serveVendoredPdfJs(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [serveVendoredPdfJs(), react()],
+  server: { fs: { allow: [
+    searchForWorkspaceRoot(__dirname),
+    path.resolve(__dirname, "../../testdata/capacity/reader-tables.json"),
+    path.resolve(__dirname, "../../testdata/capacity/artwork.json"),
+    path.resolve(__dirname, "../../testdata/offline-reading/list-ordinals.json"),
+    path.resolve(__dirname, "../../testdata/offline-reading/list-render-units.json"),
+    path.resolve(__dirname, "../../testdata/offline-reading/source-table-schema-2-members.json"),
+    path.resolve(__dirname, "../../testdata/offline-reading/retained-unicode-schema-2.json"),
+    path.resolve(__dirname, "../../testdata/offline-reading/retained-unicode-schema-2-members.json"),
+    path.resolve(__dirname, "../../testdata/offline-reading/retained-epub-schema-2.json"),
+    path.resolve(__dirname, "../../testdata/offline-reading/retained-epub-schema-2-members.json"),
+    path.resolve(__dirname, "../../testdata/offline-reading/retained-pdf-schema-2.json"),
+    path.resolve(__dirname, "../../testdata/offline-reading/retained-pdf-schema-2-members.json"),
+    ...(evidenceDirectory === undefined ? [] : [evidenceDirectory]),
+  ] } },
+  plugins: [serveVendoredPdfJs(), servePdfLoadingFixture(), react()],
   define: {
     "process.env.NEXT_PUBLIC_APP_PUBLIC_ORIGIN": JSON.stringify(
       "http://localhost:3000",
@@ -59,6 +83,10 @@ export default defineConfig({
     ],
   },
   test: {
+    env: {
+      NEXUS_TEST_RESULTS_DIR: process.env.NEXUS_TEST_RESULTS_DIR ?? "",
+      NEXUS_TEST_EVIDENCE_RUN_ID: process.env.NEXUS_TEST_EVIDENCE_RUN_ID ?? "",
+    },
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
@@ -87,6 +115,7 @@ export default defineConfig({
           browser: {
             enabled: true,
             provider: playwright(),
+            commands: { readBrowserProcessMemory },
             instances: [{ browser: "chromium" }],
             headless: true,
             fileParallelism: false,

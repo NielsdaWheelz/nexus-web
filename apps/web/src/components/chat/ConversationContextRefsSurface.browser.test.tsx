@@ -1,3 +1,7 @@
+import { ArtworkProvider } from "@/lib/media/ArtworkProvider";
+import { ARTWORK_CAPACITY } from "@/lib/media/artworkCapacity";
+import { ResourceCacheProvider } from "@/lib/api/resourceCache";
+import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -166,16 +170,23 @@ function renderSurface() {
                           transport={null}
                         >
                           <ResourceOverlaysProvider>
-                            <GlobalPlayerProvider>
-                              <ResourceActionRuntimeProvider>
-                                <ConversationContextRefsSurface
-                                  contextRefs={[CONTEXT_REF]}
-                                  removeContextRef={async () => {}}
-                                  onOpenResource={() => {}}
-                                />
-                                <ResourceActionOverlays />
-                              </ResourceActionRuntimeProvider>
-                            </GlobalPlayerProvider>
+                            <ResourceCacheProvider
+                              value={{}}
+                              publicationLimits={READER_CAPACITY.cache}
+                            >
+                              <ArtworkProvider limits={ARTWORK_CAPACITY}>
+                                <GlobalPlayerProvider>
+                                  <ResourceActionRuntimeProvider>
+                                    <ConversationContextRefsSurface
+                                      contextRefs={[CONTEXT_REF]}
+                                      removeContextRef={async () => {}}
+                                      onOpenResource={() => {}}
+                                    />
+                                    <ResourceActionOverlays />
+                                  </ResourceActionRuntimeProvider>
+                                </GlobalPlayerProvider>
+                              </ArtworkProvider>
+                            </ResourceCacheProvider>
                           </ResourceOverlaysProvider>
                         </OfflineMediaProvider>
                       </ShareControllerProvider>

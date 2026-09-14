@@ -28,6 +28,10 @@ class PinnedSuiteSource:
     source_directory: str
     repository: str
 
+    @property
+    def marker_name(self) -> str:
+        return f".nexus-{self.package}-revision"
+
 
 @dataclass(frozen=True, slots=True)
 class _SourceSnapshot:
@@ -40,6 +44,12 @@ class _SourceSnapshot:
     untracked_sha256: str
 
 
+LLM_AGENT_KERNEL_SOURCE = PinnedSuiteSource(
+    package="llm-agent-kernel",
+    source_directory="llm-agent-kernel",
+    repository="https://github.com/NielsdaWheelz/llm-agent-kernel.git",
+)
+
 PINNED_SUITE_SOURCES = (
     PinnedSuiteSource(
         package="provider-runtime",
@@ -51,6 +61,7 @@ PINNED_SUITE_SOURCES = (
         source_directory="llm-tools",
         repository="https://github.com/NielsdaWheelz/llm-tools.git",
     ),
+    LLM_AGENT_KERNEL_SOURCE,
 )
 
 

@@ -33,6 +33,10 @@ from nexus_test_control.evidence import (
 from nexus_test_control.memory import OwnedMemorySampler, measure_owned_memory, measured
 from nexus_test_control.model import (
     ANDROID_VISUAL_DEVICE_ALIASES,
+    API_CAPACITY_BASELINE_ARTWORK_PROOF,
+    API_CAPACITY_BASELINE_PROOF,
+    API_CAPACITY_BASELINE_READER_PROOF,
+    API_CAPACITY_COMPLETE_PROOFS,
     DEFERRED_CAPABILITY_OWNER,
     WORKFLOW_REGISTRY,
     AndroidVisualInputs,
@@ -49,6 +53,7 @@ from nexus_test_control.runner import (
     CapabilityContext,
     FirstFailureReporter,
     RunContextRecorder,
+    WorkflowExecutionError,
     environment_secrets,
     run_workflow,
 )
@@ -212,6 +217,14 @@ def parse_command(argv: Sequence[str]) -> Command:
 def list_json() -> dict[str, object]:
     return {
         "version": 1,
+        "api_capacity": {
+            "qualification_proofs": [
+                API_CAPACITY_BASELINE_PROOF,
+                API_CAPACITY_BASELINE_READER_PROOF,
+                API_CAPACITY_BASELINE_ARTWORK_PROOF,
+            ],
+            "complete_proofs": list(API_CAPACITY_COMPLETE_PROOFS),
+        },
         "commands": [
             {"id": "prove"},
             {"id": "diagnose"},
@@ -357,7 +370,11 @@ def _execute_workflow(
         except BaseException as error:
             artifacts: tuple[str, ...] = ()
             failure_detail = str(error)
-            if isinstance(error, SensitivityExecutionError):
+            completed: tuple[CapabilityEvidence, ...] = ()
+            if isinstance(error, WorkflowExecutionError):
+                failure_owner = error.owner
+                completed = error.completed
+            elif isinstance(error, SensitivityExecutionError):
                 sensitivity = error.completed
                 artifacts = error.artifacts
                 failure_detail = f"proof_id={error.proof_id}; {error}"
@@ -377,6 +394,7 @@ def _execute_workflow(
                 failure_owner,
                 f"controller execution did not complete: {failure_detail}",
                 artifacts=artifacts,
+                completed=completed,
             )
     peak_owned_mib = measured(memory_sampler)
     if not peak_owned_mib.measurement_complete and all(
@@ -543,15 +561,17 @@ def _execute_diagnose(
     except BaseException as error:
         reporter.report(
             output,
-            owner="diagnose",
+            owner=error.owner.value if isinstance(error, WorkflowExecutionError) else "diagnose",
             status=RunStatus.FAIL,
             kind="controller_execution_failure",
             detail=error,
         )
         peak_owned_mib = PeakOwnedMemory(0, 0, 0, measurement_complete=False)
-        capabilities = _aborted_capabilities(
-            original.workflow,
-            f"diagnostic execution did not complete: {error}",
+        detail = f"diagnostic execution did not complete: {error}"
+        capabilities = (
+            _failed_capabilities(original.workflow, error.owner, detail, completed=error.completed)
+            if isinstance(error, WorkflowExecutionError)
+            else _aborted_capabilities(original.workflow, detail)
         )
     evidence = DiagnosticRerunEvidence(
         run_id=run_id,
@@ -614,22 +634,26 @@ def _failed_capabilities(
     detail: str,
     *,
     artifacts: tuple[str, ...] = (),
+    completed: tuple[CapabilityEvidence, ...] = (),
 ) -> tuple[CapabilityEvidence, ...]:
     required = WORKFLOW_REGISTRY[workflow].requirements
     if owner not in {requirement.capability for requirement in required}:
         owner = required[0].capability
+    retained = {item.id: item for item in completed}
+    failed = retained.get(owner, CapabilityEvidence(owner, RunStatus.FAIL, 0, 0))
+    if failed.status is not RunStatus.PASS and failed.detail:
+        detail = f"{failed.detail}; {detail}"
+    retained[owner] = replace(
+        failed, status=RunStatus.FAIL, detail=detail, artifacts=(*failed.artifacts, *artifacts)
+    )
     return tuple(
-        CapabilityEvidence(
+        retained.get(requirement.capability)
+        or CapabilityEvidence(
             requirement.capability,
-            RunStatus.FAIL if requirement.capability is owner else RunStatus.NOT_RUN,
+            RunStatus.NOT_RUN,
             0,
             0,
-            artifacts=(artifacts if requirement.capability is owner else ()),
-            detail=(
-                detail
-                if requirement.capability is owner
-                else f"blocked by controller failure in {owner.value}"
-            ),
+            detail=f"blocked by controller failure in {owner.value}",
         )
         for requirement in required
     )

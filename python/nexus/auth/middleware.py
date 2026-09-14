@@ -18,9 +18,9 @@ from uuid import UUID
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import MutableHeaders
 from starlette.responses import Response
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from nexus.auth.bearer import parse_bearer_token
 from nexus.auth.verifier import TokenVerifier
@@ -159,7 +159,7 @@ def _parse_email_claim(raw_email: Any) -> str | None:
     return email
 
 
-class AuthMiddleware(BaseHTTPMiddleware):
+class AuthMiddleware:
     """Authentication middleware for FastAPI.
 
     Enforces:
@@ -194,7 +194,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             bootstrap_callback: Function(user_id, email=None) -> default_library_id.
                               Called after successful auth to ensure user exists.
         """
-        super().__init__(app)
+        self.app = app
         self.verifier = verifier
         self.requires_internal_header = requires_internal_header
         self.internal_secret = internal_secret
@@ -210,22 +210,40 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self._default_library_id_by_user: dict[UUID, UUID] = {}
         self._bootstrap_task_by_user: dict[UUID, asyncio.Task[UUID]] = {}
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        request = Request(scope, receive)
+        rejection = await self._authenticate(request)
+        if rejection is not None:
+            await rejection(scope, receive, send)
+            return
+
+        async def authenticated_send(message: Message) -> None:
+            timing = getattr(request.state, "nexus_auth_timing", None)
+            if message["type"] == "http.response.start" and timing is not None:
+                MutableHeaders(scope=message).append("Server-Timing", timing)
+            await send(message)
+
+        await self.app(scope, receive, authenticated_send)
+
+    async def _authenticate(self, request: Request) -> Response | None:
         """Process the request through auth checks."""
         # Skip auth for public paths
         if request.url.path in PUBLIC_PATHS:
-            return await call_next(request)
+            return None
 
         # Stream routes authenticate via the stream-token bearer (get_stream_viewer)
         # instead of Supabase auth. The iss/aud requirement on stream tokens prevents
         # accidental acceptance of supabase JWTs if one hits a stream endpoint.
         if is_stream_path(request.url.path):
-            return await call_next(request)
+            return None
 
         # This exact direct route verifies its scoped one-use bearer at the
         # route boundary. No other offline-reading path skips BFF/Supabase auth.
         if is_offline_reading_package_path(request.url.path):
-            return await call_next(request)
+            return None
 
         # Step 1: Check internal header if required
         if self.requires_internal_header:
@@ -234,16 +252,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return error_response_obj
 
         if request.url.path in EXTENSION_AUTH_PATHS:
-            return await call_next(request)
+            return None
 
         if request.url.path in INTERNAL_ONLY_PATHS:
-            return await call_next(request)
+            return None
 
         # Owned oracle plate bytes are public-domain and need no per-user auth, but
         # the route stays BFF-only: the internal-header check above already ran, so
         # reaching here means the request came through the BFF. Bearer-exempt.
         if request.url.path.startswith("/oracle/plates/"):
-            return await call_next(request)
+            return None
 
         # Anonymous resource reads remain BFF-only. The internal-header check
         # above has already succeeded; the route authenticates its bearer link
@@ -251,7 +269,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.url.path == "/public/resource-share" or request.url.path.startswith(
             "/public/resource-share/"
         ):
-            return await call_next(request)
+            return None
 
         auth_started_at = time.monotonic()
 
@@ -312,9 +330,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             roles=roles,
         )
         auth_duration_ms = (time.monotonic() - auth_started_at) * 1000
-        response = await call_next(request)
-        response.headers.append("Server-Timing", f"nexus_auth;dur={auth_duration_ms:.2f}")
-        return response
+        request.state.nexus_auth_timing = f"nexus_auth;dur={auth_duration_ms:.2f}"
+        return None
 
     def _cached_default_library_id(self, user_id: UUID) -> UUID | None:
         default_library_id = self._default_library_id_by_user.pop(user_id, None)

@@ -1,0 +1,14 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
+@@ -1424,6 +1424,10 @@
+ 
+     private fun recoverCorruptPackage(installed: OfflineReadingPackage) {
+         verifiedPackages.remove(installed.id)
++        database.writableDatabase.execSQL(
++            "DELETE FROM offline_reader_progress_pending WHERE binding_id = ? AND media_id = ?",
++            arrayOf(installed.bindingId.toString(), installed.mediaId.toString()),
++        )
+         packageDirectory(installed.bindingId, installed.id).deleteRecursively()
+         database.writableDatabase.transaction {
+             execSQL(

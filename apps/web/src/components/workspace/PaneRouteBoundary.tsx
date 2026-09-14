@@ -85,12 +85,11 @@ export default function PaneRouteBoundary({ children }: { children: ReactNode })
       }
       const anchor = event.target.closest("a[href]");
       if (!(anchor instanceof HTMLAnchorElement)) {
+        warmPane(null);
         return;
       }
       const href = anchor.getAttribute("href");
-      if (href && !href.startsWith("#")) {
-        warmPane(href);
-      }
+      warmPane(href && !href.startsWith("#") ? href : null);
     },
     [warmPane],
   );
@@ -103,6 +102,8 @@ export default function PaneRouteBoundary({ children }: { children: ReactNode })
       onKeyDownCapture={handleKeyDownCapture}
       onMouseOverCapture={handleIntentCapture}
       onFocusCapture={handleIntentCapture}
+      onMouseLeave={() => warmPane(null)}
+      onBlurCapture={() => warmPane(null)}
     >
       {children}
     </div>

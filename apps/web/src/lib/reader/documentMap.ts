@@ -1,10 +1,11 @@
 import type { ApiPath } from "@/lib/api/client";
+import type { ReaderApparatusKind, ReaderApparatusConfidence } from "./apparatusContract";
 import { apiFetch } from "@/lib/api/client";
 import type { Presence } from "@/lib/api/presence";
 import type { MediaRetrievalLocator } from "@/lib/api/sse/locators";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { DocumentEmbed } from "@/lib/media/documentEmbeds";
-import type { MediaNavigationResponse } from "@/lib/media/readerNavigation";
+import type { MediaNavigation } from "@/lib/media/readerNavigation";
 import type { EdgeKind, EdgeOrigin } from "@/lib/resourceGraph/connections";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -16,20 +17,8 @@ export type ReaderEvidenceFactKind =
 export type ReaderEvidenceSemanticKind =
   "highlight" | "citation" | "link" | "synapse";
 
-export type ReaderEvidenceSourceKind =
-  | "footnote_ref"
-  | "endnote_ref"
-  | "bibliography_ref"
-  | "sidenote_ref"
-  | "margin_note_ref"
-  | "footnote"
-  | "endnote"
-  | "bibliography_entry"
-  | "sidenote"
-  | "margin_note"
-  | "reference_section";
-
-export type ReaderEvidenceConfidence = "exact" | "strong" | "probable";
+export type ReaderEvidenceSourceKind = ReaderApparatusKind;
+export type ReaderEvidenceConfidence = ReaderApparatusConfidence;
 
 export interface ReaderEvidenceAnchor {
   locator: MediaRetrievalLocator;
@@ -259,7 +248,7 @@ export interface ReaderDocumentMap {
     graph_max_updated_at: Presence<string>;
     highlights_max_updated_at: Presence<string>;
   };
-  navigation: Presence<MediaNavigationResponse["data"]>;
+  navigation: Presence<MediaNavigation>;
   embeds: DocumentEmbed[];
   evidence: ReaderEvidence;
   markers: ReaderDocumentMapMarker[];

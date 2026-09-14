@@ -1,0 +1,33 @@
+diff --git a/python/nexus/services/semantic_chunks.py b/python/nexus/services/semantic_chunks.py
+--- a/python/nexus/services/semantic_chunks.py
++++ b/python/nexus/services/semantic_chunks.py
+@@ -319,19 +319,8 @@
+         Credentials(openai=credential.key),
+         http_client=http_client,
+     )
+-    start = 0
+-    while start < len(texts):
+-        end = start
+-        batch_bytes = 0
+-        while end < len(texts) and end - start < 64:
+-            size = utf8_byte_length(texts[end])
+-            if end > start and batch_bytes + size > EMBEDDING_REQUEST_MAX_UTF8_BYTES:
+-                break
+-            # A single large query still reaches the existing provider-owned
+-            # overflow/fallback path; local byte counts are not that verdict.
+-            batch_bytes += size
+-            end += 1
+-        batch = texts[start:end]
++    for start in range(0, len(texts), 64):
++        batch = texts[start : start + 64]
+         call = EmbeddingCall(
+             model=settings.transcript_embedding_model_openai,
+             inputs=tuple(batch),
+@@ -345,7 +334,6 @@
+                 expected_count=len(batch),
+             )
+         )
+-        start = end
+     return vectors
+ 
+ 

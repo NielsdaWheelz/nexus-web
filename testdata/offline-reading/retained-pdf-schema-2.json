@@ -1,0 +1,29 @@
+{
+  "package_sha256": "8ded0b359ed06da3e89634039fcfeab28f184b03a50be38b07a6438bea2250e7",
+  "expanded_bytes": 1128,
+  "canonical_text": null,
+  "manifest": {
+    "packageSchemaVersion": 2,
+    "readerContractVersion": 1,
+    "minimumReaderBundleVersion": 2,
+    "mediaId": "68ddb804-89db-43d3-808f-545550d3ea99",
+    "mediaKind": "Pdf",
+    "title": "Retained source",
+    "readerGeneration": 7,
+    "readerRevisionKey": "56438c70d4af6bf7654b055b4b35cd2e846ab20df7fb8c90754f0b821fa49f71",
+    "entries": [
+      {
+        "path": "assets/source.pdf",
+        "mediaType": "application/pdf",
+        "sizeBytes": 836,
+        "sha256": "861c9f675806b2e220e7c60510403771246cc9fb388711c3d3d6341850d3286d"
+      },
+      {
+        "path": "descriptor.json",
+        "mediaType": "application/json",
+        "sizeBytes": 292,
+        "sha256": "afadad6fee6946d9accaca5c62f63874c45c2e40fe998a23559d7ec4f1c6ebde"
+      }
+    ]
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "package_sha256": "9eae90605d749996bf8794a0c29d16cc410422abf68475a32f5e11e26eea6d41",
+  "expanded_bytes": 7005,
+  "canonical_text": "café 🧠\ncat",
+  "fragment_id": "00000000-0000-4000-8000-000000000008",
+  "manifest": {
+    "packageSchemaVersion": 2,
+    "readerContractVersion": 1,
+    "minimumReaderBundleVersion": 2,
+    "mediaId": "00000000-0000-4000-8000-000000000007",
+    "mediaKind": "WebArticle",
+    "title": "café 🧠 — retained seven",
+    "readerGeneration": 7,
+    "readerRevisionKey": "f40bd04e6deb91b71aaa293d566df9fad36c97969e6acf8d8e523adfba0085c0",
+    "entries": [
+      {
+        "path": "assets/web/0123456789abcdef",
+        "mediaType": "image/png",
+        "sizeBytes": 70,
+        "sha256": "4ff6ab670a58c14270e034e2090d9a432caa263a14e0a25785386b0c12f880b5"
+      },
+      {
+        "path": "descriptor.json",
+        "mediaType": "application/json",
+        "sizeBytes": 810,
+        "sha256": "285e7055a9ca3e632dbaf278cceb4e4e7f6a09c08f1849bef55ddccdd34a95f2"
+      },
+      {
+        "path": "index/0.json",
+        "mediaType": "application/json",
+        "sizeBytes": 489,
+        "sha256": "a5a6d69deb66fddbe7773ae929c587dc2472445c40ce4a5bcf334768bc161485"
+      },
+      {
+        "path": "index/1.json",
+        "mediaType": "application/json",
+        "sizeBytes": 692,
+        "sha256": "50dee34edecc0651368ebe94b55e12378d83428b5f51ccf499bbfd6e3c7f4afc"
+      },
+      {
+        "path": "index/contents-0.json",
+        "mediaType": "application/json",
+        "sizeBytes": 421,
+        "sha256": "d4ae6ff6c3092aaf7f131b8e85cf3d83d4bc67595739786270dd4dc129b5a4f7"
+      },
+      {
+        "path": "index/tables/00000000-0000-4000-8000-000000000008/0/1-0/0.json",
+        "mediaType": "application/json",
+        "sizeBytes": 1132,
+        "sha256": "8753d3965838056b0da23a54f806e678f85a6a4ff381e586aca1790bfdac8db9"
+      },
+      {
+        "path": "index/tables/00000000-0000-4000-8000-000000000008/0/1-0/1.json",
+        "mediaType": "application/json",
+        "sizeBytes": 262,
+        "sha256": "80316925fc3c41fa07fc68a2568e1869d8a65709ab02d97c62f3815c3c1e093f"
+      },
+      {
+        "path": "units/00000000-0000-4000-8000-000000000008/0-7-0.json",
+        "mediaType": "application/json",
+        "sizeBytes": 1784,
+        "sha256": "1c9cc76a5f5129501ea483359deda29114039599e705722e70eeecae618809b0"
+      },
+      {
+        "path": "units/00000000-0000-4000-8000-000000000008/7-10-0.json",
+        "mediaType": "application/json",
+        "sizeBytes": 1345,
+        "sha256": "3f8d054fbd99b700c715e602b42213fb0275df02e80f20f944b011690bdadcae"
+      }
+    ]
+  }
+}

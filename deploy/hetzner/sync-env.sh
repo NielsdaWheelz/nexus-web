@@ -48,6 +48,9 @@ GENERATION_CONTINUATION_ENCRYPTION_KEY
 POSTGRES_IMAGE
 CADDY_IMAGE
 PARSER_TEMP_ROOT
+API_READ_ADMISSION_LIMITS
+IMAGE_DECODER_LIMITS
+READER_PUBLICATION_LIMITS
 "
 
 die() {
@@ -274,8 +277,8 @@ reject_legacy_runtime_keys() {
 reject_node_ingest_script() {
   local file="$1"
 
-  if env_value "NODE_INGEST_SCRIPT" "$file" >/dev/null; then
-    die "NODE_INGEST_SCRIPT is image-owned and must not be present in production runtime env"
+  if env_value "NODE_INGEST_SCRIPT" "$file" >/dev/null || env_value "NEXUS_NODE_INGEST_SCRIPT" "$file" >/dev/null; then
+    die "NODE_INGEST_SCRIPT and NEXUS_NODE_INGEST_SCRIPT are image-owned and must not be present in production runtime env"
   fi
 }
 

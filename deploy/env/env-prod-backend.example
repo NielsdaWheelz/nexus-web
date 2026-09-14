@@ -16,6 +16,14 @@ DATABASE_POOL_SIZE=5
 DATABASE_MAX_OVERFLOW=5
 DATABASE_POOL_TIMEOUT_SECONDS=30
 
+# Foreground capacity profiles. The API refuses to start without all three, and
+# no value here has a default: each number is an output of the release capacity
+# qualification (deployment.md, "Foreground capacity profiles"), copied from that
+# run's receipt. Publication refuses to ship any of them blank.
+API_READ_ADMISSION_LIMITS={"max_concurrency":<qualified>,"max_image_concurrency":<qualified>,"max_package_transfer_concurrency":<qualified>,"retry_after_seconds":<qualified>,"work_deadline_seconds":<qualified>,"package_transfer_deadline_seconds":<qualified>,"request_bytes":<qualified>}
+IMAGE_DECODER_LIMITS={"address_space_bytes":<qualified>,"cpu_seconds":<qualified>,"wall_seconds":<qualified>}
+READER_PUBLICATION_LIMITS={"unit_bytes":<qualified>,"unit_codepoints":<qualified>,"unit_dom_nodes":<qualified>,"index_bytes":<qualified>,"descriptor_bytes":<qualified>}
+
 # Cloudflare R2 is the sole production object store.
 R2_ACCESS_KEY_ID=<r2-access-key-id>
 R2_SECRET_ACCESS_KEY=<r2-secret-access-key>

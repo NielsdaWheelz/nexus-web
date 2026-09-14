@@ -35,8 +35,13 @@ const INERT_REFERENCE_PREFIXES = [
   "http://www.w3.org/",
   "https://appassets.androidplatform.net/",
   "https://react.dev/errors/",
+  // the reserved base the EPUB href normalizer resolves package-relative
+  // links against (src/lib/reader/epubHref.ts); `.local` is never fetched.
+  "https://epub.local",
 ];
-const ABSOLUTE_SCHEME_REFERENCE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'`)<>\\]*/giu;
+// A remote origin needs a host: a bare scheme prefix such as the `http://` a
+// same-origin classifier compares against is not a network escape.
+const ABSOLUTE_SCHEME_REFERENCE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'`)<>\\/]+[^\s"'`)<>\\]*/giu;
 const PROTOCOL_RELATIVE_REFERENCE =
   /["'(]\/\/[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}[^\s"'`)<>\\]*/gu;
 

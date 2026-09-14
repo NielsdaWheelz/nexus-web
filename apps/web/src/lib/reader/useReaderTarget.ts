@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePaneRouter, usePaneRuntime } from "@/lib/panes/paneRuntime";
 import {
   consumePendingReaderPulse,
+  readPendingReaderPulse,
   useReaderPulseHighlight,
   type ReaderPulseTarget,
 } from "./pulseEvent";
@@ -20,21 +21,16 @@ export interface ReaderTargetState {
   clearTarget: () => void;
 }
 
-function targetFromPulse(detail: ReaderPulseTarget): ReaderTarget | null {
-  if (detail.evidenceSpanId) {
-    return { kind: "evidence", value: detail.evidenceSpanId, origin: "pulse" };
-  }
-  if (detail.highlightId) {
-    return { kind: "highlight", value: detail.highlightId, origin: "pulse" };
-  }
+function targetFromPulse(detail: ReaderPulseTarget, admittedSource: boolean): ReaderTarget | null {
   const loc = detail.locator;
-  if (loc.type === "web_text_offsets" || loc.type === "epub_fragment_offsets") {
-    return { kind: "fragment", value: loc.fragment_id, origin: "pulse" };
+  if (admittedSource && (loc.type === "web_text_offsets" || loc.type === "epub_fragment_offsets" || loc.type === "pdf_page_geometry")) {
+    return { kind: "source", value: detail.mediaId, origin: "pulse" };
   }
-  if (loc.type === "pdf_page_geometry") {
-    return { kind: "page", value: String(loc.page_number), origin: "pulse" };
-  }
-  if (loc.type === "transcript_time_range") {
+  if (detail.evidenceSpanId) return { kind: "evidence", value: detail.evidenceSpanId, origin: "pulse" };
+  if (detail.highlightId) return { kind: "highlight", value: detail.highlightId, origin: "pulse" };
+  if (loc.type === "web_text_offsets" || loc.type === "epub_fragment_offsets") return { kind: "fragment", value: loc.fragment_id, origin: "pulse" };
+  if (loc.type === "pdf_page_geometry") return { kind: "page", value: String(loc.page_number), origin: "pulse" };
+  if (loc.type === "transcript_time_range" || loc.type === "audio_time_range" || loc.type === "video_time_range") {
     return { kind: "t", value: String(loc.t_start_ms), origin: "pulse" };
   }
   return null;
@@ -53,6 +49,7 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
   const router = usePaneRouter();
   const paneRuntime = usePaneRuntime();
   const paneHref = paneRuntime?.href ?? null;
+  const paneId = paneRuntime?.paneId ?? null;
   const hasPaneRuntime = paneRuntime !== null;
   const [state, setState] = useState<{
     target: ReaderTarget | null;
@@ -72,44 +69,44 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
           ? hashFromPaneHref(paneHref)
           : window.location.hash;
     const parsed = parseReaderTargetHash(hash);
-    const pendingPulse = consumePendingReaderPulse(mediaId);
+    const pendingPulse = paneId === null ? null : readPendingReaderPulse(paneId, mediaId);
+    if (pendingPulse !== null && paneId !== null) {
+      const pendingTarget = targetFromPulse(pendingPulse, true);
+      if (pendingTarget !== null) {
+        if (pendingTarget.kind !== "source") consumePendingReaderPulse(paneId, mediaId, pendingPulse);
+        setState({ target: { ...pendingTarget, origin: parsed === null ? "pulse" : "hash" }, status: "pending" });
+        return;
+      }
+    }
     if (parsed) {
       setState({ target: { ...parsed, origin: "hash" }, status: "pending" });
       return;
     }
-    if (pendingPulse) {
-      const pendingTarget = targetFromPulse(pendingPulse);
-      if (pendingTarget) {
-        setState({ target: pendingTarget, status: "pending" });
-        return;
-      }
-    }
     if (mediaChanged) {
       setState({ target: null, status: "idle" });
     }
-  }, [hasPaneRuntime, mediaId, paneHref]);
+  }, [hasPaneRuntime, mediaId, paneHref, paneId]);
 
   const onReaderPulse = useCallback(
     (detail: ReaderPulseTarget) => {
-      if (detail.mediaId !== mediaId) return;
-      consumePendingReaderPulse(mediaId, detail);
-      const next = targetFromPulse(detail);
+      if (paneId === null || detail.paneId !== paneId || detail.mediaId !== mediaId) return;
+      const next = targetFromPulse(detail, readPendingReaderPulse(paneId, mediaId) === detail);
       if (!next) return;
+      if (next.kind !== "source") consumePendingReaderPulse(paneId, mediaId, detail);
       setState((current) => {
-        // The pulse channel still owns the visual pulse. Preserve a matching
-        // hash target until markActive consumes its canonical URL obligation.
+        // The exact source command also consumes an existing hash obligation;
+        // its full locator stays in the pending owner until admission.
         if (
           current.status === "pending" &&
           current.target?.origin === "hash" &&
-          current.target.kind === next.kind &&
-          current.target.value === next.value
+          next.kind === "source"
         ) {
-          return current;
+          return { target: { ...next, origin: "hash" }, status: "pending" };
         }
         return { target: next, status: "pending" };
       });
     },
-    [mediaId],
+    [mediaId, paneId],
   );
   useReaderPulseHighlight(onReaderPulse);
 

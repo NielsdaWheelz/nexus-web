@@ -1,0 +1,11 @@
+diff --git a/apps/web/src/lib/api/server.ts b/apps/web/src/lib/api/server.ts
+--- a/apps/web/src/lib/api/server.ts
++++ b/apps/web/src/lib/api/server.ts
+@@ -55,6 +55,7 @@
+       if (isAbortError(error)) throw error;
+       throw new ApiError(0, "E_NETWORK", "Backend request failed", requestId);
+     }
++    if (!response.ok) throw new ApiError(response.status, "E_INVALID_RESPONSE", "API returned an invalid response");
+     const body = await parseApiResponse<T>(response);
+     if (performance.now() >= deadline) throw timeoutError();
+     return body;

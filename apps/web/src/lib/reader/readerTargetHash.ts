@@ -1,9 +1,8 @@
 import { apiFetch } from "@/lib/api/client";
 import { decodePresence, type Presence } from "@/lib/api/presence";
-import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
+import { decodePdfHighlightQuad, type PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 import {
   expectExactRecord,
-  expectFiniteNumber,
   expectInteger,
   expectRecord,
   expectString,
@@ -18,7 +17,7 @@ export type ReaderTargetKind =
   | "t";
 
 export interface ReaderTarget {
-  kind: ReaderTargetKind;
+  kind: ReaderTargetKind | "source";
   value: string;
   origin: "hash" | "pulse" | "manual";
 }
@@ -38,9 +37,17 @@ export type ResolvedHighlightReaderTarget =
     } & TextOffsets)
   | {
       kind: "PdfPageGeometry";
+      sourceSha256: string;
       pageNumber: number;
       quads: PdfHighlightQuad[];
-    };
+    }
+  /**
+   * An intact highlight whose geometry no published source binary accounts
+   * for. Its authored text and notes remain readable; only the position is
+   * withheld, so the reader offers the explicit reanchoring choice instead of
+   * reporting a missing highlight.
+   */
+  | { kind: "UnresolvedSource" };
 
 const KINDS: readonly ReaderTargetKind[] = [
   "evidence",
@@ -106,25 +113,6 @@ function decodeTextOffsets(
     throw new TypeError(`${name} offsets must form a non-empty range`);
   }
   return { fragmentId, startOffset, endOffset };
-}
-
-function decodePdfQuad(raw: unknown, index: number): PdfHighlightQuad {
-  const name = `highlight reader target.quads[${index}]`;
-  const row = expectExactRecord(
-    raw,
-    ["x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4"],
-    name,
-  );
-  return {
-    x1: expectFiniteNumber(row.x1, `${name}.x1`),
-    y1: expectFiniteNumber(row.y1, `${name}.y1`),
-    x2: expectFiniteNumber(row.x2, `${name}.x2`),
-    y2: expectFiniteNumber(row.y2, `${name}.y2`),
-    x3: expectFiniteNumber(row.x3, `${name}.x3`),
-    y3: expectFiniteNumber(row.y3, `${name}.y3`),
-    x4: expectFiniteNumber(row.x4, `${name}.x4`),
-    y4: expectFiniteNumber(row.y4, `${name}.y4`),
-  };
 }
 
 export function decodeResolvedHighlightReaderTarget(
@@ -219,9 +207,12 @@ export function decodeResolvedHighlightReaderTarget(
   if (kind === "PdfPageGeometry") {
     const row = expectExactRecord(
       value,
-      ["kind", "page_number", "quads"],
+      ["kind", "source_sha256", "page_number", "quads"],
       "highlight reader target",
     );
+    if (typeof row.source_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(row.source_sha256)) {
+      throw new TypeError("highlight reader target.source_sha256 must be a SHA-256 digest");
+    }
     if (!Array.isArray(row.quads) || row.quads.length < 1 || row.quads.length > 512) {
       throw new TypeError(
         "highlight reader target.quads must contain 1 to 512 quads",
@@ -229,14 +220,19 @@ export function decodeResolvedHighlightReaderTarget(
     }
     return {
       kind,
+      sourceSha256: row.source_sha256,
       pageNumber: decodeBoundedInteger(
         row.page_number,
         "highlight reader target.page_number",
         1,
         2 ** 31 - 1,
       ),
-      quads: row.quads.map(decodePdfQuad),
+      quads: row.quads.map((raw, index) => decodePdfHighlightQuad(raw, `highlight reader target.quads[${index}]`)),
     };
+  }
+  if (kind === "UnresolvedSource") {
+    expectExactRecord(value, ["kind"], "highlight reader target");
+    return { kind };
   }
   throw new TypeError(`Unsupported highlight reader target kind: ${kind}`);
 }

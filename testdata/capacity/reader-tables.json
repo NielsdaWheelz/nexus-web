@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "purpose": "intact table browser residency experiment; no production-safe budget",
+  "prefix": "<table><caption>Intact reader table</caption><thead><tr><th scope=\"col\">row</th><th scope=\"col\">alpha</th><th scope=\"col\">beta</th><th scope=\"col\">gamma</th></tr></thead><tbody>",
+  "row": "<tr><th scope=\"row\">r</th><td>a</td><td>b</td><td>c</td></tr>",
+  "suffix": "</tbody></table>",
+  "profiles": [
+    {
+      "source_limit_bytes": 131072,
+      "rows": 2145,
+      "html_bytes": 131038,
+      "sha256": "f799096d0aaa76aae2bebc629867edeaeec49a55463bad8e12e23948b58ac8b0"
+    },
+    {
+      "source_limit_bytes": 524288,
+      "rows": 8591,
+      "html_bytes": 524244,
+      "sha256": "9793c5f3d40539ca84925ec6545288d7b4d6d44d07c450c02d3bc7057b29044d"
+    },
+    {
+      "source_limit_bytes": 2097152,
+      "rows": 34376,
+      "html_bytes": 2097129,
+      "sha256": "51d84120e809e12ef9c7a86a3d0f1e191b20a43cc3b087cef0847fd48fa458a5"
+    }
+  ]
+}

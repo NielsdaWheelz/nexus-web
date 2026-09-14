@@ -3,13 +3,19 @@ package app.nexus.android.offline.reading
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteFullException
+import android.database.sqlite.SQLiteDiskIOException
 import android.net.ConnectivityManager
 import android.system.Os
+import android.system.ErrnoException
 import android.system.OsConstants
 import app.nexus.android.offline.NetworkPolicy
 import app.nexus.android.offline.OfflineNetworkPolicyStore
 import java.io.File
+import java.io.FileNotFoundException
+import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.StandardCopyOption
 import java.time.Clock
 import java.time.Instant
@@ -36,12 +42,13 @@ internal sealed interface OfflineReadingAccountTransitionView {
 }
 
 internal sealed interface OfflineReadingReconciliationOutcome {
-    val snapshot: ReadingStoreSnapshot
-
-    data class Ready(override val snapshot: ReadingStoreSnapshot) :
+    data class Ready(val snapshot: ReadingStoreSnapshot) :
         OfflineReadingReconciliationOutcome
 
-    data class Deferred(override val snapshot: ReadingStoreSnapshot) :
+    data class Deferred(val snapshot: ReadingStoreSnapshot) :
+        OfflineReadingReconciliationOutcome
+
+    data class Failed(val cause: Exception) :
         OfflineReadingReconciliationOutcome
 }
 
@@ -79,11 +86,24 @@ internal data object AndroidOfflineReadingDurability : OfflineReadingDurability 
     }
 
     override fun syncDirectory(directory: File) {
-        val descriptor = Os.open(directory.absolutePath, OsConstants.O_RDONLY, 0)
         try {
-            Os.fsync(descriptor)
-        } finally {
-            Os.close(descriptor)
+            val descriptor = Os.open(directory.absolutePath, OsConstants.O_RDONLY, 0)
+            try {
+                Os.fsync(descriptor)
+            } finally {
+                Os.close(descriptor)
+            }
+        } catch (error: ErrnoException) {
+            // Kernel resource failures are retryable. Invalid descriptors,
+            // arguments and other programming failures keep their exact cause.
+            when (error.errno) {
+                OsConstants.ENOENT -> throw NoSuchFileException(directory.path).apply { initCause(error) }
+                OsConstants.EIO, OsConstants.ENOSPC, OsConstants.EDQUOT,
+                OsConstants.EACCES, OsConstants.EPERM, OsConstants.EROFS,
+                OsConstants.ENOMEM, OsConstants.EMFILE, OsConstants.ENFILE ->
+                    throw IOException("directory durability unavailable: ${directory.path}", error)
+                else -> throw error
+            }
         }
     }
 }
@@ -93,11 +113,14 @@ internal class OfflineReadingStore internal constructor(
     private val database: OfflineReadingDatabase = OfflineReadingDatabase(context.applicationContext),
     private val seal: OfflineReadingBindingSealPort = OfflineReadingBindingSeal(),
     private val ids: OfflineReadingIdSource = Uuid7Source(),
-    private val clock: Clock = Clock.systemUTC(),
+    /** The one time source for this store and for the origin client its runner drives. */
+    internal val clock: Clock = Clock.systemUTC(),
     private val packageVerifier: OfflineReadingPackageVerifierPort = OfflineReadingPackageVerifier(),
     private val installedVerifier: OfflineReadingInstalledPackageVerifierPort =
         OfflineReadingInstalledPackageVerifier(),
     private val rootDirectory: File = File(context.applicationContext.filesDir, "offline-reading"),
+    /** Current filesystem availability, measured like `StatFs`; this reserves no bytes. */
+    private val freeSpaceBytes: (File) -> Long = { directory -> directory.usableSpace },
     private val durability: OfflineReadingDurability = AndroidOfflineReadingDurability,
     private val schedulerFactory: (OfflineReadingStore) -> OfflineReadingSchedulerPort = { store ->
         OfflineReadingScheduler(context.applicationContext, store)
@@ -114,7 +137,14 @@ internal class OfflineReadingStore internal constructor(
     private val appContext = context.applicationContext
     private val listeners = CopyOnWriteArraySet<(ReadingStoreSnapshot) -> Unit>()
     private val leases = ConcurrentHashMap<UUID, OfflineReadingLease>()
-    private val verifiedPackages = ConcurrentHashMap<UUID, OfflineReadingPackage>()
+    private sealed interface PackageReadiness {
+        data object Prepared : PackageReadiness
+        data object ConversionRequired : PackageReadiness
+        data object StorageBlocked : PackageReadiness
+        data class Limited(val refusal: OfflineReadingConversionRefusal) : PackageReadiness
+    }
+    private data class ReconciledPackage(val installed: OfflineReadingPackage, val readiness: PackageReadiness)
+    private val verifiedPackages = ConcurrentHashMap<UUID, ReconciledPackage>()
     private val scheduler by lazy { schedulerFactory(this) }
     private val progressSyncExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "NexusOfflineReaderProgressSync").apply { isDaemon = true }
@@ -127,6 +157,9 @@ internal class OfflineReadingStore internal constructor(
     private var reconciliationAllowsLiveRunner = false
     private val reconciliationCallbacks =
         mutableListOf<(OfflineReadingReconciliationOutcome) -> Unit>()
+    // One callback in the existing completion list coalesces explicit retries
+    // that overlap a run whose snapshot still contains the previous refusal.
+    private val retryReconciliation: (OfflineReadingReconciliationOutcome) -> Unit = { requestReconciliation() }
 
     init {
         rootDirectory.mkdirs()
@@ -267,10 +300,12 @@ internal class OfflineReadingStore internal constructor(
         mediaId: UUID,
         requestedTitle: String,
         requestedMediaKind: OfflineReadingMediaKind,
+        readerGeneration: Long,
     ): ReadingStoreSnapshot {
         requireOfflineReadingSupported()
         synchronized(this) {
             requireTitle(requestedTitle)
+            require(readerGeneration > 0)
             val binding = requireBinding()
             check(!binding.authorizationRequired) { "offline reading reauthorization required" }
             require(readPackage(binding.bindingId, mediaId) == null)
@@ -286,6 +321,8 @@ internal class OfflineReadingStore internal constructor(
                     automaticRestartCount = 0,
                     stagingName = ids.next().toString(),
                     requestedAt = clock.instant(),
+                    readerGeneration = readerGeneration,
+                    preparationStartedAt = null,
                 )
                 insertTransfer(transfer)
             }
@@ -313,6 +350,24 @@ internal class OfflineReadingStore internal constructor(
     }
 
     fun retry(mediaId: UUID): ReadingStoreSnapshot {
+        val needsUpgrade = synchronized(this) {
+            val binding = requireBinding()
+            val installed = readPackage(binding.bindingId, mediaId)
+            if (installed != null && verifiedPackages[installed.id]?.readiness != PackageReadiness.Prepared) {
+                if (installed.conversionRefusal != null) {
+                    val values = ContentValues().apply { putNull("conversion_refusal") }
+                    check(database.writableDatabase.update("offline_reader_packages", values, "id = ?", arrayOf(installed.id.toString())) == 1)
+                }
+                if (reconciliationRunning && retryReconciliation !in reconciliationCallbacks) {
+                    reconciliationCallbacks += retryReconciliation
+                }
+                true
+            } else false
+        }
+        if (needsUpgrade) {
+            requestReconciliation()
+            return snapshot()
+        }
         synchronized(this) {
             val binding = requireBinding()
             check(!binding.authorizationRequired) { "offline reading reauthorization required" }
@@ -324,6 +379,7 @@ internal class OfflineReadingStore internal constructor(
                 state = ReadingTransferState.Preparing,
                 automaticRestartCount = 0,
                 stagingName = ids.next().toString(),
+                preparationStartedAt = null,
             )
             replaceTransfer(next)
         }
@@ -361,18 +417,27 @@ internal class OfflineReadingStore internal constructor(
         val installed = readPackage(binding.bindingId, mediaId)
             ?: error("offline reading package not found")
         check(!readRemoval(installed.id)) { "offline reading package is removing" }
+        check(installed.packageSchemaVersion == OFFLINE_READING_PACKAGE_SCHEMA_VERSION) {
+            "offline reading package requires local conversion"
+        }
         val directory = packageDirectory(binding.bindingId, installed.id)
-        check(verifiedPackages[installed.id] == installed && directory.isDirectory) {
+        check(verifiedPackages[installed.id] == ReconciledPackage(installed, PackageReadiness.Prepared) && directory.isDirectory) {
             "offline reading package has not passed this process integrity reconciliation"
         }
+        val manifestFile = File(directory, "manifest.json")
+        require(manifestFile.length() <= OFFLINE_READING_MAX_MANIFEST_JSON_BYTES)
+        val manifest = OfflineReadingManifestParser.parse(manifestFile.readBytes())
+        require(manifest.mediaId == mediaId && manifest.readerGeneration == installed.readerGeneration &&
+            manifest.readerRevisionKey == installed.readerRevisionKey)
         val lease = OfflineReadingLease(
             id = ids.next(),
             mediaId = mediaId,
             readerGeneration = installed.readerGeneration,
             readerRevisionKey = installed.readerRevisionKey,
             installedAt = installed.installedAt,
-            progress = readProgress(binding.bindingId, mediaId),
+            progress = readProgress(binding.bindingId, mediaId, installed.readerGeneration),
             packageDirectory = directory,
+            memberMediaTypes = manifest.entries.associate { it.path to it.mediaType },
         )
         leases[lease.id] = lease
         return lease
@@ -408,9 +473,14 @@ internal class OfflineReadingStore internal constructor(
         require(installed.readerRevisionKey == readerRevisionKey)
         val baseline = readBaseline(binding.bindingId, mediaId)
             ?: error("offline reading baseline is missing")
-        require(baseline.readerGeneration == readerGeneration)
         val existingPending = readPending(binding.bindingId, mediaId)
-        val baseRevision = readerSnapshotRevision(baseline.serverSnapshotJson)
+        if (existingPending != null && existingPending.readerGeneration != readerGeneration) {
+            return readProgress(binding.bindingId, mediaId, installed.readerGeneration)
+        }
+        val baseRevision = existingPending?.baseServerRevision ?: readerSnapshotRevision(baseline.serverSnapshotJson)
+        val syncState = if (baseline.readerGeneration != readerGeneration) {
+            OfflineReaderSyncState.ContentChanged
+        } else existingPending?.syncState ?: OfflineReaderSyncState.Pending
         val now = clock.instant()
         val db = database.writableDatabase
         db.transaction {
@@ -431,7 +501,7 @@ internal class OfflineReadingStore internal constructor(
                         readerRevisionKey,
                         baseRevision,
                         locatorJson,
-                        (existingPending?.syncState ?: OfflineReaderSyncState.Pending).name,
+                        syncState.name,
                         now.toString(),
                         binding.bindingId.toString(),
                         mediaId.toString(),
@@ -453,28 +523,42 @@ internal class OfflineReadingStore internal constructor(
                         readerRevisionKey,
                         baseRevision,
                         locatorJson,
-                        OfflineReaderSyncState.Pending.name,
+                        syncState.name,
                         now.toString(),
                     ),
                 )
             }
         }
         notifySnapshotChanged()
-        if (existingPending == null || existingPending.syncState == OfflineReaderSyncState.Pending) {
+        if (syncState == OfflineReaderSyncState.Pending) {
             synchronizeReaderProgress(mediaId)
         }
-        return readProgress(binding.bindingId, mediaId)
+        return readProgress(binding.bindingId, mediaId, installed.readerGeneration)
     }
 
-    fun resolveReaderProgress(mediaId: UUID, useCanonical: Boolean): NativeReaderProgressView {
+    fun resolveReaderProgress(
+        mediaId: UUID,
+        readerGeneration: Long,
+        readerRevisionKey: String,
+        expected: StrictJson.ObjectValue,
+        useCanonical: Boolean,
+    ): NativeReaderProgressView {
+        var shouldSynchronize = false
         val result = synchronized(this) {
             val binding = requireBinding()
+            val installed = readPackage(binding.bindingId, mediaId)
+                ?: error("offline reading package is missing")
+            require(installed.readerGeneration == readerGeneration && installed.readerRevisionKey == readerRevisionKey) {
+                "downloaded copy changed; reopen it before resolving progress"
+            }
+            val observed = readProgress(binding.bindingId, mediaId, installed.readerGeneration)
+            if (!strictJsonSemanticallyEqual(expected, readerProgressViewJson(observed))) return@synchronized observed
             val baseline = readBaseline(binding.bindingId, mediaId)
                 ?: error("offline reading baseline is missing")
             val pending = readPending(binding.bindingId, mediaId)
-                ?: error("offline reading progress has no conflict to resolve")
-            check(pending.syncState == OfflineReaderSyncState.Conflict) {
-                "only conflicted offline reading progress can be resolved"
+                ?: return@synchronized observed
+            check(observed is NativeReaderProgressView.Conflict || observed is NativeReaderProgressView.ContentChanged) {
+                "only conflicted or content-changed progress can be resolved"
             }
             if (useCanonical) {
                 database.writableDatabase.execSQL(
@@ -482,6 +566,8 @@ internal class OfflineReadingStore internal constructor(
                     arrayOf(binding.bindingId.toString(), mediaId.toString()),
                 )
             } else {
+                if (observed is NativeReaderProgressView.ContentChanged) return@synchronized observed
+                check(pending.readerGeneration == baseline.readerGeneration)
                 database.writableDatabase.execSQL(
                     """
                     UPDATE offline_reader_progress_pending
@@ -496,12 +582,12 @@ internal class OfflineReadingStore internal constructor(
                         mediaId.toString(),
                     ),
                 )
-                check(pending.readerGeneration == baseline.readerGeneration)
+                shouldSynchronize = true
             }
             notifySnapshotChanged()
-            readProgress(binding.bindingId, mediaId)
+            readProgress(binding.bindingId, mediaId, installed.readerGeneration)
         }
-        if (!useCanonical) synchronizeReaderProgress(mediaId)
+        if (shouldSynchronize) synchronizeReaderProgress(mediaId)
         return result
     }
 
@@ -510,11 +596,16 @@ internal class OfflineReadingStore internal constructor(
         val network = appContext.getSystemService(ConnectivityManager::class.java).activeNetwork
             ?: return
         progressSyncExecutor.execute {
-            runCatching {
+            try {
                 OfflineReaderProgressSynchronizer(
                     this,
                     progressOriginFactory.create(network),
                 ).synchronize(mediaId)
+            } catch (defect: Exception) {
+                // justify-ignore-error: this background pass owns no caller to raise to, and
+                // crashing the process would destroy nothing but the app. Every pending row
+                // keeps its exact intent and the next pass retries; the defect stays loud.
+                android.util.Log.e("OfflineReading", "reader progress synchronization failed", defect)
             }
         }
     }
@@ -652,29 +743,53 @@ internal class OfflineReadingStore internal constructor(
         return snapshot()
     }
 
-    fun reconcileAsync(callback: (ReadingStoreSnapshot) -> Unit) {
-        requestReconciliation { outcome -> callback(outcome.snapshot) }
+    fun reconcileAsync(callback: (OfflineReadingReconciliationOutcome) -> Unit) {
+        requestReconciliation(callback)
     }
 
     internal fun reconcileForJob(
         callback: (OfflineReadingReconciliationOutcome) -> Unit,
     ) {
-        val ready = synchronized(this) {
-            if (
-                reconciliationComplete &&
-                !bindingLocked &&
-                readAccountTransition() == null
-            ) {
-                OfflineReadingReconciliationOutcome.Ready(snapshot())
-            } else {
-                null
+        synchronized(this) {
+            if (reconciliationRunning) {
+                reconciliationClaimedByJob = true
+                reconciliationCallbacks += callback
+                return
             }
         }
-        if (ready != null) {
-            integrityExecutor.execute { callback(ready) }
-        } else {
-            synchronized(this) { reconciliationClaimedByJob = true }
-            requestReconciliation(callback)
+        integrityExecutor.execute {
+            val outcome = synchronized(this) {
+                // A run may have been claimed after this inspection was queued.
+                if (reconciliationRunning) {
+                    reconciliationClaimedByJob = true
+                    reconciliationCallbacks += callback
+                    return@execute
+                }
+                try {
+                    if (reconciliationComplete && !bindingLocked && readAccountTransition() == null) {
+                        OfflineReadingReconciliationOutcome.Ready(snapshot())
+                    } else {
+                        reconciliationClaimedByJob = true
+                        null
+                    }
+                } catch (error: Exception) {
+                    // Fail this inspection before another caller can claim a new run.
+                    bindingLocked = true
+                    reconciliationComplete = false
+                    verifiedPackages.clear()
+                    android.util.Log.e("OfflineReading", "job reconciliation inspection failed", error)
+                    OfflineReadingReconciliationOutcome.Failed(error)
+                }
+            }
+            if (outcome == null) {
+                requestReconciliation(callback)
+                return@execute
+            }
+            try {
+                callback(outcome)
+            } catch (error: Exception) {
+                android.util.Log.e("OfflineReading", "reconciliation callback failed", error)
+            }
         }
     }
 
@@ -690,9 +805,12 @@ internal class OfflineReadingStore internal constructor(
                     markSchedulerAdmissionFailed()
                 }
                 callback(OfflineReadingStalePolicyJobFinish.Complete)
-            } else {
+            } else if (outcome is OfflineReadingReconciliationOutcome.Deferred) {
                 // The old fixed-ID job must ask JobScheduler to retain ownership until unlock.
                 callback(OfflineReadingStalePolicyJobFinish.Retry)
+            } else {
+                // The cause has been reported; a defect must not spin the job.
+                callback(OfflineReadingStalePolicyJobFinish.Complete)
             }
         }
     }
@@ -714,14 +832,15 @@ internal class OfflineReadingStore internal constructor(
             reconciliationEpoch += 1
             reconciliationEpoch
         }
-        notifySnapshotChanged()
         integrityExecutor.execute { runReconciliation(epoch, liveRunnerAtRequest) }
     }
 
     private fun runReconciliation(epoch: Long, liveRunnerAtRequest: Boolean) {
         var shouldSchedule = false
         var suspendedForTransition = false
+        var failure: Exception? = null
         try {
+            notifySnapshotChanged()
             val preparation = synchronized(this) {
                 if (epoch != reconciliationEpoch) return@synchronized null
                 if (readAccountTransition() != null) {
@@ -795,10 +914,71 @@ internal class OfflineReadingStore internal constructor(
                     installed.id !in preparation.unsupportedPackageIds &&
                         installed.readerGeneration > 0 &&
                         installed.readerRevisionKey.matches(Regex("[0-9a-f]{64}")) &&
-                        installedVerifier.isValid(
+                        installedVerifier.membersAreValid(
                             installed,
                             packageDirectory(preparation.binding.bindingId, installed.id),
                         )
+                }
+                val converted = mutableMapOf<UUID, PreparedOfflineReadingPackage>()
+                val readiness = mutableMapOf<UUID, PackageReadiness>()
+                for ((installed, valid) in checks) {
+                    if (!valid) continue
+                    if (installed.conversionRefusal != null) {
+                        readiness[installed.id] = PackageReadiness.Limited(installed.conversionRefusal)
+                        continue
+                    }
+                    try {
+                        if (installedTableIndexIsReady(installed, packageDirectory(installed.bindingId, installed.id))) {
+                            readiness[installed.id] = PackageReadiness.Prepared
+                            continue
+                        }
+                    } catch (error: Exception) {
+                        android.util.Log.e("OfflineReading", "local table index verification failed", error)
+                    }
+                    val staging = synchronized(this) {
+                        if (epoch != reconciliationEpoch || readAccountTransition() != null ||
+                            readBinding() != preparation.binding ||
+                            readPackage(installed.bindingId, installed.mediaId) != installed ||
+                            readRemoval(installed.id) || leases.values.any { it.mediaId == installed.mediaId }
+                        ) {
+                            null
+                        } else if (
+                            !OfflineReadingStorageAdmission.canAdmit(
+                                freeSpaceBytes(stagingDirectory(installed.bindingId)),
+                                compressedBytes = 0,
+                                expandedBytes = installed.sizeBytes,
+                            )
+                        ) {
+                            // Check the existing admission estimate before staging. Conversion
+                            // can expand beyond it; this observation reserves no disk space.
+                            // Write failures still preserve the attested original for retry.
+                            readiness[installed.id] = PackageReadiness.StorageBlocked
+                            android.util.Log.e(
+                                "OfflineReading",
+                                "insufficient storage to stage local package conversion for ${installed.id}",
+                            )
+                            null
+                        } else {
+                            migrationDirectory(installed.bindingId, installed.id).apply {
+                                check(mkdirs() || isDirectory)
+                            }
+                        }
+                    } ?: continue
+                    try {
+                        val directory = packageDirectory(installed.bindingId, installed.id)
+                        val prepared = if (installed.packageSchemaVersion == 1) {
+                            prepareOfflineReadingPackage(stageLegacyReaderPackage(directory, staging, durability))
+                        } else stageRetainedReadingPackage(directory, staging)
+                        durability.syncTree(prepared.source.extractedDirectory)
+                        converted[installed.id] = prepared
+                    } catch (_: OfflineReadingGraphemeCapacityException) {
+                        readiness[installed.id] = PackageReadiness.Limited(OfflineReadingConversionRefusal.GraphemeExceedsUnitCapacity)
+                    } catch (error: Exception) {
+                        if (error !is IOException && error !is SQLiteFullException && error !is SQLiteDiskIOException) throw error
+                        // Resource failures preserve source and progress; the next
+                        // reconciliation may retry. Invariant/parser failures propagate.
+                        android.util.Log.e("OfflineReading", "local package conversion could not access its storage", error)
+                    }
                 }
                 synchronized(this) {
                     if (
@@ -812,10 +992,40 @@ internal class OfflineReadingStore internal constructor(
                         val current = readPackage(installed.bindingId, installed.mediaId)
                         if (current != installed) return@forEach
                         val valid = directoryValid &&
-                            readBaseline(installed.bindingId, installed.mediaId)?.readerGeneration ==
-                            installed.readerGeneration
+                            readBaseline(installed.bindingId, installed.mediaId) != null
                         if (valid) {
-                            verifiedPackages[installed.id] = installed
+                            val candidate = converted[installed.id]
+                            if (candidate != null && !readRemoval(installed.id) && leases.values.none { it.mediaId == installed.mediaId }) {
+                                try {
+                                    activatePreparedReaderPackage(preparation.binding, installed, candidate)
+                                } catch (error: Exception) {
+                                    // SQLite determines whether activation committed. A
+                                    // failed rename/fsync/commit never destroys the original.
+                                    val retained = readPackage(installed.bindingId, installed.mediaId)
+                                        ?: error("local conversion lost the installed row")
+                                    // Re-readiness belongs to the row SQLite actually
+                                    // committed, including a post-commit cleanup failure.
+                                    val prepared =
+                                        retained.packageSchemaVersion == OFFLINE_READING_PACKAGE_SCHEMA_VERSION &&
+                                            try {
+                                                installedTableIndexIsReady(
+                                                    retained,
+                                                    packageDirectory(retained.bindingId, retained.id),
+                                                )
+                                            } catch (_: Exception) { false }
+                                    verifiedPackages.remove(installed.id)
+                                    verifiedPackages[retained.id] = ReconciledPackage(retained, if (prepared) PackageReadiness.Prepared else PackageReadiness.ConversionRequired)
+                                    android.util.Log.e("OfflineReading", "local package activation failed", error)
+                                }
+                            } else {
+                                val result = readiness[installed.id] ?: PackageReadiness.ConversionRequired
+                                val retained = if (result is PackageReadiness.Limited && installed.conversionRefusal != result.refusal) {
+                                    val values = ContentValues().apply { put("conversion_refusal", result.refusal.name) }
+                                    check(database.writableDatabase.update("offline_reader_packages", values, "id = ?", arrayOf(installed.id.toString())) == 1)
+                                    installed.copy(conversionRefusal = result.refusal)
+                                } else installed
+                                verifiedPackages[installed.id] = ReconciledPackage(retained, result)
+                            }
                         } else {
                             recoverCorruptPackage(installed)
                         }
@@ -825,8 +1035,14 @@ internal class OfflineReadingStore internal constructor(
                     shouldSchedule = hasQueuedWork()
                 }
             }
-        } catch (_: Exception) {
-            // Fail closed. A later foreground/unlock reconciliation may safely retry.
+        } catch (error: Exception) {
+            if (error is IOException || error is SQLiteFullException || error is SQLiteDiskIOException ||
+                error is OfflineReadingBindingSealLockedException) {
+                android.util.Log.e("OfflineReading", "reconciliation could not access its storage", error)
+            } else {
+                failure = error
+                android.util.Log.e("OfflineReading", "package reconciliation defect", error)
+            }
         } finally {
             var claimedByJob = false
             val callbacks = synchronized(this) {
@@ -835,37 +1051,57 @@ internal class OfflineReadingStore internal constructor(
                 if (epoch != reconciliationEpoch) {
                     // A durable account transition owns exposure now; stale verification is ignored.
                     verifiedPackages.clear()
+                } else if (failure != null) {
+                    bindingLocked = true
+                    reconciliationComplete = false
+                    verifiedPackages.clear()
                 }
                 claimedByJob = reconciliationClaimedByJob
                 reconciliationClaimedByJob = false
                 reconciliationCallbacks.toList().also { reconciliationCallbacks.clear() }
             }
-            if (suspendedForTransition) scheduler.suspendForAccountTransition()
-            if (shouldSchedule && !claimedByJob) {
-                if (scheduler.ensureScheduled()) {
-                    markPreparingTransfersAdmitted()
-                } else {
-                    markSchedulerAdmissionFailed()
+            val outcome = if (failure != null) {
+                // Reporting a failed store must not require another successful
+                // SQLite read merely to manufacture a snapshot.
+                OfflineReadingReconciliationOutcome.Failed(failure)
+            } else try {
+                if (suspendedForTransition) scheduler.suspendForAccountTransition()
+                if (shouldSchedule && !claimedByJob) {
+                    if (scheduler.ensureScheduled()) markPreparingTransfersAdmitted()
+                    else markSchedulerAdmissionFailed()
+                }
+                notifySnapshotChanged()
+                val snapshot = snapshot()
+                if (synchronized(this) {
+                        reconciliationComplete && !bindingLocked && readAccountTransition() == null
+                    }
+                ) OfflineReadingReconciliationOutcome.Ready(snapshot)
+                else OfflineReadingReconciliationOutcome.Deferred(snapshot)
+            } catch (error: Exception) {
+                synchronized(this) {
+                    if (epoch == reconciliationEpoch) {
+                        bindingLocked = true
+                        reconciliationComplete = false
+                        verifiedPackages.clear()
+                    }
+                }
+                android.util.Log.e("OfflineReading", "reconciliation completion failed", error)
+                OfflineReadingReconciliationOutcome.Failed(error)
+            }
+            callbacks.forEach { callback ->
+                try {
+                    callback(outcome)
+                } catch (error: Exception) {
+                    // One failed scheduler/bridge consumer must not strand the
+                    // remaining completions or a queued explicit retry.
+                    android.util.Log.e("OfflineReading", "reconciliation callback failed", error)
                 }
             }
-            notifySnapshotChanged()
-            val snapshot = snapshot()
-            val outcome = if (synchronized(this) {
-                    reconciliationComplete &&
-                        !bindingLocked &&
-                        readAccountTransition() == null
-                }
-            ) {
-                OfflineReadingReconciliationOutcome.Ready(snapshot)
-            } else {
-                OfflineReadingReconciliationOutcome.Deferred(snapshot)
-            }
-            callbacks.forEach { callback -> callback(outcome) }
         }
     }
 
     @Synchronized
-    internal fun hasQueuedWork(): Boolean {
+    internal fun hasQueuedWork(deferred: Set<Pair<UUID, String>> = emptySet()): Boolean {
         if (
             (!reconciliationComplete && !reconciliationAllowsLiveRunner) ||
             bindingLocked ||
@@ -873,7 +1109,7 @@ internal class OfflineReadingStore internal constructor(
         ) return false
         val binding = readBinding() ?: return false
         return readTransfers(binding.bindingId).any {
-            it.state !is ReadingTransferState.Failed
+            (it.id to it.stagingName) !in deferred && it.state !is ReadingTransferState.Failed
         }
     }
 
@@ -894,7 +1130,7 @@ internal class OfflineReadingStore internal constructor(
         reconciliationComplete && !bindingLocked && readAccountTransition() == null
 
     @Synchronized
-    internal fun nextRunnableTransfer(): OfflineReadingTransfer? {
+    internal fun nextRunnableTransfer(deferred: Set<Pair<UUID, String>> = emptySet()): OfflineReadingTransfer? {
         if (
             (!reconciliationComplete && !reconciliationAllowsLiveRunner) ||
             bindingLocked ||
@@ -902,19 +1138,49 @@ internal class OfflineReadingStore internal constructor(
         ) return null
         val binding = requireBinding()
         return readTransfers(binding.bindingId).firstOrNull {
-            it.state !is ReadingTransferState.Failed
+            (it.id to it.stagingName) !in deferred && it.state !is ReadingTransferState.Failed
         }
     }
 
     @Synchronized
-    internal fun claimRunnableTransfer(admittedPolicy: NetworkPolicy): OfflineReadingRunnableClaim {
+    internal fun claimRunnableTransfer(
+        admittedPolicy: NetworkPolicy,
+        deferred: Set<Pair<UUID, String>> = emptySet(),
+    ): OfflineReadingRunnableClaim {
         if (OfflineNetworkPolicyStore(appContext).get() != admittedPolicy) {
             // setNetworkPolicy persisted a different constraint after this runner was
             // admitted; the policy owner already scheduled the replacement JobInfo.
             return OfflineReadingRunnableClaim.PolicyChanged
         }
-        val transfer = nextRunnableTransfer() ?: return OfflineReadingRunnableClaim.Idle
+        val transfer = nextRunnableTransfer(deferred) ?: return OfflineReadingRunnableClaim.Idle
         return OfflineReadingRunnableClaim.Run(transfer)
+    }
+
+    @Synchronized
+    internal fun selectLegacyTransferGeneration(
+        transferId: UUID,
+        expectedStagingName: String,
+        readerGeneration: Long,
+    ): OfflineReadingTransfer? {
+        require(readerGeneration > 0)
+        val current = readTransferById(transferId) ?: return null
+        if (current.stagingName != expectedStagingName) return null
+        require(current.readerGeneration == null || current.readerGeneration == readerGeneration)
+        val selected = current.copy(readerGeneration = readerGeneration)
+        replaceTransfer(selected)
+        return selected
+    }
+
+    @Synchronized
+    internal fun awaitPackagePreparation(transferId: UUID, expectedStagingName: String): Boolean {
+        val current = readTransferById(transferId) ?: return false
+        if (current.stagingName != expectedStagingName) return false
+        replaceTransfer(current.copy(
+            state = ReadingTransferState.Queued(ReadingQueueReason.Preparation),
+            preparationStartedAt = current.preparationStartedAt ?: clock.instant(),
+        ))
+        notifySnapshotChanged()
+        return true
     }
 
     @Synchronized
@@ -1018,43 +1284,63 @@ internal class OfflineReadingStore internal constructor(
      * Install step 5: verify the downloaded artifact and extract it into staging. This
      * MUST fully precede the reader-state baseline fetch (install step 6); the job owns
      * that ordering and the type system enforces it — publication accepts only the
-     * [VerifiedOfflineReadingPackage] this step produces. Returns null when the transfer
-     * was fenced (cancelled, restarted, or superseded) before verification began.
+     * [PreparedOfflineReadingPackage] this step produces. Returns null when the transfer
+     * was fenced (cancelled, restarted, or superseded) before preparation completed.
      */
     internal fun verifyDownloadedPackage(
         transferId: UUID,
         expectedStagingName: String,
         artifact: OfflineReadingTransferArtifact,
-    ): VerifiedOfflineReadingPackage? {
+    ): PreparedOfflineReadingPackage? {
         val preparation = synchronized(this) {
             val transfer = readTransferById(transferId) ?: return null
             if (transfer.stagingName != expectedStagingName) return null
             val binding = requireBinding()
             require(transfer.bindingId == binding.bindingId)
             require(artifact.accountId == binding.accountId)
-            transfer to binding
+            require(artifact.readerGeneration == transfer.readerGeneration)
+            Triple(transfer, binding, stagingVerified(binding.bindingId, transfer.stagingName))
         }
-        val (transfer, preparedBinding) = preparation
-        val verified = packageVerifier.verifyAndExtract(
-            artifact,
-            preparedBinding.accountId,
-            transfer.mediaId,
-            stagingVerified(preparedBinding.bindingId, transfer.stagingName),
-        )
-        require(verified.manifest.mediaKind == transfer.requestedMediaKind)
-        require(verified.manifest.readerGeneration == artifact.readerGeneration)
-        durability.syncTree(verified.extractedDirectory)
-        return verified
+        val (transfer, preparedBinding, destination) = preparation
+        fun isCurrent(): Boolean = synchronized(this) {
+            val current = readTransferById(transferId)
+            !bindingLocked && readAccountTransition() == null && readBinding() == preparedBinding &&
+                current != null && current.bindingId == transfer.bindingId &&
+                current.stagingName == expectedStagingName
+        }
+        return try {
+            val verified = packageVerifier.verifyAndExtract(
+                artifact, preparedBinding.accountId, transfer.mediaId, destination,
+            )
+            require(verified.manifest.mediaKind == transfer.requestedMediaKind)
+            require(verified.manifest.readerGeneration == artifact.readerGeneration)
+            if (!isCurrent()) return null
+            val prepared = prepareOfflineReadingPackage(verified)
+            durability.syncTree(destination)
+            if (isCurrent()) prepared else null
+        } catch (error: IOException) {
+            // justify-ignore-error: only missing files on this retired identity explain
+            // cancellation. Completed JSON parsing can also throw IOException.
+            if ((error !is FileNotFoundException && error !is NoSuchFileException) || isCurrent()) throw error
+            null
+        } catch (error: OfflineReadingPackageException) {
+            // justify-ignore-error: the verifier wraps the same retired missing-file I/O.
+            // Preserve every other verdict, including completed-byte parse failure.
+            if ((error.cause !is FileNotFoundException && error.cause !is NoSuchFileException) || isCurrent()) throw error
+            null
+        } finally {
+            if (!isCurrent()) destination.deleteRecursively()
+        }
     }
 
     /** Install steps 7-8: recheck the seal, atomically rename, and publish in one transaction. */
     internal fun publishVerifiedPackage(
         transferId: UUID,
         expectedStagingName: String,
-        verified: VerifiedOfflineReadingPackage,
+        prepared: PreparedOfflineReadingPackage,
         baseline: AttestedOfflineReaderBaseline,
     ): Boolean {
-        require(baseline.readerGeneration == verified.manifest.readerGeneration)
+        val verified = prepared.source
         OfflineReaderStateValidator.requireCursorSnapshot(baseline.snapshotJson)
         val published = synchronized(this) {
             val current = readTransferById(transferId) ?: return@synchronized false
@@ -1062,6 +1348,7 @@ internal class OfflineReadingStore internal constructor(
             val binding = requireBinding()
             require(current.bindingId == binding.bindingId)
             require(baseline.accountId == binding.accountId)
+            require(current.readerGeneration == verified.manifest.readerGeneration)
             require(
                 verified.extractedDirectory ==
                     stagingVerified(binding.bindingId, current.stagingName)
@@ -1077,6 +1364,11 @@ internal class OfflineReadingStore internal constructor(
             )
             durability.syncDirectory(bindingDirectory(binding.bindingId))
             val installedAt = clock.instant()
+            val previousBaseline = readBaseline(binding.bindingId, transfer.mediaId)
+            val observedGeneration = maxOf(baseline.readerGeneration, previousBaseline?.readerGeneration ?: 0)
+            val observedSnapshot = if (previousBaseline != null &&
+                readerSnapshotRevision(previousBaseline.serverSnapshotJson) > readerSnapshotRevision(baseline.snapshotJson)
+            ) previousBaseline.serverSnapshotJson else baseline.snapshotJson
             try {
                 database.writableDatabase.transaction {
                 execSQL(
@@ -1084,8 +1376,8 @@ internal class OfflineReadingStore internal constructor(
                     INSERT INTO offline_reader_packages(
                         id, binding_id, media_id, media_kind, title, reader_generation,
                         reader_revision_key, package_schema_version, reader_contract_version,
-                        minimum_bundle_version, package_sha256, size_bytes, installed_at
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, 1, 1, 1, ?, ?, ?)
+                        minimum_bundle_version, size_bytes, installed_at, table_index_sha256
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """.trimIndent(),
                     arrayOf(
                         packageId.toString(),
@@ -1095,9 +1387,13 @@ internal class OfflineReadingStore internal constructor(
                         verified.manifest.title,
                         verified.manifest.readerGeneration,
                         verified.manifest.readerRevisionKey,
-                        verified.packageSha256,
-                        verified.compressedBytes,
+                        verified.manifest.packageSchemaVersion,
+                        OFFLINE_READING_READER_CONTRACT_VERSION,
+                        // The manifest parser requires minimum bundle == package schema.
+                        verified.manifest.packageSchemaVersion,
+                        prepared.installedBytes,
                         installedAt.toString(),
+                        prepared.tableIndexSha256,
                     ),
                 )
                 execSQL(
@@ -1105,13 +1401,17 @@ internal class OfflineReadingStore internal constructor(
                     INSERT INTO offline_reader_progress_baselines(
                         id, binding_id, media_id, reader_generation, server_snapshot_json, observed_at
                     ) VALUES(?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(binding_id, media_id) DO UPDATE SET
+                        reader_generation = excluded.reader_generation,
+                        server_snapshot_json = excluded.server_snapshot_json,
+                        observed_at = excluded.observed_at
                     """.trimIndent(),
                     arrayOf(
                         ids.next().toString(),
                         binding.bindingId.toString(),
                         transfer.mediaId.toString(),
-                        baseline.readerGeneration,
-                        baseline.snapshotJson,
+                        observedGeneration,
+                        observedSnapshot,
                         installedAt.toString(),
                     ),
                 )
@@ -1124,8 +1424,9 @@ internal class OfflineReadingStore internal constructor(
                 // The invisible orphan is deliberately left for reconciliation after a failed publish commit.
                 throw error
             }
-            verifiedPackages[packageId] = readPackage(binding.bindingId, transfer.mediaId)
+            val installed = readPackage(binding.bindingId, transfer.mediaId)
                 ?: error("published offline reading package row is missing")
+            verifiedPackages[packageId] = ReconciledPackage(installed, PackageReadiness.Prepared)
             true
         }
         if (!published) verified.extractedDirectory.deleteRecursively()
@@ -1165,11 +1466,9 @@ internal class OfflineReadingStore internal constructor(
             SELECT pending.media_id, pending.reader_generation,
                    pending.base_server_revision, pending.locator_json
             FROM offline_reader_progress_pending AS pending
-            JOIN offline_reader_packages AS package
-              ON package.binding_id = pending.binding_id
-             AND package.media_id = pending.media_id
-             AND package.reader_generation = pending.reader_generation
-             AND package.reader_revision_key = pending.reader_revision_key
+            JOIN offline_reader_progress_baselines AS baseline
+              ON baseline.binding_id = pending.binding_id AND baseline.media_id = pending.media_id
+              AND baseline.reader_generation = pending.reader_generation
             WHERE pending.binding_id = ? AND pending.sync_state = ?$mediaPredicate
             ORDER BY pending.updated_at, pending.id
             """.trimIndent(),
@@ -1230,6 +1529,11 @@ internal class OfflineReadingStore internal constructor(
         remoteAuthorizationDenied()
     }
 
+    override fun reportDefect(mediaId: UUID, defect: Throwable) {
+        // Identity and failure only: a cursor locator is private content.
+        android.util.Log.e("OfflineReading", "reader progress sync defect for media $mediaId", defect)
+    }
+
     @Synchronized
     internal fun remoteAuthorizationDenied() {
         val binding = readBinding() ?: return
@@ -1270,6 +1574,7 @@ internal class OfflineReadingStore internal constructor(
         if (!candidateBindingIsCurrent(candidate)) return false
         val binding = readBinding() ?: return false
         val pending = readPending(binding.bindingId, candidate.mediaId) ?: return false
+        if (readBaseline(binding.bindingId, candidate.mediaId)?.readerGeneration != candidate.readerGeneration) return false
         return pending.readerGeneration == candidate.readerGeneration &&
             pending.baseServerRevision == candidate.baseServerRevision &&
             pending.locatorJson == candidate.locatorJson &&
@@ -1285,7 +1590,10 @@ internal class OfflineReadingStore internal constructor(
         candidate: ReaderProgressSyncCandidate,
         state: AttestedRemoteReaderState,
     ): Boolean = state.accountId == candidate.accountId &&
-        state.readerGeneration == candidate.readerGeneration
+        state.readerGeneration == candidate.readerGeneration &&
+        readBaseline(candidate.bindingId, candidate.mediaId)?.let {
+            readerSnapshotRevision(it.serverSnapshotJson) <= state.revision
+        } == true
 
     private fun replaceBaselineAndPending(
         candidate: ReaderProgressSyncCandidate,
@@ -1350,6 +1658,46 @@ internal class OfflineReadingStore internal constructor(
         )
     }
 
+    /** The installed row is the only commit point; original files survive every earlier failure. */
+    private fun activatePreparedReaderPackage(
+        binding: OfflineReadingBinding,
+        installed: OfflineReadingPackage,
+        prepared: PreparedOfflineReadingPackage,
+    ) {
+        val candidate = prepared.source
+        check(Thread.holdsLock(this))
+        requireBindingSeal(binding)
+        require(
+            installed.packageSchemaVersion in 1..OFFLINE_READING_PACKAGE_SCHEMA_VERSION &&
+                candidate.manifest.packageSchemaVersion == OFFLINE_READING_PACKAGE_SCHEMA_VERSION
+        )
+        require(candidate.manifest.mediaId == installed.mediaId &&
+            candidate.manifest.readerGeneration == installed.readerGeneration)
+        val packageId = ids.next()
+        val finalDirectory = packageDirectory(binding.bindingId, packageId)
+        Files.move(candidate.extractedDirectory.toPath(), finalDirectory.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        durability.syncDirectory(bindingDirectory(binding.bindingId))
+        database.writableDatabase.transaction {
+            val values = ContentValues().apply {
+                put("id", packageId.toString())
+                put("reader_revision_key", candidate.manifest.readerRevisionKey)
+                put("package_schema_version", 2)
+                put("minimum_bundle_version", 2)
+                put("size_bytes", prepared.installedBytes)
+                put("table_index_sha256", prepared.tableIndexSha256)
+                putNull("conversion_refusal")
+            }
+            check(update("offline_reader_packages", values, "id = ?", arrayOf(installed.id.toString())) == 1)
+        }
+        // Neither baseline nor pending rows participate in a byte-layout migration.
+        verifiedPackages.remove(installed.id)
+        val activated = readPackage(binding.bindingId, installed.mediaId)
+            ?: error("converted offline reading package row is missing")
+        verifiedPackages[packageId] = ReconciledPackage(activated, PackageReadiness.Prepared)
+        check(packageDirectory(binding.bindingId, installed.id).deleteRecursively())
+        check(migrationDirectory(binding.bindingId, installed.id).deleteRecursively())
+    }
+
     private data class ReconciliationPreparation(
         val binding: OfflineReadingBinding,
         val packages: List<OfflineReadingPackage>,
@@ -1383,14 +1731,6 @@ internal class OfflineReadingStore internal constructor(
                 arrayOf(installed.id.toString()),
             )
             execSQL(
-                "DELETE FROM offline_reader_progress_pending WHERE binding_id = ? AND media_id = ?",
-                arrayOf(installed.bindingId.toString(), installed.mediaId.toString()),
-            )
-            execSQL(
-                "DELETE FROM offline_reader_progress_baselines WHERE binding_id = ? AND media_id = ?",
-                arrayOf(installed.bindingId.toString(), installed.mediaId.toString()),
-            )
-            execSQL(
                 "DELETE FROM offline_reader_packages WHERE id = ?",
                 arrayOf(installed.id.toString()),
             )
@@ -1407,6 +1747,8 @@ internal class OfflineReadingStore internal constructor(
                         0,
                         ids.next().toString(),
                         clock.instant(),
+                        installed.readerGeneration,
+                        null,
                     ),
                 )
             }
@@ -1461,6 +1803,8 @@ internal class OfflineReadingStore internal constructor(
     private fun finishRemoval(installed: OfflineReadingPackage) {
         check(leases.values.none { it.mediaId == installed.mediaId })
         verifiedPackages.remove(installed.id)
+        val migration = migrationDirectory(installed.bindingId, installed.id)
+        if (migration.exists()) check(migration.deleteRecursively())
         val directory = packageDirectory(installed.bindingId, installed.id)
         if (directory.exists()) {
             check(directory.deleteRecursively())
@@ -1620,8 +1964,8 @@ internal class OfflineReadingStore internal constructor(
         database.readableDatabase.rawQuery(
             """
             SELECT id, binding_id, media_id, media_kind, title, reader_generation,
-                   reader_revision_key, package_sha256, size_bytes, installed_at,
-                   package_schema_version, reader_contract_version, minimum_bundle_version
+                   reader_revision_key, size_bytes, installed_at,
+                   package_schema_version, reader_contract_version, minimum_bundle_version, table_index_sha256, conversion_refusal
             FROM offline_reader_packages
             WHERE binding_id = ?
             ORDER BY installed_at, id
@@ -1641,9 +1985,11 @@ internal class OfflineReadingStore internal constructor(
                     cursor.text("title"),
                     cursor.long("reader_generation"),
                     cursor.text("reader_revision_key"),
-                    cursor.text("package_sha256"),
+                    cursor.int("package_schema_version"),
                     cursor.long("size_bytes"),
                     cursor.instant("installed_at"),
+                    cursor.getString(cursor.getColumnIndexOrThrow("table_index_sha256")),
+                    cursor.getString(cursor.getColumnIndexOrThrow("conversion_refusal"))?.let { OfflineReadingConversionRefusal.valueOf(it) },
                 )
             }
         }
@@ -1656,9 +2002,9 @@ internal class OfflineReadingStore internal constructor(
             """
             SELECT id FROM offline_reader_packages
             WHERE binding_id = ?
-              AND (package_schema_version != 1
+              AND (package_schema_version NOT IN (1, 2)
                    OR reader_contract_version != 1
-                   OR minimum_bundle_version != 1)
+                   OR minimum_bundle_version != package_schema_version)
             """.trimIndent(),
             arrayOf(bindingId.toString()),
         ).use { cursor ->
@@ -1680,7 +2026,7 @@ internal class OfflineReadingStore internal constructor(
         database.readableDatabase.rawQuery(
             """
             SELECT id, binding_id, media_id, requested_title, requested_media_kind, state_json,
-                   automatic_restart_count, staging_name, requested_at
+                   automatic_restart_count, staging_name, requested_at, reader_generation, preparation_started_at
             FROM offline_reader_transfers
             WHERE binding_id = ?
             ORDER BY requested_at, id
@@ -1700,6 +2046,8 @@ internal class OfflineReadingStore internal constructor(
                     cursor.int("automatic_restart_count"),
                     cursor.text("staging_name"),
                     cursor.instant("requested_at"),
+                    if (cursor.isNull(cursor.getColumnIndexOrThrow("reader_generation"))) null else cursor.long("reader_generation"),
+                    if (cursor.isNull(cursor.getColumnIndexOrThrow("preparation_started_at"))) null else cursor.instant("preparation_started_at"),
                 )
             }
         }
@@ -1715,8 +2063,8 @@ internal class OfflineReadingStore internal constructor(
             """
             INSERT INTO offline_reader_transfers(
                 id, binding_id, media_id, requested_title, requested_media_kind, state_json,
-                automatic_restart_count, staging_name, requested_at
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                automatic_restart_count, staging_name, requested_at, reader_generation, preparation_started_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent(),
             arrayOf(
                 transfer.id.toString(),
@@ -1728,6 +2076,8 @@ internal class OfflineReadingStore internal constructor(
                 transfer.automaticRestartCount,
                 transfer.stagingName,
                 transfer.requestedAt.toString(),
+                transfer.readerGeneration,
+                transfer.preparationStartedAt?.toString(),
             ),
         )
     }
@@ -1737,6 +2087,8 @@ internal class OfflineReadingStore internal constructor(
             put("state_json", OfflineReadingStateCodec.encode(transfer.state))
             put("automatic_restart_count", transfer.automaticRestartCount)
             put("staging_name", transfer.stagingName)
+            put("reader_generation", transfer.readerGeneration)
+            put("preparation_started_at", transfer.preparationStartedAt?.toString())
         }
         check(
             database.writableDatabase.update(
@@ -1794,27 +2146,46 @@ internal class OfflineReadingStore internal constructor(
         return result
     }
 
-    private fun readProgress(bindingId: UUID, mediaId: UUID): NativeReaderProgressView {
+    private fun readProgress(bindingId: UUID, mediaId: UUID, selectedGeneration: Long): NativeReaderProgressView {
         val baseline = readBaseline(bindingId, mediaId)
             ?: error("offline reading baseline is missing")
         val pending = readPending(bindingId, mediaId)
-        return when (pending?.syncState) {
-            null -> NativeReaderProgressView.Canonical(baseline.serverSnapshotJson)
+        if (pending == null) {
+            val snapshot = StrictJson.parse(baseline.serverSnapshotJson.toByteArray()) as StrictJson.ObjectValue
+            if (snapshot.fields.getValue("state").requireString() == "Positioned") {
+                val source = snapshot.fields.getValue("source") as StrictJson.ObjectValue
+                if (source.fields.getValue("kind").requireString() != "Publication" ||
+                    source.fields.getValue("reader_generation").requireLong() != selectedGeneration
+                ) {
+                    return NativeReaderProgressView.ContentChanged(
+                        baseline.serverSnapshotJson,
+                        snapshot.fields.getValue("locator").toJson(),
+                        source.toJson(),
+                    )
+                }
+            }
+            return NativeReaderProgressView.Canonical(baseline.serverSnapshotJson)
+        }
+        val source = "{\"kind\":\"Publication\",\"reader_generation\":${pending.readerGeneration}}"
+        if (pending.readerGeneration != selectedGeneration || pending.readerGeneration != baseline.readerGeneration) {
+            return NativeReaderProgressView.ContentChanged(baseline.serverSnapshotJson, pending.locatorJson, source)
+        }
+        return when (pending.syncState) {
             OfflineReaderSyncState.Pending ->
-                NativeReaderProgressView.Pending(baseline.serverSnapshotJson, pending.locatorJson)
+                NativeReaderProgressView.Pending(baseline.serverSnapshotJson, pending.locatorJson, source)
             OfflineReaderSyncState.Conflict ->
-                NativeReaderProgressView.Conflict(baseline.serverSnapshotJson, pending.locatorJson)
+                NativeReaderProgressView.Conflict(baseline.serverSnapshotJson, pending.locatorJson, source)
             OfflineReaderSyncState.ContentChanged ->
-                NativeReaderProgressView.ContentChanged(baseline.serverSnapshotJson, pending.locatorJson)
+                NativeReaderProgressView.ContentChanged(baseline.serverSnapshotJson, pending.locatorJson, source)
             OfflineReaderSyncState.SourceUnavailable ->
-                NativeReaderProgressView.SourceUnavailable(baseline.serverSnapshotJson, pending.locatorJson)
+                NativeReaderProgressView.SourceUnavailable(baseline.serverSnapshotJson, pending.locatorJson, source)
         }
     }
 
     private fun readPackageItems(): List<OfflineReadingItemSnapshot> {
         val binding = readBinding() ?: return emptyList()
         return readPackages(binding.bindingId).filter { installed ->
-            verifiedPackages[installed.id] == installed
+            verifiedPackages[installed.id]?.installed == installed
         }.map { installed ->
             OfflineReadingItemSnapshot.PackageItem(
                 mediaId = installed.mediaId,
@@ -1824,11 +2195,17 @@ internal class OfflineReadingStore internal constructor(
                 readerRevisionKey = installed.readerRevisionKey,
                 availability = if (readRemoval(installed.id)) {
                     OfflineReadingAvailability.Removing
+                } else if (installed.conversionRefusal != null) {
+                    OfflineReadingAvailability.UpgradeFailed
+                } else if (verifiedPackages[installed.id]?.readiness == PackageReadiness.StorageBlocked) {
+                    OfflineReadingAvailability.UpgradeBlockedByStorage
+                } else if (verifiedPackages[installed.id]?.readiness != PackageReadiness.Prepared) {
+                    OfflineReadingAvailability.UpgradeRequired
                 } else {
                     OfflineReadingAvailability.Ready(
                         installed.sizeBytes,
                         installed.installedAt,
-                        readProgress(binding.bindingId, installed.mediaId),
+                        readProgress(binding.bindingId, installed.mediaId, installed.readerGeneration),
                     )
                 },
             )
@@ -1862,8 +2239,10 @@ internal class OfflineReadingStore internal constructor(
         ) {}
 
     private fun cleanupStaging(bindingId: UUID) {
+        val retained = readPackages(bindingId).filter { it.packageSchemaVersion == 1 }
+            .map { migrationDirectory(bindingId, it.id).name }.toSet()
         stagingDirectory(bindingId).listFiles().orEmpty().forEach { file ->
-            check(file.deleteRecursively())
+            if (file.name !in retained) check(file.deleteRecursively())
         }
     }
 
@@ -1884,6 +2263,8 @@ internal class OfflineReadingStore internal constructor(
         File(stagingDirectory(bindingId), "$name.zip")
     private fun stagingVerified(bindingId: UUID, name: String): File =
         File(stagingDirectory(bindingId), "$name.verified")
+    private fun migrationDirectory(bindingId: UUID, packageId: UUID): File =
+        File(bindingDirectory(bindingId), ".staging/$packageId.migration")
     private fun packageDirectory(bindingId: UUID, packageId: UUID): File =
         File(bindingDirectory(bindingId), packageId.toString())
 

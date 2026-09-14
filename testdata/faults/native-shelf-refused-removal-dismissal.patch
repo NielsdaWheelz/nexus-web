@@ -1,0 +1,11 @@
+diff --git a/apps/web/src/offline-reading/OfflineReadingShelf.tsx b/apps/web/src/offline-reading/OfflineReadingShelf.tsx
+--- a/apps/web/src/offline-reading/OfflineReadingShelf.tsx
++++ b/apps/web/src/offline-reading/OfflineReadingShelf.tsx
+@@ -152,6 +152,7 @@
+           );
+       } finally {
+         if (current()) {
++          if (command.kind === "Remove") setRemoveId(null);
+           actionRef.current = null;
+           setActionPending(false);
+         }

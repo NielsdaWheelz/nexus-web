@@ -11,11 +11,18 @@ from typing import TYPE_CHECKING, Any
 from nexus.config import Settings, get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.services.parser_temp import utf8_byte_length
 
 if TYPE_CHECKING:
     import httpx
 
 logger = get_logger(__name__)
+
+# Both configured models use byte BPE: token count cannot exceed UTF-8 bytes.
+# This conservative bound sizes document chunks; query overflow remains the
+# provider's verdict. See the embedding contract in docs/modules/embeddings.md.
+EMBEDDING_INPUT_MAX_UTF8_BYTES = 8191
+EMBEDDING_REQUEST_MAX_UTF8_BYTES = 300_000
 
 
 def transcript_embedding_dimensions() -> int:
@@ -312,8 +319,19 @@ async def _embed_with_openai_async(
         Credentials(openai=credential.key),
         http_client=http_client,
     )
-    for start in range(0, len(texts), 64):
-        batch = texts[start : start + 64]
+    start = 0
+    while start < len(texts):
+        end = start
+        batch_bytes = 0
+        while end < len(texts) and end - start < 64:
+            size = utf8_byte_length(texts[end])
+            if end > start and batch_bytes + size > EMBEDDING_REQUEST_MAX_UTF8_BYTES:
+                break
+            # A single large query still reaches the existing provider-owned
+            # overflow/fallback path; local byte counts are not that verdict.
+            batch_bytes += size
+            end += 1
+        batch = texts[start:end]
         call = EmbeddingCall(
             model=settings.transcript_embedding_model_openai,
             inputs=tuple(batch),
@@ -327,6 +345,7 @@ async def _embed_with_openai_async(
                 expected_count=len(batch),
             )
         )
+        start = end
     return vectors
 
 

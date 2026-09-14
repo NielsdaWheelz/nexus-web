@@ -29,10 +29,11 @@ After ready_for_reading, canonical_text is immutable.
 import re
 import unicodedata
 from array import array
-from bisect import bisect_left
+from bisect import bisect_right
 from collections import defaultdict, deque
 from collections.abc import Mapping
 
+import regex
 from lxml.etree import HTMLParser
 
 # Block-level elements that introduce line breaks
@@ -91,13 +92,15 @@ class _RawTextBuilder:
         self.length += len(text)
 
     def build(self) -> str:
+        if len(self._chunks) > 1:
+            self._chunks = ["".join(self._chunks)]
         return "".join(self._chunks)
 
 
-class _CanonicalTextTarget:
-    """Stream sanitized HTML into canonical raw text without retaining a DOM."""
+class CanonicalTextBuilder:
+    """Canonicalize owned element/text events without retaining a DOM."""
 
-    def __init__(self, element_ids: set[str]) -> None:
+    def __init__(self, element_ids: set[str] | None) -> None:
         self.builder = _RawTextBuilder()
         self.element_ids = element_ids
         self.raw_offsets: dict[str, int] = {}
@@ -125,7 +128,7 @@ class _CanonicalTextTarget:
             self.builder.append("\n")
         for attribute in ("id", "name"):
             value = str(attributes.get(attribute) or "")
-            if value in self.element_ids:
+            if value and (self.element_ids is None or value in self.element_ids):
                 self.raw_offsets.setdefault(value, self.builder.length)
         if normalized_tag == "br":
             self.builder.append("\n")
@@ -151,6 +154,97 @@ class _CanonicalTextTarget:
     def close(self) -> None:
         return None
 
+    def build(self) -> str:
+        return _canonical_text_without_sources(self.builder.build())
+
+    def build_with_source_starts(self) -> tuple[str, array]:
+        """Map canonical points to their original raw event-text starts."""
+        return _canonical_text_with_sources(self.builder.build())
+
+    def project_markers(
+        self,
+        raw_markers: set[int],
+        *,
+        expected: str,
+        chunk_codepoints: int,
+    ) -> dict[int, int]:
+        """Project requested raw markers without a whole-source offset array.
+
+        Source-start semantics match build_with_source_starts. NFC text retains
+        identity intervals; changed text uses that same mapper on bounded
+        grapheme-complete chunks. An indivisible larger grapheme still costs its
+        actual normalization size and is part of source-capacity qualification.
+        """
+        raw = self.builder.build()
+        markers = sorted(raw_markers)
+        counts = array("Q", [0]) * (len(markers) + 1)
+        position = 0
+        nfc = unicodedata.is_normalized("NFC", raw)
+
+        def emit(value: str, sources: range | tuple[int, ...] | array, base: int = 0) -> None:
+            nonlocal position
+            if not expected.startswith(value, position):
+                raise ValueError("Canonical marker projection changed source text")
+            position += len(value)
+            if isinstance(sources, range):
+                previous = sources.start
+                bucket = bisect_right(markers, previous)
+                while bucket < len(markers) and markers[bucket] < sources.stop:
+                    counts[bucket] += markers[bucket] - previous
+                    previous = markers[bucket]
+                    bucket += 1
+                counts[bucket] += sources.stop - previous
+            else:
+                for source in sources:
+                    counts[bisect_right(markers, base + source)] += 1
+
+        def text_chunk(first: int, last: int) -> None:
+            value = raw[first:last]
+            if nfc or unicodedata.is_normalized("NFC", value):
+                emit(value, range(first, last))
+            else:
+                value, sources = _normalize_nfc_with_sources(value)
+                emit(value, sources, first)
+
+        gap_start = gap_end = 0
+
+        def text_run(first: int, last: int) -> None:
+            if first == last:
+                return
+            if position and gap_end > gap_start:
+                newlines = raw.count("\n", gap_start, gap_end)
+                if newlines:
+                    source = raw.index("\n", gap_start, gap_end)
+                    emit("\n" * min(2, newlines), (source,) * min(2, newlines))
+                else:
+                    emit(raw[gap_start:gap_end], range(gap_start, gap_end))
+            if nfc:
+                for start in range(first, last, chunk_codepoints):
+                    text_chunk(start, min(start + chunk_codepoints, last))
+                return
+            start, boundary = first, first
+            for cluster in regex.finditer(r"\X", raw, pos=first, endpos=last):
+                if cluster.end() - start > chunk_codepoints and boundary > start:
+                    text_chunk(start, boundary)
+                    start = boundary
+                boundary = cluster.end()
+            text_chunk(start, last)
+
+        previous = 0
+        for whitespace in WHITESPACE_RE.finditer(raw):
+            text_run(previous, whitespace.start())
+            gap_start, gap_end = whitespace.span()
+            previous = gap_end
+        text_run(previous, len(raw))
+        if position != len(expected):
+            raise ValueError("Canonical marker projection omitted source text")
+        total = 0
+        result = {}
+        for index, marker in enumerate(markers):
+            total += counts[index]
+            result[marker] = total
+        return result
+
 
 def generate_canonical_text(html_sanitized: str) -> str:
     """Generate canonical text from sanitized HTML.
@@ -171,30 +265,50 @@ def generate_canonical_text(html_sanitized: str) -> str:
 
 def generate_canonical_text_with_element_offsets(
     html_sanitized: str,
-    element_ids: set[str],
+    element_ids: set[str] | None,
 ) -> tuple[str, dict[str, int]]:
-    """Generate canonical text and exact starts for requested element IDs/names."""
-    if not html_sanitized or not html_sanitized.strip():
-        return "", {}
+    """Generate exact starts for requested IDs/names; None collects all authored markers."""
+    target = _parse_canonical_source(html_sanitized, element_ids)
+    text = target.build()
+    if not target.raw_offsets:
+        return text, {}
+    projected = target.project_markers(
+        set(target.raw_offsets.values()), expected=text, chunk_codepoints=65536
+    )
+    offsets = {
+        element_id: projected[raw_offset] for element_id, raw_offset in target.raw_offsets.items()
+    }
+    return text, offsets
 
-    target = _CanonicalTextTarget(element_ids)
+
+def validate_canonical_text_with_element_offsets(
+    html_sanitized: str,
+    element_ids: set[str] | None,
+    *,
+    expected: str,
+) -> dict[str, int]:
+    """Validate retained canonical text and project authored starts without copying it."""
+    target = _parse_canonical_source(html_sanitized, element_ids)
+    projected = target.project_markers(
+        set(target.raw_offsets.values()), expected=expected, chunk_codepoints=65536
+    )
+    return {
+        element_id: projected[raw_offset] for element_id, raw_offset in target.raw_offsets.items()
+    }
+
+
+def _parse_canonical_source(
+    html_sanitized: str, element_ids: set[str] | None
+) -> CanonicalTextBuilder:
+    target = CanonicalTextBuilder(element_ids)
+    if not html_sanitized or not html_sanitized.strip():
+        return target
     parser = HTMLParser(target=target)
     parser.feed("<div>")
     parser.feed(html_sanitized)
     parser.feed("</div>")
     parser.close()
-    raw_text = target.builder.build()
-    raw_offsets = target.raw_offsets
-    del parser, target
-    if not raw_offsets:
-        return _canonical_text_without_sources(raw_text), {}
-    text, final_source_starts = _canonical_text_with_sources(raw_text)
-    source_starts = sorted(final_source_starts)
-    offsets = {
-        element_id: bisect_left(source_starts, raw_offset)
-        for element_id, raw_offset in raw_offsets.items()
-    }
-    return text, offsets
+    return target
 
 
 def _canonical_text_without_sources(raw_text: str) -> str:

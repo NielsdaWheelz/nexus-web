@@ -5,8 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import { AuthenticatedAccountProvider } from "@/lib/account/authenticatedAccount";
+import { ResourceCacheProvider } from "@/lib/api/resourceCache";
+import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
+import { readerPublicationMemberResponse } from "@/lib/reader/readerPublicationMemberResponse";
+import { ArtworkProvider } from "@/lib/media/ArtworkProvider";
+import { ARTWORK_CAPACITY } from "@/lib/media/artworkCapacity";
 import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { LecternProvider } from "@/lib/lectern/LecternProvider";
+import { OfflineReadingProvider } from "@/lib/offlineReading/OfflineReadingProvider";
+import type { OfflineReadingTransport } from "@/lib/offlineReading/runtime";
+import type { ReadingCommand } from "@/lib/offlineReading/contract";
 import { OfflineMediaProvider } from "@/lib/offlineMedia/OfflineMediaProvider";
 import { GlobalPlayerProvider } from "@/lib/player/globalPlayer";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
@@ -188,6 +196,7 @@ interface Bff {
 }
 
 interface BffOptions {
+  readonly descriptor?: () => Response | Promise<Response>;
   readonly resolve?: (input: {
     readonly attempt: number;
     readonly refs: readonly string[];
@@ -269,6 +278,10 @@ function installBff(options: BffOptions = {}): Bff {
           }) ?? success()
         );
       }
+      if (path === `/api/media/${MEDIA_ID}/reader-publication` && method === "GET") {
+        if (options.descriptor === undefined) throw new Error("No reader descriptor fixture");
+        return options.descriptor();
+      }
       if (path === LIBRARY_GET_PATH && method === "GET") {
         return jsonResponse(LIBRARY_OUT);
       }
@@ -335,12 +348,15 @@ function installBff(options: BffOptions = {}): Bff {
 
 function renderResourceMenu(
   menu: ReactNode = <ResourceActionMenu actionSubject={mediaSubject} />,
+  readingTransport: OfflineReadingTransport | null = null,
 ) {
   return render(
     withRenderEnvironment(
       <AuthenticatedAccountProvider
         account={{ accountId: ACCOUNT_ID, calendarTimeZone: "UTC" }}
       >
+        <ResourceCacheProvider value={{}} publicationLimits={READER_CAPACITY.cache}>
+        <ArtworkProvider limits={ARTWORK_CAPACITY}>
         <MobileChromeProvider>
           <KeybindingsProvider>
             <FeedbackProvider>
@@ -359,14 +375,16 @@ function renderResourceMenu(
                           accountId={ACCOUNT_ID}
                           transport={null}
                         >
+                          <OfflineReadingProvider accountId={ACCOUNT_ID} transport={readingTransport}>
                           <ResourceOverlaysProvider>
-                            <GlobalPlayerProvider>
+                            <GlobalPlayerProvider accountId={ACCOUNT_ID}>
                               <ResourceActionRuntimeProvider>
                                 {menu}
                                 <ResourceActionOverlays />
                               </ResourceActionRuntimeProvider>
                             </GlobalPlayerProvider>
                           </ResourceOverlaysProvider>
+                          </OfflineReadingProvider>
                         </OfflineMediaProvider>
                       </ShareControllerProvider>
                     </LibraryPlacementControllerProvider>
@@ -376,7 +394,10 @@ function renderResourceMenu(
             </FeedbackProvider>
           </KeybindingsProvider>
         </MobileChromeProvider>
+        </ArtworkProvider>
+        </ResourceCacheProvider>
       </AuthenticatedAccountProvider>,
+      { androidShell: readingTransport !== null },
     ),
   );
 }
@@ -411,6 +432,51 @@ describe("ResourceActionMenu component contract", () => {
     localStorage.clear();
     sessionStorage.clear();
     await page.viewport(1_024, 768);
+  });
+
+  it("downloads the current publication selected at invocation", async () => {
+    let listener: ((message: unknown) => void) | null = null;
+    const nativeIntent: Extract<ReadingCommand, { kind: "Enqueue" }>[] = [];
+    const snapshot = {
+      binding: { kind: "Present", value: { accountId: ACCOUNT_ID, authorizationRequired: false } },
+      networkPolicy: "UnmeteredOnly", items: [],
+    };
+    const transport: OfflineReadingTransport = {
+      start(receive) { listener = receive; return () => { listener = null; }; },
+      send(command) {
+        if (command.kind === "Enqueue") nativeIntent.push(command);
+        queueMicrotask(() => listener?.({
+          protocolVersion: 1, requestId: command.requestId,
+          outcome: command.kind === "ConnectHosted"
+            ? { kind: "Connected", snapshot }
+            : { kind: "Accepted" },
+        }));
+      },
+    };
+    let selectDescriptor: ((response: Response) => void) | null = null;
+    installBff({
+      resolve: () => jsonResponse({ data: { snapshots: [{
+        ...MEDIA_SNAPSHOT,
+        capabilities: [{ kind: "OfflineReading", availability: { kind: "Available" }, requestedTitle: "Previously viewed edition", mediaKind: "pdf" }],
+      }] } }),
+      descriptor: () => new Promise((resolve) => { selectDescriptor = resolve; }),
+    });
+    renderResourceMenu(undefined, transport);
+    const menu = await openMenu();
+    await userEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "Download current copy" }));
+    await waitFor(() => expect(selectDescriptor).not.toBeNull());
+    expect(nativeIntent, "download committed before selecting its publication").toEqual([]);
+    selectDescriptor!(await readerPublicationMemberResponse({
+      media_id: MEDIA_ID, reader_generation: 7, kind: "pdf", title: "Selected edition",
+      reader_contract_version: 1, page_count: 3,
+      document_asset_ref: { key: "document.pdf", bytes: 1024, sha256: "a".repeat(64) },
+    }));
+    await waitFor(() => expect(nativeIntent).toHaveLength(1));
+    expect(nativeIntent[0]).toMatchObject({
+      kind: "Enqueue", mediaId: MEDIA_ID, readerGeneration: 7,
+      requestedTitle: "Selected edition", mediaKind: "Pdf",
+    });
+    expect(await screen.findByRole("button", { name: "More actions" })).toBeEnabled();
   });
 
   it("presents the catalog-owned order with danger last and preserves a server-blocked reason", async () => {

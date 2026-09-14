@@ -11,6 +11,7 @@ from uuid import UUID
 
 from lxml.html import HtmlElement, fragment_fromstring
 
+from nexus.ids import new_uuid7
 from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.document_embed_extraction import DetectedDocumentEmbed, extract_document_embeds
 from nexus.services.document_embeds import (
@@ -80,6 +81,7 @@ def document_embed_artifact_occurrences(
 ) -> list[DocumentEmbedArtifactOccurrence]:
     return [
         DocumentEmbedArtifactOccurrence(
+            id=new_uuid7(),
             fragment_id=fragment_id,
             ordinal=item.detected.ordinal,
             occurrence_key=item.detected.occurrence_key,

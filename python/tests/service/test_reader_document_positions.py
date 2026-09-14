@@ -18,9 +18,11 @@ from nexus.services.epub_ingest import (
     EpubExtractionPlan,
     build_epub_extraction_plan,
     publish_epub_extraction_plan,
+    read_epub_fragment,
 )
 from nexus.services.epub_read import get_epub_navigation_for_viewer
 from nexus.services.library_entries import ensure_media_in_default_library
+from nexus.services.parser_temp import parser_attempt_directory
 from nexus.services.reader_document_map import get_reader_document_map
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_storage_path
@@ -76,67 +78,74 @@ def test_epub_navigation_and_document_map_share_exact_canonical_positions(
 
     storage.put_object(storage_path, payload, "application/epub+zip")
     try:
-        plan = build_epub_extraction_plan(
-            session_factory=create_session_factory(engine),
-            media_id=media_id,
-            attempt_id=uuid4(),
-            storage_path=storage_path,
-            source_size_bytes=len(payload),
-            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-            storage_client=storage,
-            record_progress=lambda _completed, _total, _unit: None,
-        )
-        assert isinstance(plan, EpubExtractionPlan), (
-            f"authored EPUB did not produce an extraction plan: {plan!r}"
-        )
-
-        with Session(engine) as db:
-            publish_epub_extraction_plan(db, media_id=media_id, plan=plan)
-            media = db.get(Media, media_id)
-            assert media is not None
-            media.processing_status = ProcessingStatus.ready_for_reading
-            db.commit()
-
-        expected_text = (
-            "Opening\nCafé alpha begins the authored reader corpus.\n"
-            "Second\nOmega proves the selected section and durable resume.\n"
-            "Closing\nThe final passage proves reset returns to the beginning."
-        )
-        second_start = expected_text.index("Second")
-        with Session(engine) as db:
-            canonical_text = db.scalar(
-                select(Fragment.canonical_text).where(Fragment.media_id == media_id)
-            )
-            navigation = get_epub_navigation_for_viewer(db, viewer_id, media_id)
-            document_map = get_reader_document_map(
-                db,
-                viewer_id=viewer_id,
+        attempt_id = uuid4()
+        with parser_attempt_directory(attempt_id) as attempt_directory:
+            plan = build_epub_extraction_plan(
+                attempt_directory=attempt_directory,
+                session_factory=create_session_factory(engine),
                 media_id=media_id,
+                attempt_id=attempt_id,
+                storage_path=storage_path,
+                source_size_bytes=len(payload),
+                expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+                storage_client=storage,
+                record_progress=lambda _completed, _total, _unit: None,
+            )
+            assert isinstance(plan, EpubExtractionPlan), (
+                f"authored EPUB did not produce an extraction plan: {plan!r}"
             )
 
-        assert canonical_text == expected_text
-        assert [fragment.char_count for fragment in navigation.fragments] == [len(expected_text)]
-        assert [section.label for section in navigation.sections] == [
-            "Opening",
-            "Second",
-            "Closing",
-        ]
-        assert [(section.start_offset, section.end_offset) for section in navigation.sections] == [
-            (0, second_start),
-            (second_start, expected_text.index("Closing")),
-            (expected_text.index("Closing"), len(expected_text)),
-        ], "EPUB sections did not retain their canonical anchor intervals"
+            with Session(engine) as db:
+                publish_epub_extraction_plan(db, media_id=media_id, plan=plan)
+                media = db.get(Media, media_id)
+                assert media is not None
+                media.processing_status = ProcessingStatus.ready_for_reading
+                db.commit()
 
-        contents_positions = {
-            marker.label: marker.position
-            for marker in document_map.markers
-            if marker.kind == "Contents"
-        }
-        assert contents_positions == {
-            "Opening": pytest.approx(0.0),
-            "Second": pytest.approx(second_start / len(expected_text)),
-            "Closing": pytest.approx(expected_text.index("Closing") / len(expected_text)),
-        }, f"Document Map used non-canonical section positions: {contents_positions!r}"
+            expected_text = (
+                "Opening\nCafé alpha begins the authored reader corpus.\n"
+                "Second\nOmega proves the selected section and durable resume.\n"
+                "Closing\nThe final passage proves reset returns to the beginning."
+            )
+            second_start = expected_text.index("Second")
+            with Session(engine) as db:
+                canonical_text = db.scalar(
+                    select(Fragment.canonical_text).where(Fragment.media_id == media_id)
+                )
+                navigation = get_epub_navigation_for_viewer(db, viewer_id, media_id)
+                document_map = get_reader_document_map(
+                    db,
+                    viewer_id=viewer_id,
+                    media_id=media_id,
+                )
+
+            assert canonical_text == expected_text
+            assert [fragment.char_count for fragment in navigation.fragments] == [
+                len(expected_text)
+            ]
+            assert [section.label for section in navigation.sections] == [
+                "Opening",
+                "Second",
+                "Closing",
+            ]
+            assert [
+                (section.start_offset, section.end_offset) for section in navigation.sections
+            ] == [
+                (0, second_start),
+                (second_start, expected_text.index("Closing")),
+                (expected_text.index("Closing"), len(expected_text)),
+            ], "EPUB sections did not retain their canonical anchor intervals"
+
+            contents_positions = {
+                marker.label: marker.position
+                for marker in document_map.markers
+                if marker.kind == "Contents"
+            }
+            assert contents_positions == {
+                "Opening": pytest.approx(0.0),
+                "Second": pytest.approx(second_start / len(expected_text)),
+                "Closing": pytest.approx(expected_text.index("Closing") / len(expected_text)),
+            }, f"Document Map used non-canonical section positions: {contents_positions!r}"
     finally:
         storage.delete_object(storage_path)
 
@@ -181,28 +190,31 @@ def test_real_epub_fixture_retains_known_book_structure(engine: Engine) -> None:
     storage.put_object(storage_path, payload, "application/epub+zip")
     plan: EpubExtractionPlan | None = None
     try:
-        result = build_epub_extraction_plan(
-            session_factory=create_session_factory(engine),
-            media_id=media_id,
-            attempt_id=uuid4(),
-            storage_path=storage_path,
-            source_size_bytes=len(payload),
-            expected_source_sha256=hashlib.sha256(payload).hexdigest(),
-            storage_client=storage,
-            record_progress=lambda _completed, _total, _unit: None,
-        )
-        assert isinstance(result, EpubExtractionPlan), (
-            f"canonical real EPUB did not produce an extraction plan: {result!r}"
-        )
-        plan = result
-        assert plan.result.title == "Moby Dick; Or, The Whale"
-        assert "Herman Melville" in plan.result.creators
-        assert plan.result.chapter_count >= 10
-        assert any(location.label == "CHAPTER 1. Loomings." for location in plan.nav_locations)
-        assert any(
-            "Call me Ishmael. Some years ago" in fragment.canonical_text
-            for fragment, _chapter, _items, _edges in plan.fragment_specs
-        ), "real EPUB extraction lost its independently known opening sentence"
+        attempt_id = uuid4()
+        with parser_attempt_directory(attempt_id) as attempt_directory:
+            result = build_epub_extraction_plan(
+                attempt_directory=attempt_directory,
+                session_factory=create_session_factory(engine),
+                media_id=media_id,
+                attempt_id=attempt_id,
+                storage_path=storage_path,
+                source_size_bytes=len(payload),
+                expected_source_sha256=hashlib.sha256(payload).hexdigest(),
+                storage_client=storage,
+                record_progress=lambda _completed, _total, _unit: None,
+            )
+            assert isinstance(result, EpubExtractionPlan), (
+                f"canonical real EPUB did not produce an extraction plan: {result!r}"
+            )
+            plan = result
+            assert plan.result.title == "Moby Dick; Or, The Whale"
+            assert "Herman Melville" in plan.result.creators
+            assert plan.result.chapter_count >= 10
+            assert any(location.label == "CHAPTER 1. Loomings." for location in plan.nav_locations)
+            assert any(
+                "Call me Ishmael. Some years ago" in read_epub_fragment(fragment)[1]
+                for fragment in plan.fragments
+            ), "real EPUB extraction lost its independently known opening sentence"
     finally:
         storage.delete_object(storage_path)
         if plan is not None:

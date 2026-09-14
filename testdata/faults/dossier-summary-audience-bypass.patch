@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/artifacts/registry.py b/python/nexus/services/artifacts/registry.py
+--- a/python/nexus/services/artifacts/registry.py
++++ b/python/nexus/services/artifacts/registry.py
+@@ -140,7 +140,7 @@
+     )
+     return f"""
+         (
+-            (a.audience_scheme = 'user' AND a.audience_id = CAST(:viewer_id AS text))
++            (a.audience_scheme = 'user')
+             OR (a.audience_scheme = 'library' AND EXISTS (
+                 SELECT 1 FROM memberships audience_member
+                 WHERE audience_member.user_id = :viewer_id

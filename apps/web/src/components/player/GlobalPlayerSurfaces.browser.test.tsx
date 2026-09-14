@@ -1,3 +1,4 @@
+import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -569,7 +570,7 @@ function renderPlayerSurfaces({
         account={{ accountId: ACCOUNT_ID, calendarTimeZone: "UTC" }}
       >
         <UnauthenticatedApiBoundary>
-          <ResourceCacheProvider value={{}}>
+          <ResourceCacheProvider value={{}} publicationLimits={READER_CAPACITY.cache}>
             <FeedbackProvider>
               <PaneReturnMementoProvider>
                 <WorkspaceStoreProvider

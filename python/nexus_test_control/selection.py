@@ -72,6 +72,7 @@ _PYTHON_PROOF_OWNERS = (
     ("python/tests/contract/", Capability.PROVIDER_RUNTIME),
     ("python/tests/llm_tools_contract/", Capability.LLM_TOOLS),
     ("python/tests/release_artifact/", Capability.RELEASE_ARTIFACT),
+    ("python/tests/capacity/", Capability.API_CAPACITY),
 )
 _GLOBAL_PYTEST_SUPPORT_CAPABILITIES = (
     Capability.KERNEL_PYTHON,
@@ -82,6 +83,7 @@ _GLOBAL_PYTEST_SUPPORT_CAPABILITIES = (
     Capability.PROVIDER_RUNTIME,
     Capability.LLM_TOOLS,
     Capability.RELEASE_ARTIFACT,
+    Capability.API_CAPACITY,
 )
 
 
@@ -199,6 +201,7 @@ def proof_target(repo_root: Path, proof: str) -> SelectionTarget:
         Capability.LLM_EVAL: "pytest",
         Capability.MIGRATIONS: "pytest",
         Capability.RELEASE_ARTIFACT: "pytest",
+        Capability.API_CAPACITY: "pytest",
         Capability.SERVICE: "pytest",
     }.get(direct.capability)
     if runner != expected_runner:

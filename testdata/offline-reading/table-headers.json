@@ -1,0 +1,203 @@
+{
+  "version": 1,
+  "source": "https://html.spec.whatwg.org/multipage/tables.html#algorithm-for-assigning-header-cells",
+  "provenance": "independently hand-derived from WHATWG forming/assigning-header steps on 2026-09-13; no producer output used as oracle",
+  "cases": [
+    {
+      "id": "column-block",
+      "html": "<table><tr><th id=\"far\" scope=\"col\">far</th></tr><tr><td>gap</td></tr><tr><th id=\"near\" scope=\"col\">near</th></tr><tr><td id=\"p\">p</td></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "near"
+      ],
+      "reason": "A data cell closes the nearer header block; same-column/width older header is opaque."
+    },
+    {
+      "id": "contiguous-column-headers",
+      "html": "<table><tr><th id=\"far\" scope=\"col\">far</th></tr><tr><th id=\"near\" scope=\"col\">near</th></tr><tr><td id=\"p\">p</td></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "near",
+        "far"
+      ],
+      "reason": "Contiguous headers share a block; scan order is nearest first."
+    },
+    {
+      "id": "row-block",
+      "html": "<table><tr><th id=\"far\" scope=\"row\">far</th><td>gap</td><th id=\"near\" scope=\"row\">near</th><td id=\"p\">p</td></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "near"
+      ],
+      "reason": "Horizontal counterpart of an opaque column block."
+    },
+    {
+      "id": "principal-header-block",
+      "html": "<table><tr><th id=\"far\" scope=\"col\">far</th></tr><tr><td>gap</td></tr><tr><th id=\"p\" scope=\"col\">p</th></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [],
+      "reason": "The principal th seeds the first block and blocks an older matching header after data."
+    },
+    {
+      "id": "wrong-scope-still-opaque",
+      "html": "<table><tr><th id=\"far\" scope=\"col\">far</th></tr><tr><td>gap</td></tr><tr><th id=\"near\" scope=\"row\">near</th></tr><tr><td id=\"p\">p</td></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [],
+      "reason": "A wrong-scope th is not assigned, but still participates in the opaque block."
+    },
+    {
+      "id": "different-width-not-opaque",
+      "html": "<table><tr><th id=\"far\" colspan=\"2\" scope=\"col\">far</th></tr><tr><td>gap</td><td>x</td></tr><tr><th id=\"near\" scope=\"col\">near</th><td>x</td></tr><tr><td id=\"p\">p</td><td>x</td></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "near",
+        "far"
+      ],
+      "reason": "Opacity requires equal anchor and span in the orthogonal axis."
+    },
+    {
+      "id": "empty-slot-does-not-close-block",
+      "html": "<table><tr><th id=\"far\" scope=\"col\">far</th></tr><tr></tr><tr><th id=\"near\" scope=\"col\">near</th></tr><tr><td id=\"p\">p</td></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "near",
+        "far"
+      ],
+      "reason": "An uncovered slot is skipped without changing header-block state."
+    },
+    {
+      "id": "overlap-slot-is-skipped",
+      "html": "<table><tr><td>x</td><th id=\"over\" rowspan=\"2\" scope=\"col\">over</th></tr><tr><th id=\"wide\" colspan=\"2\" scope=\"col\">wide</th></tr><tr><td>x</td><td id=\"p\">p</td></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "over"
+      ],
+      "reason": "Two rectangles cover the intervening slot; that slot cannot choose either header."
+    },
+    {
+      "id": "spanning-principal-deduplicates-rays",
+      "html": "<table><tr><th id=\"row\" rowspan=\"2\" scope=\"row\">row</th><td id=\"p\" rowspan=\"2\">p</td></tr><tr></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "row"
+      ],
+      "reason": "Two horizontal rays encounter the same cell; final assignment deduplicates it."
+    },
+    {
+      "id": "row-group-appended",
+      "html": "<table><tbody><tr><th id=\"group\" scope=\"rowgroup\">group</th><td id=\"p\">p</td></tr></tbody></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "group"
+      ],
+      "reason": "Row-group scope is assigned by the group step, not by horizontal row-header scanning."
+    },
+    {
+      "id": "column-group-appended",
+      "html": "<table><colgroup span=\"2\"></colgroup><tr><th id=\"group\" scope=\"colgroup\">group</th><td id=\"p\">p</td></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "group"
+      ],
+      "reason": "Column-group scope follows the principal anchor group and both coordinate bounds."
+    },
+    {
+      "id": "explicit-order-data-and-empty",
+      "html": "<table><tr><td id=\"a\">data header</td><th id=\"empty\"> \t<!--comment--> </th><th id=\"b\">b</th><td id=\"p\" headers=\"b a b empty p missing\">p</td></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "b",
+        "a"
+      ],
+      "reason": "Authored order wins; td targets are permitted; duplicates, empty cells, self, and absent ids disappear."
+    },
+    {
+      "id": "explicit-empty-suppresses-auto",
+      "html": "<table><tr><th id=\"row\" scope=\"row\">row</th><td id=\"p\" headers=\"\">p</td></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [],
+      "reason": "An explicitly empty headers attribute suppresses automatic assignment."
+    },
+    {
+      "id": "empty-header-still-blocks",
+      "html": "<table><tr><th id=\"far\" scope=\"col\">far</th></tr><tr><td>gap</td></tr><tr><th id=\"near\" scope=\"col\"> </th></tr><tr><td id=\"p\">p</td></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [],
+      "reason": "Empty headers participate in opacity; they are removed only after scanning."
+    },
+    {
+      "id": "nbsp-header-is-not-empty",
+      "html": "<table><tr><th id=\"near\" scope=\"row\"> </th><td id=\"p\">p</td></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "near"
+      ],
+      "reason": "Only ASCII whitespace contributes to the final empty-cell predicate."
+    },
+    {
+      "id": "different-group-between-nearest-and-barrier",
+      "html": "<table><tr><td></td><td></td><th id='far' scope='col'>far</th></tr><tr><td></td><td></td><td>barrier</td></tr><tr><td></td><th id='middle' scope='col' colspan='2'>middle</th></tr><tr><td></td><td></td><th id='near' scope='col'>near</th></tr><tr><td></td><td></td><td id='p'>value</td></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "near",
+        "middle"
+      ],
+      "reason": "A different orthogonal header group does not close the block; the following data cell makes both groups opaque."
+    },
+    {
+      "id": "wrong-scope-principal-still-opens-block",
+      "html": "<table><tr><th id=\"far\" scope=\"col\">far</th></tr><tr><td>barrier</td></tr><tr><th id=\"p\" scope=\"row\">principal</th></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [],
+      "reason": "The principal th seeds opacity even when it is not a header for the scan direction."
+    },
+    {
+      "id": "empty-principal-still-opens-block",
+      "html": "<table><tr><th id=\"far\" scope=\"col\">far</th></tr><tr><td>barrier</td></tr><tr><th id=\"p\" scope=\"col\"> </th></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [],
+      "reason": "The principal th seeds opacity before empty headers are removed from the final association."
+    },
+    {
+      "id": "first-ray-order-before-inner-distance",
+      "html": "<table><tr><th id=\"far\" scope=\"row\">far</th><td>gap</td><td id=\"p\" rowspan=\"2\">p</td></tr><tr><th id=\"near\" scope=\"row\" colspan=\"2\">near</th></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "far",
+        "near"
+      ],
+      "reason": "All hits on the first principal row precede hits first encountered on the second row, even when the later header is closer."
+    },
+    {
+      "id": "group-source-order-before-deferred-footer-geometry",
+      "html": "<table><colgroup span=\"2\"></colgroup><tfoot><tr><th id=\"footer\" scope=\"colgroup\">footer</th><td id=\"p\">principal</td></tr></tfoot><tbody><tr><th id=\"body\" scope=\"colgroup\">body</th><td>value</td></tr></tbody></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "footer",
+        "body"
+      ],
+      "reason": "Group-header append uses original DOM/source order as the deterministic reader policy; deferred table-forming order only supplies geometry."
+    },
+    {
+      "id": "spanning-overlap-reveals-distinct-headers",
+      "html": "<table><tr><th id=\"h0\" scope=\"row\">h0</th><td rowspan=\"0\" colspan=\"2\">block</td><td id=\"p\" rowspan=\"0\">p</td></tr><tr><th id=\"h1\" scope=\"row\" colspan=\"3\">h1</th></tr><tr><th id=\"h2\" scope=\"row\" colspan=\"3\">h2</th></tr><tr><th id=\"h3\" scope=\"row\" colspan=\"3\">h3</th></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "h0",
+        "h1",
+        "h2",
+        "h3"
+      ],
+      "reason": "Rows 1–3 skip multiply-covered columns 1–2 and reveal their distinct uniquely covered row headers at column 0 when the spanning data cell ends."
+    },
+    {
+      "id": "implicit-body-rowgroup",
+      "html": "<table><tr><th id=\"group\" scope=\"rowgroup\">group</th><td>first</td></tr><tr><td id=\"p\">p</td></tr></table>",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "group"
+      ],
+      "reason": "Effective display normalization places direct rows in one tbody; the scoped rowgroup header is appended for the same group."
+    }
+  ]
+}

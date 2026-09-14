@@ -21,6 +21,8 @@ dependencies = [
     "youtube-transcript-api>=1.2.4",
     "psycopg-binary>=3.1.0",
     "html5lib==1.1",
+    "tinycss2==1.5.1",
+    "sortedcontainers==2.4.0",
     "regex>=2024.11.6",
     "stripe>=12.0.0",
     "provider-runtime",
@@ -59,8 +61,8 @@ build-backend = "hatchling.build"
 packages = ["nexus"]
 
 [tool.uv.sources]
-provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "8fde23ac56571a63c65cfcff55c73a0976f83eb4" }
-llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "41c68bdb6497a8ee76ac5ba94bd7a0b48a1fe1af" }
+provider-runtime = { git = "https://github.com/NielsdaWheelz/llm-calling.git", rev = "9abaf6b7a1f907fcf1bdbfa33dd7b343e42ffbdb" }
+llm-agent-kernel = { git = "https://github.com/NielsdaWheelz/llm-agent-kernel.git", rev = "fd2d71d8608692babbc4144ca77f65ec34f454a9" }
 llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "9e6d155f3b64f03495911435b7cae8b8d131f9a2" }
 
 [tool.ruff]
@@ -155,8 +157,6 @@ include = [
     "nexus/services/pdf_highlight_geometry.py",
     "nexus/services/pdf_lifecycle.py",
     "nexus/services/pdf_locking.py",
-    "nexus/services/pdf_quote_match.py",
-    "nexus/services/pdf_quote_match_policy.py",
     "nexus/services/pdf_readiness.py",
     "nexus/services/playback_source.py",
     "nexus/services/reader.py",

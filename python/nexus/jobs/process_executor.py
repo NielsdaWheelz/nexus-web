@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import ctypes
 import json
 import os
 import shutil
@@ -30,6 +29,7 @@ from nexus.jobs.queue import (
     ScheduleAt,
 )
 from nexus.logging import get_logger
+from nexus.process_lifetime import arm_parent_death_signal
 
 logger = get_logger(__name__)
 
@@ -71,7 +71,6 @@ _CHILD_WAIT_POLL_SECONDS = 0.25
 # justify-polling: process-group emptiness has no readiness descriptor; this probe
 # is bounded by the configured TERM grace.
 _PROCESS_GROUP_EXIT_POLL_SECONDS = 0.01
-_PR_SET_PDEATHSIG = 1
 
 
 type _ChildExitReason = Literal["Exited", "Timeout", "Shutdown", "ClaimLost"]
@@ -252,7 +251,7 @@ class BackgroundProcessExecutor:
         runtime: Literal["Base", "Llm"],
         shutdown: threading.Event,
         claim_lost: threading.Event,
-        child_exit_cleanup: Literal["None", "SourceAttemptParserTemp"] = "None",
+        child_exit_cleanup: Literal["None", "SourceAttemptParserTemp", "JobParserTemp"] = "None",
     ) -> ChildExecutionResult:
         if not 0 < wall_timeout_seconds <= _WALL_TIMEOUT_MAX_SECONDS:
             raise ValueError(
@@ -276,6 +275,7 @@ class BackgroundProcessExecutor:
             parser_temp_root=self.parser_temp_root,
             payload=payload,
             cleanup=child_exit_cleanup,
+            job_id=context.job_id,
         )
         try:
             oom_kills_before = self.cgroup.oom_kill_count()
@@ -808,15 +808,12 @@ def _kill_own_process_group() -> None:
 
 
 def _arm_parent_death_signal() -> None:
-    if sys.platform != "linux":
-        # The liveness pipe is the portable mechanism; darwin is a dev host only.
-        return
-    libc = ctypes.CDLL(None, use_errno=True)
-    prctl = libc.prctl
-    prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
-    prctl.restype = ctypes.c_int
-    if prctl(_PR_SET_PDEATHSIG, ctypes.c_ulong(signal.SIGKILL), 0, 0, 0) != 0:
-        raise BackgroundProcessProtocolDefect("child parent-death signal could not be armed")
+    try:
+        arm_parent_death_signal()
+    except OSError as error:
+        raise BackgroundProcessProtocolDefect(
+            "child parent-death signal could not be armed"
+        ) from error
 
 
 def _run_child(*, request_fd: int, result_fd: int, liveness_fd: int, supervisor_pid: int) -> int:
@@ -972,10 +969,13 @@ def _child_exit_cleanup_directory(
     *,
     parser_temp_root: Path,
     payload: Mapping[str, Any],
-    cleanup: Literal["None", "SourceAttemptParserTemp"],
+    cleanup: Literal["None", "SourceAttemptParserTemp", "JobParserTemp"],
+    job_id: UUID,
 ) -> Path | None:
     if cleanup == "None":
         return None
+    if cleanup == "JobParserTemp":
+        return parser_temp_root / str(job_id)
     if cleanup != "SourceAttemptParserTemp":
         raise BackgroundProcessProtocolDefect("background child cleanup projection is unsupported")
     try:

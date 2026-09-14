@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
+@@ -1024,7 +1024,7 @@
+                                     check(database.writableDatabase.update("offline_reader_packages", values, "id = ?", arrayOf(installed.id.toString())) == 1)
+                                     installed.copy(conversionRefusal = result.refusal)
+                                 } else installed
+-                                verifiedPackages[installed.id] = ReconciledPackage(retained, result)
++                                verifiedPackages[installed.id] = ReconciledPackage(retained, PackageReadiness.Prepared)
+                             }
+                         } else {
+                             recoverCorruptPackage(installed)

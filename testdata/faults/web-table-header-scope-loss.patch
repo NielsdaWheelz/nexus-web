@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/sanitize_html.py b/python/nexus/services/sanitize_html.py
+--- a/python/nexus/services/sanitize_html.py
++++ b/python/nexus/services/sanitize_html.py
+@@ -83,7 +83,7 @@
+     "img": {"src", "alt"},
+     "ol": {"start", "reversed"},
+     "li": {"value"},
+-    "th": {"colspan", "rowspan", "scope"},
++    "th": {"colspan", "rowspan"},
+     "td": {"colspan", "rowspan"},
+ }
+ READER_APPARATUS_ATTRS = frozenset(

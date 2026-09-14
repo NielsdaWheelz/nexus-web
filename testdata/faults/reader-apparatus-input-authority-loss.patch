@@ -1,0 +1,11 @@
+diff --git a/apps/web/src/lib/reader/publicationApparatus.ts b/apps/web/src/lib/reader/publicationApparatus.ts
+--- a/apps/web/src/lib/reader/publicationApparatus.ts
++++ b/apps/web/src/lib/reader/publicationApparatus.ts
+@@ -89,6 +89,7 @@
+   readonly stableKey: string;
+   readonly locatePdf: ((page: number, quads: readonly PdfHighlightQuad[], signal: AbortSignal) => Promise<boolean>) | null;
+ }): Promise<{ readonly kind: "Located" | "Unavailable" } | ReaderViewCapacity> {
++  commandIsCurrent = () => true;
+   signal.throwIfAborted();
+   if (!commandIsCurrent()) return { kind: "Unavailable" };
+   if (session.overlays === null) throw new Error("Hosted reader apparatus capability is unavailable");

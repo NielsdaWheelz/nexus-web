@@ -7,6 +7,12 @@ import re
 import subprocess
 from pathlib import Path
 
+from nexus_test_control.containers import (
+    close_owned_container,
+    create_owned_container,
+    local_docker,
+)
+
 REPO_ROOT = Path(__file__).parents[3]
 CANDIDATE_WORKER_IMAGE_ENV = "NEXUS_TEST_CANDIDATE_WORKER_IMAGE"
 IMAGE_ENTRYPOINT = Path("/app/node/ingest/ingest.mjs")
@@ -26,25 +32,36 @@ def _run(arguments: list[str], *, timeout: int = 60) -> subprocess.CompletedProc
 
 
 def _run_in_worker(image: str, program: str) -> dict[str, object]:
-    completed = _run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--network=none",
-            "--read-only",
-            "--cap-drop=ALL",
-            "--security-opt=no-new-privileges:true",
-            "--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=16m",
-            "--env=NEXUS_ENV=production",
-            "--env=NODE_INGEST_SCRIPT=/app/nexus/__init__.py",
-            "--entrypoint=/app/.venv/bin/python",
-            image,
-            "-c",
-            program,
-        ]
-    )
-    assert completed.stderr == ""
+    run_id = os.environ["NEXUS_TEST_RUN_ID"]
+    try:
+        name = create_owned_container(
+            REPO_ROOT,
+            {"NEXUS_ENV": "test"},
+            run_id,
+            role="worker-ingest",
+            image=image,
+            arguments=(
+                "--network=none",
+                "--read-only",
+                "--cap-drop=ALL",
+                "--security-opt=no-new-privileges:true",
+                "--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=16m",
+                "--env=NEXUS_ENV=test",
+                "--env=DATABASE_URL=postgresql+psycopg://unused:unused@127.0.0.1:1/unused",
+                "--env=SUPABASE_JWKS_URL=http://127.0.0.1:1/auth/v1/.well-known/jwks.json",
+                "--env=SUPABASE_ISSUER=http://127.0.0.1:1/auth/v1",
+                "--env=SUPABASE_AUDIENCES=authenticated",
+                "--env=NODE_INGEST_SCRIPT=/app/nexus/__init__.py",
+                "--entrypoint=/app/.venv/bin/python",
+            ),
+            command=("-c", program),
+        )
+        completed = _run(["docker", "start", "--attach", name])
+        assert completed.stderr == ""
+        inspected = json.loads(local_docker(("inspect", name)))[0]
+        assert inspected["State"]["ExitCode"] == 0
+    finally:
+        close_owned_container(REPO_ROOT, run_id, "worker-ingest")
     value = json.loads(completed.stdout)
     assert isinstance(value, dict)
     return value
@@ -91,7 +108,9 @@ print(json.dumps(value, separators=(',', ':')))
     environment = config.get("Env")
     assert isinstance(environment, list)
     assert all(
-        isinstance(item, str) and not item.startswith("NODE_INGEST_SCRIPT=") for item in environment
+        isinstance(item, str)
+        and not item.startswith(("NODE_INGEST_SCRIPT=", "NEXUS_NODE_INGEST_SCRIPT="))
+        for item in environment
     )
 
     image_hashes = _run_in_worker(
@@ -99,16 +118,25 @@ print(json.dumps(value, separators=(',', ':')))
         """
 import hashlib
 import json
+from importlib.metadata import distribution
 from pathlib import Path
 paths = (
     Path('/app/node/ingest/ingest.mjs'),
     Path('/app/node/ingest/accepted_url_egress.mjs'),
 )
-print(json.dumps(
-    {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths},
-    separators=(',', ':'),
-    sort_keys=True,
-))
+nexus = distribution('nexus')
+files = {str(path): path for path in nexus.files or ()}
+resources = (
+    'nexus/services/reader_scripts/word_boundaries.mjs',
+    'nexus/services/reader_scripts/epub_paths.mjs',
+)
+assert all(path in files for path in resources), 'installed nexus wheel lost reader scripts'
+hashes = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+hashes.update({
+    path: hashlib.sha256(nexus.locate_file(files[path]).read_bytes()).hexdigest()
+    for path in resources
+})
+print(json.dumps(hashes, separators=(',', ':'), sort_keys=True))
 """,
     )
     assert image_hashes == {
@@ -118,4 +146,10 @@ print(json.dumps(
         str(IMAGE_EGRESS_OWNER): hashlib.sha256(
             (REPO_ROOT / "node/ingest/accepted_url_egress.mjs").read_bytes()
         ).hexdigest(),
+        **{
+            f"nexus/services/reader_scripts/{name}.mjs": hashlib.sha256(
+                (REPO_ROOT / f"python/nexus/services/reader_scripts/{name}.mjs").read_bytes()
+            ).hexdigest()
+            for name in ("word_boundaries", "epub_paths")
+        },
     }

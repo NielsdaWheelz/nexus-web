@@ -447,6 +447,10 @@ def enumerate_media_storage_paths(db: Session, media_id: UUID) -> list[str]:
             SELECT storage_path
             FROM epub_resources
             WHERE media_id = :media_id
+            UNION
+            SELECT storage_path
+            FROM reader_publication_artifacts
+            WHERE media_id = :media_id
             ORDER BY storage_path
         """),
         {"media_id": media_id},
@@ -732,7 +736,10 @@ def _destroyed_media_refs(db: Session, media_id: UUID) -> list[ResourceRef]:
     )
     fragment_ids = (
         db.execute(
-            text("SELECT id FROM fragments WHERE media_id = :media_id"),
+            text(
+                "SELECT id FROM fragments WHERE media_id = :media_id "
+                "UNION SELECT fragment_id AS id FROM reader_publication_units WHERE media_id = :media_id"
+            ),
             {"media_id": media_id},
         )
         .scalars()

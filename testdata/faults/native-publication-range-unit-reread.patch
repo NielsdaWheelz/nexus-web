@@ -1,0 +1,11 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt
+@@ -69,6 +69,7 @@
+         val contextUnits = mutableSetOf<String>()
+         var tableContextsPresent = false
+         fun sourceRange(range: OfflineReadingTableSourceRange, fragment: String) {
++            json(declared.getValue(range.unitKey), OFFLINE_READING_MAX_PUBLICATION_MEMBER_BYTES)
+             require(range.fragmentId == fragment)
+             val unit = units[range.unitKey] ?: error("table context names an undeclared unit")
+             require(unit.fragment == fragment)

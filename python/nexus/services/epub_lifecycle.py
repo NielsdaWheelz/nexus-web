@@ -1,7 +1,10 @@
 """EPUB source lifecycle boundary and extraction artifact cleanup."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
-from typing import Literal
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
@@ -39,6 +42,9 @@ from nexus.services.reader_publication import (
 )
 from nexus.storage.client import get_storage_client
 
+if TYPE_CHECKING:
+    from nexus.services.reader_publication_artifacts import PreparedReaderPublication
+
 logger = get_logger(__name__)
 
 _MAX_ERROR_MSG_LEN = 1000
@@ -65,6 +71,7 @@ def prepare_epub_source(
     session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt_id: UUID,
+    attempt_directory: Path,
     storage_path: str,
     source_size_bytes: int,
     expected_source_sha256: str,
@@ -75,6 +82,7 @@ def prepare_epub_source(
         session_factory=session_factory,
         media_id=media_id,
         attempt_id=attempt_id,
+        attempt_directory=attempt_directory,
         storage_path=storage_path,
         source_size_bytes=source_size_bytes,
         expected_source_sha256=expected_source_sha256,
@@ -91,6 +99,7 @@ def publish_epub_source(
     *,
     media_id: UUID,
     plan: EpubExtractionPlan,
+    publication: PreparedReaderPublication,
     source_file: ReaderPublicationSourceFile | None = None,
 ) -> tuple[dict[str, object], list[str]]:
     """Publish a prepared EPUB plan in the caller's fenced transaction.
@@ -155,6 +164,7 @@ def publish_epub_source(
         expected_kind="epub",
         replace_projection=replace_projection,
         source_file=source_file,
+        prepared=publication,
     )
     return response, superseded_source_paths + old_storage_paths
 

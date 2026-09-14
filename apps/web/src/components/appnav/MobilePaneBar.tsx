@@ -70,9 +70,9 @@ export default function MobilePaneBar() {
     ) => {
       if (!(event.target instanceof Element)) return;
       const anchor = event.target.closest("a[href]");
-      if (!(anchor instanceof HTMLAnchorElement)) return;
+      if (!(anchor instanceof HTMLAnchorElement)) { warmPane(null); return; }
       const href = anchor.getAttribute("href");
-      if (href && !href.startsWith("#")) warmPane(href);
+      warmPane(href && !href.startsWith("#") ? href : null);
     },
     [warmPane],
   );
@@ -93,6 +93,8 @@ export default function MobilePaneBar() {
       onClickCapture={handleChromeClickCapture}
       onMouseOverCapture={handleChromeIntentCapture}
       onFocusCapture={handleChromeIntentCapture}
+      onMouseLeave={() => warmPane(null)}
+      onBlurCapture={() => warmPane(null)}
     >
       <div className={styles.topBarControls} data-testid="top-bar-controls">
         <button

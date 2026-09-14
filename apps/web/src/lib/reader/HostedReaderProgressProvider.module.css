@@ -1,0 +1,7 @@
+.recovery {
+  position: fixed;
+  z-index: var(--z-nexus);
+  right: max(var(--space-4), var(--viewport-safe-right));
+  bottom: max(var(--space-4), var(--viewport-safe-bottom));
+  width: min(30rem, calc(100vw - 2 * var(--space-4)));
+}

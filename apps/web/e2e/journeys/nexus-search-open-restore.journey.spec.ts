@@ -125,7 +125,7 @@ test("Nexus finds and opens a place whose workspace survives a fresh document", 
   ]);
   const api = pageRequest(page, webOrigin);
   const seedResponse = await api.put("/api/me/workspace-session", {
-    headers: { origin: webOrigin },
+    headers: { origin: webOrigin, "X-Nexus-Expected-Account-Id": journeyUser.id },
     data: { state: workspaceState() },
   });
   expect(

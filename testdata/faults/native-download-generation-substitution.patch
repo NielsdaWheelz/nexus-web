@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingOriginClient.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingOriginClient.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingOriginClient.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingOriginClient.kt
+@@ -174,7 +174,7 @@
+     ): MintedPackageToken? {
+         val request = Request.Builder()
+             .url(hostedOrigin.newBuilder().addPathSegments("api/media/$mediaId/offline-reading-token").build())
+-            .post("{\"expected_reader_generation\":$generation}".toRequestBody("application/json".toMediaType()))
++            .post("{\"expected_reader_generation\":${generation + 1}}".toRequestBody("application/json".toMediaType()))
+             .header("Cookie", cookieStore.requireCookies(hostedOrigin))
+             .header("X-Nexus-Expected-Account-Id", accountId.toString())
+             .header("Accept-Encoding", "identity")

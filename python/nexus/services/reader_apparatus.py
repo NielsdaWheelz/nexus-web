@@ -12,8 +12,9 @@ from uuid import UUID
 
 from lxml.etree import ParserError
 from lxml.html import HtmlElement
-from sqlalchemy import bindparam, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import bindparam, func, literal, select, text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
@@ -30,7 +31,6 @@ from nexus.services.capabilities import is_document_status_ready
 from nexus.services.html_tree import inner_html, parse_html_document, serialize_html
 from nexus.services.parser_temp import nested_utf8_byte_length
 from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resources
-from nexus.services.resource_graph.refs import ResourceRef
 from nexus.text import normalize_whitespace
 
 EXTRACTOR_VERSION = "reader_apparatus_v1"
@@ -2034,7 +2034,24 @@ def replace_media_apparatus(
             )
 
     if removed_item_ids:
-        _delete_apparatus_item_dependents(db, removed_item_ids)
+        # A replaced current item remains an authored Link/citation endpoint
+        # while any retained publication still contains its original identity.
+        unretained_item_ids = list(
+            db.execute(
+                text(
+                    """
+                    SELECT id FROM reader_apparatus_items current
+                    WHERE current.id = ANY(:ids)
+                      AND NOT EXISTS (
+                        SELECT 1 FROM reader_publication_apparatus_items retained
+                        WHERE retained.item_id = current.id
+                      )
+                    """
+                ),
+                {"ids": removed_item_ids},
+            ).scalars()
+        )
+        _delete_apparatus_item_dependents(db, unretained_item_ids)
         _assert_mutated_rows(
             db.execute(
                 text("DELETE FROM reader_apparatus_items WHERE id = ANY(:ids)"),
@@ -2090,7 +2107,13 @@ def _assert_mutated_rows(result: object, *, expected: int, operation: str) -> No
 def delete_media_apparatus(db: Session, media_id: UUID) -> None:
     item_ids = list(
         db.execute(
-            text("SELECT id FROM reader_apparatus_items WHERE media_id = :media_id"),
+            text(
+                """
+                SELECT id FROM reader_apparatus_items WHERE media_id = :media_id
+                UNION
+                SELECT item_id FROM reader_publication_apparatus_items WHERE media_id = :media_id
+                """
+            ),
             {"media_id": media_id},
         ).scalars()
     )
@@ -2103,7 +2126,10 @@ def _delete_apparatus_item_dependents(db: Session, item_ids: list[UUID]) -> None
         return
     delete_edges_for_deleted_resources(
         db,
-        refs=[ResourceRef(scheme="reader_apparatus_item", id=item_id) for item_id in item_ids],
+        refs=select(
+            literal("reader_apparatus_item"),
+            func.unnest(bindparam("item_ids", value=item_ids, type_=ARRAY(PG_UUID(as_uuid=True)))),
+        ),
     )
     db.execute(
         text(

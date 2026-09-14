@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/lib/reader/readerIntentStore.ts b/apps/web/src/lib/reader/readerIntentStore.ts
+--- a/apps/web/src/lib/reader/readerIntentStore.ts
++++ b/apps/web/src/lib/reader/readerIntentStore.ts
+@@ -143,8 +143,7 @@
+     request.onsuccess = () => {
+       const current = request.result;
+       if (current === undefined || !sameAttempt(current.attempt, attempt)) return;
+-      if (current.desired.sequence === attempt.sequence) store.delete(key);
+-      else store.put({ ...current, baseline: snapshot, attempt: null });
++      store.delete(key);
+     };
+     await transactionCompletion(transaction);
+   }

@@ -767,3 +767,37 @@ def test_permanent_resource_sharing_firewall_has_no_cutover_mode() -> None:
     assert "no network request" in completed.stdout
     assert "maintenance" not in source
     assert not (REPO_ROOT / "deploy/vercel/firewall/resource-sharing-maintenance.json").exists()
+
+
+def test_every_mandatory_settings_profile_is_published_in_the_backend_contract() -> None:
+    """A profile with no default must reach the deployed image, or it crash-loops.
+
+    `API_READ_ADMISSION_LIMITS` and `IMAGE_DECODER_LIMITS` are demanded inside
+    `lifespan`, so an image without them never serves a request and the release
+    protocol's post-deploy receipts cannot be collected. The guards are found by
+    their shape rather than listed here, so the next mandatory profile cannot be
+    shipped undeclared by a reviewer failing to notice it.
+    """
+    from nexus.config import Settings
+
+    guard = re.compile(
+        r"(\w+) = get_settings\(\)\.(\w+)\n\s+if \1 is None:\n\s+raise RuntimeError",
+    )
+    required = {
+        cast(str, Settings.model_fields[field].alias)
+        for source in (REPO_ROOT / "python/nexus").rglob("*.py")
+        for _, field in guard.findall(source.read_text(encoding="utf-8"))
+    }
+    assert {
+        "API_READ_ADMISSION_LIMITS",
+        "IMAGE_DECODER_LIMITS",
+        "READER_PUBLICATION_LIMITS",
+    } <= required, f"the mandatory-profile guard shape drifted: {sorted(required)}"
+
+    hetzner = (REPO_ROOT / "deploy/hetzner/sync-env.sh").read_text(encoding="utf-8")
+    backend = (REPO_ROOT / "deploy/env/env-prod-backend.example").read_text(encoding="utf-8")
+    allowlist_start = hetzner.index('REQUIRED_HETZNER_ENV_KEYS="')
+    allowlist = hetzner[allowlist_start : hetzner.index('"\n', allowlist_start + 27)].split("\n")
+    for key in sorted(required):
+        assert key in allowlist, f"{key} is required at runtime but never published or validated"
+        assert f"\n{key}=" in f"\n{backend}", f"{key} is missing from the backend env contract"

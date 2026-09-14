@@ -37,7 +37,7 @@ import {
   readerTargetFromReaderSelection,
   type ReaderSourceTarget,
 } from "@/lib/conversations/readerTarget";
-import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
+import { useReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
 import {
   chatDraftKeyFor,
   type ChatDraftKey,
@@ -80,6 +80,7 @@ import styles from "@/app/(authenticated)/conversations/page.module.css";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 
 export default function Conversation() {
+  const handleReaderSource = useReaderSourceActivation();
   const conversationId = usePaneParam("id");
   const router = usePaneRouter();
   const isPaneActive = usePaneIsActive();
@@ -87,7 +88,6 @@ export default function Conversation() {
   const { walk, startWalk, next, prev, leave } = useDocentWalk({
     activateTarget: paneRuntime.activateTarget,
   });
-  const resourceRef = paneRuntime.resourceRef;
   const searchParams = usePaneSearchParams();
   const draft = searchParams.get("draft") ?? "";
   const initialTargetMessageId = searchParams.get("message");
@@ -335,17 +335,12 @@ export default function Conversation() {
       target: ReaderSourceTarget | null,
       disposition: WorkspaceTargetDisposition,
     ) => {
-      if (target) dispatchReaderSourceActivation(target);
-      if (resourceRef === activation.resourceRef) {
-        return true;
-      }
-      return activateResource(activation, {
-        labelHint: target?.label,
+      return handleReaderSource(activation, target, {
         activateTarget: paneRuntime.activateTarget,
         disposition,
       });
     },
-    [paneRuntime, resourceRef],
+    [handleReaderSource, paneRuntime],
   );
 
   const handleReaderSourceActivate = useCallback(
@@ -355,14 +350,14 @@ export default function Conversation() {
       event?: React.MouseEvent,
     ) => {
       if (event?.defaultPrevented) return;
-      const activated = activateReaderSource(
+      const handled = activateReaderSource(
         activation,
         target,
         event
           ? workspaceTargetClickIntent(event).disposition
           : { kind: "Follow" },
       );
-      if (activated) event?.preventDefault();
+      if (handled) event?.preventDefault();
     },
     [activateReaderSource],
   );

@@ -1,4 +1,5 @@
 import { decodePresence, type Presence } from "@/lib/api/presence";
+import { READER_APPARATUS_KINDS, READER_APPARATUS_CONFIDENCES } from "./apparatusContract";
 import {
   isMediaRetrievalLocator,
   isRetrievalLocator,
@@ -319,7 +320,7 @@ function decodeEvidenceItem(raw: unknown, index: number): ReaderEvidenceItem {
         ),
         confidence: expectOneOf(
           item.confidence,
-          ["exact", "strong", "probable"] as const,
+          READER_APPARATUS_CONFIDENCES,
           `${name}.confidence`,
         ),
         targets: expectArray(
@@ -626,25 +627,11 @@ function decodeMarker(raw: unknown, index: number): ReaderDocumentMapMarker {
   };
 }
 
-const APPARATUS_KINDS: readonly ReaderEvidenceSourceKind[] = [
-  "footnote_ref",
-  "endnote_ref",
-  "bibliography_ref",
-  "sidenote_ref",
-  "margin_note_ref",
-  "footnote",
-  "endnote",
-  "bibliography_entry",
-  "sidenote",
-  "margin_note",
-  "reference_section",
-];
-
 function decodeApparatusKind(
   raw: unknown,
   name: string,
 ): ReaderEvidenceSourceKind {
-  return expectOneOf(raw, APPARATUS_KINDS, name);
+  return expectOneOf(raw, READER_APPARATUS_KINDS, name);
 }
 
 function decodeNavigationPresence(

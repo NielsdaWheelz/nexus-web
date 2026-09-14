@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import AppliedFilters from "@/components/search/AppliedFilters";
 import { FeedbackNotice } from "@/components/feedback/Feedback";
+import FeatureErrorBoundary from "@/components/feedback/FeatureErrorBoundary";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
@@ -107,6 +108,14 @@ function text(value: Presence<string>): string {
  * which view an unqualified entry lands on and the window History opens with
  * (contract D17), and reports every change through `onStateChange`.
  */
+function ImportsRefreshNotice({ defect, stale, retry }: {
+  defect: { readonly error: unknown } | null; stale: boolean; retry(): void;
+}) {
+  if (defect !== null) throw defect.error;
+  return stale ? <FeedbackNotice content={IMPORTS_STALE_REFRESH_NOTICE}
+    announcement="Polite" actions={[{ label: "Try again", onClick: retry }]} /> : null;
+}
+
 export default function ImportsWorkspace({
   state,
   onStateChange,
@@ -559,14 +568,14 @@ function ImportsWorkspaceView({
                   rows below are the last update, and the assertive error above
                   is kept for a view with nothing to show. `Refresh` re-keys
                   both reads, so one recovery answers either failure. */}
-              {(loadState.kind === "Failed" && summary !== null) ||
-              page.refreshFailed ? (
-                <FeedbackNotice
-                  content={IMPORTS_STALE_REFRESH_NOTICE}
-                  announcement="Polite"
-                  actions={[{ label: "Try again", onClick: () => void refresh() }]}
-                />
-              ) : null}
+              <FeatureErrorBoundary scope="Imports" key={page.refreshKey}
+                onRetry={() => void refresh()}
+                fallback={(retry) => <FeedbackNotice content={IMPORTS_STALE_REFRESH_NOTICE}
+                  announcement="Polite" actions={[{ label: "Try again", onClick: retry }]} />}>
+                <ImportsRefreshNotice defect={page.refreshDefect}
+                  stale={(loadState.kind === "Failed" && summary !== null) || page.refreshFailed}
+                  retry={() => void refresh()} />
+              </FeatureErrorBoundary>
               {page.status === "loading" ? (
                 <PaneLoadingState label="Loading imports" announcement="Polite" />
               ) : null}

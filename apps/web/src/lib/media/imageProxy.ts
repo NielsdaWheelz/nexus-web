@@ -6,6 +6,13 @@ export type MediaImageProxySrc = string & {
 
 const PREFIX = "/api/media/image?url=";
 
+/**
+ * Precondition: `url` is an absolute http(s) URL, the only shape the proxy
+ * route accepts — it answers E_SSRF_BLOCKED for anything else, which no retry
+ * can satisfy. A caller holding untrusted text must classify it at its ingress
+ * (see `documentEmbedThumbnail`) rather than hand a same-origin or malformed
+ * value to this builder.
+ */
 export function buildMediaImageProxySrc(url: string): MediaImageProxySrc {
   return `${PREFIX}${encodeURIComponent(url)}` as MediaImageProxySrc;
 }

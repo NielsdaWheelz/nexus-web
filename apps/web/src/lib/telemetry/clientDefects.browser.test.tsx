@@ -85,6 +85,7 @@ describe("client defect boundary", () => {
       "Activation delivered obsolete pane-defect focus",
     ).toHaveFocus();
     reportClientDefect(failure, {
+      scope: "Pane",
       paneId: "pane-proof",
       visitId: "visit-proof",
       componentStack: "duplicate",
@@ -119,12 +120,14 @@ describe("client defect boundary", () => {
     const failure = new Error("private");
     expect(() =>
       reportClientDefect(failure, {
-        paneId: "pane",
+        scope: "Pane",
+      paneId: "pane",
         visitId: "visit",
         componentStack: "x".repeat(10000),
       }),
     ).not.toThrow();
     reportClientDefect(failure, {
+      scope: "Pane",
       paneId: "pane",
       visitId: "visit",
       componentStack: "retry",

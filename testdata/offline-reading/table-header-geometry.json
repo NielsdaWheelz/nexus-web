@@ -1,0 +1,1215 @@
+{
+  "version": 1,
+  "source_sha256": "07576bb5240d3876421332fbfc5a4ee89817034818418e29c2d2eba1551c4f26",
+  "cases": [
+    {
+      "id": "column-block",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "near"
+      ],
+      "cells": [
+        {
+          "id": "far",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 1,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "near",
+          "row": 2,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 3,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "contiguous-column-headers",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "near",
+        "far"
+      ],
+      "cells": [
+        {
+          "id": "far",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "near",
+          "row": 1,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 2,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "row-block",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "near"
+      ],
+      "cells": [
+        {
+          "id": "far",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "row",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 0,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "near",
+          "row": 0,
+          "column": 2,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "row",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 0,
+          "column": 3,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "principal-header-block",
+      "principal_id": "p",
+      "expected_header_ids": [],
+      "cells": [
+        {
+          "id": "far",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 1,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 2,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "wrong-scope-still-opaque",
+      "principal_id": "p",
+      "expected_header_ids": [],
+      "cells": [
+        {
+          "id": "far",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 1,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "near",
+          "row": 2,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "row",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 3,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "different-width-not-opaque",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "near",
+        "far"
+      ],
+      "cells": [
+        {
+          "id": "far",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 2,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 1,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 1,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "near",
+          "row": 2,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 2,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 3,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 3,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "empty-slot-does-not-close-block",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "near",
+        "far"
+      ],
+      "cells": [
+        {
+          "id": "far",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "near",
+          "row": 2,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 3,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "overlap-slot-is-skipped",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "over"
+      ],
+      "cells": [
+        {
+          "id": null,
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "over",
+          "row": 0,
+          "column": 1,
+          "row_span": 2,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "wide",
+          "row": 1,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 2,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 2,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 2,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "spanning-principal-deduplicates-rays",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "row"
+      ],
+      "cells": [
+        {
+          "id": "row",
+          "row": 0,
+          "column": 0,
+          "row_span": 2,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "row",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 0,
+          "column": 1,
+          "row_span": 2,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "row-group-appended",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "group"
+      ],
+      "cells": [
+        {
+          "id": "group",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "rowgroup",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 0,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "column-group-appended",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "group"
+      ],
+      "cells": [
+        {
+          "id": "group",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "colgroup",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 0,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": [
+        [
+          0,
+          2
+        ]
+      ]
+    },
+    {
+      "id": "explicit-order-data-and-empty",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "b",
+        "a"
+      ],
+      "cells": [
+        {
+          "id": "a",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "empty",
+          "row": 0,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "row",
+          "empty": true,
+          "explicit_targets": null
+        },
+        {
+          "id": "b",
+          "row": 0,
+          "column": 2,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "row",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 0,
+          "column": 3,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": [
+            [
+              0,
+              2
+            ],
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              1
+            ]
+          ]
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "explicit-empty-suppresses-auto",
+      "principal_id": "p",
+      "expected_header_ids": [],
+      "cells": [
+        {
+          "id": "row",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "row",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 0,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": []
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "empty-header-still-blocks",
+      "principal_id": "p",
+      "expected_header_ids": [],
+      "cells": [
+        {
+          "id": "far",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 1,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "near",
+          "row": 2,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": true,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 3,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "nbsp-header-is-not-empty",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "near"
+      ],
+      "cells": [
+        {
+          "id": "near",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "row",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 0,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "different-group-between-nearest-and-barrier",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "near",
+        "middle"
+      ],
+      "cells": [
+        {
+          "id": null,
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": true,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 0,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": true,
+          "explicit_targets": null
+        },
+        {
+          "id": "far",
+          "row": 0,
+          "column": 2,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 1,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": true,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 1,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": true,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 1,
+          "column": 2,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 2,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": true,
+          "explicit_targets": null
+        },
+        {
+          "id": "middle",
+          "row": 2,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 2,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 3,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": true,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 3,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": true,
+          "explicit_targets": null
+        },
+        {
+          "id": "near",
+          "row": 3,
+          "column": 2,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 4,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": true,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 4,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": true,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 4,
+          "column": 2,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "wrong-scope-principal-still-opens-block",
+      "principal_id": "p",
+      "expected_header_ids": [],
+      "cells": [
+        {
+          "id": "far",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 1,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 2,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "row",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "empty-principal-still-opens-block",
+      "principal_id": "p",
+      "expected_header_ids": [],
+      "cells": [
+        {
+          "id": "far",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 1,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 2,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "column",
+          "empty": true,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "first-ray-order-before-inner-distance",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "far",
+        "near"
+      ],
+      "cells": [
+        {
+          "id": "far",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "row",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 0,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 0,
+          "column": 2,
+          "row_span": 2,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "near",
+          "row": 1,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 2,
+          "row_group": 0,
+          "header_kind": "row",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "group-source-order-before-deferred-footer-geometry",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "footer",
+        "body"
+      ],
+      "cells": [
+        {
+          "id": "footer",
+          "row": 1,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 1,
+          "header_kind": "colgroup",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 1,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 1,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "body",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "colgroup",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 0,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": [
+        [
+          0,
+          2
+        ]
+      ]
+    },
+    {
+      "id": "spanning-overlap-reveals-distinct-headers",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "h0",
+        "h1",
+        "h2",
+        "h3"
+      ],
+      "cells": [
+        {
+          "id": "h0",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "row",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 0,
+          "column": 1,
+          "row_span": 4,
+          "column_span": 2,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 0,
+          "column": 3,
+          "row_span": 4,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "h1",
+          "row": 1,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 3,
+          "row_group": 0,
+          "header_kind": "row",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "h2",
+          "row": 2,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 3,
+          "row_group": 0,
+          "header_kind": "row",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "h3",
+          "row": 3,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 3,
+          "row_group": 0,
+          "header_kind": "row",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    },
+    {
+      "id": "implicit-body-rowgroup",
+      "principal_id": "p",
+      "expected_header_ids": [
+        "group"
+      ],
+      "cells": [
+        {
+          "id": "group",
+          "row": 0,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "rowgroup",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": null,
+          "row": 0,
+          "column": 1,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        },
+        {
+          "id": "p",
+          "row": 1,
+          "column": 0,
+          "row_span": 1,
+          "column_span": 1,
+          "row_group": 0,
+          "header_kind": "data",
+          "empty": false,
+          "explicit_targets": null
+        }
+      ],
+      "column_groups": []
+    }
+  ]
+}

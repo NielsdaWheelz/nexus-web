@@ -15,7 +15,8 @@
  * ESLint exception: react/no-danger is disabled for this file only.
  */
 
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { usePaneRuntime } from "@/lib/panes/paneRuntime";
 import { useReaderPulseHighlight } from "@/lib/reader/pulseEvent";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import {
@@ -24,16 +25,7 @@ import {
 import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import styles from "./HtmlRenderer.module.css";
 
-interface HtmlRendererProps {
-  /**
-   * Sanitized HTML content from the API.
-   * This can be either:
-   * - Raw `html_sanitized` / `description_html`
-   * - Sanitized HTML annotated with highlight spans or timestamp buttons
-   *
-   * The component treats both the same way: it only renders the HTML.
-   */
-  htmlSanitized: string;
+interface HtmlRendererCommonProps {
   /** Optional class name for the container */
   className?: string;
   /**
@@ -44,12 +36,13 @@ interface HtmlRendererProps {
   mediaId?: string;
   /** Reader-owned positioning boundary for pulse navigation. */
   scrollPositioner?: ReaderScrollPositioner;
-  /**
-   * Projects imported document headings beneath the route-level pane heading.
-   * IDs and all other attributes are preserved.
-   */
-  headingLevelOffset?: 1 | 2 | 3 | 4 | 5;
 }
+
+type HtmlRendererProps = HtmlRendererCommonProps & (
+  | { htmlSanitized: string; preparedRoot?: never; headingLevelOffset?: 1 | 2 | 3 | 4 | 5 }
+  /** Publication preparation already admitted and projected these exact nodes. */
+  | { preparedRoot: HTMLElement; htmlSanitized?: never; headingLevelOffset?: never }
+);
 
 const PULSE_DURATION_MS = 1200;
 
@@ -92,24 +85,35 @@ function projectHtmlHeadingLevels(
  */
 export default memo(function HtmlRenderer({
   htmlSanitized,
+  preparedRoot,
   className,
   mediaId,
   scrollPositioner,
   headingLevelOffset,
 }: HtmlRendererProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const paneId = usePaneRuntime()?.paneId ?? null;
   const projectedHtml = useMemo(
     () =>
-      headingLevelOffset
+      htmlSanitized === undefined ? null : headingLevelOffset
         ? projectHtmlHeadingLevels(htmlSanitized, headingLevelOffset)
         : htmlSanitized,
     [headingLevelOffset, htmlSanitized],
   );
 
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (root === null || preparedRoot === undefined) return;
+    root.replaceChildren(preparedRoot);
+    return () => {
+      if (preparedRoot.parentNode === root) root.removeChild(preparedRoot);
+    };
+  }, [preparedRoot]);
+
   useReaderPulseHighlight(
     useCallback(
       (target) => {
-        if (!mediaId || target.mediaId !== mediaId) return;
+        if (!mediaId || target.mediaId !== mediaId || target.paneId !== paneId || preparedRoot !== undefined) return;
         const root = rootRef.current;
         if (!root) return;
         const candidates = collectPulseCandidates(
@@ -131,51 +135,28 @@ export default memo(function HtmlRenderer({
           }, PULSE_DURATION_MS);
         }
       },
-      [mediaId, scrollPositioner],
+      [mediaId, paneId, preparedRoot, scrollPositioner],
     ),
   );
 
   // Tag direct-child <p> elements so focus mode and reading metrics can target them.
   // Runs after each projected-HTML render; safe and idempotent (same selector each time).
   useEffect(() => {
-    const root = rootRef.current;
+    const root = preparedRoot ?? rootRef.current;
     if (!root) return;
     for (const paragraph of Array.from(root.children)) {
       if (paragraph.tagName === "P") {
         paragraph.setAttribute("data-paragraph", "true");
       }
     }
-  }, [projectedHtml]);
-
-  // Reflect non-collapsed selections inside this renderer so focus-mode dimming can suspend.
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    const handleSelectionChange = () => {
-      const selection = document.getSelection();
-      const isActive =
-        selection !== null &&
-        !selection.isCollapsed &&
-        selection.rangeCount > 0 &&
-        root.contains(selection.getRangeAt(0).commonAncestorContainer);
-      if (isActive) {
-        root.setAttribute("data-selection-active", "true");
-      } else {
-        root.removeAttribute("data-selection-active");
-      }
-    };
-    document.addEventListener("selectionchange", handleSelectionChange);
-    return () => {
-      document.removeEventListener("selectionchange", handleSelectionChange);
-    };
-  }, []);
+  }, [preparedRoot, projectedHtml]);
 
   return (
     <div
       ref={rootRef}
       className={`${styles.renderer} ${className || ""}`}
       data-testid="html-renderer"
-      dangerouslySetInnerHTML={{ __html: projectedHtml }}
+      dangerouslySetInnerHTML={projectedHtml === null ? undefined : { __html: projectedHtml }}
     />
   );
 });

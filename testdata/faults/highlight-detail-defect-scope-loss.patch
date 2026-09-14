@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/app/(authenticated)/media/[id]/useHostedTextHighlights.ts b/apps/web/src/app/(authenticated)/media/[id]/useHostedTextHighlights.ts
+--- a/apps/web/src/app/(authenticated)/media/[id]/useHostedTextHighlights.ts
++++ b/apps/web/src/app/(authenticated)/media/[id]/useHostedTextHighlights.ts
+@@ -274,7 +274,7 @@
+       retry: () => { if (keyRef.current === key) void load(); } } : null);
+   }, [defect, key, load, onDefect]);
+ 
+-  if (onDefect === undefined && defect?.key === key) throw defect.error;
++  if (defect?.key === key) throw defect.error;
+ 
+   const current =
+     state.key === key

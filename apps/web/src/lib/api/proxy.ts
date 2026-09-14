@@ -14,6 +14,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { apiErrorEnvelopeFromResponse } from "@/lib/api/client";
 import { getEnv, isDeployed } from "@/lib/env";
 import { createRandomId } from "@/lib/createRandomId";
 import {
@@ -68,6 +69,7 @@ const BLOCKED_REQUEST_HEADERS = new Set([
  * All other headers are stripped.
  */
 const ALLOWED_RESPONSE_HEADERS = new Set([
+  "retry-after",
   "x-request-id",
   "content-type",
   "cache-control",
@@ -82,20 +84,24 @@ const ALLOWED_RESPONSE_HEADERS = new Set([
   "server-timing",
 ]);
 
-// Private EPUB assets are the one authenticated byte-serving lane. It may
+// Private media assets and immutable reader members use the byte-serving lane. It may
 // forward representation length because its upstream request explicitly
 // requires identity encoding; structured API responses never forward length.
 const MEDIA_ASSET_RESPONSE_HEADERS = new Set([
   ...ALLOWED_RESPONSE_HEADERS,
   "content-length",
+  "content-digest",
+  "x-nexus-reader-generation",
+  "x-nexus-image-width",
+  "x-nexus-image-height",
 ]);
 
-const OFFLINE_READER_PROGRESS_REQUEST_HEADERS = new Set([
+const ACCOUNT_BOUND_REQUEST_HEADERS = new Set([
   ...ALLOWED_REQUEST_HEADERS,
   "x-nexus-expected-account-id",
 ]);
 
-const OFFLINE_READER_PROGRESS_RESPONSE_HEADERS = new Set([
+const ACCOUNT_BOUND_RESPONSE_HEADERS = new Set([
   ...ALLOWED_RESPONSE_HEADERS,
   "nexus-account-id",
   "nexus-reader-generation",
@@ -168,30 +174,57 @@ interface AuthenticatedProxyResponsePolicy {
   readonly allowedRequestHeaders: ReadonlySet<string>;
   readonly allowedHeaders: ReadonlySet<string>;
   readonly requireIdentityEncoding: boolean;
+  // Transfer encoding and caching are separate decisions. Session finalization
+  // stamps `private, no-store` on everything it owns, which is right when the
+  // response IS session state; a lane whose upstream produces a privately
+  // cacheable representation owns its own freshness and forwards the
+  // directive the producer sent.
+  readonly representationCaching: "session-no-store" | "forward-upstream";
 }
 
 const STRUCTURED_RESPONSE_POLICY: AuthenticatedProxyResponsePolicy = {
   allowedRequestHeaders: ALLOWED_REQUEST_HEADERS,
   allowedHeaders: ALLOWED_RESPONSE_HEADERS,
   requireIdentityEncoding: false,
+  representationCaching: "session-no-store",
 };
 
 const MEDIA_ASSET_RESPONSE_POLICY: AuthenticatedProxyResponsePolicy = {
   allowedRequestHeaders: ALLOWED_REQUEST_HEADERS,
   allowedHeaders: MEDIA_ASSET_RESPONSE_HEADERS,
   requireIdentityEncoding: true,
+  representationCaching: "session-no-store",
 };
 
-const OFFLINE_READER_PROGRESS_RESPONSE_POLICY: AuthenticatedProxyResponsePolicy = {
-  allowedRequestHeaders: OFFLINE_READER_PROGRESS_REQUEST_HEADERS,
-  allowedHeaders: OFFLINE_READER_PROGRESS_RESPONSE_HEADERS,
+// Artwork and EPUB assets are authenticated but privately cacheable: the API
+// retains no copy, so the browser's own freshness window is the only cache the
+// system has. Their upstream declares it; this lane must not overwrite it.
+const CACHEABLE_ASSET_RESPONSE_POLICY: AuthenticatedProxyResponsePolicy = {
+  allowedRequestHeaders: ALLOWED_REQUEST_HEADERS,
+  allowedHeaders: MEDIA_ASSET_RESPONSE_HEADERS,
+  requireIdentityEncoding: true,
+  representationCaching: "forward-upstream",
+};
+
+const ACCOUNT_BOUND_RESPONSE_POLICY: AuthenticatedProxyResponsePolicy = {
+  allowedRequestHeaders: ACCOUNT_BOUND_REQUEST_HEADERS,
+  allowedHeaders: ACCOUNT_BOUND_RESPONSE_HEADERS,
   requireIdentityEncoding: false,
+  representationCaching: "session-no-store",
 };
 
 interface ExtensionProxyOptions {
   defaultAccept?: string;
   defaultContentType?: string;
   forwardHeaders?: readonly string[];
+}
+
+function withNoTransform(cacheControl: string): string {
+  const directives = cacheControl.split(",").map((directive) => directive.trim()).filter(Boolean);
+  if (directives.some((directive) => directive.toLowerCase() === "no-transform")) {
+    return directives.join(", ");
+  }
+  return [...directives, "no-transform"].join(", ");
 }
 
 function isValidRequestId(value: string | null): value is string {
@@ -334,8 +367,28 @@ async function proxyAuthenticatedToFastAPIWithDeps(
 
   const requestId = getOrGenerateRequestId(request, deps.generateRequestId);
 
-  const finalize = (response: NextResponse, effect: SessionEffect) =>
+  const finalize = (response: NextResponse, effect: SessionEffect) => {
+    // Only a forwarded upstream representation carries its producer's freshness;
+    // responses this proxy generates itself carry none and stay session state.
+    const representation =
+      responsePolicy.representationCaching === "forward-upstream"
+        ? response.headers.get("cache-control")
+        : null;
     finalizeSessionResponse(response, effect);
+    // A lane that forwards the exact representation length also forbids any hop
+    // from recoding the body, however long the representation stays fresh.
+    if (representation !== null) {
+      response.headers.set(
+        "cache-control",
+        responsePolicy.requireIdentityEncoding
+          ? withNoTransform(representation)
+          : representation,
+      );
+    } else if (responsePolicy.requireIdentityEncoding) {
+      response.headers.set("cache-control", "private, no-store, no-transform");
+    }
+    return response;
+  };
 
   const errorResponse = (
     status: number,
@@ -577,6 +630,24 @@ async function proxyAuthenticatedToFastAPIWithDeps(
       );
     }
 
+    if (response.status === 502 || response.status === 503 || response.status === 504) {
+      const envelope = await apiErrorEnvelopeFromResponse(response);
+      for (const header of ["cache-control", "content-length", "content-range", "content-encoding", "content-digest", "x-nexus-reader-generation", "x-nexus-image-width", "x-nexus-image-height", "etag", "content-disposition", "accept-ranges"]) {
+        responseHeaders.delete(header);
+      }
+      responseHeaders.set("content-type", "application/json");
+      const errorBody = {
+        ...envelope,
+        error: {
+          ...envelope.error,
+          request_id: envelope.error.request_id ?? responseHeaders.get(REQUEST_ID_HEADER),
+        },
+      };
+      return finalize(new NextResponse(request.method === "HEAD" ? null : JSON.stringify(errorBody), {
+        status: response.status, headers: responseHeaders,
+      }), sessionEffect);
+    }
+
     const responseBody =
       request.method === "HEAD" ||
       response.status === 204 ||
@@ -637,23 +708,10 @@ export async function proxyMediaAssetToFastAPI(
   path: string,
 ): Promise<Response> {
   const deps = await createDefaultDeps();
-  return proxyAuthenticatedToFastAPIWithDeps(
-    request,
-    path,
-    deps,
-    MEDIA_ASSET_RESPONSE_POLICY,
-  );
+  return proxyMediaAssetToFastAPIWithDeps(request, path, deps);
 }
 
-export async function proxyOfflineReaderProgressToFastAPI(
-  request: Request,
-  path: string,
-): Promise<Response> {
-  const deps = await createDefaultDeps();
-  return proxyOfflineReaderProgressToFastAPIWithDeps(request, path, deps);
-}
-
-export async function proxyOfflineReaderProgressToFastAPIWithDeps(
+export async function proxyMediaAssetToFastAPIWithDeps(
   request: Request,
   path: string,
   deps: ProxyDeps,
@@ -662,7 +720,49 @@ export async function proxyOfflineReaderProgressToFastAPIWithDeps(
     request,
     path,
     deps,
-    OFFLINE_READER_PROGRESS_RESPONSE_POLICY,
+    MEDIA_ASSET_RESPONSE_POLICY,
+  );
+}
+
+export async function proxyCacheableMediaAssetToFastAPI(
+  request: Request,
+  path: string,
+): Promise<Response> {
+  const deps = await createDefaultDeps();
+  return proxyCacheableMediaAssetToFastAPIWithDeps(request, path, deps);
+}
+
+export async function proxyCacheableMediaAssetToFastAPIWithDeps(
+  request: Request,
+  path: string,
+  deps: ProxyDeps,
+): Promise<Response> {
+  return proxyAuthenticatedToFastAPIWithDeps(
+    request,
+    path,
+    deps,
+    CACHEABLE_ASSET_RESPONSE_POLICY,
+  );
+}
+
+export async function proxyAccountBoundToFastAPI(
+  request: Request,
+  path: string,
+): Promise<Response> {
+  const deps = await createDefaultDeps();
+  return proxyAccountBoundToFastAPIWithDeps(request, path, deps);
+}
+
+export async function proxyAccountBoundToFastAPIWithDeps(
+  request: Request,
+  path: string,
+  deps: ProxyDeps,
+): Promise<Response> {
+  return proxyAuthenticatedToFastAPIWithDeps(
+    request,
+    path,
+    deps,
+    ACCOUNT_BOUND_RESPONSE_POLICY,
   );
 }
 

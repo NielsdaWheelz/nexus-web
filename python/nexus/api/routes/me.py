@@ -4,15 +4,18 @@ Returns information about the authenticated viewer including profile fields.
 """
 
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy.orm import Session
 
+from nexus.api.read_admission import AdmittedReadRoute
+from nexus.auth.account_binding import require_expected_account
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.config import Settings, get_settings
 from nexus.db.session import get_db
 from nexus.responses import ok, success_response
-from nexus.schemas.nexus_history import NexusSelectionRecordRequest
+from nexus.schemas.nexus_history import NexusHistoryQuery, NexusSelectionRecordRequest
 from nexus.schemas.reader import ReaderProfilePatch
 from nexus.schemas.user import UpdateProfileRequest
 from nexus.schemas.workspace_session import (
@@ -27,6 +30,7 @@ from nexus.services import users as users_service
 from nexus.services import workspace_sessions as workspace_sessions_service
 
 router = APIRouter(tags=["user"])
+reads = APIRouter(route_class=AdmittedReadRoute)
 
 
 def _workspace_session_payload(session: WorkspaceSessionOut | None) -> dict | None:
@@ -95,14 +99,14 @@ def patch_reader_profile(
     return ok(result)
 
 
-@router.get("/me/nexus-history")
-def get_nexus_history(
+@reads.post("/nexus/history/query")
+def query_nexus_history(
+    body: NexusHistoryQuery,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    query: Annotated[str | None, Query(max_length=500)] = None,
 ) -> dict:
     """Get Nexus usage history for the current viewer."""
-    result = nexus_history_service.get_history_for_viewer(db, viewer.user_id, query=query)
+    result = nexus_history_service.get_history_for_viewer(db, viewer.user_id, request=body)
     return ok(result)
 
 
@@ -151,9 +155,14 @@ def put_workspace_session(
     body: WorkspaceSessionPutRequest,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    expected_account_id: Annotated[UUID, Header(alias="X-Nexus-Expected-Account-Id")],
 ) -> dict:
     """Upsert this device's workspace session (last-write-wins)."""
+    require_expected_account(viewer.user_id, expected_account_id)
     result = workspace_sessions_service.upsert_workspace_session(
         db, viewer.user_id, body.device_id, body.state
     )
     return success_response(_workspace_session_payload(result))
+
+
+router.include_router(reads)

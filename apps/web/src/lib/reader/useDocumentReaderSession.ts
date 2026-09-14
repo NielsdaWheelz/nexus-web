@@ -1,283 +1,92 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useResource } from "@/lib/api/useResource";
-import {
-  useReaderProgress,
-  type ComposedProgressAuthority,
-  type ReaderProgress,
-  type UseReaderProgressOptions,
-} from "./useReaderProgress";
-import type {
-  DocumentReaderSession,
-  LoadedDocumentReaderSession,
-  ReaderResource,
-} from "./DocumentReaderSession";
-import type { EpubSectionContent } from "@/lib/media/epubFind";
-import type {
-  ReaderNavigation,
-  ReaderTextDocument,
-  ResolvedPdfDocument,
-} from "./ReaderDocumentSource";
+import { useReaderProgress, type ComposedProgressAuthority, type ReaderProgress, type ReaderCapability, type UseReaderProgressOptions } from "./useReaderProgress";
+import type { DocumentReaderSession, ReaderSessionLoad, ReaderResource } from "./DocumentReaderSession";
+import type { ReaderPublicationTarget } from "./publicationContract";
+import type { ResolvedPdfDocument } from "./ReaderDocumentSource";
+import { useDocumentReaderWindow, type DocumentReaderWindow, type ReaderWindowUnit } from "./useDocumentReaderWindow";
+export type { ReaderWindowUnit } from "./useDocumentReaderWindow";
 
-type SessionProgressOptions = Omit<
-  UseReaderProgressOptions,
-  "port" | "composedAuthority"
->;
-
-export interface DocumentReaderSessionComposition {
+type SessionProgressOptions = Omit<UseReaderProgressOptions, "port" | "composedAuthority" | "capability"> & { capability: ReaderCapabilityRequest };
+export type ReaderCapabilityRequest = { state: "Unavailable" } | Omit<Extract<ReaderCapability, { state: "Readable" }>, "source">;
+export interface DocumentReaderSessionComposition extends DocumentReaderWindow {
   readonly progress: ReaderProgress;
-  readonly navigation: ReaderResource<ReaderNavigation>;
-  readonly textDocument: ReaderResource<ReaderTextDocument>;
-  readonly initial: ReaderResource<LoadedDocumentReaderSession>;
-  readonly epubSection: ReaderResource<EpubSectionContent>;
-  readonly activeEpubSection: EpubSectionContent | null;
-  readonly setActiveEpubSection: Dispatch<SetStateAction<EpubSectionContent | null>>;
-  readonly epubSectionLoading: boolean;
-  readonly epubSectionError: unknown | null;
+  readonly capability: ReaderCapability;
+  readonly initial: ReaderResource<ReaderSessionLoad>;
   readonly pdfDocument: ReaderResource<ResolvedPdfDocument>;
 }
 
-export interface DocumentReaderSessionEpubOptions {
-  readonly sectionId: string | null;
-  readonly cacheKey: string | null;
-  readonly sourceGeneration: number;
-}
-
-export interface DocumentReaderSessionPdfOptions {
-  readonly sourceCacheKey: string | null;
-  readonly sourceRefreshToken: number;
-}
-
-/**
- * The production composition owner for a mounted reader session.
- *
- * MediaPaneBody supplies hosted lifecycle/chrome callbacks; this hook owns the
- * initial progress, navigation, text-source, and format-resource requests
- * through the session. Format leaves retain positioning, Find, and hosted
- * decoration; highlights are a hosted layer and never enter this composition.
- */
-export function useDocumentReaderSession({
-  session,
-  progress,
-  navigation,
-  loadCacheKey,
-  initialEpubSectionId,
-  epub,
-  pdf,
-}: {
+/** The mounted view owns exact unit leases; the cache owns shared immutable bytes. */
+export function useDocumentReaderSession({ session, progress, loadCacheKey, initialTargets, retireUnits, captureNavigationAuthority, pdf }: {
   readonly session: DocumentReaderSession;
+  readonly captureNavigationAuthority?: () => (() => boolean);
   readonly progress: SessionProgressOptions;
-  readonly navigation: {
-    readonly cacheKey: string | null;
-    readonly expectedKind: "epub" | "web_article" | null;
-  };
   readonly loadCacheKey: string | null;
-  readonly initialEpubSectionId: string | null;
-  readonly epub?: DocumentReaderSessionEpubOptions;
-  readonly pdf?: DocumentReaderSessionPdfOptions;
+  /** Detach every supplied DOM root atomically, or retain all when an interaction pins one. */
+  readonly retireUnits: (units: readonly ReaderWindowUnit[]) => boolean;
+  readonly initialTargets: { readonly fresh: ReaderPublicationTarget | null; readonly cold: ReaderPublicationTarget | null };
+  readonly pdf?: { readonly sourceCacheKey: string | null; readonly sourceRefreshToken: number };
 }): DocumentReaderSessionComposition {
-  session.seedInitialEpubSection(initialEpubSectionId);
-  const initialKeysRef = useRef<{
-    readonly load: string | null;
-    readonly navigation: string | null;
-  }>({ load: null, navigation: null });
-  if (initialKeysRef.current.load !== loadCacheKey) {
-    initialKeysRef.current = {
-      load: loadCacheKey,
-      navigation: navigation.cacheKey,
-    };
+  const targetsRef = useRef(initialTargets);
+  const loadKeyRef = useRef(loadCacheKey);
+  if (loadKeyRef.current !== loadCacheKey) {
+    loadKeyRef.current = loadCacheKey;
+    targetsRef.current = initialTargets;
   }
-  // One retry/invalidation identity for the composed load: retrying discards
-  // the session's memoized transaction and re-keys the resource so document
-  // content and progress recover (or fail) together.
+  const sessionIdentityRef = useRef({ session, revision: 0 });
+  if (sessionIdentityRef.current.session !== session) {
+    sessionIdentityRef.current = { session, revision: sessionIdentityRef.current.revision + 1 };
+  }
   const [loadAttempt, setLoadAttempt] = useState(0);
-  const retryLoad = useCallback(() => {
-    session.invalidate();
-    setLoadAttempt((attempt) => attempt + 1);
-  }, [session]);
-  const initial = useResource<LoadedDocumentReaderSession>({
-    cacheKey:
-      loadCacheKey === null ? null : `${loadCacheKey}#attempt-${loadAttempt}`,
-    load: (signal) => session.load(signal),
+  const retryLoad = useCallback(() => setLoadAttempt((attempt) => attempt + 1), []);
+  const initialKey = loadCacheKey === null ? null : `${loadCacheKey}#session-${sessionIdentityRef.current.revision}#attempt-${loadAttempt}`;
+  const [initialDefect, setInitialDefect] = useState<{ key: string | null; error: unknown } | null>(null);
+  const initial = useResource<ReaderSessionLoad>({
+    cacheKey: initialKey,
+    load: (signal) => session.load(signal, targetsRef.current),
+    onDefect: (error) => setInitialDefect({ key: initialKey, error }),
   });
-  const composedAuthority = useMemo<ComposedProgressAuthority>(
-    () => ({
-      resource:
-        initial.status === "ready"
-          ? { status: "ready", data: initial.data.progress }
-          : initial,
-      retry: retryLoad,
-    }),
-    [initial, retryLoad],
-  );
+  const loaded = initial.status === "ready" && "document" in initial.data ? initial.data : null;
+  const composedAuthority = useMemo<ComposedProgressAuthority>(() => ({
+    resource: initial.status === "ready" ? loaded === null ? { status: "idle" } : { status: "ready", data: loaded.progress } : initial,
+    retry: retryLoad,
+  }), [initial, loaded, retryLoad]);
+  const capability: ReaderCapability = progress.capability.state === "Unavailable"
+    ? progress.capability
+    : progress.capability.locatorKind === "transcript"
+      ? { ...progress.capability, source: { kind: "Timeline" } }
+      : loaded !== null
+        ? { ...progress.capability, source: loaded.document.descriptor.source }
+        : { state: "Unavailable" };
   const readerProgress = useReaderProgress({
-    ...progress,
-    port: session.progress,
+    ...progress, capability, port: session.progress,
     ...(loadCacheKey === null ? {} : { composedAuthority }),
   });
-  const navigationResource = useMemo<ReaderResource<ReaderNavigation>>(
-    () =>
-      initial.status === "loading"
-        ? { status: "loading" }
-        : initial.status === "error"
-          ? { status: "error", error: initial.error, retry: retryLoad }
-          : initial.status === "idle" || initial.data.document.kind === "Pdf"
-            ? { status: "idle" }
-            : initial.data.document.navigation.kind === navigation.expectedKind
-              ? { status: "ready", data: initial.data.document.navigation }
-              : {
-                  status: "error",
-                  error: new Error("Unexpected reader navigation kind"),
-                  retry: retryLoad,
-                },
-    [initial, navigation.expectedKind, retryLoad],
-  );
-  const navigationRefreshKey =
-    initial.status === "ready" &&
-    navigation.cacheKey !== null &&
-    navigation.cacheKey !== initialKeysRef.current.navigation
-      ? navigation.cacheKey
-      : null;
-  const refreshedNavigation = useResource<ReaderNavigation>({
-    cacheKey: navigationRefreshKey,
-    load: (signal) => session.loadNavigation(signal),
-  });
-  const currentNavigation =
-    navigationRefreshKey === null ? navigationResource : refreshedNavigation;
 
-  const [activeEpubSection, setActiveEpubSection] =
-    useState<EpubSectionContent | null>(null);
-  const epubSectionId = epub?.sectionId ?? null;
-  const epubSectionCacheKey = epub?.cacheKey ?? null;
-  const epubSourceGeneration = epub?.sourceGeneration ?? 0;
-  const epubSectionInitial = useMemo(
-    () =>
-      initial.status === "ready" &&
-      initial.data.document.kind === "Epub" &&
-      epubSourceGeneration === 0 &&
-      epubSectionId !== null &&
-      initial.data.document.section.section_id === epubSectionId
-        ? ({ status: "ready", data: initial.data.document.section } as const)
-        : null,
-    [epubSectionId, epubSourceGeneration, initial],
-  );
-  const epubSectionFetch = useResource<EpubSectionContent>({
-    cacheKey:
-      epubSectionId !== null && epubSourceGeneration > 0
-        ? epubSectionCacheKey
-        : initial.status === "ready" && epubSectionId !== null
-          ? epubSectionCacheKey
-          : null,
-    load: (signal) => session.loadEpubSection(epubSectionId ?? "", signal),
-  });
-  const epubSection = useMemo<ReaderResource<EpubSectionContent>>(
-    () =>
-      epubSectionInitial ??
-      (epubSectionId === null
-        ? { status: "idle" as const }
-        : epubSourceGeneration === 0 &&
-            (initial.status === "loading" || initial.status === "error")
-          ? initial.status === "loading"
-            ? { status: "loading" as const }
-            : {
-                status: "error" as const,
-                error: initial.error,
-                retry: retryLoad,
-              }
-          : epubSectionFetch),
-    [
-      epubSectionId,
-      epubSourceGeneration,
-      epubSectionFetch,
-      epubSectionInitial,
-      initial,
-      retryLoad,
-    ],
-  );
+  const readerWindow = useDocumentReaderWindow({ session, initial, retryInitial: retryLoad, retireUnits, captureNavigationAuthority });
 
-  useEffect(() => {
-    setActiveEpubSection((current) =>
-      current?.section_id === epubSectionId ? current : null,
-    );
-  }, [epubSectionId]);
-  useEffect(() => {
-    if (epubSection.status === "ready") {
-      setActiveEpubSection(epubSection.data);
-    }
-  }, [epubSection]);
-
-  const pdfSourceRefreshToken = pdf?.sourceRefreshToken ?? 0;
-  const pdfSourceCacheKey = pdf?.sourceCacheKey ?? null;
-  const pdfEnabled = pdf !== undefined;
-  const pdfRefreshResource = useResource<ResolvedPdfDocument>({
-    cacheKey:
-      pdfSourceRefreshToken > 0
-        ? pdfSourceCacheKey
-        : null,
+  const [pdfAttempt, setPdfAttempt] = useState(0);
+  const retryPdf = useCallback(() => setPdfAttempt((attempt) => attempt + 1), []);
+  const pdfKey = pdf !== undefined && pdf.sourceRefreshToken > 0 && pdf.sourceCacheKey !== null
+    ? `${pdf.sourceCacheKey}#session-${sessionIdentityRef.current.revision}#attempt-${pdfAttempt}` : null;
+  const [pdfDefect, setPdfDefect] = useState<{ key: string | null; error: unknown } | null>(null);
+  const pdfRefresh = useResource<ResolvedPdfDocument>({
+    cacheKey: pdfKey,
     load: (signal) => session.openPdf(signal),
+    onDefect: (error) => setPdfDefect({ key: pdfKey, error }),
   });
-  const pdfDocument = useMemo<ReaderResource<ResolvedPdfDocument>>(
-    () =>
-      !pdfEnabled
-        ? { status: "idle" as const }
-        : pdfSourceRefreshToken === 0
-        ? initial.status === "ready" && initial.data.document.kind === "Pdf"
-          ? { status: "ready" as const, data: initial.data.document.document }
-          : initial.status === "loading"
-            ? { status: "loading" as const }
-            : initial.status === "error"
-              ? {
-                  status: "error" as const,
-                  error: initial.error,
-                  retry: retryLoad,
-                }
-              : { status: "idle" as const }
-        : pdfRefreshResource,
-    [initial, pdfEnabled, pdfRefreshResource, pdfSourceRefreshToken, retryLoad],
-  );
-  const textDocumentResource = useMemo<ReaderResource<ReaderTextDocument>>(
-    () =>
-      initial.status === "ready" && initial.data.document.kind === "WebArticle"
-        ? {
-            status: "ready",
-            data: {
-              fragments: initial.data.document.fragments,
-              navigation: initial.data.document.navigation.sections.map(
-                (section) => ({
-                  fragment_id: section.fragment_id,
-                  label: section.label,
-                }),
-              ),
-            },
-          }
-        : initial.status === "loading"
-          ? { status: "loading" }
-          : initial.status === "error"
-            ? { status: "error", error: initial.error, retry: retryLoad }
-            : { status: "idle" },
-    [initial, retryLoad],
-  );
-
+  const pdfDocument: ReaderResource<ResolvedPdfDocument> = pdf === undefined ? { status: "idle" }
+    : pdf.sourceRefreshToken > 0 ? pdfRefresh
+      : loaded !== null && loaded.document.kind === "Pdf" ? { status: "ready", data: loaded.document.document }
+        : initial.status === "loading" ? { status: "loading" }
+          : initial.status === "error" ? { status: "error", error: initial.error, retry: retryLoad } : { status: "idle" };
   return {
-    initial,
-    progress: readerProgress,
-    navigation: currentNavigation,
-    textDocument: textDocumentResource,
-    epubSection,
-    activeEpubSection,
-    setActiveEpubSection,
-    epubSectionLoading: epubSection.status === "loading",
-    epubSectionError:
-      epubSection.status === "error" ? epubSection.error : null,
-    pdfDocument,
+    ...readerWindow,
+    initial, capability, progress: readerProgress, pdfDocument,
+    contentDefect: initialKey !== null && initialDefect?.key === initialKey ? { key: `initial:${initialKey}`, error: initialDefect.error, retry: retryLoad }
+      : pdfKey !== null && pdfDefect?.key === pdfKey ? { key: `pdf:${pdfKey}`, error: pdfDefect.error, retry: retryPdf }
+        : readerWindow.contentDefect,
   };
 }

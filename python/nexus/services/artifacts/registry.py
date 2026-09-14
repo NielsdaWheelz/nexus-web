@@ -11,7 +11,12 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import is_library_member
+from nexus.auth.permissions import (
+    is_library_member,
+    visible_contributor_ids_cte_sql,
+    visible_media_ids_cte_sql,
+    visible_podcast_ids_cte_sql,
+)
 from nexus.errors import NotFoundError
 from nexus.services.artifacts.idea_seeds import get_idea_subject
 from nexus.services.artifacts.subject_policy import (
@@ -79,6 +84,74 @@ def _registrations() -> Mapping[str, DossierRegistration]:
 
 def dossier_registration(subject_scheme: str) -> DossierRegistration | None:
     return _registrations().get(subject_scheme)
+
+
+def _subject_visible_sql_arms() -> Mapping[str, str]:
+    """Per-scheme visibility predicate for a stored head aliased `a`."""
+    return {
+        "media": f"a.subject_id IN ({visible_media_ids_cte_sql()})",
+        "conversation": """EXISTS (
+                SELECT 1 FROM conversations subject
+                WHERE subject.id = a.subject_id AND subject.owner_user_id = :viewer_id
+            )""",
+        "library": """EXISTS (
+                SELECT 1 FROM memberships subject_member
+                WHERE subject_member.library_id = a.subject_id
+                  AND subject_member.user_id = :viewer_id
+            )""",
+        "podcast": f"a.subject_id IN ({visible_podcast_ids_cte_sql()})",
+        "contributor": f"""EXISTS (
+                SELECT 1 FROM contributors subject
+                WHERE subject.id = a.subject_id
+                  AND subject.id IN ({visible_contributor_ids_cte_sql()})
+            )""",
+        "page": """EXISTS (
+                SELECT 1 FROM pages subject
+                WHERE subject.id = a.subject_id AND subject.user_id = :viewer_id
+            )""",
+        "note_block": """EXISTS (
+                SELECT 1 FROM note_blocks subject
+                WHERE subject.id = a.subject_id AND subject.user_id = :viewer_id
+            )""",
+        "idea": """a.audience_scheme = 'user' AND EXISTS (
+                SELECT 1 FROM artifact_idea_subjects subject
+                WHERE subject.id = a.subject_id AND subject.user_id = :viewer_id
+            )""",
+    }
+
+
+def persisted_subject_visible_sql() -> str:
+    """SQL form of visible_persisted_subject for a stored head aliased `a`.
+
+    Binds :viewer_id. Apply before counting/paging; subject bodies are not read.
+    Conversation Dossiers require ownership, even for publicly shared subjects.
+    The head writer stores AudienceScope UUIDs in their canonical string form.
+    Every registered scheme must have its own arm: a registration whose subject
+    is unreachable here would silently vanish from counts and paging while the
+    Python authority still resolves it.
+    """
+    arms = _subject_visible_sql_arms()
+    # justify-defect: the registry is closed and both authorities are ours, so a
+    # scheme without an arm is a code mismatch, not a runtime condition.
+    if arms.keys() != _registrations().keys():
+        raise AssertionError("Dossier registrations and SQL visibility arms are not aligned")
+    branches = "\n            ".join(
+        f"WHEN '{scheme}' THEN {arms[scheme]}" for scheme in _registrations()
+    )
+    return f"""
+        (
+            (a.audience_scheme = 'user' AND a.audience_id = CAST(:viewer_id AS text))
+            OR (a.audience_scheme = 'library' AND EXISTS (
+                SELECT 1 FROM memberships audience_member
+                WHERE audience_member.user_id = :viewer_id
+                  AND CAST(audience_member.library_id AS text) = a.audience_id
+            ))
+        )
+        AND CASE a.subject_scheme
+            {branches}
+            ELSE FALSE
+        END
+    """
 
 
 def visible_persisted_subject(

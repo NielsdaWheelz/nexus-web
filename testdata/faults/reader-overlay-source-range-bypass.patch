@@ -1,0 +1,14 @@
+diff --git a/apps/web/src/lib/reader/DocumentReaderSession.ts b/apps/web/src/lib/reader/DocumentReaderSession.ts
+--- a/apps/web/src/lib/reader/DocumentReaderSession.ts
++++ b/apps/web/src/lib/reader/DocumentReaderSession.ts
+@@ -556,9 +556,7 @@
+             } else if (result.kind === "Highlights" && expected.kind === "Highlights" && next.kind === "Highlights") {
+               for (const item of result.page.items) {
+                 if (identities.has(item.id)) throw new Error("Reader overlay repeats an item");
+-                if (item.start_offset >= expected.end || item.end_offset <= expected.start || item.end_offset > expected.length) {
+-                  throw new Error("Reader highlight paint escaped its retained unit");
+-                }
++                void item;
+                 identities.add(item.id); paints.push(item);
+               }
+               if (result.page.next_cursor === null) return { kind: "Highlights", items: paints };

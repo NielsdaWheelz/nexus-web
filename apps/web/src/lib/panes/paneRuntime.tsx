@@ -30,7 +30,6 @@ import {
 } from "@/lib/workspace/workspaceHref";
 import type { ResourceItem } from "@/lib/resources/resourceItems";
 import { normalizePaneRouteKeyHref } from "@/lib/panes/paneIdentity";
-import { preloadPane } from "@/lib/panes/paneRenderRegistry";
 import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
 import type { PaneRuntimeLayout } from "@/lib/workspace/paneSizing";
 import type {
@@ -143,6 +142,16 @@ export interface PaneRuntimeContextValue {
   setPaneAliases: (aliases: readonly string[]) => void;
 }
 
+/** One mounted document body publishes whether its concrete local owners can retire. */
+export const PaneReaderSuspensionContext = createContext<{
+  readonly displayed: boolean;
+  readonly publish: (canSuspend: boolean | null) => void;
+} | null>(null);
+
+export function usePaneReaderDisplayed(): boolean {
+  return useContext(PaneReaderSuspensionContext)?.displayed ?? true;
+}
+
 const PaneRuntimeContext = createContext<PaneRuntimeContextValue | null>(null);
 const PaneActivityContext = createContext<boolean | null>(null);
 const PaneRouterNavigationContext = createContext<{
@@ -184,6 +193,13 @@ interface PaneRuntimeProviderProps {
   ) => WorkspaceTargetActivationResult;
   onGoBackPane: (paneId: string, modality: PaneNavigationModality) => void;
   onGoForwardPane: (paneId: string, modality: PaneNavigationModality) => void;
+  /**
+   * Warms a route's pane body ahead of a view transition. Supplied by the
+   * workspace host, which owns the render registry; the runtime itself must
+   * stay free of that registry so leaf renderers shared with the offline shelf
+   * do not drag every pane body into its bundle.
+   */
+  preloadPane?: (routeId: PaneRouteId) => Promise<void>;
   onSetPaneLabel?: (input: {
     paneId: string;
     routeKey: string;
@@ -255,7 +271,9 @@ function resourceKeyForItem(resourceItem: ResourceItem | null): string | null {
 
 function panePreloadForHref(
   href: string,
+  preloadPane: ((routeId: PaneRouteId) => Promise<void>) | undefined,
 ): (() => Promise<unknown>) | undefined {
+  if (preloadPane === undefined) return undefined;
   const route = resolvePaneRoute(href);
   if (route.id === "unsupported") return undefined;
   const routeId: PaneRouteId = route.id;
@@ -266,6 +284,7 @@ function runPaneNavigation(
   href: string,
   viewTransition: PaneViewTransitionIntent | undefined,
   navigate: () => void,
+  preloadPane: ((routeId: PaneRouteId) => Promise<void>) | undefined,
 ): void {
   if (!viewTransition) {
     navigate();
@@ -275,7 +294,7 @@ function runPaneNavigation(
   startSameDocumentViewTransition(navigate, {
     preload:
       viewTransition.kind === "media-reader"
-        ? panePreloadForHref(href)
+        ? panePreloadForHref(href, preloadPane)
         : undefined,
     onFinish:
       viewTransition.kind === "media-reader"
@@ -305,6 +324,7 @@ export function PaneRuntimeProvider({
   onActivateWorkspaceTarget,
   onGoBackPane,
   onGoForwardPane,
+  preloadPane,
   onSetPaneLabel,
   onSetPaneLayout,
   onRequestSecondarySurface,
@@ -371,6 +391,7 @@ export function PaneRuntimeProvider({
     onActivateWorkspaceTarget,
     onGoBackPane,
     onGoForwardPane,
+    preloadPane,
     onSetPaneLabel,
     onSetPaneLayout,
     onRequestSecondarySurface,
@@ -394,6 +415,7 @@ export function PaneRuntimeProvider({
     onActivateWorkspaceTarget,
     onGoBackPane,
     onGoForwardPane,
+    preloadPane,
     onSetPaneLabel,
     onSetPaneLayout,
     onRequestSecondarySurface,
@@ -435,9 +457,14 @@ export function PaneRuntimeProvider({
             : {}),
           modality: consumeNavigationModality(),
         };
-        runPaneNavigation(normalized, options?.viewTransition, () => {
-          current.onNavigatePane(current.paneId, normalized, navigationOptions);
-        });
+        runPaneNavigation(
+          normalized,
+          options?.viewTransition,
+          () => {
+            current.onNavigatePane(current.paneId, normalized, navigationOptions);
+          },
+          current.preloadPane,
+        );
       },
       replace: (nextHref: string, options?: PaneRouterOptions) => {
         const normalized = normalizeWorkspaceHref(nextHref);
@@ -452,9 +479,14 @@ export function PaneRuntimeProvider({
             : {}),
           modality: consumeNavigationModality(),
         };
-        runPaneNavigation(normalized, options?.viewTransition, () => {
-          current.onReplacePane(current.paneId, normalized, navigationOptions);
-        });
+        runPaneNavigation(
+          normalized,
+          options?.viewTransition,
+          () => {
+            current.onReplacePane(current.paneId, normalized, navigationOptions);
+          },
+          current.preloadPane,
+        );
       },
       back: () => {
         const current = commandsRef.current;

@@ -1,0 +1,11 @@
+diff --git a/apps/web/src/lib/reader/publicationDom.ts b/apps/web/src/lib/reader/publicationDom.ts
+--- a/apps/web/src/lib/reader/publicationDom.ts
++++ b/apps/web/src/lib/reader/publicationDom.ts
+@@ -112,7 +112,6 @@
+           // Block-layout excerpts can contain no resident header. Chromium's
+           // layout-table heuristic otherwise removes their table semantics.
+           if (record.namespace === "html" && name === "table" && element.hasAttribute("data-nexus-table") && !element.hasAttribute("role")) {
+-            element.setAttribute("role", "table");
+           }
+           node = element;
+         }

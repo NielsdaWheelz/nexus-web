@@ -37,3 +37,26 @@
     box-shadow: 0 0 0 0 var(--accent);
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .reader-apparatus-pulse {
+    animation-duration: 0ms;
+  }
+}
+
+.reader-source-pulse {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 2px;
+  background: var(--highlight-yellow);
+  animation: reader-source-pulse 1200ms var(--ease-glide);
+}
+
+@keyframes reader-source-pulse {
+  from { opacity: 0.65; }
+  to { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reader-source-pulse { animation-timing-function: steps(1, end); }
+}

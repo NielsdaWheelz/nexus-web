@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/lib/offlineReading/OfflineReaderAdapters.ts b/apps/web/src/lib/offlineReading/OfflineReaderAdapters.ts
+--- a/apps/web/src/lib/offlineReading/OfflineReaderAdapters.ts
++++ b/apps/web/src/lib/offlineReading/OfflineReaderAdapters.ts
+@@ -121,8 +121,7 @@
+ 
+   #assertSelected(descriptor: ReaderMedia): void {
+     if (
+-      descriptor.media_id !== this.mediaId ||
+-      descriptor.reader_generation !== this.opened.readerGeneration
++      descriptor.media_id !== this.mediaId
+     ) {
+       throw new Error("Offline reader publication identity mismatch");
+     }

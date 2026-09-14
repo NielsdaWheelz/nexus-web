@@ -21,7 +21,12 @@ import pytest
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Media, MediaSourceAttempt
+from nexus.db.models import (
+    Media,
+    MediaSourceAttempt,
+    ReaderPublicationArtifact,
+    ReaderPublicationUnit,
+)
 from nexus.db.session import create_session_factory, transaction
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.jobs.history_projections import RetryScheduled, apply_history_projection
@@ -51,7 +56,6 @@ from nexus.services.media_source_ingest import (
     retry_source_for_viewer,
 )
 from nexus.services.media_upload_sessions import confirm_upload_session, create_upload_session
-from nexus.services.reader_publication import replace_reader_publication
 from nexus.services.sealed_handles import unseal_upload_session
 from nexus.services.source_attempt_failures import (
     ResourceLimitedSourceAttempt,
@@ -60,6 +64,12 @@ from nexus.services.source_attempt_failures import (
     publish_source_attempt_failure,
 )
 from nexus.services.x_identity import canonical_x_post_url
+from nexus.services.x_types import (
+    XPostSnapshot,
+    XPostSourceCheckpoint,
+    XSinglePostSnapshot,
+    XUserSnapshot,
+)
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_upload_session_staging_storage_path
 from tests.testkit.auth import UserRecord
@@ -213,6 +223,88 @@ def import_owner(
                 library_entries.delete_all_entries_for_media(cleanup, media_id)
                 paths = media_deletion.delete_document_media_if_unreferenced(cleanup, media_id)
             media_deletion.delete_document_storage_objects(paths or [], storage)
+
+
+def test_committed_x_snapshot_runs_without_refetching_and_publishes_exact_members(
+    import_owner: tuple[Session, UserRecord], engine: Engine
+) -> None:
+    db, user = import_owner
+    parent = _publish_small_pdf(db, user, label="captured-x-parent")
+    post_id = str(uuid4().int % 10**18)
+    snapshot = XPostSourceCheckpoint(
+        version=1,
+        parent_source_attempt_id=parent.attempt_id,
+        snapshot=XSinglePostSnapshot(
+            requested_post_id=post_id,
+            canonical_url=canonical_x_post_url(post_id),
+            post=XPostSnapshot(
+                id=post_id,
+                author_id="42",
+                text="A captured post 🧠.",
+                created_at=None,
+                conversation_id=None,
+                referenced_tweets=(),
+                media_keys=(),
+                urls=(),
+            ),
+            users={"42": XUserSnapshot(id="42", name="Ada", username="ada")},
+            media={},
+        ),
+    )
+    accepted = accept_embedded_source(
+        db=db,
+        viewer_id=user.id,
+        url=canonical_x_post_url(post_id),
+        parent_media_id=parent.media_id,
+        document_embed_key=f"x-quote-post:{post_id}",
+        library_ids=[],
+        request_id=None,
+        x_snapshot=snapshot,
+    )
+    enqueue_accepted_source_attempt_in_transaction(
+        db,
+        media_id=accepted.media_id,
+        attempt_id=accepted.source_attempt_id,
+        actor_user_id=user.id,
+        request_id=None,
+    )
+    db.commit()
+    attempt = _attempt(db, accepted.source_attempt_id)
+    job_id = attempt.job_id
+    assert job_id is not None
+    assert attempt.source_payload["x_post_snapshot"] == snapshot.model_dump(mode="json")
+    # The parent's final phase has not run. A fresh real worker owns the child
+    # through the committed queue and checkpoint; provider network stays denied.
+    assert _worker(engine).run_exact(job_id) is True
+    assert _attempt(db, accepted.source_attempt_id).status == "succeeded", _job(db, job_id)
+    assert _media(db, accepted.media_id).title == "X post by Ada"
+    assert _media(db, accepted.media_id).processing_status.value == "ready_for_reading"
+    units = list(
+        db.scalars(
+            select(ReaderPublicationUnit)
+            .where(
+                ReaderPublicationUnit.media_id == accepted.media_id,
+                ReaderPublicationUnit.generation == 1,
+            )
+            .order_by(ReaderPublicationUnit.ordinal)
+        )
+    )
+    assert "".join(unit.canonical_text for unit in units) == (
+        "Post 1\nAda @ada - Open on X\nA captured post 🧠."
+    ), "source completion must include its object-first immutable publication"
+    artifacts = list(
+        db.scalars(
+            select(ReaderPublicationArtifact).where(
+                ReaderPublicationArtifact.media_id == accepted.media_id,
+                ReaderPublicationArtifact.generation == 1,
+            )
+        )
+    )
+    assert {artifact.role for artifact in artifacts} == {"descriptor", "index", "unit", "asset"}
+    for artifact in artifacts:
+        stored = get_storage_client().head_object(artifact.storage_path)
+        assert stored is not None and stored.size_bytes == artifact.size_bytes
+    assert _attempt(db, parent.attempt_id).status == "queued"
 
 
 def test_terminal_source_failure_retries_through_one_new_attempt_the_worker_completes(
@@ -599,17 +691,14 @@ def test_a_quote_completion_settles_beside_its_running_ingest_transition(
     completions: list[str] = []
 
     def complete_the_quote_under_its_media_lock() -> None:
-        def hold(locked: Media) -> Media:
-            quote_media_locked.set()
-            return locked
-
         with Session(engine) as phase:
-            quote_media = replace_reader_publication(
-                phase,
-                media_id=accepted.media_id,
-                expected_kind="web_article",
-                replace_projection=hold,
+            # The lock this phase must hold is the quote media row itself; the
+            # completion below is the writer that contends with the quote worker.
+            quote_media = phase.scalar(
+                select(Media).where(Media.id == accepted.media_id).with_for_update()
             )
+            assert quote_media is not None, "the accepted quote media disappeared"
+            quote_media_locked.set()
             complete_x_post_snapshot_attempt(
                 phase,
                 media=quote_media,

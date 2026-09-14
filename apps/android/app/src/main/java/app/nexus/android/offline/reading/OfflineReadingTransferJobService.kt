@@ -29,7 +29,11 @@ class OfflineReadingTransferJobService : JobService() {
         Thread(runnable, "NexusOfflineReadingTransfer").apply { isDaemon = true }
     }
     private val store by lazy { OfflineReadingStore.get(this) }
-    private val originClient: OfflineReadingOriginClient by lazy { HttpOfflineReadingOriginClient() }
+    // One time source across the runner: the store writes preparationStartedAt and the
+    // origin client measures OFFLINE_READING_PREPARATION_MAX_AGE against the same clock.
+    private val originClient: OfflineReadingOriginClient by lazy {
+        HttpOfflineReadingOriginClient(store.clock)
+    }
     @Volatile private var stopped = false
     @Volatile private var activeTransfer: OfflineReadingTransfer? = null
     private val runGeneration = AtomicLong(0)
@@ -92,6 +96,10 @@ class OfflineReadingTransferJobService : JobService() {
                 is OfflineReadingReconciliationOutcome.Deferred -> {
                     OfflineReadingScheduler.finishJobReconciliation()
                     finishAwaitingReconciliation(params, generation, reschedule = true)
+                }
+                is OfflineReadingReconciliationOutcome.Failed -> {
+                    OfflineReadingScheduler.finishJobReconciliation()
+                    finishAwaitingReconciliation(params, generation, reschedule = false)
                 }
             }
         }
@@ -157,9 +165,10 @@ class OfflineReadingTransferJobService : JobService() {
             params.extras.getString(OFFLINE_READING_POLICY_EXTRA)
                 ?: error("offline reading job is missing its admitted network policy"),
         )
+        val deferredPreparations = mutableSetOf<Pair<UUID, String>>()
         try {
             while (!stopped && runGeneration.get() == generation) {
-                val transfer = when (val claim = store.claimRunnableTransfer(admittedPolicy)) {
+                val transfer = when (val claim = store.claimRunnableTransfer(admittedPolicy, deferredPreparations)) {
                     is OfflineReadingRunnableClaim.PolicyChanged -> {
                         // The persisted policy no longer matches this runner's admitted
                         // constraint: JobParameters.network was granted for the old policy.
@@ -180,12 +189,13 @@ class OfflineReadingTransferJobService : JobService() {
                         return
                     }
                     is OfflineReadingRunnableClaim.Idle -> {
-                        if (!OfflineReadingScheduler.runnerCheckpoint(store) {
-                                jobFinished(params, false)
+                        val continueDrain = synchronized(callbackLock) {
+                            if (!readingJobCallbackOwnsFinish(stopped, runGeneration.get(), generation)) return
+                            OfflineReadingScheduler.runnerCheckpoint(store, deferredPreparations) {
+                                jobFinished(params, deferredPreparations.isNotEmpty() && store.hasQueuedWork())
                             }
-                        ) {
-                            return
                         }
+                        if (!continueDrain) return
                         continue
                     }
                     is OfflineReadingRunnableClaim.Run -> claim.transfer
@@ -201,10 +211,13 @@ class OfflineReadingTransferJobService : JobService() {
                     TransferRunFence(generation, transfer.id, transfer.stagingName),
                 )
                 synchronized(callbackLock) { activeTransfer = null }
+                if (step == TransferStep.AwaitPreparation) {
+                    deferredPreparations += transfer.id to transfer.stagingName
+                    continue
+                }
                 if (step == TransferStep.DeferUntilUnlocked) {
-                    // The Keystore binding key is unusable until the device unlocks. The
-                    // durable intent stays queued; ask JobScheduler for a later retry
-                    // instead of failing a fully downloaded transfer.
+                    // The durable transfer remains queued. JobScheduler owns the delayed
+                    // retry for either a locked binding key or worker preparation.
                     synchronized(callbackLock) {
                         if (
                             readingJobCallbackOwnsFinish(stopped, runGeneration.get(), generation)
@@ -240,7 +253,7 @@ class OfflineReadingTransferJobService : JobService() {
         }
     }
 
-    private enum class TransferStep { Continue, DeferUntilUnlocked }
+    private enum class TransferStep { Continue, DeferUntilUnlocked, AwaitPreparation }
 
     private fun process(
         params: JobParameters,
@@ -256,11 +269,21 @@ class OfflineReadingTransferJobService : JobService() {
     private fun processWithOperation(
         params: JobParameters,
         network: android.net.Network,
-        transfer: OfflineReadingTransfer,
+        initialTransfer: OfflineReadingTransfer,
         fence: TransferRunFence,
         operation: OfflineReadingTransferOperation,
     ): TransferStep {
+        var transfer = initialTransfer
         try {
+            val accountId = store.boundAccountId(transfer.bindingId)
+            if (transfer.readerGeneration == null) {
+                val selected = originClient.selectLegacyGeneration(transfer, accountId, network, operation)
+                transfer = synchronized(callbackLock) {
+                    if (!callbackIsCurrent(fence)) return TransferStep.Continue
+                    store.selectLegacyTransferGeneration(transfer.id, transfer.stagingName, selected)
+                        ?: return TransferStep.Continue
+                }
+            }
             mutateIfCurrent(fence) {
                 store.updateTransferState(
                 transfer.id,
@@ -276,10 +299,9 @@ class OfflineReadingTransferJobService : JobService() {
                     JOB_END_NOTIFICATION_POLICY_REMOVE,
                 )
             }
-            val accountId = store.boundAccountId(transfer.bindingId)
             var lastPersistedBytes = -1L
             // Install steps 2-4: mint the token and download to a unique staging file.
-            val artifact = originClient.downloadPackage(
+            val downloaded = originClient.downloadPackage(
                 transfer,
                 accountId,
                 network,
@@ -304,6 +326,13 @@ class OfflineReadingTransferJobService : JobService() {
                 }
             }
             if (!callbackIsCurrent(fence)) return TransferStep.Continue
+            val artifact = when (downloaded) {
+                OfflineReadingDownloadResult.Preparing -> {
+                    mutateIfCurrent(fence) { store.awaitPackagePreparation(transfer.id, transfer.stagingName) }
+                    return TransferStep.AwaitPreparation
+                }
+                is OfflineReadingDownloadResult.Downloaded -> downloaded.artifact
+            }
             mutateIfCurrent(fence) {
                 store.updateTransferState(
                     transfer.id,
@@ -331,7 +360,6 @@ class OfflineReadingTransferJobService : JobService() {
                     transfer,
                     accountId,
                     network,
-                    artifact.readerGeneration,
                     operation,
                 )
                 if (callbackIsCurrent(fence)) {
@@ -350,6 +378,18 @@ class OfflineReadingTransferJobService : JobService() {
                     transfer.id,
                     transfer.stagingName,
                     ReadingTransferState.Queued(ReadingQueueReason.Scheduler),
+                )
+            }
+            return TransferStep.DeferUntilUnlocked
+        } catch (_: OfflineReadingCapacityRefusedException) {
+            // The origin admitted no work, so the transfer is still runnable and its
+            // staged bytes stay. JobScheduler's exponential backoff owns the next
+            // attempt, the same delayed retry a locked binding key gets.
+            mutateIfCurrent(fence) {
+                store.updateTransferState(
+                    transfer.id,
+                    transfer.stagingName,
+                    ReadingTransferState.Queued(ReadingQueueReason.ServerCapacity),
                 )
             }
             return TransferStep.DeferUntilUnlocked

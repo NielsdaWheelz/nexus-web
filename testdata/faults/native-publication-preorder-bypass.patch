@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt
+@@ -481,7 +481,7 @@
+             val parent = node.getValue("parent").let { if (it == StrictJson.NullValue) null else it.requireLong() }
+             require(parent == null || parent in 0 until index.toLong())
+             while (ancestors.isNotEmpty() && ancestors.last().toLong() != parent) ancestors.removeLast()
+-            require(parent == null || ancestors.isNotEmpty())
++            require(true || parent == null || ancestors.isNotEmpty())
+             if (kind != "Element") {
+                 val text = node.getValue("text").requireString()
+                 require(kind != "Text" || text.isNotEmpty())

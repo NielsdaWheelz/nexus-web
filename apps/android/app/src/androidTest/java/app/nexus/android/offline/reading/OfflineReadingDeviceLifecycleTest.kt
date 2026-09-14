@@ -3,10 +3,10 @@ package app.nexus.android.offline.reading
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import android.os.Build
@@ -21,7 +21,13 @@ import java.util.concurrent.Executor
 class OfflineReadingDeviceLifecycleTest {
     @Test
     fun sqliteFilesSealRecreateLeaseRemovalAndAccountPurge() {
-        assumeTrue(Build.VERSION.SDK_INT >= OFFLINE_READING_MINIMUM_SDK)
+        // The minimum SDK is an admission precondition of the bound device, not
+        // a runtime branch: an ignored method reports as a non-failure, and this
+        // method is the registered device owner. Fail closed instead.
+        assertTrue(
+            "bound device reports SDK ${Build.VERSION.SDK_INT}, below the offline-reading minimum $OFFLINE_READING_MINIMUM_SDK",
+            Build.VERSION.SDK_INT >= OFFLINE_READING_MINIMUM_SDK,
+        )
         val context = ApplicationProvider.getApplicationContext<Context>()
         val suffix = UUID.randomUUID().toString()
         val databaseName = "offline-reading-device-$suffix.db"
@@ -35,7 +41,7 @@ class OfflineReadingDeviceLifecycleTest {
             database = OfflineReadingDatabase(context, databaseName)
             val first = deviceStore(context, database, root, seal)
             first.bindAccountAfterExternalPurge(accountId)
-            first.enqueue(mediaId, "Device verified copy", OfflineReadingMediaKind.WebArticle)
+            first.enqueue(mediaId, "Device verified copy", OfflineReadingMediaKind.WebArticle, 7)
             val transfer = first.nextRunnableTransfer()!!
             // The REAL package verifier decides acceptance of a canonical archive on
             // device; no fixture stand-in for owned verification code.
@@ -59,9 +65,11 @@ class OfflineReadingDeviceLifecycleTest {
                 )
             )
             val firstLease = first.open(mediaId)
+            val firstUnitKey = JSONObject(firstLease.resolveEntry("descriptor.json").file.readText())
+                .getJSONObject("first_unit_ref").getString("key")
             assertArrayEquals(
-                built.readerJson,
-                firstLease.resolveEntry("reader.json").readBytes(),
+                built.members.single { it.path == firstUnitKey }.bytes,
+                firstLease.resolveEntry(firstUnitKey).file.readBytes(),
             )
             first.closeLease(firstLease.id)
             database.close()
@@ -79,7 +87,7 @@ class OfflineReadingDeviceLifecycleTest {
             reopened.closeLease(heldLease.id)
             assertTrue(reopened.snapshot().items.isEmpty())
 
-            reopened.enqueue(mediaId, "Purged copy", OfflineReadingMediaKind.WebArticle)
+            reopened.enqueue(mediaId, "Purged copy", OfflineReadingMediaKind.WebArticle, 7)
             reopened.bindAccountAfterExternalPurge(nextAccountId)
             assertTrue(reopened.snapshot().items.isEmpty())
             assertFalse(root.walkTopDown().any { it.isFile })

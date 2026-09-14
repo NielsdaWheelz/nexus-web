@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/pdf_highlights.py b/python/nexus/services/pdf_highlights.py
+--- a/python/nexus/services/pdf_highlights.py
++++ b/python/nexus/services/pdf_highlights.py
+@@ -702,7 +702,7 @@
+         .where(Highlight.id == highlight.id)
+         .with_for_update()
+         .options(selectinload(Highlight.pdf_anchor), selectinload(Highlight.pdf_quads))
+-        .execution_options(populate_existing=True)
++        .execution_options(populate_existing=False)
+     )
+     if locked is None:
+         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")

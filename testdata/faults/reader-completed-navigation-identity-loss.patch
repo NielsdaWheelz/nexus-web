@@ -1,0 +1,29 @@
+diff --git a/apps/web/src/lib/reader/useDocumentReaderWindow.ts b/apps/web/src/lib/reader/useDocumentReaderWindow.ts
+--- a/apps/web/src/lib/reader/useDocumentReaderWindow.ts
++++ b/apps/web/src/lib/reader/useDocumentReaderWindow.ts
+@@ -113,7 +113,6 @@
+     if (requestTarget === null) return;
+     const controller = new AbortController();
+     const expectedRequest = requestId.current;
+-    const expectedNavigation = explicitNavigationId.current;
+     const explicit = currentRequest?.activate !== false;
+     const commandIsCurrent = currentRequest?.commandIsCurrent;
+     const complete = (value: ReaderNavigationCompletion) => {
+@@ -169,7 +168,7 @@
+         setUnitRequest({ status: "ready", data: null });
+         const currentLease = existing.lease;
+         complete({ kind: "Ready", item: existing, target: resolution,
+-          isCurrent: () => explicitNavigationId.current === expectedNavigation && !currentLease.released && commandIsCurrent?.() !== false });
++          isCurrent: () => !currentLease.released && commandIsCurrent?.() !== false });
+         return;
+       }
+       // The session's budget covers transition overlap, so the replacement is
+@@ -215,7 +214,7 @@
+       setUnitRequest({ status: "ready", data: null });
+       const currentLease = item.lease;
+       complete({ kind: "Ready", item, target: resolution,
+-        isCurrent: () => explicitNavigationId.current === expectedNavigation && !currentLease.released && commandIsCurrent?.() !== false });
++        isCurrent: () => !currentLease.released && commandIsCurrent?.() !== false });
+     })().catch((error: unknown) => {
+       if (controller.signal.aborted || requestId.current !== expectedRequest) return;
+       if (isAbortError(error)) {

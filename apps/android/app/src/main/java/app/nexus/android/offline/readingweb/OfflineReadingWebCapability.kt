@@ -59,11 +59,14 @@ internal fun offlineReadingMessageAdmitted(
 /**
  * Failures the renderer protocol answers with a reply: malformed payloads,
  * refused commands, and durable-store refusals. Anything else is a defect and
- * keeps propagating.
+ * keeps propagating. A missing member surfaces from the strict JSON readers as
+ * NoSuchElementException; the AndroidX message listener above this boundary has
+ * no catch, so it must be answered here rather than kill the shell process.
  */
 internal fun isOfflineReadingCommandFailure(error: Throwable): Boolean =
     error is IllegalArgumentException ||
         error is IllegalStateException ||
+        error is NoSuchElementException ||
         error is JSONException ||
         error is SQLException ||
         error is IOException
@@ -94,6 +97,10 @@ private inline fun <T : Any> parsedOrNull(parse: () -> T): T? =
         null
     } catch (_: JSONException) {
         // justify-ignore-error: as above for a payload missing a required member.
+        null
+    } catch (_: NoSuchElementException) {
+        // justify-ignore-error: the strict readers throw this for an absent
+        // member as well; it is renderer input malformedness, not a defect.
         null
     }
 
@@ -238,9 +245,10 @@ internal fun offlineReadingCommandIsValid(root: JSONObject, kind: String): Boole
             root.requireExactKeys("protocolVersion", "requestId", "kind")
         "Enqueue" -> {
             root.requireExactKeys(
-                "protocolVersion", "requestId", "kind", "mediaId", "requestedTitle", "mediaKind",
+                "protocolVersion", "requestId", "kind", "mediaId", "requestedTitle", "mediaKind", "readerGeneration",
             )
             root.requireCanonicalUuid("mediaId")
+            root.requireLong("readerGeneration", 1, Long.MAX_VALUE)
             require(root.requireBoundedString("requestedTitle", 1, 512).isNotBlank())
             OfflineReadingMediaKind.valueOf(root.requireBoundedString("mediaKind", 3, 10))
         }
@@ -263,8 +271,12 @@ internal fun offlineReadingCommandIsValid(root: JSONObject, kind: String): Boole
             root.getJSONObject("locator")
         }
         "ResolveReaderProgress" -> {
-            root.requireExactKeys("protocolVersion", "requestId", "kind", "mediaId", "choice")
+            root.requireExactKeys("protocolVersion", "requestId", "kind", "mediaId", "choice",
+                "readerGeneration", "readerRevisionKey", "expected")
             root.requireCanonicalUuid("mediaId")
+            root.requireLong("readerGeneration", 1, Long.MAX_VALUE)
+            require(root.requireBoundedString("readerRevisionKey", 64, 64).matches(Regex("[0-9a-f]{64}")))
+            requireReaderProgressViewJson(root.getJSONObject("expected").toString())
             require(root.requireBoundedString("choice", 6, 9) in setOf("Canonical", "Device"))
         }
         "SetNetworkPolicy" -> {
@@ -444,12 +456,13 @@ internal class OfflineReadingWebCapability(
                 }
                 "Enqueue" -> {
                     root.requireExactKeys(
-                        "protocolVersion", "requestId", "kind", "mediaId", "requestedTitle", "mediaKind",
+                        "protocolVersion", "requestId", "kind", "mediaId", "requestedTitle", "mediaKind", "readerGeneration",
                     )
                     store.enqueue(
                         root.requireCanonicalUuid("mediaId"),
                         root.requireBoundedString("requestedTitle", 1, 512),
                         OfflineReadingMediaKind.valueOf(root.requireBoundedString("mediaKind", 3, 10)),
+                        root.requireLong("readerGeneration", 1, Long.MAX_VALUE),
                     )
                     reply(message.replyProxy, requestId, accepted())
                 }
@@ -518,9 +531,13 @@ internal class OfflineReadingWebCapability(
                     reply(message.replyProxy, requestId, outcome("ReaderProgressSaved", "result" to progressJson(result, true)))
                 }
                 "ResolveReaderProgress" -> {
-                    root.requireExactKeys("protocolVersion", "requestId", "kind", "mediaId", "choice")
+                    root.requireExactKeys("protocolVersion", "requestId", "kind", "mediaId", "choice",
+                        "readerGeneration", "readerRevisionKey", "expected")
                     val result = store.resolveReaderProgress(
                         root.requireCanonicalUuid("mediaId"),
+                        root.requireLong("readerGeneration", 1, Long.MAX_VALUE),
+                        root.requireBoundedString("readerRevisionKey", 64, 64),
+                        requireReaderProgressViewJson(root.getJSONObject("expected").toString()),
                         root.requireBoundedString("choice", 6, 9) == "Canonical",
                     )
                     reply(message.replyProxy, requestId, outcome("ReaderProgressSaved", "result" to progressJson(result, true)))
@@ -651,8 +668,16 @@ internal class OfflineReadingWebCapability(
                 failHostedConnect(message, requestId, "Failed")
                 return@connect
             }
-            store.reconcileAsync { snapshot ->
+            store.reconcileAsync { outcome ->
                 if (message.documentGeneration != bridge.currentDocumentGeneration()) return@reconcileAsync
+                val snapshot = when (outcome) {
+                    is OfflineReadingReconciliationOutcome.Ready -> outcome.snapshot
+                    is OfflineReadingReconciliationOutcome.Deferred -> outcome.snapshot
+                    is OfflineReadingReconciliationOutcome.Failed -> {
+                        failHostedConnect(message, requestId, "Failed")
+                        return@reconcileAsync
+                    }
+                }
                 if (!hostedReconciledSnapshotAccepted(snapshot, accountId)) {
                     failHostedConnect(message, requestId, "Failed")
                     return@reconcileAsync
@@ -671,9 +696,13 @@ internal class OfflineReadingWebCapability(
         leases.clear()
         when (val step = offlineRecoveryStep(store.pendingAccountTransition())) {
             OfflineReadingRecoveryStep.Reconcile -> {
-                store.reconcileAsync { snapshot ->
+                store.reconcileAsync { outcome ->
                     if (message.documentGeneration != bridge.currentDocumentGeneration()) return@reconcileAsync
-                    finishOfflineConnect(message, requestId, snapshot)
+                    when (outcome) {
+                        is OfflineReadingReconciliationOutcome.Ready -> finishOfflineConnect(message, requestId, outcome.snapshot)
+                        is OfflineReadingReconciliationOutcome.Deferred -> finishOfflineConnect(message, requestId, outcome.snapshot)
+                        is OfflineReadingReconciliationOutcome.Failed -> failConnect(message, requestId, "Failed")
+                    }
                 }
             }
             OfflineReadingRecoveryStep.FinishLogout -> {
@@ -817,7 +846,7 @@ internal class OfflineReadingWebCapability(
         "leaseId" to lease.id.toString(),
         "readerGeneration" to lease.readerGeneration,
         "readerRevisionKey" to lease.readerRevisionKey,
-        "readerUrl" to "https://$OFFLINE_READING_ASSET_HOST/nexus-offline/lease/$capability/reader.json",
+        "readerUrl" to "https://$OFFLINE_READING_ASSET_HOST/nexus-offline/lease/$capability/descriptor.json",
         "progress" to progressJson(lease.progress, false),
         "installedAt" to lease.installedAt.toString(),
     )
@@ -869,6 +898,9 @@ internal class OfflineReadingWebCapability(
             "readerRevisionKey" to requireNotNull(readerRevisionKey),
             "progress" to progressJson(value.progress, false),
         )
+        OfflineReadingAvailability.UpgradeRequired -> outcome("UpgradeRequired")
+        OfflineReadingAvailability.UpgradeBlockedByStorage -> outcome("UpgradeBlockedByStorage")
+        OfflineReadingAvailability.UpgradeFailed -> outcome("UpgradeFailed")
         OfflineReadingAvailability.Removing -> outcome("Removing")
     }
 
@@ -887,23 +919,7 @@ internal class OfflineReadingWebCapability(
     }
 
     private fun progressJson(view: NativeReaderProgressView, saveResult: Boolean): JSONObject {
-        val result = when (view) {
-            is NativeReaderProgressView.Canonical -> outcome(
-                "Canonical", "snapshot" to JSONObject(view.baselineJson),
-            )
-            is NativeReaderProgressView.Pending -> outcome(
-                "Pending", "baseline" to JSONObject(view.baselineJson), "device" to JSONObject(view.deviceLocatorJson),
-            )
-            is NativeReaderProgressView.Conflict -> outcome(
-                "Conflict", "canonical" to JSONObject(view.canonicalJson), "device" to JSONObject(view.deviceLocatorJson),
-            )
-            is NativeReaderProgressView.ContentChanged -> outcome(
-                "ContentChanged", "baseline" to JSONObject(view.baselineJson), "device" to JSONObject(view.deviceLocatorJson),
-            )
-            is NativeReaderProgressView.SourceUnavailable -> outcome(
-                "SourceUnavailable", "baseline" to JSONObject(view.baselineJson), "device" to JSONObject(view.deviceLocatorJson),
-            )
-        }
+        val result = JSONObject(readerProgressViewJson(view).toJson())
         return if (saveResult && view !is NativeReaderProgressView.Canonical && view !is NativeReaderProgressView.Conflict) {
             outcome(
                 when (view) {

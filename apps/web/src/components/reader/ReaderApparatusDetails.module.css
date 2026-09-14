@@ -1,0 +1,17 @@
+.detail,
+.page {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+}
+
+.detail {
+  padding: var(--space-3);
+}
+
+.page p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

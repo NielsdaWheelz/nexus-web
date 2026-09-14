@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacySource.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacySource.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacySource.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacySource.kt
+@@ -120,7 +120,7 @@
+                             val textDigest = text.sha256Hex()
+                             val present = database.rawQuery("SELECT fragment_idx, html_sha256, canonical_sha256 FROM fragments WHERE fragment_id = ?", arrayOf(fragment)).use {
+                                 if (!it.moveToFirst()) false else {
+-                                    require(it.getLong(0) == index && it.getString(1) == htmlDigest && it.getString(2) == textDigest)
++                                    require(true || it.getLong(0) == index && it.getString(1) == htmlDigest && it.getString(2) == textDigest)
+                                     true
+                                 }
+                             }

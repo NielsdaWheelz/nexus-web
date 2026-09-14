@@ -6,10 +6,12 @@ import {
   expectIsoInstant,
   expectNonnegativeInteger,
   expectOneOf,
+  expectRecord,
   expectString,
 } from "@/lib/validation";
 import {
   parseReaderCursorSnapshot,
+  parseReaderCursorSource,
 } from "@/lib/reader/readerProgress";
 import {
   parseReaderResumeState,
@@ -23,7 +25,7 @@ import type {
 export const OFFLINE_READING_PROTOCOL_VERSION = 1 as const;
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 const LEASE_READER_PATH_RE =
-  /^\/nexus-offline\/lease\/[0-9a-f]{32}\/reader\.json$/;
+  /^\/nexus-offline\/lease\/[0-9a-f]{32}\/descriptor\.json$/;
 
 export type NetworkPolicy = "UnmeteredOnly" | "AnyConnected";
 export type ReadingRejectedCode =
@@ -40,7 +42,12 @@ export type ReadingTransferState =
   | { readonly kind: "Preparing" }
   | {
       readonly kind: "Queued";
-      readonly reason: "WaitingForUnmetered" | "Capacity" | "Scheduler";
+      readonly reason:
+        | "WaitingForUnmetered"
+        | "Capacity"
+        | "Scheduler"
+        | "Preparation"
+        | "ServerCapacity";
     }
   | { readonly kind: "Authorizing" }
   | {
@@ -80,6 +87,9 @@ export type ReadingAvailability =
       readonly readerRevisionKey: string;
       readonly progress: ReaderProgressView;
     }
+  | { readonly kind: "UpgradeRequired" }
+  | { readonly kind: "UpgradeBlockedByStorage" }
+  | { readonly kind: "UpgradeFailed" }
   | { readonly kind: "Removing" };
 
 export interface ReadingSnapshot {
@@ -102,18 +112,30 @@ interface ReadingCommandBase {
 }
 
 export type ReadingCommand =
-  | (ReadingCommandBase & { readonly kind: "ConnectHosted" | "ConnectOffline" | "GetSnapshot" | "OpenHosted" | "LogoutAndPurge" })
+  | (ReadingCommandBase & {
+      readonly kind:
+        | "ConnectHosted"
+        | "ConnectOffline"
+        | "GetSnapshot"
+        | "OpenHosted"
+        | "LogoutAndPurge";
+    })
   | (ReadingCommandBase & {
       readonly kind: "Enqueue";
       readonly mediaId: string;
+      readonly readerGeneration: number;
       readonly requestedTitle: string;
       readonly mediaKind: "Pdf" | "Epub" | "WebArticle";
     })
   | (ReadingCommandBase & {
-      readonly kind: "Cancel" | "Retry" | "Remove" | "OpenReading" | "OpenDownloadedCopy";
+      readonly kind:
+        "Cancel" | "Retry" | "Remove" | "OpenReading" | "OpenDownloadedCopy";
       readonly mediaId: string;
     })
-  | (ReadingCommandBase & { readonly kind: "CloseReading"; readonly leaseId: string })
+  | (ReadingCommandBase & {
+      readonly kind: "CloseReading";
+      readonly leaseId: string;
+    })
   | (ReadingCommandBase & {
       readonly kind: "SaveReaderProgress";
       readonly mediaId: string;
@@ -124,6 +146,9 @@ export type ReadingCommand =
   | (ReadingCommandBase & {
       readonly kind: "ResolveReaderProgress";
       readonly mediaId: string;
+      readonly readerGeneration: number;
+      readonly readerRevisionKey: string;
+      readonly expected: ReaderProgressView;
       readonly choice: "Canonical" | "Device";
     })
   | (ReadingCommandBase & {
@@ -143,7 +168,10 @@ export type ReadingReplyOutcome =
       readonly progress: ReaderProgressView;
       readonly installedAt: string;
     }
-  | { readonly kind: "ReaderProgressSaved"; readonly result: ReaderProgressSaveResult }
+  | {
+      readonly kind: "ReaderProgressSaved";
+      readonly result: ReaderProgressSaveResult;
+    }
   | { readonly kind: "Accepted" }
   | { readonly kind: "Rejected"; readonly code: ReadingRejectedCode };
 
@@ -180,7 +208,8 @@ function positiveInteger(raw: unknown, name: string): number {
 
 function sha256Hex(raw: unknown, name: string): string {
   const value = expectString(raw, name);
-  if (!SHA256_HEX_RE.test(value)) throw new TypeError(`${name} must be lowercase SHA-256 hex`);
+  if (!SHA256_HEX_RE.test(value))
+    throw new TypeError(`${name} must be lowercase SHA-256 hex`);
   return value;
 }
 
@@ -193,63 +222,82 @@ function readerLocator(raw: unknown, name: string): ReaderResumeState {
 }
 
 function progressView(raw: unknown, name: string): ReaderProgressView {
-  const record = expectExactRecord(
-    raw,
-    (() => {
-      const kind =
-        typeof raw === "object" && raw !== null && !Array.isArray(raw)
-          ? (raw as Record<string, unknown>).kind
-          : undefined;
-      return kind === "Canonical"
-        ? ["kind", "snapshot"]
-        : kind === "Conflict"
-          ? ["kind", "canonical", "device"]
-          : ["kind", "baseline", "device"];
-    })(),
-    name,
-  );
   const kind = expectOneOf(
-    record.kind,
-    ["Canonical", "Pending", "Conflict", "ContentChanged", "SourceUnavailable"] as const,
+    expectRecord(raw, name).kind,
+    [
+      "Canonical",
+      "Pending",
+      "Conflict",
+      "ContentChanged",
+      "SourceUnavailable",
+    ] as const,
     `${name}.kind`,
   );
-  if (kind === "Canonical") {
+  const record = expectExactRecord(
+    raw,
+    kind === "Canonical"
+      ? ["kind", "snapshot"]
+      : kind === "Conflict"
+        ? ["kind", "canonical", "source", "device"]
+        : ["kind", "baseline", "source", "device"],
+    name,
+  );
+  if (kind === "Canonical")
     return { kind, snapshot: parseReaderCursorSnapshot(record.snapshot) };
-  }
-  if (kind === "Conflict") {
+  const source = parseReaderCursorSource(record.source);
+  if (source.kind === "Timeline")
+    throw new TypeError(
+      "Downloaded reader position cannot have a timeline source",
+    );
+  const device = readerLocator(record.device, `${name}.device`);
+  if (kind === "ContentChanged" || kind === "SourceUnavailable") {
     return {
       kind,
-      canonical: parseReaderCursorSnapshot(record.canonical),
-      device: readerLocator(record.device, `${name}.device`),
+      source,
+      device,
+      baseline: parseReaderCursorSnapshot(record.baseline),
     };
   }
-  return {
-    kind,
-    baseline: parseReaderCursorSnapshot(record.baseline),
-    device: readerLocator(record.device, `${name}.device`),
-  };
+  if (source.kind === "Unresolved")
+    throw new TypeError(
+      "Pending reader intent must identify its selected publication",
+    );
+  return kind === "Conflict"
+    ? {
+        kind,
+        source,
+        device,
+        canonical: parseReaderCursorSnapshot(record.canonical),
+      }
+    : {
+        kind,
+        source,
+        device,
+        baseline: parseReaderCursorSnapshot(record.baseline),
+      };
 }
 
 function progressSaveResult(raw: unknown): ReaderProgressSaveResult {
-  const kind =
-    typeof raw === "object" && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>).kind
-      : undefined;
-  if (kind === "Canonical") {
-    const record = expectExactRecord(raw, ["kind", "snapshot"], "progress result");
-    return { kind, snapshot: parseReaderCursorSnapshot(record.snapshot) };
+  const kind = expectRecord(raw, "progress result").kind;
+  if (kind === "Canonical" || kind === "Conflict") {
+    const view = progressView(raw, "progress result");
+    if (view.kind !== "Canonical" && view.kind !== "Conflict")
+      throw new TypeError("Invalid saved reader progress");
+    return view;
   }
-  if (kind === "Conflict") {
-    const record = expectExactRecord(raw, ["kind", "canonical", "device"], "progress result");
-    return {
-      kind,
-      canonical: parseReaderCursorSnapshot(record.canonical),
-      device: readerLocator(record.device, "progress result.device"),
-    };
-  }
-  if (kind === "DurablyPending" || kind === "ContentChanged" || kind === "SourceUnavailable") {
+  if (
+    kind === "DurablyPending" ||
+    kind === "ContentChanged" ||
+    kind === "SourceUnavailable"
+  ) {
     const record = expectExactRecord(raw, ["kind", "view"], "progress result");
-    return { kind, view: progressView(record.view, "progress result.view") };
+    const view = progressView(record.view, "progress result.view");
+    if (kind === "DurablyPending" && view.kind === "Pending")
+      return { kind, view };
+    if (kind === "ContentChanged" && view.kind === "ContentChanged")
+      return { kind, view };
+    if (kind === "SourceUnavailable" && view.kind === "SourceUnavailable")
+      return { kind, view };
   }
   throw new TypeError("Unsupported progress save result");
 }
@@ -263,6 +311,9 @@ function availability(raw: unknown, name: string): ReadingAvailability {
     case "Preparing":
     case "Authorizing":
     case "Verifying":
+    case "UpgradeRequired":
+    case "UpgradeBlockedByStorage":
+    case "UpgradeFailed":
     case "Removing":
       expectExactRecord(raw, ["kind"], name);
       return { kind };
@@ -272,16 +323,33 @@ function availability(raw: unknown, name: string): ReadingAvailability {
         kind,
         reason: expectOneOf(
           value.reason,
-          ["WaitingForUnmetered", "Capacity", "Scheduler"] as const,
+          [
+            "WaitingForUnmetered",
+            "Capacity",
+            "Scheduler",
+            "Preparation",
+            "ServerCapacity",
+          ] as const,
           `${name}.reason`,
         ),
       };
     }
     case "Downloading": {
-      const value = expectExactRecord(raw, ["kind", "receivedBytes", "totalBytes"], name);
-      const receivedBytes = expectNonnegativeInteger(value.receivedBytes, `${name}.receivedBytes`);
-      const totalBytes = expectNonnegativeInteger(value.totalBytes, `${name}.totalBytes`);
-      if (receivedBytes > totalBytes) throw new TypeError(`${name} received too many bytes`);
+      const value = expectExactRecord(
+        raw,
+        ["kind", "receivedBytes", "totalBytes"],
+        name,
+      );
+      const receivedBytes = expectNonnegativeInteger(
+        value.receivedBytes,
+        `${name}.receivedBytes`,
+      );
+      const totalBytes = expectNonnegativeInteger(
+        value.totalBytes,
+        `${name}.totalBytes`,
+      );
+      if (receivedBytes > totalBytes)
+        throw new TypeError(`${name} received too many bytes`);
       return { kind, receivedBytes, totalBytes };
     }
     case "Restarting": {
@@ -289,7 +357,11 @@ function availability(raw: unknown, name: string): ReadingAvailability {
       return {
         kind,
         attempt: positiveInteger(value.attempt, `${name}.attempt`),
-        reason: expectOneOf(value.reason, ["Interrupted", "PolicyChanged"] as const, `${name}.reason`),
+        reason: expectOneOf(
+          value.reason,
+          ["Interrupted", "PolicyChanged"] as const,
+          `${name}.reason`,
+        ),
       };
     }
     case "Failed": {
@@ -318,15 +390,31 @@ function availability(raw: unknown, name: string): ReadingAvailability {
     case "Ready": {
       const value = expectExactRecord(
         raw,
-        ["kind", "sizeBytes", "installedAt", "readerGeneration", "readerRevisionKey", "progress"],
+        [
+          "kind",
+          "sizeBytes",
+          "installedAt",
+          "readerGeneration",
+          "readerRevisionKey",
+          "progress",
+        ],
         name,
       );
       return {
         kind,
-        sizeBytes: expectNonnegativeInteger(value.sizeBytes, `${name}.sizeBytes`),
+        sizeBytes: expectNonnegativeInteger(
+          value.sizeBytes,
+          `${name}.sizeBytes`,
+        ),
         installedAt: expectIsoInstant(value.installedAt, `${name}.installedAt`),
-        readerGeneration: positiveInteger(value.readerGeneration, `${name}.readerGeneration`),
-        readerRevisionKey: sha256Hex(value.readerRevisionKey, `${name}.readerRevisionKey`),
+        readerGeneration: positiveInteger(
+          value.readerGeneration,
+          `${name}.readerGeneration`,
+        ),
+        readerRevisionKey: sha256Hex(
+          value.readerRevisionKey,
+          `${name}.readerRevisionKey`,
+        ),
         progress: progressView(value.progress, `${name}.progress`),
       };
     }
@@ -336,7 +424,11 @@ function availability(raw: unknown, name: string): ReadingAvailability {
 }
 
 export function decodeReadingSnapshot(raw: unknown): ReadingSnapshot {
-  const value = expectExactRecord(raw, ["binding", "networkPolicy", "items"], "reading snapshot");
+  const value = expectExactRecord(
+    raw,
+    ["binding", "networkPolicy", "items"],
+    "reading snapshot",
+  );
   return {
     binding: decodePresence(value.binding, (binding) => {
       const record = expectExactRecord(
@@ -345,18 +437,28 @@ export function decodeReadingSnapshot(raw: unknown): ReadingSnapshot {
         "reading binding",
       );
       if (typeof record.authorizationRequired !== "boolean") {
-        throw new TypeError("reading binding.authorizationRequired must be boolean");
+        throw new TypeError(
+          "reading binding.authorizationRequired must be boolean",
+        );
       }
       return {
         accountId: canonicalUuid(record.accountId, "reading binding.accountId"),
         authorizationRequired: record.authorizationRequired,
       };
     }),
-    networkPolicy: expectOneOf(value.networkPolicy, ["UnmeteredOnly", "AnyConnected"] as const, "networkPolicy"),
+    networkPolicy: expectOneOf(
+      value.networkPolicy,
+      ["UnmeteredOnly", "AnyConnected"] as const,
+      "networkPolicy",
+    ),
     items: expectArray(
       value.items,
       (item, index) => {
-        const record = expectExactRecord(item, ["mediaId", "title", "mediaKind", "availability"], `items[${index}]`);
+        const record = expectExactRecord(
+          item,
+          ["mediaId", "title", "mediaKind", "availability"],
+          `items[${index}]`,
+        );
         const title = expectString(record.title, `items[${index}].title`);
         if (Array.from(title).length < 1 || Array.from(title).length > 512) {
           throw new TypeError(`items[${index}].title must be bounded`);
@@ -397,28 +499,51 @@ export function decodeReadingInbound(raw: unknown): ReadingInbound {
     const requestId = canonicalUuid(top.requestId, "requestId");
     const rawOutcome = top.outcome;
     const outcomeKind =
-      typeof rawOutcome === "object" && rawOutcome !== null && !Array.isArray(rawOutcome)
+      typeof rawOutcome === "object" &&
+      rawOutcome !== null &&
+      !Array.isArray(rawOutcome)
         ? (rawOutcome as Record<string, unknown>).kind
         : undefined;
     let outcome: ReadingReplyOutcome;
     switch (outcomeKind) {
       case "Connected":
       case "Snapshot": {
-        const record = expectExactRecord(rawOutcome, ["kind", "snapshot"], "reading outcome");
-        outcome = { kind: outcomeKind, snapshot: decodeReadingSnapshot(record.snapshot) };
+        const record = expectExactRecord(
+          rawOutcome,
+          ["kind", "snapshot"],
+          "reading outcome",
+        );
+        outcome = {
+          kind: outcomeKind,
+          snapshot: decodeReadingSnapshot(record.snapshot),
+        };
         break;
       }
       case "OpenedReading": {
         const record = expectExactRecord(
           rawOutcome,
-          ["kind", "leaseId", "readerGeneration", "readerRevisionKey", "readerUrl", "progress", "installedAt"],
+          [
+            "kind",
+            "leaseId",
+            "readerGeneration",
+            "readerRevisionKey",
+            "readerUrl",
+            "progress",
+            "installedAt",
+          ],
           "reading outcome",
         );
         outcome = {
           kind: outcomeKind,
           leaseId: canonicalUuid(record.leaseId, "leaseId"),
-          readerGeneration: positiveInteger(record.readerGeneration, "readerGeneration"),
-          readerRevisionKey: sha256Hex(record.readerRevisionKey, "readerRevisionKey"),
+          readerGeneration: positiveInteger(
+            record.readerGeneration,
+            "readerGeneration",
+          ),
+          readerRevisionKey: sha256Hex(
+            record.readerRevisionKey,
+            "readerRevisionKey",
+          ),
           readerUrl: decodeInternalReaderUrl(record.readerUrl),
           progress: progressView(record.progress, "opened progress"),
           installedAt: expectIsoInstant(record.installedAt, "installedAt"),
@@ -426,8 +551,15 @@ export function decodeReadingInbound(raw: unknown): ReadingInbound {
         break;
       }
       case "ReaderProgressSaved": {
-        const record = expectExactRecord(rawOutcome, ["kind", "result"], "reading outcome");
-        outcome = { kind: outcomeKind, result: progressSaveResult(record.result) };
+        const record = expectExactRecord(
+          rawOutcome,
+          ["kind", "result"],
+          "reading outcome",
+        );
+        outcome = {
+          kind: outcomeKind,
+          result: progressSaveResult(record.result),
+        };
         break;
       }
       case "Accepted":
@@ -435,12 +567,25 @@ export function decodeReadingInbound(raw: unknown): ReadingInbound {
         outcome = { kind: outcomeKind };
         break;
       case "Rejected": {
-        const record = expectExactRecord(rawOutcome, ["kind", "code"], "reading outcome");
+        const record = expectExactRecord(
+          rawOutcome,
+          ["kind", "code"],
+          "reading outcome",
+        );
         outcome = {
           kind: outcomeKind,
           code: expectOneOf(
             record.code,
-            ["InvalidRequest", "Unsupported", "NotConnected", "NotFound", "Busy", "AuthorizationRequired", "ContentChanged", "Failed"] as const,
+            [
+              "InvalidRequest",
+              "Unsupported",
+              "NotConnected",
+              "NotFound",
+              "Busy",
+              "AuthorizationRequired",
+              "ContentChanged",
+              "Failed",
+            ] as const,
             "reading rejection code",
           ),
         };
@@ -451,15 +596,27 @@ export function decodeReadingInbound(raw: unknown): ReadingInbound {
     }
     return { kind: "Reply", requestId, outcome };
   }
-  const eventKind = typeof top.event === "object" && top.event !== null
-    ? (top.event as Record<string, unknown>).kind
-    : undefined;
+  const eventKind =
+    typeof top.event === "object" && top.event !== null
+      ? (top.event as Record<string, unknown>).kind
+      : undefined;
   if (eventKind === "SnapshotChanged") {
-    const event = expectExactRecord(top.event, ["kind", "snapshot"], "reading event");
-    return { kind: "SnapshotChanged", snapshot: decodeReadingSnapshot(event.snapshot) };
+    const event = expectExactRecord(
+      top.event,
+      ["kind", "snapshot"],
+      "reading event",
+    );
+    return {
+      kind: "SnapshotChanged",
+      snapshot: decodeReadingSnapshot(event.snapshot),
+    };
   }
   if (eventKind === "OpenReadingRequested") {
-    const event = expectExactRecord(top.event, ["kind", "mediaId"], "reading event");
+    const event = expectExactRecord(
+      top.event,
+      ["kind", "mediaId"],
+      "reading event",
+    );
     return {
       kind: "OpenReadingRequested",
       mediaId: canonicalUuid(event.mediaId, "reading event.mediaId"),

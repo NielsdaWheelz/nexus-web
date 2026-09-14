@@ -23,6 +23,7 @@ from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory, transaction
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.schemas.offline_reading_preparation import OFFLINE_ARCHIVE_SCHEMA_VERSION
 from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
@@ -33,7 +34,6 @@ STREAM_TOKEN_SCOPE = "stream"
 STREAM_TOKEN_TTL_SECONDS = 60
 OFFLINE_READING_PACKAGE_SCOPE = "offline-reading-package"
 OFFLINE_READING_PACKAGE_TOKEN_TTL_SECONDS = 300
-OFFLINE_READING_PACKAGE_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -127,14 +127,14 @@ def mint_offline_reading_package_token(
         "scope": OFFLINE_READING_PACKAGE_SCOPE,
         "media_id": str(media_id),
         "reader_generation": reader_generation,
-        "package_schema_version": OFFLINE_READING_PACKAGE_SCHEMA_VERSION,
+        "package_schema_version": OFFLINE_ARCHIVE_SCHEMA_VERSION,
     }
     return OfflineReadingPackageTokenResult(
         token=jwt.encode(payload, _get_signing_key_bytes(), algorithm="HS256"),
         package_base_url=settings.effective_stream_base_url.rstrip("/"),
         account_id=user_id,
         reader_generation=reader_generation,
-        package_schema_version=OFFLINE_READING_PACKAGE_SCHEMA_VERSION,
+        package_schema_version=OFFLINE_ARCHIVE_SCHEMA_VERSION,
         expires_at=datetime.fromtimestamp(expires, tz=UTC).isoformat(),
     )
 
@@ -198,7 +198,7 @@ def verify_offline_reading_package_token(
         or type(generation) is not int
         or generation < 1
         or type(schema_version) is not int
-        or schema_version != OFFLINE_READING_PACKAGE_SCHEMA_VERSION
+        or schema_version != OFFLINE_ARCHIVE_SCHEMA_VERSION
         or not isinstance(jti, str)
         or not jti
         or type(exp) is not int

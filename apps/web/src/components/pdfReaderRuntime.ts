@@ -34,7 +34,7 @@ export interface PdfDocumentLike {
 
 export interface PdfDocumentLoadingTaskLike {
   promise: Promise<PdfDocumentLike>;
-  destroy?: () => void;
+  destroy?: () => Promise<void> | void;
 }
 
 export interface PdfDocumentSourceLike {
@@ -125,6 +125,7 @@ export interface PdfFindControllerLike {
 }
 
 export interface PdfViewerLike {
+  readonly l10n?: { destroy(): Promise<void> };
   setDocument(doc: PdfDocumentLike | null): void;
   currentPageNumber: number;
   currentScale?: number;

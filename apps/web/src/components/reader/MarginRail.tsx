@@ -1,344 +1,223 @@
 "use client";
 
-import {
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type RefObject,
-} from "react";
-import { X } from "lucide-react";
-import MachineText from "@/components/ui/MachineText";
-import {
-  findScrollParent,
-  useAnchoredReaderProjection,
-  type AnchoredReaderRow,
-} from "./useAnchoredReaderProjection";
-import {
-  capProjectedMarginRows,
-  stackAnchoredRows,
-  type MarginItem,
-} from "@/lib/reader/marginItems";
-// Imported directly by the one surface that draws it (blueprint §3): the
-// registry is data-heavy and must never enter a shared barrel. This module is
-// reached only through the media pane's lazy chunk, so it costs no First Load JS.
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { createInlineMachineText } from "@/components/ui/MachineText";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isAbortError } from "@/lib/errors";
+import { createRandomId } from "@/lib/createRandomId";
+import type { DocumentReaderSession, ReaderDomLease, ReaderViewCapacity } from "@/lib/reader/DocumentReaderSession";
+import type { ReaderPublicationEvidenceGutterPage, ReaderPublicationEvidenceGutterRequest } from "@/lib/reader/readerPublicationOverlays";
+import { readerCapacityNotice } from "@/lib/reader/readerCapacity";
+import type { EvidenceFilterState } from "@/lib/reader/useEvidenceFilters";
+import { readTextGutterWindow, readPdfGutterWindow, publicationGutterTop, type PublicationGutterTextPart } from "@/lib/reader/publicationGutter";
+import { stackAnchoredRows } from "@/lib/reader/marginItems";
 import { elvishInscriptions } from "@/lib/theme/elvishInscriptions";
+import { findScrollParent } from "./useAnchoredReaderProjection";
+import type { ReaderContentDefect } from "./ReaderContentBoundary";
 import styles from "./MarginRail.module.css";
 
-const ROW_GAP = 6;
-const ROW_HEIGHT = 72;
+const MEASURE_DELAY_MS = 75;
 const CHAPTER_OPENER = elvishInscriptions.elenSila;
 
-export interface MarginRailProps {
-  items: MarginItem[];
-  contentRef: RefObject<HTMLElement | null>;
-  measureKey: string | number;
-  isMobile: boolean;
-  onOpenSidecar: () => void;
-  onActivateItem: (itemId: string) => void;
-  onDismissSynapse: (edgeId: string) => void;
-}
-
-/**
- * The wide-viewport inline margin presenter (§4.4). It renders in the reader's
- * gutter, reusing the exact projection (useAnchoredReaderProjection) + the shared
- * stackAnchoredRows solver. Renders only when the pane is wide enough for the
- * measure + margin (AC-8); below threshold it is absent and the Evidence sheet
- * is the presenter (N-6). Nothing is a card: hairline rhythm, amber only for the
- * live focus; Synapse rationales set in the Machine Hand.
- */
-export default function MarginRail({
-  items,
-  contentRef,
-  measureKey,
-  isMobile,
-  onOpenSidecar,
-  onActivateItem,
-  onDismissSynapse,
-}: MarginRailProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const probeRef = useRef<HTMLDivElement>(null);
-  const rowRefs = useRef(new Map<string, HTMLElement>());
-  const [wideEnough, setWideEnough] = useState(false);
-  const [alignedRows, setAlignedRows] = useState<{ id: string; top: number }[]>(
-    [],
-  );
-  const [overflowCount, setOverflowCount] = useState(0);
-  const [rowHeights, setRowHeights] = useState(new Map<string, number>());
-  const [layoutVersion, setLayoutVersion] = useState(0);
-
-  const anchorById = useMemo(() => {
-    const map = new Map<string, MarginItem>();
-    for (const item of items) map.set(item.anchor.id, item);
-    return map;
-  }, [items]);
-  const anchoredRows = useMemo<AnchoredReaderRow[]>(
-    () => items.map((item) => item.anchor),
-    [items],
-  );
-
-  const { orderedRows, projections, viewportState } =
-    useAnchoredReaderProjection({
-      contentRef,
-      rows: wideEnough && !isMobile ? anchoredRows : [],
-      measureKey,
-      missingTargetLogName: "reader_margin_target_missing",
-    });
-
-  // Breakpoint: measure the pane (contentRef's scroll parent) against a hidden
-  // probe sized to (--reader-measure + --reader-margin-width) — resolving the
-  // ch/rem tokens to px without hand-converting units (§4.4).
-  useEffect(() => {
-    if (isMobile || !contentRef.current) {
-      setWideEnough(false);
-      return;
-    }
-    const scrollParent = findScrollParent(contentRef.current);
-    const evaluate = () => {
-      const threshold = probeRef.current?.getBoundingClientRect().width ?? 0;
-      setWideEnough(threshold > 0 && scrollParent.clientWidth >= threshold);
-    };
-    evaluate();
-    const observer = new ResizeObserver(evaluate);
-    observer.observe(scrollParent);
-    return () => observer.disconnect();
-  }, [contentRef, isMobile, measureKey]);
-
-  useLayoutEffect(() => {
-    if (!wideEnough) return;
-    setRowHeights((previous) => {
-      const next = new Map<string, number>();
-      for (const row of orderedRows) {
-        next.set(
-          row.id,
-          Math.ceil(
-            rowRefs.current.get(row.id)?.getBoundingClientRect().height ??
-              ROW_HEIGHT,
-          ),
-        );
-      }
-      if (previous.size === next.size) {
-        let same = true;
-        for (const [id, height] of next) {
-          if (previous.get(id) !== height) same = false;
-        }
-        if (same) return previous;
-      }
-      return next;
-    });
-  }, [alignedRows, orderedRows, wideEnough]);
-
-  useEffect(() => {
-    if (!wideEnough || !containerRef.current) return;
-    const observer = new ResizeObserver(() => setLayoutVersion((v) => v + 1));
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, [wideEnough]);
-
-  useEffect(() => {
-    if (!wideEnough || !containerRef.current || !contentRef.current) return;
-    const scrollParent = findScrollParent(contentRef.current);
-    const baseline =
-      scrollParent.getBoundingClientRect().top -
-      containerRef.current.getBoundingClientRect().top;
-    const orderById = new Map(orderedRows.map((row, index) => [row.id, index]));
-    // The cap is intentionally applied here, after projection has reduced the
-    // document inventory to facts visible in this viewport.
-    const { visible: visibleProjections } = capProjectedMarginRows(projections);
-    const positioned = visibleProjections
-      .map((projection) => ({
-        id: projection.row.id,
-        desiredTop: projection.rect.top - viewportState.scrollTop + baseline,
-      }))
-      .sort(
-        (left, right) =>
-          (orderById.get(left.id) ?? 0) - (orderById.get(right.id) ?? 0),
-      );
-    const { alignedRows: nextAligned, overflowCount: nextOverflow } =
-      stackAnchoredRows(positioned, {
-        rowHeights,
-        rowHeight: ROW_HEIGHT,
-        gap: ROW_GAP,
-        containerHeight: containerRef.current.clientHeight,
-      });
-    setAlignedRows((previous) => {
-      if (previous.length !== nextAligned.length) return nextAligned;
-      for (let index = 0; index < previous.length; index += 1) {
-        if (
-          previous[index]?.id !== nextAligned[index]?.id ||
-          previous[index]?.top !== nextAligned[index]?.top
-        ) {
-          return nextAligned;
-        }
-      }
-      return previous;
-    });
-    setOverflowCount(nextOverflow);
-  }, [
-    contentRef,
-    layoutVersion,
-    orderedRows,
-    projections,
-    rowHeights,
-    viewportState.scrollTop,
-    wideEnough,
-  ]);
-
-  const probe = (
-    <div
-      ref={probeRef}
-      aria-hidden="true"
-      className={styles.probe}
-      style={{
-        width: "calc(var(--reader-measure) + var(--reader-margin-width))",
-      }}
-    />
-  );
-
-  if (isMobile || !wideEnough) {
-    return probe;
-  }
-
-  const hiddenByCap = capProjectedMarginRows(projections).hidden;
-  const remaining = overflowCount + hiddenByCap;
-
-  return (
-    <aside
-      className={styles.rail}
-      aria-label="Margin"
-      data-testid="margin-rail"
-    >
-      {probe}
-      {/* The chapter opener's plaque (direction §5.2, §8.4): one verified
-          inscription in the margin, never inside the text measure, resting at
-          `--edge-subtle` and silvering when the pane it belongs to holds
-          attention. Baked outlines, never a font; the English never depends on
-          it, so it is `aria-hidden` and unfocusable. It is `display: none`
-          outside the Solar, so the other two rooms render nothing at all.
-          Drawn only for a margin with nothing in it: margin items are
-          transparent, so an item on the plaque's lines would read its strokes
-          through its own text, and the document inventory — not the viewport
-          projection — is the gate, so scrolling never blinks the ornament. */}
-      {items.length === 0 ? (
-        <svg
-          className={styles.plaque}
-          viewBox={CHAPTER_OPENER.viewBox}
-          aria-hidden="true"
-          focusable="false"
-        >
-          {CHAPTER_OPENER.paths.map((path, index) => (
-            <path key={index} d={path} />
-          ))}
-        </svg>
-      ) : null}
-      <div ref={containerRef} className={styles.container}>
-        {alignedRows.map((alignedRow) => {
-          const item = anchorById.get(alignedRow.id);
-          if (!item) return null;
-          return (
-            <div
-              key={item.id}
-              ref={(el) => {
-                if (el) rowRefs.current.set(alignedRow.id, el);
-                else rowRefs.current.delete(alignedRow.id);
-              }}
-              className={styles.item}
-              data-margin-kind={item.kind}
-              style={{ transform: `translateY(${alignedRow.top}px)` }}
-            >
-              <MarginItemBody
-                item={item}
-                onActivateItem={onActivateItem}
-                onDismissSynapse={onDismissSynapse}
-              />
-            </div>
-          );
-        })}
-      </div>
-      {remaining > 0 ? (
-        <button
-          type="button"
-          className={styles.overflowFoot}
-          data-testid="margin-overflow-foot"
-          onClick={onOpenSidecar}
-        >
-          +{remaining} more
-        </button>
-      ) : null}
-    </aside>
-  );
-}
-
-export function MarginItemBody({
-  item,
-  onActivateItem,
-  onDismissSynapse,
-}: {
-  item: MarginItem;
-  onActivateItem: (itemId: string) => void;
-  onDismissSynapse: (edgeId: string) => void;
+/** One current visible-source page. The source snapshot and rows never enter React state. */
+export default function MarginRail({ session, contentRef, layoutKey, readTextParts, isPdf, isMobile, filters,
+  refreshToken, hasMarginFacts, onOpenSidecar, onActivateItem, onDismissSynapse, onDefect }: {
+  readonly session: DocumentReaderSession;
+  readonly contentRef: RefObject<HTMLElement | null>;
+  readonly layoutKey: unknown;
+  readonly readTextParts: () => Iterable<PublicationGutterTextPart>;
+  readonly isPdf: boolean;
+  readonly isMobile: boolean;
+  readonly filters: EvidenceFilterState;
+  readonly refreshToken: number;
+  readonly hasMarginFacts: boolean | null;
+  readonly onOpenSidecar: () => void;
+  readonly onActivateItem: (factId: string, signal: AbortSignal) => Promise<{ readonly kind: "Located" | "Unavailable" } | ReaderViewCapacity>;
+  readonly onDismissSynapse: (edgeId: string) => Promise<void>;
+  readonly onDefect: (defect: ReaderContentDefect | null) => void;
 }) {
-  if (item.kind === "stance") {
-    const conceded = item.stance === "supports";
-    return (
-      <button
-        type="button"
-        className={styles.stance}
-        aria-label={conceded ? "Conceded" : "Doubted"}
-        onClick={() => onActivateItem(item.itemId)}
-      >
-        {conceded ? "✓" : "~"}
-      </button>
-    );
-  }
-  if (item.kind === "synapse") {
-    const edgeId = item.edgeId;
-    return (
-      <div className={styles.synapse}>
-        <button
-          type="button"
-          className={styles.itemActivation}
-          onClick={() => onActivateItem(item.itemId)}
-        >
-          <MachineText
-            variant="inline"
-            origin={{ label: "Synapse" }}
-            className={styles.synapseText}
-          >
-            {item.excerpt ?? item.label}
-          </MachineText>
-        </button>
-        {edgeId ? (
-          <button
-            type="button"
-            className={styles.dismiss}
-            aria-label="Dismiss Synapse connection"
-            onClick={() => onDismissSynapse(edgeId)}
-          >
-            <X size={12} aria-hidden="true" />
-          </button>
-        ) : null}
-      </div>
-    );
-  }
-  return (
-    <button
-      type="button"
-      className={styles.itemActivation}
-      onClick={() => onActivateItem(item.itemId)}
-    >
-      <span className={styles.kicker}>
-        {item.kind === "highlight"
-          ? "Highlight"
-          : item.kind === "citation"
-            ? "Citation"
-            : "Link"}
-      </span>
-      <span className={styles.itemLabel}>{item.label}</span>
-      {item.excerpt ? (
-        <span className={styles.itemExcerpt}>{item.excerpt}</span>
-      ) : null}
-    </button>
-  );
+  const host = useRef<HTMLDivElement>(null);
+  const probe = useRef<HTMLDivElement>(null);
+  const [wide, setWide] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [after, setAfter] = useState<string | null>(null);
+  const [next, setNext] = useState<string | null>(null);
+  const [remaining, setRemaining] = useState(0);
+  const [status, setStatus] = useState<{ readonly kind: "Loading" | "Ready" | "Failed" } | ReaderViewCapacity>({ kind: "Loading" });
+  const [actionStatus, setActionStatus] = useState<{ readonly kind: "Idle" | "Loading" | "Unavailable" | "Failed" } | ReaderViewCapacity>({ kind: "Idle" });
+  const callbacks = useRef({ readTextParts, onActivateItem, onDismissSynapse, onDefect });
+  callbacks.current = { readTextParts, onActivateItem, onDismissSynapse, onDefect };
+  const kinds = useMemo<ReaderPublicationEvidenceGutterRequest["kinds"]>(() => [
+    ...(filters.highlight ? ["Highlight" as const] : []), ...(filters.citation ? ["SourceReference" as const, "GeneratedCitation" as const] : []),
+    ...(filters.link ? ["Link" as const] : []), ...(filters.synapse ? ["Synapse" as const] : []),
+  ], [filters.highlight, filters.citation, filters.link, filters.synapse]);
+
+  useEffect(() => {
+    if (isMobile || contentRef.current === null) { setWide(false); return; }
+    const viewport = findScrollParent(contentRef.current);
+    const measure = () => {
+      const threshold = probe.current?.getBoundingClientRect().width ?? 0;
+      setWide(threshold > 0 && viewport.clientWidth >= threshold);
+    };
+    measure();
+    const observer = new ResizeObserver(measure); observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [contentRef, isMobile, layoutKey]);
+
+  useEffect(() => {
+    if (!wide || host.current === null || contentRef.current === null) return;
+    let observed: { content: HTMLElement; viewport: HTMLElement } | null = {
+      content: contentRef.current, viewport: findScrollParent(contentRef.current),
+    };
+    let current: AbortController | null = null;
+    let timer: number | null = null;
+    let withdraw: (() => void) | null = null;
+    const retire = () => {
+      current?.abort(); current = null;
+      withdraw?.(); withdraw = null;
+    };
+    const fail = (error: unknown, request: AbortController) => {
+      if (request.signal.aborted || isAbortError(error)) return;
+      setStatus({ kind: "Failed" });
+      if (!isApiError(error) || isSameSystemApiDefect(error)) callbacks.current.onDefect({ key: createRandomId("reader-gutter"), error,
+        retry: () => { if (current === request) setAttempt((value) => value + 1); } });
+    };
+    const load = (cursor: string | null) => {
+      retire();
+      if (observed === null || host.current === null || contentRef.current === null) return;
+      let presentation: { host: HTMLElement; content: HTMLElement; viewport: HTMLElement } | null = {
+        host: host.current, content: contentRef.current, viewport: findScrollParent(contentRef.current),
+      };
+      const request = new AbortController(); current = request;
+      let lease: { readonly page: ReaderPublicationEvidenceGutterPage; release(): void } | null = null;
+      let dom: ReaderDomLease | null = null;
+      let pendingAction = false;
+      const release = () => { lease?.release(); lease = null; dom?.release(); dom = null; };
+      withdraw = () => {
+        presentation?.host.replaceChildren(); presentation = null;
+        if (!pendingAction) release();
+      };
+      setStatus({ kind: "Loading" }); setNext(null); setRemaining(0); setActionStatus({ kind: "Idle" }); callbacks.current.onDefect(null);
+      void (async () => {
+        if (session.gutter === null) throw new Error("Hosted gutter capability is unavailable");
+        const result = await session.gutter({ kinds, include_stances: filters.link, after: cursor, limit: 24,
+          readWindow: (maxBytes) => {
+            const view = presentation;
+            if (view === null) throw new DOMException("Margin source retired", "AbortError");
+            return isPdf ? readPdfGutterWindow(view.content, view.viewport.getBoundingClientRect(), maxBytes)
+              : readTextGutterWindow(callbacks.current.readTextParts(), view.viewport.getBoundingClientRect(), maxBytes);
+          },
+        }, request.signal);
+        if (result.kind === "Capacity") { if (!request.signal.aborted) setStatus(result); return; }
+        if (request.signal.aborted || presentation === null || presentation.host !== host.current || presentation.content !== contentRef.current) { result.lease.release(); return; }
+        lease = result.lease;
+        dom = session.reserveDomNodes(32 + CHAPTER_OPENER.paths.length + lease.page.items.length * 14);
+        if (dom === null) { release(); setStatus({ kind: "Capacity", reason: "Dom" }); return; }
+        const { host: root, content, viewport } = presentation;
+        const rect = viewport.getBoundingClientRect();
+        const baseline = root.getBoundingClientRect().top;
+        const positions: { id: string; desiredTop: number }[] = [];
+        const heights = new Map<string, number>();
+        const act = (action: () => Promise<{ readonly kind: "Located" | "Unavailable" } | ReaderViewCapacity | void>) => {
+          if (pendingAction || request.signal.aborted) return;
+          pendingAction = true; setActionStatus({ kind: "Loading" });
+          void action().then((outcome) => {
+            if (!request.signal.aborted) {
+              setActionStatus(outcome === undefined || outcome.kind === "Located" ? { kind: "Idle" }
+                : outcome.kind === "Capacity" ? outcome : { kind: "Unavailable" });
+            }
+          }).catch((error: unknown) => { if (!request.signal.aborted && !isAbortError(error)) { setActionStatus({ kind: "Failed" }); fail(error, request); } })
+            .finally(() => { pendingAction = false; if (request.signal.aborted) release(); });
+        };
+        for (const item of lease.page.items) {
+          const top = publicationGutterTop(item, callbacks.current.readTextParts(), content, rect);
+          if (top === null) continue;
+          const row = document.createElement("div"); row.className = styles.item; row.dataset.gutterId = item.id;
+          const button = document.createElement("button"); button.type = "button";
+          const factId = item.fact_id;
+          button.onclick = () => act(() => callbacks.current.onActivateItem(factId, request.signal));
+          if (item.kind === "Stance") {
+            button.className = styles.stance; button.textContent = item.stance === "supports" ? "✓" : "~";
+            button.setAttribute("aria-label", item.stance === "supports" ? "Conceded" : "Doubted");
+          } else {
+            button.className = styles.itemActivation;
+            const kicker = document.createElement("span"); kicker.className = styles.kicker;
+            kicker.textContent = item.kind === "GeneratedCitation" || item.kind === "SourceReference" ? "Citation" : item.kind;
+            button.append(kicker);
+            if (item.kind === "Synapse") {
+              const machine = createInlineMachineText(item.excerpt ?? item.label_excerpt, { label: item.kind });
+              machine.classList.add(styles.synapseText); button.append(machine); row.classList.add(styles.synapse);
+            } else {
+              const label = document.createElement("span"); label.className = styles.itemLabel; label.textContent = item.label_excerpt; button.append(label);
+              if (item.excerpt !== null) { const excerpt = document.createElement("span"); excerpt.className = styles.itemExcerpt; excerpt.textContent = item.excerpt; button.append(excerpt); }
+            }
+          }
+          row.append(button);
+          if (item.kind === "Synapse" && item.edge_id !== null) {
+            const edgeId = item.edge_id;
+            const dismiss = document.createElement("button"); dismiss.type = "button"; dismiss.className = styles.dismiss;
+            dismiss.setAttribute("aria-label", "Dismiss Synapse connection"); dismiss.textContent = "×";
+            dismiss.onclick = () => act(() => callbacks.current.onDismissSynapse(edgeId)); row.append(dismiss);
+          }
+          root.append(row); positions.push({ id: item.id, desiredTop: top - baseline });
+          heights.set(item.id, Math.ceil(row.getBoundingClientRect().height));
+        }
+        const { alignedRows } = stackAnchoredRows(positions, { rowHeights: heights, rowHeight: 72, gap: 6, containerHeight: root.clientHeight });
+        for (const row of root.querySelectorAll<HTMLElement>("[data-gutter-id]")) {
+          const position = alignedRows.find((entry) => entry.id === row.dataset.gutterId);
+          if (position === undefined) row.remove(); else row.style.transform = `translateY(${position.top}px)`;
+        }
+        setRemaining(Math.max(0, lease.page.total_count - alignedRows.length)); setNext(lease.page.next_cursor); setStatus({ kind: "Ready" });
+      })().catch((error: unknown) => { if (current === request) { presentation?.host.replaceChildren(); presentation = null; release(); fail(error, request); } });
+    };
+    const measure = () => {
+      if (observed === null) return;
+      retire(); setStatus({ kind: "Loading" });
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => { timer = null; if (after !== null) setAfter(null); else load(null); }, MEASURE_DELAY_MS);
+    };
+    load(after);
+    observed.viewport.addEventListener("scroll", measure, { passive: true });
+    observed.content.addEventListener("load", measure, true);
+    let width = observed.viewport.clientWidth;
+    let height = observed.viewport.clientHeight;
+    let contentWidth = observed.content.clientWidth;
+    let contentHeight = observed.content.clientHeight;
+    const observer = new ResizeObserver(() => {
+      if (observed === null) return;
+      if (width === observed.viewport.clientWidth && height === observed.viewport.clientHeight &&
+          contentWidth === observed.content.clientWidth && contentHeight === observed.content.clientHeight) return;
+      width = observed.viewport.clientWidth; height = observed.viewport.clientHeight;
+      contentWidth = observed.content.clientWidth; contentHeight = observed.content.clientHeight;
+      measure();
+    });
+    observer.observe(observed.viewport); observer.observe(observed.content);
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+      observer.disconnect();
+      observed?.viewport.removeEventListener("scroll", measure); observed?.content.removeEventListener("load", measure, true);
+      observed = null; retire();
+    };
+  }, [session, contentRef, wide, isPdf, kinds, filters.link, refreshToken, layoutKey, after, attempt]);
+
+  const notice = status.kind === "Capacity" ? readerCapacityNotice(status.reason) : null;
+  const actionNotice = actionStatus.kind === "Capacity" ? readerCapacityNotice(actionStatus.reason) : null;
+  const measuringProbe = <div ref={probe} aria-hidden="true" className={styles.probe} style={{ width: "calc(var(--reader-measure) + var(--reader-margin-width))" }} />;
+  if (isMobile || !wide) return measuringProbe;
+  return <aside className={styles.rail} aria-label="Margin">
+    {measuringProbe}
+    {hasMarginFacts === false ? <svg className={styles.plaque} viewBox={CHAPTER_OPENER.viewBox} aria-hidden="true" focusable="false">
+      {CHAPTER_OPENER.paths.map((path, index) => <path key={index} d={path} />)}
+    </svg> : null}
+    <div ref={host} className={styles.container} />
+    <div className={styles.overflowFoot}>
+      {status.kind === "Loading" ? <span role="status">Loading margin…</span> : null}
+      {notice !== null || status.kind === "Failed" ? <span role="status">{notice?.message ?? "Margin could not be loaded."}
+        {notice === null || notice.retryable ? <button type="button" onClick={() => setAttempt((value) => value + 1)}>Retry margin</button> : null}</span> : null}
+      {actionStatus.kind !== "Idle" ? <span role="status">{actionStatus.kind === "Loading" ? "Opening passage…" : actionNotice?.message ?? (actionStatus.kind === "Unavailable" ? "Passage is unavailable." : "Passage could not be opened.")}</span> : null}
+      {remaining > 0 ? <button type="button" onClick={onOpenSidecar}>+{remaining} more</button> : null}
+      {after !== null ? <button type="button" onClick={() => setAfter(null)}>First margin page</button> : null}
+      {next !== null ? <button type="button" onClick={() => setAfter(next)}>Next margin page</button> : null}
+    </div>
+  </aside>;
 }

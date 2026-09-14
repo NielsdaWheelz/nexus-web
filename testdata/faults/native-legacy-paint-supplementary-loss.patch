@@ -1,0 +1,11 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyPaint.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyPaint.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyPaint.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyPaint.kt
+@@ -138,6 +138,6 @@
+                 }
+             }
+         }
+-        appendCodePoint(if (cp == 0 || cp in 0xd800..0xdfff || cp > 0x10ffff) 0xfffd else cp)
++        appendCodePoint(if (cp == 0 || cp in 0xd800..0xdfff || cp > 0xffff) 0xfffd else cp)
+     }
+ }

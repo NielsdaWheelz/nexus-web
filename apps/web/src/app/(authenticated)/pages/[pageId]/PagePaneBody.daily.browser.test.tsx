@@ -1,3 +1,7 @@
+import { ArtworkProvider } from "@/lib/media/ArtworkProvider";
+import { ARTWORK_CAPACITY } from "@/lib/media/artworkCapacity";
+import { ResourceCacheProvider } from "@/lib/api/resourceCache";
+import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { describe, expect, it, vi } from "vitest";
@@ -179,12 +183,19 @@ function CanonicalActionTestProviders({
               <LecternProvider>
                 <OfflineMediaProvider accountId={ACCOUNT_ID} transport={null}>
                   <ResourceOverlaysProvider>
-                    <GlobalPlayerProvider>
-                      <ResourceActionRuntimeProvider>
-                        {children}
-                        <ResourceActionOverlays />
-                      </ResourceActionRuntimeProvider>
-                    </GlobalPlayerProvider>
+                    <ResourceCacheProvider
+                      value={{}}
+                      publicationLimits={READER_CAPACITY.cache}
+                    >
+                      <ArtworkProvider limits={ARTWORK_CAPACITY}>
+                        <GlobalPlayerProvider>
+                          <ResourceActionRuntimeProvider>
+                            {children}
+                            <ResourceActionOverlays />
+                          </ResourceActionRuntimeProvider>
+                        </GlobalPlayerProvider>
+                      </ArtworkProvider>
+                    </ResourceCacheProvider>
                   </ResourceOverlaysProvider>
                 </OfflineMediaProvider>
               </LecternProvider>

@@ -20,11 +20,9 @@ from uuid import UUID
 
 from pydantic import TypeAdapter
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, visible_media_ids_cte_sql
-from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import MediaKind
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
@@ -102,7 +100,11 @@ from nexus.schemas.consumption_activity import (
     RetainedArtifactsOut,
 )
 from nexus.schemas.presence import Absent, Present, absent, nullable_from_presence, present
-from nexus.schemas.reader import CursorWrite, ReaderCursorSnapshot
+from nexus.schemas.reader import (
+    CursorWrite,
+    ReaderCursorSnapshot,
+    ReaderCursorSource,
+)
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_collection_families,
@@ -595,49 +597,30 @@ def get_listening_state(db: Session, viewer_id: UUID, media_id: UUID) -> Listeni
     return _projection.to_listening_state_out(row)
 
 
-def get_reader_cursor(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderCursorSnapshot:
-    """Canonical reader cursor snapshot for a visible media item."""
+@dataclass(frozen=True, slots=True)
+class VisibleReaderCursor:
+    """One visible media's cursor and the single locator kind it may carry.
+
+    The kind is resolved by the same visibility read that loads the cursor, so a
+    caller that must branch on timeline-versus-document never re-derives it.
+    """
+
+    locator_kind: str
+    cursor: ReaderCursorSnapshot
+
+
+def get_reader_cursor(db: Session, viewer_id: UUID, media_id: UUID) -> VisibleReaderCursor:
+    """Canonical cursor of a visible media, with the locator kind it may carry."""
     media_kind = _visible_reader_media_kind(db, viewer_id=viewer_id, media_id=media_id)
-    return _reader_cursor_store.load_snapshot(
-        db,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        media_kind=media_kind,
+    return VisibleReaderCursor(
+        locator_kind=_reader_cursor_store.expected_locator_kind(media_kind),
+        cursor=_reader_cursor_store.load_snapshot(
+            db,
+            viewer_id=viewer_id,
+            media_id=media_id,
+            media_kind=media_kind,
+        ),
     )
-
-
-def put_reader_cursor(
-    viewer_id: UUID,
-    media_id: UUID,
-    write: CursorWrite,
-) -> ReaderCursorSnapshot:
-    """Atomically replace a cursor, current engagement, and completion transition."""
-    fresh = fresh_session()
-    try:
-        try:
-            return retry_serializable(
-                fresh,
-                "reader_cursor_write",
-                partial(_put_reader_cursor_op, fresh, viewer_id, media_id, write),
-            )
-        except IntegrityError as exc:
-            if integrity_constraint_name(exc) != _reader_cursor_store.READER_MEDIA_STATE_MEDIA_FK:
-                raise
-            _visible_reader_media_kind(fresh, viewer_id=viewer_id, media_id=media_id)
-            raise
-    finally:
-        fresh.close()
-
-
-def _put_reader_cursor_op(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    write: CursorWrite,
-) -> ReaderCursorSnapshot:
-    snapshot = put_reader_cursor_in_txn(db, viewer_id=viewer_id, media_id=media_id, write=write)
-    db.commit()
-    return snapshot
 
 
 def put_reader_cursor_in_txn(
@@ -646,6 +629,7 @@ def put_reader_cursor_in_txn(
     viewer_id: UUID,
     media_id: UUID,
     write: CursorWrite,
+    source: ReaderCursorSource,
 ) -> ReaderCursorSnapshot:
     """Apply the canonical cursor mutation inside the caller's transaction."""
     _lock_viewer(db, viewer_id)
@@ -657,6 +641,7 @@ def put_reader_cursor_in_txn(
         media_id=media_id,
         media_kind=media_kind,
         write=write,
+        source=source,
     )
     _reader_engagement_store.record_engagement_in_txn(
         db,

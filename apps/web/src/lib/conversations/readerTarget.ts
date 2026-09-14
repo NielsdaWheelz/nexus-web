@@ -58,7 +58,9 @@ export function readerTargetFromReaderSelection(
     kind: "media",
     source: "reader_selection",
     media_id: selection.key.mediaId,
-    locator: selection.locator,
+    locator: selection.locator.type === "web_text_offsets" || selection.locator.type === "epub_fragment_offsets"
+      ? { ...selection.locator, text_quote_selector: { exact: selection.exact, prefix: selection.prefix, suffix: selection.suffix } }
+      : selection.locator,
     snippet: selection.exact,
     highlight_behavior: "pulse",
     focus_behavior: "scroll_into_view",

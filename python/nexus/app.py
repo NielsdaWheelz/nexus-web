@@ -13,22 +13,23 @@ Middleware Ordering (Critical):
 - RequestIDMiddleware is added LAST so it runs FIRST (outermost)
 - This ensures all requests (including auth failures) get X-Request-ID
 
-Order of registration:
-1. AuthMiddleware (innermost auth boundary)
-2. RequestDbSessionMiddleware (releases sessions before body transfer)
+The stack a request passes through, outermost to innermost:
+1. RequestIDMiddleware (sets request_id, starts timer, stamps X-Request-ID)
+2. APIResponsePolicyMiddleware (private no-store / public share header policy,
+   and delegation of pre-start exceptions to the handlers below)
 3. StreamCORSMiddleware when configured (stream route CORS)
-4. RequestIDMiddleware (outermost request logging and X-Request-ID)
+4. RequestDbSessionMiddleware (releases request DB sessions at response start,
+   before body transfer)
+5. AuthMiddleware (verifies auth, sets viewer)
+6. Routing, then the route-level read admission owner for the admitted route
+   families (see nexus.api.read_admission), then the route handler
 
-Actual execution order per request:
-1. RequestIDMiddleware (sets request_id, starts timer)
-2. StreamCORSMiddleware when configured (stream route CORS)
-3. RequestDbSessionMiddleware (tracks response-start DB release)
-4. AuthMiddleware (verifies auth, sets viewer)
-5. Route handler
-6. AuthMiddleware (returns response)
-7. RequestDbSessionMiddleware (releases request DB sessions before body transfer)
-8. StreamCORSMiddleware when configured (stream route CORS)
-9. RequestIDMiddleware (logs, sets response header)
+Every layer above is pure ASGI, not BaseHTTPMiddleware, and must stay that way:
+BaseHTTPMiddleware runs the downstream app in a child task and buffers its
+response, which breaks the admission owner's shielded permit (a caller
+cancellation would unwind the request while its synchronous worker still holds
+DB resources), breaks streaming responses, and leaves its inner send wrapper
+unable to stamp headers on a ServerErrorMiddleware 500.
 
 Outbound client lifecycle:
 - httpx.AsyncClient is created at startup, stored in app.state, and shared by
@@ -39,7 +40,6 @@ Outbound client lifecycle:
 - Client is closed gracefully at shutdown
 """
 
-import json
 import re
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -53,23 +53,22 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 
+from nexus.api.read_admission import configured_read_admission
 from nexus.api.routes import create_api_router
 from nexus.auth.middleware import AuthMiddleware
 from nexus.auth.verifier import SupabaseJwksVerifier
-from nexus.config import Environment, get_settings
+from nexus.config import Environment, get_settings, require_image_decoder_limits
 from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.jobs.registry import get_task_contract_digest
 from nexus.logging import get_logger
 from nexus.middleware.db_session import RequestDbSessionMiddleware
 from nexus.middleware.request_id import RequestIDMiddleware
+from nexus.middleware.response_policy import APIResponsePolicyMiddleware
 from nexus.middleware.stream_cors import StreamCORSMiddleware
-from nexus.public_resource_security import (
-    PUBLIC_RESOURCE_SHARE_PATH_RE,
-    apply_public_resource_share_headers,
-)
 from nexus.responses import (
     api_error_handler,
+    client_disconnect_handler,
     error_response,
     http_exception_handler,
     unhandled_exception_handler,
@@ -84,46 +83,6 @@ from nexus.services.tool_runtime.composition import (
 )
 
 logger = get_logger(__name__)
-
-# Exact private response paths. These responses carry per-viewer state or
-# private source capabilities and must never be retained by an intermediary.
-PRIVATE_NO_STORE_PATH_RE = re.compile(
-    r"/llm-catalog|/imports(/.*)?|/media/[^/]+/(reader-state|offline-reader-state|offline-download-spec)"
-    r"|/internal/offline-reading/account-binding"
-    r"|/internal/media/[^/]+/offline-reading-token"
-    r"|/me/reader-profile|/consumption/(activity|activity-exclusions|stats|sessions)"
-)
-
-
-async def validate_json_request_body(request: Request) -> JSONResponse | None:
-    """Pre-validate JSON request bodies without treating disconnects as 500s."""
-    if request.method not in ("POST", "PUT", "PATCH"):
-        return None
-    content_type = request.headers.get("content-type", "")
-    if "application/json" not in content_type:
-        return None
-    try:
-        body = await request.body()
-    except ClientDisconnect:
-        logger.info(
-            "request_body_client_disconnected",
-            path=request.url.path,
-            method=request.method,
-        )
-        return JSONResponse(
-            status_code=499,
-            content=error_response(ApiErrorCode.E_CLIENT_DISCONNECT, "Client disconnected"),
-        )
-    if not body:
-        return None
-    try:
-        json.loads(body)
-    except json.JSONDecodeError:
-        return JSONResponse(
-            status_code=400,
-            content=error_response(ApiErrorCode.E_INVALID_REQUEST, "Malformed JSON body"),
-        )
-    return None
 
 
 def create_bootstrap_callback():
@@ -183,6 +142,12 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     get_runtime_identity()
     get_task_contract_digest()
+    (
+        app.state.read_admission,
+        app.state.image_admission,
+        app.state.package_transfer_admission,
+    ) = configured_read_admission()
+    require_image_decoder_limits()
 
     validate_policy()
 
@@ -261,6 +226,10 @@ def create_app(
     # Register exception handlers
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+    # Routes that read the request body themselves (Stripe webhook, email ingest)
+    # raise ClientDisconnect directly; FastAPI's own body read re-raises it as an
+    # HTTPException cause. Both classify as 499, never as an internal defect.
+    app.add_exception_handler(ClientDisconnect, client_disconnect_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
     # The five author-surface endpoints return 422 for structural/bounds
@@ -276,6 +245,13 @@ def create_app(
     ) -> JSONResponse:
         """Handle request validation errors (including malformed JSON).
 
+        This is the only owner of the malformed-JSON 400, and it sees a body only
+        where the route declares one: nothing reads a request body before the
+        route is admitted, so a mutation route that declares no body model ignores
+        whatever bytes arrive with it. A route that needs the 400 contract declares
+        its body model, which also puts the shape in the OpenAPI contract and lets
+        pydantic own validity.
+
         Logged errors are redacted to location/type only: the pydantic ``input``
         and ``ctx`` values echo request content (reader locators, quote context,
         URL targets) and must never reach logs.
@@ -289,6 +265,7 @@ def create_app(
                 for err in exc.errors()
             ],
         )
+        malformed_json = any(error.get("type") == "json_invalid" for error in exc.errors())
         invalid_chat_selection = (
             request.method == "POST"
             and bool(chat_selection_route_re.fullmatch(request.url.path))
@@ -300,7 +277,10 @@ def create_app(
             )
         )
         status_code = (
-            422 if invalid_chat_selection or author_surface_422_re.search(request.url.path) else 400
+            422
+            if not malformed_json
+            and (invalid_chat_selection or author_surface_422_re.search(request.url.path))
+            else 400
         )
         code = (
             ApiErrorCode.E_INVALID_GENERATION_SELECTION
@@ -309,17 +289,10 @@ def create_app(
         )
         return JSONResponse(
             status_code=status_code,
-            content=error_response(code, "Invalid request body"),
+            content=error_response(
+                code, "Malformed JSON body" if malformed_json else "Invalid request body"
+            ),
         )
-
-    # Handle JSON decode errors from malformed JSON bodies
-    @app.middleware("http")
-    async def catch_json_decode_errors(request: Request, call_next):
-        """Catch JSON decode errors before they reach route handlers."""
-        body_error_response = await validate_json_request_body(request)
-        if body_error_response is not None:
-            return body_error_response
-        return await call_next(request)
 
     # Include API routes (must be before middleware for correct ordering)
     # Use router factory to avoid import-time settings loading. The factory owns
@@ -408,37 +381,8 @@ def create_app(
                 stream_base_url=settings.effective_stream_base_url,
             )
 
-    # Reader-state and reader-profile responses are never cacheable: the
-    # cursor is revalidated event-driven and the profile is per-user private
-    # state, so a cached snapshot would defeat revision arbitration or leak
-    # across accounts. Registered after every other create_app middleware so
-    # it runs outermost here and stamps every matched response, including
-    # auth failures, validation errors, and exception-handler output; for a
-    # matched path it also owns the raw-500 stamp by delegating once to the
-    # canonical exception handler instead of letting the exception propagate
-    # to the outer ServerErrorMiddleware unstamped.
-    @app.middleware("http")
-    async def private_history_no_store(request: Request, call_next):
-        if not PRIVATE_NO_STORE_PATH_RE.fullmatch(request.url.path):
-            return await call_next(request)
-        try:
-            response = await call_next(request)
-        except Exception as exc:
-            response = await unhandled_exception_handler(request, exc)
-        response.headers["Cache-Control"] = "private, no-store"
-        return response
-
-    @app.middleware("http")
-    async def public_resource_share_security(request: Request, call_next):
-        """Stamp every route/error outcome in the anonymous public API tree."""
-        if PUBLIC_RESOURCE_SHARE_PATH_RE.fullmatch(request.url.path) is None:
-            return await call_next(request)
-        try:
-            response = await call_next(request)
-        except Exception as exc:
-            response = await unhandled_exception_handler(request, exc)
-        apply_public_resource_share_headers(response)
-        return response
+    # Header policy wraps auth and route failures without buffering responses.
+    app.add_middleware(APIResponsePolicyMiddleware)
 
     return app
 

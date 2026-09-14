@@ -1,0 +1,12 @@
+diff --git a/python/nexus_test_control/runtime.py b/python/nexus_test_control/runtime.py
+--- a/python/nexus_test_control/runtime.py
++++ b/python/nexus_test_control/runtime.py
+@@ -396,7 +396,7 @@
+         resolved_external_id = external_id if external_id is not None else entry.external_id
+         if resource.kind in {ResourceKind.PROCESS, ResourceKind.CONTAINER}:
+             _require_match(resolved_external_id, _PROCESS_OWNER, "process owner token")
+-            if resolved_external_id != entry.external_id:
++            if resource.kind is ResourceKind.PROCESS and resolved_external_id != entry.external_id:
+                 raise RuntimeContractError("created process owner changed after planning")
+         elif resource.kind is ResourceKind.SUPABASE_USER:
+             _require_match(resolved_external_id, _UUID, "Supabase admin user id")

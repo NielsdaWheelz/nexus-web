@@ -18,7 +18,7 @@ import threading
 import time
 import tomllib
 import xml.etree.ElementTree as ET
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import date
@@ -41,6 +41,7 @@ from nexus.release_artifact import (
 )
 from nexus_test_control import android_visual
 from nexus_test_control.build import StandaloneBuild, ensure_standalone_build
+from nexus_test_control.containers import close_owned_container, local_docker
 from nexus_test_control.evidence import (
     BrowserIdentity,
     CapabilityEvidence,
@@ -48,6 +49,7 @@ from nexus_test_control.evidence import (
     JsonValue,
     RunContextEvidence,
     RuntimeIdentity,
+    compute_proof_digest,
     redact_text,
     write_evidence_json,
 )
@@ -59,6 +61,17 @@ from nexus_test_control.memory import (
     required_platform_memory_tools,
 )
 from nexus_test_control.model import (
+    API_CAPACITY_BASELINE_ARTWORK_PROOF,
+    API_CAPACITY_BASELINE_PROOF,
+    API_CAPACITY_BASELINE_READER_PROOF,
+    API_CAPACITY_CANDIDATE_ARTWORK_PROOF,
+    API_CAPACITY_CANDIDATE_DENSE_EPUB_WORKER_PROOF,
+    API_CAPACITY_CANDIDATE_EPUB_WORKER_PROOF,
+    API_CAPACITY_CANDIDATE_METADATA_PROOF,
+    API_CAPACITY_CANDIDATE_READER_PROOF,
+    API_CAPACITY_CANDIDATE_WORKER_PROOF,
+    API_CAPACITY_COMPLETE_PROOFS,
+    API_CAPACITY_DATABASE_PROOFS,
     WORKFLOW_REGISTRY,
     Capability,
     PeakOwnedMemory,
@@ -84,6 +97,7 @@ from nexus_test_control.process import run_command
 from nexus_test_control.runtime import (
     EndpointKind,
     RuntimeContractError,
+    claim_run,
     extension_profile_identity,
     local_docker_host,
     migration_database_name,
@@ -132,6 +146,7 @@ from nexus_test_control.services import (
     wait_codex_generation_peer_ready,
     wait_process_ready,
 )
+from nexus_test_control.setup_dependencies import LLM_AGENT_KERNEL_SOURCE, PinnedSuiteSource
 
 _SENSITIVE_ENV_PARTS = (
     "credential",
@@ -392,6 +407,7 @@ _HEAVY_CAPABILITIES = frozenset(
         Capability.ANDROID_DEVICE,
         Capability.ANDROID_RELEASE,
         Capability.RELEASE_ARTIFACT,
+        Capability.API_CAPACITY,
     }
 )
 _MEMORY_ADMITTED_CAPABILITIES = _HEAVY_CAPABILITIES | {
@@ -410,6 +426,7 @@ _LOCAL_RUNTIME_CAPABILITIES = frozenset(
         Capability.LLM_EVAL,
         Capability.EXTENSION,
         Capability.AUDIT,
+        Capability.API_CAPACITY,
     }
 )
 _EXTERNAL_PROTOCOL_CAPABILITIES = frozenset(
@@ -463,20 +480,14 @@ class _SuccessfulFixedCommand:
 
 
 @dataclass(frozen=True, slots=True)
-class _PinnedPythonSuite:
+class _PinnedPythonSuite(PinnedSuiteSource):
     capability: Capability
-    package: str
-    source_directory: str
     contract_directory: str
     local_absent_detail: str
     exact_proof_error: str
     no_selection_detail: str
     success_detail: str
     verification_commands: tuple[tuple[str, ...], ...]
-
-    @property
-    def marker_name(self) -> str:
-        return f".nexus-{self.package}-revision"
 
 
 _PINNED_PYTHON_VERIFICATION = (
@@ -499,6 +510,7 @@ _PROVIDER_RUNTIME_SUITE = _PinnedPythonSuite(
     capability=Capability.PROVIDER_RUNTIME,
     package="provider-runtime",
     source_directory="llm-calling",
+    repository="https://github.com/NielsdaWheelz/llm-calling.git",
     contract_directory="tests/contract",
     local_absent_detail="local provider protocol contract owner is absent",
     exact_proof_error="exact provider protocol proof must name one pytest node",
@@ -510,6 +522,7 @@ _LLM_TOOLS_SUITE = _PinnedPythonSuite(
     capability=Capability.LLM_TOOLS,
     package="llm-tools",
     source_directory="llm-tools",
+    repository="https://github.com/NielsdaWheelz/llm-tools.git",
     contract_directory="tests/llm_tools_contract",
     local_absent_detail="local llm-tools contract owner is absent",
     exact_proof_error="exact llm-tools proof must name one pytest node",
@@ -562,6 +575,27 @@ class CapabilityResult:
 class WorkflowRun:
     capabilities: tuple[CapabilityEvidence, ...]
     peak_owned_mib: PeakOwnedMemory
+
+
+class WorkflowExecutionError(RuntimeError):
+    """An interrupted workflow retains its actual owner and completed evidence."""
+
+    def __init__(
+        self,
+        owner: Capability,
+        completed: tuple[CapabilityEvidence, ...],
+        error: BaseException,
+    ) -> None:
+        self.owner = owner
+        self.completed = completed
+        details: list[str] = []
+        current: BaseException | None = error
+        while current is not None:
+            details.append(f"{type(current).__name__}: {current}")
+            current = current.__cause__ or (
+                None if current.__suppress_context__ else current.__context__
+            )
+        super().__init__("; caused by: ".join(details))
 
 
 class FirstFailureReporter:
@@ -725,6 +759,9 @@ class _RunnerPorts:
 
     def local_docker_host(self) -> str:
         return local_docker_host()
+
+    def local_docker(self, arguments: Sequence[str]) -> str:
+        return local_docker(arguments)
 
     def run_environment(
         self,
@@ -1037,14 +1074,29 @@ def run_workflow(
             requirement.capability is Capability.MIGRATIONS
             and _capability_is_selected(context, Capability.MIGRATIONS)
             for requirement in requirements
+        )
+        or any(
+            requirement.capability is Capability.API_CAPACITY
+            and _capability_is_selected(context, Capability.API_CAPACITY)
+            and (
+                _scope(context, Capability.API_CAPACITY) is SelectionScope.COMPLETE
+                or _api_capacity_needs_migration_database(
+                    _selected_proof_nodes(context, Capability.API_CAPACITY, "pytest")[0]
+                )
+            )
+            for requirement in requirements
         ),
         run_id=run_id,
         ports=_ports or _RunnerPorts(),
     )
     reporter = _reporter or FirstFailureReporter(environment_secrets(environment))
 
+    completed: list[CapabilityEvidence] = []
+    active_owner = requirements[0].capability
+    cleanup_owner = active_owner
+
     def results() -> Iterable[CapabilityResult]:
-        nonlocal heavy_lock_held
+        nonlocal heavy_lock_held, active_owner, cleanup_owner
         blocked_by: Capability | None = None
 
         def run_requirement(capability: Capability) -> CapabilityResult:
@@ -1085,6 +1137,11 @@ def run_workflow(
                         f"blocked by earlier {blocked_by.value} result",
                     )
                     continue
+                active_owner = requirement.capability
+                if requirement.scope is not SelectionScope.AFFECTED or _capability_is_selected(
+                    context, active_owner
+                ):
+                    cleanup_owner = active_owner
                 if (
                     requirement.capability in _HEAVY_CAPABILITIES
                     and _capability_is_selected(context, requirement.capability)
@@ -1104,6 +1161,7 @@ def run_workflow(
                 if measured_result.evidence.status is not RunStatus.PASS:
                     blocked_by = requirement.capability
         finally:
+            active_owner = cleanup_owner
             try:
                 if measures_containers and heavy_lock_held:
                     workflow_sampler.disable_containers(context.repo_root)
@@ -1127,21 +1185,25 @@ def run_workflow(
         if owns_sampler
         else nullcontext(_memory_sampler)
     )
-    with ExitStack() as workflow_lifecycle:
-        with sampler_lifecycle as workflow_sampler:
-            if workflow_sampler is None:
-                raise AssertionError("workflow owned-memory sampler is absent")
-            workflow_sampler.checkpoint()
-            capabilities = tuple(
-                result.evidence
+    try:
+        with ExitStack() as workflow_lifecycle:
+            with sampler_lifecycle as workflow_sampler:
+                if workflow_sampler is None:
+                    raise AssertionError("workflow owned-memory sampler is absent")
+                workflow_sampler.checkpoint()
                 for result in stream_first_failure(
                     results(),
                     stream,
                     environment_secrets(environment),
                     reporter=reporter,
-                )
-            )
-    workflow_memory = measured(workflow_sampler) if owns_sampler else workflow_sampler.snapshot()
+                ):
+                    completed.append(result.evidence)
+        workflow_memory = (
+            measured(workflow_sampler) if owns_sampler else workflow_sampler.snapshot()
+        )
+    except BaseException as error:
+        raise WorkflowExecutionError(active_owner, tuple(completed), error) from error
+    capabilities = tuple(completed)
     if not workflow_memory.measurement_complete and all(
         item.status is RunStatus.PASS for item in capabilities
     ):
@@ -1269,7 +1331,11 @@ def run_proof(
         execution = _WorkflowExecution(
             proof_context,
             environment,
-            include_migration_database=capability is Capability.MIGRATIONS,
+            include_migration_database=capability is Capability.MIGRATIONS
+            or (
+                capability is Capability.API_CAPACITY
+                and _api_capacity_needs_migration_database((node,))
+            ),
             run_id=new_run_id(),
             ports=ports,
         )
@@ -1331,6 +1397,8 @@ def run_proof(
                     execution,
                     exact=True,
                 )
+            case Capability.API_CAPACITY:
+                result = _run_api_capacity(proof_context, environment, execution, exact=True)
             case Capability.COMPONENT:
                 result = _run_component(proof_context, environment, execution, exact=True)
             case Capability.JOURNEYS_ALL:
@@ -1351,7 +1419,7 @@ def run_proof(
             case Capability.ANDROID_DEVICE:
                 result = _run_android_device_exact(proof_context, node, environment)
             case Capability.ANDROID_HOST:
-                result = _run_android_host(proof_context, environment)
+                result = _run_android_host(proof_context, environment, exact=True)
             case Capability.AUDIT:
                 result = _run_audit(proof_context, environment, execution, exact=True)
             case _:
@@ -1373,7 +1441,16 @@ def _run_capability(
     *,
     heavy_lock_held: bool = False,
 ) -> CapabilityResult:
-    if capability in _MEMORY_ADMITTED_CAPABILITIES and not heavy_lock_held:
+    required = {
+        requirement.capability for requirement in WORKFLOW_REGISTRY[context.workflow].requirements
+    }
+    if capability not in required:
+        raise ValueError(f"{capability.value} is not required by workflow {context.workflow.value}")
+    if _scope(context, capability) is SelectionScope.AFFECTED and not _capability_is_selected(
+        context, capability
+    ):
+        return _pass(capability, f"no selected {capability.value} proof")
+    if _requires_memory_admission(context, capability) and not heavy_lock_held:
         with workspace_heavy_lock(context.repo_root):
             return _run_capability_unlocked(context, capability, environment, execution)
     return _run_capability_unlocked(context, capability, environment, execution)
@@ -1447,15 +1524,6 @@ def _run_capability_unlocked(
     environment: Mapping[str, str],
     execution: _WorkflowExecution | None,
 ) -> CapabilityResult:
-    required = {
-        requirement.capability for requirement in WORKFLOW_REGISTRY[context.workflow].requirements
-    }
-    if capability not in required:
-        raise ValueError(f"{capability.value} is not required by workflow {context.workflow.value}")
-    if _scope(context, capability) is SelectionScope.AFFECTED and not _capability_is_selected(
-        context, capability
-    ):
-        return _pass(capability, f"no selected {capability.value} proof")
     caller_environment = environment
     match capability:
         case Capability.POLICY:
@@ -1528,6 +1596,8 @@ def _run_capability_unlocked(
             return _run_android_release(context, caller_environment, execution)
         case Capability.RELEASE_ARTIFACT:
             return _run_release_artifact(context, caller_environment, execution)
+        case Capability.API_CAPACITY:
+            return _run_api_capacity(context, caller_environment, execution)
         case Capability.DOCTOR:
             return _run_doctor(context, caller_environment)
         case Capability.ANDROID_VISUAL:
@@ -1782,8 +1852,6 @@ def _run_static_python(
 
 def _run_static_web(context: CapabilityContext, environment: Mapping[str, str]) -> CapabilityResult:
     web_root = context.repo_root / "apps/web"
-    if not (web_root / "package.json").is_file() or not (web_root / "node_modules").is_dir():
-        return _not_run(Capability.STATIC_WEB, "web static owner is absent")
     complete = _scope(context, Capability.STATIC_WEB) is SelectionScope.COMPLETE or any(
         selection.path in _WEB_STATIC_PROMOTERS for selection in context.selection
     )
@@ -1810,6 +1878,8 @@ def _run_static_web(context: CapabilityContext, environment: Mapping[str, str]) 
         )
         if len(scripts) != len(paths):
             commands = ((("bun", "run", "lint:css-tokens"), web_root), *commands)
+    if not (web_root / "package.json").is_file() or not (web_root / "node_modules").is_dir():
+        return _not_run(Capability.STATIC_WEB, "web static owner is absent")
     return _run_fixed_commands(
         Capability.STATIC_WEB,
         commands,
@@ -2158,6 +2228,476 @@ def _run_python_heavy(
     )
 
 
+def _api_build_input_paths(repo_root: Path, *, include_worker: bool = False) -> tuple[str, ...]:
+    return (
+        ".dockerignore",
+        "docker/Dockerfile.backend",
+        "python/pyproject.toml",
+        "python/uv.lock",
+        "python/README.md",
+        *sorted(
+            path.relative_to(repo_root).as_posix()
+            for directory in (
+                "python/nexus",
+                "apps/api",
+                "migrations",
+                "scripts/oracle",
+                *(("apps/worker", "apps/codex_agent") if include_worker else ()),
+            )
+            for path in (repo_root / directory).rglob("*")
+            if path.is_file()
+            and "__pycache__" not in path.parts
+            and path.suffix not in {".pyc", ".pyo", ".pyd", ".log"}
+        ),
+        *(
+            (
+                "node/ingest/package.json",
+                "node/ingest/bun.lock",
+                "node/ingest/ingest.mjs",
+                "node/ingest/accepted_url_egress.mjs",
+            )
+            if include_worker
+            else ()
+        ),
+    )
+
+
+def _api_capacity_candidate_proofs(nodes: Sequence[str]) -> tuple[str, ...]:
+    """Candidate proofs a selection names exactly or through its whole proof file.
+
+    A changed capacity proof file is selected as a file, never as a node, so the
+    file stands for the candidate proofs it owns; qualification nodes are never
+    reached this way because they are inputs, not candidates.
+    """
+    return tuple(
+        proof
+        for proof in API_CAPACITY_COMPLETE_PROOFS
+        if proof in nodes or proof.split("::", 1)[0] in nodes
+    )
+
+
+def _api_capacity_needs_migration_database(nodes: Sequence[str]) -> bool:
+    return any(
+        node in API_CAPACITY_DATABASE_PROOFS
+        for node in (*nodes, *_api_capacity_candidate_proofs(nodes))
+    )
+
+
+def _run_api_capacity(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    execution: _WorkflowExecution | None,
+    *,
+    exact: bool = False,
+) -> CapabilityResult:
+    capability = Capability.API_CAPACITY
+    owner = "tests/capacity"
+    nodes, promoted = _selected_proof_nodes(context, capability, "pytest")
+    baseline = API_CAPACITY_BASELINE_PROOF
+    # The historical image is a qualification input, never a dependency of full.
+    if exact or nodes and not promoted:
+        candidates = _api_capacity_candidate_proofs(nodes)
+        named = {*candidates, *(proof.split("::", 1)[0] for proof in candidates)}
+        if len(nodes) == 1 and nodes[0] in {
+            baseline,
+            API_CAPACITY_BASELINE_READER_PROOF,
+            API_CAPACITY_BASELINE_ARTWORK_PROOF,
+        }:
+            selected = nodes
+        elif candidates and all(node in named for node in nodes):
+            selected = candidates
+        else:
+            return _not_run(
+                capability,
+                "select api capacity candidate proof nodes, their whole proof files, "
+                "or exactly one qualification proof node",
+            )
+    else:
+        selected = API_CAPACITY_COMPLETE_PROOFS
+    prepared = _prepared_run(execution, capability)
+    if isinstance(prepared, CapabilityResult):
+        return prepared
+    if execution is None:
+        raise AssertionError("prepared api capacity run lacks execution owner")
+    child = _heavy_environment(context, environment, prepared, execution.ports)
+    targets = tuple(_python_heavy_node(node, owner) for node in selected)
+    if selected in (
+        (baseline,),
+        (API_CAPACITY_BASELINE_READER_PROOF,),
+        (API_CAPACITY_BASELINE_ARTWORK_PROOF,),
+    ):
+        try:
+            result = _run_owned_commands(
+                capability,
+                (
+                    (
+                        (
+                            "uv",
+                            "run",
+                            "--frozen",
+                            "--no-sync",
+                            "pytest",
+                            *_DETERMINISTIC_PYTEST,
+                            *targets,
+                        ),
+                        context.repo_root / "python",
+                    ),
+                ),
+                child,
+                ("uv", "docker"),
+                context=context,
+            )
+        finally:
+            close_owned_container(context.repo_root, prepared.run_id, "api-baseline")
+        return _retain_api_capacity_evidence(
+            context.repo_root, prepared.run_id, selected, result, build=None
+        )
+    source_sha = _git_commit(context.repo_root, "HEAD", environment)
+    include_worker = any(
+        proof in selected
+        for proof in (
+            API_CAPACITY_CANDIDATE_WORKER_PROOF,
+            API_CAPACITY_CANDIDATE_EPUB_WORKER_PROOF,
+            API_CAPACITY_CANDIDATE_DENSE_EPUB_WORKER_PROOF,
+        )
+    )
+    source_paths = _api_build_input_paths(context.repo_root, include_worker=include_worker)
+    source_digest = compute_proof_digest(
+        context.repo_root, "static:docker/Dockerfile.backend", source_paths
+    )
+    dirty = (
+        subprocess.run(
+            ("git", "status", "--porcelain"),
+            cwd=context.repo_root,
+            env=dict(environment),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        != ""
+    )
+    relative_identity = Path("test-results/runs") / prepared.run_id / "api-build-inputs.json"
+    identity = context.repo_root / relative_identity
+    identity.parent.mkdir(parents=True, exist_ok=True)
+    identity.write_text(
+        json.dumps(
+            {
+                "source_sha_label": source_sha,
+                "dirty_worktree": dirty,
+                "build_input_digest": source_digest,
+                "build_input_paths": source_paths,
+                "build_targets": ["api", "worker"] if include_worker else ["api"],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    if dirty:
+        # The image label and the runtime identity it serves both carry
+        # SOURCE_SHA, so a candidate built here would attest a commit it does
+        # not contain. Qualification takes a committed candidate or nothing.
+        return _result(
+            capability,
+            RunStatus.FAIL,
+            0,
+            "proof_result=setup_or_execution_failure|api capacity qualification requires a "
+            f"clean committed candidate; the worktree carries uncommitted build inputs "
+            f"{source_digest}",
+            artifacts=(relative_identity.as_posix(),),
+        )
+    try:
+        docker_host = execution.ports.local_docker_host()
+    except RuntimeContractError as error:
+        return _not_run(capability, f"api capacity candidate build is unavailable: {error}")
+    environment = {**environment, "DOCKER_HOST": docker_host, "DOCKER_CONTEXT": "default"}
+    image_tag = f"nexus-test-api-{repo_id_for(context.repo_root)}:{execution.run_id}"
+    worker_tag = f"nexus-test-capacity-worker-{repo_id_for(context.repo_root)}:{execution.run_id}"
+    with tempfile.TemporaryDirectory(prefix=f"nexus-api-capacity-{execution.run_id}-") as temporary:
+        iidfile = Path(temporary) / "api.iid"
+        build_context = Path(temporary) / "context"
+        for relative in source_paths:
+            destination = build_context / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source = context.repo_root / relative
+            shutil.copyfile(source, destination)
+            # Git tracks executability, not a checkout's incidental private
+            # read bits. Reproduce those repository modes inside the image.
+            destination.chmod(0o755 if source.stat().st_mode & 0o100 else 0o644)
+        # Docker preserves directory modes. The image's non-root user must
+        # traverse public source even when the test host uses a private umask.
+        # The enclosing TemporaryDirectory remains private to this run.
+        build_context.chmod(0o755)
+        for directory in build_context.rglob("*"):
+            if directory.is_dir():
+                directory.chmod(0o755)
+        if source_digest != compute_proof_digest(
+            build_context, "static:docker/Dockerfile.backend", source_paths
+        ):
+            return _fail(capability, "api build inputs changed while being staged")
+        try:
+            built = _run_fixed_commands(
+                capability,
+                (
+                    (
+                        (
+                            "docker",
+                            "buildx",
+                            "build",
+                            "--load",
+                            "--file",
+                            "docker/Dockerfile.backend",
+                            "--target",
+                            "api",
+                            "--build-arg",
+                            f"SOURCE_SHA={source_sha}",
+                            "--tag",
+                            image_tag,
+                            "--iidfile",
+                            str(iidfile),
+                            str(build_context),
+                        ),
+                        context.repo_root,
+                    ),
+                ),
+                environment,
+                ("docker",),
+                context=context,
+            )
+            if built.evidence.status is not RunStatus.PASS:
+                return built
+            image_id = iidfile.read_text(encoding="utf-8").strip()
+            if _LOCAL_IMAGE_ID_RE.fullmatch(image_id) is None:
+                return _fail(capability, "api build did not produce an immutable image id")
+            worker_image_environment: tuple[str, ...] = ()
+            if include_worker:
+                worker_iidfile = Path(temporary) / "worker.iid"
+                worker_build = _run_fixed_commands(
+                    capability,
+                    (
+                        (
+                            (
+                                "docker",
+                                "buildx",
+                                "build",
+                                "--load",
+                                "--file",
+                                "docker/Dockerfile.backend",
+                                "--target",
+                                "worker",
+                                "--build-arg",
+                                f"SOURCE_SHA={source_sha}",
+                                "--tag",
+                                worker_tag,
+                                "--iidfile",
+                                str(worker_iidfile),
+                                str(build_context),
+                            ),
+                            context.repo_root,
+                        ),
+                    ),
+                    environment,
+                    ("docker",),
+                    context=context,
+                )
+                if worker_build.evidence.status is not RunStatus.PASS:
+                    return worker_build
+                worker_image_id = worker_iidfile.read_text(encoding="utf-8").strip()
+                if _LOCAL_IMAGE_ID_RE.fullmatch(worker_image_id) is None:
+                    return _fail(capability, "capacity worker build omitted its immutable image id")
+                worker_image_environment = (f"NEXUS_TEST_CANDIDATE_WORKER_IMAGE={worker_image_id}",)
+                embedding_peer = execution.ports.materialize_embedding_peer(
+                    context.repo_root, {"NEXUS_ENV": "test"}, prepared
+                )
+                provider_openai = execution.ports.start_python_process(
+                    context.repo_root, {"NEXUS_ENV": "test"}, prepared, "provider-openai"
+                )
+                execution.ports.wait_process_ready(
+                    context.repo_root,
+                    {"NEXUS_ENV": "test"},
+                    provider_openai,
+                    EndpointKind.PROVIDER_OPENAI,
+                    "/livez",
+                    tls_ca=embedding_peer.certificate,
+                )
+                generation_peer = execution.ports.materialize_generation_peer(
+                    context.repo_root, {"NEXUS_ENV": "test"}, prepared
+                )
+                codex_peer = execution.ports.start_python_process(
+                    context.repo_root, {"NEXUS_ENV": "test"}, prepared, "codex-generation-peer"
+                )
+                execution.ports.wait_generation_peer_ready(
+                    context.repo_root, {"NEXUS_ENV": "test"}, codex_peer, generation_peer.socket
+                )
+                # Rootless Docker cannot reuse host group numbers. Only this
+                # secret-free socket is shared; its parent and audit stay private.
+                generation_peer.socket.chmod(0o666)
+                guard_directory = Path(temporary) / "worker-network"
+                guard_directory.mkdir(mode=0o755)
+                guard_directory.chmod(0o755)
+                for source, filename in (
+                    (
+                        context.repo_root / "python/tests/testkit/sitecustomize.py",
+                        "sitecustomize.py",
+                    ),
+                    (context.repo_root / "python/tests/testkit/network.py", "network.py"),
+                    (embedding_peer.certificate, "ca.pem"),
+                ):
+                    destination = guard_directory / filename
+                    shutil.copyfile(source, destination)
+                    destination.chmod(0o644)
+                child.update(
+                    {
+                        **embedding_peer.client_environment(),
+                        **generation_peer.client_environment(),
+                        "NEXUS_TEST_CAPACITY_WORKER_GUARD": str(guard_directory),
+                        "NEXUS_TEST_CAPACITY_CODEX_PEER_MODES": json.dumps(
+                            {
+                                "parent": oct(generation_peer.state.stat().st_mode & 0o777),
+                                "audit": oct(generation_peer.audit.stat().st_mode & 0o777),
+                            }
+                        ),
+                    }
+                )
+            result = _run_owned_commands(
+                capability,
+                (
+                    (
+                        (
+                            "env",
+                            f"NEXUS_TEST_CANDIDATE_API_IMAGE={image_id}",
+                            *worker_image_environment,
+                            "uv",
+                            "run",
+                            "--frozen",
+                            "--no-sync",
+                            "pytest",
+                            *_DETERMINISTIC_PYTEST,
+                            *targets,
+                        ),
+                        context.repo_root / "python",
+                    ),
+                ),
+                child,
+                ("uv", "docker", "env"),
+                context=context,
+            )
+        finally:
+            try:
+                try:
+                    close_owned_container(context.repo_root, prepared.run_id, "capacity-worker")
+                finally:
+                    close_owned_container(context.repo_root, prepared.run_id, "api-candidate")
+            finally:
+                try:
+                    close_owned_container(context.repo_root, prepared.run_id, "cleanup-proof")
+                finally:
+                    cleanup_errors: list[Exception] = []
+                    for owned_tag in (worker_tag, image_tag) if include_worker else (image_tag,):
+                        try:
+                            tags = execution.ports.local_docker(
+                                (
+                                    "image",
+                                    "ls",
+                                    "--filter",
+                                    f"reference={owned_tag}",
+                                    "--format",
+                                    "{{.Repository}}:{{.Tag}}",
+                                )
+                            ).splitlines()
+                            if tags:
+                                if tags != [owned_tag]:
+                                    raise RuntimeContractError(
+                                        "capacity image cleanup was not exact"
+                                    )
+                                execution.ports.local_docker(("image", "rm", owned_tag))
+                        except Exception as error:
+                            cleanup_errors.append(error)
+                    if cleanup_errors:
+                        raise ExceptionGroup("capacity image cleanup failed", cleanup_errors)
+        return _retain_api_capacity_evidence(
+            context.repo_root,
+            prepared.run_id,
+            selected,
+            result,
+            build=_ApiCapacityBuild(image_id, source_digest),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _ApiCapacityBuild:
+    """The candidate image this run built, and the inputs it was built from."""
+
+    image_id: str
+    build_input_digest: str
+
+
+def _retain_api_capacity_evidence(
+    repo_root: Path,
+    run_id: str,
+    selected: tuple[str, ...],
+    result: CapabilityResult,
+    *,
+    build: _ApiCapacityBuild | None,
+) -> CapabilityResult:
+    names = {
+        API_CAPACITY_BASELINE_PROOF: "api-capacity-baseline.json",
+        API_CAPACITY_BASELINE_READER_PROOF: "api-capacity-baseline-reader.json",
+        API_CAPACITY_BASELINE_ARTWORK_PROOF: "api-capacity-baseline-artwork.json",
+        API_CAPACITY_CANDIDATE_READER_PROOF: "api-capacity-candidate-reader.json",
+        API_CAPACITY_CANDIDATE_ARTWORK_PROOF: "api-capacity-candidate-artwork.json",
+        API_CAPACITY_CANDIDATE_METADATA_PROOF: "api-capacity-candidate-metadata.json",
+        API_CAPACITY_CANDIDATE_WORKER_PROOF: "api-capacity-candidate-worker.json",
+        API_CAPACITY_CANDIDATE_EPUB_WORKER_PROOF: "api-capacity-candidate-worker-epub.json",
+        API_CAPACITY_CANDIDATE_DENSE_EPUB_WORKER_PROOF: "api-capacity-candidate-worker-epub-dense.json",
+        "python/tests/capacity/test_api_capacity.py::test_candidate_import_envelope": "api-capacity-candidate.json",
+    }
+    # Each candidate receipt names the image it measured in its owner's field.
+    candidate_image_fields = {
+        "python/tests/capacity/test_api_capacity.py::test_candidate_import_envelope": "image_id",
+        API_CAPACITY_CANDIDATE_READER_PROOF: "image",
+        API_CAPACITY_CANDIDATE_ARTWORK_PROOF: "image",
+        API_CAPACITY_CANDIDATE_METADATA_PROOF: "image",
+        API_CAPACITY_CANDIDATE_WORKER_PROOF: "image",
+        API_CAPACITY_CANDIDATE_EPUB_WORKER_PROOF: "image",
+        API_CAPACITY_CANDIDATE_DENSE_EPUB_WORKER_PROOF: "image",
+    }
+    artifacts = list(result.evidence.artifacts)
+    if build is not None:
+        artifacts.append((Path("test-results/runs") / run_id / "api-build-inputs.json").as_posix())
+    for node in (node for node in selected if node in names):
+        relative = Path("test-results/runs") / run_id / names[node]
+        artifact = repo_root / relative
+        if not artifact.exists() and result.evidence.status is not RunStatus.PASS:
+            continue
+        try:
+            if artifact.stat().st_size > 4 * 1024 * 1024:
+                raise ValueError("capacity evidence exceeds its artifact bound")
+            receipt = json.loads(artifact.read_text())
+            if not isinstance(receipt, dict):
+                raise ValueError("capacity evidence is not an object")
+            image_field = candidate_image_fields.get(node)
+            if image_field is not None:
+                if build is None:
+                    raise ValueError("candidate capacity evidence has no candidate build")
+                if receipt.get(image_field) != build.image_id:
+                    raise ValueError("capacity evidence measured another image")
+                inputs = receipt.get("build_inputs")
+                if (
+                    not isinstance(inputs, dict)
+                    or inputs.get("build_input_digest") != build.build_input_digest
+                ):
+                    raise ValueError("capacity evidence omits this build's input digest")
+        except (OSError, ValueError) as error:
+            return _result(
+                Capability.API_CAPACITY,
+                RunStatus.NOT_RUN,
+                result.evidence.duration_ms,
+                f"capacity measurement was not retained: {error}",
+            )
+        artifacts.append(relative.as_posix())
+    return CapabilityResult(replace(result.evidence, artifacts=tuple(artifacts)), result.detail)
+
+
 def _run_release_artifact_proofs(
     context: CapabilityContext,
     environment: Mapping[str, str],
@@ -2195,112 +2735,146 @@ def _run_release_artifact_proofs(
         f"DOCKER_HOST={docker_host}",
         "DOCKER_CONTEXT=default",
     )
-    with tempfile.TemporaryDirectory(prefix=f"nexus-test-worker-{execution.run_id}-") as temporary:
-        iidfile = Path(temporary) / "worker.iid"
-        build = _run_fixed_commands(
-            capability,
-            (
-                (
-                    (
-                        *docker_prefix,
-                        "docker",
-                        "buildx",
-                        "build",
-                        "--load",
-                        "--file",
-                        "./docker/Dockerfile.backend",
-                        "--target",
-                        "worker",
-                        "--build-arg",
-                        f"SOURCE_SHA={source_sha}",
-                        "--tag",
-                        image_tag,
-                        "--iidfile",
-                        str(iidfile),
-                        ".",
-                    ),
-                    context.repo_root,
-                ),
-            ),
-            environment,
-            ("docker", "env"),
-            context=context,
-        )
-        if build.evidence.status is not RunStatus.PASS:
-            return _release_artifact_setup_result(build, "candidate worker image build")
+    environment = {**environment, "NEXUS_TEST_RUN_ID": execution.run_id}
 
-        result: CapabilityResult | None = None
-        try:
-            try:
-                image_id = iidfile.read_text(encoding="utf-8").strip()
-            except (OSError, UnicodeDecodeError) as error:
-                result = _result(
-                    capability,
-                    RunStatus.FAIL,
-                    build.evidence.duration_ms,
-                    "proof_result=setup_or_execution_failure|"
-                    f"candidate worker image ID is unreadable: {error}",
-                )
-            else:
-                if _LOCAL_IMAGE_ID_RE.fullmatch(image_id) is None:
-                    result = _result(
-                        capability,
-                        RunStatus.FAIL,
-                        build.evidence.duration_ms,
-                        "proof_result=setup_or_execution_failure|"
-                        "candidate worker image build did not produce an immutable image ID",
-                    )
-                else:
-                    result = _run_fixed_commands(
-                        capability,
-                        (
-                            (
-                                (
-                                    *docker_prefix,
-                                    f"{_RELEASE_ARTIFACT_WORKER_IMAGE_ENV}={image_id}",
-                                    "uv",
-                                    "run",
-                                    "--frozen",
-                                    "--no-sync",
-                                    "pytest",
-                                    *_DETERMINISTIC_PYTEST,
-                                    *targets,
-                                ),
-                                python_root,
-                            ),
-                        ),
-                        environment,
-                        ("docker", "env", "uv"),
-                        context=context,
-                        elapsed_ms=build.evidence.duration_ms,
-                    )
-        finally:
-            elapsed_ms = (
-                result.evidence.duration_ms if result is not None else build.evidence.duration_ms
-            )
-            cleanup = _run_fixed_commands(
+    def worker_image_proofs() -> CapabilityResult:
+        with tempfile.TemporaryDirectory(
+            prefix=f"nexus-test-worker-{execution.run_id}-"
+        ) as temporary:
+            iidfile = Path(temporary) / "worker.iid"
+            build = _run_fixed_commands(
                 capability,
                 (
                     (
-                        (*docker_prefix, "docker", "image", "rm", image_tag),
+                        (
+                            *docker_prefix,
+                            "docker",
+                            "buildx",
+                            "build",
+                            "--load",
+                            "--file",
+                            "./docker/Dockerfile.backend",
+                            "--target",
+                            "worker",
+                            "--build-arg",
+                            f"SOURCE_SHA={source_sha}",
+                            "--tag",
+                            image_tag,
+                            "--iidfile",
+                            str(iidfile),
+                            ".",
+                        ),
                         context.repo_root,
                     ),
                 ),
                 environment,
                 ("docker", "env"),
                 context=context,
-                elapsed_ms=elapsed_ms,
             )
-        if cleanup.evidence.status is not RunStatus.PASS:
-            return _release_artifact_setup_result(
-                cleanup,
-                "candidate worker image cleanup",
+            if build.evidence.status is not RunStatus.PASS:
+                return _release_artifact_setup_result(build, "candidate worker image build")
+
+            result: CapabilityResult | None = None
+            try:
+                try:
+                    image_id = iidfile.read_text(encoding="utf-8").strip()
+                except (OSError, UnicodeDecodeError) as error:
+                    result = _result(
+                        capability,
+                        RunStatus.FAIL,
+                        build.evidence.duration_ms,
+                        "proof_result=setup_or_execution_failure|"
+                        f"candidate worker image ID is unreadable: {error}",
+                    )
+                else:
+                    if _LOCAL_IMAGE_ID_RE.fullmatch(image_id) is None:
+                        result = _result(
+                            capability,
+                            RunStatus.FAIL,
+                            build.evidence.duration_ms,
+                            "proof_result=setup_or_execution_failure|"
+                            "candidate worker image build did not produce an immutable image ID",
+                        )
+                    else:
+                        result = _run_fixed_commands(
+                            capability,
+                            (
+                                (
+                                    (
+                                        *docker_prefix,
+                                        f"{_RELEASE_ARTIFACT_WORKER_IMAGE_ENV}={image_id}",
+                                        "uv",
+                                        "run",
+                                        "--frozen",
+                                        "--no-sync",
+                                        "pytest",
+                                        *_DETERMINISTIC_PYTEST,
+                                        *targets,
+                                    ),
+                                    python_root,
+                                ),
+                            ),
+                            environment,
+                            ("docker", "env", "uv"),
+                            context=context,
+                            elapsed_ms=build.evidence.duration_ms,
+                        )
+            finally:
+                elapsed_ms = (
+                    result.evidence.duration_ms
+                    if result is not None
+                    else build.evidence.duration_ms
+                )
+                cleanup = _run_fixed_commands(
+                    capability,
+                    (
+                        (
+                            (*docker_prefix, "docker", "image", "rm", image_tag),
+                            context.repo_root,
+                        ),
+                    ),
+                    environment,
+                    ("docker", "env"),
+                    context=context,
+                    elapsed_ms=elapsed_ms,
+                )
+            if cleanup.evidence.status is not RunStatus.PASS:
+                return _release_artifact_setup_result(
+                    cleanup,
+                    "candidate worker image cleanup",
+                )
+            assert result is not None
+            return CapabilityResult(
+                replace(result.evidence, duration_ms=cleanup.evidence.duration_ms),
+                result.detail,
             )
-        assert result is not None
-        return CapabilityResult(
-            replace(result.evidence, duration_ms=cleanup.evidence.duration_ms),
-            result.detail,
+
+    if execution.run is not None:
+        return worker_image_proofs()
+    try:
+        claim_run(context.repo_root, {"NEXUS_ENV": "test"}, execution.run_id)
+    except RuntimeContractError as error:
+        return _not_run(capability, f"candidate worker image setup is unavailable: {error}")
+    try:
+        proofs = worker_image_proofs()
+    finally:
+        release: RuntimeContractError | None = None
+        try:
+            clean_run(context.repo_root, {"NEXUS_ENV": "test"}, execution.run_id)
+        except RuntimeContractError as error:
+            release = error
+    if release is not None:
+        # A leaked local run is decisive, and it reports beside the verdict it
+        # would otherwise have replaced.
+        return _result(
+            capability,
+            RunStatus.FAIL,
+            proofs.evidence.duration_ms,
+            "proof_result=setup_or_execution_failure|owned local test run cleanup failed: "
+            f"{release}; proof verdict was {proofs.detail}",
+            artifacts=proofs.evidence.artifacts,
         )
+    return proofs
 
 
 def _run_component(
@@ -2371,13 +2945,164 @@ def _run_component(
         argv = ("bun", "run", "test:browser")
         if targets:
             argv = (*argv, "--", *targets)
-    return _run_owned_commands(
+    result = _run_owned_commands(
         capability,
         ((argv, web_root),),
         _component_environment(environment, execution.run_id),
         (argv[0],),
         context=context,
     )
+    if (
+        result.evidence.status is RunStatus.PASS
+        and "./src/components/reader/ReaderTableCapacity.browser.test.tsx" in targets
+    ):
+        relative = Path("test-results/runs") / execution.run_id / "reader-table-capacity.json"
+        artifact = context.repo_root / relative
+        try:
+            if artifact.stat().st_size > 64 * 1024:
+                raise ValueError("table capacity evidence exceeds its artifact bound")
+            payload = json.loads(artifact.read_text())
+            fixture = context.repo_root / "testdata/capacity/reader-tables.json"
+            profiles = json.loads(fixture.read_text())["profiles"]
+            if (
+                not isinstance(payload, dict)
+                or payload.get("version") != 1
+                or payload.get("runId") != execution.run_id
+                or payload.get("scope")
+                != "unqualified intact TextDocumentReader experiment; excludes hosted decorators, workspace and native WebView; no 64MiB qualification"
+                or payload.get("fixture")
+                != {
+                    "path": fixture.relative_to(context.repo_root).as_posix(),
+                    "sha256": hashlib.sha256(fixture.read_bytes()).hexdigest(),
+                }
+            ):
+                raise ValueError("table capacity evidence has the wrong run, fixture or scope")
+            measurements = payload.get("measurements")
+            if not isinstance(measurements, list) or len(measurements) != 2 * len(profiles):
+                raise ValueError("table capacity evidence lacks complete measured profiles")
+            for measurement, (profile, views) in zip(
+                measurements,
+                ((profile, views) for profile in profiles for views in (1, 2)),
+                strict=True,
+            ):
+                if (
+                    not isinstance(measurement, dict)
+                    or measurement.get("profile") != profile
+                    or measurement.get("views") != views
+                    or not all(
+                        isinstance(measurement.get(key), dict)
+                        for key in (
+                            "baseline",
+                            "baselineDom",
+                            "loaded",
+                            "loadedDom",
+                            "released",
+                            "releasedDom",
+                        )
+                    )
+                ):
+                    raise ValueError(
+                        "table capacity evidence lacks its actual heap/DOM observations"
+                    )
+        except (OSError, ValueError) as error:
+            return _result(
+                capability,
+                RunStatus.NOT_RUN,
+                result.evidence.duration_ms,
+                f"table capacity diagnostics were not retained: {error}",
+            )
+        result = CapabilityResult(
+            replace(result.evidence, artifacts=(*result.evidence.artifacts, relative.as_posix())),
+            result.detail,
+        )
+    if (
+        result.evidence.status is RunStatus.PASS
+        and "./src/lib/media/ArtworkCapacity.browser.test.tsx" in targets
+    ):
+        relative = Path("test-results/runs") / execution.run_id / "artwork-capacity.json"
+        artifact = context.repo_root / relative
+        fixture = context.repo_root / "testdata/capacity/artwork.json"
+        try:
+            if artifact.stat().st_size > 64 * 1024:
+                raise ValueError("artwork capacity evidence exceeds its artifact bound")
+            payload = json.loads(artifact.read_text())
+            sources = {
+                source["name"]: source for source in json.loads(fixture.read_text())["cases"]
+            }
+            if (
+                not isinstance(payload, dict)
+                or payload.get("version") != 1
+                or payload.get("runId") != execution.run_id
+                or payload.get("scope")
+                != "unqualified artwork derivative experiment; excludes workspace and native figures; process high-water sums are conservative, not simultaneous peaks"
+                or payload.get("fixture")
+                != {
+                    "path": fixture.relative_to(context.repo_root).as_posix(),
+                    "sha256": hashlib.sha256(fixture.read_bytes()).hexdigest(),
+                }
+            ):
+                raise ValueError("artwork capacity evidence has the wrong run, fixture or scope")
+            measurements = payload.get("measurements")
+            if not isinstance(measurements, list) or len(measurements) != 12:
+                raise ValueError("artwork capacity evidence lacks all twelve profiles")
+            profiles = (
+                (name, dimension, consumers)
+                for name in ("maximum-dimensions", "maximum-png-metadata")
+                for dimension in (256, 512, 1024)
+                for consumers in (1, 16)
+            )
+            for observation, (name, dimension, consumers) in zip(
+                measurements, profiles, strict=True
+            ):
+                if (
+                    not isinstance(observation, dict)
+                    or observation.get("name") != name
+                    or observation.get("dimension") != dimension
+                    or observation.get("consumers") != consumers
+                    or observation.get("sourceSha256") != sources[name]["sha256"]
+                ):
+                    raise ValueError("artwork capacity evidence has the wrong profile")
+                for phase in ("baseline", "loaded", "released"):
+                    sample = observation.get(phase)
+                    if (
+                        not isinstance(sample, dict)
+                        or not isinstance(sample.get("heap"), dict)
+                        or not isinstance(sample.get("native"), dict)
+                        or not sample["native"].get("processes")
+                    ):
+                        raise ValueError(
+                            "artwork capacity evidence lacks actual owned native observations"
+                        )
+                    native = sample["native"]
+                    if sys.platform == "linux":
+                        kind = "LinuxProcessMemory"
+                        fields = (
+                            "privateResidentBytes",
+                            "rssBytes",
+                            "swapBytes",
+                            "sumHighWaterBytes",
+                        )
+                    else:
+                        kind = "ChromiumTrace"
+                        fields = ("privateFootprintBytes", "sumHighWaterBytes")
+                    if native.get("kind") != kind or any(
+                        type(native.get(field)) is not int or native[field] < 0 for field in fields
+                    ):
+                        raise ValueError(
+                            "artwork capacity evidence has the wrong platform memory observations"
+                        )
+        except (OSError, ValueError) as error:
+            return _result(
+                capability,
+                RunStatus.NOT_RUN,
+                result.evidence.duration_ms,
+                f"artwork capacity diagnostics were not retained: {error}",
+            )
+        result = CapabilityResult(
+            replace(result.evidence, artifacts=(*result.evidence.artifacts, relative.as_posix())),
+            result.detail,
+        )
+    return result
 
 
 def _run_bundle(
@@ -2923,6 +3648,7 @@ def _proof_owner(runner_name: str, node: str) -> tuple[Capability, Workflow]:
             ("python/tests/contract/", Capability.PROVIDER_RUNTIME, Workflow.FULL),
             ("python/tests/llm_tools_contract/", Capability.LLM_TOOLS, Workflow.FULL),
             ("python/tests/release_artifact/", Capability.RELEASE_ARTIFACT, Workflow.RELEASE),
+            ("python/tests/capacity/", Capability.API_CAPACITY, Workflow.CHANGED),
             ("python/tests/evals/", Capability.LLM_EVAL, Workflow.FULL),
             ("python/tests/audit/", Capability.AUDIT, Workflow.NIGHTLY),
         ):
@@ -3327,7 +4053,7 @@ def _run_audit(
     )
 
 
-def _pinned_python_suite_pin(repo_root: Path, suite: _PinnedPythonSuite) -> str:
+def _pinned_python_suite_pin(repo_root: Path, suite: PinnedSuiteSource) -> str:
     try:
         data = tomllib.loads((repo_root / "python/pyproject.toml").read_text(encoding="utf-8"))
         revision = data["tool"]["uv"]["sources"][suite.package]["rev"]
@@ -3344,7 +4070,7 @@ def _provider_runtime_pin(repo_root: Path) -> str:
 
 def _pinned_python_suite_checkout_ready(
     repo_root: Path,
-    suite: _PinnedPythonSuite,
+    suite: PinnedSuiteSource,
 ) -> bool:
     revision = _pinned_python_suite_pin(repo_root, suite)
     checkout = repo_root / ".nexus-test" / suite.package / revision
@@ -3355,7 +4081,7 @@ def _pinned_python_suite_checkout_ready(
 def _ensure_pinned_python_suite_checkout(
     repo_root: Path,
     environment: Mapping[str, str],
-    suite: _PinnedPythonSuite,
+    suite: PinnedSuiteSource,
 ) -> Path:
     """Materialize one immutable suite without retargeting developer state."""
 
@@ -3475,11 +4201,33 @@ def _run_provider_runtime(
     *,
     exact: bool = False,
 ) -> CapabilityResult:
-    return _run_pinned_python_suite(
+    provider = _run_pinned_python_suite(
         context,
         environment,
         _PROVIDER_RUNTIME_SUITE,
         exact=exact,
+    )
+    if provider.evidence.status is not RunStatus.PASS or exact:
+        return provider
+    try:
+        kernel = _ensure_pinned_python_suite_checkout(
+            context.repo_root, environment, LLM_AGENT_KERNEL_SOURCE
+        )
+    except RuntimeContractError as error:
+        return _not_run(Capability.PROVIDER_RUNTIME, str(error))
+    return _run_fixed_commands(
+        Capability.PROVIDER_RUNTIME,
+        tuple(
+            (command, kernel)
+            for command in (
+                *_PINNED_PYTHON_VERIFICATION,
+                ("uv", "build", "--no-sources", "--offline"),
+            )
+        ),
+        environment,
+        ("uv",),
+        elapsed_ms=provider.evidence.duration_ms,
+        context=context,
     )
 
 
@@ -3632,7 +4380,7 @@ def _run_pinned_python_suite(
 
 
 def _run_android_host(
-    context: CapabilityContext, environment: Mapping[str, str]
+    context: CapabilityContext, environment: Mapping[str, str], *, exact: bool = False
 ) -> CapabilityResult:
     android_root = context.repo_root / "apps/android"
     wrapper = android_root / "gradlew"
@@ -3649,7 +4397,11 @@ def _run_android_host(
         return _not_run(Capability.ANDROID_HOST, "Android SDK is absent")
     nodes, promoted = _selected_proof_nodes(context, Capability.ANDROID_HOST, "gradle")
     argv: tuple[str, ...] = ("./gradlew", "--no-daemon", ":app:testDebugUnitTest")
-    if _scope(context, Capability.ANDROID_HOST) is not SelectionScope.COMPLETE and not promoted:
+    if exact and (len(nodes) != 1 or promoted):
+        raise ValueError("exact Android host proof must name one Gradle class")
+    if exact or (
+        _scope(context, Capability.ANDROID_HOST) is not SelectionScope.COMPLETE and not promoted
+    ):
         if not nodes:
             return _pass(Capability.ANDROID_HOST, "no selected Android host proof")
         for node in nodes:
@@ -3657,13 +4409,127 @@ def _run_android_host(
     child_environment = resolved_android_environment(environment)
     child_environment["NEXUS_GOOGLE_WEB_CLIENT_ID"] = _TEST_GOOGLE_CLIENT_ID
     with _gradle_lock(context.repo_root):
-        return _run_fixed_commands(
+        report = None
+        class_name = None
+        if exact:
+            class_name = _android_test_class(context.repo_root, nodes[0])
+            report = (
+                android_root / "app/build/test-results/testDebugUnitTest" / f"TEST-{class_name}.xml"
+            )
+            report.unlink(missing_ok=True)
+        result = _run_fixed_commands(
             Capability.ANDROID_HOST,
             ((argv, android_root),),
             child_environment,
             ("java",),
             context=context,
         )
+        if report is None or class_name is None or result.evidence.status is RunStatus.NOT_RUN:
+            return result
+        return _android_host_exact_result(context, result, report, class_name, environment)
+
+
+def _android_host_exact_result(
+    context: CapabilityContext,
+    result: CapabilityResult,
+    report: Path,
+    class_name: str,
+    environment: Mapping[str, str],
+) -> CapabilityResult:
+    """Retain only fresh results owned by the exact requested JUnit class."""
+    try:
+        if report.stat().st_size > 256 * 1024:
+            raise ValueError("exact JUnit report exceeds its diagnostic bound")
+        suite = ET.fromstring(report.read_bytes())
+        cases = suite.findall("testcase")
+        failures = [case for case in cases if case.find("failure") is not None]
+        if (
+            suite.tag != "testsuite"
+            or suite.attrib.get("name") != class_name
+            or not cases
+            or any(case.attrib.get("classname") != class_name for case in cases)
+            or int(suite.attrib.get("tests", "-1")) != len(cases)
+            or int(suite.attrib.get("failures", "-1")) != len(failures)
+            or int(suite.attrib.get("errors", "-1")) != 0
+            or int(suite.attrib.get("skipped", "-1")) != 0
+            or any(
+                case.find("error") is not None or case.find("skipped") is not None for case in cases
+            )
+        ):
+            raise ValueError("JUnit results do not attest the exact complete class")
+        observations = []
+        assertions = []
+        messages = []
+        for case in cases:
+            name = case.attrib["name"]
+            failure = case.find("failure")
+            if failure is None:
+                observations.append({"name": name, "status": "pass"})
+                continue
+            kind = failure.attrib.get("type", "")
+            message = failure.attrib.get("message", "")
+            stack = failure.text or ""
+            owned_assertion = kind in {
+                "java.lang.AssertionError",
+                "org.junit.ComparisonFailure",
+                "org.junit.internal.ArrayComparisonFailure",
+            } and any(
+                line.lstrip().startswith((f"at {class_name}.", f"at {class_name}$"))
+                for line in stack.splitlines()
+            )
+            assertions.append(owned_assertion)
+            messages.append(f"{name}: {kind}: {message}")
+            observations.append(
+                {"name": name, "status": "fail", "type": kind, "message": message, "stack": stack}
+            )
+        artifact = report.with_suffix(".nexus.json")
+        artifact.write_text(
+            redact_text(
+                json.dumps(
+                    {
+                        "class": class_name,
+                        "cases": observations,
+                        "system_out": suite.findtext("system-out") or "",
+                    },
+                    indent=2,
+                )
+                + "\n",
+                environment_secrets(environment),
+            )
+        )
+    except (OSError, KeyError, ValueError, ET.ParseError) as error:
+        if result.evidence.status is RunStatus.FAIL:
+            return CapabilityResult(
+                result.evidence,
+                f"proof_result=setup_or_execution_failure|{result.detail}; JUnit evidence: {error}",
+            )
+        return _result(
+            Capability.ANDROID_HOST,
+            RunStatus.NOT_RUN,
+            result.evidence.duration_ms,
+            f"exact Android host proof has no valid fresh JUnit evidence: {error}",
+        )
+    evidence = replace(
+        result.evidence,
+        artifacts=(*result.evidence.artifacts, artifact.relative_to(context.repo_root).as_posix()),
+    )
+    if result.evidence.status is RunStatus.PASS:
+        if failures:
+            return _result(
+                Capability.ANDROID_HOST,
+                RunStatus.NOT_RUN,
+                result.evidence.duration_ms,
+                "Gradle reported success with failed exact JUnit cases",
+                artifacts=evidence.artifacts,
+            )
+        return CapabilityResult(evidence, result.detail)
+    if assertions and all(assertions):
+        return CapabilityResult(
+            evidence,
+            "proof_result=behavioral_assertion_failure|"
+            + redact_text(" | ".join(messages), environment_secrets(environment)),
+        )
+    return CapabilityResult(evidence, f"proof_result=setup_or_execution_failure|{result.detail}")
 
 
 def _android_device_requires_physical(
@@ -5376,7 +6242,7 @@ def _run_doctor(context: CapabilityContext, environment: Mapping[str, str]) -> C
         if command[0] == "uv" and re.search(r"(?m)^Would (?:download|install|uninstall) ", output):
             return _fail(Capability.DOCTOR, "locked Python environment is stale")
 
-    for suite in (_PROVIDER_RUNTIME_SUITE, _LLM_TOOLS_SUITE):
+    for suite in (_PROVIDER_RUNTIME_SUITE, _LLM_TOOLS_SUITE, LLM_AGENT_KERNEL_SOURCE):
         try:
             ready = _pinned_python_suite_checkout_ready(context.repo_root, suite)
         except (OSError, RuntimeContractError):

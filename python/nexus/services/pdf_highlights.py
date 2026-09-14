@@ -10,31 +10,32 @@ Owns:
 - Effective-state comparison and no-op detection
 """
 
+import json
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import delete, text
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, select, text, tuple_
+from sqlalchemy.orm import Session, selectinload
 
-from nexus.auth.permissions import can_read_media, highlight_visibility_filter
+from nexus.auth.permissions import highlight_visibility_filter
+from nexus.config import ReaderPublicationLimits
 from nexus.db.models import (
     Highlight,
     HighlightPdfAnchor,
     HighlightPdfQuad,
-    Media,
-    PdfPageTextSpan,
 )
-from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.logging import get_logger
+from nexus.errors import ApiError, ApiErrorCode, NotFoundError, ReaderContentTooLargeError
 from nexus.schemas.highlights import (
     CreatePdfHighlightRequest,
     PdfBoundsUpdate,
+    PdfHighlightPaint,
+    PdfHighlightPaintPage,
+    PdfQuadOut,
     TypedHighlightOut,
 )
-from nexus.services.capabilities import is_document_status_ready
+from nexus.services.highlight_access import get_highlight_for_author_write_or_404
 from nexus.services.highlights import (
     project_highlight,
-    project_highlights_with_links,
 )
 from nexus.services.pdf_highlight_geometry import (
     CanonicalGeometry,
@@ -48,32 +49,18 @@ from nexus.services.pdf_locking import (
     acquire_ordered_locks,
     derive_media_coordination_lock_key,
 )
-from nexus.services.pdf_quote_match import MatcherAnomaly, compute_match
-from nexus.services.pdf_quote_match_policy import (
-    handle_recoverable_anomaly,
-    handle_unclassified_exception,
-    match_result_to_persistence_fields,
-)
+from nexus.services.reader_publication_read import get_reader_publication_pdf_source_for_viewer
 from nexus.services.resource_graph.refs import ResourceRef
-
-logger = get_logger(__name__)
-
+from nexus.services.signed_keyset_cursor import (
+    KeysetValue,
+    KeysetValueKind,
+    decode_signed_keyset_cursor,
+    encode_signed_keyset_cursor,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _get_pdf_media_for_viewer_or_404(db: Session, viewer_id: UUID, media_id: UUID) -> Media:
-    """Load media, enforce visibility and kind=pdf."""
-    media = db.get(Media, media_id)
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-    if media.kind != "pdf":
-        raise ApiError(ApiErrorCode.E_INVALID_KIND, "Operation requires PDF media")
-    return media
 
 
 def _validate_page_number(page_number: int, page_count: int | None) -> None:
@@ -87,92 +74,76 @@ def _validate_page_number(page_number: int, page_count: int | None) -> None:
         )
 
 
-def _get_page_span(db: Session, media_id: UUID, page_number: int) -> PdfPageTextSpan | None:
-    """Load page text span for a given page."""
-    return (
-        db.query(PdfPageTextSpan)
-        .filter(
-            PdfPageTextSpan.media_id == media_id,
-            PdfPageTextSpan.page_number == page_number,
-        )
-        .first()
-    )
-
-
-def _require_pdf_media_ready_or_409(media: Media) -> None:
-    if not is_document_status_ready(media.processing_status.value):
-        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media not ready")
+_PDF_SEARCH_SOURCE = """
+        FROM reader_publication_search_sources s
+        WHERE s.media_id = :media AND s.generation = :generation
+          AND s.source_ordinal = 0 AND s.fragment_id IS NULL
+"""
 
 
 def _compute_write_time_match(
-    db: Session,
-    media: Media,
-    page_number: int,
-    exact: str,
-    highlight_id: UUID | None,
+    db: Session, media_id: UUID, generation: int, page_number: int, exact: str
 ) -> dict:
-    """Compute write-time PDF match metadata + prefix/suffix.
+    """Match raw selected-source text in PostgreSQL; return only scalar geometry.
 
-    Returns dict with fields for highlight + pdf_anchor persistence.
-    On quote-not-ready: returns pending fields.
-    On matcher anomaly: returns pending fields with logging.
-    On unclassified exception: raises.
+    Only the page slice and two 64-code-point context windows leave their SQL
+    source expressions. PostgreSQL may still detoast the complete source while
+    extracting a deep page; database memory and work remain qualification costs.
+
+    A present empty page span never falls back to the whole document. The first
+    two overlapping literal occurrences suffice to distinguish unique/ambiguous.
+    The stored readiness flag owns pending; it is separate from match status.
     """
-    from nexus.services.pdf_readiness import is_pdf_quote_text_ready
-
-    if not is_pdf_quote_text_ready(db, media.id):
-        return {
-            "match_status": "pending",
-            "start_offset": None,
-            "end_offset": None,
-            "prefix": "",
-            "suffix": "",
-        }
-
-    page_span = _get_page_span(db, media.id, page_number)
-    span_start = page_span.start_offset if page_span else None
-    span_end = page_span.end_offset if page_span else None
-
-    try:
-        result = compute_match(
-            exact=exact,
-            page_number=page_number,
-            plain_text=media.plain_text,
-            page_span_start=span_start,
-            page_span_end=span_end,
+    row = (
+        db.execute(
+            text(f"""
+        WITH extent AS MATERIALIZED (
+            SELECT s.pdf_quote_text_ready,
+                   COALESCE((s.pdf_page_spans -> (:page - 1) ->> 1)::integer, 0) AS lo,
+                   COALESCE((s.pdf_page_spans -> (:page - 1) ->> 2)::integer, s.raw_codepoints)
+                       AS hi
+            {_PDF_SEARCH_SOURCE}
+        ), page_slice AS (
+            SELECT extent.lo, extent.pdf_quote_text_ready,
+                   (SELECT substring(s.canonical_text FROM extent.lo + 1 FOR extent.hi - extent.lo)
+                    {_PDF_SEARCH_SOURCE}) AS page_text
+            FROM extent
+        ), located AS MATERIALIZED (
+            SELECT lo, pdf_quote_text_ready, page_text,
+                   CASE WHEN pdf_quote_text_ready AND :exact <> ''
+                       THEN strpos(page_text COLLATE "C", :exact COLLATE "C") ELSE 0 END AS hit
+            FROM page_slice
+        ), result AS (
+            SELECT pdf_quote_text_ready,
+                   CASE WHEN NOT pdf_quote_text_ready THEN 'pending'
+                       WHEN :exact = '' THEN 'empty_exact'
+                       WHEN hit = 0 THEN 'no_match'
+                       WHEN strpos(substring(page_text FROM hit + 1) COLLATE "C",
+                                   :exact COLLATE "C") > 0 THEN 'ambiguous'
+                       ELSE 'unique' END AS status,
+                   lo + hit - 1 AS start, lo + hit - 1 + char_length(:exact) AS finish
+            FROM located
         )
-    except MatcherAnomaly as anomaly:
-        outcome = handle_recoverable_anomaly(
-            anomaly,
-            highlight_id=highlight_id,
-            media_id=media.id,
-            page_number=page_number,
-            path="pdf_highlight_write",
+        SELECT status AS match_status,
+            CASE WHEN status = 'unique' THEN start END AS start_offset,
+            CASE WHEN status = 'unique' THEN finish END AS end_offset,
+            CASE WHEN status = 'unique' THEN (SELECT substring(s.canonical_text
+                FROM greatest(0, start - 64) + 1 FOR least(start, 64))
+                {_PDF_SEARCH_SOURCE}) ELSE '' END AS prefix,
+            CASE WHEN status = 'unique' THEN (SELECT substring(s.canonical_text
+                FROM finish + 1 FOR 64) {_PDF_SEARCH_SOURCE}) ELSE '' END AS suffix,
+            pdf_quote_text_ready
+        FROM result
+    """),
+            {"media": media_id, "generation": generation, "page": page_number, "exact": exact},
         )
-        return {
-            "match_status": outcome.match_status,
-            "start_offset": outcome.start_offset,
-            "end_offset": outcome.end_offset,
-            "prefix": outcome.prefix,
-            "suffix": outcome.suffix,
-        }
-    except Exception as exc:
-        handle_unclassified_exception(
-            exc,
-            highlight_id=highlight_id,
-            media_id=media.id,
-            page_number=page_number,
-            path="pdf_highlight_write",
-        )
-        raise  # unreachable, handle_unclassified_exception always raises
-
-    fields = match_result_to_persistence_fields(result)
+        .mappings()
+        .one()
+    )
+    if row["pdf_quote_text_ready"] is None:
+        raise AssertionError("Ready PDF source has no frozen quote readiness")
     return {
-        "match_status": fields["plain_text_match_status"],
-        "start_offset": fields["plain_text_start_offset"],
-        "end_offset": fields["plain_text_end_offset"],
-        "prefix": result.prefix,
-        "suffix": result.suffix,
+        key: row[key] for key in ("match_status", "start_offset", "end_offset", "prefix", "suffix")
     }
 
 
@@ -209,25 +180,55 @@ def _find_duplicate_pdf_anchor(
     viewer_id: UUID,
     media_id: UUID,
     canonical: CanonicalGeometry,
+    source_sha256: str,
     exclude_highlight_id: UUID | None = None,
-) -> HighlightPdfAnchor | None:
-    query = (
-        db.query(Highlight)
-        .join(HighlightPdfAnchor, Highlight.id == HighlightPdfAnchor.highlight_id)
-        .filter(
-            Highlight.user_id == viewer_id,
-            HighlightPdfAnchor.media_id == media_id,
-            HighlightPdfAnchor.page_number == canonical.page_number,
-            HighlightPdfAnchor.rect_count == canonical.rect_count,
+) -> UUID | None:
+    """Exact ordered quantized geometry, returning only the matching identity."""
+    quads = [
+        {
+            "quad_idx": index,
+            **{
+                f"{axis}{point}": str(getattr(quad, f"{axis}{point}"))
+                for axis in ("x", "y")
+                for point in range(1, 5)
+            },
+        }
+        for index, quad in enumerate(canonical.quads)
+    ]
+    return db.scalar(
+        text("""
+        WITH requested AS MATERIALIZED (
+            SELECT * FROM jsonb_to_recordset(CAST(:quads AS jsonb)) AS q(
+                quad_idx integer, x1 numeric, y1 numeric, x2 numeric, y2 numeric,
+                x3 numeric, y3 numeric, x4 numeric, y4 numeric)
         )
+        SELECT hpa.highlight_id
+        FROM highlight_pdf_anchors hpa JOIN highlights h ON h.id = hpa.highlight_id
+        WHERE h.user_id = :viewer AND hpa.media_id = :media
+          AND hpa.page_number = :page AND hpa.source_sha256 = :digest
+          AND hpa.rect_count = :count
+          AND (CAST(:exclude AS uuid) IS NULL OR hpa.highlight_id <> CAST(:exclude AS uuid))
+          AND NOT EXISTS (
+              SELECT 1 FROM requested r
+              LEFT JOIN highlight_pdf_quads stored
+                ON stored.highlight_id = hpa.highlight_id AND stored.quad_idx = r.quad_idx
+              WHERE stored.highlight_id IS NULL OR
+                ROW(stored.x1, stored.y1, stored.x2, stored.y2,
+                    stored.x3, stored.y3, stored.x4, stored.y4)
+                IS DISTINCT FROM ROW(r.x1, r.y1, r.x2, r.y2, r.x3, r.y3, r.x4, r.y4)
+          )
+        ORDER BY hpa.highlight_id LIMIT 1
+    """),
+        {
+            "viewer": viewer_id,
+            "media": media_id,
+            "page": canonical.page_number,
+            "digest": source_sha256,
+            "count": canonical.rect_count,
+            "exclude": exclude_highlight_id,
+            "quads": json.dumps(quads, separators=(",", ":")),
+        },
     )
-    if exclude_highlight_id is not None:
-        query = query.filter(Highlight.id != exclude_highlight_id)
-
-    for candidate in query.all():
-        if _stored_quads_match(candidate.pdf_quads, canonical.quads):
-            return candidate.pdf_anchor
-    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +244,7 @@ def compare_effective_state(
     canonical: CanonicalGeometry,
     new_exact: str,
     new_color: str | None,
+    source_sha256: str,
 ) -> EffectiveStateComparison:
     """Canonical side-effect-free effective-state comparison.
 
@@ -253,7 +255,7 @@ def compare_effective_state(
     if pa is None:
         return EffectiveStateComparison(is_noop=False, requires_full_path=True)
 
-    if pa.page_number != canonical.page_number:
+    if pa.source_sha256 != source_sha256 or pa.page_number != canonical.page_number:
         return EffectiveStateComparison(is_noop=False, requires_full_path=False)
 
     if not _stored_quads_match(highlight.pdf_quads, canonical.quads):
@@ -281,9 +283,10 @@ def create_pdf_highlight(
     req: CreatePdfHighlightRequest,
 ) -> TypedHighlightOut:
     """Create a PDF geometry highlight."""
-    media = _get_pdf_media_for_viewer_or_404(db, viewer_id, media_id)
-    _require_pdf_media_ready_or_409(media)
-    _validate_page_number(req.page_number, media.page_count)
+    source = get_reader_publication_pdf_source_for_viewer(
+        db, viewer_id=viewer_id, media_id=media_id, generation=req.reader_generation
+    )
+    _validate_page_number(req.page_number, source.page_count)
 
     try:
         validate_exact_length(req.exact)
@@ -296,7 +299,9 @@ def create_pdf_highlight(
     except GeometryValidationError as e:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, e.message) from e
 
-    match_fields = _compute_write_time_match(db, media, req.page_number, req.exact, None)
+    match_fields = _compute_write_time_match(
+        db, media_id, req.reader_generation, req.page_number, req.exact
+    )
 
     coord_key = derive_media_coordination_lock_key(media_id)
     dup_key = derive_duplicate_lock_key(
@@ -307,7 +312,7 @@ def create_pdf_highlight(
     )
     acquire_ordered_locks(db, coord_key, dup_key)
 
-    existing = _find_duplicate_pdf_anchor(db, viewer_id, media_id, canonical)
+    existing = _find_duplicate_pdf_anchor(db, viewer_id, media_id, canonical, source.sha256)
     if existing is not None:
         raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Duplicate PDF highlight")
 
@@ -326,6 +331,7 @@ def create_pdf_highlight(
     pdf_anchor = HighlightPdfAnchor(
         highlight_id=highlight.id,
         media_id=media_id,
+        source_sha256=source.sha256,
         page_number=canonical.page_number,
         sort_top=canonical.sort_top,
         sort_left=canonical.sort_left,
@@ -374,6 +380,7 @@ def create_pdf_highlight_in_txn(
     viewer_id: UUID,
     highlight_id: UUID,
     media_id: UUID,
+    reader_generation: int,
     page_number: int,
     quads: list,
     exact: str,
@@ -387,9 +394,10 @@ def create_pdf_highlight_in_txn(
     selection is ``E_HIGHLIGHT_CONFLICT`` (§ Mutation APIs); reusing it for the
     same page/quads returns the existing row so an in-flight retry converges.
     """
-    media = _get_pdf_media_for_viewer_or_404(db, viewer_id, media_id)
-    _require_pdf_media_ready_or_409(media)
-    _validate_page_number(page_number, media.page_count)
+    source = get_reader_publication_pdf_source_for_viewer(
+        db, viewer_id=viewer_id, media_id=media_id, generation=reader_generation
+    )
+    _validate_page_number(page_number, source.page_count)
 
     try:
         validate_exact_length(exact)
@@ -400,17 +408,21 @@ def create_pdf_highlight_in_txn(
     existing = db.get(Highlight, highlight_id)
     if existing is not None:
         _assert_pdf_selection_matches(
-            existing=existing, viewer_id=viewer_id, media_id=media_id, canonical=canonical
+            existing=existing,
+            viewer_id=viewer_id,
+            media_id=media_id,
+            canonical=canonical,
+            source_sha256=source.sha256,
         )
         return existing
 
-    match_fields = _compute_write_time_match(db, media, page_number, exact, None)
+    match_fields = _compute_write_time_match(db, media_id, reader_generation, page_number, exact)
 
     coord_key = derive_media_coordination_lock_key(media_id)
     dup_key = derive_duplicate_lock_key(viewer_id, media_id, canonical.page_number, canonical.quads)
     acquire_ordered_locks(db, coord_key, dup_key)
 
-    if _find_duplicate_pdf_anchor(db, viewer_id, media_id, canonical) is not None:
+    if _find_duplicate_pdf_anchor(db, viewer_id, media_id, canonical, source.sha256) is not None:
         raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Duplicate PDF highlight")
 
     highlight = Highlight(
@@ -430,6 +442,7 @@ def create_pdf_highlight_in_txn(
         HighlightPdfAnchor(
             highlight_id=highlight.id,
             media_id=media_id,
+            source_sha256=source.sha256,
             page_number=canonical.page_number,
             sort_top=canonical.sort_top,
             sort_left=canonical.sort_left,
@@ -474,6 +487,7 @@ def _assert_pdf_selection_matches(
     viewer_id: UUID,
     media_id: UUID,
     canonical: CanonicalGeometry,
+    source_sha256: str,
 ) -> None:
     """Guard a client-stable Highlight id against naming a different PDF selection."""
     anchor = existing.pdf_anchor
@@ -482,6 +496,7 @@ def _assert_pdf_selection_matches(
         or existing.anchor_kind != "pdf_page_geometry"
         or anchor is None
         or anchor.media_id != media_id
+        or anchor.source_sha256 != source_sha256
         or anchor.page_number != canonical.page_number
         or not _stored_quads_match(existing.pdf_quads, canonical.quads)
     ):
@@ -495,35 +510,147 @@ def list_pdf_highlights(
     viewer_id: UUID,
     media_id: UUID,
     page_number: int,
+    *,
+    reader_generation: int,
+    limits: ReaderPublicationLimits,
     mine_only: bool = True,
-) -> list[TypedHighlightOut]:
-    """List PDF highlights for a single page."""
-    media = _get_pdf_media_for_viewer_or_404(db, viewer_id, media_id)
-    _validate_page_number(page_number, media.page_count)
-
+    after: str | None = None,
+    limit: int = 50,
+) -> PdfHighlightPaintPage:
+    """Page only attested paint; authored prose and linked bodies stay on detail reads."""
+    source = get_reader_publication_pdf_source_for_viewer(
+        db,
+        viewer_id=viewer_id,
+        media_id=media_id,
+        generation=reader_generation,
+    )
+    _validate_page_number(page_number, source.page_count)
+    binding = {
+        "viewer": str(viewer_id),
+        "media": str(media_id),
+        "generation": reader_generation,
+        "page": page_number,
+        "mine_only": mine_only,
+    }
+    order = (
+        HighlightPdfAnchor.sort_top,
+        HighlightPdfAnchor.sort_left,
+        Highlight.created_at,
+        Highlight.id,
+    )
     query = (
-        db.query(Highlight)
-        .join(HighlightPdfAnchor, Highlight.id == HighlightPdfAnchor.highlight_id)
-        .filter(
+        select(
+            Highlight.id,
+            Highlight.color,
+            Highlight.created_at,
+            Highlight.user_id,
+            HighlightPdfAnchor.sort_top,
+            HighlightPdfAnchor.sort_left,
+        )
+        .join(HighlightPdfAnchor, HighlightPdfAnchor.highlight_id == Highlight.id)
+        .where(
             HighlightPdfAnchor.media_id == media_id,
             HighlightPdfAnchor.page_number == page_number,
+            HighlightPdfAnchor.source_sha256 == source.sha256,
             Highlight.anchor_kind == "pdf_page_geometry",
+            Highlight.user_id == viewer_id
+            if mine_only
+            else highlight_visibility_filter(viewer_id, media_id),
         )
     )
+    if after is not None:
+        values = decode_signed_keyset_cursor(
+            after,
+            family="ReaderPublicationPdfHighlights",
+            query=binding,
+            expected_kinds=(
+                KeysetValueKind.Text,
+                KeysetValueKind.Text,
+                KeysetValueKind.DateTime,
+                KeysetValueKind.Uuid,
+            ),
+        )
+        from decimal import Decimal
 
-    if mine_only:
-        query = query.filter(Highlight.user_id == viewer_id)
-    else:
-        query = query.filter(highlight_visibility_filter(viewer_id, media_id))
-
-    highlights = query.order_by(
-        HighlightPdfAnchor.sort_top.asc(),
-        HighlightPdfAnchor.sort_left.asc(),
-        Highlight.created_at.asc(),
-        Highlight.id.asc(),
-    ).all()
-
-    return project_highlights_with_links(db, viewer_id, highlights)
+        query = query.where(
+            tuple_(*order) > tuple_(Decimal(values[0]), Decimal(values[1]), values[2], values[3])
+        )
+    rows = db.execute(query.order_by(*order).limit(limit + 1)).all()
+    items = []
+    last_cursor = None
+    for row in rows:
+        if len(items) == limit:
+            return PdfHighlightPaintPage(
+                page_number=page_number,
+                source_sha256=source.sha256,
+                highlights=tuple(items),
+                next_cursor=last_cursor,
+            )
+        quads = (
+            db.execute(
+                select(HighlightPdfQuad)
+                .where(HighlightPdfQuad.highlight_id == row.id)
+                .order_by(HighlightPdfQuad.quad_idx)
+            )
+            .scalars()
+            .all()
+        )
+        paint = PdfHighlightPaint(
+            id=row.id,
+            color=row.color,
+            created_at=row.created_at,
+            author_user_id=row.user_id,
+            is_owner=row.user_id == viewer_id,
+            quads=tuple(
+                PdfQuadOut(
+                    **{
+                        f"{axis}{index}": float(getattr(quad, f"{axis}{index}"))
+                        for axis in ("x", "y")
+                        for index in range(1, 5)
+                    }
+                )
+                for quad in quads
+            ),
+        )
+        cursor = encode_signed_keyset_cursor(
+            family="ReaderPublicationPdfHighlights",
+            query=binding,
+            after=(
+                KeysetValue(KeysetValueKind.Text, str(row.sort_top)),
+                KeysetValue(KeysetValueKind.Text, str(row.sort_left)),
+                KeysetValue(KeysetValueKind.DateTime, row.created_at),
+                KeysetValue(KeysetValueKind.Uuid, row.id),
+            ),
+        )
+        candidate = PdfHighlightPaintPage(
+            page_number=page_number,
+            source_sha256=source.sha256,
+            highlights=(*items, paint),
+            next_cursor=cursor,
+        )
+        page_bytes = len(candidate.model_dump_json().encode("utf-8")) + len(b'{"data":}')
+        if page_bytes > limits.index_bytes:
+            if not items:
+                raise ReaderContentTooLargeError(
+                    "PDF highlight exceeds response capacity",
+                    limit="index_bytes",
+                    limit_value=limits.index_bytes,
+                    measured=page_bytes,
+                )
+            return PdfHighlightPaintPage(
+                page_number=page_number,
+                source_sha256=source.sha256,
+                highlights=tuple(items),
+                next_cursor=last_cursor,
+            )
+        items.append(paint)
+        last_cursor = cursor
+    return PdfHighlightPaintPage(
+        page_number=page_number,
+        source_sha256=source.sha256,
+        highlights=tuple(items),
+        next_cursor=None,
+    )
 
 
 def update_pdf_highlight_bounds(
@@ -537,12 +664,13 @@ def update_pdf_highlight_bounds(
 
     Caller must have already verified ownership + media readability.
     """
-    media = db.get(Media, highlight.anchor_media_id)
-    if media is None or media.kind != "pdf":
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-
-    _require_pdf_media_ready_or_409(media)
-    _validate_page_number(bounds.page_number, media.page_count)
+    source = get_reader_publication_pdf_source_for_viewer(
+        db,
+        viewer_id=viewer_id,
+        media_id=highlight.anchor_media_id,
+        generation=bounds.reader_generation,
+    )
+    _validate_page_number(bounds.page_number, source.page_count)
 
     try:
         validate_exact_length(bounds.exact)
@@ -555,47 +683,42 @@ def update_pdf_highlight_bounds(
     except GeometryValidationError as e:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, e.message) from e
 
-    # Pre-lock no-op short circuit with row lock.
-    db.execute(
-        text("SELECT id FROM highlights WHERE id = :hid FOR UPDATE"),
-        {"hid": highlight.id},
-    )
-    comparison = compare_effective_state(highlight, canonical, bounds.exact, new_color)
-
-    if comparison.is_noop:
-        return project_highlight(highlight, viewer_id)
-
-    match_fields = _compute_write_time_match(
-        db,
-        media,
-        canonical.page_number,
-        bounds.exact,
-        highlight.id,
-    )
-
     coord_key = derive_media_coordination_lock_key(highlight.anchor_media_id)
     dup_key = derive_duplicate_lock_key(
-        viewer_id,
-        highlight.anchor_media_id,
-        canonical.page_number,
-        canonical.quads,
+        viewer_id, highlight.anchor_media_id, canonical.page_number, canonical.quads
     )
     acquire_ordered_locks(db, coord_key, dup_key)
+    # Loading before the lock grants access; it does not establish mutation
+    # state. Refresh the anchor and ordered quads after acquiring that lock.
+    locked = db.scalar(
+        select(Highlight)
+        .where(Highlight.id == highlight.id)
+        .with_for_update()
+        .options(selectinload(Highlight.pdf_anchor), selectinload(Highlight.pdf_quads))
+        .execution_options(populate_existing=True)
+    )
+    if locked is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
+    highlight = get_highlight_for_author_write_or_404(db, viewer_id, locked.id)
+    comparison = compare_effective_state(
+        highlight, canonical, bounds.exact, new_color, source.sha256
+    )
+    if comparison.is_noop:
+        return project_highlight(highlight, viewer_id)
+    match_fields = _compute_write_time_match(
+        db, highlight.anchor_media_id, bounds.reader_generation, canonical.page_number, bounds.exact
+    )
 
     dup = _find_duplicate_pdf_anchor(
         db,
         viewer_id,
         highlight.anchor_media_id,
         canonical,
+        source.sha256,
         exclude_highlight_id=highlight.id,
     )
     if dup is not None:
         raise ApiError(ApiErrorCode.E_HIGHLIGHT_CONFLICT, "Duplicate PDF highlight")
-
-    # Post-lock no-op recheck using the same comparison helper.
-    post_comparison = compare_effective_state(highlight, canonical, bounds.exact, new_color)
-    if post_comparison.is_noop:
-        return project_highlight(highlight, viewer_id)
 
     # Apply updates
     effective_color = new_color if new_color is not None else highlight.color
@@ -609,6 +732,7 @@ def update_pdf_highlight_bounds(
     highlight.updated_at = func.now()
 
     pa = highlight.pdf_anchor
+    pa.source_sha256 = source.sha256
     pa.page_number = canonical.page_number
     pa.sort_top = canonical.sort_top
     pa.sort_left = canonical.sort_left

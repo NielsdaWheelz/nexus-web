@@ -4,6 +4,9 @@ Every in-process object write reserves an at-most-one-nonterminal
 ``StorageObjectCleanupJob`` for its closed ``Media | UploadSession`` owner and
 ``storagePath`` *before* the bounded external call, then marks
 it ``Retained`` after a successful write once the committed DB owner is visible.
+A writer whose committed DB owner lands only at the end of a long preparation
+instead carries an exact ``retainUntil`` on its reservation, so its own fence
+cannot fire while that preparation may still publish the object.
 If the writer crashes between the write and that recheck (or the write lands after
 the client timeout), the reservation's future-dated ``Armed`` deadline fires and
 the handler decides ``Retained`` (committed owner), reschedules (a live teardown
@@ -85,6 +88,17 @@ def _parse_iso(value: str) -> datetime:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
+def _payload_retain_until(payload: Mapping[str, Any]) -> datetime | None:
+    """Read the optional exact retention boundary written by the reservation."""
+    raw = payload.get("retainUntil")
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        # justify-defect: this module is the sole writer of the durable payload.
+        raise RuntimeError("storage cleanup payload has a non-ISO retainUntil")
+    return _parse_iso(raw)
+
+
 def _media_id_from_storage_path(storage_path: str) -> UUID | None:
     """Extract the media id embedded in a canonical ``media/{id}/...`` path."""
     parts = storage_path.split("/")
@@ -115,6 +129,11 @@ def path_has_live_db_owner(db: Session, storage_path: str) -> bool:
         {"p": storage_path},
     ).first():
         return True
+    if db.execute(
+        text("SELECT 1 FROM reader_publication_artifacts WHERE storage_path = :p LIMIT 1"),
+        {"p": storage_path},
+    ).first():
+        return True
     media_id = _media_id_from_storage_path(storage_path)
     if media_id is not None:
         for (source_payload,) in db.execute(
@@ -139,8 +158,21 @@ def _armed_writers_for_path(db: Session, storage_path: str) -> list:
 # ---------------------------------------------------------------------------
 
 
-def reserve_storage_object_write(db: Session, *, media_id: UUID, storage_path: str) -> None:
-    """Reserve a durable final-sweep owned by published Media support state."""
+def reserve_storage_object_write(
+    db: Session,
+    *,
+    media_id: UUID,
+    storage_path: str,
+    retain_until: datetime | None = None,
+) -> None:
+    """Reserve a durable final-sweep owned by published Media support state.
+
+    Supply ``retain_until`` when the committed DB owner of these bytes lands after
+    the write window rather than immediately after the write: the sweep is then not
+    due before that instant, so a writer whose publication transaction is still
+    ahead of it cannot have its own reservation delete the object it is preparing.
+    Omit it when the caller finalizes the write in its own bounded step.
+    """
     with transaction(db):
         try:
             _reserve_storage_object_write_in_current_transaction(
@@ -148,7 +180,7 @@ def reserve_storage_object_write(db: Session, *, media_id: UUID, storage_path: s
                 owner_kind=_MEDIA_OWNER,
                 owner_id=media_id,
                 storage_path=storage_path,
-                retain_until=None,
+                retain_until=retain_until,
             )
         except StoragePathCleanupInFlight as exc:
             raise ConflictError(
@@ -212,8 +244,10 @@ def _reserve_storage_object_write_in_current_transaction(
     nonterminal ``Armed`` cleanup job for ``(owner, path)`` whose
     ``writeMayLandUntil`` is ``now + storage_object_cleanup_write_window_seconds`` (the
     window is wider than every configured server/browser writer deadline, so a delayed
-    write can still land inside it). Upload-session bytes may additionally carry an exact
-    ``retainUntil``; their cleanup job is not due before that instant.
+    write can still land inside it). A reservation may additionally carry an exact
+    ``retainUntil``; its cleanup job is not due before that instant. Upload-session
+    bytes always carry one (their staged retention boundary); a Media write carries one
+    when its committed DB owner lands after the write window.
     """
     settings = get_settings()
     window = int(settings.storage_object_cleanup_write_window_seconds)
@@ -472,19 +506,18 @@ def _resolve_armed(
                 text("SELECT 1 FROM media_teardown_intents WHERE media_id = :owner_id"),
                 {"owner_id": owner_id},
             ).first()
-            retain_until = None
+            retain_until = _payload_retain_until(base_payload)
         elif owner_kind == _UPLOAD_SESSION_OWNER:
             db.execute(
                 text("SELECT 1 FROM media_upload_sessions WHERE id = :owner_id FOR UPDATE"),
                 {"owner_id": owner_id},
             )
             intent = None
-            raw_retain_until = base_payload.get("retainUntil")
-            if not isinstance(raw_retain_until, str):
+            retain_until = _payload_retain_until(base_payload)
+            if retain_until is None:
                 # justify-defect: every UploadSession reservation writes its exact
                 # retention boundary into the closed durable payload.
                 raise RuntimeError("UploadSession cleanup payload has no retainUntil")
-            retain_until = _parse_iso(raw_retain_until)
         else:
             raise RuntimeError(f"unknown storage_object_cleanup owner {owner_kind!r}")
         owned = path_has_live_db_owner(db, storage_path)

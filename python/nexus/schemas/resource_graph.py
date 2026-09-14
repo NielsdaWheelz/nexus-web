@@ -220,6 +220,7 @@ class LinkPdfSelectionSource(ResourceGraphModel):
     kind: Literal["pdf_selection"] = "pdf_selection"
     highlight_id: UUID
     media_id: UUID
+    reader_generation: int = Field(ge=1)
     page_number: int = Field(..., ge=1)
     quads: list[PdfQuadIn] = Field(..., min_length=1, max_length=512)
     exact: str = ""

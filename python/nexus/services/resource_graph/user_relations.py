@@ -407,6 +407,7 @@ def _resolve_link_source(
             viewer_id=viewer_id,
             highlight_id=source.highlight_id,
             media_id=source.media_id,
+            reader_generation=source.reader_generation,
             page_number=source.page_number,
             quads=[q.model_dump() for q in source.quads],
             exact=source.exact,
@@ -580,22 +581,7 @@ def _link_note_block_id(
     db: Session, *, viewer_id: UUID, a: ResourceRef, b: ResourceRef
 ) -> UUID | None:
     """The ``note_block`` id whose ``link_note`` motif attaches to BOTH ``a`` and ``b``."""
-    a_key = (a.scheme, a.id)
-    b_key = (b.scheme, b.id)
-    targets_by_note: dict[UUID, set[tuple[str, UUID]]] = {}
-    for note_id, ts, ti in db.execute(
-        select(ResourceEdge.source_id, ResourceEdge.target_scheme, ResourceEdge.target_id).where(
-            ResourceEdge.user_id == viewer_id,
-            ResourceEdge.origin == "link_note",
-            ResourceEdge.source_scheme == "note_block",
-            or_(_target_is(a), _target_is(b)),
-        )
-    ).all():
-        targets_by_note.setdefault(note_id, set()).add((ts, ti))
-    for note_id, targets in targets_by_note.items():
-        if a_key in targets and b_key in targets:
-            return note_id
-    return None
+    return connections.link_note_ids_for_pairs(db, viewer_id=viewer_id, pairs=((a, b),))[0]
 
 
 def _connection_for_edge(

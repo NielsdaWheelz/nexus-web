@@ -1,0 +1,11 @@
+diff --git a/python/nexus/services/media_source_ingest.py b/python/nexus/services/media_source_ingest.py
+--- a/python/nexus/services/media_source_ingest.py
++++ b/python/nexus/services/media_source_ingest.py
+@@ -3975,6 +3975,7 @@
+                 fence=fence,
+                 media_id=media_id,
+             )
++            source_files.close()
+             yield source
+ 
+ 

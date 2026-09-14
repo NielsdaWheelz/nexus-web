@@ -28,7 +28,11 @@ export type AsyncResource<T> =
 // starving the owner's first render — otherwise whichever commits first (the eager
 // chrome reader) removes the seed before the lazy owner pane hydrates, so the pane
 // renders its loading state against server-rendered content and hydration mismatches.
-type SeedClaimArgs = { claimSeed?: boolean };
+type SeedClaimArgs = {
+  claimSeed?: boolean;
+  /** A retained coordinator may forward defects to its descendant boundary. */
+  onDefect?: (error: unknown) => void;
+};
 
 type DescriptorResourceArgs<T, P> = SeedClaimArgs & {
   descriptor: ResourceDescriptor<P>;
@@ -87,6 +91,11 @@ export function useResource<T, P>(
   const [defect, setDefect] = useState<{ key: string; error: unknown } | null>(
     null,
   );
+  const defectObserver = useRef(args.onDefect);
+  defectObserver.current = args.onDefect;
+  useEffect(() => {
+    if (defect?.key === cacheKey) defectObserver.current?.(defect.error);
+  }, [cacheKey, defect]);
 
   const cache = useContext(ResourceCacheContext);
   const handleUnauthenticatedApiError = useUnauthenticatedApiHandler();
@@ -130,8 +139,11 @@ export function useResource<T, P>(
         : { status: "loading" };
 
   useEffect(() => {
-    if (claimSeed && seeded !== null && cache !== null) {
-      cache.consume(seeded.key);
+    if (seeded !== null && cache !== null && (claimSeed || seeded.entry.status === "pending")) {
+      // Even an ambient reader owns an adopted running request. claimSeed:false
+      // preserves ready hydration seeds; it cannot make foreground reads abortable
+      // by a hover surface that has moved away.
+      cache.consume(seeded.key, seeded.entry);
     }
   }, [cache, seeded, claimSeed]);
 
@@ -144,45 +156,18 @@ export function useResource<T, P>(
       setResourceState({ key: null, resource: { status: "idle" } });
       return;
     }
+    let adopted: Promise<unknown> | null = null;
     if (skipKeyRef.current === cacheKey) {
       skipKeyRef.current = null;
-      // A pending prefetch is in flight for this key: adopt its promise (no second
-      // fetch). On success → ready; on failure → re-run this effect to fetch fresh.
       const seededEntry = seededRef.current;
       if (seededEntry !== null && seededEntry.entry.status === "pending") {
-        // Adopt the in-flight prefetch's promise; do NOT abort its (cache-owned, possibly
-        // shared) controller on unmount — just ignore a late result. The cache's LRU owns
-        // cancellation; a background completion is harmless (the entry is already consumed).
-        const { promise } = seededEntry.entry;
-        let cancelled = false;
-        promise.then(
-          (data) => {
-            if (!cancelled) {
-              setResourceState({
-                key: cacheKey,
-                resource: { status: "ready", data: data as T },
-              });
-            }
-          },
-          (error) => {
-            // justify-ignore-error: a cancelled adoption or an aborted
-            // in-flight prefetch is framework cancellation, not a modelable
-            // failure; the fresh fetch below (or the owning consumer) reports.
-            if (cancelled || isAbortError(error)) return;
-            if (handleUnauthenticatedApiError(error)) return;
-            if (!isApiError(error) || isSameSystemApiDefect(error)) {
-              setDefect({ key: cacheKey, error });
-              return;
-            }
-            retry();
-          },
-        );
-        return () => {
-          cancelled = true;
-        };
+        // Cache owns this request's cancellation. Adoption consumes its first
+        // attempt, then this consumer owns only the remaining retry budget.
+        if (!seededEntry.entry.signal.aborted) adopted = seededEntry.entry.promise;
+      } else {
+        // A ready seed was applied synchronously during initial render.
+        return;
       }
-      // A ready seed was already applied synchronously in the useState initializer.
-      return;
     }
 
     const controller = new AbortController();
@@ -194,7 +179,8 @@ export function useResource<T, P>(
     const run = async () => {
       try {
         const data = await requestWithRetry(
-          (signal) => loadRef.current(signal),
+          (signal, attempt) => attempt === 1 && adopted !== null
+            ? adopted as Promise<T> : loadRef.current(signal),
           controller.signal,
         );
         if (controller.signal.aborted) return;
@@ -222,7 +208,7 @@ export function useResource<T, P>(
     };
   }, [cacheKey, retryTick, retry, handleUnauthenticatedApiError]);
 
-  if (defect?.key === cacheKey) {
+  if (defect?.key === cacheKey && !args.onDefect) {
     throw defect.error;
   }
 

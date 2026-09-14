@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+from tempfile import TemporaryFile
 from threading import Event
 from uuid import UUID, uuid4
 
@@ -24,8 +25,13 @@ from nexus.services.reader_publication import (
     read_publication_generation,
     replace_reader_publication,
 )
+from nexus.services.reader_publication_artifacts import (
+    prepare_pdf_reader_publication,
+    verify_reader_publication_asset,
+)
 from nexus.storage.client import get_storage_client
 from nexus.storage.paths import build_source_artifact_storage_path
+from tests.testkit.reader_publication import FIXTURE_LIMITS
 
 
 def test_capture_restarts_once_without_mixing_database_and_minio_publications(
@@ -71,20 +77,16 @@ def test_capture_restarts_once_without_mixing_database_and_minio_publications(
                 html_sanitized="<p>Stable canonical fragment identity</p>",
             )
         )
-        replace_reader_publication(
-            db,
-            media_id=media_id,
-            expected_kind=MediaKind.pdf.value,
-            replace_projection=lambda _media: db.add(
-                MediaFile(
-                    media_id=media_id,
-                    storage_path=paths[0],
-                    content_type="application/pdf",
-                    size_bytes=len(payloads[0]),
-                    source_sha256=hashlib.sha256(payloads[0]).hexdigest(),
-                )
-            ),
-        )
+        db.commit()
+    _publish_pdf_generation(
+        engine,
+        media_id=media_id,
+        title="Atomic publication",
+        expected_generation=None,
+        storage_path=paths[0],
+        payload=payloads[0],
+    )
+    with Session(engine) as db:
         db.get(Media, media_id).processing_status = ProcessingStatus.ready_for_reading  # type: ignore[union-attr]
         db.commit()
         assert read_publication_generation(db, media_id=media_id) == 1
@@ -118,9 +120,11 @@ def test_capture_restarts_once_without_mixing_database_and_minio_publications(
         assert first_assembly_started.wait(10), (
             "capture did not expose the first repeatable-read projection"
         )
-        _replace_pdf_pointer(
+        _publish_pdf_generation(
             engine,
             media_id=media_id,
+            title="Atomic publication",
+            expected_generation=1,
             storage_path=paths[1],
             payload=payloads[1],
         )
@@ -164,17 +168,21 @@ def test_capture_restarts_once_without_mixing_database_and_minio_publications(
             storage_client=storage,
         )
         assert assembly_started[0].wait(10), "first busy capture projection was not observed"
-        _replace_pdf_pointer(
+        _publish_pdf_generation(
             engine,
             media_id=media_id,
+            title="Atomic publication",
+            expected_generation=2,
             storage_path=paths[2],
             payload=payloads[2],
         )
         continue_assembly[0].set()
         assert assembly_started[1].wait(10), "capture did not perform its one allowed restart"
-        _replace_pdf_pointer(
+        _publish_pdf_generation(
             engine,
             media_id=media_id,
+            title="Atomic publication",
+            expected_generation=3,
             storage_path=paths[3],
             payload=payloads[3],
         )
@@ -192,14 +200,17 @@ def test_capture_restarts_once_without_mixing_database_and_minio_publications(
     with Session(engine) as db:
         cleanup_paths = delete_document_media_if_unreferenced(db, media_id)
         db.commit()
-    assert cleanup_paths == [paths[3]]
+    assert cleanup_paths is not None and set(paths) <= set(cleanup_paths), (
+        "media deletion left the objects its retained publications still reference behind: "
+        f"{cleanup_paths!r}"
+    )
     with Session(engine) as oracle:
         assert oracle.get(Media, media_id) is None
         assert read_publication_generation(oracle, media_id=media_id) is None, (
             "media deletion left its non-cascading Reader publication owner behind"
         )
 
-    for path in paths:
+    for path in cleanup_paths:
         storage.delete_object(path)
 
 
@@ -217,7 +228,7 @@ def test_missing_object_defects_at_an_unchanged_generation_and_restarts_after_a_
     ]
     payloads = [f"%PDF-1.4 missing-object-{index}".encode() for index in range(1, 3)]
     storage = get_storage_client()
-    # Only the replacement object exists: the published object is the one that is gone.
+    storage.put_object(paths[0], payloads[0], "application/pdf")
     storage.put_object(paths[1], payloads[1], "application/pdf")
 
     session_factory = sessionmaker(engine, expire_on_commit=False)
@@ -246,21 +257,21 @@ def test_missing_object_defects_at_an_unchanged_generation_and_restarts_after_a_
                 html_sanitized="<p>Canonical fragment of a lost object</p>",
             )
         )
-        replace_reader_publication(
-            db,
-            media_id=media_id,
-            expected_kind=MediaKind.pdf.value,
-            replace_projection=lambda _media: None,
-            source_file=ReaderPublicationSourceFile(
-                storage_path=paths[0],
-                content_type="application/pdf",
-                size_bytes=len(payloads[0]),
-                source_sha256=hashlib.sha256(payloads[0]).hexdigest(),
-            ),
-        )
+        db.commit()
+    _publish_pdf_generation(
+        engine,
+        media_id=media_id,
+        title="Missing object publication",
+        expected_generation=None,
+        storage_path=paths[0],
+        payload=payloads[0],
+    )
+    with Session(engine) as db:
         db.get(Media, media_id).processing_status = ProcessingStatus.ready_for_reading  # type: ignore[union-attr]
         db.commit()
         assert read_publication_generation(db, media_id=media_id) == 1
+    # The published object is lost after it was published: that is the scenario.
+    storage.delete_object(paths[0])
 
     defected_generations: list[int] = []
 
@@ -296,9 +307,11 @@ def test_missing_object_defects_at_an_unchanged_generation_and_restarts_after_a_
         restarted_generations.append(projection.generation)
         if projection.generation == 1:
             # The publication that replaced this object is exactly why it is gone.
-            _replace_pdf_pointer(
+            _publish_pdf_generation(
                 engine,
                 media_id=media_id,
+                title="Missing object publication",
+                expected_generation=1,
                 storage_path=paths[1],
                 payload=payloads[1],
             )
@@ -320,28 +333,66 @@ def test_missing_object_defects_at_an_unchanged_generation_and_restarts_after_a_
     with Session(engine) as db:
         cleanup_paths = delete_document_media_if_unreferenced(db, media_id)
         db.commit()
-    assert cleanup_paths == [paths[1]]
-    storage.delete_object(paths[1])
+    assert cleanup_paths is not None and set(paths) <= set(cleanup_paths), (
+        "media deletion left the objects its retained publications still reference behind: "
+        f"{cleanup_paths!r}"
+    )
+    for path in cleanup_paths:
+        storage.delete_object(path)
 
 
-def _replace_pdf_pointer(
+def _publish_pdf_generation(
     engine: Engine,
     *,
     media_id: UUID,
+    title: str,
+    expected_generation: int | None,
     storage_path: str,
     payload: bytes,
 ) -> None:
-    with Session(engine) as db:
-        replace_reader_publication(
-            db,
+    """Publish one PDF generation the way its owner does: prepare, then replace.
+
+    The successor descriptor and its verified document asset are written as
+    immutable objects before the transaction opens, so the generation this
+    installs is fenced to exactly the members prepared under it.
+    """
+    storage = get_storage_client()
+    digest = hashlib.sha256(payload).hexdigest()
+    with TemporaryFile(mode="w+b") as search_file:
+        prepared = prepare_pdf_reader_publication(
+            sessionmaker(engine, expire_on_commit=False),
+            storage,
             media_id=media_id,
-            expected_kind=MediaKind.pdf.value,
-            replace_projection=lambda _media: None,
-            source_file=ReaderPublicationSourceFile(
+            expected_generation=expected_generation,
+            generation=(expected_generation or 0) + 1,
+            title=title,
+            page_count=1,
+            plain_text="",
+            page_spans=(),
+            page_heights=(),
+            search_projection_file=search_file,
+            document=verify_reader_publication_asset(
+                storage,
+                key="assets/document.pdf",
                 storage_path=storage_path,
-                content_type="application/pdf",
-                size_bytes=len(payload),
-                source_sha256=hashlib.sha256(payload).hexdigest(),
+                media_type="application/pdf",
+                expected_size_bytes=len(payload),
+                expected_sha256=digest,
             ),
+            limits=FIXTURE_LIMITS,
         )
-        db.commit()
+        with Session(engine) as db:
+            replace_reader_publication(
+                db,
+                media_id=media_id,
+                expected_kind=MediaKind.pdf.value,
+                replace_projection=lambda _media: None,
+                source_file=ReaderPublicationSourceFile(
+                    storage_path=storage_path,
+                    content_type="application/pdf",
+                    size_bytes=len(payload),
+                    source_sha256=digest,
+                ),
+                prepared=prepared,
+            )
+            db.commit()

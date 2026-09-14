@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTables.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTables.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTables.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTables.kt
+@@ -264,7 +264,7 @@
+                     val kind = if (cells.getString(5) == "td") "data" else when (attributes.tableAttribute("scope")?.lowercase(Locale.ROOT)) {
+                         "row" -> "row"
+                         "col" -> "column"
+-                        "rowgroup" -> "rowgroup"
++                        "rowgroup" -> "none"
+                         "colgroup" -> "colgroup"
+                         else -> if (!hasData("rows", cells.getLong(1), cells.getLong(3))) "column"
+                             else if (!hasData("columns", cells.getLong(2), cells.getLong(4))) "row" else "none"

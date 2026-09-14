@@ -1,0 +1,11 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacySource.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacySource.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacySource.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacySource.kt
+@@ -160,6 +160,7 @@
+             }
+         }
+         durability.syncTree(staging)
++        staging.mkdirs()
+         database.execSQL("INSERT INTO complete VALUES(?)", arrayOf(sourceDigest))
+     }
+ }

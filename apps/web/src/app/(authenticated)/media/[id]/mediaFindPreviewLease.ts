@@ -50,7 +50,6 @@ export function createMediaFindPreviewLease(): MediaFindPreviewLease {
     acquire() {
       if (retired) return;
       suppressNextCapture = false;
-      suppressCapturesUntilGenuineInput = false;
       if (active) return;
       active = true;
       publish();

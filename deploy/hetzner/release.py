@@ -2819,9 +2819,10 @@ def publish_config(source: Path, store: ReleaseStore, *, next_source_sha: str) -
     store.require_current_record()
     store.assert_fresh_candidate(next_source_sha)
     values = _read_env(source)
-    if "NODE_INGEST_SCRIPT" in values:
+    if "NODE_INGEST_SCRIPT" in values or "NEXUS_NODE_INGEST_SCRIPT" in values:
         raise ReleaseDefect(
-            "NODE_INGEST_SCRIPT is image-owned and must not be present in published production config"
+            "NODE_INGEST_SCRIPT and NEXUS_NODE_INGEST_SCRIPT are image-owned "
+            "and must not be present in published production config"
         )
     canonical = "".join(f"{key}={values[key]}\n" for key in sorted(values)).encode()
     digest = hashlib.sha256(canonical).hexdigest()

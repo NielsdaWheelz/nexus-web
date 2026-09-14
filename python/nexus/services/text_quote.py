@@ -6,9 +6,8 @@ module anchors that text against ``fragments.canonical_text`` — the same sourc
 of truth ``highlights.create_highlight_for_fragment`` derives its
 exact/prefix/suffix from.
 
-Mirrors ``pdf_quote_match.compute_match``: a quote resolves to offsets only when
-it is *unique*. Multiple occurrences are ``ambiguous`` and a miss is
-``no_match`` — both return null offsets. The caller (a write tool) turns either
+A quote resolves to offsets only when it is *unique*. Multiple occurrences are
+``ambiguous`` and a miss is ``no_match`` — both return null offsets. The caller (a write tool) turns either
 into a refusal that asks the model to quote more surrounding text; it never
 guesses a wrong anchor (amanuensis D-4).
 """
@@ -24,7 +23,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Fragment, NoteBlock
-from nexus.services.pdf_quote_match import PREFIX_SUFFIX_WINDOW
+
+# Nearest scalars quoted on each side of a match, the width every stored quote
+# context is authored at.
+PREFIX_SUFFIX_WINDOW = 64
 
 
 class QuoteStatus(str, Enum):

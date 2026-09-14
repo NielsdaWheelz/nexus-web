@@ -279,12 +279,38 @@ deviation from a rule is explicit, see [`rules/overrides.md`](rules/overrides.md
    outcomes clear cookies. The shared response finalizer owns all cookie effects
    and canonical `private, no-store` headers, including downstream failures.
 5. **FastAPI** receives the request through its middleware stack — executed in this
-   order (`python/nexus/app.py`): RequestID → StreamCORS → RequestDbSession →
-   **Auth** → route. `AuthMiddleware` (`auth/middleware.py`) verifies the JWT via
+   order (`python/nexus/app.py`, outermost first): RequestID → APIResponsePolicy
+   → StreamCORS (when configured) → RequestDbSession → **Auth** → routing → the
+   route-level **read admission owner** → route. Every layer is pure ASGI, never
+   `BaseHTTPMiddleware`: that class runs the downstream app in a child task and
+   buffers the response, which would break the admission permit's shield, break
+   streaming, and leave its send wrapper unable to stamp a `ServerErrorMiddleware`
+   500. `AuthMiddleware` (`auth/middleware.py`) verifies the JWT via
    JWKS (`auth/verifier.py`), resolves first-login **bootstrap** through its bounded
    process-local success cache (threadpool + database only on a miss), and attaches
    a `Viewer{user_id, default_library_id, email, roles}` to `request.state`. It
    publishes its measured phase as `nexus_auth`.
+5b. **Read admission** (`api/read_admission.py`) is a route class, not a
+   middleware, so it sits inside routing and applies per route family. Three
+   pools draw on one qualified profile and a route belongs to exactly one:
+   `AdmittedReadRoute` (expensive reads that materialize a response — media,
+   reader, reader-publications, resource-items, me, search),
+   `AdmittedImageRoute` (whole-image reads: `/media/image`, EPUB assets, oracle
+   plates — a stricter sub-budget), and `AdmittedPackageTransferRoute` (offline
+   package transfers, whose bytes dwarf every other response). A permit covers
+   the **request body** as well as execution, serialization and response
+   transfer: a declared `Content-Length` above `ReadAdmissionLimits.request_bytes`
+   is refused **before** a slot is taken, and the receive stream is capped so a
+   chunked body or a lying declaration is stopped on the way in rather than after
+   the framework has materialized it. That refusal is `413
+   E_REQUEST_TOO_LARGE`; pool exhaustion is `503 E_READ_CAPACITY` with
+   `Retry-After`. Progress, reader state, readiness, file redirects and
+   mint/status routes stay outside every pool — that reserved headroom is what
+   keeps the process answering while the pools are full. The profile is
+   required configuration with no default: `API_READ_ADMISSION_LIMITS`,
+   `IMAGE_DECODER_LIMITS` and `READER_PUBLICATION_LIMITS` must be supplied or the
+   API refuses to start.
+
 6. The **route handler** (`api/routes/*`) is transport-only: pull the `Viewer` and
    a DB `Session` via `Depends`, call exactly one **service** function, return
    `success_response(...)` or raise an `ApiError`. Handlers are plain `def`, so
@@ -401,9 +427,10 @@ transactional canonical pointer swap, a replacement increments the generation
 once, and package capture restarts once rather than mixing database and object
 generations. Every write that changes what a reader sees is a publication,
 including metadata enrichment's title write. `nexus.ops.reader_publication_preflight`
-is the idempotent operator entrypoint that publishes any eligible ready document
-still missing a row at generation `1`; run it before exposing a reading-capable
-APK ([`deployment.md`](../deployment.md)). Offline packages and device
+accepts missing generation metadata and exact-generation member jobs idempotently.
+its separate verification checks complete retained bytes and query projections
+while all publication writers remain stopped; the release sequence is owned by
+[`deployment.md`](../deployment.md#reader-publication-preflight). Offline packages and device
 availability are not server rows.
 
 **Retrieval index** — `content_blocks`, `evidence_spans`, `content_chunks`,
@@ -472,6 +499,10 @@ all three may coexist on the same endpoints. An optional **Link note** is one
 ordinary note attached through two structural `link_note` edges (one per
 endpoint), folded by `connections.py` into a single `ConnectionOut.link_note`
 field — the attachment edges themselves never render as separate rows.
+the connection reader and Link-note mutations share one SQL motif lookup. if
+legacy data has several complete motifs, the earliest canonical first-endpoint
+attachment by `(created_at, id)` wins. preview reads select only 200 codepoints
+in PostgreSQL; complete authored note bodies remain with the note detail owner.
 
 **Universal Dossiers** — `artifacts` is the stable head keyed by subject plus
 derived audience; `artifact_builds` records each manual generation attempt;
@@ -2306,7 +2337,7 @@ The things most likely to bite you, distilled:
 | Generation backends                                               | `python/nexus/services/{generation_catalog,generation_policy,generation_service,generation_spec,generation_backend,provider_generation_backend,codex_generation_client,llm_execution,llm_ledger,tool_authority}.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md) |
 | Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_failure_projection.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
 | Imports workspace (query owner, history, pane)                    | `python/nexus/services/{imports,import_history}.py`, `python/nexus/api/routes/imports.py`, `apps/web/src/lib/imports/`, `apps/web/src/components/imports/`, `apps/web/src/app/(authenticated)/imports/`                                              |
-| Reader/highlights backend                                         | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote,pdf_quote_match}.py`                                                                |
+| Reader/highlights backend                                         | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote}.py`                                                                |
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
 | Oracle                                                            | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py`                                                                                  |
 | Search / retrieval / indexing / resource target/openable search   | `python/nexus/services/{search,content_indexing,semantic_chunks,retrieval_citation}.py`, `python/nexus/services/search/candidates.py`, `python/nexus/services/resource_items/{targets,openables}.py`   |

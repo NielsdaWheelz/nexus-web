@@ -43,16 +43,55 @@ orchestration, initial active-unit and preferred-locator selection, and the
 canonical locator projection helpers. Format composition and
 `useReaderProgress` retain visible navigation/scroll/Find state and cursor
 ordering, suppression, revalidation, and writes. `ReaderDocumentSource`
-supplies resolved format inputs and `ReaderProgressPort` supplies
-load/save/conflict transport. Neither interface grants generic network or
-storage access.
+supplies resolved format inputs and `ReaderProgressPort` supplies the
+pending-work seam — `bindSource`, `attach`, `load`, `capture`, `flush`,
+`resolve` — over a durable local writer. Neither interface grants generic
+network or storage access.
 
-Hosted media composition installs the current BFF/API source and canonical
-online cursor port. The Android APK shelf installs a lease-scoped local source
+Hosted media composition installs the current BFF/API source and the durable
+browser progress port owned by `HostedReaderProgressRuntime` (see per-media
+progress). The Android APK shelf installs a lease-scoped local source
 and native latest-value progress port. `TextDocumentReader` and `PdfReader`
 render resolved inputs and do not fetch media, signed URLs, highlights, or
 progress. Hosted decorations remain a layer over canonical content; offline
 packages contain undecorated canonical inputs.
+
+### bounded reader view capacity
+
+Reader view capacity is two independent pools, not one counter. `maxUnits`
+bounds resident publication units; `maxQueryLeases` bounds decoration/query
+leases (overlays, apparatus, find, contents). Before the split a PDF paint lease
+could starve unit acquisition, so a reader ran out of text because it had drawn
+decorations. `DocumentReaderSession.acquireUnit` refuses against the first pool
+and `reserveRead` against the second.
+
+`readerCapacity.ts` owns `READER_DECODE_RESERVATION_FACTOR` and
+`READER_RETAINED_PAYLOAD_FACTOR`; no other module may restate them. A read is
+reserved at its declared maximum bytes times the decode factor and settles to
+the retained factor.
+
+Capacity refusals are a tagged reason. `Leases` and `Payload` are retryable:
+the demand is admissible once something retires. `Content` is not: it is the
+client projection of the server's `E_READER_CONTENT_TOO_LARGE` (HTTP 422), the
+non-retryable counterpart of `E_READ_CAPACITY` (503 + `Retry-After`). A row or
+unit that cannot fit any budget is a terminal refusal, and
+`readerCapacityNotice` offers retry only for the retryable reasons.
+
+`DocumentReaderSession.memberAssetUrl(reference)` is the one seam that resolves
+an authored `nexus-reader-member:` reference to an authorized asset URL, always
+against the selected generation. `applyReaderUnitResources(session, prepared)`
+in `publicationDom.ts` is the shared DOM application; a prepared unit's
+resources are discarded with the unit's root, so there is nothing separate to
+release.
+
+### PDF paint outcomes
+
+The PDF paint layer has one typed page-scoped outcome: `Capacity`,
+`Unavailable` or `SavedUnpainted`. A committed highlight write is acknowledged
+before any attempt to project it, so an adoption failure is a paint outcome and
+never a write outcome. Retry is offered only when `readerCapacityNotice(reason)`
+is retryable. `ResolvedPdfDocument` carries no expiry: the PDF member URL is
+generation-bound and immutable.
 
 The parameterized Chromium component proof covers hosted PDF, EPUB, and article
 load/restore/save through this session. It is format-coordinator evidence, not
@@ -169,7 +208,7 @@ already visible.
 The terminal capture is the existing `web` or `epub` locator at the canonical
 text length. Only the last canonical fragment may set both `progression` and
 `total_progression` to exact `1`. The browser owns no Finished
-threshold and sends no completion command: the ordinary reader-state PUT
+threshold and sends no completion command: the ordinary cursor PUT
 atomically advances Consumption engagement and completion. After the write is
 acknowledged, the Lectern provider performs one FIFO-owned revalidation. Its
 canonical Finished projection may publish the existing next-item prompt in the
@@ -187,7 +226,12 @@ generic secondary-pane disclosure contract.
   markers from `GET /media/{id}/document-map`, shows whole-document positions
   for positioned reader facts, and activates the matching contextual target.
   It has no generic opener.
-- Contents uses `ReaderContentsNav`.
+- Contents uses the paged `ReaderContentsPage` (stylesheet
+  `ReaderContentsPage.module.css`) driven by `useReaderContents`. The retired
+  whole-document `ReaderContentsNav` is deleted. The index is a forward-linked
+  chain of member refs, so the surface keeps a trail of the refs it has visited;
+  "Previous contents page" walks that trail rather than re-deriving a backward
+  link the chain does not carry.
 - Evidence uses `EvidencePaneSurface`. The shipped surface merges highlights,
   source-authored apparatus, and resource-graph connections; its wide-reader
   companion is `MarginRail`.
@@ -318,7 +362,8 @@ bare keys.
 ### contents surface
 
 The document table of contents (epub + web article) is the Resource Inspector
-**Contents** tab (`ReaderContentsNav`) and remains a Document Map feature.
+**Contents** tab (paged `ReaderContentsPage` + `useReaderContents`) and remains
+a Document Map feature.
 
 - it is on-demand through the shared Companion action. When contents exist,
   Media's capability default order selects it first.
@@ -609,9 +654,9 @@ separate from source-authored apparatus.
   integer fields are all `400`; an empty `{}` patch is also `400`.
 - GET/PATCH accept and return exactly the seven preference fields, nothing
   else — no `updated_at` or other metadata.
-- FastAPI's `private_reader_no_store` middleware (matching
-  `READER_PRIVATE_NO_STORE_PATH_RE`) stamps `Cache-Control: private, no-store`
-  on `/me/reader-profile` and `/media/{id}/reader-state` for
+- FastAPI's `APIResponsePolicyMiddleware` (matching
+  `PRIVATE_NO_STORE_PATH_RE`) stamps `Cache-Control: private, no-store`
+  on `/me/reader-profile` and `/media/{id}/offline-reader-state` for
   200/400/401/403 and middleware-caught raw 500 responses; the BFF wraps both
   routes with the shared `privateNoStoreResponse.server.ts` helper, and the
   client GET also requests `cache: "no-store"`.
@@ -669,30 +714,55 @@ pure black/white to reduce halation under long sessions.
 ### per-media progress
 
 - Consumption's `_reader_cursor_store.py` is the sole DML owner of
-  `reader_media_state`. One row per user/media carries a nullable jsonb
-  `locator` and monotonic bigint `revision` (starts `1`). A null locator is an
-  internal revisioned `Empty` reset tombstone; PUT never accepts a null/clear
-  shape. The explicitly named non-cascading FKs are
-  `fk_reader_media_state_user` and `fk_reader_media_state_media`.
+  `reader_media_state`. One row per user/media carries nullable jsonb `locator`
+  and `source` and a monotonic bigint `revision` (starts `1`). `locator` and
+  `source` are null together: that is the internal revisioned `Empty` reset
+  tombstone. PUT never accepts a null/clear shape, and a stored locator without
+  recorded provenance reads back as `{kind:"Unresolved"}`. The explicitly named
+  non-cascading FKs are `fk_reader_media_state_user` and
+  `fk_reader_media_state_media`.
   `updated_at` is metadata; `revision` is authority.
-- `GET /api/media/{id}/reader-state` returns exactly
-  `{state:"Empty",revision>=0}` or
-  `{state:"Positioned",revision>=1,locator}` — never raw `null`. Empty
+- `GET|PUT /api/media/{id}/offline-reader-state` is the one progress endpoint
+  for hosted browsers and native clients — there is no second, unfenced cursor
+  route. It requires `X-Nexus-Expected-Account-Id`, and returns
+  `{accountId, readerGeneration, cursor}`: the account and current publication
+  attestation beside the cursor. `readerGeneration` is null only for timeline
+  media. Wrong account, changed generation, and ordinary revision conflict
+  mutate nothing. The path keeps its `offline-` spelling because installed
+  native copies address it; its handlers and service owner are named for the
+  shared progress boundary they are.
+- A cursor snapshot is exactly `{state:"Empty",revision>=0}` or
+  `{state:"Positioned",revision>=1,locator,source}` — never raw `null`. Empty
   revision `0` means no row; Empty revision `>=1` is a persisted reset
   tombstone. An unsupported (future) media kind returns
   `400 E_INVALID_REQUEST`; missing/inaccessible media returns masked
   `404 E_MEDIA_NOT_FOUND`.
-- `PUT /api/media/{id}/reader-state` takes the bare `CursorWrite` body
-  (`{locator, base_revision}` — no wrapping envelope, no optional sibling
-  block). Extra fields, old bare locators, and a top-level `null` clear are
-  rejected with `400`.
-  - Empty + matching `base_revision` writes a Positioned cursor at the next
+- Cursor `source` is the provenance of the stored locator. It is stored beside
+  the locator and stays separate from the current generation:
+  `{kind:"Publication",reader_generation}`, `{kind:"Timeline"}`, or
+  `{kind:"Unresolved"}` for a pre-cutover document cursor whose generation was
+  never recorded. Empty tombstones carry none. Provenance is never backfilled
+  from the current pointer and never inferred from a reused fragment id; a
+  `Timeline` source and a `transcript` locator imply each other.
+- Equality acknowledgment compares source plus locator. An equal locator under
+  `Unresolved` provenance is not an acknowledgment.
+- A client whose selected source is `Unresolved` or superseded treats the cursor
+  as `ContentChanged`: it preserves the locator, opens current content without
+  applying it, and saves only after explicit navigation or confirmation
+  establishes a selected-source locator.
+- PUT takes `{expectedReaderGeneration, baseRevision, locator}`. It locks and
+  compares `reader_publications.generation` against `expectedReaderGeneration`
+  (null for timelines) and returns `409 E_READER_CONTENT_CHANGED` on a
+  mismatch, then invokes the cursor CAS in the same serializable transaction.
+  Extra fields, old bare locators, and a top-level `null` clear are rejected
+  with `400`.
+  - Empty + matching `baseRevision` writes a Positioned cursor at the next
     revision; only an absent row starts from `0`.
-  - A matching `base_revision` replaces the cursor at `revision + 1`.
+  - A matching `baseRevision` replaces the cursor at `revision + 1`.
   - An equal desired locator is idempotent success at the current revision —
     the cursor is not revised, but the save still counts as engagement (next
     bullet).
-  - A stale `base_revision` returns `409 E_READER_STATE_CONFLICT` with
+  - A stale `baseRevision` returns `409 E_READER_STATE_CONFLICT` with
     `error.details.current` set to the exact current snapshot; nothing is
     mutated, and no engagement is recorded.
   - On cursor success — including the idempotent equal-locator case — the same
@@ -704,17 +774,47 @@ pure black/white to reduce halation under long sessions.
   - `ResetProgress` writes a higher-revision Empty tombstone and clears current
     engagement atomically. A stale pre-reset save therefore conflicts instead
     of resurrecting the old position.
-- All reader-state responses carry `Cache-Control: private, no-store`, via an
-  exact-path FastAPI middleware and the matching header on the Next reader-state
-  BFF route.
-- Offline reading does not alter this canonical cursor shape or create another
-  server cursor row. `GET|PUT /api/media/{id}/offline-reader-state` is a narrow
-  authenticated envelope around the same Consumption owner. It requires
-  `X-Nexus-Expected-Account-Id`, returns account and publication-generation
-  attestation, and on PUT checks account and locks/compares
-  `reader_publications.generation` before invoking the existing cursor CAS.
-  Wrong account, changed generation, and ordinary revision conflict mutate
-  nothing.
+- All progress responses carry `Cache-Control: private, no-store`, via an
+  exact-path FastAPI middleware and the matching header on the Next
+  offline-reader-state BFF route.
+- Offline reading creates no second server cursor row: native and hosted
+  writers share this endpoint, this row, and this CAS.
+- The browser keeps unsent movement in one account-scoped IndexedDB row per
+  reader visit, keyed by `(account_id, writer_id)`:
+  `{account_id, media_id, writer_id, desired: {sequence, source, locator},
+  baseline, attempt?}`. `ReaderIntentStore` owns it; `HostedReaderProgressRuntime`
+  owns delivery for an account lifetime, and `HostedReaderProgressPort` is one
+  writer's view of it.
+  - `capture` commits the desired locator before the hook may report durably
+    pending work; failed local storage stays unsaved and never claims a save.
+    A row that already exists keeps its baseline, so an acknowledged revision is
+    never resurrected by newer movement.
+  - `freeze` atomically retains an existing `attempt`
+    (`{sequence, source, locator, baseRevision}`) or creates one when absent,
+    and reports which it did. A retained attempt may already have committed
+    elsewhere, so an equal canonical source and locator acknowledges it without
+    a duplicate mutation; a first dispatch always writes, because an unchanged
+    position is how a read-only visit records engagement.
+  - After ambiguous delivery the writer fetches source and canonical cursor: a
+    changed generation preserves the intent as `ContentChanged`, a matching
+    source and locator acknowledges that attempt, an unchanged base replays it,
+    and anything else exposes the existing conflict choice. This holds whether
+    the row is still present, already delivered by another browser context, or
+    evicted with the intent still held in memory.
+  - `acknowledge` installs the baseline and clears the matching attempt, and
+    deletes the row only when its desired sequence also matches. Acknowledgment
+    never rebases onto a newer cursor or a reset tombstone.
+  - One runtime drives each writer locally; other browser contexts may deliver
+    the same frozen attempt. There is no leader election: the revision CAS and
+    the conditional IndexedDB acknowledgment tolerate duplicates, and a 409
+    whose current snapshot equals this attempt is absorbed as its
+    acknowledgment.
+  - Rows outlive their view. `recover()` scans rows this runtime has no attached
+    writer for and delivers them independently, so a blocked writer never blocks
+    another; a live writer resumes its own pending attempt on movement,
+    revalidation, teardown, or `Retry sync`. Unresolvable rows surface one
+    account-level notice with an explicit choice and stay on the device until
+    the user chooses.
 - Native stores one baseline plus one latest pending locator per installed
   publication. An offline save is acknowledged only after that pending locator
   is durable. Foreground sync uses the generation fence and canonical revision;
@@ -871,19 +971,22 @@ of its location-target writes uses.
 
 ### epub reader surface
 
-- epub reader bootstraps from `GET /api/media/{id}/navigation`
-- navigation carries ordered unique `fragments` and exact section targets.
-  Fragments own document length; sections carry their required `fragment_id`,
+- epub reader bootstraps from the publication it selected:
+  `GET /api/media/{id}/reader-publications/{generation}/index`, followed as a
+  member chain through `next_ref`
+- the index carries ordered unique units and exact section targets. Units own
+  document length; sections carry their required `fragment_id`, `unit_key`,
   `start_offset`, and `end_offset`. Repeated headings in one XHTML fragment do
   not duplicate its length.
-- active epub content loads from
-  `GET /api/media/{id}/sections/{section_id}`
-- `section_id` is treated as a path-encoded identifier and may contain `/`
+- active epub content loads one bounded unit at a time from
+  `GET /api/media/{id}/reader-publications/{generation}/units/{key}`
+- `section_id` is an opaque identifier of the publication that minted it
 - one-shot reader target hashes use `#loc-{section_id}` and are consumed by
   `useReaderTarget`; pane-local EPUB section navigation replaces the `?loc=`
   search parameter as coarse in-visit address state and adds no Back/Forward
   entry
-- removed `chapters` and `toc` reader routes stay out of the client surface
+- the removed `chapters`, `toc`, `navigation`, `sections/{id}`, `epub-find`
+  and `reader-state` reader routes stay out of the client surface
 - the pane label and resource-header title are driven by media metadata, not by
   navigation section title or active section content. navigation and section
   loading are content-level states and do not own workspace label/header state.
@@ -903,11 +1006,15 @@ kind, and server-owned `requestedTitle` used by the Android enqueue command.
 The title is bounded presentation metadata, not authorization or package
 identity; the verified package manifest replaces it after installation.
 
-`offline_reading_packages.py` creates deterministic package-schema and
-reader-contract V1 ZIPs. `testdata/offline-reading-contract-v1.json` is the
-shared Python/TypeScript/Kotlin oracle for strict keys, paths, bounds, hashes,
+`offline_reading_packages.py` creates deterministic archive-schema 2 ZIPs; the
+schema-1 whole-document reader is a hard cut, and no producer parameter selects
+it. One constant, `OFFLINE_ARCHIVE_SCHEMA_VERSION`, owns that number.
+`testdata/offline-reading-contract-v1.json` is retained only as the reviewed
+refusal corpus: native ingress must refuse each of its schema-1 packages as
+`UnsupportedPackage`, never as `Integrity`. The shipping schema has no reviewed
+reject corpus yet. The shared oracle for strict keys, paths, bounds, hashes,
 revision-key computation, local EPUB assets, PDF binding, and text-only article
-content. Native verifies the response digest, ZIP grammar, manifest and entry
+content is now the schema-2 archive corpus beside it. Native verifies the response digest, ZIP grammar, manifest and entry
 integrity, supported versions, media/account/generation binding, and baseline
 before publishing one package row and sealed directory.
 
@@ -915,8 +1022,18 @@ Archive and expanded totals remain bounded at 512 MiB. The JSON reader member
 has an exact 64-MiB limit matching the canonical EPUB/API-container bound; SVG
 members have an exact 8-MiB limit because their safety check parses XML; other
 members retain the 512-MiB ceiling. Production objects are staged and hashed in
-chunks, then ZIP-streamed with cooperative deadline checks per chunk rather
-than accumulated as one in-memory package.
+chunks, then ZIP-streamed rather than accumulated as one in-memory package.
+The archive builder carries no deadline or cancellation callback of its own:
+the background process executor's wall timeout and the task's claim-lost check
+are the only cancellation owners. A per-attempt preparation budget is not yet
+committed (see the ticket register).
+
+Installed-copy availability is a closed vocabulary: `UpgradeRequired` (a
+schema-1 copy that must be converted), `UpgradeBlockedByStorage` (conversion was
+refused by the storage admission gate, so the remedy is to free space and
+retry), and `UpgradeFailed` (the converter rejected the copy and will not
+re-run without an explicit retry). The storage-refusal set is process-local by
+design and is re-observed on the next reconciliation.
 
 The Android shelf serves the committed Vite bundle and package entries only on
 the reserved appassets host. Lease capabilities are memory-only. Remote
@@ -1008,3 +1125,145 @@ in-place V1 update compatibility. Host or emulator success is not that evidence.
 ./scripts/test changed apps/web/e2e/journeys/reader-progress-resume.journey.spec.ts
 ./scripts/test changed apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts
 ```
+
+### retained evidence projections
+
+selected-generation evidence reads classify and coalesce facts before counting,
+filtering or paging. facts preserve existing ids and source order; associations
+are explicit pages ordered by relationship, then canonical resource ref and edge
+id. this changes the former alphabetical disclosure order, avoiding full note
+body reads or another mutable sort projection. summary excerpts are at most 300
+codepoints and include the full display length. authored note pm/text remains
+under `GET /notes/blocks/{id}`; highlight detail and selected apparatus text keep
+their existing owners.
+
+an explicit evidence location read returns selected-source text ranges,
+source-attested pdf quads, beginning-page pdf passage navigation, document scope,
+or a typed unavailable result. normalized pdf quote coordinates never become
+fabricated raw offsets or borrowed geometry. missing page height makes an overview
+position unavailable even if page navigation remains possible. retained page
+heights are independent of absent or empty text spans.
+
+the overview counts all seven existing marker kinds: contents, embeds,
+highlights, source references, generated citations, links and synapses. it returns
+at most 512 requested buckets and explicit unavailable counts. bucket members are
+paged in exact position/kind/id order; position 1 belongs to the final bucket.
+contents and embed counts do not depend on which source pages are mounted.
+marker targets retain their existing section, fact or occurrence identity.
+one focused preview read supplies the actual label and current card disposition;
+accessible kind and position remain available while it resolves. the price is
+an extra preview read and latency, instead of an eager complete label/card array.
+
+all six evidence reads use the selected descriptor's existing authorization,
+read admission and final encoded response bound. they use the normal data
+envelope with exact content length and `private, no-store, no-transform`; this
+spends bandwidth to preserve allocation admission. scalar api rows do not imply
+bounded database cost: retained text detoast, literal matching, exact counts and
+live graph classification still require maximum-source/database qualification.
+
+### retained source-range activation
+
+raw web/epub retrieval-locator activation resolves through the selected retained
+publication. its complete `text_quote_selector.exact` first attests the supplied
+canonical range; otherwise the existing normalized exact/prefix/suffix matcher
+must find one unique selected-source result. missing evidence or ambiguity stays
+unresolved. a display snippet never substitutes for the full quote. the response
+carries the original full source range and an actual retained resume locator;
+the client does not reconstruct an epub section or borrow current-source text.
+section extents are half-open; a null end describes a point. if no section
+contains the resolved point, the first same-fragment section retains the existing
+default-target policy.
+
+authored epub anchor offsets are projected from original source events before
+cropping, through the same sparse canonical marker owner used by table ranges.
+the first visible original id/name occurrence owns its exact unit key; hidden
+duplicates cannot borrow a later visible occurrence. an opening-only element can
+own canonical separator bytes trimmed from its display text, so those bytes stay
+in that unit's canonical suffix. cropped text is not an independent oracle for
+the original marker position. package verification binds the published point to
+its visible original marker, unit, fragment and canonical bounds; member digests
+bind the exact published bytes. the publisher and its source-oracle proofs own
+the original offset semantics, as they do for sparse table source ranges.
+
+hosted whole-word boundaries are computed over each original canonical fragment,
+then sliced to each unit's inclusive range. a crop inside a word does not create
+a boundary: a nonempty unit may have an empty array, or boundaries that exclude
+one or both unit edges. package verification checks ordered unique in-range
+coordinates. hosted preparation requires computed arrays; native local conversion
+may use null to declare its unavailable find capability. null and an empty
+computed boundary set have different meanings. dictionary segmentation and its
+maximum unbroken-span allocation remain worker qualification costs.
+
+reader Node scripts are resources beside their Python preparation owner, under
+`nexus/services/reader_scripts`. checkout and installed workers use that same
+package-relative location; the product data environment does not select a
+filesystem layout. the image's pinned Node executable is resolved through its
+runtime path. the API package also carries these small inert resource files;
+Node execution remains preparation work owned by the worker.
+
+### sparse table metadata
+
+text descriptors address a separate optional table metadata chain through
+`table_metadata_ref`, using the existing bounded index member codec. its pages
+contain only table metadata, never navigation or unit rows. each table is
+identified by its original fragment id and table ordinal. its table record and
+column-group intervals precede cells in original dom order, including authored
+footers that the table-forming algorithm positions after body rows.
+
+cell records retain sparse rectangles, resolved row spans, row groups, existing
+header classification and exact source ranges. authored `headers` presence is a
+boolean; ordered deduplicated explicit targets follow that cell as separate
+records, including across page boundaries. an authored empty list remains empty.
+automatic header associations are queried for the selected cell, never expanded
+for every source cell. captions and cell ranges keep the exact first unit key
+even when their text extent is zero or ends in another unit. empty grids may
+still have an addressable caption.
+
+geometry and display use the same private effective tree: contiguous direct
+html table rows receive explicit tbody wrappers before either projection. this
+preserves source text/tails and leaves retained originals untouched. new web
+captures preserve authored th.scope; a scope already discarded from old stored
+source cannot be reconstructed. web capture also retains caption elements and
+their exact source ranges; its existing general authored-id policy is unchanged.
+already unwrapped caption text cannot be recast as attested caption structure.
+
+ordinary complete tables must fit the final unit encoding and aggregate layout
+work allowance. work is max(1, row_count) times max(1, column_count), summed across
+all ordinary tables in that unit, including nested tables. the current 8192
+trial is separate from dom-node admission and remains unqualified for release.
+a non-fitting table becomes logical excerpts with original tags and coordinates;
+its own marked structures use block layout, and operative spans/header id lists
+are replaced by sparse source metadata. unmarked nested ordinary tables retain
+native layout. excerpts lose whole-table aligned columns. exact header and
+caption context, source row/column identities, and explicit continuation retain
+their meaning. continuation counts structural source pieces, including an earlier
+empty piece; canonical offset equality alone cannot decide it.
+
+a fragment is staged as bounded units before source keys are finalized, so a
+caption after its cells may address a later unit. metadata follows the finalized
+unit stream through the existing artifact owner. source geometry, marker maps,
+an additional staging pass, and sparse index bytes all count toward worker and
+package qualification; bounded delivered units do not make these costs free.
+
+coordinates use exact json safe integers and ordinary sqlite int64 arithmetic.
+this does not narrow accepted sources: the 100,000-element epub entry bound times
+the 65,534 positive row-span limit is below 2^33; even one cell per byte of a 64mib
+legacy reader times 65,535 is below 2^43. column growth at the 1000-column-span limit
+is smaller. the limits do not justify dense grid allocation.
+
+native derives `.table-context.sqlite` inside the existing candidate package,
+binds its exact bytes to the source revision, counts its disk once, and retires
+it with the package. it is never a transferred asset or a second source authority.
+extra metadata, local disk and index construction are the price. source pages,
+actual splitter behavior, maximum package expansion and device query capacity
+must all qualify before activation.
+
+focused source-marker seek preserves the old last displayed source-reference
+owner when several references share a target. a focused overview preview reads
+only that marker's bounded display projection; embed labels and warnings come
+from the existing current card owner. the extra request adds preview latency.
+
+disclosures now sort by relationship and canonical resource ref. consequently,
+the preferred gutter note is the first outgoing nonempty highlight note in ref
+order, instead of full note-label order. every note remains reachable through
+the disclosure and its explicit authored detail read.

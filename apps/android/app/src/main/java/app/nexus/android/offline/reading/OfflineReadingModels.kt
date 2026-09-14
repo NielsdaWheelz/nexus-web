@@ -6,9 +6,9 @@ import android.os.Build
 import java.time.Instant
 import java.util.UUID
 
-internal const val OFFLINE_READING_PACKAGE_SCHEMA_VERSION = 1
+internal const val OFFLINE_READING_PACKAGE_SCHEMA_VERSION = 2
 internal const val OFFLINE_READING_READER_CONTRACT_VERSION = 1
-internal const val OFFLINE_READING_READER_BUNDLE_VERSION = 1
+internal const val OFFLINE_READING_READER_BUNDLE_VERSION = 2
 internal const val OFFLINE_READING_FILESYSTEM_OVERHEAD_BYTES = 16L * 1024L * 1024L
 internal const val OFFLINE_READING_MINIMUM_SDK = 34
 
@@ -28,8 +28,17 @@ internal enum class OfflineReadingMediaKind {
 
 internal enum class ReadingQueueReason {
     WaitingForUnmetered,
+
+    /** Another transfer on this device holds the single runner. */
     Capacity,
     Scheduler,
+    Preparation,
+
+    /**
+     * The owned origin refused this attempt for its own read capacity. Nothing
+     * about the transfer is wrong and nothing was consumed, so it stays queued.
+     */
+    ServerCapacity,
 }
 
 internal enum class ReadingRestartReason {
@@ -207,7 +216,12 @@ internal data class OfflineReadingTransfer(
     val automaticRestartCount: Int,
     val stagingName: String,
     val requestedAt: Instant,
+    // Only queued requests made before schema 3 can lack a selected generation.
+    val readerGeneration: Long?,
+    val preparationStartedAt: Instant?,
 )
+
+internal enum class OfflineReadingConversionRefusal { GraphemeExceedsUnitCapacity }
 
 internal data class OfflineReadingPackage(
     val id: UUID,
@@ -217,9 +231,11 @@ internal data class OfflineReadingPackage(
     val title: String,
     val readerGeneration: Long,
     val readerRevisionKey: String,
-    val packageSha256: String,
+    val packageSchemaVersion: Int,
     val sizeBytes: Long,
     val installedAt: Instant,
+    val tableIndexSha256: String?,
+    val conversionRefusal: OfflineReadingConversionRefusal? = null,
 )
 
 internal data class OfflineReaderBaseline(
@@ -254,21 +270,25 @@ internal sealed interface NativeReaderProgressView {
     data class Pending(
         val baselineJson: String,
         val deviceLocatorJson: String,
+        val sourceJson: String,
     ) : NativeReaderProgressView
 
     data class Conflict(
         val canonicalJson: String,
         val deviceLocatorJson: String,
+        val sourceJson: String,
     ) : NativeReaderProgressView
 
     data class ContentChanged(
         val baselineJson: String,
         val deviceLocatorJson: String,
+        val sourceJson: String,
     ) : NativeReaderProgressView
 
     data class SourceUnavailable(
         val baselineJson: String,
         val deviceLocatorJson: String,
+        val sourceJson: String,
     ) : NativeReaderProgressView
 }
 
@@ -288,6 +308,19 @@ internal sealed interface OfflineReadingAvailability {
         val installedAt: Instant,
         val progress: NativeReaderProgressView,
     ) : OfflineReadingAvailability
+
+    /** The installed copy needs a local conversion that has not run or completed yet. */
+    data object UpgradeRequired : OfflineReadingAvailability
+
+    /**
+     * The installed copy needs a local conversion the device has no room to stage.
+     * The attested original is intact; freeing space and reconciling again is the
+     * whole remedy.
+     */
+    data object UpgradeBlockedByStorage : OfflineReadingAvailability
+
+    /** An established limitation of this converter, not a verdict that source bytes are invalid. */
+    data object UpgradeFailed : OfflineReadingAvailability
 
     data object Removing : OfflineReadingAvailability
 }
@@ -316,7 +349,10 @@ internal sealed interface OfflineReadingItemSnapshot {
         init {
             require(
                 availability is OfflineReadingAvailability.Ready ||
-                    availability is OfflineReadingAvailability.Removing
+                    availability is OfflineReadingAvailability.Removing ||
+                    availability is OfflineReadingAvailability.UpgradeRequired ||
+                    availability is OfflineReadingAvailability.UpgradeBlockedByStorage ||
+                    availability is OfflineReadingAvailability.UpgradeFailed
             )
         }
     }
@@ -328,6 +364,8 @@ internal data class ReadingStoreSnapshot(
     val items: List<OfflineReadingItemSnapshot>,
 )
 
+internal data class OfflineReadingLeaseMember(val file: java.io.File, val mediaType: String)
+
 internal data class OfflineReadingLease(
     val id: UUID,
     val mediaId: UUID,
@@ -336,12 +374,14 @@ internal data class OfflineReadingLease(
     val installedAt: Instant,
     val progress: NativeReaderProgressView,
     private val packageDirectory: java.io.File,
+    private val memberMediaTypes: Map<String, String>,
 ) {
-    fun resolveEntry(path: String): java.io.File {
+    fun resolveEntry(path: String): OfflineReadingLeaseMember {
         requireSafePackagePath(path)
+        val mediaType = requireNotNull(memberMediaTypes[path]) { "offline reader member is not declared" }
         val entry = java.io.File(packageDirectory, path).canonicalFile
         require(entry.toPath().startsWith(packageDirectory.canonicalFile.toPath()))
         require(entry.isFile)
-        return entry
+        return OfflineReadingLeaseMember(entry, mediaType)
     }
 }

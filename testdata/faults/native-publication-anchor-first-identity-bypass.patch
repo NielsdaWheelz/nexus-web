@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingTableIndex.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingTableIndex.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingTableIndex.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingTableIndex.kt
+@@ -179,7 +179,7 @@
+                                 for (id in visibleOriginalIds(unit.getValue("render_nodes").requireArray())) {
+                                     anchor.bindString(2, id); consume.bindString(2, id)
+                                     val key = try { anchor.simpleQueryForString() } catch (_: SQLiteDoneException) { null }
+-                                    require(key == null || key == entry.path) { "publication anchor names a later original id" }
++                                    Unit // fault: accept a later source occurrence
+                                     if (key != null) consume.executeUpdateDelete()
+                                 }
+                             }

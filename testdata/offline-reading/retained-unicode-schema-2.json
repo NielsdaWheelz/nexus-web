@@ -1,0 +1,60 @@
+{
+  "package_sha256": "9b43c0ffcb1288acb3b9f2125edb5e4fad32da40dcfcede21b33cc3eb03671fe",
+  "expanded_bytes": 3747,
+  "canonical_text": "café 🧠\ncat",
+  "fragment_id": "00000000-0000-4000-8000-000000000008",
+  "manifest": {
+    "packageSchemaVersion": 2,
+    "readerContractVersion": 1,
+    "minimumReaderBundleVersion": 2,
+    "mediaId": "00000000-0000-4000-8000-000000000007",
+    "mediaKind": "WebArticle",
+    "title": "café 🧠 — retained seven",
+    "readerGeneration": 7,
+    "readerRevisionKey": "1f2991b7dbd95e7b0adb88eeb6c0c796b0252883ec188a48943a0b74d5ec183a",
+    "entries": [
+      {
+        "path": "assets/web/0123456789abcdef",
+        "mediaType": "image/png",
+        "sizeBytes": 70,
+        "sha256": "4ff6ab670a58c14270e034e2090d9a432caa263a14e0a25785386b0c12f880b5"
+      },
+      {
+        "path": "descriptor.json",
+        "mediaType": "application/json",
+        "sizeBytes": 652,
+        "sha256": "d7405bce07c2ffcc16d35d85b979118c560be937f00aab510a04d86071be726d"
+      },
+      {
+        "path": "index/0.json",
+        "mediaType": "application/json",
+        "sizeBytes": 488,
+        "sha256": "caaa10523781217a6aa014069198dfe1acde972ab4c0aa2a9fd42b53d139d1fc"
+      },
+      {
+        "path": "index/1.json",
+        "mediaType": "application/json",
+        "sizeBytes": 691,
+        "sha256": "49e309d1ebba23b538bd4bda06a8b5f951a30868beee96c323421394fb2d5d7b"
+      },
+      {
+        "path": "index/contents-0.json",
+        "mediaType": "application/json",
+        "sizeBytes": 421,
+        "sha256": "d4ae6ff6c3092aaf7f131b8e85cf3d83d4bc67595739786270dd4dc129b5a4f7"
+      },
+      {
+        "path": "units/00000000-0000-4000-8000-000000000008/0-7-0.json",
+        "mediaType": "application/json",
+        "sizeBytes": 932,
+        "sha256": "5891e0813e44e743a60fced1585d56c84658d6625400da600e259089e42d265b"
+      },
+      {
+        "path": "units/00000000-0000-4000-8000-000000000008/7-10-0.json",
+        "mediaType": "application/json",
+        "sizeBytes": 493,
+        "sha256": "b3f0f2d6baccdc45377554927d6d75a9b9c9b97d1c300359379bfa7e81000fd1"
+      }
+    ]
+  }
+}

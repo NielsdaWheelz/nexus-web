@@ -46,8 +46,13 @@ from nexus.db.models import (
     Fragment,
 )
 from nexus.errors import ApiErrorCode, ResourceFailureDimension
+from nexus.ids import new_uuid7
 from nexus.services.canonicalize import generate_canonical_text_with_element_offsets
-from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
+from nexus.services.fragment_blocks import (
+    FragmentBlockSpec,
+    insert_fragment_blocks,
+    parse_fragment_blocks,
+)
 from nexus.services.html5_shape import normalize_html5_shape
 from nexus.services.html_tree import (
     inner_html,
@@ -58,9 +63,7 @@ from nexus.services.html_tree import (
 )
 from nexus.services.parser_temp import (
     StorageObjectIntegrityError,
-    parser_attempt_directory,
     stream_storage_object_to_file,
-    utf8_byte_length,
 )
 from nexus.services.reader_apparatus import (
     HtmlApparatusTargetLimitExceeded,
@@ -70,6 +73,7 @@ from nexus.services.reader_apparatus import (
     replace_media_apparatus,
     source_fingerprint,
 )
+from nexus.services.svg_paint import project_svg_paint
 from nexus.storage.client import StorageError
 from nexus.storage.paths import build_epub_attempt_asset_storage_path
 from nexus.tasks.storage_object_cleanup import reserve_storage_object_write
@@ -207,6 +211,7 @@ _EPUB_ALLOWED_HTML_TAGS = frozenset(
         "a",
         "img",
         "table",
+        "caption",
         "thead",
         "tbody",
         "tfoot",
@@ -269,6 +274,8 @@ _EPUB_GLOBAL_ATTRS = frozenset(
 _EPUB_ALLOWED_ATTRS = {
     "a": {"href", "title", "name"},
     "img": {"src", "srcset", "alt", "title", "width", "height"},
+    "ol": {"start", "reversed"},
+    "li": {"value"},
     "th": {"colspan", "rowspan", "scope"},
     "td": {"colspan", "rowspan"},
 }
@@ -485,26 +492,55 @@ class _ArchiveSafetyConfig:
 
 
 @dataclass(frozen=True)
+class EpubStagedFragment:
+    id: UUID
+    idx: int
+    char_count: int
+    html_path: Path
+    canonical_path: Path
+    fallback_label: str
+    chapter: _ChapterSpec
+    block_specs: list[FragmentBlockSpec]
+    apparatus_items: list[dict[str, object]]
+    apparatus_edges: list[dict[str, object]]
+
+
+@dataclass(frozen=True)
 class EpubExtractionPlan:
     result: EpubExtractionResult
     now: datetime
     storage_path: str
     source_size_bytes: int
-    fragment_specs: tuple[
-        tuple[
-            Fragment,
-            _ChapterSpec,
-            list[dict[str, object]],
-            list[dict[str, object]],
-        ],
-        ...,
-    ]
-    all_block_specs: tuple[list, ...]
+    source_sha256_hex: str
+    fragments: tuple[EpubStagedFragment, ...]
     toc_nodes: tuple[_TocNodeSpec, ...]
     nav_locations: tuple[_NavLocationSpec, ...]
     asset_entries: tuple[_AssetEntry, ...]
     asset_storage_paths: dict[str, str]
     apparatus_source_fingerprint: str
+
+
+def read_epub_fragment(fragment: EpubStagedFragment) -> tuple[str, str]:
+    """Read one exact staged HTML/canonical pair during its attempt lifetime."""
+    with fragment.html_path.open("r", encoding="utf-8", newline="") as source:
+        html_sanitized = source.read()
+    with fragment.canonical_path.open("r", encoding="utf-8", newline="") as source:
+        canonical_text = source.read()
+    return html_sanitized, canonical_text
+
+
+def _stage_epub_text(path: Path, value: str, *, remaining_bytes: int) -> int:
+    written = 0
+    with path.open("wb") as output:
+        for start in range(0, len(value), 65536):
+            encoded = value[start : start + 65536].encode("utf-8")
+            written += len(encoded)
+            if written > remaining_bytes:
+                raise _EpubResourceLimitExceeded(
+                    "EPUB rendered text exceeds the 64 MiB limit", dimension="Output"
+                )
+            output.write(encoded)
+    return written
 
 
 class _EpubExtractionFailure(Exception):
@@ -548,6 +584,7 @@ def build_epub_extraction_plan(
     session_factory: sessionmaker[Session],
     media_id: UUID,
     attempt_id: UUID,
+    attempt_directory: Path,
     storage_path: str,
     source_size_bytes: int,
     expected_source_sha256: str,
@@ -555,35 +592,35 @@ def build_epub_extraction_plan(
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
     now: datetime | None = None,
 ) -> EpubExtractionPlan | EpubExtractionError:
-    """Materialize and parse one immutable EPUB without retaining source bytes."""
-    with parser_attempt_directory(attempt_id) as attempt_directory:
-        epub_path = attempt_directory / "source.epub"
-        try:
-            stream_storage_object_to_file(
-                storage_client,
-                storage_path=storage_path,
-                destination=epub_path,
-                expected_size_bytes=source_size_bytes,
-                expected_source_sha256=expected_source_sha256,
-            )
-        except StorageObjectIntegrityError:
-            return EpubExtractionError(
-                error_code=ApiErrorCode.E_SOURCE_INTEGRITY.value,
-                error_message="Stored EPUB bytes do not match the immutable source identity",
-                terminal=True,
-            )
-        return _build_epub_extraction_plan_from_file(
-            session_factory=session_factory,
-            media_id=media_id,
-            attempt_id=attempt_id,
+    """Stage one EPUB inside the caller's preparation/publication attempt scope."""
+    epub_path = attempt_directory / "source.epub"
+    try:
+        stream_storage_object_to_file(
+            storage_client,
             storage_path=storage_path,
-            source_size_bytes=source_size_bytes,
-            storage_client=storage_client,
-            record_progress=record_progress,
-            epub_path=epub_path,
-            attempt_directory=attempt_directory,
-            now=now,
+            destination=epub_path,
+            expected_size_bytes=source_size_bytes,
+            expected_source_sha256=expected_source_sha256,
         )
+    except StorageObjectIntegrityError:
+        return EpubExtractionError(
+            error_code=ApiErrorCode.E_SOURCE_INTEGRITY.value,
+            error_message="Stored EPUB bytes do not match the immutable source identity",
+            terminal=True,
+        )
+    return _build_epub_extraction_plan_from_file(
+        session_factory=session_factory,
+        media_id=media_id,
+        attempt_id=attempt_id,
+        storage_path=storage_path,
+        source_size_bytes=source_size_bytes,
+        source_sha256_hex=expected_source_sha256,
+        storage_client=storage_client,
+        record_progress=record_progress,
+        epub_path=epub_path,
+        attempt_directory=attempt_directory,
+        now=now,
+    )
 
 
 def _build_epub_extraction_plan_from_file(
@@ -593,6 +630,7 @@ def _build_epub_extraction_plan_from_file(
     attempt_id: UUID,
     storage_path: str,
     source_size_bytes: int,
+    source_sha256_hex: str,
     storage_client: StorageClientBase,
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
     epub_path: Path,
@@ -687,12 +725,11 @@ def _build_epub_extraction_plan_from_file(
         sanitized_chapters: list[
             tuple[
                 _ChapterSpec,
-                str,
+                Path,
                 list[dict[str, object]],
                 list[dict[str, object]],
             ]
         ] = []
-        all_block_specs: list[list] = []
         retained_hrefs: list[str] = []
         chapter_source_fingerprints: list[dict[str, object]] = []
         rendered_text_bytes = 0
@@ -724,13 +761,13 @@ def _build_epub_extraction_plan_from_file(
             if not html_sanitized.strip():
                 record_progress(chapter_index, chapter_total, "Chapter")
                 continue
-            rendered_text_bytes += utf8_byte_length(html_sanitized)
-            if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
-                return _epub_resource_limit_error(
-                    "EPUB rendered text exceeds the 64 MiB limit",
-                    dimension="Output",
-                )
-            sanitized_chapters.append((ch, html_sanitized, apparatus_items, apparatus_edges))
+            rendered_text_bytes += _stage_epub_text(
+                staged.html_path,
+                html_sanitized,
+                remaining_bytes=EPUB_RENDERED_TEXT_MAX_BYTES - rendered_text_bytes,
+            )
+            sanitized_chapters.append((ch, staged.html_path, apparatus_items, apparatus_edges))
+            del html_sanitized
             retained_hrefs.append(ch.href)
             chapter_source_fingerprints.append(
                 {
@@ -770,19 +807,14 @@ def _build_epub_extraction_plan_from_file(
                 requested_targets.setdefault(node.fragment_idx, {})[href_fragment] = str(node.href)
 
         # ---- canonicalize once with exact requested anchor starts ----------
-        fragment_specs: list[
-            tuple[
-                Fragment,
-                _ChapterSpec,
-                list[dict[str, object]],
-                list[dict[str, object]],
-            ]
-        ] = []
+        fragments: list[EpubStagedFragment] = []
         anchor_offsets_by_fragment: dict[int, dict[str, int]] = {}
         canonical_text_digest = hashlib.sha256()
-        for fragment_idx, (ch, html_sanitized, apparatus_items, apparatus_edges) in enumerate(
+        for fragment_idx, (ch, html_path, apparatus_items, apparatus_edges) in enumerate(
             sanitized_chapters
         ):
+            with html_path.open("r", encoding="utf-8", newline="") as source:
+                html_sanitized = source.read()
             targets = requested_targets.get(fragment_idx, {})
             try:
                 canonical_text, offsets = generate_canonical_text_with_element_offsets(
@@ -803,27 +835,33 @@ def _build_epub_extraction_plan_from_file(
                         f"EPUB navigation target {targets[anchor_id]} names a missing anchor"
                     ),
                 )
-            rendered_text_bytes += utf8_byte_length(canonical_text)
-            if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
-                return _epub_resource_limit_error(
-                    "EPUB rendered text exceeds the 64 MiB limit",
-                    dimension="Output",
-                )
+            canonical_path = attempt_directory / f"canonical-{fragment_idx}.txt"
+            rendered_text_bytes += _stage_epub_text(
+                canonical_path,
+                canonical_text,
+                remaining_bytes=EPUB_RENDERED_TEXT_MAX_BYTES - rendered_text_bytes,
+            )
             if fragment_idx:
                 canonical_text_digest.update(b"\n")
-            canonical_text_digest.update(canonical_text.encode("utf-8"))
+            for start in range(0, len(canonical_text), 65536):
+                canonical_text_digest.update(canonical_text[start : start + 65536].encode("utf-8"))
             anchor_offsets_by_fragment[fragment_idx] = offsets
-            fragment = Fragment(
-                media_id=media_id,
-                idx=fragment_idx,
-                html_sanitized=html_sanitized,
-                canonical_text=canonical_text,
-                created_at=now,
+            fragments.append(
+                EpubStagedFragment(
+                    id=new_uuid7(),
+                    idx=fragment_idx,
+                    char_count=len(canonical_text),
+                    html_path=html_path,
+                    canonical_path=canonical_path,
+                    fallback_label=_fallback_fragment_label(canonical_text, fragment_idx),
+                    chapter=ch,
+                    block_specs=parse_fragment_blocks(canonical_text),
+                    apparatus_items=apparatus_items,
+                    apparatus_edges=apparatus_edges,
+                )
             )
-            fragment_specs.append((fragment, ch, apparatus_items, apparatus_edges))
-            all_block_specs.append(parse_fragment_blocks(canonical_text))
+            del html_sanitized, canonical_text
 
-        fragments = [frag for frag, _ch, _items, _edges in fragment_specs]
         try:
             nav_locations = _materialize_nav_locations(
                 toc_nodes,
@@ -905,8 +943,8 @@ def _build_epub_extraction_plan_from_file(
             now=now,
             storage_path=storage_path,
             source_size_bytes=source_size_bytes,
-            fragment_specs=tuple(fragment_specs),
-            all_block_specs=tuple(all_block_specs),
+            source_sha256_hex=source_sha256_hex,
+            fragments=tuple(fragments),
             toc_nodes=tuple(toc_nodes),
             nav_locations=tuple(nav_locations),
             asset_entries=tuple(asset_entries),
@@ -949,6 +987,10 @@ def publish_epub_extraction_plan(
                 SELECT storage_path
                 FROM epub_resources
                 WHERE media_id = :media_id
+                  AND NOT EXISTS (
+                      SELECT 1 FROM reader_publication_artifacts retained
+                      WHERE retained.storage_path = epub_resources.storage_path
+                  )
                 ORDER BY storage_path
                 """
             ),
@@ -987,31 +1029,22 @@ def publish_epub_extraction_plan(
         {"media_id": media_id},
     )
 
-    fragments: list[Fragment] = []
-    for template, _chapter, _items, _edges in plan.fragment_specs:
+    apparatus_items: list[dict[str, object]] = []
+    apparatus_edges: list[dict[str, object]] = []
+    for staged in plan.fragments:
+        html_sanitized, canonical_text = read_epub_fragment(staged)
         fragment = Fragment(
+            id=staged.id,
             media_id=media_id,
-            idx=template.idx,
-            html_sanitized=template.html_sanitized,
-            canonical_text=template.canonical_text,
+            idx=staged.idx,
+            html_sanitized=html_sanitized,
+            canonical_text=canonical_text,
             created_at=plan.now,
         )
-        fragments.append(fragment)
         db.add(fragment)
-    db.flush()
-    for fragment in fragments:
-        if 0 <= fragment.idx < len(plan.all_block_specs):
-            insert_fragment_blocks(
-                db,
-                fragment.id,
-                plan.all_block_specs[fragment.idx],
-            )
-
-    for fragment, (_template, chapter, _items, _edges) in zip(
-        fragments,
-        plan.fragment_specs,
-        strict=True,
-    ):
+        db.flush()
+        insert_fragment_blocks(db, fragment.id, staged.block_specs)
+        chapter = staged.chapter
         db.add(
             EpubFragmentSource(
                 media_id=media_id,
@@ -1025,6 +1058,19 @@ def publish_epub_extraction_plan(
                 created_at=plan.now,
             )
         )
+        apparatus_items.extend(
+            attach_fragment_locators(
+                media_id=media_id,
+                fragment_id=fragment.id,
+                media_kind="epub",
+                canonical_text=canonical_text,
+                items=staged.apparatus_items,
+                html_sanitized=html_sanitized,
+            )
+        )
+        apparatus_edges.extend(staged.apparatus_edges)
+        db.flush()
+        del fragment, html_sanitized, canonical_text
     for node in plan.toc_nodes:
         db.add(
             EpubTocNode(
@@ -1075,24 +1121,6 @@ def publish_epub_extraction_plan(
         )
     db.flush()
 
-    apparatus_items: list[dict[str, object]] = []
-    apparatus_edges: list[dict[str, object]] = []
-    for fragment, (_template, _chapter, fragment_items, fragment_edges) in zip(
-        fragments,
-        plan.fragment_specs,
-        strict=True,
-    ):
-        apparatus_items.extend(
-            attach_fragment_locators(
-                media_id=media_id,
-                fragment_id=fragment.id,
-                media_kind="epub",
-                canonical_text=fragment.canonical_text,
-                items=fragment_items,
-                html_sanitized=fragment.html_sanitized,
-            )
-        )
-        apparatus_edges.extend(fragment_edges)
     replace_media_apparatus(
         db,
         media_id=media_id,
@@ -1995,7 +2023,26 @@ def _sanitize_svg_asset_element(element: ET.Element) -> bool:
             elif not _is_safe_svg_href(value):
                 del element.attrib[attr]
             continue
-        if "url(" in value.lower() and not _is_safe_svg_url_reference(value):
+        # The named presentation attributes are screened because a browser resolves
+        # them as paint; every other attribute is screened on its value, because
+        # this sanitizer carries no attribute allowlist to stop an external fetch.
+        if (
+            normalized_attr
+            in {
+                "fill",
+                "stroke",
+                "clip-path",
+                "filter",
+                "mask",
+                "cursor",
+                "marker",
+                "marker-start",
+                "marker-mid",
+                "marker-end",
+                "color-profile",
+            }
+            or "url(" in value.lower()
+        ) and project_svg_paint(value) is None:
             del element.attrib[attr]
 
     return False
@@ -2179,8 +2226,8 @@ def _sanitize_svg_attributes(element: HtmlElement, tag: str) -> None:
             elif not _is_safe_svg_href(value):
                 del element.attrib[attr]
                 continue
-        if normalized_attr in {"clip-path", "fill", "stroke"} and "url(" in value.lower():
-            if not _is_safe_svg_url_reference(value):
+        if normalized_attr in {"clip-path", "fill", "stroke"}:
+            if project_svg_paint(value) is None:
                 del element.attrib[attr]
                 continue
 
@@ -2197,11 +2244,6 @@ def _is_safe_svg_image_href(value: str) -> bool:
     if scheme:
         return False
     return web_paths.is_media_asset_path(value)
-
-
-def _is_safe_svg_url_reference(value: str) -> bool:
-    trimmed = value.strip().replace(" ", "")
-    return bool(re.fullmatch(r"url\(#[-A-Za-z0-9_:.]+\)", trimmed))
 
 
 def _normalized_attr_name(attr: str) -> str:
@@ -2523,7 +2565,7 @@ def _resolve_nav_target(
 
 def _materialize_nav_locations(
     toc_nodes: list[_TocNodeSpec],
-    fragments: list[Fragment],
+    fragments: list[EpubStagedFragment],
     retained_hrefs: list[str],
     anchor_offsets_by_fragment: dict[int, dict[str, int]],
 ) -> list[_NavLocationSpec]:
@@ -2575,7 +2617,7 @@ def _materialize_nav_locations(
                 location_id=location_id,
                 ordinal=ordinal,
                 source_node_id=None,
-                label=_fallback_fragment_label(frag.canonical_text, frag.idx),
+                label=frag.fallback_label,
                 fragment_idx=frag.idx,
                 href_path=chapter_href,
                 href_fragment=None,
@@ -2602,7 +2644,7 @@ def _materialize_nav_locations(
         end_by_start = {
             start: ordered_starts[position + 1]
             if position + 1 < len(ordered_starts)
-            else len(fragment.canonical_text)
+            else fragment.char_count
             for position, start in enumerate(ordered_starts)
         }
         for index in indexes:
@@ -2648,11 +2690,22 @@ def _truncate_section_id(value: str) -> str:
 
 
 def _fallback_fragment_label(canonical_text: str, idx: int) -> str:
-    for line in canonical_text.splitlines():
-        trimmed = line.strip()
-        if trimmed:
-            return trimmed[:512]
-    return f"Chapter {idx + 1}"
+    # str.splitlines() separators, scanned only until the first label is known.
+    start: int | None = None
+    end = 0
+    for offset, character in enumerate(canonical_text):
+        if character in "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029":
+            if start is not None:
+                break
+        elif not character.isspace():
+            if start is None:
+                start = offset
+            end = offset + 1
+            if end - start >= 512:
+                break
+    return (
+        canonical_text[start : min(end, start + 512)] if start is not None else f"Chapter {idx + 1}"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -24,7 +24,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, literal, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import PassageAnchor
@@ -233,7 +233,7 @@ def delete_for_owner(
         return
     cleanup.delete_edges_for_deleted_resources(
         db,
-        refs=[ResourceRef(scheme="passage_anchor", id=anchor.id) for anchor in anchors],
+        refs=query.with_only_columns(literal("passage_anchor"), PassageAnchor.id),
     )
     for anchor in anchors:
         cleanup.delete_resource_protocol_state(

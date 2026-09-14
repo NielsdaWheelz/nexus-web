@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   PaneFindResult,
   PaneFindResultKey,
@@ -27,6 +27,19 @@ export interface PaneFindSession {
   readonly scopes: readonly PaneFindScopeOption[];
 }
 
+export type PaneFindPreparation<TError> =
+  | { readonly kind: "Prepared"; readonly session: PaneFindSession }
+  | {
+      readonly kind: "Failed";
+      readonly sessionId: number;
+      readonly sourceKey: PaneFindSourceKey;
+      readonly error: TError;
+    };
+
+export type PaneFindReturnReceipt<TError> =
+  | { readonly kind: "Returned" }
+  | { readonly kind: "Failed"; readonly error: TError };
+
 export interface PaneFindRequest extends PaneFindSessionRequest {
   readonly queryId: number;
   readonly query: string;
@@ -49,6 +62,8 @@ export type PaneFindResponse<TError> =
       readonly completeness: "Complete" | "Partial";
       readonly rows: readonly PaneFindResultRow[];
       readonly initialActiveKey: PaneFindResultKey;
+      /** Controller retains these rows through committed UI and pending previews. */
+      readonly releaseRows?: () => void;
     }
   | {
       readonly kind: "NoMatches";
@@ -83,6 +98,7 @@ export type PaneFindPreviewReceipt<TError> =
     }
   | {
       readonly kind: "Rejected";
+      readonly returnAvailable: boolean;
       readonly sessionId: number;
       readonly queryId: number;
       readonly sourceKey: PaneFindSourceKey;
@@ -92,13 +108,13 @@ export type PaneFindPreviewReceipt<TError> =
 
 export interface PaneFindAdapter<TError> {
   readonly sourceKey: PaneFindSourceKey;
-  prepare(request: PaneFindPrepareRequest): Promise<PaneFindSession>;
+  prepare(request: PaneFindPrepareRequest): Promise<PaneFindPreparation<TError>>;
   find(request: PaneFindRequest): Promise<PaneFindResponse<TError>>;
   preview(
     request: PaneFindPreviewRequest,
   ): Promise<PaneFindPreviewReceipt<TError>>;
   clearPresentation(request: PaneFindSessionRequest): Promise<void>;
-  returnToReadingPosition(request: PaneFindSessionRequest): Promise<void>;
+  returnToReadingPosition(request: PaneFindSessionRequest): Promise<PaneFindReturnReceipt<TError>>;
   errorMessage(error: TError): string;
 }
 
@@ -108,6 +124,18 @@ export type PaneFindCapability<TError> =
       readonly kind: "Available";
       readonly adapter: PaneFindAdapter<TError>;
     };
+
+export interface PaneFindDefect {
+  readonly key: string;
+  readonly error: unknown;
+  retry(): void;
+}
+
+interface FindOperation extends PaneFindSessionRequest {
+  readonly queryId: number | null;
+  readonly kind: "Prepare" | "Query" | "Preview" | "Clear" | "Return";
+  readonly retry: () => void;
+}
 
 export interface PaneFindController {
   readonly query: string;
@@ -136,9 +164,19 @@ export type PaneFindUseResult =
 
 type PreparedState =
   | { readonly kind: "Preparing" }
+  | { readonly kind: "Failed"; readonly session: PaneFindSession | null; readonly result: Extract<PaneFindResult, { kind: "Failed" }> }
   | { readonly kind: "Ready"; readonly session: PaneFindSession };
 
 type ReadyResult = Extract<PaneFindResult, { readonly kind: "Ready" }>;
+
+interface FindRowsOwner {
+  users: number;
+  readonly release: () => void;
+}
+
+function releaseFindRows(owner: FindRowsOwner | null): void {
+  if (owner !== null && --owner.users === 0) owner.release();
+}
 
 interface PreviewAttempt {
   readonly key: PaneFindResultKey;
@@ -200,9 +238,10 @@ function readyResult(input: {
 }
 
 export function usePaneFind<TError>({
-  capability,
+  capability, onDefect,
 }: {
   readonly capability: PaneFindCapability<TError>;
+  readonly onDefect?: (defect: PaneFindDefect | null) => void;
 }): PaneFindUseResult {
   const adapterCandidate =
     capability.kind === "Available" ? capability.adapter : undefined;
@@ -218,9 +257,31 @@ export function usePaneFind<TError>({
     kind: "Preparing",
   });
   const [selectedScopeId, setSelectedScopeId] = useState("");
-  const [result, setResult] = useState<PaneFindResult>({ kind: "Idle" });
+  const selectedScopeIdRef = useRef(selectedScopeId);
+  selectedScopeIdRef.current = selectedScopeId;
+  const [resultState, setResultState] = useState<{ value: PaneFindResult; rows: FindRowsOwner | null }>({ value: { kind: "Idle" }, rows: null });
+  const result = resultState.value;
+  const resultRowsRef = useRef<FindRowsOwner | null>(null);
+  const setResult = useCallback((value: PaneFindResult) => setResultState({ value, rows: resultRowsRef.current }), []);
+  const retireRows = useCallback(() => {
+    const previous = resultRowsRef.current;
+    resultRowsRef.current = null;
+    releaseFindRows(previous);
+  }, []);
+  const replaceResult = useCallback((value: PaneFindResult) => {
+    retireRows();
+    setResultState({ value, rows: null });
+  }, [retireRows]);
+  useLayoutEffect(() => {
+    const rows = resultState.rows;
+    if (rows !== null) rows.users += 1;
+    return () => releaseFindRows(rows);
+  }, [resultState.rows]);
+  useLayoutEffect(() => retireRows, [retireRows]);
   const [returnAvailable, setReturnAvailable] = useState(false);
-  const [defect, setDefect] = useState<unknown>(null);
+  const [defect, setDefect] = useState<{ error: unknown; operation: FindOperation } | null>(null);
+  const defectObserver = useRef(onDefect);
+  defectObserver.current = onDefect;
   const sessionIdRef = useRef(0);
   const queryIdRef = useRef(0);
   const prepareAbortRef = useRef<AbortController | null>(null);
@@ -281,11 +342,27 @@ export function usePaneFind<TError>({
     [setReturnAvailability],
   );
 
-  const defectAsync = useCallback((error: unknown) => {
-    if (!isAbort(error)) setDefect(error);
-  }, []);
+  const currentOperation = useCallback((operation: FindOperation) =>
+    !operation.signal.aborted && sourceAdapterRef.current?.sourceKey === operation.sourceKey &&
+    sessionIdRef.current === operation.sessionId &&
+    (operation.queryId === null || queryIdRef.current === operation.queryId), []);
+  const defectAsync = useCallback((error: unknown, operation: FindOperation) => {
+    if (!isAbort(error) && currentOperation(operation)) setDefect({ error, operation });
+  }, [currentOperation]);
+  const currentDefect = defect !== null && currentOperation(defect.operation) ? defect : null;
+  useEffect(() => {
+    defectObserver.current?.(currentDefect === null ? null : {
+      key: `find:${currentDefect.operation.sessionId}:${currentDefect.operation.queryId ?? "session"}:${currentDefect.operation.kind}`,
+      error: currentDefect.error,
+      retry() {
+        if (!currentOperation(currentDefect.operation)) return;
+        setDefect(null);
+        currentDefect.operation.retry();
+      },
+    });
+  }, [currentDefect, currentOperation]);
 
-  const clearCurrentPresentation = useCallback(() => {
+  const clearCurrentPresentation = useCallback(function clearCurrentPresentation() {
     const current = preparedRef.current;
     if (!sourceAdapter || current.kind !== "Ready") return;
     clearAbortRef.current?.abort();
@@ -297,18 +374,24 @@ export function usePaneFind<TError>({
         sourceKey: current.session.sourceKey,
         signal: abort.signal,
       })
-      .catch(defectAsync);
+      .catch((error: unknown) => defectAsync(error, {
+        kind: "Clear", sourceKey: current.session.sourceKey, sessionId: current.session.sessionId,
+        queryId: null, signal: abort.signal, retry: clearCurrentPresentation,
+      }));
   }, [defectAsync, sourceAdapter]);
 
   const startPreparation = useCallback(
-    ({
+    function startPreparation({
       preserveQuery,
       resetMatchOptions,
     }: {
       readonly preserveQuery: boolean;
       readonly resetMatchOptions: boolean;
-    }) => {
+    }) {
       if (!sourceAdapter) return;
+      const previousCandidate = preparedRef.current.kind === "Preparing" ? null : preparedRef.current.session;
+      const previousSession = previousCandidate?.sourceKey === sourceAdapter.sourceKey ? previousCandidate : null;
+      const previousScopeId = preserveQuery ? selectedScopeIdRef.current : "";
       const sessionId = sessionIdRef.current + 1;
       sessionIdRef.current = sessionId;
       queryIdRef.current = 0;
@@ -333,12 +416,12 @@ export function usePaneFind<TError>({
         queryRef.current = "";
         setQuery("");
       }
-      setResult(
+      replaceResult(
         nextQuery.length === 0 ? { kind: "Idle" } : { kind: "Searching" },
       );
       setReturnAvailability(false);
       setDefect(null);
-      setSelectedScopeId("");
+      if (!preserveQuery) setSelectedScopeId("");
       if (resetMatchOptions) {
         setMatchCase(false);
         setWholeWord(false);
@@ -349,22 +432,38 @@ export function usePaneFind<TError>({
           sourceKey: sourceAdapter.sourceKey,
           signal: abort.signal,
         })
-        .then((session) => {
+        .then((preparation) => {
+          const identity = preparation.kind === "Prepared" ? preparation.session : preparation;
           if (
             abort.signal.aborted ||
             sessionIdRef.current !== sessionId ||
-            session.sessionId !== sessionId ||
-            session.sourceKey !== sourceAdapter.sourceKey
+            identity.sessionId !== sessionId ||
+            identity.sourceKey !== sourceAdapter.sourceKey
           ) {
             return;
           }
-          const entire = entireResourceScope(session.scopes);
-          setSelectedScopeId(entire.id);
-          setPrepared({ kind: "Ready", session });
+          switch (preparation.kind) {
+            case "Failed":
+              setPrepared({ kind: "Failed", session: previousSession, result: {
+                kind: "Failed", message: sourceAdapter.errorMessage(preparation.error),
+                onRetry: () => startPreparation({ preserveQuery: true, resetMatchOptions: false }),
+              } });
+              return;
+            case "Prepared": {
+              const { session } = preparation;
+              const entire = entireResourceScope(session.scopes);
+              setSelectedScopeId(session.scopes.some((scope) => scope.id === previousScopeId) ? previousScopeId : entire.id);
+              setPrepared({ kind: "Ready", session });
+              return;
+            }
+          }
         })
-        .catch(defectAsync);
+        .catch((error: unknown) => defectAsync(error, {
+          kind: "Prepare", sourceKey: sourceAdapter.sourceKey, sessionId, queryId: null,
+          signal: abort.signal, retry: () => startPreparation({ preserveQuery: true, resetMatchOptions: false }),
+        }));
     },
-    [defectAsync, setReturnAvailability, sourceAdapter],
+    [defectAsync, replaceResult, setReturnAvailability, sourceAdapter],
   );
 
   useEffect(() => {
@@ -387,7 +486,7 @@ export function usePaneFind<TError>({
       returnInFlightRef.current = false;
       setPrepared({ kind: "Preparing" });
       setQuery("");
-      setResult({ kind: "Idle" });
+      replaceResult({ kind: "Idle" });
       setReturnAvailability(false);
       setDefect(null);
       setSelectedScopeId("");
@@ -415,7 +514,7 @@ export function usePaneFind<TError>({
       clearAbortRef.current?.abort();
       returnAbortRef.current?.abort();
     };
-  }, [setReturnAvailability, sourceAdapter, startPreparation]);
+  }, [replaceResult, setReturnAvailability, sourceAdapter, startPreparation]);
 
   const onOpen = useCallback(() => {
     if (returnInFlightRef.current) return;
@@ -442,7 +541,8 @@ export function usePaneFind<TError>({
     const queryId = queryIdRef.current + 1;
     queryIdRef.current = queryId;
     const { session } = current;
-    setResult({ kind: "Searching" });
+    replaceResult({ kind: "Searching" });
+    setDefect(null);
     void sourceAdapter
       .find({
         sessionId: session.sessionId,
@@ -461,6 +561,7 @@ export function usePaneFind<TError>({
           queryIdRef.current !== response.queryId ||
           response.sourceKey !== session.sourceKey
         ) {
+          if (response.kind === "Ready") response.releaseRows?.();
           return;
         }
         switch (response.kind) {
@@ -487,13 +588,13 @@ export function usePaneFind<TError>({
             });
             return;
           case "Ready": {
-            setResult(
-              readyResult({
-                rows: response.rows,
-                activeKey: response.initialActiveKey,
-                completeness: response.completeness,
-              }),
-            );
+            const rows = response.releaseRows === undefined ? null : { users: 1, release: response.releaseRows };
+            retireRows();
+            resultRowsRef.current = rows;
+            setResultState({ value: readyResult({ rows: response.rows, activeKey: response.initialActiveKey,
+              completeness: response.completeness }), rows });
+            // The automatic preview callback retains the response until settlement.
+            if (rows !== null) rows.users += 1;
             const previewAbort = new AbortController();
             previewAbortRef.current = previewAbort;
             const previewGeneration = beginPreviewAttempt();
@@ -514,7 +615,7 @@ export function usePaneFind<TError>({
                 const settlement = settlePreviewAttempt({
                   generation: previewGeneration,
                   capturedOrigin:
-                    identifiesRequest && receipt.kind === "Previewed",
+                    identifiesRequest && receipt.returnAvailable,
                 });
                 if (settlement.kind === "Current" && settlement.reprepare) {
                   startPreparation({
@@ -559,20 +660,30 @@ export function usePaneFind<TError>({
                 ) {
                   return;
                 }
-                defectAsync(error);
-              });
+                defectAsync(error, {
+                  kind: "Preview", sourceKey: session.sourceKey, sessionId: session.sessionId, queryId,
+                  signal: previewAbort.signal, retry: () => retryRef.current(),
+                });
+              })
+              .finally(() => releaseFindRows(rows));
             return;
           }
         }
       })
-      .catch(defectAsync);
+      .catch((error: unknown) => defectAsync(error, {
+        kind: "Query", sourceKey: session.sourceKey, sessionId: session.sessionId, queryId,
+        signal: abort.signal, retry: () => retryRef.current(),
+      }));
   }, [
     beginPreviewAttempt,
     clearCurrentPresentation,
     defectAsync,
     matchCase,
     query,
+    replaceResult,
+    retireRows,
     selectedScopeId,
+    setResult,
     settlePreviewAttempt,
     sourceAdapter,
     startPreparation,
@@ -589,7 +700,7 @@ export function usePaneFind<TError>({
       queryAbortRef.current?.abort();
       previewAbortRef.current?.abort();
       queryIdRef.current += 1;
-      setResult({ kind: "Idle" });
+      replaceResult({ kind: "Idle" });
       clearCurrentPresentation();
       return;
     }
@@ -606,6 +717,7 @@ export function usePaneFind<TError>({
     clearCurrentPresentation,
     prepared.kind,
     query,
+    replaceResult,
     runQuery,
     selectedScopeId,
   ]);
@@ -636,6 +748,8 @@ export function usePaneFind<TError>({
           completeness: attempt.ready.completeness,
         }),
       );
+      const rows = resultRowsRef.current;
+      if (rows !== null) rows.users += 1;
       try {
         const receipt = await sourceAdapter.preview({
           sessionId: session.sessionId,
@@ -651,7 +765,7 @@ export function usePaneFind<TError>({
           receipt.key === attempt.key;
         const settlement = settlePreviewAttempt({
           generation: previewGeneration,
-          capturedOrigin: identifiesRequest && receipt.kind === "Previewed",
+          capturedOrigin: identifiesRequest && receipt.returnAvailable,
         });
         if (settlement.kind === "Current" && settlement.reprepare) {
           startPreparation({
@@ -695,14 +809,18 @@ export function usePaneFind<TError>({
         if (settlement.kind === "Stale" || abort.signal.aborted) {
           return false;
         }
-        defectAsync(error);
+        defectAsync(error, {
+          kind: "Preview", sourceKey: session.sourceKey, sessionId: session.sessionId, queryId: attempt.queryId,
+          signal: abort.signal, retry: () => retryRef.current(),
+        });
         return false;
-      }
+      } finally { releaseFindRows(rows); }
     },
     [
       beginPreviewAttempt,
       clearCurrentPresentation,
       defectAsync,
+      setResult,
       settlePreviewAttempt,
       sourceAdapter,
       startPreparation,
@@ -743,8 +861,10 @@ export function usePaneFind<TError>({
     queryAbortRef.current?.abort();
     previewAbortRef.current?.abort();
     queryIdRef.current += 1;
+    setDefect(null);
+    retireRows();
     clearCurrentPresentation();
-  }, [clearCurrentPresentation]);
+  }, [clearCurrentPresentation, retireRows]);
 
   const onDismiss = useCallback(() => {
     if (returnInFlightRef.current) return;
@@ -752,7 +872,7 @@ export function usePaneFind<TError>({
     queryRef.current = "";
     setQuery("");
     setResult({ kind: "Idle" });
-  }, [invalidateQuery]);
+  }, [invalidateQuery, setResult]);
 
   const onQueryChange = useCallback(
     (nextQuery: string) => {
@@ -765,7 +885,7 @@ export function usePaneFind<TError>({
         truncated.length === 0 ? { kind: "Idle" } : { kind: "Searching" },
       );
     },
-    [invalidateQuery],
+    [invalidateQuery, setResult],
   );
 
   const onMatchCaseChange = useCallback(
@@ -775,7 +895,7 @@ export function usePaneFind<TError>({
       setMatchCase(value);
       if (query.length > 0) setResult({ kind: "Searching" });
     },
-    [invalidateQuery, query.length],
+    [invalidateQuery, query.length, setResult],
   );
 
   const onWholeWordChange = useCallback(
@@ -785,16 +905,17 @@ export function usePaneFind<TError>({
       setWholeWord(value);
       if (query.length > 0) setResult({ kind: "Searching" });
     },
-    [invalidateQuery, query.length],
+    [invalidateQuery, query.length, setResult],
   );
 
   const onScopeChange = useCallback(
     (scopeId: string) => {
       if (returnInFlightRef.current) return;
       const current = preparedRef.current;
+      const session = current.kind === "Preparing" ? null : current.session;
       if (
-        current.kind !== "Ready" ||
-        !current.session.scopes.some((scope) => scope.id === scopeId)
+        session === null ||
+        !session.scopes.some((scope) => scope.id === scopeId)
       ) {
         throw new Error(`Unknown Pane Find scope: ${scopeId}`);
       }
@@ -802,10 +923,10 @@ export function usePaneFind<TError>({
       setSelectedScopeId(scopeId);
       if (query.length > 0) setResult({ kind: "Searching" });
     },
-    [invalidateQuery, query.length],
+    [invalidateQuery, query.length, setResult],
   );
 
-  const onReturn = useCallback(() => {
+  const onReturn = useCallback(function onReturn() {
     const current = preparedRef.current;
     if (
       !sourceAdapter ||
@@ -836,7 +957,7 @@ export function usePaneFind<TError>({
         sourceKey: session.sourceKey,
         signal: abort.signal,
       })
-      .then(() => {
+      .then((receipt) => {
         if (
           abort.signal.aborted ||
           sessionIdRef.current !== session.sessionId ||
@@ -845,24 +966,35 @@ export function usePaneFind<TError>({
         ) {
           return;
         }
-        setReturnAvailability(false);
+        switch (receipt.kind) {
+          case "Failed":
+            setResult({ kind: "Failed", message: sourceAdapter.errorMessage(receipt.error), onRetry: onReturn });
+            return;
+          case "Returned":
+            setReturnAvailability(false);
+            return;
+        }
       })
-      .catch(defectAsync)
+      .catch((error: unknown) => defectAsync(error, {
+        kind: "Return", sourceKey: session.sourceKey, sessionId: session.sessionId, queryId: null,
+        signal: abort.signal, retry: onReturn,
+      }))
       .finally(() => {
         if (returnAbortRef.current === abort) {
           returnInFlightRef.current = false;
         }
       });
-  }, [defectAsync, returnAvailable, setReturnAvailability, sourceAdapter]);
+  }, [defectAsync, returnAvailable, setResult, setReturnAvailability, sourceAdapter]);
 
   const scope = useMemo<PaneFindScopeControl>(() => {
-    if (prepared.kind !== "Ready" || prepared.session.scopes.length <= 1) {
+    const session = prepared.kind === "Preparing" ? null : prepared.session;
+    if (session === null || session.scopes.length <= 1) {
       return { kind: "EntireResource" };
     }
     return {
       kind: "Selectable",
       selectedId: selectedScopeId,
-      options: prepared.session.scopes,
+      options: session.scopes,
       onChange: onScopeChange,
     };
   }, [onScopeChange, prepared, selectedScopeId]);
@@ -880,7 +1012,7 @@ export function usePaneFind<TError>({
   const controller = useMemo<PaneFindController>(
     () => ({
       query,
-      result,
+      result: prepared.kind === "Failed" ? prepared.result : result,
       scope,
       matchCase,
       wholeWord,
@@ -902,6 +1034,7 @@ export function usePaneFind<TError>({
       onStep,
       onWholeWordChange,
       preview,
+      prepared,
       query,
       result,
       returnToReadingPosition,
@@ -917,6 +1050,6 @@ export function usePaneFind<TError>({
     [controller, sourceAdapter],
   );
 
-  if (defect !== null) throw defect;
+  if (currentDefect !== null && onDefect === undefined) throw currentDefect.error;
   return useResult;
 }

@@ -83,6 +83,13 @@ def build_source_artifact_storage_path(
     return f"media/{media_id}/source/{attempt_id}.{ext}"
 
 
+def build_reader_publication_member_storage_path(media_id: UUID, sha256: str) -> str:
+    """Content-addressed member bytes may be reused by retained generations."""
+    if re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
+        raise ValueError("Reader member digest must be a lowercase SHA-256.")
+    return f"media/{media_id}/reader-publications/sha256/{sha256}"
+
+
 def build_upload_verification_candidate_storage_path(
     media_id: UUID | str,
     verification_token: UUID | str,

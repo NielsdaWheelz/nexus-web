@@ -28,8 +28,10 @@ export interface ReaderDocumentOverviewRange {
 export type ReaderDocumentProjection =
   | {
       kind: "Text";
+      length: number;
       fragments: readonly {
         fragmentId: string;
+        start: number;
         length: number;
       }[];
     }
@@ -43,42 +45,37 @@ function projectTextPoint(
   documentProjection: Extract<ReaderDocumentProjection, { kind: "Text" }>,
   point: Extract<ReaderDocumentPoint, { kind: "Text" }>,
 ): number {
-  let prefixLength = 0;
-  let pointFragmentLength: number | null = null;
+  if (!Number.isSafeInteger(documentProjection.length) || documentProjection.length < 0) {
+    throw new Error("Text document projection requires a nonnegative canonical extent.");
+  }
+  let selected: (typeof documentProjection.fragments)[number] | null = null;
+  let previousEnd = 0;
   const fragmentIds = new Set<string>();
   for (const fragment of documentProjection.fragments) {
     if (
       fragmentIds.has(fragment.fragmentId) ||
-      !Number.isInteger(fragment.length) ||
-      fragment.length < 0
+      !Number.isSafeInteger(fragment.start) || fragment.start < previousEnd ||
+      !Number.isSafeInteger(fragment.length) || fragment.length < 0 ||
+      fragment.start + fragment.length > documentProjection.length
     ) {
       throw new Error(
-        "Text document projection requires ordered unique fragments with canonical lengths.",
+        "Text document projection requires ordered unique fragments with canonical origins and lengths.",
       );
     }
     fragmentIds.add(fragment.fragmentId);
-    if (fragment.fragmentId === point.fragmentId) {
-      pointFragmentLength = fragment.length;
-    } else if (pointFragmentLength === null) {
-      prefixLength += fragment.length;
-    }
+    previousEnd = fragment.start + fragment.length;
+    if (fragment.fragmentId === point.fragmentId) selected = fragment;
   }
-  const totalLength = documentProjection.fragments.reduce(
-    (total, fragment) => total + fragment.length,
-    0,
-  );
-  if (totalLength <= 0) {
-    throw new Error("Text document projection requires canonical text.");
-  }
-  if (pointFragmentLength === null) {
+  if (selected === null) {
     throw new Error("Text point fragment is absent from the document projection.");
   }
   if (!Number.isFinite(point.offset)) {
     throw new Error("Text point offset must be finite.");
   }
+  if (documentProjection.length === 0) return 0;
   return clampUnit(
-    (prefixLength + Math.min(pointFragmentLength, Math.max(0, point.offset))) /
-      totalLength,
+    (selected.start + Math.min(selected.length, Math.max(0, point.offset))) /
+      documentProjection.length,
   );
 }
 

@@ -348,3 +348,201 @@ timeouts while scanning synapses, leaving inherited work pending. Deploy the
 current execution cutover, then prove the backlog converges without new
 unexpected timeouts. See
 [docs/tickets/production-synapse-scan-statement-timeout-backlog.md](tickets/production-synapse-scan-statement-timeout-backlog.md).
+
+- [open] oi-061 · reader · 2026-09-11 council · epub headings absent from coarse publisher navigation: [ticket](tickets/reader-structure-epub-headings-missing.md).
+- [open] oi-062 · reader · 2026-09-11 council · transitive marker clusters collapse document geography: [ticket](tickets/reader-map-transitive-marker-clusters.md).
+- [open] oi-063 · reader · 2026-09-11 council · navigation intervals cannot represent nested or multi-file chapter extents: [ticket](tickets/reader-structure-epub-semantic-extents.md).
+- [open] oi-064 · reader · 2026-09-11 council · current section ignores scrolling and local section progress is absent: [ticket](tickets/reader-map-active-section-and-local-position.md).
+- [open] oi-065 · reader · 2026-09-11 council · previous/next can follow backward publisher toc targets: [ticket](tickets/reader-structure-epub-reading-order.md).
+- [open] oi-066 · reader · 2026-09-11 council · themed marginalia records a separate, misleading progress history: [ticket](tickets/reader-map-marginalia-parallel-progress.md).
+- [open] oi-067 · offline reader · 2026-09-11 council · web navigation emits document offsets as fragment offsets: [ticket](tickets/reader-map-offline-web-coordinate-mismatch.md).
+- [open] oi-068 · epub ingest · 2026-09-11 council · long colliding section ids can loop indefinitely: [ticket](tickets/reader-structure-long-section-id-loop.md).
+- [open] oi-069 · reader interaction · 2026-09-11 council · requested position/mobile map actions need an explicit contract: [ticket](tickets/reader-map-inert-position-and-mobile-controls.md).
+- [open] oi-070 · reader verification · 2026-09-11 council · inspect the exact shadow & claw and pillow book imports: [ticket](tickets/reader-map-shadow-claw-reproduction.md).
+- [open] oi-071 · offline reader · 2026-09-11 spec review · epub package duplicates complete fragment content per navigation target: [ticket](tickets/reader-map-offline-content-duplication.md).
+- [open] oi-072 · offline reader · 2026-09-11 spec review · text capture/restore estimates exact locators from scroll percentages: [ticket](tickets/reader-map-offline-pixel-locators.md).
+- [open] oi-073 · reader migration · 2026-09-11 adversarial review · retire synthetic section references without breaking stored passages: [ticket](tickets/reader-map-retired-spine-references.md).
+- [open] oi-074 · nexus history · 2026-09-13 council · valid titles exceed history ingress and can crash the workspace: [ticket](tickets/second-tab-selection-history-rejects-valid-labels.md).
+- [open] oi-075 · failure containment · 2026-09-13 council · selection-history defects replace healthy workspace panes: [ticket](tickets/second-tab-selection-history-can-fail-workspace.md).
+- [open] oi-076 · failure containment · 2026-09-13 council · current resource-registry defects escape pane boundaries: [ticket](tickets/second-tab-resource-resolution-escapes-pane-boundary.md).
+- [open] oi-077 · workspace persistence · 2026-09-13 council · save state advances before acknowledgment and failed flushes lose ownership: [ticket](tickets/second-tab-workspace-save-acknowledgment.md).
+- [open] oi-078 · diagnostics · 2026-09-13 council · shared-workspace failures have no remote client receipt: [ticket](tickets/second-tab-workspace-defect-telemetry.md).
+- [open] oi-079 · production api · 2026-09-13 council · six confirmed api memory kills cause gateway failures: [ticket](tickets/second-tab-production-api-restarts.md).
+- [open] oi-080 · reader memory · 2026-09-13 council · complete document responses have no content or byte window: [ticket](tickets/second-tab-reader-content-response-budget.md).
+- [open] oi-081 · document map memory · 2026-09-13 council · aggregate evidence reads drain all lower-layer pages: [ticket](tickets/second-tab-document-map-response-budget.md).
+- [open] oi-082 · nexus history memory · 2026-09-13 council · five recent targets materialize lifetime usage rows: [ticket](tickets/second-tab-nexus-history-read-budget.md).
+- [open] oi-083 · production search · 2026-09-13 council · content search reaches its statement timeout: [ticket](tickets/second-tab-production-search-timeout.md).
+- [open] oi-084 · recovery copy · 2026-09-13 council · workspace fallback promises unverified durability: [ticket](tickets/second-tab-workspace-recovery-durability-copy.md).
+- [open] oi-085 · gateway classification · 2026-09-13 user trace · raw upstream 502s become fatal workspace defects: [ticket](tickets/second-tab-gateway-outage-classified-as-workspace-defect.md).
+- [open] oi-087 · reader durability · 2026-09-13 follow-up · pending cursor intent loses its owner on reader teardown: [ticket](tickets/second-tab-reader-cursor-teardown-durability.md).
+- [open] oi-088 · api startup memory · 2026-09-13 follow-up · provider configuration imports every vendor execution sdk into the api: [ticket](tickets/second-tab-eager-provider-sdk-imports.md).
+- [open] oi-089 · workspace startup load · 2026-09-13 follow-up · restored-pane seeding fans out across offscreen mobile panes: [ticket](tickets/second-tab-bootstrap-read-fanout.md).
+- [open] oi-090 · speculative reads · 2026-09-13 follow-up · per-key prefetch timers and cache limits do not bound outstanding work: [ticket](tickets/second-tab-speculative-read-admission.md).
+- [open] oi-091 · reader consistency · 2026-09-13 architecture council · hosted content reads lack a selected publication identity: [ticket](tickets/reader-source-lacks-publication-revision.md).
+- [open] oi-092 · resource cache · 2026-09-13 architecture review · older prefetch completion can overwrite or delete a newer pending read: [ticket](tickets/second-tab-prefetch-settlement-identity.md).
+- [open] oi-093 · offline reader · 2026-09-13 architecture review · navigation repeatedly scans preceding text and allocates code-point arrays: [ticket](tickets/offline-reader-navigation-repeated-text-allocation.md).
+- [open] oi-094 · offline delivery · 2026-09-13 architecture review · downloads rebuild unchanged publications inside foreground api threads: [ticket](tickets/offline-download-rebuilds-publication-in-api.md).
+- [open] oi-095 · pdf loading · 2026-09-13 architecture review · streaming configuration undermines the requested demand-fetch policy: [ticket](tickets/reader-pdf-streaming-defeats-on-demand-fetch.md).
+- [open] oi-096 · offline reader · 2026-09-13 architecture review · loading a descriptor decodes the complete publication payload: [ticket](tickets/offline-reader-decodes-whole-publication.md).
+- [open] oi-099 · native response memory · 2026-09-13 implementation · reader json limits apply after whole-body allocation: [ticket](tickets/native-reader-json-bound-applied-after-allocation.md).
+- [open] oi-100 · api image memory · 2026-09-13 implementation · the image proxy retains up to 128 mib inside a 320 mib api limit: [ticket](tickets/second-tab-image-proxy-api-memory-budget.md).
+- [open] oi-103 · browser qualification · 2026-09-13 implementation · large browser experiments lack an execution memory ceiling: [ticket](tickets/test-browser-capacity-experiment-memory-ceiling.md).
+- [open] oi-105 · native artwork · 2026-09-13 implementation · preview sends relative authenticated artwork to media3 without origin/auth normalization: [ticket](tickets/native-preview-artwork-relative-origin.md).
+- [open] oi-106 · reader publication · 2026-09-13 implementation · oversized tables and header associations exceed bounded reading units: [ticket](tickets/reader-table-continuation-capacity.md).
+- [open] oi-107 · image validation · 2026-09-13 implementation · compressed png metadata expands inside foreground api memory: [ticket](tickets/image-validation-expanded-metadata-allocation.md).
+- [open] oi-108 · reader publication · 2026-09-13 implementation · html parsing can allocate more browser nodes than publication counts: [ticket](tickets/reader-browser-dom-expansion-bound.md).
+- [open] oi-109 · image validation · 2026-09-13 implementation · eager exif parsing materializes aliased unselected values: [ticket](tickets/image-validation-exif-tag-alias-allocation.md).
+- [open] oi-111 · bounded workspace · 2026-09-13 implementation · small table node trees can allocate large browser span grids: [ticket](tickets/reader-table-span-layout-allocation.md).
+- [open] oi-112 · bounded workspace · 2026-09-13 implementation · svg use instances can expand beyond authored-node admission: [ticket](tickets/reader-svg-instance-residency.md).
+- [open] oi-113 · reader coordinates · 2026-09-13 implementation · svg title and description metadata enter canonical text: [ticket](tickets/reader-svg-metadata-canonical-text.md).
+- [open] oi-114 · browser test runtime · 2026-09-13 implementation · vitest cdp once removes its listener twice: [ticket](tickets/vitest-cdp-once-double-removal.md).
+- [open] oi-115 · bounded workspace · 2026-09-13 implementation · native newer movement can conflict with its own earlier acknowledgment: [ticket](tickets/native-progress-new-intent-own-ack-conflict.md).
+- [open] oi-116 · bounded workspace · 2026-09-13 implementation · whole-fragment highlight queries escape reader residency limits: [ticket](tickets/reader-highlight-query-residency.md).
+- [open] oi-117 · bounded workspace · 2026-09-13 implementation · escaped svg paint URLs escape resource binding: [ticket](tickets/reader-svg-paint-resource-binding.md).
+- [open] oi-118 · native asset memory · 2026-09-13 implementation · svg validation materializes the complete XML tree: [ticket](tickets/native-svg-validation-materializes-dom.md).
+- [open] oi-119 · reader query latency · 2026-09-13 implementation · quote resolution can require a roundtrip per publication unit: [ticket](tickets/reader-quote-resolution-roundtrip-capacity.md).
+- [open] oi-120 · browser test runtime · 2026-09-13 implementation · concurrent vitest cdp requests can lose handler initialization: [ticket](tickets/vitest-cdp-concurrent-handler-initialization.md).
+- [open] oi-121 · reader display · 2026-09-13 implementation · svg local references can resolve another pane's definitions: [ticket](tickets/reader-svg-reference-scope.md).
+- [open] oi-122 · reader capacity · 2026-09-13 implementation · supported source attributes can exceed unit and migration token budgets: [ticket](tickets/reader-oversized-attribute-capacity.md).
+- [open] oi-123 · offline identity · 2026-09-13 implementation · schema-2 UUID-only fragments cannot preserve valid older opaque locators: [ticket](tickets/offline-legacy-opaque-fragment-identity.md).
+- [open] oi-124 · offline conversion · 2026-09-13 implementation · installed schema-1 verification materializes the whole member before migration: [ticket](tickets/offline-installed-legacy-verification-whole-member.md).
+- [open] oi-125 · reader find · 2026-09-13 implementation · UAX word boundaries do not prove existing dictionary segmentation: [ticket](tickets/reader-whole-word-dictionary-segmentation.md).
+- [open] oi-126 · offline delivery · 2026-09-13 implementation · extensionless publication assets lose declared MIME and PDF byte ranges: [ticket](tickets/native-publication-member-mime-and-ranges.md).
+- [open] oi-127 · offline navigation · 2026-09-13 implementation · offset-only index targets cannot distinguish zero-text units: [ticket](tickets/reader-publication-offline-navigation-identity.md).
+- [open] oi-128 · offline conversion · 2026-09-13 implementation · ICU dictionary segmentation allocates complete CJK spans behind its iterator: [ticket](tickets/native-legacy-icu-dictionary-span-allocation.md).
+- [open] oi-129 · reader navigation · 2026-09-13 implementation · contents paging shares the unit lookup chain and drains unrelated records: [ticket](tickets/reader-publication-contents-index-purpose.md).
+- [open] oi-133 · publication proof · 2026-09-13 implementation · foreign controller occupies the real-source fixture producer port: [ticket](tickets/reader-source-fixture-producer-port-contention.md).
+- [open] oi-134 · offline conversion · 2026-09-13 implementation · crop candidates can repeatedly scan an entire installed source: [ticket](tickets/native-legacy-crop-query-scan-capacity.md).
+- [open] oi-136 · reader table metadata · 2026-09-13 implementation · explicit cell-to-header associations can grow quadratically from small source tables: [ticket](tickets/reader-table-header-association-expansion.md).
+- [open] oi-139 · reader evidence · 2026-09-13 implementation · connection summaries materialize whole current bodies and associations: [ticket](tickets/reader-connection-summary-materialization.md).
+- [open] oi-140 · reader provenance · 2026-09-13 implementation · mutable apparatus rows cannot establish retained-generation source facts: [ticket](tickets/reader-retained-apparatus-source-projection.md).
+- [open] oi-141 · offline capacity · 2026-09-13 implementation · schema2 representation can exceed schema1 aggregate/member limits for accepted sources: [ticket](tickets/reader-schema-two-aggregate-expansion.md).
+- [open] oi-145 · proof ownership · 2026-09-13 implementation · changed reader proofs cannot reach behavioral assertions through absent BASE interfaces: [ticket](tickets/changed-reader-proof-base-interface-mismatch.md).
+- [open] oi-147 · transcript coordinates · 2026-09-13 implementation · mutable embed cards replace authored transcript text: [ticket](tickets/transcript-embed-display-canonical-mismatch.md).
+- [open] oi-151 · reader navigation · 2026-09-13 implementation · media-only pulses cross view/source boundaries: [ticket](tickets/reader-pulse-missing-view-source-identity.md).
+- [open] oi-152 · retained evidence · 2026-09-13 implementation · passage quote resolution needs its existing unbounded-quote semantics under bounded reads: [ticket](tickets/reader-evidence-normalized-anchor-query.md).
+- [open] oi-153 · native table context · 2026-09-13 qualification · ordinary btree prefix scans multiply across large principal spans: [ticket](tickets/native-table-ray-query-prefix-cost.md).
+- [open] oi-156 · document figures · 2026-09-13 implementation · assets lack attested pre-decode raster facts and measured admission: [ticket](tickets/reader-figure-predecode-admission.md).
+- [open] oi-157 · pdf evidence · 2026-09-13 implementation · geometry lacks immutable source attestation: [ticket](tickets/reader-evidence-pdf-highlight-source-provenance.md).
+- [open] oi-158 · pdf quote search · 2026-09-13 review · pdf normalization does not establish the search projection's nfc premise: [ticket](tickets/reader-pdf-search-nfc-source-assumption.md).
+- [open] oi-160 · pdf mutations · 2026-09-13 review · duplicate lookup materializes every candidate's authored text and quads: [ticket](tickets/pdf-highlight-duplicate-query-materializes-candidates.md).
+- [open] oi-161 · reader residency · 2026-09-13 review · session close releases published query charges before their committed consumers retire: [ticket](tickets/reader-published-query-close-retention.md).
+- [open] oi-163 · reader residency · 2026-09-14 review · contents and chapter controls retain raw query results after reservation release: [ticket](tickets/reader-contents-raw-result-retirement.md).
+- [open] oi-167 · native table conversion · 2026-09-14 review · local table conversion still needs canonical-boundary and activation acceptance: [ticket](tickets/native-legacy-table-metadata-producer.md).
+- [open] oi-168 · reader navigation · 2026-09-14 review · section commands save before prepared source positioning: [ticket](tickets/reader-section-ready-before-position.md).
+- [open] oi-169 · pdf memory · 2026-09-14 qualification · complete-find native allocation and post-close reclamation remain unqualified: [ticket](tickets/pdf-complete-find-native-memory-qualification.md).
+- [open] oi-170 · foreground image memory · 2026-09-14 adversarial review · image admission is not qualified until its allocation is measured: [ticket](tickets/image-read-admission-needs-client-recovery.md).
+- [open] oi-171 · retained publication · 2026-09-14 adversarial review · retained epub internal href identity needs cross-language conformance: [ticket](tickets/reader-retained-epub-internal-href.md).
+- [open] oi-172 · sensitivity evidence · 2026-09-14 adversarial review · the coherent-fault portfolio must be replayed, not re-pinned: [ticket](tickets/coherent-fault-replay-portfolio.md).
+- [open] oi-173 · proof registry · 2026-09-14 adversarial review · the ownership pin and routing sha need their independent review: [ticket](tickets/priority-risk-ownership-floor-review.md).
+- [open] oi-174 · release process · 2026-09-14 adversarial review · no exact candidate exists, so every gate naming one is unreachable: [ticket](tickets/bounded-workspace-candidate-is-not-committed.md).
+- [open] oi-175 · evidence · 2026-09-14 adversarial review · 217 of 470 cited receipts cannot be reached from the candidate: [ticket](tickets/dossier-receipt-index-is-not-auditable.md).
+- [open] oi-176 · capacity qualification · 2026-09-14 adversarial review · thread/database headroom, host reserve and retained-growth tolerance are recorded nowhere: [ticket](tickets/gate-0a-recorded-capacity-limits-incomplete.md).
+- [open] oi-177 · composition qualification · 2026-09-14 adversarial review · twelve-pane restore, pinned selection and slow cancellation have no artifact: [ticket](tickets/gate-e-twelve-pane-restore-journey.md).
+- [open] oi-178 · release artifact · 2026-09-14 adversarial review · the deployed compose and release.py cannot boot the candidate: [ticket](tickets/gate-g-release-artifact-carries-no-capacity-profile.md).
+- [open] oi-179 · hosted reader progress · 2026-09-14 adversarial review · a cross-tab acknowledgment leaves the live writer with a stale baseline: [ticket](tickets/hosted-progress-crosstab-ack-leaves-a-stale-baseline.md).
+- [open] oi-180 · hosted reader progress · 2026-09-14 adversarial review · a ContentChanged view applies the device locator while saying it did not: [ticket](tickets/content-changed-view-applies-a-locator-it-reports-as-unapplied.md).
+- [open] oi-181 · workspace persistence · 2026-09-14 adversarial review · recovery offers an arbitrary row and its discard path has no proof: [ticket](tickets/workspace-recovery-row-selection-and-discard.md).
+- [open] oi-182 · workspace session sync · 2026-09-14 adversarial review · a test-only scheduler seam and a dead positional parameter: [ticket](tickets/session-sync-scheduler-seam-and-dead-parameter.md).
+- [open] oi-183 · resource cache · 2026-09-14 adversarial review · useResource publishes defects but never their clearance: [ticket](tickets/use-resource-defect-clearance-has-no-consumer.md).
+- [open] oi-184 · speculative reads · 2026-09-14 adversarial review · closing the nexus withdraws the warm read for the pane it is opening: [ticket](tickets/nexus-close-withdraws-the-pane-it-just-opened.md).
+- [open] oi-185 · publication render · 2026-09-14 adversarial review · direct render-node construction has no closed element/attribute vocabulary: [ticket](tickets/render-node-vocabulary-has-no-closed-enumeration.md).
+- [open] oi-186 · reader evidence · 2026-09-14 adversarial review · evidence seek by source marker cannot be verified by its caller: [ticket](tickets/evidence-seek-does-not-return-its-resolved-selection.md).
+- [open] oi-187 · reader stance · 2026-09-14 adversarial review · stance target resolution has no addressed read: [ticket](tickets/stance-target-resolution-has-no-addressed-route.md).
+- [open] oi-188 · publication render · 2026-09-14 adversarial review · svg paint scope and member byte charging are still unowned: [ticket](tickets/deferred-unit-resources-lack-paint-scope-and-byte-charge.md).
+- [open] oi-189 · hard-cut cleanliness · 2026-09-14 adversarial review · dead error codes, types and helpers left by the reader retirement: [ticket](tickets/retired-reader-surface-orphans.md).
+- [open] oi-190 · overrides · 2026-09-14 adversarial review · three lint suppressions omit the repository-standard justification token: [ticket](tickets/lint-suppressions-missing-justification.md).
+- [open] oi-191 · publication preparation · 2026-09-14 adversarial review · every prepared member takes the media row lock and enqueues its own job: [ticket](tickets/publication-member-preparation-reservation-flood.md).
+- [open] oi-192 · publication schema · 2026-09-14 adversarial review · a changed title still copies every unit's text: [ticket](tickets/publication-content-identity-split.md).
+- [open] oi-193 · pdf highlights · 2026-09-14 adversarial review · the paint page budget re-serializes the page per candidate row: [ticket](tickets/pdf-paint-page-budget-is-measured-quadratically.md).
+- [open] oi-194 · epub ingest · 2026-09-14 adversarial review · the svg asset sanitizer screens by value, not by an allowlist: [ticket](tickets/epub-svg-asset-sanitizer-lacks-an-attribute-allowlist.md).
+- [open] oi-195 · foreground image memory · 2026-09-14 adversarial review · epub asset and oracle plate reads still hold the whole object: [ticket](tickets/publication-asset-reads-materialize-whole-objects.md).
+- [open] oi-196 · reader progress · 2026-09-14 adversarial review · the retired offline identity survives in bff constants and two proof modules: [ticket](tickets/reader-progress-identity-leftovers.md).
+- [open] oi-197 · browser artwork memory · 2026-09-14 adversarial review · residency charges decoded pixels only, not the retained png derivative: [ticket](tickets/artwork-residency-ignores-its-encoded-derivative.md).
+- [open] oi-198 · client transport · 2026-09-14 adversarial review · the client still retries every 5xx, including deterministic refusals: [ticket](tickets/blanket-5xx-retry-rule-survives-the-terminal-code-cut.md).
+- [open] oi-199 · media pane proofs · 2026-09-14 adversarial review · four fixed pane defects have no proof for want of a fixture: [ticket](tickets/media-pane-proof-fixture-lacks-pdf-and-transcript-surfaces.md).
+- [open] oi-200 · native offline reading · 2026-09-14 adversarial review · the publication verifier retains one identity per anchor and section: [ticket](tickets/native-publication-verifier-heap-scales-with-content.md).
+- [open] oi-201 · native offline reading · 2026-09-14 adversarial review · the verifier's origin admission has three unmigrated call sites: [ticket](tickets/native-verifier-origin-admission-call-sites.md).
+- [open] oi-202 · native offline reading proofs · 2026-09-14 adversarial review · three jvm fixtures no longer match the schema they construct: [ticket](tickets/native-test-fixtures-out-of-step-with-the-package-schema.md).
+- [open] oi-203 · native offline conversion · 2026-09-14 adversarial review · schema-2 to schema-2 conversion still stages a full second copy: [ticket](tickets/native-schema-two-conversion-copies-the-whole-tree.md).
+- [open] oi-204 · native transfer scheduling · 2026-09-14 adversarial review · a server capacity refusal does not honour its retry-after: [ticket](tickets/native-transfer-capacity-refusal-has-no-retry-after-floor.md).
+- [open] oi-205 · native playback artwork · 2026-09-14 adversarial review · the over-limit refusal cannot be told from the absent-length refusal: [ticket](tickets/native-artwork-over-limit-shares-its-absent-length-message.md).
+- [open] oi-206 · cross-language corpus · 2026-09-14 adversarial review · no producer archive exercises embed, svg-paint or schema-2 rejects: [ticket](tickets/native-producer-corpus-lacks-embed-svg-and-reject-vectors.md).
+- [open] oi-207 · native table metadata · 2026-09-14 adversarial review · the table characterization workloads have no capacity owner: [ticket](tickets/native-table-characterization-capacity-entry.md).
+- [open] oi-208 · offline delivery · 2026-09-14 adversarial review · the server preparation/status/transfer owner has no sensitivity witness: [ticket](tickets/offline-package-delivery-has-no-registered-product-fault.md).
+- [open] oi-209 · offline delivery · 2026-09-14 adversarial review · archive preparation has no committed per-attempt budget: [ticket](tickets/offline-preparation-has-no-committed-attempt-budget.md).
+- [open] oi-210 · x ingest · 2026-09-14 adversarial review · the duplicate-media race is fixed but unproved: [ticket](tickets/x-duplicate-media-race-has-no-proof.md).
+- [open] oi-211 · fixture provenance · 2026-09-14 adversarial review · the committed schema-2 corpus has no producer-agreement assertion: [ticket](tickets/cross-language-corpus-producer-agreement.md).
+- [open] oi-212 · test controller · 2026-09-14 adversarial review · controller experiment limits reach every local-stack proof: [ticket](tickets/local-stack-proofs-inherit-controller-experiment-limits.md).
+
+- [open] note source activation · accepted destination is not yet carried through note pulses: [ticket](tickets/note-source-pulse-pane-scope.md).
+- [open] reader source delivery · 2026-09-14 review · pre-admission pending quotes have no payload owner: [ticket](tickets/reader-source-delivery-input-admission.md).
+
+- [open] native metadata capacity · member count does not bound retained anchor records; maximum heap remains unqualified: [ticket](tickets/native-publication-metadata-memory-qualification.md).
+
+- [open] indivisible grapheme capacity · accepted source can contain a grapheme larger than the candidate unit bound: [ticket](tickets/reader-indivisible-grapheme-capacity.md).
+
+- source table sanitizer loses caption identity: [ticket](tickets/reader-source-table-caption-sanitizer-loss.md).
+- hosted reader cache lacks account retirement: [ticket](tickets/hosted-reader-cache-account-retirement.md).
+
+- release host parser temp ownership harness fails: [ticket](tickets/release-host-parser-temp-ownership-harness.md).
+
+- [shared main deliberate fault mutation](tickets/shared-main-deliberate-fault-mutation.md): external sensitivity work can contaminate shared source snapshots.
+- initial strict-mode replay proofs are nested below the fixture root: [ticket](tickets/browser-strict-mode-root-proof-gap.md).
+- resource-action fixtures lack the required account cache: [ticket](tickets/resource-action-fixture-account-cache-composition.md).
+- native main contains unreviewed source/proof deltas: [ticket](tickets/native-main-snapshot-review-gap.md).
+
+- [open] text highlight selection · late acknowledgment clears a newer same-reader selection: [ticket](tickets/reader-text-highlight-late-ack-selection-loss.md).
+
+- [open] text highlight completion · retired presentation discards a committed write result: [ticket](tickets/reader-text-highlight-late-ack-outcome-loss.md).
+
+- [open] pdf loading · resource wrapper churn reopens an unchanged binary: [ticket](tickets/reader-pdf-resource-wrapper-reopens-source.md).
+
+- [open] text selection links · late completion clears a later selection: [ticket](tickets/reader-selection-link-late-ack-selection-loss.md).
+
+
+- packaged web ingest selects its Node path from the data environment: [ticket](tickets/worker-web-ingest-command-uses-data-environment.md).
+
+
+
+- epub source preparation / worker memory: [ticket](tickets/reader-epub-source-worker-cgroup-ceiling.md).
+
+
+- epub sanitizer discards caption semantics: [ticket](tickets/reader-epub-caption-sanitizer-loss.md).
+
+- [open] reader link completion · late response clears a newer dialog and can install its old retry: [ticket](tickets/reader-link-late-response-replaces-session.md).
+- [open] reader pending writes · completion closures retain source ranges after reader retirement: [ticket](tickets/reader-pending-write-retains-source-range.md).
+
+
+- history recency sorts the retained corpus: [ticket](tickets/nexus-history-recency-sorts-retained-corpus.md).
+
+- content indexing rejects an accepted unbroken source: [ticket](tickets/content-indexing-rejects-accepted-unbroken-source.md).
+
+
+- accepted paragraph cardinality exceeds document-index spool and block retention: [ticket](tickets/content-indexing-paragraph-cardinality-exceeds-spool.md).
+
+- bulk resource cleanup exceeds postgres stack depth: [ticket](tickets/resource-graph-bulk-cleanup-exceeds-postgres-stack.md).
+- indexing publication blocks a job heartbeat: [ticket](tickets/content-indexing-publication-blocks-job-heartbeat.md).
+- parent and child test processes deadlock on the shared heavy lock: [ticket](tickets/controller-parent-child-heavy-lock-deadlock.md).
+
+- native progress-choice proof still corrupts the retired schema-one member: [ticket](tickets/native-progress-choice-proof-retains-schema-one-member.md).
+
+- failed reader-layer rollback can retain a released prepared view: [ticket](tickets/reader-layer-rollback-retired-view.md).
+
+- native conversion retains all fragment rows to close one cursor: [ticket](tickets/native-legacy-fragment-list-allocation.md).
+
+- [epub retained canonical block corpus](tickets/epub-retains-canonical-block-corpus.md): body spooling leaves separator-sized block metadata and per-fragment ORM allocation unqualified.
+- conversation context has no common fence with ephemeral target deletion: [ticket](tickets/conversation-context-can-race-resource-death.md).
+
+- native reconciliation can orphan its claimed run when its initial sqlite-backed notification fails; see [ticket](tickets/native-reconciliation-start-can-orphan-claimed-run.md).
+
+- native job reconciliation reads sqlite before its owned failure boundary; see [ticket](tickets/native-reconciliation-job-fast-path-reads-before-owned-boundary.md).
+
+
+- immutable member stream retirement lacks explicit storage-body close ownership: [ticket](tickets/immutable-member-stream-close-ownership.md).
+
+- [open] oi-214 · foreground admission · 2026-09-14 bounded-workspace review · deadline cancellation lacks physical-worker lifetime proof: [ticket](tickets/read-deadline-can-retire-a-live-synchronous-worker.md).
+
+- [open] oi-215 · foreground admission · 2026-09-14 bounded-workspace review · route-owned timeout can spin the admitted event loop: [ticket](tickets/read-admission-confuses-route-timeout-with-permit-expiry.md).
+
+- [open] oi-216 · test controller · 2026-09-14 bounded-workspace review · bounded service logs discard the primary assertion: [ticket](tickets/controller-service-tail-loses-primary-assertion.md).

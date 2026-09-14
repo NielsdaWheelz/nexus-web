@@ -3,17 +3,10 @@
 import { useCallback, useEffect, useRef } from "react";
 import { apiFetch } from "@/lib/api/client";
 import { isAbortError } from "@/lib/errors";
-import type { NexusHistorySource } from "./model";
+import { nexusHistoryCommand, type NexusSelectionRecord } from "./history";
 
 const NEXUS_SELECTION_IDLE_DELAY_MS = 500;
 const NEXUS_SELECTION_QUEUE_PRESSURE_LIMIT = 64;
-
-export interface NexusSelectionRecord {
-  readonly query: string | null;
-  readonly target_href: string;
-  readonly label_snapshot: string;
-  readonly source: NexusHistorySource;
-}
 
 interface QueuedSelection {
   readonly request: NexusSelectionRecord & {
@@ -26,9 +19,23 @@ interface QueuedSelection {
   controller: AbortController | null;
 }
 
+/**
+ * A durable coordinator publishes its failures as values; it never throws above
+ * the boundary that owns its surface. A failed write keeps its frozen entry, so
+ * `retry` replays that exact `client_mutation_id` and the backend's replay
+ * record counts the selection once.
+ */
+export type NexusSelectionJournalFailure =
+  | {
+      readonly kind: "WriteFailed";
+      readonly error: unknown;
+      readonly retry: () => void;
+    }
+  | { readonly kind: "DrainDefect"; readonly error: unknown };
+
 interface NexusSelectionJournalOptions {
   readonly foregroundActive: boolean;
-  readonly onError: (error: unknown, retry: () => void) => void;
+  readonly onFailure: (failure: NexusSelectionJournalFailure) => void;
   readonly onQuiescentCommit: () => void;
 }
 
@@ -41,7 +48,7 @@ interface NexusSelectionJournalOptions {
  */
 export function useNexusSelectionJournal({
   foregroundActive,
-  onError,
+  onFailure,
   onQuiescentCommit,
 }: NexusSelectionJournalOptions): (selection: NexusSelectionRecord) => void {
   const queueRef = useRef<QueuedSelection[]>([]);
@@ -52,11 +59,11 @@ export function useNexusSelectionJournal({
   const foregroundActiveRef = useRef(foregroundActive);
   const activeRef = useRef(false);
   const committedSinceRefreshRef = useRef(false);
-  const onErrorRef = useRef(onError);
+  const onFailureRef = useRef(onFailure);
   const onQuiescentCommitRef = useRef(onQuiescentCommit);
   const drainRef = useRef<() => Promise<void>>(async () => {});
   const scheduleDrainRef = useRef<() => void>(() => {});
-  onErrorRef.current = onError;
+  onFailureRef.current = onFailure;
   onQuiescentCommitRef.current = onQuiescentCommit;
 
   const cancelFrames = useCallback((entry: QueuedSelection) => {
@@ -77,12 +84,6 @@ export function useNexusSelectionJournal({
       body: JSON.stringify(entry.request),
       signal,
     });
-  }, []);
-
-  const escalateDrainDefect = useCallback((error: unknown) => {
-    window.setTimeout(() => {
-      throw error;
-    }, 0);
   }, []);
 
   scheduleDrainRef.current = () => {
@@ -106,7 +107,9 @@ export function useNexusSelectionJournal({
         : NEXUS_SELECTION_IDLE_DELAY_MS;
     idleTimerRef.current = window.setTimeout(() => {
       idleTimerRef.current = null;
-      void drainRef.current().catch(escalateDrainDefect);
+      void drainRef.current().catch((error: unknown) => {
+        onFailureRef.current({ kind: "DrainDefect", error });
+      });
     }, delay);
   };
 
@@ -145,10 +148,14 @@ export function useNexusSelectionJournal({
           } else {
             awaitingExplicitRetry = true;
             entry.ready = false;
-            onErrorRef.current(error, () => {
-              if (!queueRef.current.includes(entry) || entry.sending) return;
-              entry.ready = true;
-              scheduleDrainRef.current();
+            onFailureRef.current({
+              kind: "WriteFailed",
+              error,
+              retry: () => {
+                if (!queueRef.current.includes(entry) || entry.sending) return;
+                entry.ready = true;
+                scheduleDrainRef.current();
+              },
             });
           }
         } finally {
@@ -233,10 +240,7 @@ export function useNexusSelectionJournal({
   return useCallback(
     (selection: NexusSelectionRecord) => {
       const entry: QueuedSelection = {
-        request: {
-          client_mutation_id: crypto.randomUUID(),
-          ...selection,
-        },
+        request: nexusHistoryCommand(selection, crypto.randomUUID()),
         firstFrame: null,
         secondFrame: null,
         ready: false,

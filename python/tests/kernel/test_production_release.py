@@ -3841,19 +3841,20 @@ def test_config_publication_rejects_even_blank_image_owned_node_ingest_script_be
     with _host_harness(tmp_path) as harness:
         paths = release.ReleasePaths.under(harness.root)
         source = tmp_path / "source.env"
-        source.write_text("ALPHA=first\nNODE_INGEST_SCRIPT=\n", encoding="utf-8")
         before_config = {path.name for path in paths.config_root.iterdir()}
         before_current = paths.current_config.readlink()
 
-        with pytest.raises(release.ReleaseDefect, match="NODE_INGEST_SCRIPT"):
-            release.publish_config(
-                source,
-                release.ReleaseStore(paths),
-                next_source_sha=SOURCE_SHA,
-            )
+        for key in ("NODE_INGEST_SCRIPT", "NEXUS_NODE_INGEST_SCRIPT"):
+            source.write_text(f"ALPHA=first\n{key}=\n", encoding="utf-8")
+            with pytest.raises(release.ReleaseDefect, match=key):
+                release.publish_config(
+                    source,
+                    release.ReleaseStore(paths),
+                    next_source_sha=SOURCE_SHA,
+                )
 
-        assert {path.name for path in paths.config_root.iterdir()} == before_config
-        assert paths.current_config.readlink() == before_current
+            assert {path.name for path in paths.config_root.iterdir()} == before_config
+            assert paths.current_config.readlink() == before_current
 
 
 def test_config_publication_refuses_to_orphan_a_pending_caddy_activation(

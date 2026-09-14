@@ -1,3 +1,5 @@
+import { expectExactRecord, expectFiniteNumber } from "@/lib/validation";
+
 export interface PdfHighlightQuad {
   x1: number;
   y1: number;
@@ -7,6 +9,17 @@ export interface PdfHighlightQuad {
   y3: number;
   x4: number;
   y4: number;
+}
+
+/** Strict wire boundary; unlike raw legacy overlays, no quad can be discarded. */
+export function decodePdfHighlightQuad(raw: unknown, name: string): PdfHighlightQuad {
+  const row = expectExactRecord(raw, ["x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4"], name);
+  return {
+    x1: expectFiniteNumber(row.x1, `${name}.x1`), y1: expectFiniteNumber(row.y1, `${name}.y1`),
+    x2: expectFiniteNumber(row.x2, `${name}.x2`), y2: expectFiniteNumber(row.y2, `${name}.y2`),
+    x3: expectFiniteNumber(row.x3, `${name}.x3`), y3: expectFiniteNumber(row.y3, `${name}.y3`),
+    x4: expectFiniteNumber(row.x4, `${name}.x4`), y4: expectFiniteNumber(row.y4, `${name}.y4`),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

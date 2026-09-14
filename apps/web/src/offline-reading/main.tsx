@@ -11,19 +11,29 @@ import "pdfjs-dist/web/pdf_viewer.css";
 import "@/lib/highlights/highlights.css";
 import "@/lib/reader/apparatus.css";
 
+import { ResourceCacheProvider } from "@/lib/api/resourceCache";
+import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import OfflineReadingShelf from "./OfflineReadingShelf";
-import { OfflineReadingControllerRuntime } from "@/lib/offlineReading/runtime";
 import { createWebKitOfflineReadingTransport } from "@/lib/offlineReading/transport";
+import { OfflineReadingControllerRuntime } from "@/lib/offlineReading/runtime";
 
 const transport = createWebKitOfflineReadingTransport();
-if (transport === null) throw new Error("Offline reading requires the Nexus Android capability");
+if (transport === null)
+  throw new Error("Offline reading requires the Nexus Android capability");
 const root = document.getElementById("root");
 if (root === null) throw new Error("Offline reading root is missing");
+// The native handshake and channel belong to this document, outside React replay.
+const controller = new OfflineReadingControllerRuntime(transport);
+void controller.connect("Offline").catch(() => {
+  // justify-ignore-error: connect publishes its retained failure to the shelf.
+});
 
 createRoot(root).render(
   <StrictMode>
-    <OfflineReadingShelf controller={new OfflineReadingControllerRuntime(transport)} />
+    <ResourceCacheProvider value={{}} publicationLimits={READER_CAPACITY.cache}>
+      <OfflineReadingShelf controller={controller} />
+    </ResourceCacheProvider>
   </StrictMode>,
 );

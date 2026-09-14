@@ -6,9 +6,11 @@ import hashlib
 import json
 import posixpath
 import re
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 from urllib.parse import unquote, urlparse
 from uuid import UUID
 
@@ -16,8 +18,12 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+if TYPE_CHECKING:
+    from nexus.services.reader_publication_sources import PreparedFileReaderSource
+    from nexus.services.x_types import XPostSourceCheckpoint
+
 from nexus.auth.permissions import can_read_media
-from nexus.config import get_settings
+from nexus.config import get_settings, require_reader_publication_limits
 from nexus.db.models import (
     Fragment,
     Media,
@@ -38,6 +44,7 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
+from nexus.ids import new_uuid7
 from nexus.jobs.queue import (
     JobExecutionContext,
     current_dead_job_for_payload,
@@ -62,6 +69,7 @@ from nexus.schemas.import_history import (
 )
 from nexus.schemas.imports import RepairSourceOffer, RetrySourceOffer, SourceRecoveryInput
 from nexus.schemas.media import (
+    DocumentEmbedSource,
     FromUrlResponse,
     MediaProcessingStatus,
     MediaSourceAttemptStatus,
@@ -93,7 +101,9 @@ from nexus.services.contributor_taxonomy import (
     build_observation,
 )
 from nexus.services.document_embeds import (
+    DocumentEmbedArtifactOccurrence,
     delete_document_embed_artifacts,
+    prepare_document_embed_sources,
     replace_document_embed_artifact,
 )
 from nexus.services.file_ingest_validation import (
@@ -120,6 +130,7 @@ from nexus.services.media_processing_state import (
     mark_stage_warning,
 )
 from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
+from nexus.services.parser_temp import parser_attempt_directory
 from nexus.services.pdf_ingest import PdfSourcePackageArtifact
 from nexus.services.reader_apparatus import (
     attach_fragment_locators,
@@ -225,6 +236,7 @@ _TERMINAL_SOURCE_FAILURE_CODES = frozenset(
         ApiErrorCode.E_ARCHIVE_UNSAFE,
         ApiErrorCode.E_INVALID_REQUEST,
         ApiErrorCode.E_PDF_PASSWORD_REQUIRED,
+        ApiErrorCode.E_READER_CONTENT_TOO_LARGE,
         ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE,
         ApiErrorCode.E_X_POST_UNAVAILABLE,
         ApiErrorCode.E_X_PROVIDER_CREDITS_DEPLETED,
@@ -918,6 +930,7 @@ def accept_embedded_source(
     document_embed_key: str,
     library_ids: list[UUID],
     request_id: str | None = None,
+    x_snapshot: XPostSourceCheckpoint | None = None,
 ) -> EmbeddedSourceAcceptance:
     """Create or reuse a child source for a trusted document embed. Flush-only."""
     validate_requested_url(url)
@@ -937,6 +950,11 @@ def accept_embedded_source(
         )
     if spec["source_type"] == source_types.X_POST:
         lock_x_provider_identity(db, str(spec["provider_id"]))
+    if x_snapshot is not None and (
+        spec["source_type"] != source_types.X_POST
+        or x_snapshot.snapshot.post.id != spec["provider_target_ref"]
+    ):
+        raise ValueError("Captured X snapshot does not describe the accepted source")
 
     now = datetime.now(UTC)
     media = _find_reusable_url_media(db, viewer_id, spec)
@@ -986,6 +1004,8 @@ def accept_embedded_source(
         **_source_payload_from_spec(spec),
         "library_ids": [str(library_id) for library_id in library_ids],
     }
+    if x_snapshot is not None:
+        source_payload["x_post_snapshot"] = x_snapshot.model_dump(mode="json")
     attempt = create_attempt(
         db,
         media=media,
@@ -3086,10 +3106,19 @@ def _run_x_post(
     fence: SourcePublicationFence,
 ) -> dict[str, object]:
     from nexus.services import x_ingest
+    from nexus.services.x_types import XPostSourceCheckpoint
 
     post_id = str(attempt.provider_target_ref or attempt.source_payload.get("post_id") or "")
     if not post_id:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Missing X post source target.")
+    checkpoint_body = attempt.source_payload.get("x_post_snapshot")
+    checkpoint = (
+        XPostSourceCheckpoint.model_validate(checkpoint_body)
+        if checkpoint_body is not None
+        else None
+    )
+    if checkpoint is not None and checkpoint.snapshot.post.id != post_id:
+        raise AssertionError("Stored X snapshot changed the accepted source identity")
 
     def begin_x_post_extraction(db: Session, _attempt: MediaSourceAttempt) -> None:
         media = db.get(Media, media_id)
@@ -3118,6 +3147,7 @@ def _run_x_post(
         source_attempt_id=attempt.id,
         request_id=request_id,
         publication_fence=fence,
+        snapshot=checkpoint.snapshot if checkpoint is not None else None,
     )
 
 
@@ -3320,32 +3350,45 @@ def _run_prepared_html_article(
             "Article has no readable text.",
         )
 
-    from nexus.services.document_embeds import DocumentEmbedLockSetChanged
+    from nexus.services.reader_publication_web import (
+        WebReaderFragment,
+        prepare_web_reader_publication,
+    )
 
-    embed_urls = [
-        item.detected.canonical_source_url
-        for item in prepared.document_embeds
+    prepared_fragment_id = new_uuid7()
+    if attempt.created_by_user_id is None:
+        raise AssertionError("stored HTML source attempt has no owner")
+    occurrences, planned_existing_media_ids = prepare_document_embed_sources(
+        session_factory,
+        media_id=media_id,
+        owner_user_id=attempt.created_by_user_id,
+        fence=fence,
+        occurrences=document_embed_artifact_occurrences(
+            fragment_id=prepared_fragment_id, document_embeds=prepared.document_embeds
+        )
         if extract_embeds
-        and item.detected.resolution_status == "pending"
-        and item.detected.canonical_source_url
-    ]
-    planned_existing_media_ids: set[UUID] = set()
-    for _lock_set_attempt in range(3):
-        discovery = session_factory()
-        try:
-            if attempt.created_by_user_id is None and embed_urls:
-                raise AssertionError("stored HTML source attempt has no owner")
-            if attempt.created_by_user_id is not None:
-                planned_existing_media_ids.update(
-                    reusable_embedded_source_media_ids(
-                        discovery,
-                        viewer_id=attempt.created_by_user_id,
-                        urls=list(embed_urls),
-                    )
-                )
-            discovery.rollback()
-        finally:
-            discovery.close()
+        else (),
+        request_id=request_id,
+    )
+    replacement_title = str(payload.get("title") or "").strip() if extract_embeds else ""
+    with prepare_web_reader_publication(
+        session_factory,
+        media_id=media_id,
+        fragments=(
+            WebReaderFragment(
+                prepared_fragment_id,
+                0,
+                prepared,
+                tuple(
+                    DocumentEmbedSource.model_validate(item.model_dump(exclude={"fragment_id"}))
+                    for item in occurrences
+                ),
+            ),
+        ),
+        source_html=source_html if source_html is not None else content_html,
+        title=replacement_title[:255] if replacement_title else None,
+        limits=require_reader_publication_limits(),
+    ) as publication:
 
         def publish_html_artifacts(
             db: Session, locked_attempt: MediaSourceAttempt
@@ -3358,10 +3401,12 @@ def _run_prepared_html_article(
                     media=media,
                     locked_attempt=locked_attempt,
                     media_id=media_id,
+                    fragment_id=prepared_fragment_id,
                     actor_storage_path=storage_path,
                     content_html=content_html,
                     prepared=prepared,
                     extract_embeds=extract_embeds,
+                    occurrences=occurrences,
                     request_id=request_id,
                     planned_existing_media_ids=planned_existing_media_ids,
                     payload=payload,
@@ -3372,19 +3417,16 @@ def _run_prepared_html_article(
                 media_id=media_id,
                 expected_kind="web_article",
                 replace_projection=replace_projection,
+                prepared=publication,
             )
 
-        try:
-            return run_source_publication_phase(
-                session_factory=session_factory,
-                label="publish_stored_html_artifacts",
-                fence=fence,
-                media_ids=tuple({media_id, *planned_existing_media_ids}),
-                mutate=publish_html_artifacts,
-            )
-        except DocumentEmbedLockSetChanged as exc:
-            planned_existing_media_ids.add(exc.media_id)
-    raise AssertionError("stored HTML embed media lock set did not stabilize")
+        return run_source_publication_phase(
+            session_factory=session_factory,
+            label="publish_stored_html_artifacts",
+            fence=fence,
+            media_ids=tuple({media_id, *planned_existing_media_ids}),
+            mutate=publish_html_artifacts,
+        )
 
 
 def _replace_stored_html_projection(
@@ -3393,12 +3435,14 @@ def _replace_stored_html_projection(
     media: Media,
     locked_attempt: MediaSourceAttempt,
     media_id: UUID,
+    fragment_id: UUID,
     actor_storage_path: str,
     content_html: str,
     prepared: WebArticlePreparedFragment,
     extract_embeds: bool,
     request_id: str | None,
-    planned_existing_media_ids: set[UUID],
+    planned_existing_media_ids: frozenset[UUID],
+    occurrences: tuple[DocumentEmbedArtifactOccurrence, ...],
     payload: dict[str, object],
 ) -> tuple[UUID, ContributorObservationBatch]:
     storage_path = actor_storage_path
@@ -3418,6 +3462,7 @@ def _replace_stored_html_projection(
         include_content_index=False,
     )
     fragment = Fragment(
+        id=fragment_id,
         media_id=media_id,
         idx=0,
         html_sanitized=prepared.html_sanitized,
@@ -3428,28 +3473,18 @@ def _replace_stored_html_projection(
     db.flush()
     insert_fragment_blocks(db, fragment.id, prepared.fragment_blocks)
     if extract_embeds:
-        queued_children = replace_document_embed_artifact(
+        replace_document_embed_artifact(
             db,
             owner_user_id=owner_user_id,
             media_id=media_id,
             source_attempt_id=locked_attempt.id,
-            occurrences=document_embed_artifact_occurrences(
-                fragment_id=fragment.id,
-                document_embeds=prepared.document_embeds,
-            ),
+            occurrences=occurrences,
             extraction_error_code=prepared.document_embed_extraction_error_code,
             extraction_error_message=prepared.document_embed_extraction_error_message,
             request_id=request_id,
             locked_existing_target_media_ids=frozenset(planned_existing_media_ids),
         )
-        for child_media_id, child_attempt_id in queued_children:
-            enqueue_accepted_source_attempt_in_transaction(
-                db,
-                media_id=child_media_id,
-                attempt_id=child_attempt_id,
-                actor_user_id=owner_user_id,
-                request_id=request_id,
-            )
+
     replace_media_apparatus(
         db,
         media_id=media_id,
@@ -3618,7 +3653,7 @@ def _run_remote_file(
             storage_client=storage_client,
         )
     )
-    prepared = _prepare_existing_file_source(
+    with _prepare_existing_file_source(
         session_factory,
         media_id,
         kind,
@@ -3628,77 +3663,77 @@ def _run_remote_file(
         source_sha256=fetched.sha256_hex,
         source_package=source_package,
         source_package_diagnostics=source_package_diagnostics,
-    )
+    ) as prepared:
 
-    def publish_remote_file(
-        db: Session, locked_attempt: MediaSourceAttempt
-    ) -> tuple[dict[str, object], list[str]]:
-        media = db.get(Media, media_id)
-        if media is None:
-            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-        media.canonical_source_url = normalize_url_for_display(fetched.final_url)
-        media.updated_at = func.now()
-        if source_package is not None or source_package_diagnostics:
-            source_payload = dict(locked_attempt.source_payload or {})
-            if source_package_diagnostics:
-                source_payload["arxiv_source_package"] = source_package_diagnostics
-            elif source_package is not None:
-                source_payload["arxiv_source_package"] = {
-                    "status": "fetched",
-                    "source_url": source_package.source_url,
-                    "storage_path": source_package.storage_path,
-                    "content_type": source_package.content_type,
-                    "size_bytes": source_package.size_bytes,
-                    "sha256_hex": source_package.sha256_hex,
-                }
-            else:
-                raise AssertionError("source-package branch has no package state")
-            locked_attempt.source_payload = source_payload
-        return _publish_prepared_file_source(
-            db,
-            media_id=media_id,
-            kind=kind,
-            prepared=prepared,
-            source_file=ReaderPublicationSourceFile(
-                storage_path=storage_path,
-                content_type=fetched.content_type,
-                size_bytes=fetched.size_bytes,
-                source_sha256=fetched.sha256_hex,
-            ),
-        )
+        def publish_remote_file(
+            db: Session, locked_attempt: MediaSourceAttempt
+        ) -> tuple[dict[str, object], list[str]]:
+            media = db.get(Media, media_id)
+            if media is None:
+                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+            media.canonical_source_url = normalize_url_for_display(fetched.final_url)
+            media.updated_at = func.now()
+            if source_package is not None or source_package_diagnostics:
+                source_payload = dict(locked_attempt.source_payload or {})
+                if source_package_diagnostics:
+                    source_payload["arxiv_source_package"] = source_package_diagnostics
+                elif source_package is not None:
+                    source_payload["arxiv_source_package"] = {
+                        "status": "fetched",
+                        "source_url": source_package.source_url,
+                        "storage_path": source_package.storage_path,
+                        "content_type": source_package.content_type,
+                        "size_bytes": source_package.size_bytes,
+                        "sha256_hex": source_package.sha256_hex,
+                    }
+                else:
+                    raise AssertionError("source-package branch has no package state")
+                locked_attempt.source_payload = source_payload
+            return _publish_prepared_file_source(
+                db,
+                media_id=media_id,
+                kind=kind,
+                prepared=prepared,
+                source_file=ReaderPublicationSourceFile(
+                    storage_path=storage_path,
+                    content_type=fetched.content_type,
+                    size_bytes=fetched.size_bytes,
+                    source_sha256=fetched.sha256_hex,
+                ),
+            )
 
-    response, cleanup_paths = run_source_publication_phase(
-        session_factory=session_factory,
-        label="publish_remote_file_reference",
-        fence=fence,
-        media_ids=(media_id,),
-        mutate=publish_remote_file,
-    )
-    finalize_db = session_factory()
-    try:
-        finalize_storage_object_write(
-            finalize_db,
-            media_id=media_id,
-            storage_path=storage_path,
-            storage_client=storage_client,
+        response, cleanup_paths = run_source_publication_phase(
+            session_factory=session_factory,
+            label="publish_remote_file_reference",
+            fence=fence,
+            media_ids=(media_id,),
+            mutate=publish_remote_file,
         )
-        if source_package_storage_path:
+        finalize_db = session_factory()
+        try:
             finalize_storage_object_write(
                 finalize_db,
                 media_id=media_id,
-                storage_path=source_package_storage_path,
+                storage_path=storage_path,
                 storage_client=storage_client,
             )
-    finally:
-        finalize_db.close()
-    _finalize_prepared_file_source(
-        session_factory,
-        media_id=media_id,
-        kind=kind,
-        prepared=prepared,
-        old_storage_paths=cleanup_paths,
-    )
-    return response
+            if source_package_storage_path:
+                finalize_storage_object_write(
+                    finalize_db,
+                    media_id=media_id,
+                    storage_path=source_package_storage_path,
+                    storage_client=storage_client,
+                )
+        finally:
+            finalize_db.close()
+        _finalize_prepared_file_source(
+            session_factory,
+            media_id=media_id,
+            kind=kind,
+            prepared=prepared,
+            old_storage_paths=cleanup_paths,
+        )
+        return response
 
 
 def _try_fetch_arxiv_source_package(
@@ -3837,7 +3872,7 @@ def _materialize_existing_file_source(
     source_package: PdfSourcePackageArtifact | None = None,
     source_package_diagnostics: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    prepared = _prepare_existing_file_source(
+    with _prepare_existing_file_source(
         session_factory,
         media_id,
         kind,
@@ -3847,29 +3882,30 @@ def _materialize_existing_file_source(
         source_sha256=source_sha256,
         source_package=source_package,
         source_package_diagnostics=source_package_diagnostics,
-    )
-    response, old_storage_paths = run_source_publication_phase(
-        session_factory=session_factory,
-        label=f"publish_{kind}_source_artifacts",
-        fence=fence,
-        media_ids=(media_id,),
-        mutate=lambda db, _attempt: _publish_prepared_file_source(
-            db,
+    ) as prepared:
+        response, old_storage_paths = run_source_publication_phase(
+            session_factory=session_factory,
+            label=f"publish_{kind}_source_artifacts",
+            fence=fence,
+            media_ids=(media_id,),
+            mutate=lambda db, _attempt: _publish_prepared_file_source(
+                db,
+                media_id=media_id,
+                kind=kind,
+                prepared=prepared,
+            ),
+        )
+        _finalize_prepared_file_source(
+            session_factory,
             media_id=media_id,
             kind=kind,
             prepared=prepared,
-        ),
-    )
-    _finalize_prepared_file_source(
-        session_factory,
-        media_id=media_id,
-        kind=kind,
-        prepared=prepared,
-        old_storage_paths=old_storage_paths,
-    )
-    return response
+            old_storage_paths=old_storage_paths,
+        )
+        return response
 
 
+@contextmanager
 def _prepare_existing_file_source(
     session_factory: sessionmaker[Session],
     media_id: UUID,
@@ -3881,7 +3917,7 @@ def _prepare_existing_file_source(
     source_sha256: str,
     source_package: PdfSourcePackageArtifact | None = None,
     source_package_diagnostics: dict[str, object] | None = None,
-) -> object:
+) -> Iterator[PreparedFileReaderSource]:
     def record_progress(completed: int, total: int, unit: Literal["Page", "Chapter"]) -> None:
         record_source_extraction_progress(
             session_factory=session_factory,
@@ -3892,39 +3928,54 @@ def _prepare_existing_file_source(
             unit=unit,
         )
 
-    if kind == MediaKind.pdf.value:
-        from nexus.services.pdf_lifecycle import prepare_pdf_source
+    with ExitStack() as source_files:
+        if kind == MediaKind.pdf.value:
+            from nexus.services.pdf_lifecycle import prepare_pdf_source
 
-        prepared = prepare_pdf_source(
-            media_id=media_id,
-            attempt_id=fence.attempt_id,
-            storage_path=storage_path,
-            source_size_bytes=source_size_bytes,
-            expected_source_sha256=source_sha256,
-            record_progress=record_progress,
-            source_package=source_package,
-            source_package_diagnostics=source_package_diagnostics,
-        )
-    elif kind == MediaKind.epub.value:
-        from nexus.services.epub_lifecycle import prepare_epub_source
+            prepared = prepare_pdf_source(
+                media_id=media_id,
+                attempt_id=fence.attempt_id,
+                storage_path=storage_path,
+                source_size_bytes=source_size_bytes,
+                expected_source_sha256=source_sha256,
+                record_progress=record_progress,
+                source_package=source_package,
+                source_package_diagnostics=source_package_diagnostics,
+            )
+        elif kind == MediaKind.epub.value:
+            from nexus.services.epub_lifecycle import prepare_epub_source
 
-        prepared = prepare_epub_source(
-            session_factory=session_factory,
+            attempt_directory = source_files.enter_context(
+                parser_attempt_directory(fence.attempt_id)
+            )
+            prepared = prepare_epub_source(
+                session_factory=session_factory,
+                attempt_directory=attempt_directory,
+                media_id=media_id,
+                attempt_id=fence.attempt_id,
+                storage_path=storage_path,
+                source_size_bytes=source_size_bytes,
+                expected_source_sha256=source_sha256,
+                record_progress=record_progress,
+            )
+        else:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_KIND, "Source file must be PDF or EPUB."
+            )
+        from nexus.services.reader_publication_sources import prepare_file_reader_publication
+
+        with prepare_file_reader_publication(
+            session_factory,
             media_id=media_id,
-            attempt_id=fence.attempt_id,
-            storage_path=storage_path,
-            source_size_bytes=source_size_bytes,
-            expected_source_sha256=source_sha256,
-            record_progress=record_progress,
-        )
-    else:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Source file must be PDF or EPUB.")
-    record_source_finalizing(
-        session_factory=session_factory,
-        fence=fence,
-        media_id=media_id,
-    )
-    return prepared
+            plan=prepared,
+            limits=require_reader_publication_limits(),
+        ) as source:
+            record_source_finalizing(
+                session_factory=session_factory,
+                fence=fence,
+                media_id=media_id,
+            )
+            yield source
 
 
 def _publish_prepared_file_source(
@@ -3932,7 +3983,7 @@ def _publish_prepared_file_source(
     *,
     media_id: UUID,
     kind: str,
-    prepared: object,
+    prepared: PreparedFileReaderSource,
     source_file: ReaderPublicationSourceFile | None = None,
 ) -> tuple[dict[str, object], list[str]]:
     """Publish one prepared plan and report its post-commit storage cleanup.
@@ -3946,28 +3997,30 @@ def _publish_prepared_file_source(
         from nexus.services.pdf_ingest import PdfExtractionPlan
         from nexus.services.pdf_lifecycle import publish_pdf_source
 
-        if not isinstance(prepared, PdfExtractionPlan):
+        if not isinstance(prepared.plan, PdfExtractionPlan):
             # justify-defect: the prepare and publish phases of one run share the
             # media kind, so a mismatched plan type is a broken call graph.
             raise AssertionError("PDF source plan has the wrong type")
         return publish_pdf_source(
             db,
             media_id=media_id,
-            plan=prepared,
+            plan=prepared.plan,
+            publication=prepared.publication,
             source_file=source_file,
         )
     if kind == MediaKind.epub.value:
         from nexus.services.epub_ingest import EpubExtractionPlan
         from nexus.services.epub_lifecycle import publish_epub_source
 
-        if not isinstance(prepared, EpubExtractionPlan):
+        if not isinstance(prepared.plan, EpubExtractionPlan):
             # justify-defect: the prepare and publish phases of one run share the
             # media kind, so a mismatched plan type is a broken call graph.
             raise AssertionError("EPUB source plan has the wrong type")
         return publish_epub_source(
             db,
             media_id=media_id,
-            plan=prepared,
+            plan=prepared.plan,
+            publication=prepared.publication,
             source_file=source_file,
         )
     raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Source file must be PDF or EPUB.")
@@ -3978,18 +4031,18 @@ def _finalize_prepared_file_source(
     *,
     media_id: UUID,
     kind: str,
-    prepared: object,
+    prepared: PreparedFileReaderSource,
     old_storage_paths: list[str],
 ) -> None:
     storage_client = get_storage_client()
     if kind == MediaKind.epub.value:
         from nexus.services.epub_ingest import EpubExtractionPlan
 
-        if not isinstance(prepared, EpubExtractionPlan):
+        if not isinstance(prepared.plan, EpubExtractionPlan):
             raise AssertionError("EPUB source plan has the wrong type")
         finalize_db = session_factory()
         try:
-            for asset_storage_path in prepared.asset_storage_paths.values():
+            for asset_storage_path in prepared.plan.asset_storage_paths.values():
                 finalize_storage_object_write(
                     finalize_db,
                     media_id=media_id,

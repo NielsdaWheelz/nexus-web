@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/media/observeArtwork.ts b/apps/web/src/lib/media/observeArtwork.ts
+--- a/apps/web/src/lib/media/observeArtwork.ts
++++ b/apps/web/src/lib/media/observeArtwork.ts
+@@ -27,7 +27,7 @@
+     owned?.lease.release();
+   };
+   const update = () => {
+-    if (retired) return;
++    if (retired && !image.isConnected) return;
+     const box = image.getBoundingClientRect();
+     const displayed = { width: Math.ceil(box.width * window.devicePixelRatio), height: Math.ceil(box.height * window.devicePixelRatio) };
+     if (!intersects || displayed.width === 0 || displayed.height === 0) { release(); return; }

@@ -69,6 +69,11 @@
   margin-bottom: 0.25em;
 }
 
+/* A unit cut continues the same source item; its original marker occurs once. */
+.renderer li[data-nexus-continuation="list-item"]::marker {
+  content: "";
+}
+
 /* Blockquotes */
 .renderer blockquote {
   margin: 1em 0;
@@ -113,6 +118,13 @@
   width: 100%;
   margin: 1em 0;
   border-collapse: collapse;
+}
+
+/* Only source-table excerpts carry this marker. Their original coordinates
+   and headers are separate metadata; a browser must not rebuild a slot grid
+   from the remaining rows. Unmarked nested and complete tables keep layout. */
+.renderer :is(table, thead, tbody, tfoot, tr, td, th, colgroup, col, caption)[data-nexus-table] {
+  display: block;
 }
 
 .renderer th,

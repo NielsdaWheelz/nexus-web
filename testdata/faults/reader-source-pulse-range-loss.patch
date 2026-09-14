@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/reader/publicationSourcePulse.ts b/apps/web/src/lib/reader/publicationSourcePulse.ts
+--- a/apps/web/src/lib/reader/publicationSourcePulse.ts
++++ b/apps/web/src/lib/reader/publicationSourcePulse.ts
+@@ -37,7 +37,7 @@
+   for (const part of parts) {
+     const origin = part.root.getBoundingClientRect();
+     if (origin.bottom <= viewport.top || origin.top >= viewport.bottom || origin.right <= viewport.left || origin.left >= viewport.right) continue;
+-    if (!visitPublicationTextRangeRects(part, range, (rect) => {
++    if (!visitPublicationTextRangeRects(part, { ...range, start_cp: 0, end_cp: Number.MAX_SAFE_INTEGER }, (rect) => {
+       const left = Math.max(rect.left, viewport.left); const right = Math.min(rect.right, viewport.right);
+       const top = Math.max(rect.top, viewport.top); const bottom = Math.min(rect.bottom, viewport.bottom);
+       if (right <= left || bottom <= top) return true;

@@ -1261,9 +1261,9 @@ def list_fragments_for_viewer(
     viewer_id: UUID,
     media_id: UUID,
 ) -> list[FragmentOut]:
-    """List fragments for a media item if readable by viewer.
+    """List timed transcript fragments if readable by the viewer.
 
-    Returns ordered fragments if media is readable.
+    Returns ordered fragments for podcast episodes and videos.
     Uses the canonical visibility predicate.
 
     Args:
@@ -1272,7 +1272,7 @@ def list_fragments_for_viewer(
         media_id: The ID of the media.
 
     Returns:
-        List of fragments ordered by idx ASC.
+        List of fragments ordered by start time, then source index.
 
     Raises:
         NotFoundError: If media does not exist or viewer cannot read it.
@@ -1294,12 +1294,9 @@ def list_fragments_for_viewer(
     if media_row is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     media_kind = str(media_row[0])
-    if media_kind in {
-        "web_article",
-        "epub",
-        "podcast_episode",
-        "video",
-    } and not is_text_document_ready(
+    if media_kind not in {"podcast_episode", "video"}:
+        raise ApiError(ApiErrorCode.E_INVALID_KIND, "Endpoint only supports timeline fragments")
+    if not is_text_document_ready(
         media_kind,
         str(media_row[1]),
         str(media_row[2]) if media_row[2] is not None else None,
@@ -1307,7 +1304,7 @@ def list_fragments_for_viewer(
     ):
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
 
-    # Query 2: Fetch fragments ordered by idx ASC
+    # Source word positions stay in index order; display follows transcript time.
     result = db.execute(
         text("""
             SELECT

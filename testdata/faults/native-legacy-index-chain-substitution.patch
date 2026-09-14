@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyIndex.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyIndex.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyIndex.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyIndex.kt
+@@ -163,7 +163,7 @@
+             val length = database.rawQuery("SELECT sum(canonical_length) FROM fragments", null).use { require(it.moveToFirst()); it.getLong(0) }
+             appendLegacyTableMetadata(database) { tables.add("table_metadata", it) }
+             descriptor.put("kind", if (epub) "epub" else "web_article").put("first_unit_ref", requireNotNull(first))
+-                .put("index_ref", requireNotNull(index.finish())).put("contents_ref", contents.finish() ?: JSONObject.NULL)
++                .put("index_ref", requireNotNull(contents.finish())).put("contents_ref", index.finish() ?: JSONObject.NULL)
+                 .put("table_metadata_ref", tables.finish() ?: JSONObject.NULL)
+                 .put("unit_count", unitCount).put("canonical_length", length)
+             manifest.entries.filter { it.path.startsWith("assets/") }.forEach(::record)

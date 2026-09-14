@@ -1,10 +1,14 @@
 package app.nexus.android.offline.readingweb
 
 import app.nexus.android.BuildConfig
+import app.nexus.android.offline.reading.OFFLINE_READING_PACKAGE_SCHEMA_VERSION
+import app.nexus.android.offline.reading.OFFLINE_READING_READER_BUNDLE_VERSION
+import app.nexus.android.offline.reading.OFFLINE_READING_READER_CONTRACT_VERSION
 import app.nexus.android.offline.reading.OfflineReadingOwnedOriginCookieStore
 import app.nexus.android.offline.reading.StrictJson
 import app.nexus.android.offline.reading.WebViewOfflineReadingOwnedOriginCookieStore
 import app.nexus.android.offline.reading.installOfflineReadingOwnedOriginCookies
+import app.nexus.android.offline.reading.readBoundedJson
 import app.nexus.android.offline.reading.requireOfflineReadingOrigin
 import okhttp3.Call
 import okhttp3.Callback
@@ -63,8 +67,8 @@ internal class OfflineReadingAccountAttestor(
                             response.use {
                                 installOfflineReadingOwnedOriginCookies(it, origin, cookieStore)
                                 require(it.isSuccessful && !it.isRedirect && it.priorResponse == null)
-                                val bytes = it.body?.bytes() ?: error("account binding body is missing")
-                                require(bytes.size <= 64 * 1024)
+                                val bytes = it.body?.readBoundedJson(64L * 1024L)
+                                    ?: error("account binding body is missing")
                                 val envelope = StrictJson.parse(bytes).requireObject(setOf("data"))
                                 val data = envelope.getValue("data").requireObject(
                                     setOf(
@@ -76,9 +80,20 @@ internal class OfflineReadingAccountAttestor(
                                     )
                                 )
                                 require(data.getValue("protocol_version").requireLong() == 1L)
-                                require(data.getValue("package_schema_version").requireLong() == 1L)
-                                require(data.getValue("reader_contract_version").requireLong() == 1L)
-                                require(data.getValue("minimum_reader_bundle_version").requireLong() == 1L)
+                                require(
+                                    data.getValue("package_schema_version").requireLong() ==
+                                        OFFLINE_READING_PACKAGE_SCHEMA_VERSION.toLong()
+                                )
+                                require(
+                                    data.getValue("reader_contract_version").requireLong() ==
+                                        OFFLINE_READING_READER_CONTRACT_VERSION.toLong()
+                                )
+                                // The server advertises the oldest reader bundle it will serve;
+                                // this build installs its own, so it must be at least that new.
+                                require(
+                                    data.getValue("minimum_reader_bundle_version").requireLong() in 1L..
+                                        OFFLINE_READING_READER_BUNDLE_VERSION.toLong()
+                                )
                                 val raw = data.getValue("account_id").requireString()
                                 UUID.fromString(raw).also { account -> require(account.toString() == raw) }
                             }

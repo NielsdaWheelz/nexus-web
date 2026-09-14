@@ -89,3 +89,18 @@ packaged shelf rather than only hashed. The recurrence is a separate ticket:
 
 The Android offline-reading proof passes on the regenerated bundle, recorded with
 command and SHA.
+
+## 2026-09-14 — it has happened again, on the bounded-workspace branch
+
+`apps/android/app/src/main/assets/nexus-offline/source-manifest.sha256` is stale
+again: the shipped shelf still contains the schema-1 `reader.json` reader while
+the branch hard-cut schema-1 out of every other path. regenerating with `bun run
+build:offline-reading` also pulls roughly ten newly shared modules into the
+bundle graph (`publicationDom`, `useDocumentReaderWindow`, `publicationContract`,
+`resourceCache`, `useResource`, `readerCapacity`, `readBoundedResponseBytes`,
+`epubHref`, `codepoints`, `ReaderContentsPage`), none of which any
+`immutable-production-release` source glob matches — exactly the hole OI-052
+describes. regenerate and commit both manifests with the rebuilt assets, run the
+gradle proof against the regenerated bundle, and land the glob generation from
+OI-052 in the same change so the third occurrence is impossible rather than
+merely unlikely.

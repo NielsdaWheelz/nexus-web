@@ -10,6 +10,21 @@ class OfflineReaderProgressSynchronizerTest {
     private val mediaId = UUID.fromString("018f2e74-5efc-7d0d-8a3a-142857142857")
 
     @Test
+    fun `cursor source is distinct from the current publication generation`() {
+        val snapshot = """{"state":"Positioned","revision":9,"source":{"kind":"Publication","reader_generation":6},"locator":{"kind":"pdf","page":1,"page_progression":null,"zoom":null,"position":null}}"""
+        val observed = AttestedRemoteReaderState(accountId, 7, snapshot)
+        assertEquals(9L, observed.revision)
+        val repository = RecordingProgressRepository(candidate())
+        val origin = SequenceProgressOrigin(
+            fetches = ArrayDeque(listOf(observed)),
+            writeResult = RemoteReaderWriteResult.Accepted(state(10)),
+        )
+        OfflineReaderProgressSynchronizer(repository, origin).synchronize()
+        assertEquals(listOf("Conflict:9"), repository.outcomes)
+        assertEquals(0, origin.writeCount)
+    }
+
+    @Test
     fun `equal base CAS clears pending while races and generation changes preserve device state`() {
         val acceptedRepository = RecordingProgressRepository(candidate())
         OfflineReaderProgressSynchronizer(
@@ -146,7 +161,7 @@ class OfflineReaderProgressSynchronizerTest {
                     AttestedRemoteReaderState(
                         accountId,
                         7,
-                        """{"state":"Positioned","revision":9,"locator":{"kind":"pdf","page":3,"page_progression":null,"zoom":null,"position":null}}""",
+                        """{"state":"Positioned","revision":9,"source":{"kind":"Publication","reader_generation":7},"locator":{"kind":"pdf","page":3,"page_progression":null,"zoom":null,"position":null}}""",
                     )
                 )
             ),
@@ -160,28 +175,44 @@ class OfflineReaderProgressSynchronizerTest {
     }
 
     @Test
-    fun `wrong-account attestation fails closed before local mutation`() {
-        val repository = RecordingProgressRepository(candidate())
+    fun `wrong-account attestation fails closed without abandoning the rest of the pass`() {
         val wrongAccount = UUID.fromString("33333333-3333-4333-8333-333333333333")
-        val failure = runCatching {
-            OfflineReaderProgressSynchronizer(
-                repository,
-                SequenceProgressOrigin(
-                    fetches = ArrayDeque(
-                        listOf(
-                            AttestedRemoteReaderState(
-                                wrongAccount,
-                                7,
-                                snapshot(4),
-                            )
-                        )
-                    ),
-                    writeResult = RemoteReaderWriteResult.Accepted(state(5)),
+        val otherMedia = UUID.fromString("018f2e74-5efc-7d0d-8a3a-142857142858")
+        val repository = RecordingProgressRepository(
+            candidate(),
+            candidate().copy(mediaId = otherMedia),
+        )
+        OfflineReaderProgressSynchronizer(
+            repository,
+            SequenceProgressOrigin(
+                fetches = ArrayDeque(
+                    listOf(
+                        AttestedRemoteReaderState(wrongAccount, 7, snapshot(4)),
+                        stateWithPage(4, 2),
+                    )
                 ),
-            ).synchronize()
-        }
-        assertTrue(failure.exceptionOrNull() is IllegalArgumentException)
-        assertTrue(repository.outcomes.isEmpty())
+                writeResult = RemoteReaderWriteResult.Accepted(state(5)),
+            ),
+        ).synchronize()
+        assertEquals(listOf("$mediaId:IllegalArgumentException"), repository.defects)
+        // The anomalous media mutated nothing; the next media's write still committed.
+        assertEquals(listOf("Accepted:5"), repository.outcomes)
+    }
+
+    @Test
+    fun `accepted write attesting another cursor conflicts instead of acknowledging`() {
+        val repository = RecordingProgressRepository(candidate())
+        val origin = SequenceProgressOrigin(
+            fetches = ArrayDeque(listOf(stateWithPage(4, 2))),
+            writeResult = RemoteReaderWriteResult.Accepted(stateWithPage(5, 3)),
+        )
+        OfflineReaderProgressSynchronizer(repository, origin).synchronize()
+        assertEquals(1, origin.writeCount)
+        assertEquals(
+            listOf("$mediaId:UnrecognizedReaderAcknowledgment"),
+            repository.defects,
+        )
+        assertEquals(listOf("Conflict:5"), repository.outcomes)
     }
 
     private fun candidate() = ReaderProgressSyncCandidate(
@@ -202,11 +233,11 @@ class OfflineReaderProgressSynchronizerTest {
     private fun stateWithPage(revision: Long, page: Int) = AttestedRemoteReaderState(
         accountId,
         7,
-        "{\"state\":\"Positioned\",\"revision\":$revision,\"locator\":{\"kind\":\"pdf\",\"page\":$page,\"page_progression\":null,\"zoom\":null,\"position\":null}}",
+        "{\"state\":\"Positioned\",\"revision\":$revision,\"source\":{\"kind\":\"Publication\",\"reader_generation\":7},\"locator\":{\"kind\":\"pdf\",\"page\":$page,\"page_progression\":null,\"zoom\":null,\"position\":null}}",
     )
 
     private fun snapshot(revision: Long) =
-        "{\"state\":\"Positioned\",\"revision\":$revision,\"locator\":{\"kind\":\"pdf\",\"page\":1,\"page_progression\":null,\"zoom\":null,\"position\":null}}"
+        "{\"state\":\"Positioned\",\"revision\":$revision,\"source\":{\"kind\":\"Publication\",\"reader_generation\":7},\"locator\":{\"kind\":\"pdf\",\"page\":1,\"page_progression\":null,\"zoom\":null,\"position\":null}}"
 }
 
 private class SequenceProgressOrigin(
@@ -225,11 +256,12 @@ private class SequenceProgressOrigin(
 }
 
 private class RecordingProgressRepository(
-    private val candidate: ReaderProgressSyncCandidate,
+    private vararg val candidates: ReaderProgressSyncCandidate,
 ) : OfflineReaderProgressRepository {
     val outcomes = mutableListOf<String>()
+    val defects = mutableListOf<String>()
 
-    override fun pendingSyncCandidates(mediaId: UUID?) = listOf(candidate)
+    override fun pendingSyncCandidates(mediaId: UUID?) = candidates.toList()
 
     override fun acceptCanonical(
         candidate: ReaderProgressSyncCandidate,
@@ -255,5 +287,9 @@ private class RecordingProgressRepository(
 
     override fun recordAuthorizationRequired(candidate: ReaderProgressSyncCandidate) {
         outcomes += "AuthorizationRequired"
+    }
+
+    override fun reportDefect(mediaId: UUID, defect: Throwable) {
+        defects += "$mediaId:${defect.javaClass.simpleName}"
     }
 }

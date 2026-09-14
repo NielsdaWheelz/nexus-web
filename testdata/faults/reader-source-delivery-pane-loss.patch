@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/reader/pulseEvent.ts b/apps/web/src/lib/reader/pulseEvent.ts
+--- a/apps/web/src/lib/reader/pulseEvent.ts
++++ b/apps/web/src/lib/reader/pulseEvent.ts
+@@ -56,7 +56,7 @@
+ }
+ 
+ export function readPendingReaderPulse(paneId: string, mediaId: string): ReaderPulseTarget | null {
+-  return pendingReaderPulseByPane.get(`${paneId}:${mediaId}`)?.target ?? null;
++  return [...pendingReaderPulseByPane.values()].find((entry) => entry.target.mediaId === mediaId)?.target ?? null;
+ }
+ 
+ /** Actual workspace navigation/close withdraws undelivered source payloads. */

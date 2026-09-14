@@ -48,9 +48,7 @@ import {
   planInspectorSurfaces,
   type InspectorDomainBodies,
 } from "@/components/resource-inspector/inspectorSurfaces";
-import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
-import { activateResource } from "@/lib/resources/activation";
-import { hasSamePaneResource } from "@/lib/panes/paneIdentity";
+import { useReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
 
 export interface UseResourceInspectorParams {
   /** The subject's capability scheme (RESOURCE_CAPABILITIES key) — also the A9
@@ -93,6 +91,7 @@ export function useResourceInspector({
   onCitationActivate,
 }: UseResourceInspectorParams): ResourceInspectorComposition {
   const paneRuntime = usePaneRuntime();
+  const handleReaderSource = useReaderSourceActivation();
   const paneId = paneRuntime?.paneId ?? null;
   const secondaryPane = paneRuntime?.secondaryPane ?? null;
   const secondaryActivation = paneRuntime?.secondaryActivation ?? null;
@@ -159,10 +158,12 @@ export function useResourceInspector({
   const citationCommandsRef = useRef({
     onCitationActivate,
     paneRuntime,
+    handleReaderSource,
   });
   citationCommandsRef.current = {
     onCitationActivate,
     paneRuntime,
+    handleReaderSource,
   };
   const stableCitationActivate = useCallback<DossierCitationActivate>(
     (activation, target, disposition) => {
@@ -171,30 +172,9 @@ export function useResourceInspector({
         commands.onCitationActivate(activation, target, disposition);
         return;
       }
-      if (target) {
-        dispatchReaderSourceActivation(target);
-      }
       const runtime = commands.paneRuntime;
-      if (!runtime) return;
-      if (disposition.kind === "Fork") {
-        activateResource(activation, {
-          labelHint: target?.label,
-          activateTarget: runtime.activateTarget,
-          disposition,
-        });
-        return;
-      }
-      if (
-        runtime.resourceRef === activation.resourceRef ||
-        (activation.href && hasSamePaneResource(runtime.href, activation.href))
-      ) {
-        return;
-      }
-      activateResource(activation, {
-        labelHint: target?.label,
-        activateTarget: runtime.activateTarget,
-        disposition,
-      });
+      if (runtime === null) return;
+      commands.handleReaderSource(activation, target, { activateTarget: runtime.activateTarget, disposition });
     },
     [],
   );

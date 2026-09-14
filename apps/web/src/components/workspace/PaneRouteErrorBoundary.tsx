@@ -44,6 +44,7 @@ export class PaneRouteErrorBoundary extends Component<
 
   componentDidCatch(error: unknown, errorInfo: ErrorInfo): void {
     reportClientDefect(error, {
+      scope: "Pane",
       paneId: this.props.paneId,
       visitId: this.props.visitId,
       componentStack: errorInfo.componentStack ?? "",

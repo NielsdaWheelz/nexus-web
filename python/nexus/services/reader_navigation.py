@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
@@ -79,6 +82,14 @@ def get_media_navigation_for_viewer(
         for row in fragment_rows
     ]
 
+    return load_web_navigation_projection(db, media_id=media_id, fragments=fragments)
+
+
+def load_web_navigation_projection(
+    db: Session, *, media_id: UUID, fragments: list[ReaderNavigationFragmentOut]
+) -> MediaNavigationOut:
+    """Read stored heading facts in the caller's current source snapshot."""
+
     rows = db.execute(
         text(
             """
@@ -96,6 +107,16 @@ def get_media_navigation_for_viewer(
         {"media_id": media_id},
     ).fetchall()
 
+    return build_web_navigation_projection(media_id=media_id, fragments=fragments, rows=rows)
+
+
+def build_web_navigation_projection(
+    *,
+    media_id: UUID,
+    fragments: list[ReaderNavigationFragmentOut],
+    rows: Sequence[tuple[Any, ...] | Row[Any]],
+) -> MediaNavigationOut:
+    """Project the same heading facts from stored rows or a prepared source."""
     sections: list[ReaderNavigationSectionOut] = []
     for row in rows:
         locator = _required_mapping(row[2], "heading locator")

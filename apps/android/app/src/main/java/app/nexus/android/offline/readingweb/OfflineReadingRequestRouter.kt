@@ -5,6 +5,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import androidx.webkit.WebViewAssetLoader
 import app.nexus.android.offline.reading.OfflineReadingLease
+import app.nexus.android.offline.reading.OfflineReadingLeaseMember
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
@@ -80,7 +81,7 @@ internal class OfflineReadingLeaseRegistry(
         return capability
     }
 
-    fun resolve(capability: String, path: String): File? {
+    fun resolve(capability: String, path: String): OfflineReadingLeaseMember? {
         val lease = leases[capability] ?: return null
         return try {
             lease.resolveEntry(path)
@@ -152,7 +153,7 @@ internal class OfflineReadingRequestRouter(
             }
             is OfflineReadingLocalPath.Lease ->
                 leaseRegistry.resolve(route.capability, route.entryPath)
-                    ?.let { serveEntry(it, request.requestHeaders["Range"]) }
+                    ?.let { member -> serveEntry(member, request.requestHeaders.entries.firstOrNull { it.key.equals("Range", ignoreCase = true) }?.value) }
                     ?: notFound()
             null -> notFound()
         }
@@ -162,22 +163,9 @@ internal class OfflineReadingRequestRouter(
     fun interceptOfflineDocument(request: WebResourceRequest): WebResourceResponse =
         intercept(request) ?: notFound()
 
-    private fun serveEntry(file: File, rangeHeader: String?): WebResourceResponse {
-        val mimeType = when (file.extension.lowercase()) {
-            "json" -> "application/json"
-            "pdf" -> "application/pdf"
-            "svg" -> "image/svg+xml"
-            "png" -> "image/png"
-            "gif" -> "image/gif"
-            "avif" -> "image/avif"
-            "jpg", "jpeg" -> "image/jpeg"
-            "webp" -> "image/webp"
-            "woff" -> "font/woff"
-            "woff2" -> "font/woff2"
-            "ttf" -> "font/ttf"
-            "otf" -> "font/otf"
-            else -> "application/octet-stream"
-        }
+    private fun serveEntry(member: OfflineReadingLeaseMember, rangeHeader: String?): WebResourceResponse {
+        val file = member.file
+        val mimeType = member.mediaType
         // The packaged PDF.js decides range capability from the first response:
         // without an exact `Accept-Ranges: bytes` there it streams the whole
         // package PDF instead of seeking.

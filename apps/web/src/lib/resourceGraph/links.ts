@@ -36,6 +36,7 @@ export interface LinkPdfSelectionSource {
   kind: "pdf_selection";
   highlight_id: string;
   media_id: string;
+  reader_generation: number;
   page_number: number;
   quads: PdfHighlightQuad[];
   exact: string;

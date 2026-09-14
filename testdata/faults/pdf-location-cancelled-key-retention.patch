@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/lib/highlights/usePdfScrollToTarget.ts b/apps/web/src/lib/highlights/usePdfScrollToTarget.ts
+--- a/apps/web/src/lib/highlights/usePdfScrollToTarget.ts
++++ b/apps/web/src/lib/highlights/usePdfScrollToTarget.ts
+@@ -119,8 +119,7 @@
+       pending = null;
+       eventBus?.off("pagerendered", rendered);
+       if (frame !== null) window.cancelAnimationFrame(frame);
+-      if (!completed && processedKeyRef.current === key)
+-        processedKeyRef.current = null;
++      // Deliberate fault: cancelled unfinished target remains processed.
+     };
+   }, [
+     goToPage,

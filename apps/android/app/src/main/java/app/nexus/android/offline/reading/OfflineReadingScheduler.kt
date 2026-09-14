@@ -75,6 +75,11 @@ internal class OfflineReadingScheduler(
         )
             .setPersisted(true)
             .setUserInitiated(true)
+            // This backoff is the cadence of the whole runner, including the status
+            // observation justified at OfflineReadingOriginClient.downloadPackage
+            // (justify-polling): server-side archive preparation has no completion
+            // channel, so each retry of this job reads status once.
+            .setBackoffCriteria(JobInfo.DEFAULT_INITIAL_BACKOFF_MILLIS, JobInfo.BACKOFF_POLICY_EXPONENTIAL)
         val policy = OfflineNetworkPolicyStore(appContext).get()
         builder.setExtras(
             PersistableBundle().apply { putString(OFFLINE_READING_POLICY_EXTRA, policy.name) }
@@ -118,9 +123,13 @@ internal class OfflineReadingScheduler(
          * replace the finishing job, never trust the visible-but-doomed JobInfo. The next
          * `runnerStarted`/admission clears the state.
          */
-        fun runnerCheckpoint(store: OfflineReadingStore, finishJob: () -> Unit): Boolean {
+        fun runnerCheckpoint(
+            store: OfflineReadingStore,
+            deferred: Set<Pair<java.util.UUID, String>> = emptySet(),
+            finishJob: () -> Unit,
+        ): Boolean {
             synchronized(QUEUE_LOCK) {
-                if (store.hasQueuedWork()) return true
+                if (store.hasQueuedWork(deferred)) return true
                 runnerActive = false
                 runnerTerminalizing = true
                 finishJob()

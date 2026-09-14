@@ -1,0 +1,5 @@
+:where(.artwork) {
+  display: inline-block;
+  width: var(--artwork-width);
+  height: var(--artwork-height);
+}

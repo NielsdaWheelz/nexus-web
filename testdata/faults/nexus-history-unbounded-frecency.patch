@@ -1,0 +1,11 @@
+diff --git a/python/nexus/services/nexus_history.py b/python/nexus/services/nexus_history.py
+--- a/python/nexus/services/nexus_history.py
++++ b/python/nexus/services/nexus_history.py
+@@ -188,7 +188,6 @@
+             select(NexusUsage).where(
+                 NexusUsage.user_id == viewer_id,
+                 query_filter,
+-                NexusUsage.target_href.in_(target_hrefs),
+             )
+         )
+         .scalars()

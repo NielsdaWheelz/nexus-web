@@ -14,7 +14,7 @@ by provenance.
 - `x_rendering.py`: stored X thread/post HTML rendering.
 - `x_ingest.py`: X same-author thread persistence, quote-post media, refresh,
   provider event recording, and library assignment; no oEmbed fallback.
-- `media.py`: catalog/hydration and fragment listing only for web articles.
+- `media.py`: catalog and hydration; document bodies use selected reader publications.
 - `web_article_structure.py`: sanitization, canonical text, and fragment block
   preparation.
 - `content_indexing.py` + `media_content_reindex_job`: durable, revision-fenced
@@ -24,6 +24,15 @@ by provenance.
   pre-extraction for Wikisource proofread pages (`.mw-parser-output >
   .prp-pages-output`) so page-body text wins over reference sections before the
   normal Python source-normalization path consumes it.
+
+The Python Node adapter reads the absolute `NEXUS_NODE_INGEST_SCRIPT` setting
+when ingestion runs; its image default is `/app/node/ingest/ingest.mjs`. Checkout
+worker launchers and the local test controller supply the actual checkout path.
+`NEXUS_ENV` selects data policy, never installation layout. Node resolves through
+`PATH` at invocation. The API can load settings without Node or the ingest script.
+The existing child protocol still receives only its minimal process environment.
+Production config publication rejects both this checkout override and the retired
+`NODE_INGEST_SCRIPT` variable, preserving the image-owned ingress implementation.
 
 Routes stay transport-only. X URLs fail closed through `x_ingest.py`; they do
 not fall back to generic web article capture or oEmbed. X author-thread media

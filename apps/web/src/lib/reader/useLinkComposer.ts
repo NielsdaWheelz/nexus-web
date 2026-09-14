@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useFeedback,
   type FeedbackActions,
@@ -184,8 +184,8 @@ export function useLinkComposer({
   onAddLinkNote,
   onViewConnection,
 }: {
-  /** Refresh the reader-connections read model so the new Link appears. */
-  onLinked: () => void | Promise<void>;
+  /** Refresh all results; only the still-current created source may retire its presentation. */
+  onLinked: (source: LinkSource | null) => void | Promise<void>;
   /** Open the Link-note composer for the just-created Link (toast action). */
   onAddLinkNote?: (linkId: string) => void;
   /** Reveal the Connection for an already-linked target (toast action). */
@@ -194,6 +194,7 @@ export function useLinkComposer({
   const feedback = useFeedback();
   const [open, setOpen] = useState(false);
   const [source, setSource] = useState<LinkSource | null>(null);
+  const currentSourceRef = useRef<LinkSource | null>(null);
   const [sourceRef, setSourceRef] = useState<string | undefined>(undefined);
   const [committing, setCommitting] = useState(false);
   const [failure, setFailure] = useState<LinkComposerFailure | null>(null);
@@ -202,6 +203,7 @@ export function useLinkComposer({
 
   const openLink = useCallback(
     (args: { source: LinkSource; sourceRef?: string }) => {
+      currentSourceRef.current = args.source;
       setSource(args.source);
       setSourceRef(args.sourceRef);
       setFailure(null);
@@ -211,11 +213,13 @@ export function useLinkComposer({
   );
 
   const close = useCallback(() => {
+    currentSourceRef.current = null;
     setOpen(false);
     setSource(null);
     setSourceRef(undefined);
     setFailure(null);
   }, []);
+  useEffect(() => () => { currentSourceRef.current = null; }, []);
 
   const undo = useCallback(
     async (linkId: string) => {
@@ -223,7 +227,7 @@ export function useLinkComposer({
       try {
         await deleteLink(linkId);
         feedback.resolve(feedbackKey);
-        await onLinked();
+        await onLinked(null);
       } catch (error) {
         if (handleUnauthenticatedApiError(error)) return;
         if (
@@ -232,7 +236,7 @@ export function useLinkComposer({
           error.code === "E_NOT_FOUND"
         ) {
           feedback.resolve(feedbackKey);
-          await onLinked();
+          await onLinked(null);
           return;
         }
         try {
@@ -283,22 +287,22 @@ export function useLinkComposer({
         target,
         label,
       };
+      const feedbackKey = `reader-link-create:${intent.clientMutationId}`;
 
       async function runConfirmedIntent() {
         if (commitGuardRef.current) return;
         commitGuardRef.current = true;
         setCommitting(true);
-        setFailure(null);
+        if (currentSourceRef.current === intent.source) setFailure(null);
         try {
           const result = await createLink({
             clientMutationId: intent.clientMutationId,
             source: intent.source,
             target: intent.target,
           });
-          await onLinked();
-          setOpen(false);
-          setSource(null);
-          setSourceRef(undefined);
+          feedback.resolve(feedbackKey);
+          await onLinked(currentSourceRef.current === intent.source ? intent.source : null);
+          if (currentSourceRef.current === intent.source) close();
 
           if (result.created) {
             const linkId = result.connection.edge_id;
@@ -332,9 +336,9 @@ export function useLinkComposer({
           }
         } catch (error) {
           if (handleUnauthenticatedApiError(error)) return;
-          // Keep the dialog and frozen intent open; Retry reuses its mutation id.
+          // Retry owns this exact confirmed write even after its dialog closes.
           try {
-            setFailure({
+            const failed: LinkComposerFailure = {
               content: linkErrorMessage(error, "Create"),
               actions: [
                 {
@@ -342,7 +346,10 @@ export function useLinkComposer({
                   onClick: () => void runConfirmedIntent(),
                 },
               ],
-            });
+            };
+            if (currentSourceRef.current === intent.source) setFailure(failed);
+            else feedback.publish({ kind: "Persistent", key: feedbackKey,
+              announcement: "Assertive", ...failed });
           } catch (caughtDefect) {
             setDefect({ error: caughtDefect });
           }
@@ -354,7 +361,7 @@ export function useLinkComposer({
 
       await runConfirmedIntent();
     },
-    [committing, feedback, onAddLinkNote, onLinked, onViewConnection, source, undo],
+    [close, committing, feedback, onAddLinkNote, onLinked, onViewConnection, source, undo],
   );
 
   const composer = useMemo(

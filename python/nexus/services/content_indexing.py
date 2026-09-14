@@ -9,7 +9,7 @@ import json
 import math
 import re
 from array import array
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import chain, islice
@@ -17,12 +17,14 @@ from pathlib import Path
 from typing import Any, BinaryIO, Literal, TypeGuard
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import literal, select, text, union_all
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
+from nexus.db.models import ContentChunk, EvidenceSpan
 from nexus.db.retries import admit_serializable
 from nexus.errors import ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
+from nexus.ids import new_uuid7
 from nexus.jobs.queue import JobExecutionContext, current_dead_job_for_payload, requeue_dead_job
 from nexus.schemas.import_history import (
     IndexAccepted,
@@ -45,13 +47,13 @@ from nexus.services.capabilities import (
 from nexus.services.import_history import append_processing_event
 from nexus.services.parser_temp import utf8_byte_length
 from nexus.services.resource_graph import cleanup
-from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
     lookup_replay,
     record_replay,
 )
 from nexus.services.semantic_chunks import (
+    EMBEDDING_INPUT_MAX_UTF8_BYTES,
     build_text_embeddings,
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
@@ -71,6 +73,9 @@ CONTENT_INDEX_CHUNK_MAX_BYTES = 256 * 1024
 CONTENT_INDEX_SPOOL_MAX_BYTES = 384 * 1024 * 1024
 _CONTENT_INDEX_SPOOL_RECORD_MAX_BYTES = CONTENT_INDEX_CHUNK_MAX_BYTES * 16 + 1024 * 1024
 _CONTENT_INDEX_SPOOL_VERSION = 1
+# Prepared parameter envelope; heap/driver and single-group costs are separate.
+_CONTENT_INDEX_INSERT_MAX_ROWS = 64
+_CONTENT_INDEX_INSERT_MAX_BYTES = 1024 * 1024
 MEDIA_CONTENT_REINDEX_JOB_KIND = "media_content_reindex_job"
 MEDIA_CONTENT_REINDEX_REASONS = frozenset(
     {
@@ -198,7 +203,7 @@ def plan_content_index(
 
     planned_chunks: list[PlannedContentChunk] = []
     chunk_batch: list[list[tuple[IndexableBlock, int, int, int]]] = []
-    for chunk_parts in _iter_content_chunk_parts(blocks):
+    for chunk_parts in _iter_content_chunk_parts(blocks, maximum_chunk_bytes=None):
         chunk_batch.append(chunk_parts)
         if len(chunk_batch) == CONTENT_INDEX_EMBEDDING_BATCH_SIZE:
             planned_chunks.extend(
@@ -274,7 +279,9 @@ def build_spooled_content_index_plan(
                 digest=digest,
             )
             chunk_batch: list[list[tuple[IndexableBlock, int, int, int]]] = []
-            for chunk_parts in _iter_content_chunk_parts(block_list):
+            for chunk_parts in _iter_content_chunk_parts(
+                block_list, maximum_chunk_bytes=EMBEDDING_INPUT_MAX_UTF8_BYTES
+            ):
                 chunk_batch.append(chunk_parts)
                 if len(chunk_batch) == CONTENT_INDEX_EMBEDDING_BATCH_SIZE:
                     planned = _plan_content_chunk_batch(
@@ -336,6 +343,25 @@ def build_spooled_content_index_plan(
     )
 
 
+def _prepared_content_index_bytes(rows: Iterable[Mapping[str, object]]) -> int:
+    """Count prepared parameter names/values, including already-serialized JSON.
+
+    This is an admission measure, not Python heap or PostgreSQL protocol bytes.
+    The row limit separately bounds scalar/dictionary overhead. Count large
+    existing text in slices without constructing another whole encoded block.
+    """
+    total = 0
+    for row in rows:
+        for name, value in row.items():
+            total += len(name)
+            rendered = value if isinstance(value, str) else str(value)
+            total += sum(
+                utf8_byte_length(rendered[start : start + 65536])
+                for start in range(0, len(rendered), 65536)
+            )
+    return total
+
+
 def publish_content_index(
     db: Session,
     *,
@@ -355,63 +381,187 @@ def publish_content_index(
         now=now,
     )
 
+    block_insert = text("""
+        INSERT INTO content_blocks (
+            id,
+            owner_kind,
+            owner_id,
+            block_idx,
+            block_kind,
+            canonical_text,
+            extraction_confidence,
+            source_start_offset,
+            source_end_offset,
+            parent_block_id,
+            heading_path,
+            locator,
+            selector,
+            metadata,
+            created_at
+        )
+        VALUES (
+            :id,
+            :owner_kind,
+            :owner_id,
+            :block_idx,
+            :block_kind,
+            :canonical_text,
+            :extraction_confidence,
+            :source_start_offset,
+            :source_end_offset,
+            NULL,
+            CAST(:heading_path AS jsonb),
+            CAST(:locator AS jsonb),
+            CAST(:selector AS jsonb),
+            CAST(:metadata AS jsonb),
+            :now
+        )
+    """)
+
+    span_insert = text("""
+        INSERT INTO evidence_spans (
+            id,
+            owner_kind,
+            owner_id,
+            start_block_id,
+            end_block_id,
+            start_block_offset,
+            end_block_offset,
+            span_text,
+            selector,
+            citation_label,
+            resolver_kind,
+            created_at
+        )
+        VALUES (
+            :id,
+            :owner_kind,
+            :owner_id,
+            :start_block_id,
+            :end_block_id,
+            :start_block_offset,
+            :end_offset,
+            :span_text,
+            CAST(:selector AS jsonb),
+            :citation_label,
+            :resolver_kind,
+            :now
+        )
+    """)
+
+    chunk_insert = text("""
+        INSERT INTO content_chunks (
+            id,
+            owner_kind,
+            owner_id,
+            primary_evidence_span_id,
+            chunk_idx,
+            source_kind,
+            chunk_text,
+            token_count,
+            heading_path,
+            summary_locator,
+            created_at
+        )
+        VALUES (
+            :id,
+            :owner_kind,
+            :owner_id,
+            :evidence_span_id,
+            :chunk_idx,
+            :source_kind,
+            :chunk_text,
+            :token_count,
+            CAST(:heading_path AS jsonb),
+            CAST(:summary_locator AS jsonb),
+            :now
+        )
+    """)
+
+    part_insert = text("""
+        INSERT INTO content_chunk_parts (
+            chunk_id,
+            part_idx,
+            block_id,
+            block_start_offset,
+            block_end_offset,
+            chunk_start_offset,
+            chunk_end_offset,
+            separator_before,
+            created_at
+        )
+        VALUES (
+            :chunk_id,
+            :part_idx,
+            :block_id,
+            :block_start_offset,
+            :block_end_offset,
+            :chunk_start_offset,
+            :chunk_end_offset,
+            :separator_before,
+            :now
+        )
+    """)
+
+    embedding_insert = text(f"""
+        INSERT INTO content_embeddings (
+            chunk_id,
+            embedding_provider,
+            embedding_model,
+            embedding_dimensions,
+            embedding_vector,
+            created_at
+        )
+        VALUES (
+            :chunk_id,
+            :embedding_provider,
+            :embedding_model,
+            :embedding_dimensions,
+            CAST(:embedding_vector AS vector({plan.embedding_dimensions})),
+            :now
+        )
+    """)
+
     block_ids_by_idx: dict[int, UUID] = {}
+    block_rows: list[dict[str, object]] = []
+    block_bytes = 0
     for expected_idx, block in enumerate(plan.blocks):
-        block_id = db.execute(
-            text(
-                """
-                INSERT INTO content_blocks (
-                    owner_kind,
-                    owner_id,
-                    block_idx,
-                    block_kind,
-                    canonical_text,
-                    extraction_confidence,
-                    source_start_offset,
-                    source_end_offset,
-                    parent_block_id,
-                    heading_path,
-                    locator,
-                    selector,
-                    metadata,
-                    created_at
-                )
-                VALUES (
-                    :owner_kind,
-                    :owner_id,
-                    :block_idx,
-                    :block_kind,
-                    :canonical_text,
-                    :extraction_confidence,
-                    :source_start_offset,
-                    :source_end_offset,
-                    NULL,
-                    CAST(:heading_path AS jsonb),
-                    CAST(:locator AS jsonb),
-                    CAST(:selector AS jsonb),
-                    CAST(:metadata AS jsonb),
-                    :now
-                )
-                RETURNING id
-                """
-            ),
-            {
-                "owner_kind": plan.owner.kind,
-                "owner_id": plan.owner.id,
-                "block_idx": block.block_idx,
-                "block_kind": block.block_kind,
-                "canonical_text": block.canonical_text,
-                "extraction_confidence": block.extraction_confidence,
-                "source_start_offset": block.source_start_offset,
-                "source_end_offset": block.source_end_offset,
-                "heading_path": json.dumps(list(block.heading_path)),
-                "locator": json.dumps(block.locator),
-                "selector": json.dumps(block.selector),
-                "metadata": json.dumps(block.metadata),
-                "now": now,
-            },
-        ).scalar_one()
+        block_id = new_uuid7()
+        row = {
+            "id": block_id,
+            "owner_kind": plan.owner.kind,
+            "owner_id": plan.owner.id,
+            "block_idx": block.block_idx,
+            "block_kind": block.block_kind,
+            "canonical_text": block.canonical_text,
+            "extraction_confidence": block.extraction_confidence,
+            "source_start_offset": block.source_start_offset,
+            "source_end_offset": block.source_end_offset,
+            "heading_path": json.dumps(list(block.heading_path)),
+            "locator": json.dumps(block.locator),
+            "selector": json.dumps(block.selector),
+            "metadata": json.dumps(block.metadata),
+            "now": now,
+        }
+        row_bytes = _prepared_content_index_bytes((row,))
+        if block_rows and (
+            len(block_rows) == _CONTENT_INDEX_INSERT_MAX_ROWS
+            or block_bytes + row_bytes > _CONTENT_INDEX_INSERT_MAX_BYTES
+        ):
+            db.execute(block_insert, block_rows)
+            block_rows.clear()
+            block_bytes = 0
+        block_rows.append(row)
+        block_bytes += row_bytes
         block_ids_by_idx[expected_idx] = block_id
+        if block_bytes >= _CONTENT_INDEX_INSERT_MAX_BYTES:
+            # One already-supported large block is written alone.
+            db.execute(block_insert, block_rows)
+            block_rows.clear()
+            block_bytes = 0
+    if block_rows:
+        db.execute(block_insert, block_rows)
+        block_rows.clear()
 
     planned_chunks = iter(_content_index_plan_chunks(plan))
     try:
@@ -431,12 +581,28 @@ def publish_content_index(
         )
         return ContentIndexResult(owner=plan.owner, status="no_text", chunk_count=0)
 
+    span_rows: list[dict[str, object]] = []
+    chunk_rows: list[dict[str, object]] = []
+    part_rows: list[dict[str, object]] = []
+    embedding_rows: list[dict[str, object]] = []
+
+    def flush_chunks() -> None:
+        db.execute(span_insert, span_rows)
+        db.execute(chunk_insert, chunk_rows)
+        db.execute(part_insert, part_rows)
+        db.execute(embedding_insert, embedding_rows)
+        span_rows.clear()
+        chunk_rows.clear()
+        part_rows.clear()
+        embedding_rows.clear()
+
+    batch_bytes = 0
+    batch_rows = 0
     published_chunk_count = 0
     for chunk_idx, chunk in enumerate(chain((first_chunk,), planned_chunks)):
         if chunk is None:
             # justify-defect: the empty-plan branch returned above.
             raise AssertionError("content-index chunk iterator yielded an absent first chunk")
-        published_chunk_count += 1
         chunk_parts = chunk.parts
         chunk_text = chunk.text
         summary_locator = chunk.locator
@@ -445,97 +611,46 @@ def publish_content_index(
         first_block_id = block_ids_by_idx[first_block.block_idx]
         last_block_id = block_ids_by_idx[last_block.block_idx]
         citation_label = str(first_block.heading_path[-1]) if first_block.heading_path else "Source"
-        evidence_span_id = db.execute(
-            text(
-                """
-                INSERT INTO evidence_spans (
-                    owner_kind,
-                    owner_id,
-                    start_block_id,
-                    end_block_id,
-                    start_block_offset,
-                    end_block_offset,
-                    span_text,
-                    selector,
-                    citation_label,
-                    resolver_kind,
-                    created_at
-                )
-                VALUES (
-                    :owner_kind,
-                    :owner_id,
-                    :start_block_id,
-                    :end_block_id,
-                    :start_block_offset,
-                    :end_offset,
-                    :span_text,
-                    CAST(:selector AS jsonb),
-                    :citation_label,
-                    :resolver_kind,
-                    :now
-                )
-                RETURNING id
-                """
+        evidence_span_id = new_uuid7()
+        chunk_id = new_uuid7()
+        span_row = {
+            "id": evidence_span_id,
+            "owner_kind": plan.owner.kind,
+            "owner_id": plan.owner.id,
+            "start_block_id": first_block_id,
+            "end_block_id": last_block_id,
+            "start_block_offset": first_start,
+            "end_offset": last_end,
+            "span_text": chunk_text,
+            "selector": json.dumps(summary_locator),
+            "citation_label": citation_label,
+            "resolver_kind": _resolver_kind(plan.source_kind),
+            "now": now,
+        }
+        chunk_row = {
+            "id": chunk_id,
+            "owner_kind": plan.owner.kind,
+            "owner_id": plan.owner.id,
+            "evidence_span_id": evidence_span_id,
+            "chunk_idx": chunk_idx,
+            "source_kind": plan.source_kind,
+            "chunk_text": chunk_text,
+            "token_count": sum(int(part[3]) for part in chunk_parts),
+            "heading_path": json.dumps(list(first_block.heading_path)),
+            "summary_locator": json.dumps(summary_locator),
+            "now": now,
+        }
+        embedding_row = {
+            "chunk_id": chunk_id,
+            "embedding_provider": plan.embedding_provider,
+            "embedding_model": plan.embedding_model,
+            "embedding_dimensions": plan.embedding_dimensions,
+            "embedding_vector": _packed_embedding_literal(
+                chunk.embedding_f32, dimensions=plan.embedding_dimensions
             ),
-            {
-                "owner_kind": plan.owner.kind,
-                "owner_id": plan.owner.id,
-                "start_block_id": first_block_id,
-                "end_block_id": last_block_id,
-                "start_block_offset": first_start,
-                "end_offset": last_end,
-                "span_text": chunk_text,
-                "selector": json.dumps(summary_locator),
-                "citation_label": citation_label,
-                "resolver_kind": _resolver_kind(plan.source_kind),
-                "now": now,
-            },
-        ).scalar_one()
-
-        chunk_id = db.execute(
-            text(
-                """
-                INSERT INTO content_chunks (
-                    owner_kind,
-                    owner_id,
-                    primary_evidence_span_id,
-                    chunk_idx,
-                    source_kind,
-                    chunk_text,
-                    token_count,
-                    heading_path,
-                    summary_locator,
-                    created_at
-                )
-                VALUES (
-                    :owner_kind,
-                    :owner_id,
-                    :evidence_span_id,
-                    :chunk_idx,
-                    :source_kind,
-                    :chunk_text,
-                    :token_count,
-                    CAST(:heading_path AS jsonb),
-                    CAST(:summary_locator AS jsonb),
-                    :now
-                )
-                RETURNING id
-                """
-            ),
-            {
-                "owner_kind": plan.owner.kind,
-                "owner_id": plan.owner.id,
-                "evidence_span_id": evidence_span_id,
-                "chunk_idx": chunk_idx,
-                "source_kind": plan.source_kind,
-                "chunk_text": chunk_text,
-                "token_count": sum(int(part[3]) for part in chunk_parts),
-                "heading_path": json.dumps(list(first_block.heading_path)),
-                "summary_locator": json.dumps(summary_locator),
-                "now": now,
-            },
-        ).scalar_one()
-
+            "now": now,
+        }
+        prepared_parts: list[dict[str, object]] = []
         chunk_offset = 0
         previous_block: IndexableBlock | None = None
         for part_idx, (block, start_offset, end_offset, _) in enumerate(chunk_parts):
@@ -543,83 +658,52 @@ def publish_content_index(
             separator_before = _separator_before(previous_block, block)
             chunk_start_offset = chunk_offset + len(separator_before)
             chunk_end_offset = chunk_start_offset + end_offset - start_offset
-            db.execute(
-                text(
-                    """
-                    INSERT INTO content_chunk_parts (
-                        chunk_id,
-                        part_idx,
-                        block_id,
-                        block_start_offset,
-                        block_end_offset,
-                        chunk_start_offset,
-                        chunk_end_offset,
-                        separator_before,
-                        created_at
-                    )
-                    VALUES (
-                        :chunk_id,
-                        :part_idx,
-                        :block_id,
-                        :block_start_offset,
-                        :block_end_offset,
-                        :chunk_start_offset,
-                        :chunk_end_offset,
-                        :separator_before,
-                        :now
-                    )
-                    """
-                ),
-                {
-                    "chunk_id": chunk_id,
-                    "part_idx": part_idx,
-                    "block_id": block_id,
-                    "block_start_offset": start_offset,
-                    "block_end_offset": end_offset,
-                    "chunk_start_offset": chunk_start_offset,
-                    "chunk_end_offset": chunk_end_offset,
-                    "separator_before": separator_before,
-                    "now": now,
-                },
-            )
+            part_row = {
+                "chunk_id": chunk_id,
+                "part_idx": part_idx,
+                "block_id": block_id,
+                "block_start_offset": start_offset,
+                "block_end_offset": end_offset,
+                "chunk_start_offset": chunk_start_offset,
+                "chunk_end_offset": chunk_end_offset,
+                "separator_before": separator_before,
+                "now": now,
+            }
+            prepared_parts.append(part_row)
             chunk_offset = chunk_end_offset
             previous_block = block
         if chunk_offset != len(chunk_text):
             raise ValueError("Chunk part offsets do not reconstruct chunk text")
 
-        db.execute(
-            text(
-                f"""
-                INSERT INTO content_embeddings (
-                    chunk_id,
-                    embedding_provider,
-                    embedding_model,
-                    embedding_dimensions,
-                    embedding_vector,
-                    created_at
-                )
-                VALUES (
-                    :chunk_id,
-                    :embedding_provider,
-                    :embedding_model,
-                    :embedding_dimensions,
-                    CAST(:embedding_vector AS vector({plan.embedding_dimensions})),
-                    :now
-                )
-                """
-            ),
-            {
-                "chunk_id": chunk_id,
-                "embedding_provider": plan.embedding_provider,
-                "embedding_model": plan.embedding_model,
-                "embedding_dimensions": plan.embedding_dimensions,
-                "embedding_vector": _packed_embedding_literal(
-                    chunk.embedding_f32,
-                    dimensions=plan.embedding_dimensions,
-                ),
-                "now": now,
-            },
+        group_rows = 3 + len(prepared_parts)
+        group_bytes = _prepared_content_index_bytes(
+            chain((span_row, chunk_row, embedding_row), prepared_parts)
         )
+        if span_rows and (
+            batch_rows + group_rows > _CONTENT_INDEX_INSERT_MAX_ROWS
+            or batch_bytes + group_bytes > _CONTENT_INDEX_INSERT_MAX_BYTES
+        ):
+            flush_chunks()
+            batch_rows = 0
+            batch_bytes = 0
+        span_rows.append(span_row)
+        chunk_rows.append(chunk_row)
+        part_rows.extend(prepared_parts)
+        embedding_rows.append(embedding_row)
+        batch_rows += group_rows
+        batch_bytes += group_bytes
+        published_chunk_count += 1
+        if (
+            batch_rows >= _CONTENT_INDEX_INSERT_MAX_ROWS
+            or batch_bytes >= _CONTENT_INDEX_INSERT_MAX_BYTES
+        ):
+            # A complete accepted group may exceed the batch envelope;
+            # it is written alone, preserving its exact source reconstruction.
+            flush_chunks()
+            batch_rows = 0
+            batch_bytes = 0
+    if span_rows:
+        flush_chunks()
 
     expected_chunk_count = (
         len(plan.chunks) if isinstance(plan, ContentIndexPlan) else plan.chunk_count
@@ -1761,39 +1845,17 @@ def replace_content_index_materialization(db: Session, *, owner: IndexOwner) -> 
         ),
         params,
     )
-    # Graph cleanup, set-batched over every destroyed span/chunk (§9.6, AC12):
-    # bare edges touching one die with it; cited edges keep rendering from their
-    # snapshots and the jump fails closed. Two DELETEs total, not N+1 per row —
-    # this is a hot reindex path. Runs in the caller's transaction, before the
-    # rows below disappear.
-    span_ids = (
-        db.execute(
-            text(
-                "SELECT id FROM evidence_spans "
-                "WHERE owner_kind = :owner_kind AND owner_id = :owner_id"
-            ),
-            params,
-        )
-        .scalars()
-        .all()
-    )
-    chunk_ids = (
-        db.execute(
-            text(
-                "SELECT id FROM content_chunks "
-                "WHERE owner_kind = :owner_kind AND owner_id = :owner_id"
-            ),
-            params,
-        )
-        .scalars()
-        .all()
-    )
+    # Keep the dying identities in SQL until their dependent graph is removed.
     cleanup.delete_edges_for_deleted_resources(
         db,
-        refs=[
-            *(ResourceRef(scheme="evidence_span", id=span_id) for span_id in span_ids),
-            *(ResourceRef(scheme="content_chunk", id=chunk_id) for chunk_id in chunk_ids),
-        ],
+        refs=union_all(
+            select(literal("evidence_span"), EvidenceSpan.id).where(
+                EvidenceSpan.owner_kind == owner.kind, EvidenceSpan.owner_id == owner.id
+            ),
+            select(literal("content_chunk"), ContentChunk.id).where(
+                ContentChunk.owner_kind == owner.kind, ContentChunk.owner_id == owner.id
+            ),
+        ),
     )
     db.execute(
         text(
@@ -2148,18 +2210,61 @@ def _is_positive_number(value: object) -> TypeGuard[int | float]:
 
 def _iter_content_chunk_parts(
     blocks: Sequence[IndexableBlock],
+    *,
+    maximum_chunk_bytes: int | None,
 ) -> Iterator[list[tuple[IndexableBlock, int, int, int]]]:
     """Yield one chunk descriptor at a time without retaining a second corpus graph."""
     current_parts: list[tuple[IndexableBlock, int, int, int]] = []
     current_tokens = 0
+    current_bytes = 0
     for block in blocks:
-        for start_offset, end_offset, token_count in _block_pieces(block.canonical_text):
+        for start_offset, end_offset, token_count in _block_pieces(
+            block.canonical_text, maximum_chunk_bytes=maximum_chunk_bytes
+        ):
             if token_count == 0:
                 continue
+            part_bytes = (
+                len(block.canonical_text[start_offset:end_offset].encode("utf-8"))
+                if maximum_chunk_bytes is not None
+                else 0
+            )
             if current_parts:
-                previous_block, _, previous_end_offset, _ = current_parts[-1]
+                previous_block, previous_start, previous_end_offset, previous_tokens = (
+                    current_parts[-1]
+                )
+                if (
+                    maximum_chunk_bytes is not None
+                    and previous_block is not block
+                    and current_tokens + token_count <= CHUNK_MAX_TOKENS
+                    and _same_locator_anchor(previous_block, block)
+                    and _separator_before(previous_block, block) == ""
+                    and current_bytes
+                    + part_bytes
+                    + len(previous_block.canonical_text)
+                    - previous_end_offset
+                    + start_offset
+                    <= maximum_chunk_bytes
+                ):
+                    # Only adjacent original block slices can supply this gap.
+                    # Check the codepoint lower bound before copying whitespace.
+                    tail = previous_block.canonical_text[previous_end_offset:]
+                    head = block.canonical_text[:start_offset]
+                    if (not tail or tail.isspace()) and (not head or head.isspace()):
+                        gap_bytes = utf8_byte_length(tail) + utf8_byte_length(head)
+                        if current_bytes + part_bytes + gap_bytes <= maximum_chunk_bytes:
+                            previous_end_offset = len(previous_block.canonical_text)
+                            current_parts[-1] = (
+                                previous_block,
+                                previous_start,
+                                previous_end_offset,
+                                previous_tokens,
+                            )
+                            start_offset = 0
+                            current_bytes += gap_bytes
                 if (
                     current_tokens + token_count > CHUNK_MAX_TOKENS
+                    or maximum_chunk_bytes is not None
+                    and current_bytes + part_bytes > maximum_chunk_bytes
                     or not _same_locator_anchor(previous_block, block)
                     or previous_end_offset != len(previous_block.canonical_text)
                     or start_offset != 0
@@ -2168,8 +2273,10 @@ def _iter_content_chunk_parts(
                     yield current_parts
                     current_parts = []
                     current_tokens = 0
+                    current_bytes = 0
             current_parts.append((block, start_offset, end_offset, token_count))
             current_tokens += token_count
+            current_bytes += part_bytes
     if current_parts:
         yield current_parts
 
@@ -2497,7 +2604,9 @@ def _content_index_plan_chunks(
     yield from read_spooled_content_index_chunks(plan)
 
 
-def _block_pieces(text_value: str) -> Iterator[tuple[int, int, int]]:
+def _block_pieces(
+    text_value: str, *, maximum_chunk_bytes: int | None
+) -> Iterator[tuple[int, int, int]]:
     matches = iter(re.finditer(r"\S+", text_value))
     window = list(islice(matches, CHUNK_MAX_TOKENS + 1))
     if not window:
@@ -2507,7 +2616,18 @@ def _block_pieces(text_value: str) -> Iterator[tuple[int, int, int]]:
     while window:
         has_more = len(window) > CHUNK_MAX_TOKENS
         current = window[:CHUNK_MAX_TOKENS] if has_more else window
-        yield (current[0].start(), current[-1].end(), len(current))
+        start, end = current[0].start(), current[-1].end()
+        if maximum_chunk_bytes is None:
+            yield (start, end, len(current))
+        else:
+            while start < end:
+                # At most one byte budget of codepoints is encoded. A clipped
+                # final UTF-8 sequence belongs to the next exact source range.
+                encoded = text_value[start : min(end, start + maximum_chunk_bytes)].encode("utf-8")
+                following = start + len(encoded[:maximum_chunk_bytes].decode("utf-8", "ignore"))
+                words = sum(word.start() < following and word.end() > start for word in current)
+                yield (start, following, words)
+                start = following
         if not has_more:
             return
         window = window[step:]

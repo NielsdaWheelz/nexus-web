@@ -23,13 +23,17 @@ import { KeybindingsProvider } from "@/lib/keybindingsProvider";
 import { RenderEnvironmentProvider } from "@/lib/renderEnvironment/provider";
 import ActivityCaptureLifecycle from "@/lib/consumption/ActivityCaptureLifecycle";
 import { WorkspaceStoreProvider } from "@/lib/workspace/store";
+import WorkspaceSessionSync from "@/lib/workspace/WorkspaceSessionSync";
+import { HostedReaderProgressProvider } from "@/lib/reader/HostedReaderProgressProvider";
+import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
+import { ArtworkProvider, ArtworkFailureNotice } from "@/lib/media/ArtworkProvider";
+import { ARTWORK_CAPACITY } from "@/lib/media/artworkCapacity";
+import WorkspaceRecovery from "@/lib/workspace/WorkspaceRecovery";
 import { PaneReturnMementoProvider } from "@/lib/workspace/paneReturnMemento";
 import { MobileChromeProvider } from "@/lib/workspace/mobileChrome";
 import { MobileViewportProvider } from "@/lib/mobileViewport/MobileViewportProvider";
 import { useWorkspacePrimaryMetrics } from "@/lib/workspace/useWorkspacePrimaryMetrics";
-import { getWorkspacePrimaryPanes, type WorkspaceState } from "@/lib/workspace/schema";
-import { resolvePaneRouteModel, type PaneRouteId } from "@/lib/panes/paneRouteModel";
-import { preloadPane } from "@/lib/panes/paneRenderRegistry";
+import type { WorkspaceState } from "@/lib/workspace/schema";
 import {
   ResourceCacheProvider,
   type DehydratedResources,
@@ -54,12 +58,14 @@ export default function AuthenticatedShell({
   readerProfile,
   renderEnvironment,
   initialState,
+  entryHref,
   resources,
 }: {
   account: AuthenticatedAccount;
   readerProfile: ReaderProfile;
   renderEnvironment: RenderEnvironment;
   initialState: WorkspaceState;
+  entryHref: string | null;
   resources: DehydratedResources;
 }) {
   return (
@@ -69,16 +75,21 @@ export default function AuthenticatedShell({
           <ActivityCaptureLifecycle accountId={account.accountId} />
           <LocalVaultAutoSync />
           <WebVitalsReporter />
-          <ResourceCacheProvider value={resources}>
+          <ResourceCacheProvider key={account.accountId} value={resources} publicationLimits={READER_CAPACITY.cache}>
+            <ArtworkProvider key={account.accountId} limits={ARTWORK_CAPACITY}>
             <KeybindingsProvider>
               <ReaderProvider initialProfile={readerProfile}>
                 <ReaderProfileSaveFeedback />
+                <ArtworkFailureNotice />
                 <AuthenticatedWorkspace
+                  key={account.accountId}
                   accountId={account.accountId}
                   initialState={initialState}
+                  entryHref={entryHref}
                 />
               </ReaderProvider>
             </KeybindingsProvider>
+            </ArtworkProvider>
           </ResourceCacheProvider>
         </UnauthenticatedApiBoundary>
       </RenderEnvironmentProvider>
@@ -89,9 +100,11 @@ export default function AuthenticatedShell({
 function AuthenticatedWorkspace({
   accountId,
   initialState,
+  entryHref,
 }: {
   accountId: string;
   initialState: WorkspaceState;
+  entryHref: string | null;
 }) {
   const { workspacePrimaryMetrics, probe } = useWorkspacePrimaryMetrics();
 
@@ -104,34 +117,17 @@ function AuthenticatedWorkspace({
     setHydrated(true);
   }, []);
 
-  // Warm every restored visible pane's chunk as soon as the shell mounts so the downloads
-  // overlap hydration instead of waiting for each WorkspaceHost Suspense to commit (D-7).
-  // resolvePaneRouteModel is the same resolver the store uses, so this targets exactly the
-  // panes about to render.
-  useEffect(() => {
-    const ids = new Set<PaneRouteId>();
-    for (const pane of getWorkspacePrimaryPanes(initialState)) {
-      if (pane.visibility !== "visible") {
-        continue;
-      }
-      const { id } = resolvePaneRouteModel(pane.currentVisit.href);
-      if (id !== "unsupported") {
-        ids.add(id);
-      }
-    }
-    for (const id of ids) {
-      preloadPane(id);
-    }
-  }, [initialState]);
-
   return (
     <>
       {probe}
-      <PaneReturnMementoProvider>
+      <WorkspaceRecovery accountId={accountId} initialState={initialState} entryHref={entryHref} metrics={workspacePrimaryMetrics}>
+        {(restoredState, recovered) => <PaneReturnMementoProvider>
         <WorkspaceStoreProvider
           workspacePrimaryMetrics={workspacePrimaryMetrics}
-          initialState={initialState}
+          initialState={restoredState}
         >
+          <HostedReaderProgressProvider accountId={accountId}>
+          <WorkspaceSessionSync accountId={accountId} recovered={recovered} />
           <MobileViewportProvider>
             <MobileChromeProvider>
               {/* One Lectern owner wraps the workspace leaves and player
@@ -188,8 +184,10 @@ function AuthenticatedWorkspace({
               </LecternProvider>
             </MobileChromeProvider>
           </MobileViewportProvider>
+          </HostedReaderProgressProvider>
         </WorkspaceStoreProvider>
-      </PaneReturnMementoProvider>
+      </PaneReturnMementoProvider>}
+      </WorkspaceRecovery>
     </>
   );
 }

@@ -5,20 +5,22 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import java.io.IOException
 import java.util.UUID
 
 internal class HttpOfflineReaderProgressOriginClient(
     network: Network,
+    createSession: (Network) -> OfflineReadingHttpSession = { selectedNetwork ->
+        OfflineReadingHttpSessionFactory.create(selectedNetwork)
+    },
 ) : OfflineReaderProgressOriginClient {
     private val session = try {
-        OfflineReadingHttpSessionFactory.create(network)
+        createSession(network)
     } catch (error: OfflineReadingCookieUnavailableException) {
         throw OfflineReaderProgressOriginException(
             ReaderProgressOriginFailure.AuthorizationRequired,
             error,
         )
-    } catch (error: Exception) {
-        throw OfflineReaderProgressOriginException(ReaderProgressOriginFailure.Network, error)
     }
 
     override fun fetch(
@@ -73,55 +75,70 @@ internal class HttpOfflineReaderProgressOriginClient(
     }
 
     private fun executeState(request: Request, expectedAccountId: UUID): AttestedRemoteReaderState {
-        try {
-            session.client.newCall(request).execute().use { response ->
-                installOfflineReadingOwnedOriginCookies(
-                    response,
-                    session.hostedOrigin,
-                    session.cookieStore,
-                )
-                if (!response.isSuccessful) throw response.readProgressError()
-                require(response.priorResponse == null && !response.isRedirect)
-                require(response.header("Content-Encoding") == null)
-                val headerAccountText = response.header("Nexus-Account-Id")
-                    ?: error("offline reader-state account header is missing")
-                val headerAccount = UUID.fromString(headerAccountText)
-                require(headerAccount.toString() == headerAccountText && headerAccount == expectedAccountId)
-                val headerGeneration = response.header("Nexus-Reader-Generation")?.toLongOrNull()
-                    ?: error("offline reader-state generation header is missing")
-                require(headerGeneration > 0)
-                val bytes = response.body?.bytes() ?: error("offline reader-state body is missing")
-                require(bytes.size <= OFFLINE_READING_JSON_RESPONSE_LIMIT_BYTES)
-                val data = StrictJson.parse(bytes).requireObject(setOf("data")).getValue("data")
-                    .requireObject(setOf("accountId", "readerGeneration", "cursor"))
-                require(data.getValue("accountId").requireString() == expectedAccountId.toString())
-                require(data.getValue("readerGeneration").requireLong() == headerGeneration)
-                return AttestedRemoteReaderState(
-                    expectedAccountId,
-                    headerGeneration,
-                    data.getValue("cursor").toJson(),
-                )
-            }
-        } catch (error: OfflineReaderProgressHttpException) {
-            throw error
-        } catch (error: IllegalArgumentException) {
-            throw OfflineReaderProgressOriginException(ReaderProgressOriginFailure.Server, error)
-        } catch (error: Exception) {
+        val call = session.client.newCall(request)
+        val response = try {
+            call.execute()
+        } catch (error: IOException) {
+            throw OfflineReaderProgressOriginException(ReaderProgressOriginFailure.Network, error)
+        }
+        response.use {
+            installOfflineReadingOwnedOriginCookies(
+                response,
+                session.hostedOrigin,
+                session.cookieStore,
+            )
+            if (!response.isSuccessful) throw response.readProgressError()
+            require(response.priorResponse == null && !response.isRedirect)
+            require(response.header("Content-Encoding") == null)
+            val headerAccountText = response.header("Nexus-Account-Id")
+                ?: error("offline reader-state account header is missing")
+            val headerAccount = UUID.fromString(headerAccountText)
+            require(headerAccount.toString() == headerAccountText && headerAccount == expectedAccountId)
+            val headerGeneration = response.header("Nexus-Reader-Generation")?.toLongOrNull()
+                ?: error("offline reader-state generation header is missing")
+            require(headerGeneration > 0)
+            val bytes = response.readProgressBytes()
+            val data = StrictJson.parse(bytes).requireObject(setOf("data")).getValue("data")
+                .requireObject(setOf("accountId", "readerGeneration", "cursor"))
+            require(data.getValue("accountId").requireString() == expectedAccountId.toString())
+            require(data.getValue("readerGeneration").requireLong() == headerGeneration)
+            return AttestedRemoteReaderState(
+                expectedAccountId,
+                headerGeneration,
+                data.getValue("cursor").toJson(),
+            )
+        }
+    }
+
+    private fun Response.readProgressBytes(): ByteArray {
+        val content = body ?: error("offline reader-state body is missing")
+        return try {
+            content.readBoundedJson()
+        } catch (error: IOException) {
             throw OfflineReaderProgressOriginException(ReaderProgressOriginFailure.Network, error)
         }
     }
 
     private fun Response.readProgressError(): OfflineReaderProgressHttpException {
-        val bytes = body?.bytes() ?: byteArrayOf()
-        require(bytes.size <= OFFLINE_READING_JSON_RESPONSE_LIMIT_BYTES)
-        val errorCode = runCatching {
+        val bytes = if (body == null) byteArrayOf() else readProgressBytes()
+        val errorCode = try {
             val error = StrictJson.parse(bytes).requireObject(setOf("error")).getValue("error")
             val errorFields = (error as? StrictJson.ObjectValue)?.fields
                 ?: error("offline reader-state error must be an object")
             require(errorFields.keys.containsAll(setOf("code", "message")))
             require(errorFields.keys.all { it in setOf("code", "message", "request_id", "details") })
             errorFields.getValue("code").requireString()
-        }.getOrNull()
+        } catch (_: IOException) {
+            // justify-ignore-error: a raw gateway error may lack the owned JSON envelope;
+            // only an unsuccessful HTTP status supplies the fallback below.
+            null
+        } catch (_: IllegalArgumentException) {
+            // justify-ignore-error: invalid error-envelope fields use the same HTTP fallback.
+            null
+        } catch (_: IllegalStateException) {
+            // justify-ignore-error: a different JSON shape uses the same HTTP fallback.
+            null
+        }
         return OfflineReaderProgressHttpException(
             errorCode ?: when (code) {
                 401 -> "E_UNAUTHENTICATED"

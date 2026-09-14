@@ -1,3 +1,7 @@
+import { ArtworkProvider } from "@/lib/media/ArtworkProvider";
+import { ARTWORK_CAPACITY } from "@/lib/media/artworkCapacity";
+import { ResourceCacheProvider } from "@/lib/api/resourceCache";
+import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
 import { render, screen, within } from "@testing-library/react";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -156,31 +160,38 @@ function renderHeader() {
                           transport={null}
                         >
                           <ResourceOverlaysProvider>
-                            <GlobalPlayerProvider>
-                              <ResourceActionRuntimeProvider>
-                                <SurfaceHeader
-                                header={sectionHeader}
-                                identityId="pane-identity"
-                                actionSubject={mediaSubject}
-                                paneActions={[
-                                  {
-                                    kind: "command",
-                                    id: "Pane.Refresh",
-                                    label: "Refresh",
-                                    onSelect: () => {},
-                                  },
-                                ]}
-                                menuActions={[readerSettingsAction]}
-                                navigation={{
-                                  canGoBack: false,
-                                  canGoForward: false,
-                                  onBack: () => {},
-                                  onForward: () => {},
-                                }}
-                                />
-                                <ResourceActionOverlays />
-                              </ResourceActionRuntimeProvider>
-                            </GlobalPlayerProvider>
+                            <ResourceCacheProvider
+                              value={{}}
+                              publicationLimits={READER_CAPACITY.cache}
+                            >
+                              <ArtworkProvider limits={ARTWORK_CAPACITY}>
+                                <GlobalPlayerProvider>
+                                  <ResourceActionRuntimeProvider>
+                                    <SurfaceHeader
+                                    header={sectionHeader}
+                                    identityId="pane-identity"
+                                    actionSubject={mediaSubject}
+                                    paneActions={[
+                                      {
+                                        kind: "command",
+                                        id: "Pane.Refresh",
+                                        label: "Refresh",
+                                        onSelect: () => {},
+                                      },
+                                    ]}
+                                    menuActions={[readerSettingsAction]}
+                                    navigation={{
+                                      canGoBack: false,
+                                      canGoForward: false,
+                                      onBack: () => {},
+                                      onForward: () => {},
+                                    }}
+                                    />
+                                    <ResourceActionOverlays />
+                                  </ResourceActionRuntimeProvider>
+                                </GlobalPlayerProvider>
+                              </ArtworkProvider>
+                            </ResourceCacheProvider>
                           </ResourceOverlaysProvider>
                         </OfflineMediaProvider>
                       </ShareControllerProvider>

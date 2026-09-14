@@ -1,3 +1,4 @@
+import { requestResult, transactionCompletion } from "@/lib/browser/indexedDb";
 import type {
   ActivityDeviceClass,
   ActivityCaptureKey,
@@ -77,21 +78,6 @@ export function activityOutboxCapacity(
   limit = ACTIVITY_OUTBOX_MAX_SPANS,
 ): "Available" | "Reached" {
   return count >= limit ? "Reached" : "Available";
-}
-
-function requestResult<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-function transactionCompletion(transaction: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-    transaction.onabort = () => reject(transaction.error);
-  });
 }
 
 function accountKeys(accountId: string): IDBKeyRange {

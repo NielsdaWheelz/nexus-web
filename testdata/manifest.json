@@ -162,6 +162,258 @@
         "Visible ranking equivalence across the finalist-only snippet projection cutover",
         "Bounded final-result snippet work and query-budget sensitivity"
       ]
+    },
+    {
+      "path": "testdata/contracts/nexus-history.json",
+      "sha256": "f39be1ec71eba465d38bf861887b13ab8f9c715041b012237dbf68ce807eb672",
+      "source": "repo-authored: finite Nexus candidate union, accepted destination-href grammar and history snapshots",
+      "license": "Repository-owned contract data",
+      "purpose": [
+        "Cross-language Nexus history request bounds and complete candidate-union proof",
+        "One shared statement of which destination hrefs the target grammar scores"
+      ]
+    },
+    {
+      "path": "testdata/capacity/api_import_probe.py",
+      "sha256": "9041905b4b6e2e73f7dac12c22c25a4460e7fd534b8ae16e171dfe075ce60043",
+      "source": "repo-authored: bounded workspace incident qualification",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Measure exact-image imports and first selected provider request without paid external traffic"
+      ]
+    },
+    {
+      "path": "testdata/capacity/incident-api.json",
+      "sha256": "76afd4ede1da4f99440f88fc18a6b7ac9167436491aae5badf07ccc16df73a8a",
+      "source": "repo-authored: bounded workspace incident qualification",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Bind local capacity qualification to the incident image, source, cgroup limit and documented content census"
+      ]
+    },
+    {
+      "path": "testdata/contracts/reader-publication-text.json",
+      "sha256": "5f262baabea6d57a16a370c30e5a2cbb31abc21acd9f788ff8214a33cf1965f2",
+      "source": "repo-authored: Unicode word-boundary and canonical coordinate adversaries",
+      "license": "Repository-owned contract data",
+      "purpose": [
+        "Hosted and native whole-fragment word-boundary semantics survive artificial unit splits",
+        "Canonical code-point interpretation including Unicode format, regional indicators, combining marks and astral text"
+      ]
+    },
+    {
+      "path": "testdata/capacity/reader-tables.json",
+      "sha256": "71a3232d949b50f24a47d1a9fefe58b64889a13f9e690f193a99d7c46cd8b390",
+      "source": "repo-authored: deterministic intact table capacity recipes",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Measure real TextDocumentReader table DOM, heap and selection at explicit experiment sizes; not a production budget"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/retained-unicode-schema-2.zip",
+      "sha256": "9b43c0ffcb1288acb3b9f2125edb5e4fad32da40dcfcede21b33cc3eb03671fe",
+      "source": "repo-authored schema-2 wire literals, assembled and verified by the real packager in python/tests/kernel/test_offline_reading_publication_package.py; not emitted by the publication producer; sparse table metadata contract; green 825a36c68be5445b",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Cross-language exact retained generation, Unicode offsets, fixed index traversal and extensionless captured-image package conformance"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/retained-unicode-schema-2.json",
+      "sha256": "11ffc9dfda27c53f271d271ecfd377115431bb06a9144e80b2b099976f05664b",
+      "source": "repo-authored schema-2 wire literals, assembled and verified by the real packager in python/tests/kernel/test_offline_reading_publication_package.py; not emitted by the publication producer; sparse table metadata contract; green 825a36c68be5445b",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Cross-language exact retained generation, Unicode offsets, fixed index traversal and extensionless captured-image package conformance"
+      ]
+    },
+    {
+      "path": "testdata/capacity/api_image_origin.py",
+      "sha256": "d8ff006f4707890485fd0a84dcbe7f6afde8fd9086ff5a4379b0c19bfd2faaa0",
+      "source": "repo-authored: exact-image artwork capacity transport fixture",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Serve only manifested synthetic image bytes while retaining the selected image ASGI, authentication, SSRF, byte bounds and Pillow validation"
+      ]
+    },
+    {
+      "path": "testdata/capacity/artwork.json",
+      "sha256": "8247a3f90413aaf62515bcaa5e278c1ac175e17e16048190a226aaefb6949245",
+      "source": "repo-authored: independently specified external artwork image formats and supported allocation envelopes",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Display orientation and static first-frame artwork derivation",
+        "Actual browser decode and retained derivative capacity experiments"
+      ]
+    },
+    {
+      "path": "testdata/capacity/api_provider_first_request.py",
+      "sha256": "5d50bb62056348a4b4422530fed253378cdce4cad55aef3d281f9d79c9d54a87",
+      "source": "repo-authored: actual selected provider request with controlled external Responses HTTP bytes",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Shared cold-import first-request and provider-warmed API capacity experiment"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/retained-table-context-schema-2.zip",
+      "sha256": "9eae90605d749996bf8794a0c29d16cc410422abf68475a32f5e11e26eea6d41",
+      "source": "repo-authored schema-2 wire literals, assembled and verified by the real packager in python/tests/kernel/test_offline_reading_publication_package.py; not emitted by the publication producer; sparse table metadata; explicit header crosses member boundary; green b83cd1bbeaf94d15",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Cross-language retained generation, separate bounded table-context graph, source header range and exact render-node package conformance"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/retained-table-context-schema-2.json",
+      "sha256": "29de23ba0da00622ee855c55ceaa6453fab516d10b88e0fbd023589ef6208aa0",
+      "source": "repo-authored schema-2 wire literals, assembled and verified by the real packager in python/tests/kernel/test_offline_reading_publication_package.py; not emitted by the publication producer; sparse table metadata; explicit header crosses member boundary; green b83cd1bbeaf94d15",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Cross-language retained generation, separate bounded table-context graph, source header range and exact render-node package conformance"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/retained-unicode-schema-2-members.json",
+      "sha256": "75933649afcf0153f4893c0086d716a3ae2ba78827618e6ad515d59771bf8f32",
+      "source": "repo-authored: exact UTF-8 JSON members extracted from the manifested retained-unicode-schema-2.zip, whose wire bodies are authored kernel literals assembled by the real packager; source archive SHA-256 is embedded",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Native browser descriptor/index/unit conformance using the retained authored wire"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/legacy-svg-paint.json",
+      "sha256": "e816cb5c153893b49b33a8041ad4585ad63be2cc2798e16c49dcdde05110be90",
+      "source": "repo-authored: independently declared CSS Syntax escape, URL resource and literal-preservation verdicts",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Cross-language SVG paint projection for hosted publication and native local migration"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/retained-pdf-schema-2.zip",
+      "sha256": "8ded0b359ed06da3e89634039fcfeab28f184b03a50be38b07a6438bea2250e7",
+      "source": "repo-authored: actual source EPUB/PDF producer cases passed in bd8ea004677d16d3 (overall run later failed an unrelated SourceRange fixture); sparse schema archive bytes",
+      "license": "Repository-owned minimal source fixture",
+      "purpose": [
+        "Cross-language retained PDF schema-2 reading through actual producer bytes",
+        "Canonical generation, source content, navigation and verified member conformance"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/retained-pdf-schema-2.json",
+      "sha256": "135911ecaa7d7e1f045328cc7baa150566a05dc7aefa20cacb71cb7aa20cba9c",
+      "source": "repo-authored: actual source EPUB/PDF producer cases passed in bd8ea004677d16d3 (overall run later failed an unrelated SourceRange fixture); sparse schema archive bytes",
+      "license": "Repository-owned minimal source fixture",
+      "purpose": [
+        "Cross-language retained PDF schema-2 reading through actual producer bytes",
+        "Canonical generation, source content, navigation and verified member conformance"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/retained-epub-schema-2.zip",
+      "sha256": "bbb65eec37ef689832fdd1221824ed8a996bd571d4ccef353b4754bfa8d44019",
+      "source": "repo-authored: actual source EPUB/PDF producer cases passed in bd8ea004677d16d3 (overall run later failed an unrelated SourceRange fixture); sparse schema archive bytes",
+      "license": "Repository-owned minimal source fixture",
+      "purpose": [
+        "Cross-language retained EPUB schema-2 reading through actual producer bytes",
+        "Canonical generation, source content, navigation and verified member conformance"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/retained-epub-schema-2.json",
+      "sha256": "6385eeb049c0491459bec18da7464465eefcd475ca6c12e4165a94e4cbcbff01",
+      "source": "repo-authored: actual source EPUB/PDF producer cases passed in bd8ea004677d16d3 (overall run later failed an unrelated SourceRange fixture); sparse schema archive bytes",
+      "license": "Repository-owned minimal source fixture",
+      "purpose": [
+        "Cross-language retained EPUB schema-2 reading through actual producer bytes",
+        "Canonical generation, source content, navigation and verified member conformance"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/retained-epub-schema-2-members.json",
+      "source": "repo-authored: actual source EPUB/PDF producer cases passed in bd8ea004677d16d3 (overall run later failed an unrelated SourceRange fixture); sparse schema archive bytes; exact member extraction, source archive digest embedded",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Native browser descriptor/index/unit or PDF conformance using actual retained producer bytes"
+      ],
+      "sha256": "faac0de71a55ff88078f588d58b8008d368423e171b7fc46b1169fc14620b1e4"
+    },
+    {
+      "path": "testdata/offline-reading/retained-pdf-schema-2-members.json",
+      "source": "repo-authored: actual source EPUB/PDF producer cases passed in bd8ea004677d16d3 (overall run later failed an unrelated SourceRange fixture); sparse schema archive bytes; exact member extraction, source archive digest embedded",
+      "license": "Repository-owned test data",
+      "purpose": [
+        "Native browser descriptor/index/unit or PDF conformance using actual retained producer bytes"
+      ],
+      "sha256": "01a008a6be957cc11ecee3c4f52c9d0f87ec467b3c318773d236a3ca5eefd336"
+    },
+    {
+      "path": "testdata/offline-reading/epub-pathnames.json",
+      "sha256": "f00d22a39fc02a305bfdc3334050166b9ae6cc10e56dbcfcad5b56a96ed395cb",
+      "source": "repo-authored: independently declared existing normalizeTocLinkPath and WHATWG URL pathname cases",
+      "license": "Repository-owned protocol conformance fixture",
+      "purpose": [
+        "Worker and browser EPUB source-path lookup preserves Unicode, literal percent, escaped slash and relative path semantics"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/list-ordinals.json",
+      "sha256": "09fa795cd4735d91cd76641258a18d19179bf38e63eaf3fbaebc81b4e67dc9be",
+      "source": "repo-authored: WHATWG ol/li integer and ordinal rules; independently reviewed Chromium marker characterization 117401aad3917482; explicit until-found/reversed counter normalization",
+      "license": "Repository-owned semantic compatibility fixture",
+      "purpose": [
+        "Hosted and native publication list numbering across bounded render-unit continuations"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/list-render-units.json",
+      "sha256": "449d13b7fbcf169e260d638d0a2b7b47ee9c31f3454f4b0fa9fe34793ad0ce16",
+      "source": "repo-authored: actual hosted splitter output b330aea17da58184 from independently reviewed list-ordinals.json; unit cuts force continued source items",
+      "license": "Repository-owned minimal reading compatibility fixture",
+      "purpose": [
+        "Actual publication units through browser rendering preserve one original list marker across item continuations"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/table-headers.json",
+      "sha256": "07576bb5240d3876421332fbfc5a4ee89817034818418e29c2d2eba1551c4f26",
+      "source": "repo-authored: independently hand-derived WHATWG table header association cases, 2026-09-13; no implementation output used as oracle",
+      "license": "Repository-owned semantic compatibility fixture",
+      "purpose": [
+        "Hosted and native sparse table queries preserve header block opacity, source order, group scope and authored explicit associations"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/table-header-geometry.json",
+      "sha256": "4c7ec664cc883861b0b54a83384dc7744d56b0d5a741b1159826785be1ca5ecd",
+      "source": "Actual effective-tree geometry from test_table_header_fixture.py, kernel pass a4249283c531e5bf; independently expected table-headers.json source sha256 07576bb5240d3876421332fbfc5a4ee89817034818418e29c2d2eba1551c4f26. Overall run later failed service setup on stale proof-worktree admission config; no capacity qualification.",
+      "license": "Repository-owned semantic compatibility fixture",
+      "purpose": [
+        "Native selected-cell association consumes actual sparse source geometry with independent WHATWG header verdicts"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/source-table-schema-2-members.json",
+      "sha256": "d0ae33c2a0eea0a2aa219354b19b8197e037da7bd9c577a6b51f430da02e5184",
+      "source": "actual retained member strings from source publisher/archive service proof 24d947b70dabea09; package sha256 8803ec7c19d75b72d04d3d00acfe269304db34f208e7947fff113a873de67f93",
+      "license": "Repository-owned source HTML and derived immutable publication members",
+      "purpose": [
+        "Real Chromium excerpt table roles and original row/column/span coordinates",
+        "Authored separator-boundary positioning without canonical offset clamping",
+        "Actual preserved late caption source range and accessible table name"
+      ]
+    },
+    {
+      "path": "testdata/offline-reading/reader-raster-source-facts.json",
+      "sha256": "6930524638e1506dab43090c812700b7748ccade552b9da15ae5f01116fe2944",
+      "source": "Exact independently encoded GIF/ICO source bodies and expected all-frame facts retained by actual Python kernel owner, green 3c5e13747bb3e4b8. Not native decoder or maximum allocation qualification.",
+      "license": "Repository-owned minimal encoded raster fixtures",
+      "purpose": [
+        "Characterize public native decoder observations against later GIF canvas growth and concealed ICO pixel dimensions without treating initial dimensions as all-frame facts"
+      ]
     }
   ]
 }

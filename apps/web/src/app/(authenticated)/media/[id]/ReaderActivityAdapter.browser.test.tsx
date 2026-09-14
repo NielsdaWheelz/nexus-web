@@ -62,7 +62,7 @@ function Harness({
   const pdf = format === "pdf";
   const documentProjection: ReaderDocumentProjection = pdf
     ? { kind: "Pdf", pageCount: 10 }
-    : { kind: "Text", fragments: [{ fragmentId: "fragment", length: 100 }] };
+    : { kind: "Text", length: 100, fragments: [{ fragmentId: "fragment", start: 0, length: 100 }] };
   const primaryLocator: ReaderResumeState = pdf
     ? { kind: "pdf", page: 1, page_progression: 0, zoom: null, position: 1 }
     : textLocator(format);
@@ -97,7 +97,7 @@ function Harness({
       : {
           fragmentId: "fragment",
           canonicalText: "one two three four five six seven eight nine ten",
-          documentWordStart: 0,
+          documentWordStart: 0, startsInWord: false, unitStartOffset: 0,
         },
     semanticViewport,
     documentProjection,

@@ -1,0 +1,22 @@
+diff --git a/apps/web/src/lib/workspace/sessionSync.ts b/apps/web/src/lib/workspace/sessionSync.ts
+--- a/apps/web/src/lib/workspace/sessionSync.ts
++++ b/apps/web/src/lib/workspace/sessionSync.ts
+@@ -128,17 +128,7 @@
+         ?? (retained ? await this.store.get(this.accountId, this.writerId) : undefined);
+       if (this.closed) return;
+       if (retained && stored === undefined) {
+-        // A missing row proves only that this device no longer holds it:
+-        // eviction and cleared site data are indistinguishable from another
+-        // owner's acknowledgment, and nothing here was ever delivered. Restore
+-        // the recovery copy and deliver; only a decoded acknowledgment saves.
+-        // A copy that vanishes again is storage this device cannot retain.
+-        if (this.repersistedSequence === this.sequence) {
+-          this.localFailure = { error: new Error("Workspace storage did not retain the pending layout") };
+-          continue;
+-        }
+-        this.repersistedSequence = this.sequence;
+-        this.persist();
++        this.acknowledgedSequence = this.sequence;
+         continue;
+       }
+       // Without a retained copy the writer's own desired state is the payload.

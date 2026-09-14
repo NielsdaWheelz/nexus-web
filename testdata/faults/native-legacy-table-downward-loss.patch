@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTables.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTables.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTables.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTables.kt
+@@ -133,7 +133,7 @@
+                     var caption: Long? = null
+                     occupancy.clear()
+                     fun endGroup() {
+-                        db.execSQL("UPDATE legacy_table_cells SET row_end=?, downward=0 WHERE fragment=? AND table_node=? AND downward=1",
++                        db.execSQL("UPDATE legacy_table_cells SET row_end=min(?, row_start+1), downward=0 WHERE fragment=? AND table_node=? AND downward=1",
+                             arrayOf(height, fragment, table))
+                         occupancy.clear()
+                         row = height

@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTablePublication.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTablePublication.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTablePublication.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyTablePublication.kt
+@@ -33,7 +33,7 @@
+                 if (it.moveToFirst()) end = maxOf(end, it.getLong(0))
+             }
+         }
+-        if (end == crop.end) return crop
++        if (end >= crop.end) return crop
+         crop = cropLegacyReaderHtml(db, fragment, start, end) ?: return null
+     }
+ }

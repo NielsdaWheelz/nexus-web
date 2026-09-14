@@ -75,24 +75,27 @@ export function createArtifactPaneFindAdapter(
         currentSectionId = preparedSectionId;
       }
       return {
-        sessionId: request.sessionId,
-        sourceKey: request.sourceKey,
-        scopes: [
-          {
-            kind: "EntireResource",
-            id: ENTIRE_SCOPE_ID,
-            label: "Entire dossier",
-          },
-          ...(prepared.currentSection.kind === "Present"
-            ? [
-                {
-                  kind: "Narrow" as const,
-                  id: CURRENT_SECTION_SCOPE_ID,
-                  label: "This section",
-                },
-              ]
-            : []),
-        ],
+        kind: "Prepared",
+        session: {
+          sessionId: request.sessionId,
+          sourceKey: request.sourceKey,
+          scopes: [
+            {
+              kind: "EntireResource",
+              id: ENTIRE_SCOPE_ID,
+              label: "Entire dossier",
+            },
+            ...(prepared.currentSection.kind === "Present"
+              ? [
+                  {
+                    kind: "Narrow" as const,
+                    id: CURRENT_SECTION_SCOPE_ID,
+                    label: "This section",
+                  },
+                ]
+              : []),
+          ],
+        },
       };
     },
     async find(request) {
@@ -226,6 +229,7 @@ export function createArtifactPaneFindAdapter(
           }
         : {
             kind: "Rejected",
+            returnAvailable: false,
             sessionId: request.sessionId,
             queryId: request.queryId,
             sourceKey: request.sourceKey,
@@ -253,6 +257,7 @@ export function createArtifactPaneFindAdapter(
       if (returned.kind === "Rejected") {
         throw new Error("Artifact Find reading origin is unavailable.");
       }
+      return { kind: "Returned" };
     },
     errorMessage(error) {
       switch (error.kind) {

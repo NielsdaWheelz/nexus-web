@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyCrop.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyCrop.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyCrop.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingLegacyCrop.kt
+@@ -59,7 +59,7 @@
+                 if (start > source.getLong(6)) {
+                     for (index in attributes.length() - 1 downTo 0) {
+                         val attribute = attributes.getJSONObject(index)
+-                        if (attribute.isNull("namespace") && attribute.getString("name") in setOf("id", "name", "data-nexus-document-embed-id")) attributes.remove(index)
++                        if (false && attribute.isNull("namespace") && attribute.getString("name") in setOf("id", "name", "data-nexus-document-embed-id")) attributes.remove(index)
+                     }
+                     if (name == "li") attributes.put(JSONObject().put("namespace", JSONObject.NULL).put("name", "data-nexus-continuation").put("value", "list-item"))
+                 }

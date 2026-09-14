@@ -28,7 +28,7 @@ from nexus.services.podcasts.types import (
 JobHandler = Callable[..., Mapping[str, Any] | RescheduleRequested | None]
 type ResourceFailureProjection = Literal["Job", "SourceAttemptMedia"]
 type ChildRuntime = Literal["Base", "Llm"]
-type ChildExitCleanup = Literal["None", "SourceAttemptParserTemp"]
+type ChildExitCleanup = Literal["None", "SourceAttemptParserTemp", "JobParserTemp"]
 
 CHAT_RUN_LEASE_SECONDS = 1_200
 
@@ -129,6 +129,27 @@ def periodic_dedupe_key(*, kind: str, slot_start: datetime) -> str:
 def _build_default_registry() -> dict[str, JobDefinition]:
     settings = get_settings()
     return {
+        "prepare_reader_publication": JobDefinition(
+            kind="prepare_reader_publication",
+            handler_path="nexus.tasks.prepare_reader_publication:prepare_reader_publication",
+            resource_class="Heavy",
+            max_attempts=3,
+            retry_delays_seconds=(60, 300),
+            lease_seconds=300,
+            wall_timeout_seconds=settings.background_process_wall_timeout_seconds,
+            never_prune_dead=True,
+        ),
+        "prepare_offline_reading_package": JobDefinition(
+            kind="prepare_offline_reading_package",
+            handler_path="nexus.tasks.prepare_offline_reading_package:prepare_offline_reading_package",
+            resource_class="Heavy",
+            child_exit_cleanup="JobParserTemp",
+            max_attempts=3,
+            retry_delays_seconds=(60, 300),
+            lease_seconds=300,
+            wall_timeout_seconds=settings.background_process_wall_timeout_seconds,
+            never_prune_dead=True,
+        ),
         "ingest_media_source": JobDefinition(
             kind="ingest_media_source",
             handler_path="nexus.jobs.registry:_run_ingest_media_source",
@@ -146,6 +167,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             kind="media_content_reindex_job",
             handler_path="nexus.jobs.registry:_run_media_content_reindex",
             resource_class="Heavy",
+            child_exit_cleanup="JobParserTemp",
             max_attempts=3,
             retry_delays_seconds=(60, 300),
             lease_seconds=900,

@@ -1,9 +1,9 @@
 diff --git a/python/nexus/services/consumption/_reader_cursor_store.py b/python/nexus/services/consumption/_reader_cursor_store.py
 --- a/python/nexus/services/consumption/_reader_cursor_store.py
 +++ b/python/nexus/services/consumption/_reader_cursor_store.py
-@@ -141,7 +141,7 @@ def replace_in_txn(
-     )
-     if isinstance(current, ReaderCursorPositioned) and current.locator == write.locator:
+@@ -154,7 +154,7 @@
+         and current.source == source
+     ):
          return current
 -    if write.base_revision != current.revision:
 +    if False and write.base_revision != current.revision:

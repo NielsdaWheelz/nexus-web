@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthDependencyError } from "@/lib/auth/session-response";
 import { AUTH_ENDED_FEEDBACK_COOKIE } from "@/lib/auth/messages";
 import {
-  proxyOfflineReaderProgressToFastAPIWithDeps,
+  proxyAccountBoundToFastAPIWithDeps,
+  proxyCacheableMediaAssetToFastAPIWithDeps,
   proxyExtensionToFastAPI,
+  proxyMediaAssetToFastAPIWithDeps,
   proxyToFastAPIWithDeps,
 } from "./proxy";
 
@@ -117,14 +119,191 @@ describe("BFF response streaming", () => {
     process.env = { ...originalEnvironment };
   });
 
+  it.each([502, 503, 504])("normalizes an unenveloped gateway %s with private request context", async (status) => {
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/media/one"),
+      "/media/one",
+      authenticatedDeps(async () => new Response("upstream unavailable", { status })),
+    );
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual({
+      error: {
+        code: status === 504 ? "E_UPSTREAM_TIMEOUT" : "E_UPSTREAM",
+        message: `Request failed with status ${status}`,
+        request_id: REQUEST_ID,
+      },
+    });
+    expectCanonicalPrivateHeaders(response);
+  });
+
+  it("preserves owned gateway metadata and drops obsolete representation headers", async () => {
+    const envelope = {
+      error: { code: "E_READ_CAPACITY", message: "Try again", request_id: "upstream-request" },
+      retry_after_seconds: 2,
+    };
+    for (const method of ["GET", "HEAD"]) {
+      const response = await proxyToFastAPIWithDeps(
+        new Request("http://localhost:3000/api/media/one", { method }),
+        "/media/one",
+        authenticatedDeps(async () => new Response(JSON.stringify(envelope), {
+          status: 503,
+          headers: { etag: "old-entity", "content-range": "bytes 0-5/6", "accept-ranges": "bytes", "content-disposition": "attachment" },
+        })),
+      );
+      for (const header of ["etag", "content-range", "accept-ranges", "content-disposition", "content-length"]) {
+        expect(response.headers.get(header)).toBeNull();
+      }
+      if (method === "HEAD") expect(response.body).toBeNull();
+      else expect(await response.json()).toEqual(envelope);
+    }
+  });
+
+  it("delivers a terminal reader oversize refusal with the exact limit its content broke", async () => {
+    // A 422 is the API's own permanent answer, not an unowned gateway outage,
+    // so it keeps its code and `details`: the browser names the broken limit
+    // from them and must not offer a retry.
+    const envelope = {
+      error: {
+        code: "E_READER_CONTENT_TOO_LARGE",
+        message: "Reader query exceeds response capacity",
+        request_id: "upstream-request",
+        details: { limit: "index_bytes", limit_value: 262144, measured: 393216 },
+      },
+    };
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/media/one/reader-publications/2/find", {
+        method: "POST", headers: { "content-type": "application/json", origin: "http://localhost:3000" }, body: "{}",
+      }),
+      "/media/one/reader-publications/2/find",
+      authenticatedDeps(async () => new Response(JSON.stringify(envelope), {
+        status: 422, headers: { "content-type": "application/json" },
+      })),
+    );
+    expect(response.status).toBe(422);
+    expect(await response.json(), "the reader lost the limit its content broke").toEqual(envelope);
+    expect(response.headers.get("retry-after"), "a permanent refusal advertised retry guidance").toBeNull();
+    expectCanonicalPrivateHeaders(response);
+  });
+
+  it("preserves byte-serving integrity and removes digest identity when replacing failed bytes", async () => {
+    for (const status of [200, 503]) {
+      const response = await proxyMediaAssetToFastAPIWithDeps(
+        new Request("http://localhost:3000/api/media/one/reader-publication"),
+        "/media/one/reader-publication",
+        authenticatedDeps(async (_input, init) => {
+          expect(new Headers(init?.headers).get("accept-encoding")).toBe("identity");
+          return new Response("{}", {
+            status,
+            headers: {
+              "content-type": "application/json", "content-length": "2",
+              "content-digest": "sha-256=:fixture:", "x-nexus-reader-generation": "7",
+              "x-nexus-image-width": "2", "x-nexus-image-height": "6",
+              "cache-control": "private, no-store, no-transform", "Retry-After": "1",
+            },
+          });
+        }),
+      );
+      expect(response.headers.get("retry-after"), "proxy discarded read admission guidance").toBe("1");
+      expect(response.headers.get("cache-control"), "session finalization reenabled member compression")
+        .toBe("private, no-store, no-transform");
+      for (const [header, value] of [["content-length", "2"], ["content-digest", "sha-256=:fixture:"], ["x-nexus-reader-generation", "7"], ["x-nexus-image-width", "2"], ["x-nexus-image-height", "6"]]) {
+        expect(response.headers.get(header), "replacement error retained obsolete member identity")
+          .toBe(status === 200 ? value : null);
+      }
+      if (status === 200) expect(await response.text()).toBe("{}");
+      else expect((await response.json()).error.code).toBe("E_UPSTREAM");
+    }
+  });
+
+  it("delivers the artwork lane's own freshness to the browser and keeps members session-private", async () => {
+    // The API retains no image bytes, so the browser's private window is the
+    // only cache in the system; a member is session state and must not be kept.
+    const upstream = (cacheControl: string): typeof fetch => async () =>
+      new Response("bytes", {
+        headers: { "content-type": "image/png", "content-length": "5", "cache-control": cacheControl },
+      });
+
+    const artwork = await proxyCacheableMediaAssetToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/media/image?url=https://example.test/cover.png"),
+      "/media/image",
+      authenticatedDeps(upstream("private, max-age=86400, no-transform")),
+    );
+    expect(
+      artwork.headers.get("cache-control"),
+      "the browser lost the private freshness the deleted API cache was traded for",
+    ).toBe("private, max-age=86400, no-transform");
+
+    const epubAsset = await proxyCacheableMediaAssetToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/media/one/assets/cover.png"),
+      "/media/one/assets/cover.png",
+      authenticatedDeps(upstream("private, max-age=86400")),
+    );
+    expect(
+      epubAsset.headers.get("cache-control"),
+      "the identity byte lane forwarded a representation a hop may recode",
+    ).toBe("private, max-age=86400, no-transform");
+
+    const member = await proxyMediaAssetToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/media/one/reader-publications/7/descriptor"),
+      "/media/one/reader-publications/7/descriptor",
+      authenticatedDeps(upstream("private, max-age=86400")),
+    );
+    expect(
+      member.headers.get("cache-control"),
+      "a publication member lane adopted an upstream freshness window",
+    ).toBe("private, no-store, no-transform");
+
+    const failed = await proxyCacheableMediaAssetToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/media/image?url=https://example.test/cover.png"),
+      "/media/image",
+      authenticatedDeps(async () => new Response("gateway page", {
+        status: 503, headers: { "cache-control": "private, max-age=86400, no-transform" },
+      })),
+    );
+    expect(
+      failed.headers.get("cache-control"),
+      "a replaced failure body inherited the representation's freshness",
+    ).toBe("private, no-store, no-transform");
+  });
+
+  it("normalizes a gateway body without materializing it past the envelope ceiling", async () => {
+    const chunk = new TextEncoder().encode("x".repeat(8 * 1024));
+    let produced = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (produced >= 64 * 1024) {
+          controller.close();
+          return;
+        }
+        produced += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const response = await proxyToFastAPIWithDeps(
+      new Request("http://localhost:3000/api/media/one"),
+      "/media/one",
+      authenticatedDeps(async () => new Response(body, { status: 503 })),
+    );
+
+    expect(await response.json(), "an oversized gateway body was adopted as an owned envelope").toEqual({
+      error: { code: "E_UPSTREAM", message: "Request failed with status 503", request_id: REQUEST_ID },
+    });
+    expect(cancelled, "the BFF drained a gateway body it had already refused").toBe(true);
+    expect(produced, "the BFF buffered the whole gateway body while classifying it").toBeLessThan(64 * 1024);
+  });
+
   it("forwards offline reader attestation only through its narrow route policy", async () => {
     const accountId = "11111111-1111-4111-8111-111111111111";
     let ordinaryExpectedAccount: string | null = null;
     const ordinary = await proxyToFastAPIWithDeps(
-      new Request("http://localhost:3000/api/media/one/reader-state", {
+      new Request("http://localhost:3000/api/media/one/document-map", {
         headers: { "X-Nexus-Expected-Account-Id": accountId },
       }),
-      "/media/one/reader-state",
+      "/media/one/document-map",
       authenticatedDeps(async (_input, init) => {
         ordinaryExpectedAccount = new Headers(init?.headers).get(
           "x-nexus-expected-account-id",
@@ -140,7 +319,7 @@ describe("BFF response streaming", () => {
     );
 
     let offlineExpectedAccount: string | null = null;
-    const offline = await proxyOfflineReaderProgressToFastAPIWithDeps(
+    const offline = await proxyAccountBoundToFastAPIWithDeps(
       new Request("http://localhost:3000/api/media/one/offline-reader-state", {
         headers: { "X-Nexus-Expected-Account-Id": accountId },
       }),

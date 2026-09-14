@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/reader/publicationFind.ts b/apps/web/src/lib/reader/publicationFind.ts
+--- a/apps/web/src/lib/reader/publicationFind.ts
++++ b/apps/web/src/lib/reader/publicationFind.ts
+@@ -95,7 +95,7 @@
+       targets: current.rows, activeKey,
+     }).activeComplete;
+   };
+-  const releaseResult = () => { result = null; activeKey = null; presentation.clear(); };
++  const releaseResult = () => { const previous = result; result = null; activeKey = null; presentation.clear(); previous?.lease.release(); };
+   const modeledError = (error: unknown): PublicationFindError => {
+     if (handleUnauthenticatedApiError(error)) throw new DOMException("Find authentication boundary took ownership", "AbortError");
+     if (isApiError(error) && !isSameSystemApiDefect(error)) return { kind: "RequestUnavailable" };

@@ -1,5 +1,9 @@
 /// <reference types="vite/client" />
 
+import { ArtworkProvider } from "@/lib/media/ArtworkProvider";
+import { ARTWORK_CAPACITY } from "@/lib/media/artworkCapacity";
+import { ResourceCacheProvider } from "@/lib/api/resourceCache";
+import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
 import {
   Component,
   useState,
@@ -249,14 +253,21 @@ function renderWorkspace(
                         <OfflineReadingProvider accountId={A}>
                           <OfflineMediaProvider accountId={A}>
                             <ResourceOverlaysProvider>
-                              <GlobalPlayerProvider accountId={A}>
-                                <ResourceActionRuntimeProvider>
-                                  <WorkspaceProbe />
-                                  <div style={{ height: 800, width: 1500 }}>
-                                    <WorkspaceHost />
-                                  </div>
-                                </ResourceActionRuntimeProvider>
-                              </GlobalPlayerProvider>
+                              <ResourceCacheProvider
+                                value={{}}
+                                publicationLimits={READER_CAPACITY.cache}
+                              >
+                                <ArtworkProvider limits={ARTWORK_CAPACITY}>
+                                  <GlobalPlayerProvider accountId={A}>
+                                    <ResourceActionRuntimeProvider>
+                                      <WorkspaceProbe />
+                                      <div style={{ height: 800, width: 1500 }}>
+                                        <WorkspaceHost />
+                                      </div>
+                                    </ResourceActionRuntimeProvider>
+                                  </GlobalPlayerProvider>
+                                </ArtworkProvider>
+                              </ResourceCacheProvider>
                             </ResourceOverlaysProvider>
                           </OfflineMediaProvider>
                         </OfflineReadingProvider>
@@ -801,6 +812,7 @@ describe("chat admission ownership", () => {
                   {
                     locator: { kind: "resource_ref", ref: `conversation:${A}` },
                     canonicalHref: route,
+                    documentReader: false,
                     resourceItem: {
                       ref: `conversation:${A}`,
                       scheme: "conversation",

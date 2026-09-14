@@ -8,27 +8,29 @@ registered before the `media` router (see create_api_router).
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 
+from nexus.api.read_admission import AdmittedImageRoute
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_session_factory
 from nexus.services import epub_assets, image_proxy
 
-router = APIRouter(tags=["media"])
+# Both routes materialize whole image bytes in the API process, so both draw on
+# the one qualified image budget, whether the bytes come from upstream or from
+# our own object store.
+router = APIRouter(tags=["media"], route_class=AdmittedImageRoute)
 
 
 @router.get("/media/image")
 def get_proxied_image(
     url: str,
-    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
 ) -> Response:
     """Proxy an external image through the server with SSRF protection.
 
-    Validates URL scheme/port/host (no private IPs, no credentials), decodes the
-    image with Pillow, caches by normalized URL with ETag, and answers conditional
-    GETs with 304.
+    Validates URL scheme/port/host, bounded encoded bytes, image structure and
+    dimensions. The browser owns private freshness; the API retains no image bytes.
 
     Raises:
         E_SSRF_BLOCKED (403): URL violates security rules.
@@ -37,13 +39,16 @@ def get_proxied_image(
         E_IMAGE_TOO_LARGE (413): Image exceeds 10MB or 4096x4096 dimensions.
         E_INVALID_REQUEST (400): Malformed URL or invalid image content.
     """
-    result = image_proxy.fetch_image(url, if_none_match=request.headers.get("If-None-Match"))
-    if result.not_modified:
-        return Response(status_code=304, headers={"ETag": result.etag})
+    result = image_proxy.fetch_image(url)
     return Response(
         content=result.data,
         media_type=result.content_type,
-        headers={"Cache-Control": "private, max-age=86400", "ETag": result.etag},
+        headers={
+            "Cache-Control": "private, max-age=86400, no-transform",
+            "X-Nexus-Image-Width": str(result.width),
+            "X-Nexus-Image-Height": str(result.height),
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

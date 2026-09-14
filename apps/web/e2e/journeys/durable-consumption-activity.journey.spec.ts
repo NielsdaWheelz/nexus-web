@@ -37,11 +37,21 @@ interface ConsumptionStatsPayload {
   };
 }
 
-interface EpubSection {
+interface PublicationSection {
   section_id: string;
   label: string;
   href_path: string | null;
   start_offset: number;
+}
+
+interface ReaderProgressBaseline {
+  readerGeneration: number | null;
+  cursor: { revision: number };
+}
+
+interface PublicationIndexPage {
+  sections: PublicationSection[];
+  next_ref: { key: string } | null;
 }
 
 async function readJson<T>(response: APIResponse, label: string): Promise<T> {
@@ -106,6 +116,42 @@ async function consumptionStats(
   )).data;
 }
 
+/** The account-bound baseline every reader writes against: generation and revision. */
+async function readerProgressBaseline(
+  api: ExactOriginRequest,
+  mediaId: string,
+  accountId: string,
+): Promise<ReaderProgressBaseline> {
+  return (await readJson<{ data: ReaderProgressBaseline }>(
+    await api.get(`/api/media/${mediaId}/offline-reader-state`, {
+      headers: { "X-Nexus-Expected-Account-Id": accountId },
+    }),
+    `Reader progress baseline for ${mediaId}`,
+  )).data;
+}
+
+/** Every published section, following the index member chain the reader follows. */
+async function publicationSections(
+  api: ExactOriginRequest,
+  mediaId: string,
+  generation: number,
+): Promise<PublicationSection[]> {
+  const sections: PublicationSection[] = [];
+  let after: string | null = null;
+  for (;;) {
+    const indexPage: PublicationIndexPage = await readJson(
+      await api.get(
+        `/api/media/${mediaId}/reader-publications/${generation}/index`
+          + (after === null ? "" : `?after=${encodeURIComponent(after)}`),
+      ),
+      `Reader publication index for ${mediaId}`,
+    );
+    sections.push(...indexPage.sections);
+    if (indexPage.next_ref === null) return sections;
+    after = indexPage.next_ref.key;
+  }
+}
+
 test("restored reader input is durably projected as observed time in mounted Stats", async ({
   page,
   journeyUser,
@@ -113,13 +159,17 @@ test("restored reader input is durably projected as observed time in mounted Sta
   await signIn(page, journeyUser);
   const api = pageRequest(page, webOrigin);
   const mediaId = await uploadReadableEpub(page, journeyUser.id);
-  const navigation = await readJson<{
-    data: { sections: EpubSection[] };
-  }>(
-    await api.get(`/api/media/${mediaId}/navigation`),
-    `EPUB navigation for ${mediaId}`,
+  const baseline = await readerProgressBaseline(api, mediaId, journeyUser.id);
+  expect(
+    baseline.readerGeneration,
+    `EPUB ${mediaId} exposed no reader publication to take a position against.`,
+  ).not.toBeNull();
+  const sections = await publicationSections(
+    api,
+    mediaId,
+    baseline.readerGeneration!,
   );
-  const target = navigation.data.sections.find(
+  const target = sections.find(
     (section) => section.label === "Second" && section.href_path !== null,
   );
   expect(
@@ -127,10 +177,18 @@ test("restored reader input is durably projected as observed time in mounted Sta
     `EPUB ${mediaId} did not expose the fixture-owned Second section.`,
   ).toBeDefined();
 
+  // Seed the cursor exactly as the reader does: account-bound, fenced on the
+  // generation this position was taken against, so the stored cursor records
+  // Publication provenance and is applied on open instead of prompting.
   await readJson(
-    await api.put(`/api/media/${mediaId}/reader-state`, {
-      headers: { origin: webOrigin },
+    await api.put(`/api/media/${mediaId}/offline-reader-state`, {
+      headers: {
+        origin: webOrigin,
+        "X-Nexus-Expected-Account-Id": journeyUser.id,
+      },
       data: {
+        expectedReaderGeneration: baseline.readerGeneration,
+        baseRevision: baseline.cursor.revision,
         locator: {
           kind: "epub",
           target: {
@@ -150,7 +208,6 @@ test("restored reader input is durably projected as observed time in mounted Sta
             quote_suffix: null,
           },
         },
-        base_revision: 0,
       },
     }),
     `Persisted reader restore for ${mediaId}`,

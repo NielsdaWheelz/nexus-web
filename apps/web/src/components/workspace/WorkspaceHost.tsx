@@ -10,9 +10,10 @@ import {
   useState,
 } from "react";
 import type { ResolvedPaneRoute } from "@/lib/panes/paneRouteTable";
-import { renderPane } from "@/lib/panes/paneRenderRegistry";
+import { preloadPane, renderPane } from "@/lib/panes/paneRenderRegistry";
 import {
   PaneRuntimeProvider,
+  PaneReaderSuspensionContext,
   type PaneNavigationCommandOptions,
   type PaneNavigationModality,
   type PaneResourceStatus,
@@ -26,6 +27,7 @@ import {
   type PaneRouteShareIdentity,
 } from "@/lib/panes/paneResourceLocator";
 import {
+  ThrowPaneResourceDefect,
   usePaneResourceResolutionRegistry,
   type PaneResourceResolutionState,
 } from "@/lib/panes/usePaneResourceResolutionRegistry";
@@ -117,6 +119,8 @@ interface WorkspaceHostPane {
   routeShareIdentity: PaneRouteShareIdentity | null;
   resourceItem: ResourceItem | null;
   resourceStatus: PaneResourceStatus;
+  resourceDefect: { readonly cause: unknown } | null;
+  documentReader: boolean | null;
   label: string;
   labelState: "resolved" | "pending";
   canGoBack: boolean;
@@ -137,19 +141,46 @@ interface WorkspaceHostPane {
   content: React.ReactNode;
 }
 
+/** A pane's resolution is either a resource projection or that pane's own
+ *  defect. A defect is never a resource status: the pane renders
+ *  `ThrowPaneResourceDefect` inside its route boundary instead of its body. */
+type PaneResourceProjection =
+  | {
+      readonly kind: "Resolution";
+      readonly resourceItem: ResourceItem | null;
+      readonly documentReader: boolean | null;
+      readonly resourceStatus: Exclude<PaneResourceStatus, "none">;
+    }
+  | { readonly kind: "Defect"; readonly cause: unknown };
+
 function projectPaneResourceResolution(
   state: PaneResourceResolutionState | undefined,
-): {
-  readonly resourceItem: ResourceItem | null;
-  readonly resourceStatus: Exclude<PaneResourceStatus, "none">;
-} {
+): PaneResourceProjection {
   if (state === undefined || state.kind === "Pending") {
-    return { resourceItem: null, resourceStatus: "pending" };
+    return {
+      kind: "Resolution",
+      resourceItem: null,
+      documentReader: null,
+      resourceStatus: "pending",
+    };
   }
   if (state.kind === "Resolved") {
-    return { resourceItem: state.item, resourceStatus: state.status };
+    return {
+      kind: "Resolution",
+      resourceItem: state.item,
+      documentReader: state.documentReader,
+      resourceStatus: state.status,
+    };
   }
-  return { resourceItem: null, resourceStatus: state.status };
+  if (state.kind === "Defected") {
+    return { kind: "Defect", cause: state.cause };
+  }
+  return {
+    kind: "Resolution",
+    resourceItem: null,
+    documentReader: null,
+    resourceStatus: state.status,
+  };
 }
 
 interface PendingResponsivePaneSearchDelivery {
@@ -342,6 +373,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
     <PaneRuntimeProvider
       paneId={paneId}
       visitId={visitId}
+      preloadPane={preloadPane}
       isActive={isActive}
       href={href}
       routeId={route.id}
@@ -417,6 +449,36 @@ const PaneContent = memo(function PaneContent({
     </div>
   );
 });
+
+/** Compact visits remain mounted. Only a known document reader may retire its body. */
+function PaneReaderBody({ documentReader, displayed, dragging, children }: {
+  readonly documentReader: boolean | null;
+  readonly displayed: boolean;
+  readonly dragging: boolean;
+  readonly children: React.ReactNode;
+}) {
+  const [mounted, setMounted] = useState(documentReader === false || displayed);
+  const [canSuspend, setCanSuspend] = useState<boolean | null>(null);
+  const currentCanSuspend = useRef<boolean | null>(null);
+  const publishCanSuspend = useCallback((value: boolean | null) => {
+    currentCanSuspend.current = value;
+    setCanSuspend(value);
+  }, []);
+  const [focused, setFocused] = useState(false);
+  useLayoutEffect(() => {
+    if (displayed || documentReader === false) setMounted(true);
+    else if (documentReader === true && currentCanSuspend.current === true && !focused && !dragging) setMounted(false);
+  }, [displayed, documentReader, canSuspend, focused, dragging]);
+  const publication = useMemo(() => ({ displayed, publish: publishCanSuspend }), [displayed, publishCanSuspend]);
+  return <PaneReaderSuspensionContext.Provider value={publication}>
+    <div style={{ display: "contents" }} onFocusCapture={() => setFocused(true)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
+      }}>
+      {mounted ? children : null}
+    </div>
+  </PaneReaderSuspensionContext.Provider>;
+}
 
 // ---------------------------------------------------------------------------
 // buildHostPane - builds the pane record consumed by the host layout.
@@ -529,6 +591,8 @@ function buildHostPane(input: {
   descriptor: WorkspacePaneLabelDescriptor;
   resourceItem: ResourceItem | null;
   resourceStatus: PaneResourceStatus;
+  resourceDefect: { readonly cause: unknown } | null;
+  documentReader: boolean | null;
   isActive: boolean;
   runtimeLayout: PaneRuntimeLayout;
   runtimeLayoutResolved: boolean;
@@ -608,6 +672,8 @@ function buildHostPane(input: {
     routeShareIdentity: resolvePaneRouteShareIdentity(route, label),
     resourceItem: input.resourceItem,
     resourceStatus: input.resourceStatus,
+    resourceDefect: input.resourceDefect,
+    documentReader: input.documentReader,
     label,
     labelState,
     canGoBack: input.pane.history.back.length > 0,
@@ -936,8 +1002,18 @@ function WorkspaceHost() {
             ? (state.secondaryPanesById[pane.attachedSecondaryPaneId] ?? null)
             : null,
           descriptor,
-          resourceItem: resourceResolution?.resourceItem ?? null,
-          resourceStatus: resourceResolution?.resourceStatus ?? "none",
+          resourceItem:
+            resourceResolution?.kind === "Resolution"
+              ? resourceResolution.resourceItem
+              : null,
+          resourceStatus:
+            resourceResolution?.kind === "Resolution"
+              ? resourceResolution.resourceStatus
+              : "none",
+          resourceDefect:
+            resourceResolution?.kind === "Defect" ? resourceResolution : null,
+          documentReader: descriptor.route.id !== "media" ? false
+            : resourceResolution?.kind === "Resolution" ? resourceResolution.documentReader : null,
           isActive: pane.id === state.activePrimaryPaneId,
           runtimeLayout:
             runtimeLayoutRecord?.layout ?? DEFAULT_PANE_RUNTIME_LAYOUT,
@@ -979,6 +1055,7 @@ function WorkspaceHost() {
     onWheel,
     edges,
     inViewPaneIds,
+    isDragging,
     handleChromeMouseDown,
     scrollPaneIntoView,
   } = usePaneCanvas({
@@ -1396,7 +1473,7 @@ function WorkspaceHost() {
   // title (see its layout), so React owns this element and re-asserts it on
   // every commit instead of losing it to a late streamed metadata write.
   const documentTitle = activePane ? `${activePane.label} · Nexus` : "Nexus";
-  const renderedPanes = isMobile ? (activePane ? [activePane] : []) : panes;
+  const renderedPanes = isMobile ? panes.filter((pane) => pane.isActive || (pane.route.id === "media" && pane.documentReader !== false)) : panes;
 
   // --- Pane focus management ---
   const focusPane = useCallback(
@@ -1534,7 +1611,7 @@ function WorkspaceHost() {
         <div ref={canvasRef} className={styles.paneCanvas} onWheel={onWheel}>
           {renderedPanes.map((pane) => (
             <div
-              key={isMobile ? "mobile-active-pane" : pane.paneId}
+              key={pane.paneId}
               className={styles.paneWrap}
               data-pane-id={pane.paneId}
               data-active={pane.isActive ? "true" : "false"}
@@ -1542,8 +1619,8 @@ function WorkspaceHost() {
               data-minimized={
                 pane.visibility === "minimized" ? "true" : "false"
               }
-              hidden={pane.visibility === "minimized"}
-              inert={pane.visibility === "minimized" ? true : undefined}
+              hidden={pane.visibility === "minimized" || (isMobile && !pane.isActive)}
+              inert={pane.visibility === "minimized" || (isMobile && !pane.isActive) ? true : undefined}
               ref={(element) => {
                 if (element) {
                   paneWrapRefById.current.set(pane.paneId, element);
@@ -1573,6 +1650,11 @@ function WorkspaceHost() {
                       }px`
                 }
               >
+                {/* Contained here, not above: this pane's resolution defect
+                    reaches only its own boundary, which reports it. */}
+                {pane.resourceDefect ? (
+                  <ThrowPaneResourceDefect cause={pane.resourceDefect.cause} />
+                ) : null}
                 <PaneRuntimeFrame
                   paneId={pane.paneId}
                   visitId={pane.visitId}
@@ -1674,7 +1756,11 @@ function WorkspaceHost() {
                           : null
                       }
                     >
-                      {pane.content}
+                      <PaneReaderBody key={pane.visitId} documentReader={pane.documentReader}
+                        displayed={pane.visibility === "visible" && (isMobile ? pane.isActive : inViewPaneIds.has(pane.paneId))}
+                        dragging={isDragging}>
+                        {pane.content}
+                      </PaneReaderBody>
                     </PaneShell>
                   ) : (
                     pane.content

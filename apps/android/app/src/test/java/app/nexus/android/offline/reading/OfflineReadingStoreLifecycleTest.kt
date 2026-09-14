@@ -2,6 +2,7 @@ package app.nexus.android.offline.reading
 
 import app.nexus.android.offline.NetworkPolicy
 import app.nexus.android.offline.OfflineNetworkPolicyStore
+import app.nexus.android.offline.StorageAdmissionPolicy
 import android.content.Context
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -55,15 +56,51 @@ class OfflineReadingStoreLifecycleTest {
     }
 
     @Test
+    fun `schema one cursor migration preserves pending identity without inventing provenance`() {
+        val database = OfflineReadingDatabase(context, databaseName)
+        val before = store(database)
+        before.bindAccountAfterExternalPurge(accountId)
+        before.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
+        assertTrue(publishRealPackage(before, before.nextRunnableTransfer()!!))
+        val installed = before.snapshot().items.single() as OfflineReadingItemSnapshot.PackageItem
+        val locator = """{"kind":"web","target":{"fragment_id":"intro"},"locations":{"text_offset":1,"progression":0.2,"total_progression":0.2,"position":2},"text":{"quote":"eader","quote_prefix":"r","quote_suffix":null}}"""
+        before.saveReaderProgress(mediaId, installed.readerGeneration, installed.readerRevisionKey, locator)
+        val pending = before.pendingSyncCandidates(mediaId).single()
+        // Restore the actual v1 shape and cursor payload before reopening its upgrade.
+        database.writableDatabase.execSQL(
+            "UPDATE offline_reader_progress_baselines SET server_snapshot_json = ?",
+            arrayOf("""{"state":"Positioned","revision":6,"locator":$locator}"""),
+        )
+        database.writableDatabase.execSQL("ALTER TABLE offline_reader_transfers DROP COLUMN reader_generation")
+        database.writableDatabase.execSQL("ALTER TABLE offline_reader_transfers DROP COLUMN preparation_started_at")
+        database.writableDatabase.execSQL("ALTER TABLE offline_reader_packages ADD COLUMN package_sha256 TEXT NOT NULL DEFAULT '${"b".repeat(64)}'")
+        database.writableDatabase.version = 1
+        database.close()
+
+        val migratedDatabase = OfflineReadingDatabase(context, databaseName)
+        val migrated = store(migratedDatabase)
+        assertEquals(pending, migrated.pendingSyncCandidates(mediaId).single())
+        val ready = migrated.snapshot().items.single().availability as OfflineReadingAvailability.Ready
+        val progress = ready.progress as NativeReaderProgressView.Pending
+        val baseline = StrictJson.parse(progress.baselineJson.toByteArray()) as StrictJson.ObjectValue
+        assertEquals(6L, baseline.fields.getValue("revision").requireLong())
+        assertEquals("Unresolved", (baseline.fields.getValue("source") as StrictJson.ObjectValue)
+            .fields.getValue("kind").requireString())
+        assertTrue(strictJsonSemanticallyEqual(baseline.fields.getValue("locator"), StrictJson.parse(locator.toByteArray())))
+        assertEquals(locator, progress.deviceLocatorJson)
+        migratedDatabase.close()
+    }
+
+    @Test
     fun `SQLite and files survive recreate then lease gates removal and account switch purges`() {
         val firstDatabase = OfflineReadingDatabase(context, databaseName)
         val first = store(firstDatabase)
         first.bindAccountAfterExternalPurge(accountId)
-        first.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle)
+        first.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
         assertEquals(1, scheduler.admissions)
         assertTrue(publishRealPackage(first, first.nextRunnableTransfer()!!))
         val firstLease = first.open(mediaId)
-        assertTrue(firstLease.resolveEntry("reader.json").readText().contains("readerContractVersion"))
+        assertTrue(firstLease.resolveEntry("descriptor.json").file.readText().contains("reader_contract_version"))
         first.closeLease(firstLease.id)
         firstDatabase.close()
 
@@ -83,7 +120,7 @@ class OfflineReadingStoreLifecycleTest {
         reopened.closeLease(heldLease.id)
         assertTrue(reopened.snapshot().items.isEmpty())
 
-        reopened.enqueue(mediaId, "Second copy", OfflineReadingMediaKind.WebArticle)
+        reopened.enqueue(mediaId, "Second copy", OfflineReadingMediaKind.WebArticle, 7)
         reopened.beginAccountTransition(nextAccountId)
         assertTrue(reopened.snapshot().items.isEmpty())
         reopenedDatabase.close()
@@ -95,6 +132,91 @@ class OfflineReadingStoreLifecycleTest {
         assertTrue(duringTransition.snapshot().items.isEmpty())
         assertFalse(root.walkTopDown().any { it.isFile })
         transitionDatabase.close()
+    }
+
+    @Test
+    fun `retirement during actual prepared-directory durability cannot publish or recreate account files`() {
+        val fixtures = File(File(System.getProperty("nexus.testdata.offlineReadingContract")
+            ?: error("testdata root is missing")).parentFile, "offline-reading")
+        val metadata = org.json.JSONObject(File(fixtures, "retained-table-context-schema-2.json").readText())
+        val source = File(fixtures, "retained-table-context-schema-2.zip")
+        val tableMedia = UUID.fromString("00000000-0000-4000-8000-000000000007")
+        for (retirement in listOf("Stop", "BeginTransition", "Purge")) {
+            val name = "$databaseName-durability-$retirement"
+            val database = OfflineReadingDatabase(context, name)
+            lateinit var owner: OfflineReadingStore
+            lateinit var transfer: OfflineReadingTransfer
+            var observed = false
+            val boundary = object : OfflineReadingDurability {
+                override fun syncDirectory(directory: File) = HostReadingFilesystemDurability.syncDirectory(directory)
+                override fun syncTree(directory: File) {
+                    assertTrue("durability boundary did not receive the real prepared index",
+                        File(directory, OFFLINE_READING_TABLE_INDEX_NAME).isFile)
+                    observed = true
+                    if (retirement == "Stop") owner.systemStopped(transfer.id, transfer.stagingName)
+                    else {
+                        owner.beginAccountTransition(null)
+                        if (retirement == "Purge") owner.completeAccountTransition(null)
+                    }
+                    // Stop/purge causes a real missing-directory failure. Begin alone leaves
+                    // the directory readable, so only the authority checkpoint can fence it.
+                    HostReadingFilesystemDurability.syncDirectory(directory)
+                }
+            }
+            try {
+                owner = store(database, durabilityPort = boundary)
+                owner.bindAccountAfterExternalPurge(accountId)
+                owner.enqueue(tableMedia, "Table", OfflineReadingMediaKind.WebArticle, 7)
+                transfer = owner.nextRunnableTransfer()!!
+                val archive = owner.stagingArchiveFor(transfer)
+                source.copyTo(archive)
+                val artifact = OfflineReadingTransferArtifact(archive, accountId, 7, archive.length(),
+                    metadata.getLong("expanded_bytes"), metadata.getString("package_sha256"))
+                var prepared: PreparedOfflineReadingPackage? = null
+                val missing = try {
+                    prepared = owner.verifyDownloadedPackage(transfer.id, transfer.stagingName, artifact)
+                    null
+                } catch (error: java.nio.file.NoSuchFileException) { error }
+                assertTrue(observed)
+                assertEquals("retired preparation surfaced its removed staging directory", null, missing)
+                assertEquals("retired preparation escaped as ready to publish", null, prepared)
+                assertFalse(owner.snapshot().items.any { it is OfflineReadingItemSnapshot.PackageItem })
+                val bindingDirectory = File(root, transfer.bindingId.toString())
+                if (retirement == "Purge") assertFalse("prepared work recreated the purged account", bindingDirectory.exists())
+                else {
+                    assertFalse(File(bindingDirectory, ".staging/${transfer.stagingName}.verified").exists())
+                    if (retirement == "Stop") assertTrue(
+                        storedRow(database, "offline_reader_transfers", tableMedia).getValue("staging_name") != transfer.stagingName)
+                    else assertEquals(OfflineReadingAccountTransitionView.Logout, owner.pendingAccountTransition())
+                }
+            } finally {
+                database.close()
+                context.deleteDatabase(name)
+            }
+        }
+    }
+
+    @Test
+    fun `a live zero-byte verified member remains a contract failure`() {
+        val database = OfflineReadingDatabase(context, databaseName)
+        val truncated = OfflineReadingPackageVerifierPort { artifact, account, media, destination ->
+            OfflineReadingPackageVerifier().verifyAndExtract(artifact, account, media, destination).also {
+                // External filesystem damage after byte verification, before the derived read.
+                File(destination, "descriptor.json").writeBytes(byteArrayOf())
+            }
+        }
+        try {
+            val owner = store(database, truncated)
+            owner.bindAccountAfterExternalPurge(accountId)
+            owner.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
+            val transfer = owner.nextRunnableTransfer()!!
+            val artifact = buildWebArticleReadingPackage(mediaId, "Verified copy")
+                .stageArtifact(owner.stagingArchiveFor(transfer), accountId)
+            assertThrows("a zero-byte member was treated as retired missing staging", IllegalArgumentException::class.java) {
+                owner.verifyDownloadedPackage(transfer.id, transfer.stagingName, artifact)
+            }
+            assertFalse(owner.snapshot().items.any { it is OfflineReadingItemSnapshot.PackageItem })
+        } finally { database.close() }
     }
 
     @Test
@@ -113,7 +235,7 @@ class OfflineReadingStoreLifecycleTest {
         val database = OfflineReadingDatabase(context, databaseName)
         val store = store(database, blocking)
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle)
+        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
         val transfer = store.nextRunnableTransfer()!!
         val artifact = buildWebArticleReadingPackage(mediaId, "Verified copy")
             .stageArtifact(store.stagingArchiveFor(transfer), accountId)
@@ -153,9 +275,15 @@ class OfflineReadingStoreLifecycleTest {
         val database = OfflineReadingDatabase(context, databaseName)
         val store = store(database)
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle)
+        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
         assertTrue(publishRealPackage(store, store.nextRunnableTransfer()!!))
-        root.walkTopDown().single { it.name == "reader.json" }.writeText("corrupt")
+        val installed = store.snapshot().items.single() as OfflineReadingItemSnapshot.PackageItem
+        val locator = """{"kind":"web","target":{"fragment_id":"intro"},"locations":{"text_offset":1,"progression":0.2,"total_progression":0.2,"position":2},"text":{"quote":"eader","quote_prefix":"r","quote_suffix":null}}"""
+        store.saveReaderProgress(mediaId, installed.readerGeneration, installed.readerRevisionKey, locator)
+        val pending = store.pendingSyncCandidates(mediaId).single()
+        var intentId = ""
+        database.readableDatabase.queryOne("SELECT id FROM offline_reader_progress_pending") { intentId = it.text("id") }
+        root.walkTopDown().single { it.name == "descriptor.json" }.writeText("corrupt")
 
         store.reconcile()
         assertThrows(IllegalStateException::class.java) { store.open(mediaId) }
@@ -164,7 +292,53 @@ class OfflineReadingStoreLifecycleTest {
             ReadingTransferState.Failed(ReadingFailureReason.RecoveryRequired),
             recovery.state,
         )
+        assertEquals("content recovery discarded pending intent", listOf(pending), store.pendingSyncCandidates(mediaId))
         database.close()
+        val reopenedDatabase = OfflineReadingDatabase(context, databaseName)
+        val reopened = store(reopenedDatabase)
+        assertEquals(pending, reopened.pendingSyncCandidates(mediaId).single())
+        reopenedDatabase.readableDatabase.queryOne("SELECT id FROM offline_reader_progress_pending") {
+            assertEquals(intentId, it.text("id"))
+        }
+        reopened.retry(mediaId)
+        assertTrue(publishRealPackage(reopened, reopened.nextRunnableTransfer()!!))
+        assertEquals(pending, reopened.pendingSyncCandidates(mediaId).single())
+        reopenedDatabase.close()
+    }
+
+    @Test
+    fun `retained copy captures same-source intent when current generation has advanced`() {
+        val database = OfflineReadingDatabase(context, databaseName)
+        val store = store(database)
+        store.bindAccountAfterExternalPurge(accountId)
+        store.enqueue(mediaId, "Retained copy", OfflineReadingMediaKind.WebArticle, 7)
+        val transfer = store.nextRunnableTransfer()!!
+        val artifact = buildWebArticleReadingPackage(mediaId, "Retained copy", 7)
+            .stageArtifact(store.stagingArchiveFor(transfer), accountId)
+        val verified = store.verifyDownloadedPackage(transfer.id, transfer.stagingName, artifact)!!
+        assertTrue(store.publishVerifiedPackage(transfer.id, transfer.stagingName, verified,
+            AttestedOfflineReaderBaseline(accountId, 8, "{\"state\":\"Empty\",\"revision\":9}")))
+        val installed = store.snapshot().items.single() as OfflineReadingItemSnapshot.PackageItem
+        val locator = """{"kind":"web","target":{"fragment_id":"intro"},"locations":{"text_offset":1,"progression":0.2,"total_progression":0.2,"position":2},"text":{"quote":"eader","quote_prefix":"r","quote_suffix":null}}"""
+        val captured = runCatching { store.saveReaderProgress(mediaId, 7, installed.readerRevisionKey, locator) }
+        assertTrue("a retained copy could not durably retain its source-bound position: ${captured.exceptionOrNull()}", captured.isSuccess)
+        assertTrue(captured.getOrThrow() is NativeReaderProgressView.ContentChanged)
+        val changed = captured.getOrThrow() as NativeReaderProgressView.ContentChanged
+        assertEquals("{\"kind\":\"Publication\",\"reader_generation\":7}", changed.sourceJson)
+        assertEquals(locator, changed.deviceLocatorJson)
+        assertTrue(store.pendingSyncCandidates(mediaId).isEmpty())
+        database.close()
+        val reopenedDatabase = OfflineReadingDatabase(context, databaseName)
+        val reopened = store(reopenedDatabase)
+        val lease = reopened.open(mediaId)
+        assertEquals(changed, lease.progress)
+        reopenedDatabase.readableDatabase.queryOne("SELECT reader_generation, base_server_revision, locator_json FROM offline_reader_progress_pending") {
+            assertEquals(7L, it.long("reader_generation"))
+            assertEquals(9L, it.long("base_server_revision"))
+            assertEquals(locator, it.text("locator_json"))
+        }
+        reopened.closeLease(lease.id)
+        reopenedDatabase.close()
     }
 
     @Test
@@ -172,7 +346,7 @@ class OfflineReadingStoreLifecycleTest {
         val database = OfflineReadingDatabase(context, databaseName)
         val store = store(database)
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "Failed copy", OfflineReadingMediaKind.WebArticle)
+        store.enqueue(mediaId, "Failed copy", OfflineReadingMediaKind.WebArticle, 7)
         ReadingFailureReason.entries.forEachIndexed { index, reason ->
             val transfer = store.nextRunnableTransfer()!!
             val archive = store.stagingArchiveFor(transfer).apply {
@@ -210,7 +384,7 @@ class OfflineReadingStoreLifecycleTest {
         val database = OfflineReadingDatabase(context, databaseName)
         val store = store(database)
         store.bindAccountAfterExternalPurge(accountId)
-        val queued = store.enqueue(mediaId, "Wrong kind", OfflineReadingMediaKind.Pdf)
+        val queued = store.enqueue(mediaId, "Wrong kind", OfflineReadingMediaKind.Pdf, 7)
 
         assertEquals(OfflineReadingMediaKind.Pdf, queued.items.single().mediaKind)
         val transfer = store.nextRunnableTransfer()!!
@@ -230,7 +404,7 @@ class OfflineReadingStoreLifecycleTest {
         val initialDatabase = OfflineReadingDatabase(context, databaseName)
         val initial = store(initialDatabase)
         initial.bindAccountAfterExternalPurge(accountId)
-        initial.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle)
+        initial.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
         assertTrue(publishRealPackage(initial, initial.nextRunnableTransfer()!!))
         initialDatabase.close()
 
@@ -241,7 +415,7 @@ class OfflineReadingStoreLifecycleTest {
             entered.countDown()
             try {
                 check(release.await(5, TimeUnit.SECONDS))
-                OfflineReadingInstalledPackageVerifier().isValid(installed, directory)
+                OfflineReadingInstalledPackageVerifier().membersAreValid(installed, directory)
             } finally {
                 finished.countDown()
             }
@@ -274,7 +448,7 @@ class OfflineReadingStoreLifecycleTest {
         val firstDatabase = OfflineReadingDatabase(context, databaseName)
         val first = store(firstDatabase)
         first.bindAccountAfterExternalPurge(accountId)
-        first.enqueue(mediaId, "Interrupted copy", OfflineReadingMediaKind.WebArticle)
+        first.enqueue(mediaId, "Interrupted copy", OfflineReadingMediaKind.WebArticle, 7)
         val transfer = first.nextRunnableTransfer()!!
         assertTrue(
             first.updateTransferState(
@@ -311,7 +485,7 @@ class OfflineReadingStoreLifecycleTest {
         val firstDatabase = OfflineReadingDatabase(context, databaseName)
         val first = store(firstDatabase)
         first.bindAccountAfterExternalPurge(accountId)
-        first.enqueue(mediaId, "Live copy", OfflineReadingMediaKind.WebArticle)
+        first.enqueue(mediaId, "Live copy", OfflineReadingMediaKind.WebArticle, 7)
         val transfer = first.nextRunnableTransfer()!!
         first.updateTransferState(
             transfer.id,
@@ -340,7 +514,7 @@ class OfflineReadingStoreLifecycleTest {
         val firstDatabase = OfflineReadingDatabase(context, databaseName)
         val first = store(firstDatabase)
         first.bindAccountAfterExternalPurge(accountId)
-        first.enqueue(mediaId, "Locked copy", OfflineReadingMediaKind.WebArticle)
+        first.enqueue(mediaId, "Locked copy", OfflineReadingMediaKind.WebArticle, 7)
         firstDatabase.close()
 
         val lockedDatabase = OfflineReadingDatabase(context, databaseName)
@@ -359,7 +533,7 @@ class OfflineReadingStoreLifecycleTest {
         val database = OfflineReadingDatabase(context, databaseName)
         val first = store(database)
         first.bindAccountAfterExternalPurge(accountId)
-        first.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle)
+        first.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
         assertTrue(publishRealPackage(first, first.nextRunnableTransfer()!!))
         database.close()
 
@@ -370,7 +544,13 @@ class OfflineReadingStoreLifecycleTest {
 
         lockableSeal.locked = false
         var unlockedSnapshot: ReadingStoreSnapshot? = null
-        reopened.reconcileAsync { unlockedSnapshot = it }
+        reopened.reconcileAsync { outcome ->
+            unlockedSnapshot = when (outcome) {
+                is OfflineReadingReconciliationOutcome.Ready -> outcome.snapshot
+                is OfflineReadingReconciliationOutcome.Deferred -> outcome.snapshot
+                is OfflineReadingReconciliationOutcome.Failed -> throw AssertionError("unlock reconciliation failed", outcome.cause)
+            }
+        }
         assertTrue(unlockedSnapshot!!.binding is OfflineReadingBindingView.Present)
         assertTrue(
             unlockedSnapshot!!.items.single().availability is OfflineReadingAvailability.Ready
@@ -384,7 +564,7 @@ class OfflineReadingStoreLifecycleTest {
         val firstDatabase = OfflineReadingDatabase(context, databaseName)
         val first = store(firstDatabase)
         first.bindAccountAfterExternalPurge(accountId)
-        first.enqueue(mediaId, "Owned run", OfflineReadingMediaKind.WebArticle)
+        first.enqueue(mediaId, "Owned run", OfflineReadingMediaKind.WebArticle, 7)
         val transfer = first.nextRunnableTransfer()!!
         first.updateTransferState(
             transfer.id,
@@ -417,8 +597,8 @@ class OfflineReadingStoreLifecycleTest {
         val store = store(database)
         store.bindAccountAfterExternalPurge(accountId)
         val secondMediaId = UUID.fromString("028f2e74-5efc-7d0d-8a3a-142857142857")
-        store.enqueue(mediaId, "Admission retry", OfflineReadingMediaKind.WebArticle)
-        store.enqueue(secondMediaId, "Second queued copy", OfflineReadingMediaKind.Pdf)
+        store.enqueue(mediaId, "Admission retry", OfflineReadingMediaKind.WebArticle, 7)
+        store.enqueue(secondMediaId, "Second queued copy", OfflineReadingMediaKind.Pdf, 7)
         scheduler.failNextAdmission = true
 
         val failed = store.setNetworkPolicy(NetworkPolicy.UnmeteredOnly)
@@ -452,6 +632,7 @@ class OfflineReadingStoreLifecycleTest {
             mediaId,
             "Waiting copy",
             OfflineReadingMediaKind.WebArticle,
+            7,
         )
 
         assertEquals(NetworkPolicy.UnmeteredOnly, snapshot.networkPolicy)
@@ -469,8 +650,8 @@ class OfflineReadingStoreLifecycleTest {
         val store = store(database)
         val secondMediaId = UUID.fromString("028f2e74-5efc-7d0d-8a3a-142857142857")
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "First copy", OfflineReadingMediaKind.WebArticle)
-        store.enqueue(secondMediaId, "Second copy", OfflineReadingMediaKind.Pdf)
+        store.enqueue(mediaId, "First copy", OfflineReadingMediaKind.WebArticle, 7)
+        store.enqueue(secondMediaId, "Second copy", OfflineReadingMediaKind.Pdf, 7)
 
         assertTrue(store.systemStopAllDurableTransferWork(null, null))
 
@@ -488,8 +669,8 @@ class OfflineReadingStoreLifecycleTest {
         val store = store(database)
         store.bindAccountAfterExternalPurge(accountId)
         val secondMediaId = UUID.fromString("028f2e74-5efc-7d0d-8a3a-142857142857")
-        store.enqueue(mediaId, "First copy", OfflineReadingMediaKind.WebArticle)
-        store.enqueue(secondMediaId, "Second copy", OfflineReadingMediaKind.Pdf)
+        store.enqueue(mediaId, "First copy", OfflineReadingMediaKind.WebArticle, 7)
+        store.enqueue(secondMediaId, "Second copy", OfflineReadingMediaKind.Pdf, 7)
 
         val connected = store.setNetworkPolicy(NetworkPolicy.AnyConnected)
         assertTrue(connected.items.all {
@@ -529,11 +710,135 @@ class OfflineReadingStoreLifecycleTest {
     }
 
     @Test
+    fun `foreign progress attestation preserves stored intent and lets the next writer commit`() {
+        val database = OfflineReadingDatabase(context, databaseName)
+        val writer = store(database)
+        writer.bindAccountAfterExternalPurge(accountId)
+        val otherMedia = UUID.fromString("018f2e74-5efc-7d0d-8a3a-142857142858")
+        val locator = """{"kind":"web","target":{"fragment_id":"intro"},"locations":{"text_offset":1,"progression":0.2,"total_progression":0.2,"position":2},"text":{"quote":"eader","quote_prefix":"r","quote_suffix":null}}"""
+        for (id in listOf(mediaId, otherMedia)) {
+            writer.enqueue(id, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
+            assertTrue(publishRealPackage(writer, writer.nextRunnableTransfer()!!))
+            val installed = writer.snapshot().items.single { it.mediaId == id } as OfflineReadingItemSnapshot.PackageItem
+            writer.saveReaderProgress(id, installed.readerGeneration, installed.readerRevisionKey, locator)
+        }
+        // Choose the first actual queued writer for the external failure, so the
+        // second commit establishes continuation after that failure.
+        val candidates = writer.pendingSyncCandidates()
+        assertEquals(2, candidates.size)
+        val failed = candidates[0]
+        val succeeding = candidates[1]
+        val beforePending = storedRow(database, "offline_reader_progress_pending", failed.mediaId)
+        val beforeBaseline = storedRow(database, "offline_reader_progress_baselines", failed.mediaId)
+        val otherBaseline = storedRow(database, "offline_reader_progress_baselines", succeeding.mediaId)
+        val packages = candidates.associate { it.mediaId to storedRow(database, "offline_reader_packages", it.mediaId) }
+        val accepted = """{"state":"Positioned","revision":1,"source":{"kind":"Publication","reader_generation":7},"locator":$locator}"""
+        val fetched = mutableListOf<UUID>()
+        val synchronizer = OfflineReaderProgressSynchronizer(writer, object : OfflineReaderProgressOriginClient {
+            override fun fetch(mediaId: UUID, expectedAccountId: UUID): AttestedRemoteReaderState {
+                fetched += mediaId
+                assertEquals(accountId, expectedAccountId)
+                return AttestedRemoteReaderState(if (mediaId == failed.mediaId) nextAccountId else accountId,
+                    7, """{"state":"Empty","revision":0}""")
+            }
+            override fun compareAndSwap(candidate: ReaderProgressSyncCandidate): RemoteReaderWriteResult {
+                assertEquals(succeeding, candidate)
+                return RemoteReaderWriteResult.Accepted(AttestedRemoteReaderState(accountId, 7, accepted))
+            }
+        })
+        val escapedDefect = try { synchronizer.synchronize(); null }
+            catch (error: IllegalArgumentException) { error }
+        database.close()
+        assertEquals("one media defect abandoned stored progress pass", null, escapedDefect)
+        assertEquals(candidates.map { it.mediaId }, fetched)
+
+        val reopenedDatabase = OfflineReadingDatabase(context, databaseName)
+        try {
+            val reopened = store(reopenedDatabase)
+            assertEquals("foreign attestation changed stored pending bytes", beforePending,
+                storedRow(reopenedDatabase, "offline_reader_progress_pending", failed.mediaId))
+            assertEquals(beforeBaseline, storedRow(reopenedDatabase, "offline_reader_progress_baselines", failed.mediaId))
+            assertEquals(listOf(failed), reopened.pendingSyncCandidates())
+            assertFalse(reopenedDatabase.readableDatabase.queryOne(
+                "SELECT id FROM offline_reader_progress_pending WHERE media_id = ?",
+                arrayOf(succeeding.mediaId.toString()),
+            ) {})
+            assertEquals("later progress writer was abandoned", otherBaseline + ("server_snapshot_json" to accepted),
+                storedRow(reopenedDatabase, "offline_reader_progress_baselines", succeeding.mediaId))
+            for ((id, original) in packages) assertEquals(original, storedRow(reopenedDatabase, "offline_reader_packages", id))
+            val failedView = (reopened.snapshot().items.single { it.mediaId == failed.mediaId }.availability as OfflineReadingAvailability.Ready).progress
+            assertTrue(failedView is NativeReaderProgressView.Pending)
+            failedView as NativeReaderProgressView.Pending
+            assertEquals(locator, failedView.deviceLocatorJson)
+            assertEquals("""{"kind":"Publication","reader_generation":7}""", failedView.sourceJson)
+            val successfulView = (reopened.snapshot().items.single { it.mediaId == succeeding.mediaId }.availability as OfflineReadingAvailability.Ready).progress
+            assertEquals(NativeReaderProgressView.Canonical(accepted), successfulView)
+        } finally { reopenedDatabase.close() }
+    }
+
+    @Test
+    fun `unrecognized accepted cursor preserves source and intent as a persisted conflict`() {
+        val database = OfflineReadingDatabase(context, databaseName)
+        val writer = store(database)
+        writer.bindAccountAfterExternalPurge(accountId)
+        val locator = """{"kind":"web","target":{"fragment_id":"intro"},"locations":{"text_offset":1,"progression":0.2,"total_progression":0.2,"position":2},"text":{"quote":"eader","quote_prefix":"r","quote_suffix":null}}"""
+        val moved = """{"kind":"web","target":{"fragment_id":"intro"},"locations":{"text_offset":3,"progression":0.5,"total_progression":0.5,"position":3},"text":{"quote":"der","quote_prefix":"rea","quote_suffix":null}}"""
+        val mismatches = listOf(
+            mediaId to """{"state":"Positioned","revision":1,"source":{"kind":"Publication","reader_generation":7},"locator":$moved}""",
+            UUID.fromString("018f2e74-5efc-7d0d-8a3a-142857142858") to """{"state":"Positioned","revision":1,"source":{"kind":"Publication","reader_generation":8},"locator":$locator}""",
+        )
+        val pending = mutableMapOf<UUID, Map<String, String?>>()
+        val baselines = mutableMapOf<UUID, Map<String, String?>>()
+        val packages = mutableMapOf<UUID, Map<String, String?>>()
+        for ((id, response) in mismatches) {
+            writer.enqueue(id, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
+            assertTrue(publishRealPackage(writer, writer.nextRunnableTransfer()!!))
+            val installed = writer.snapshot().items.single { it.mediaId == id } as OfflineReadingItemSnapshot.PackageItem
+            writer.saveReaderProgress(id, installed.readerGeneration, installed.readerRevisionKey, locator)
+            val submitted = writer.pendingSyncCandidates(id).single()
+            pending[id] = storedRow(database, "offline_reader_progress_pending", id)
+            baselines[id] = storedRow(database, "offline_reader_progress_baselines", id)
+            packages[id] = storedRow(database, "offline_reader_packages", id)
+            OfflineReaderProgressSynchronizer(writer, object : OfflineReaderProgressOriginClient {
+                override fun fetch(mediaId: UUID, expectedAccountId: UUID): AttestedRemoteReaderState {
+                    assertEquals(id, mediaId)
+                    assertEquals(accountId, expectedAccountId)
+                    return AttestedRemoteReaderState(accountId, 7, """{"state":"Empty","revision":0}""")
+                }
+                override fun compareAndSwap(candidate: ReaderProgressSyncCandidate): RemoteReaderWriteResult {
+                    assertEquals(submitted, candidate)
+                    return RemoteReaderWriteResult.Accepted(AttestedRemoteReaderState(accountId, 7, response))
+                }
+            }).synchronize(id)
+        }
+        database.close()
+
+        val reopenedDatabase = OfflineReadingDatabase(context, databaseName)
+        try {
+            val reopened = store(reopenedDatabase)
+            assertTrue(reopened.pendingSyncCandidates().isEmpty())
+            for ((id, response) in mismatches) {
+                val view = (reopened.snapshot().items.single { it.mediaId == id }.availability as OfflineReadingAvailability.Ready).progress
+                assertTrue("unrecognized ack lost persisted conflict", view is NativeReaderProgressView.Conflict)
+                view as NativeReaderProgressView.Conflict
+                assertEquals("unrecognized ack discarded or rebased stored intent", pending.getValue(id) + ("sync_state" to "Conflict"),
+                    storedRow(reopenedDatabase, "offline_reader_progress_pending", id))
+                assertEquals(baselines.getValue(id) + ("server_snapshot_json" to response),
+                    storedRow(reopenedDatabase, "offline_reader_progress_baselines", id))
+                assertEquals(packages.getValue(id), storedRow(reopenedDatabase, "offline_reader_packages", id))
+                assertEquals(response, view.canonicalJson)
+                assertEquals(locator, view.deviceLocatorJson)
+                assertEquals("""{"kind":"Publication","reader_generation":7}""", view.sourceJson)
+            }
+        } finally { reopenedDatabase.close() }
+    }
+
+    @Test
     fun `conflicted progress cannot silently rebase until explicit canonical or device choice`() {
         val database = OfflineReadingDatabase(context, databaseName)
         val store = store(database)
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle)
+        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
         assertTrue(publishRealPackage(store, store.nextRunnableTransfer()!!))
         val firstLocator =
             """{"kind":"web","target":{"fragment_id":"intro"},"locations":{"text_offset":0,"progression":0.1,"total_progression":0.1,"position":1},"text":{"quote":"reader","quote_prefix":null,"quote_suffix":null}}"""
@@ -552,7 +857,7 @@ class OfflineReadingStoreLifecycleTest {
             AttestedRemoteReaderState(
                 accountId,
                 7,
-                "{\"state\":\"Positioned\",\"revision\":1,\"locator\":$movedLocator}",
+                "{\"state\":\"Positioned\",\"revision\":1,\"source\":{\"kind\":\"Publication\",\"reader_generation\":7},\"locator\":$movedLocator}",
             ),
         )
 
@@ -568,7 +873,7 @@ class OfflineReadingStoreLifecycleTest {
         assertEquals(firstLocator, conflictAfterMovement.deviceLocatorJson)
         assertTrue(store.pendingSyncCandidates(mediaId).isEmpty())
 
-        assertTrue(store.resolveReaderProgress(mediaId, useCanonical = true) is
+        assertTrue(resolveProgress(store, useCanonical = true) is
             NativeReaderProgressView.Canonical)
         store.saveReaderProgress(
             mediaId,
@@ -582,10 +887,10 @@ class OfflineReadingStoreLifecycleTest {
             AttestedRemoteReaderState(
                 accountId,
                 7,
-                "{\"state\":\"Positioned\",\"revision\":2,\"locator\":$movedLocator}",
+                "{\"state\":\"Positioned\",\"revision\":2,\"source\":{\"kind\":\"Publication\",\"reader_generation\":7},\"locator\":$movedLocator}",
             ),
         )
-        assertTrue(store.resolveReaderProgress(mediaId, useCanonical = false) is
+        assertTrue(resolveProgress(store, useCanonical = false) is
             NativeReaderProgressView.Pending)
         assertEquals(2, store.pendingSyncCandidates(mediaId).single().baseServerRevision)
 
@@ -601,12 +906,8 @@ class OfflineReadingStoreLifecycleTest {
         changed as NativeReaderProgressView.ContentChanged
         assertEquals(movedLocator, changed.deviceLocatorJson)
         assertTrue(store.pendingSyncCandidates(mediaId).isEmpty())
-        assertThrows(IllegalStateException::class.java) {
-            store.resolveReaderProgress(mediaId, useCanonical = true)
-        }
-        assertThrows(IllegalStateException::class.java) {
-            store.resolveReaderProgress(mediaId, useCanonical = false)
-        }
+        assertTrue(resolveProgress(store, useCanonical = false) is NativeReaderProgressView.ContentChanged)
+        assertTrue(resolveProgress(store, useCanonical = true) is NativeReaderProgressView.Canonical)
         database.close()
     }
 
@@ -615,7 +916,7 @@ class OfflineReadingStoreLifecycleTest {
         val database = OfflineReadingDatabase(context, databaseName)
         val store = store(database)
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle)
+        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
         assertTrue(publishRealPackage(store, store.nextRunnableTransfer()!!))
         val locator =
             """{"kind":"web","target":{"fragment_id":"intro"},"locations":{"text_offset":0,"progression":0.1,"total_progression":0.1,"position":1},"text":{"quote":"reader","quote_prefix":null,"quote_suffix":null}}"""
@@ -638,13 +939,13 @@ class OfflineReadingStoreLifecycleTest {
             ) is NativeReaderProgressView.SourceUnavailable
         )
         assertThrows(IllegalStateException::class.java) {
-            store.resolveReaderProgress(mediaId, useCanonical = true)
+            resolveProgress(store, useCanonical = true)
         }
         assertThrows(IllegalStateException::class.java) {
-            store.resolveReaderProgress(mediaId, useCanonical = false)
+            resolveProgress(store, useCanonical = false)
         }
         val lease = store.open(mediaId)
-        assertTrue(lease.resolveEntry("reader.json").isFile)
+        assertTrue(lease.resolveEntry("descriptor.json").file.isFile)
         store.closeLease(lease.id)
         database.close()
     }
@@ -654,7 +955,7 @@ class OfflineReadingStoreLifecycleTest {
         val database = OfflineReadingDatabase(context, databaseName)
         val store = store(database)
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle)
+        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
         assertTrue(publishRealPackage(store, store.nextRunnableTransfer()!!))
         val installed = store.snapshot().items.single() as OfflineReadingItemSnapshot.PackageItem
         store.saveReaderProgress(
@@ -667,7 +968,7 @@ class OfflineReadingStoreLifecycleTest {
 
         store.logoutAndPurge()
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "Fresh intent", OfflineReadingMediaKind.Pdf)
+        store.enqueue(mediaId, "Fresh intent", OfflineReadingMediaKind.Pdf, 7)
         store.recordAuthorizationRequired(staleCandidate)
 
         val snapshot = store.snapshot()
@@ -685,7 +986,7 @@ class OfflineReadingStoreLifecycleTest {
         val firstDatabase = OfflineReadingDatabase(context, databaseName)
         val first = store(firstDatabase)
         first.bindAccountAfterExternalPurge(accountId)
-        first.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle)
+        first.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
         assertTrue(publishRealPackage(first, first.nextRunnableTransfer()!!))
         val installed = first.snapshot().items.single() as OfflineReadingItemSnapshot.PackageItem
         val firstLocator =
@@ -720,12 +1021,12 @@ class OfflineReadingStoreLifecycleTest {
         val database = OfflineReadingDatabase(context, databaseName)
         val store = store(database)
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle)
+        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
         assertTrue(publishRealPackage(store, store.nextRunnableTransfer()!!))
         val second = UUID.fromString("028f2e74-5efc-7d0d-8a3a-142857142857")
         val third = UUID.fromString("038f2e74-5efc-7d0d-8a3a-142857142857")
-        store.enqueue(second, "Needs auth", OfflineReadingMediaKind.Pdf)
-        store.enqueue(third, "Also needs auth", OfflineReadingMediaKind.Epub)
+        store.enqueue(second, "Needs auth", OfflineReadingMediaKind.Pdf, 7)
+        store.enqueue(third, "Also needs auth", OfflineReadingMediaKind.Epub, 7)
 
         store.remoteAuthorizationDenied()
 
@@ -739,7 +1040,7 @@ class OfflineReadingStoreLifecycleTest {
         })
         assertFalse(store.hasDurableTransferWork())
         val lease = store.open(mediaId)
-        assertTrue(lease.resolveEntry("reader.json").isFile)
+        assertTrue(lease.resolveEntry("descriptor.json").file.isFile)
         store.closeLease(lease.id)
 
         store.completeAccountTransition(accountId)
@@ -754,7 +1055,7 @@ class OfflineReadingStoreLifecycleTest {
         val database = OfflineReadingDatabase(context, databaseName)
         val store = store(database)
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle)
+        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
         assertTrue(publishRealPackage(store, store.nextRunnableTransfer()!!))
         val packageRow = store.snapshot().items.single() as OfflineReadingItemSnapshot.PackageItem
         val packageId = root.walkTopDown()
@@ -796,7 +1097,7 @@ class OfflineReadingStoreLifecycleTest {
         val database = OfflineReadingDatabase(context, databaseName)
         val store = store(database)
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle)
+        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
         assertTrue(publishRealPackage(store, store.nextRunnableTransfer()!!))
         val bindingDirectory = root.listFiles()!!.single { it.isDirectory }
         val concurrentlyPublished = bindingDirectory
@@ -831,8 +1132,8 @@ class OfflineReadingStoreLifecycleTest {
         store.bindAccountAfterExternalPurge(accountId)
         store.setNetworkPolicy(NetworkPolicy.AnyConnected)
         val secondMediaId = UUID.fromString("028f2e74-5efc-7d0d-8a3a-142857142857")
-        store.enqueue(mediaId, "Active copy", OfflineReadingMediaKind.WebArticle)
-        store.enqueue(secondMediaId, "Queued copy", OfflineReadingMediaKind.Pdf)
+        store.enqueue(mediaId, "Active copy", OfflineReadingMediaKind.WebArticle, 7)
+        store.enqueue(secondMediaId, "Queued copy", OfflineReadingMediaKind.Pdf, 7)
 
         val active = (store.claimRunnableTransfer(NetworkPolicy.AnyConnected)
             as OfflineReadingRunnableClaim.Run).transfer
@@ -866,7 +1167,7 @@ class OfflineReadingStoreLifecycleTest {
         val firstDatabase = OfflineReadingDatabase(context, databaseName)
         val first = store(firstDatabase)
         first.bindAccountAfterExternalPurge(accountId)
-        first.enqueue(mediaId, "Renamed copy", OfflineReadingMediaKind.WebArticle)
+        first.enqueue(mediaId, "Renamed copy", OfflineReadingMediaKind.WebArticle, 7)
         val transfer = first.nextRunnableTransfer()!!
         first.stagingArchiveFor(transfer)
         assertTrue(
@@ -901,10 +1202,10 @@ class OfflineReadingStoreLifecycleTest {
         val database = OfflineReadingDatabase(context, databaseName)
         val store = store(database)
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle)
+        store.enqueue(mediaId, "Verified copy", OfflineReadingMediaKind.WebArticle, 7)
         assertTrue(publishRealPackage(store, store.nextRunnableTransfer()!!))
         database.writableDatabase.execSQL(
-            "UPDATE offline_reader_packages SET package_schema_version = 2",
+            "UPDATE offline_reader_packages SET package_schema_version = 3",
         )
         database.close()
 
@@ -935,7 +1236,7 @@ class OfflineReadingStoreLifecycleTest {
         val database = OfflineReadingDatabase(context, databaseName)
         val store = store(database, sealPort = lockableSeal)
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "Locked copy", OfflineReadingMediaKind.WebArticle)
+        store.enqueue(mediaId, "Locked copy", OfflineReadingMediaKind.WebArticle, 7)
         val transfer = store.nextRunnableTransfer()!!
         val artifact = buildWebArticleReadingPackage(mediaId, "Locked copy")
             .stageArtifact(store.stagingArchiveFor(transfer), accountId)
@@ -1005,22 +1306,17 @@ class OfflineReadingStoreLifecycleTest {
         val database = OfflineReadingDatabase(context, databaseName)
         val store = store(database)
         store.bindAccountAfterExternalPurge(accountId)
-        store.enqueue(mediaId, "Tampered copy", OfflineReadingMediaKind.WebArticle)
+        store.enqueue(mediaId, "Tampered copy", OfflineReadingMediaKind.WebArticle, 7)
         val transfer = store.nextRunnableTransfer()!!
         val genuine = buildWebArticleReadingPackage(mediaId, "Tampered copy")
-        // The tampered byte keeps reader.json structurally valid: only the manifest's
-        // per-entry digest check can observe the divergence.
-        val tamperedReader = genuine.readerJson.toString(Charsets.UTF_8)
-            .replace("\"canonicalText\":\"reader\"", "\"canonicalText\":\"readeX\"")
-            .toByteArray()
-        check(!tamperedReader.contentEquals(genuine.readerJson))
-        check(tamperedReader.size == genuine.readerJson.size)
-        val tamperedArchive = encodeCanonicalOfflineReadingZip(
-            listOf(
-                CanonicalZipMember("manifest.json", genuine.manifestJson),
-                CanonicalZipMember("reader.json", tamperedReader),
-            )
-        )
+        // Keep valid unit JSON and byte length, while the declared digest stays original.
+        val original = genuine.members.single { it.path == "units/intro.json" }
+        val tampered = original.bytes.toString(Charsets.UTF_8)
+            .replace("\"canonical_text\":\"reader\"", "\"canonical_text\":\"readeX\"").toByteArray()
+        check(!tampered.contentEquals(original.bytes) && tampered.size == original.bytes.size)
+        val tamperedArchive = encodeCanonicalOfflineReadingZip(genuine.members.map {
+            if (it.path == original.path) it.copy(bytes = tampered) else it
+        })
         val archiveFile = store.stagingArchiveFor(transfer).apply { writeBytes(tamperedArchive) }
         val artifact = OfflineReadingTransferArtifact(
             archive = archiveFile,
@@ -1056,6 +1352,80 @@ class OfflineReadingStoreLifecycleTest {
         database.close()
     }
 
+    @Test
+    fun `conversion checks available disk space before staging`() {
+        // The filesystem observation gates staging against the current admission estimate.
+        // It neither reserves those bytes nor bounds the converted package's expansion.
+        val fixture = InstalledLegacyReadingFixture(File(root, "legacy").apply { check(mkdirs()) })
+        try {
+            val migration = File(fixture.root, "${fixture.binding}/.staging/${fixture.packageId}.migration")
+            val required = StorageAdmissionPolicy.RESERVE_BYTES +
+                OFFLINE_READING_FILESYSTEM_OVERHEAD_BYTES + fixture.reader.size
+            fun openStore(freeBytes: Long) = OfflineReadingStore(
+                fixture.context,
+                database = fixture.database,
+                seal = fixture.seal,
+                rootDirectory = fixture.root,
+                freeSpaceBytes = { freeBytes },
+                durability = NoOpDurability,
+                integrityExecutor = Executor(Runnable::run),
+            )
+
+            val refused = openStore(required - 1)
+            assertEquals(
+                "conversion below the preflight estimate must stay locally retryable",
+                OfflineReadingAvailability.UpgradeBlockedByStorage,
+                refused.snapshot().items.single().availability,
+            )
+            assertFalse("refused conversion staged bytes anyway", migration.exists())
+            assertTrue(File(fixture.installedDirectory, "reader.json").isFile)
+
+            val admitted = openStore(required)
+            assertTrue(
+                "admitted conversion must still complete",
+                admitted.snapshot().items.single().availability is OfflineReadingAvailability.Ready,
+            )
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `retained staging resumes a verified member and drops what the manifest omits`() {
+        val directory = File(root, "retained-source")
+        val members = OfflineReadingPackageVerifier().verifyAndExtract(
+            buildWebArticleReadingPackage(mediaId, "Resumable copy", 7)
+                .stageArtifact(File(root, "retained.zip"), accountId),
+            accountId,
+            mediaId,
+            directory,
+        )
+        val staging = File(root, "retained-staging").apply { assertTrue(mkdirs()) }
+        val publication = File(staging, "publication").apply { assertTrue(mkdirs()) }
+        val entry = members.manifest.entries.maxByOrNull { it.sizeBytes }!!
+        val staged = File(publication, entry.path)
+        assertTrue(staged.parentFile!!.mkdirs() || staged.parentFile!!.isDirectory)
+        staged.writeBytes(File(directory, entry.path).readBytes())
+        // Only a stager that resumes can finish without this source member: a fresh
+        // copy of the whole package has to read the file this line removes.
+        assertTrue(File(directory, entry.path).delete())
+        val abandonedMember = File(publication, "units/abandoned.json").apply {
+            assertTrue(parentFile!!.mkdirs() || parentFile!!.isDirectory)
+            writeText("{}")
+        }
+        val abandonedRoot = File(publication, "abandoned.json").apply { writeText("{}") }
+
+        val prepared = stageRetainedReadingPackage(directory, staging)
+
+        assertEquals(
+            "resumed staging did not keep the member it had already verified",
+            entry.sha256,
+            File(prepared.source.extractedDirectory, entry.path).sha256Hex(),
+        )
+        assertFalse("undeclared nested staging file survived", abandonedMember.exists())
+        assertFalse("undeclared staging file survived", abandonedRoot.exists())
+    }
+
     /**
      * Downloads-then-publishes through the production install sequence: canonical archive
      * bytes staged, the REAL package verifier deciding acceptance, then durable publication.
@@ -1082,6 +1452,20 @@ class OfflineReadingStoreLifecycleTest {
         )
     }
 
+    private fun storedRow(database: OfflineReadingDatabase, table: String, media: UUID): Map<String, String?> =
+        database.readableDatabase.rawQuery("SELECT * FROM $table WHERE media_id = ?", arrayOf(media.toString())).use { cursor ->
+            assertTrue("stored $table row is missing for $media", cursor.moveToFirst())
+            val row = cursor.columnNames.mapIndexed { index, name -> name to cursor.getString(index) }.toMap()
+            assertFalse(cursor.moveToNext())
+            row
+        }
+
+    private fun resolveProgress(store: OfflineReadingStore, useCanonical: Boolean): NativeReaderProgressView {
+        val installed = store.snapshot().items.single() as OfflineReadingItemSnapshot.PackageItem
+        return store.resolveReaderProgress(mediaId, installed.readerGeneration, installed.readerRevisionKey,
+            readerProgressViewJson((installed.availability as OfflineReadingAvailability.Ready).progress), useCanonical)
+    }
+
     private fun store(
         database: OfflineReadingDatabase,
         verifier: OfflineReadingPackageVerifierPort = OfflineReadingPackageVerifier(),
@@ -1089,6 +1473,7 @@ class OfflineReadingStoreLifecycleTest {
             OfflineReadingInstalledPackageVerifier(),
         integrityExecutor: Executor = Executor(Runnable::run),
         sealPort: OfflineReadingBindingSealPort = seal,
+        durabilityPort: OfflineReadingDurability = NoOpDurability,
     ) = OfflineReadingStore(
         context = context,
         database = database,
@@ -1098,7 +1483,7 @@ class OfflineReadingStoreLifecycleTest {
         packageVerifier = verifier,
         installedVerifier = installedVerifier,
         rootDirectory = root,
-        durability = NoOpDurability,
+        durability = durabilityPort,
         schedulerFactory = { scheduler },
         progressOriginFactory = OfflineReaderProgressOriginFactory {
             error("progress sync must not run without an active network")

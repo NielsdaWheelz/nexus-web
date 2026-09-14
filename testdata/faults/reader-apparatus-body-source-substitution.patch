@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/components/reader/ReaderApparatusDetails.tsx b/apps/web/src/components/reader/ReaderApparatusDetails.tsx
+--- a/apps/web/src/components/reader/ReaderApparatusDetails.tsx
++++ b/apps/web/src/components/reader/ReaderApparatusDetails.tsx
+@@ -97,7 +97,7 @@
+           button(root, "Read full label", () => setRequest({ kind: "ApparatusText", itemId: labelOwner, request: { field: "Label", offset_cp: 0 } }));
+         }
+         if (item.body_source_id !== null) {
+-          const bodyOwner = item.body_source_id;
++          const bodyOwner = item.id;
+           button(root, "Read full note", () => setRequest({ kind: "ApparatusText", itemId: bodyOwner, request: { field: "Body", offset_cp: 0 } }));
+         }
+         if (item.has_targets) button(root, "Source targets", () => setRequest({ kind: "ApparatusTargets", itemId, request: { after: null, limit: 100 } }));

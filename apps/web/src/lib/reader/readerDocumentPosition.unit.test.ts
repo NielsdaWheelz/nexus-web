@@ -8,10 +8,10 @@ import {
 describe("canonical reader document positions", () => {
   it("counts each ordered text fragment once and projects exact code-point offsets", () => {
     const documentProjection = {
-      kind: "Text",
+      kind: "Text", length: 10,
       fragments: [
-        { fragmentId: "opening", length: 4 },
-        { fragmentId: "chapter", length: 6 },
+        { fragmentId: "opening", start: 0, length: 4 },
+        { fragmentId: "chapter", start: 4, length: 6 },
       ],
     } as const satisfies ReaderDocumentProjection;
 
@@ -33,10 +33,10 @@ describe("canonical reader document positions", () => {
     expect(() =>
       projectReaderDocumentPoint(
         {
-          kind: "Text",
+          kind: "Text", length: 10,
           fragments: [
-            { fragmentId: "repeated", length: 4 },
-            { fragmentId: "repeated", length: 6 },
+            { fragmentId: "repeated", start: 0, length: 4 },
+            { fragmentId: "repeated", start: 4, length: 6 },
           ],
         },
         { kind: "Text", fragmentId: "repeated", offset: 2 },
@@ -74,4 +74,17 @@ describe("canonical reader document positions", () => {
       ),
     ).toThrow(/formats differ/);
   });
+});
+
+it("projects a resident fragment using its retained full-document origin and extent", () => {
+  expect(projectReaderDocumentPoint({
+    kind: "Text", length: 1_000,
+    fragments: [{ fragmentId: "resident", start: 500, length: 100 }],
+  }, { kind: "Text", fragmentId: "resident", offset: 50 })).toBe(0.55);
+});
+
+it("keeps an addressed image-only fragment at zero canonical progression", () => {
+  expect(projectReaderDocumentPoint({ kind: "Text", length: 0,
+    fragments: [{ fragmentId: "figure", start: 0, length: 0 }],
+  }, { kind: "Text", fragmentId: "figure", offset: 0 })).toBe(0);
 });

@@ -27,10 +27,35 @@ export interface ReaderCursorEmpty {
   revision: number;
 }
 
+export type ReaderCursorSource =
+  | { readonly kind: "Publication"; readonly reader_generation: number }
+  | { readonly kind: "Timeline" }
+  | { readonly kind: "Unresolved" };
+
+export function parseReaderCursorSource(value: unknown): ReaderCursorSource {
+  if (!isRecord(value)) throw new Error("Invalid reader cursor source");
+  if (value.kind === "Publication" && Object.keys(value).length === 2 &&
+      typeof value.reader_generation === "number" &&
+      Number.isSafeInteger(value.reader_generation) && value.reader_generation >= 1) {
+    return { kind: "Publication", reader_generation: value.reader_generation };
+  }
+  if ((value.kind === "Timeline" || value.kind === "Unresolved") && Object.keys(value).length === 1) {
+    return { kind: value.kind };
+  }
+  throw new Error("Invalid reader cursor source");
+}
+
+export function readerCursorSourcesEqual(left: ReaderCursorSource, right: ReaderCursorSource): boolean {
+  return left.kind === "Publication" && right.kind === "Publication"
+    ? left.reader_generation === right.reader_generation
+    : left.kind === right.kind;
+}
+
 export interface ReaderCursorPositioned {
   state: "Positioned";
   revision: number;
   locator: ReaderResumeState;
+  source: ReaderCursorSource;
 }
 
 export type ReaderCursorSnapshot = ReaderCursorEmpty | ReaderCursorPositioned;
@@ -59,7 +84,7 @@ export function parseReaderCursorSnapshot(value: unknown): ReaderCursorSnapshot 
   }
   if (value.state === "Positioned") {
     if (
-      keys.length !== 3 ||
+      keys.length !== 4 ||
       typeof value.revision !== "number" ||
       !Number.isInteger(value.revision) ||
       value.revision < 1
@@ -70,7 +95,11 @@ export function parseReaderCursorSnapshot(value: unknown): ReaderCursorSnapshot 
     if (locator === null) {
       throw new Error("Invalid reader cursor snapshot");
     }
-    return { state: "Positioned", revision: value.revision, locator };
+    const source = parseReaderCursorSource(value.source);
+    if ((source.kind === "Timeline") !== (locator.kind === "transcript")) {
+      throw new Error("Reader cursor source does not match its locator");
+    }
+    return { state: "Positioned", revision: value.revision, locator, source };
   }
   throw new Error("Invalid reader cursor snapshot");
 }
@@ -103,6 +132,7 @@ export type ProgressLocal =
   | { status: "clean" }
   | { status: "dirty"; locator: ReaderResumeState }
   | { status: "saving"; sent: ReaderResumeState; queued: ReaderResumeState | null }
+  | { status: "pending"; locator: ReaderResumeState }
   | { status: "save_failed"; locator: ReaderResumeState };
 
 export type ProgressRemote =
@@ -110,12 +140,14 @@ export type ProgressRemote =
   | { status: "candidate"; snapshot: ReaderCursorSnapshot };
 
 export interface ReaderProgressState {
+  source: Exclude<ReaderCursorSource, { kind: "Unresolved" }> | null;
   authority: ProgressAuthority;
   local: ProgressLocal;
   remote: ProgressRemote;
 }
 
 export const initialReaderProgressState: ReaderProgressState = {
+  source: null,
   authority: { status: "loading" },
   local: { status: "clean" },
   remote: { status: "none" },
@@ -130,10 +162,12 @@ export type ReaderProgressEvent =
   | { type: "save_succeeded"; snapshot: ReaderCursorPositioned }
   | { type: "save_conflicted"; current: ReaderCursorSnapshot }
   | { type: "save_failed" }
+  | { type: "save_pending" }
+  | { type: "capture_failed" }
   | { type: "revalidated"; snapshot: ReaderCursorSnapshot }
   | { type: "remote_applied" }
   | { type: "canonical_snapshot_installed"; snapshot: ReaderCursorSnapshot }
-  | { type: "reset" };
+  | { type: "reset"; source: ReaderProgressState["source"] };
 
 /** The locator the user still wants persisted, if any. */
 export function pendingLocator(local: ProgressLocal): ReaderResumeState | null {
@@ -142,6 +176,7 @@ export function pendingLocator(local: ProgressLocal): ReaderResumeState | null {
       return null;
     case "dirty":
     case "save_failed":
+    case "pending":
       return local.locator;
     case "saving":
       return local.queued ?? local.sent;
@@ -157,13 +192,6 @@ export function canScheduleSave(state: ReaderProgressState): boolean {
   );
 }
 
-export function saveBaseRevision(state: ReaderProgressState): number {
-  if (state.authority.status !== "ready") {
-    throw new Error("Cannot save without cursor authority");
-  }
-  return state.authority.snapshot.revision;
-}
-
 function reduceRevalidated(
   state: ReaderProgressState,
   snapshot: ReaderCursorSnapshot,
@@ -172,6 +200,9 @@ function reduceRevalidated(
     return state;
   }
   const authoritySnapshot = state.authority.snapshot;
+  const knownRevision = Math.max(authoritySnapshot.revision,
+    state.remote.status === "candidate" ? state.remote.snapshot.revision : 0);
+  if (snapshot.revision < knownRevision) return state;
   const localWanted = pendingLocator(state.local);
 
   // An elsewhere-committed cursor identical to our unsaved position resolves
@@ -181,9 +212,11 @@ function reduceRevalidated(
     localWanted !== null &&
     state.local.status !== "saving" &&
     snapshot.state === "Positioned" &&
+    state.source !== null && readerCursorSourcesEqual(state.source, snapshot.source) &&
     readerResumeStatesEqual(localWanted, snapshot.locator)
   ) {
     return {
+      ...state,
       authority: { status: "ready", snapshot },
       local: { status: "clean" },
       remote: { status: "none" },
@@ -196,6 +229,7 @@ function reduceRevalidated(
     if (
       snapshot.state === "Positioned" &&
       authoritySnapshot.state === "Positioned" &&
+      readerCursorSourcesEqual(authoritySnapshot.source, snapshot.source) &&
       readerResumeStatesEqual(authoritySnapshot.locator, snapshot.locator)
     ) {
       return { ...state, authority: { status: "ready", snapshot } };
@@ -217,10 +251,10 @@ export function reduceReaderProgress(
 ): ReaderProgressState {
   switch (event.type) {
     case "reset":
-      return initialReaderProgressState;
+      return { ...initialReaderProgressState, source: event.source };
 
     case "load_started":
-      return { ...initialReaderProgressState, authority: { status: "loading" } };
+      return { ...state, authority: { status: "loading" } };
 
     case "load_succeeded": {
       // Movement that raced the initial load survives it unless the loaded
@@ -228,10 +262,13 @@ export function reduceReaderProgress(
       const wanted = pendingLocator(state.local);
       const loadedLocator = snapshotLocator(event.snapshot);
       const local: ProgressLocal =
-        wanted !== null && !(loadedLocator !== null && readerResumeStatesEqual(wanted, loadedLocator))
+        wanted !== null && !(loadedLocator !== null && event.snapshot.state === "Positioned" &&
+          state.source !== null && readerCursorSourcesEqual(state.source, event.snapshot.source) &&
+          readerResumeStatesEqual(wanted, loadedLocator))
           ? { status: "dirty", locator: wanted }
           : { status: "clean" };
       return {
+        ...state,
         authority: { status: "ready", snapshot: event.snapshot },
         local,
         remote: { status: "none" },
@@ -251,7 +288,7 @@ export function reduceReaderProgress(
       return { ...state, local: { status: "dirty", locator: event.locator } };
 
     case "save_started":
-      if (state.local.status !== "dirty" && state.local.status !== "save_failed") {
+      if (state.local.status !== "dirty" && state.local.status !== "save_failed" && state.local.status !== "pending") {
         return state;
       }
       return {
@@ -263,17 +300,22 @@ export function reduceReaderProgress(
       if (state.local.status !== "saving") {
         return state;
       }
-      const queued = state.local.queued;
+      const wanted = state.local.queued ?? state.local.sent;
       const local: ProgressLocal =
-        queued !== null && !readerResumeStatesEqual(queued, event.snapshot.locator)
-          ? { status: "dirty", locator: queued }
-          : { status: "clean" };
-      // Any accepted write supersedes an open candidate: this viewport is
-      // canonical now.
+        state.source !== null && readerCursorSourcesEqual(state.source, event.snapshot.source) &&
+        readerResumeStatesEqual(wanted, event.snapshot.locator)
+          ? { status: "clean" }
+          : { status: "dirty", locator: wanted };
+      // The acknowledgment commits this attempt, not a later observed write.
       return {
-        authority: { status: "ready", snapshot: event.snapshot },
+        ...state,
+        authority: state.authority.status === "ready" &&
+          state.authority.snapshot.revision > event.snapshot.revision
+            ? state.authority : { status: "ready", snapshot: event.snapshot },
         local,
-        remote: { status: "none" },
+        remote: state.remote.status === "candidate" &&
+          state.remote.snapshot.revision > event.snapshot.revision
+            ? state.remote : { status: "none" },
       };
     }
 
@@ -285,7 +327,9 @@ export function reduceReaderProgress(
       return {
         ...state,
         local: { status: "dirty", locator: latest },
-        remote: { status: "candidate", snapshot: event.current },
+        remote: state.remote.status === "candidate" &&
+          state.remote.snapshot.revision > event.current.revision
+            ? state.remote : { status: "candidate", snapshot: event.current },
       };
     }
 
@@ -301,6 +345,16 @@ export function reduceReaderProgress(
         },
       };
 
+    case "save_pending": {
+      const locator = pendingLocator(state.local);
+      return locator === null ? state : { ...state, local: { status: "pending", locator } };
+    }
+
+    case "capture_failed": {
+      const locator = pendingLocator(state.local);
+      return locator === null ? state : { ...state, local: { status: "save_failed", locator } };
+    }
+
     case "revalidated":
       return reduceRevalidated(state, event.snapshot);
 
@@ -309,6 +363,7 @@ export function reduceReaderProgress(
         return state;
       }
       return {
+        ...state,
         authority: { status: "ready", snapshot: state.remote.snapshot },
         local: { status: "clean" },
         remote: { status: "none" },
@@ -316,6 +371,7 @@ export function reduceReaderProgress(
 
     case "canonical_snapshot_installed":
       return {
+        ...state,
         authority: { status: "ready", snapshot: event.snapshot },
         local: { status: "clean" },
         remote: { status: "none" },

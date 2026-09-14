@@ -1,0 +1,11 @@
+diff --git a/apps/web/src/lib/reader/apparatusPulse.ts b/apps/web/src/lib/reader/apparatusPulse.ts
+--- a/apps/web/src/lib/reader/apparatusPulse.ts
++++ b/apps/web/src/lib/reader/apparatusPulse.ts
+@@ -11,7 +11,6 @@
+ 
+ /** The node and its CSS animation own the pulse; retirement leaves no timer holding source DOM. */
+ export function pulseReaderApparatusElement(element: HTMLElement): void {
+-  element.addEventListener("animationend", finishPulse);
+   element.addEventListener("animationcancel", finishPulse);
+   const active = element.getAnimations().find((animation) => animation instanceof CSSAnimation && animation.animationName === PULSE);
+   if (active !== undefined) { active.currentTime = 0; return; }

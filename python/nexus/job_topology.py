@@ -9,6 +9,8 @@ INTERACTIVE_WORKER_JOB_KINDS: tuple[str, ...] = (
 BACKGROUND_WORKER_JOB_KINDS: tuple[str, ...] = (
     "ingest_media_source",
     "media_content_reindex_job",
+    "prepare_offline_reading_package",
+    "prepare_reader_publication",
     "enrich_metadata",
     "media_unit_build",
     "note_reindex_job",

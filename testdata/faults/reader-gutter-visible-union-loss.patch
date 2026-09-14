@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/reader/publicationGutter.ts b/apps/web/src/lib/reader/publicationGutter.ts
+--- a/apps/web/src/lib/reader/publicationGutter.ts
++++ b/apps/web/src/lib/reader/publicationGutter.ts
+@@ -50,7 +50,7 @@
+         any ||= visible(rect, viewport);
+         contained &&= rect.left >= viewport.left && rect.right <= viewport.right && rect.top >= viewport.top && rect.bottom <= viewport.bottom;
+       }
+-      if (!any) return true;
++      if (!any) return append(part.renderStart + start, part.renderStart + end);
+       if (contained || end - start === 1) return append(part.renderStart + start, part.renderStart + end);
+       const middle = start + Math.floor((end - start) / 2);
+       return visit(start, middle) && visit(middle, end);

@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/reader/useReaderContents.ts b/apps/web/src/lib/reader/useReaderContents.ts
+--- a/apps/web/src/lib/reader/useReaderContents.ts
++++ b/apps/web/src/lib/reader/useReaderContents.ts
+@@ -64,7 +64,7 @@
+         if (consumers !== 0) return;
+         retainedPage = null;
+         lease?.release(); lease = null;
+-        dom?.release(); dom = null;
++        dom = null;
+       };
+       withdrawPage = release;
+       publish({ kind: "Ready", get page() {

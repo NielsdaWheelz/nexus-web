@@ -1,0 +1,13 @@
+diff --git a/python/nexus/api/read_admission.py b/python/nexus/api/read_admission.py
+--- a/python/nexus/api/read_admission.py
++++ b/python/nexus/api/read_admission.py
+@@ -117,8 +117,7 @@
+ 
+ class AdmittedImageRoute(AdmittedReadRoute):
+     async def handle(self, scope: Scope, receive: Receive, send: Send) -> None:
+-        admission: ReadAdmission = scope["app"].state.image_admission
+-        await admission.serve(super().handle, scope, receive, send)
++        await super().handle(scope, receive, send)
+ 
+ 
+ class AdmittedPackageTransferRoute(APIRoute):

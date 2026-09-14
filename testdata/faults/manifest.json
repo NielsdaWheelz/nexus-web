@@ -182,7 +182,7 @@
     {
       "id": "reading-progress-cas-bypass",
       "patch": "testdata/faults/reading-progress-cas-bypass.patch",
-      "sha256": "f9b7b3bbe84e30bb10fec6f5aa229a1e359606874ac6d7cf2e64257706539a21",
+      "sha256": "83a5615a9ed6461fd06c2ecbcffe3643360bf805227d90a516e1ce85e9ed8ed5",
       "proofs": [
         "pytest:python/tests/service/test_reading_progress.py::test_reader_cursor_cas_rejects_stale_progress_without_partial_side_effects"
       ],
@@ -218,25 +218,29 @@
     {
       "id": "offline-reading-expected-account-bypass",
       "patch": "testdata/faults/offline-reading-expected-account-bypass.patch",
-      "sha256": "b4b27f9e4c4486934369867b87d0887459d1676a145527da9fa3769e18f654e3",
+      "sha256": "8a7207d8b52096d825d59826b01f6f6bb6b8da0eb2cbf2606f6879ce51ccb351",
       "proofs": [
-        "pytest:python/tests/service/test_offline_reader_account_fence.py"
+        "pytest:python/tests/service/test_offline_reader_account_fence.py::test_a_foreign_expected_account_is_refused_at_every_offline_progress_entry"
       ],
-      "expected_failure": "DID NOT RAISE"
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "41ae9e8d41117351cb1b65a3271e987a48f13102336560615d8d3e97468d52f6"
     },
     {
       "id": "offline-reading-generation-cas-bypass",
       "patch": "testdata/faults/offline-reading-generation-cas-bypass.patch",
-      "sha256": "99b406c75778fad2f93a50be680bf78464b82d4ebba0150d0b23e5bf778fcfe2",
+      "sha256": "5f3e0e2ed65a3daffc04e850dda973e1f5017b7e9095706df9169db27b83c15b",
       "proofs": [
         "pytest:python/tests/service/test_offline_reader_progress.py::test_offline_progress_is_account_generation_and_response_attested"
       ],
-      "expected_failure": "DID NOT RAISE"
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "28720b6630a87d7014ae0f0f13052c0e0dbc646dd50a0964dc5dfe7e38bde956"
     },
     {
       "id": "reader-position-fragment-prefix-bypass",
       "patch": "testdata/faults/reader-position-fragment-prefix-bypass.patch",
-      "sha256": "c6bb454eda56feb9518f732644aec2181e455d65f9c621adbce42279390aaaee",
+      "sha256": "358cddf7be4ba396434e6199adf255535c27b2965ba48b91968fd06d1304c25e",
       "proofs": [
         "vitest:apps/web/src/lib/reader/readerDocumentPosition.unit.test.ts"
       ],
@@ -623,7 +627,7 @@
     {
       "id": "pdf-committed-highlight-projection-bypass",
       "patch": "testdata/faults/pdf-committed-highlight-projection-bypass.patch",
-      "sha256": "266f15886ff7619fbdfc83845f34c63f087301e58424abbf391d963a43e0a16f",
+      "sha256": "50d802663bc9018acfdc98a90f61b40a445fb73e4a81d4e88424a927ac157f2f",
       "proofs": [
         "vitest:apps/web/src/components/PdfReader.browser.test.tsx"
       ],
@@ -721,7 +725,7 @@
       ],
       "expected_failure": "PDF resource-limit projection lost its typed carrier",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "821595c83e7f14f430139765315c84f2430d96052de53519d51bf03607a03870"
+      "changed_owner_sha256": "6acce10ff6774d3d026ec438980162b93b59e2921c0f15f7b59956e740e68707"
     },
     {
       "id": "document-import-reconciler-readiness-bypass",
@@ -741,7 +745,9 @@
       "proofs": [
         "vitest:apps/web/src/components/imports/ImportsWorkspace.browser.test.tsx"
       ],
-      "expected_failure": "the stranded upload stopped offering the retry it accepts"
+      "expected_failure": "the stranded upload stopped offering the retry it accepts",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "6ff1186c162d2579bf790b50a17ff9b0d690d3fc708028fa5c1bfeaeb214d8d1"
     },
     {
       "id": "imports-history-baseline-omission",
@@ -763,7 +769,7 @@
       ],
       "expected_failure": "a published source with a later dead job is complete, not suspended",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "715976d92d2acc63ffd9e743265ed1269f1cbd1363e36ebf11c9bd9240a45d61"
+      "changed_owner_sha256": "2cebb501e6d93bc25ac21c0a9ceaac6cfa029dd6ea7b84119c0a1aed3b4949ed"
     },
     {
       "id": "import-search-repair-revision-bypass",
@@ -794,7 +800,9 @@
       "proofs": [
         "vitest:apps/web/src/app/(authenticated)/imports/ImportsPaneBody.browser.test.tsx"
       ],
-      "expected_failure": "spent its return memento on a list that had not been read yet"
+      "expected_failure": "spent its return memento on a list that had not been read yet",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "83c411737187338c84eba48336a92943456f2b02ce0971f1ad0a729014952908"
     },
     {
       "id": "document-import-confirm-replay-conflict",
@@ -922,7 +930,9 @@
       "proofs": [
         "vitest:apps/web/src/components/chat/chatAdmission.browser.test.tsx"
       ],
-      "expected_failure": "expect(element).toBeEnabled()"
+      "expected_failure": "expect(element).toBeEnabled()",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "bf4d395a0ccc49d0218ac46fc63c95a63f9ebd04d8219eda20f3257e5d692b6a"
     },
     {
       "id": "chat-hydration-snapshot-bypass",
@@ -954,7 +964,7 @@
     {
       "id": "client-defect-component-stack-loss",
       "patch": "testdata/faults/client-defect-component-stack-loss.patch",
-      "sha256": "d2de1c915d32596b0e46dbcfb93fb7689c8e93e932b9337c10a4b1d8ecfbf960",
+      "sha256": "0d8ecd36bdd6a17ec23110615216ac6a42b4da9b8795be0f7bfff74cbf22de52",
       "proofs": [
         "vitest:apps/web/src/lib/telemetry/clientDefects.browser.test.tsx"
       ],
@@ -963,7 +973,7 @@
     {
       "id": "client-defect-private-payload-acceptance",
       "patch": "testdata/faults/client-defect-private-payload-acceptance.patch",
-      "sha256": "309efadb393d822e2da8943b23b8eb0971a7d5d4287a516ee5e75fa0500be9c6",
+      "sha256": "a45e8749449692a313daa70c6388e01771c40353431bb059c600a9ddb78bc678",
       "proofs": [
         "pytest:python/tests/service/test_client_defect_telemetry.py::test_client_defect_report_is_authenticated_bounded_and_structural"
       ],
@@ -1162,6 +1172,1095 @@
       "expected_failure": "trust projection omitted durable machine authorship from a successful additive write",
       "changed_owner_red": "coherent-fault",
       "changed_owner_sha256": "5dccea7777434a3de061b5827166f28a44da2d46ff10fafe2bd9d7f19b7c5cad"
+    },
+    {
+      "id": "reader-cursor-source-ack-bypass",
+      "patch": "testdata/faults/reader-cursor-source-ack-bypass.patch",
+      "sha256": "e0bb3f72368926164a8b83a0a477b331f6160e71a023781a543a9ecfdda38a0e",
+      "proofs": [
+        "pytest:python/tests/service/test_reader_cursor_source.py::test_cursor_source_survives_replacement_and_fences_acknowledgment"
+      ],
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "282bb31a03a679fa13a1463ef234424a759313f873fdd4b427f04118aedb0ce6"
+    },
+    {
+      "id": "reader-cursor-source-migration-invention",
+      "patch": "testdata/faults/reader-cursor-source-migration-invention.patch",
+      "sha256": "b2743afb83adc6a039860f50166ffa52e84be5a721ddbb204b1e58849f353793",
+      "proofs": [
+        "pytest:python/tests/migrations/test_reader_cursor_source_migration.py::test_0228_preserves_unknown_source_and_tombstone_revision"
+      ],
+      "expected_failure": "migration must not label old coordinates with the current publication",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "407f0a857ded5292a1b4344478e4912254cfe08cffacda2ae664d06e0de22b64"
+    },
+    {
+      "id": "hosted-reader-source-ack-bypass",
+      "patch": "testdata/faults/hosted-reader-source-ack-bypass.patch",
+      "sha256": "b5c339c38e6931be295adba7e351d7f4be1a65f2773a447767634fd0a1fd927f",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/hostedReaderProgress.browser.test.tsx"
+      ],
+      "expected_failure": "locator-only equality acknowledged unknown provenance"
+    },
+    {
+      "id": "reader-intent-newer-movement-loss",
+      "patch": "testdata/faults/reader-intent-newer-movement-loss.patch",
+      "sha256": "b5efa1ea64da3e1e394547122df10dd95028871ccfe3501ca1347ce3e244a520",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/readerIntentStore.browser.test.tsx"
+      ],
+      "expected_failure": "acknowledgment erased newer durable movement"
+    },
+    {
+      "id": "read-admission-cancellation-unwind",
+      "patch": "testdata/faults/read-admission-cancellation-unwind.patch",
+      "sha256": "6b69a19587e01add12664a7c17b2b4d7a3801ede0494c04b1899af757a845a8a",
+      "proofs": [
+        "pytest:python/tests/service/test_read_admission.py::test_cancelled_sync_read_retains_admission_until_its_response_finishes"
+      ],
+      "expected_failure": "cancellation unwound request session ownership early",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "3f9afeaba68e6795793ba2ef55307c42418ee9a293bcc7b82ea27c81d34c05df"
+    },
+    {
+      "id": "image-fetch-before-byte-admission",
+      "patch": "testdata/faults/image-fetch-before-byte-admission.patch",
+      "sha256": "e8fd97302f571004ca7b6581fc599268f25b34298c80facdf6feef1bd5c6d665",
+      "proofs": [
+        "pytest:python/tests/kernel/test_image_fetch_budget.py::test_image_fetch_rejects_oversize_before_retaining_the_response"
+      ],
+      "expected_failure": "image response was retained before enforcing its byte bound"
+    },
+    {
+      "id": "image-proxy-resident-byte-retention",
+      "patch": "testdata/faults/image-proxy-resident-byte-retention.patch",
+      "sha256": "18567e0bd2759d6ea972d5942fde2f43cd00a9e20f551091efb60b1ec8e7b616",
+      "proofs": [
+        "pytest:python/tests/service/test_image_proxy_retention.py::test_image_proxy_fetches_current_bytes_without_a_process_cache_or_time_validator"
+      ],
+      "expected_failure": "API retained stale resident image bytes"
+    },
+    {
+      "id": "capacity-container-foreign-cleanup",
+      "patch": "testdata/faults/capacity-container-foreign-cleanup.patch",
+      "sha256": "395c7777851a467f1b0d33296c2eaa9060747a859fb4bd689db1ddd87310db22",
+      "proofs": [
+        "pytest:python/tests/capacity/test_capacity_container_cleanup.py::test_container_cleanup_preserves_foreign_owners"
+      ],
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "fa78b455b3250a762c5bcdffae53f60a966199462ba8964d3c1a0fcd024934ef"
+    },
+    {
+      "id": "capacity-container-owner-replacement",
+      "patch": "testdata/faults/capacity-container-owner-replacement.patch",
+      "sha256": "580dfaa6b55eb1e64f27ad861c99a3205a3f85df7f7a84447f266a8744dd1843",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_capacity_ownership.py::test_capacity_container_recovery_retains_planned_owner_and_rejects_foreign_identity"
+      ],
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "12a46403b168b06ec3d8563c4ea49bdc005a7a6518afd1b992ab64abb135088d"
+    },
+    {
+      "id": "native-exact-host-selection-loss",
+      "patch": "testdata/faults/native-exact-host-selection-loss.patch",
+      "sha256": "8565648407e3c09cf3f98bb9b2ebf8ef2324af4fd4f6b3aba9a99e445bef9024",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_runner.py::test_exact_android_host_proof_selects_only_its_class"
+      ],
+      "expected_failure": "exact native proof silently ran unrelated classes"
+    },
+    {
+      "id": "native-reader-source-equality-bypass",
+      "patch": "testdata/faults/native-reader-source-equality-bypass.patch",
+      "sha256": "4fd46476e68c910ba8869ac6cba413e4abc84b96fb0c199f342f6753a2a59da4",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReaderProgressSynchronizerTest.kt"
+      ],
+      "expected_failure": "Conflict:9"
+    },
+    {
+      "id": "native-reader-json-allocation-before-bound",
+      "patch": "testdata/faults/native-reader-json-allocation-before-bound.patch",
+      "sha256": "ae5070ddcd8b2954baa17b329bc894591b24a67a776284cf8923be910e18ec6c",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingJsonBoundTest.kt"
+      ],
+      "expected_failure": "the limit must stop wire consumption before whole-body allocation"
+    },
+    {
+      "id": "native-download-generation-substitution",
+      "patch": "testdata/faults/native-download-generation-substitution.patch",
+      "sha256": "e7b1f0bb146acaa68ad27274ec68e446874066dffb22359f91fe5cd5680ce167",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingOriginClientTest.kt"
+      ],
+      "expected_failure": "download selection changed before mint",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "57e5cc3fb3c3a22807817576d872ef6e12cfcb35a620f30ee5c7da6b0e2bf5d5"
+    },
+    {
+      "id": "native-corrupt-package-pending-deletion",
+      "patch": "testdata/faults/native-corrupt-package-pending-deletion.patch",
+      "sha256": "c8e6c72694e385d6b56630b44156cbca4b83b4b62d80ed77a1b96106e434fbdc",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingStoreLifecycleTest.kt"
+      ],
+      "expected_failure": "content recovery discarded pending intent",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "2aea3607b80163e4f335e8387ed338bf7bea7ec0d666c2bce962a16ed132b897"
+    },
+    {
+      "id": "native-preparation-queue-starvation",
+      "patch": "testdata/faults/native-preparation-queue-starvation.patch",
+      "sha256": "9aa2ee8b0e950eba0a181f3e87226f8a0bd606c53822af617c96502249b4a4d8",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingSchedulerStoreBoundaryTest.kt"
+      ],
+      "expected_failure": "preparing publication blocked another transfer"
+    },
+    {
+      "id": "image-admission-exclusive-permit-bypass",
+      "patch": "testdata/faults/image-admission-exclusive-permit-bypass.patch",
+      "sha256": "ef84f32c2f5c8832b12fceb7a7e4e513d35dd6c39015ca1fbae31b19aa43f85a",
+      "proofs": [
+        "pytest:python/tests/service/test_image_admission.py::test_image_admission_releases_partial_acquisition_and_retains_both_permits"
+      ],
+      "expected_failure": "two image validations escaped their image-only permit"
+    },
+    {
+      "id": "native-publication-preorder-bypass",
+      "patch": "testdata/faults/native-publication-preorder-bypass.patch",
+      "sha256": "6e3836a72eede09752c8a075c3e88a5600d5574ed4a4113be899081e0bca688b",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifierTest.kt"
+      ],
+      "expected_failure": "expected app.nexus.android.offline.reading.OfflineReadingPackageException to be thrown",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "98e9f7ced0e25c4ac9d6b5c01327f40932672edcf96baa6ae2f0395bf7c218a2"
+    },
+    {
+      "id": "native-progress-choice-stale-view-bypass",
+      "patch": "testdata/faults/native-progress-choice-stale-view-bypass.patch",
+      "sha256": "cd2dad301b915edd14800ed6d8b66a3269185375bcb674a81ed13b8a7137c96e",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingProgressChoiceTest.kt"
+      ],
+      "expected_failure": "a stale choice discarded preserved intent"
+    },
+    {
+      "id": "native-legacy-string-whole-value-allocation",
+      "patch": "testdata/faults/native-legacy-string-whole-value-allocation.patch",
+      "sha256": "468bad3ce57ba778ef515ec86cb53963c9d2f143374e714629482ae7c4eed03e",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyStringTest.kt"
+      ],
+      "expected_failure": "legacy string must reach disk before the complete value is read"
+    },
+    {
+      "id": "native-legacy-fragment-source-substitution",
+      "patch": "testdata/faults/native-legacy-fragment-source-substitution.patch",
+      "sha256": "f55531359770c5fa05d2d0308bbddb62b8ea78214cb6714d97da62ffd0a449db",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacySourceTest.kt"
+      ],
+      "expected_failure": "conflicting source duplicate must retain the original package"
+    },
+    {
+      "id": "native-svg-declaration-bypass",
+      "patch": "testdata/faults/native-svg-declaration-bypass.patch",
+      "sha256": "36ec5b9f4509da917e53d716ab129cdb8c4980e550c4e15ea57cb9169e2e3ac4",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingSvgTest.kt"
+      ],
+      "expected_failure": "SVG declaration or invalid XML accepted at case 0"
+    },
+    {
+      "id": "native-legacy-html-source-substitution",
+      "patch": "testdata/faults/native-legacy-html-source-substitution.patch",
+      "sha256": "fad98b1b10deeaf80db677cf9fd70d4854b57aa0d27b2dbc1a2dc28f1b3005e2",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyHtmlTest.kt"
+      ],
+      "expected_failure": "source text changed"
+    },
+    {
+      "id": "native-artwork-reconnect-retry-loss",
+      "patch": "testdata/faults/native-artwork-reconnect-retry-loss.patch",
+      "sha256": "3471b3210954082ae5a637f7b075892da4f8ab9f6295d2ab8beb8221dec4ddcf",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/playback/NexusArtworkTest.kt"
+      ],
+      "expected_failure": "reconnect reused the failed current-track future",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "229f6672393fd5d40e0f9ec48da3f07d3b4a28dbea39f3ddac01bdcf1d0a707b"
+    },
+    {
+      "id": "native-publication-fragment-bound-bypass",
+      "patch": "testdata/faults/native-publication-fragment-bound-bypass.patch",
+      "sha256": "36ce510419672de6912a5d5824d027e69921d7bef54d2a3812db6c54fa9cbffc",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReaderPublicationIdentityTest.kt"
+      ],
+      "expected_failure": "invalid identity was accepted"
+    },
+    {
+      "id": "native-publication-embed-marker-bypass",
+      "patch": "testdata/faults/native-publication-embed-marker-bypass.patch",
+      "sha256": "a1610d59d3e7065c6878d894f0fd9f4a5d5f0093e08f79791d2c1dbdbcb98761",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReaderPublicationEmbedTest.kt"
+      ],
+      "expected_failure": "invalid retained embed was accepted"
+    },
+    {
+      "id": "native-publication-epub-default-bypass",
+      "patch": "testdata/faults/native-publication-epub-default-bypass.patch",
+      "sha256": "cca771f0334f74bd58b9a2762623f33131c171d847a60b3a599d30965ff417da",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReaderPublicationEpubTest.kt"
+      ],
+      "expected_failure": "invalid epub default was accepted"
+    },
+    {
+      "id": "native-legacy-crop-duplicate-anchor",
+      "patch": "testdata/faults/native-legacy-crop-duplicate-anchor.patch",
+      "sha256": "8398c3bcd9ec2097b4f9eb3e8d04e25b9803cd40c04b6ed88029459e9a9d9fd2",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyCropTest.kt"
+      ],
+      "expected_failure": "source anchors must occur exactly once across cuts",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "9996d3f8ea1543710789be89c7b0b0238fe48721341431d10ede58b170a0fb9e"
+    },
+    {
+      "id": "native-legacy-canonical-normalization-bypass",
+      "patch": "testdata/faults/native-legacy-canonical-normalization-bypass.patch",
+      "sha256": "101c29a6d44946f648c3ad784192ea9902513ba8c76b1fce75574b254dc3501c",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyCanonicalTest.kt"
+      ],
+      "expected_failure": "canonical source meaning changed",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "f4ca31aaea985822f2426c33720a8b2276661ca01b74dbb9998e71b0d5ca4e64"
+    },
+    {
+      "id": "native-legacy-list-direction-bypass",
+      "patch": "testdata/faults/native-legacy-list-direction-bypass.patch",
+      "sha256": "7df66816c47b3bef06c131ee69c78a5c7a9f20b3e44c6450c35b815ccc68985d",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyListTest.kt"
+      ],
+      "expected_failure": "continued list number changed",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "2f40e42d955e6414e0cae33e32fafcccf6d66dcf331d233bede28a307f0c658b"
+    },
+    {
+      "id": "native-legacy-text-page-source-substitution",
+      "patch": "testdata/faults/native-legacy-text-page-source-substitution.patch",
+      "sha256": "1e2e3b0e41f00012c0523f32f0b0d9995a70835837380b3df14223fb3315c017",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyTextTest.kt"
+      ],
+      "expected_failure": "source character changed across pages",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "c0d96a0a7222dbe8e6c36d265a2dd5fa8ed29ed55f0324550aa8ed731a623ba7"
+    },
+    {
+      "id": "reader-initial-authority-movement-loss",
+      "patch": "testdata/faults/reader-initial-authority-movement-loss.patch",
+      "sha256": "0e907ec8925b9157045b1308d0419d6076aa6df79c9b998074b06eb5eb67ceaa",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/readerProgressInitialRetry.browser.test.tsx"
+      ],
+      "expected_failure": "retry lost movement captured before the first baseline",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "81daf6dbcd0f2ca57935fe138a8cf4144d4c177ca6749a3941897268222df920"
+    },
+    {
+      "id": "reader-reset-writer-baseline-stale",
+      "patch": "testdata/faults/reader-reset-writer-baseline-stale.patch",
+      "sha256": "33fe9ac3db095fd750b4622edf922a0d86479371c52c196c16cc34dd6c4926c8",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/readerProgressReset.browser.test.tsx"
+      ],
+      "expected_failure": "reset reused a pre-reset baseline",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "0ca5733252bb2eaa3c18d5c924ca0a303479faef11a74d1e79b02ad581b8221e"
+    },
+    {
+      "id": "workspace-missing-row-newer-ack",
+      "patch": "testdata/faults/workspace-missing-row-newer-ack.patch",
+      "sha256": "81644ba0331a5ab03b561fa95857b6243c830b527b355df8d19a1335529eafaf",
+      "proofs": [
+        "vitest:apps/web/src/lib/workspace/workspaceMissingRow.browser.test.tsx"
+      ],
+      "expected_failure": "missing old row falsely acknowledged newer navigation",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "d016196bbf561c8788f123288fae82d3d3666c62dd99187635144db0e3be26b6"
+    },
+    {
+      "id": "reader-unknown-source-lifecycle-invention",
+      "patch": "testdata/faults/reader-unknown-source-lifecycle-invention.patch",
+      "sha256": "141cb427c0ce59a7898d3238243584c4789e47581953a6dcd0dc43799f206a75",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/useReaderProgress.browser.test.tsx"
+      ],
+      "expected_failure": "closing the view invented a selected-source position"
+    },
+    {
+      "id": "native-reader-member-mime-extension",
+      "patch": "testdata/faults/native-reader-member-mime-extension.patch",
+      "sha256": "38698f735633b94a8cc1219a10a650f48ebd7a9d8f4cbc7d843d274358dc67d9",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/readingweb/OfflineReadingRequestRouterTest.kt"
+      ],
+      "expected_failure": "the packaged reader only issues ranges when the first response says bytes"
+    },
+    {
+      "id": "reader-window-navigation-completion",
+      "patch": "testdata/faults/reader-window-navigation-completion.patch",
+      "sha256": "96bebf88004119148f3c46ae5bb75e0336c6438af8f8c17f6ae4fee2907ee43d",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/readerWindowNavigation.browser.test.tsx"
+      ],
+      "expected_failure": "superseded navigation never settled"
+    },
+    {
+      "id": "native-legacy-boundary-source-substitution",
+      "patch": "testdata/faults/native-legacy-boundary-source-substitution.patch",
+      "sha256": "5e28071978c48b4325082bec3c4401a36e82fb8346e14f17d05bf54f66996338",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyBoundaryTest.kt"
+      ],
+      "expected_failure": "canonical boundary lost its original source coordinate",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "e55dac1f7431913410b78a3e2ef4b0a132950f207c81ca16191930c9c1480f21"
+    },
+    {
+      "id": "native-reader-source-generation-bypass",
+      "patch": "testdata/faults/native-reader-source-generation-bypass.patch",
+      "sha256": "d54ee80b0051bb330081f149a7b793f2ebec0c6ecf8039fe92c23f4da0b01099",
+      "proofs": [
+        "vitest:apps/web/src/lib/offlineReading/OfflineReaderSource.browser.test.tsx"
+      ],
+      "expected_failure": "native selected generation accepted another publication"
+    },
+    {
+      "id": "native-legacy-paint-supplementary-loss",
+      "patch": "testdata/faults/native-legacy-paint-supplementary-loss.patch",
+      "sha256": "297057a23678a77e2dd115b22250d35b04fd4b5fd18e0dc6b60fa2dcdb66c91f",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyPaintTest.kt"
+      ],
+      "expected_failure": "SVG paint local identity",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "22e302c8a0987c0694af81f703be257b0f6c3e922fe5eb32fbbca3fbde49b248"
+    },
+    {
+      "id": "native-legacy-units-canonical-substitution",
+      "patch": "testdata/faults/native-legacy-units-canonical-substitution.patch",
+      "sha256": "97c19d6ccc5c48ba996951533fc9cde02b4c2f5be79e8c52711da4bdf877e556",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyUnitsTest.kt"
+      ],
+      "expected_failure": "converted units changed original canonical text",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "e89f0f163e8ba651cff6b2eae4beb38242fd817d19910e48dd0b098e131f43b6"
+    },
+    {
+      "id": "reader-contents-dom-retention",
+      "patch": "testdata/faults/reader-contents-dom-retention.patch",
+      "sha256": "68f1537b09084630f83664c93cc0dab552db90d913ada1e5212e5021b772db7f",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/readerContents.browser.test.tsx"
+      ],
+      "expected_failure": "withdrawn contents page retained its DOM admission",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "fd6afb1ae3bc4722fab842208bdfca4d6261baa944cd4855dee6aa39c88fc51d"
+    },
+    {
+      "id": "native-legacy-activation-pending-loss",
+      "patch": "testdata/faults/native-legacy-activation-pending-loss.patch",
+      "sha256": "65d3ae16b96d45910057b9f89343989df45e9d05253f5b424c402e1bc68a0b5d",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyActivationTest.kt"
+      ],
+      "expected_failure": "migration changed durable pending intent",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "4bc026d3df920cf86f8010feb993649b169868a87036652d7954d9feb3cb1a71"
+    },
+    {
+      "id": "native-legacy-index-chain-substitution",
+      "patch": "testdata/faults/native-legacy-index-chain-substitution.patch",
+      "sha256": "f0cc87b5f8bd7889fdaf92f0ab964687a2a9f76ddabfe2fdb8ec1bf8449876d5",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyIndexTest.kt"
+      ],
+      "expected_failure": "converted first reader index lost source units",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "4edfdfb863f15d25b72adc477139c047e37af6cfe9ee186ba55a63071fdd1caa"
+    },
+    {
+      "id": "publication-find-tail-omission",
+      "patch": "testdata/faults/publication-find-tail-omission.patch",
+      "sha256": "634127efff9f1628b848594b63a7ee1ef680927e13b52b205cc2479d212014af",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/publicationFind.browser.test.tsx"
+      ],
+      "expected_failure": "required match tail was never requested",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "9bb68b84157337b2813b9083018b6b276cb246b73945b8277593c5ca2b521860"
+    },
+    {
+      "id": "native-legacy-purge-ancestry-resurrection",
+      "patch": "testdata/faults/native-legacy-purge-ancestry-resurrection.patch",
+      "sha256": "ef66250aa8297d2e5b99b1e51ca9a06ff18862dadd0d84adc6b6de4bdbcdfe6b",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyPurgeTest.kt"
+      ],
+      "expected_failure": "conversion recreated a purged account directory",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "c6eb5f7f874eeeb8db2714872e2bf3c57222f8a5cc40cd282bab35ace213e40c"
+    },
+    {
+      "id": "native-package-upgrade-retained-size-drift",
+      "patch": "testdata/faults/native-package-upgrade-retained-size-drift.patch",
+      "sha256": "dd7f3259d1ad712746bd5f81adf9c27ad234a23b8c6bb267d703a8b20187ca79",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingDatabaseTest.kt"
+      ],
+      "expected_failure": "database upgrade changed retained rows",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "b7f398009d3de76b20a0a2fbd7965afa15d7fbb35fe1369f76128e4bb9c24e8c"
+    },
+    {
+      "id": "native-installed-access-corruption",
+      "patch": "testdata/faults/native-installed-access-corruption.patch",
+      "sha256": "98ed979b3795f236bbc1e9c5244705ffabf4e10881b173a02ec6f91a79febf5a",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingInstalledAccessTest.kt"
+      ],
+      "expected_failure": "temporary file access failure deleted the installed original"
+    },
+    {
+      "id": "publication-find-row-release-before-preview",
+      "patch": "testdata/faults/publication-find-row-release-before-preview.patch",
+      "sha256": "5505b02fe391236e1c8731bca34b5d26f73f689a7c47038bfb4dffe6bd504852",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/publicationFindRetention.browser.test.tsx"
+      ],
+      "expected_failure": "pending preview rows were released before settlement",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "a2fca19ee25b05ccb95c638f1a2cb8f165d5cb11bc5c76815bd4162dabf610cd"
+    },
+    {
+      "id": "native-document-startup-open-loss",
+      "patch": "testdata/faults/native-document-startup-open-loss.patch",
+      "sha256": "b4a1fb958791f95146f5d26b7f1995c9d909332011cf20081fe9d946d3410453",
+      "proofs": [
+        "vitest:apps/web/src/lib/offlineReading/OfflineReadingConnection.browser.test.tsx"
+      ],
+      "expected_failure": "initial native open request was lost before the shelf subscribed"
+    },
+    {
+      "id": "reader-overlay-source-range-bypass",
+      "patch": "testdata/faults/reader-overlay-source-range-bypass.patch",
+      "sha256": "fc6a98f2711b7bbe901df558e5651defce8dac19072dc4165cd8254b803093f9",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/readerOverlayLease.browser.test.tsx"
+      ],
+      "expected_failure": "paint escaped its selected unit"
+    },
+    {
+      "id": "native-reader-conflict-side-substitution",
+      "patch": "testdata/faults/native-reader-conflict-side-substitution.patch",
+      "sha256": "c9fc705433c02e882ecb46d0e1bc4376f4737c79e4565913f160e9bd4dc05611",
+      "proofs": [
+        "vitest:apps/web/src/lib/offlineReading/OfflineReading.browser.test.tsx"
+      ],
+      "expected_failure": "native conflict choice lost the displayed source or selected side"
+    },
+    {
+      "id": "native-current-archive-symbolic-link",
+      "patch": "testdata/faults/native-current-archive-symbolic-link.patch",
+      "sha256": "c4e5f7ee36efa6d0d88db76cd0dd653abbe567dfbd05ebba9b1d951beca74a47",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingSharedContractTest.kt"
+      ],
+      "expected_failure": "schema-two archive accepted symbolic link",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "9e306afd67f38e593b2d28a5010b79e38449d6e13986f7bf9ae90305e1c31589"
+    },
+    {
+      "id": "native-shelf-refused-removal-dismissal",
+      "patch": "testdata/faults/native-shelf-refused-removal-dismissal.patch",
+      "sha256": "78a9381737270985e451cd4851198f610e020563603e8b0339a9b4611488915e",
+      "proofs": [
+        "vitest:apps/web/src/lib/offlineReading/OfflineReadingShelf.browser.test.tsx"
+      ],
+      "expected_failure": "refused native removal discarded its confirmation",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "8fabf20f74b84fa1ae26902a589b9cb6b15eadc30668c888d89acc8f055215fd"
+    },
+    {
+      "id": "native-legacy-url-activation",
+      "patch": "testdata/faults/native-legacy-url-activation.patch",
+      "sha256": "4770a54c59e018e7bfb2b2479ba84853f0c6ad5230c911a190983914190e1e92",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyContractTest.kt"
+      ],
+      "expected_failure": "legacy remote attribute activated",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "ec13201ed278eecdfd1891965bedb93002f39101a167b5c10828ba89436b1fe5"
+    },
+    {
+      "id": "highlight-conflict-address-loss",
+      "patch": "testdata/faults/highlight-conflict-address-loss.patch",
+      "sha256": "3c8d052d455632ad3655728fbd586fed49ff21a65b6aa18d2b0ddd35e84a239e",
+      "proofs": [
+        "vitest:apps/web/src/app/(authenticated)/media/[id]/highlightConflict.browser.test.tsx"
+      ],
+      "expected_failure": "Duplicate response lost its addressed highlight",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "ee1594583580b531f79541bf45040a40453f179e1a30dd0e901132c318bccc09"
+    },
+    {
+      "id": "publication-embed-canonical-ui-inclusion",
+      "patch": "testdata/faults/publication-embed-canonical-ui-inclusion.patch",
+      "sha256": "31163112ef7f3c085b69219079c6ba37189112f57c3f9514a9d763b3be415d54",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/publicationEmbedDom.browser.test.tsx"
+      ],
+      "expected_failure": "live card UI entered canonical source coordinates",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "739fb925139c64457930dd3aa799d0cc21ab8d32b50a2dfe0aa5664552b5ef00"
+    },
+    {
+      "id": "native-retired-schema-ingress",
+      "patch": "testdata/faults/native-retired-schema-ingress.patch",
+      "sha256": "cdef508fe70b15ae4ab30bbdc58f56eb9abbc650b46b67d2f95c53e51a51e758",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingPackageIngressTest.kt"
+      ],
+      "expected_failure": "retired schema-one archive entered current member validation",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "dbf0b09ffcf9b5cf93a2123248863adcdf09353b0dc940688d1d2a5531f21f3b"
+    },
+    {
+      "id": "artwork-retired-observer-demand",
+      "patch": "testdata/faults/artwork-retired-observer-demand.patch",
+      "sha256": "b2fe75540016034ef959188fa8ebb6c092b452630ee57f96b701c5b799f3aed9",
+      "proofs": [
+        "vitest:apps/web/src/lib/media/observeArtwork.browser.test.tsx"
+      ],
+      "expected_failure": "retired visibility resurrected an image request",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "2a5a1a8612c978ccb89acfbf228c4147d84c93106da64de1ded5abf6fc3af31c"
+    },
+    {
+      "id": "highlight-detail-defect-scope-loss",
+      "patch": "testdata/faults/highlight-detail-defect-scope-loss.patch",
+      "sha256": "548c7f59ae9af83a25b6b1f7fa25bec04ef093ae9328880b2ff36868411aaf6a",
+      "proofs": [
+        "vitest:apps/web/src/app/(authenticated)/media/[id]/highlightDetailFailure.browser.test.tsx"
+      ],
+      "expected_failure": "selected-detail defect discarded the draft owner",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "1b3dd43326b3c5b7ec9668952fcd912ef4f682764e2ee73d73dfc838f026784b"
+    },
+    {
+      "id": "native-svg-resource-corruption",
+      "patch": "testdata/faults/native-svg-resource-corruption.patch",
+      "sha256": "d6944a842cff83d0a29cecdb344cd258110df8dc7a286b3b26bd7c05e7e0155c",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingSvgResourceTest.kt"
+      ],
+      "expected_failure": "SVG resource failure was classified as corrupt source",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "e7dae1d336d8cecfd4360e42aa92e9f409ede9ba8ff5ddbeca5d538bd46500fd"
+    },
+    {
+      "id": "reader-apparatus-retired-preview-clear",
+      "patch": "testdata/faults/reader-apparatus-retired-preview-clear.patch",
+      "sha256": "4318afaffb7aa6e4b870594eb9d5b5484862c0f033e7204b3550b8a8943349a2",
+      "proofs": [
+        "vitest:apps/web/src/components/reader/ReaderApparatusPreview.browser.test.tsx"
+      ],
+      "expected_failure": "retired preview cleared its replacement source",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "67c5fa0028526fa3dd4743b8b59c09f4fd4353ec4416d4921f1e695d4dcc7351"
+    },
+    {
+      "id": "reader-apparatus-body-source-substitution",
+      "patch": "testdata/faults/reader-apparatus-body-source-substitution.patch",
+      "sha256": "0a4861339fe74088536e4284563d57696829c3af0443188d5931e2ec755db7d0",
+      "proofs": [
+        "vitest:apps/web/src/components/reader/ReaderApparatusDetails.browser.test.tsx"
+      ],
+      "expected_failure": "source note detail substituted its owner's body for the attested target",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "e72273e0cbef314ab4d9b281146ec1c65fb8e7eed7d7cc4debf7c8042d8eb697"
+    },
+    {
+      "id": "dossier-summary-audience-bypass",
+      "patch": "testdata/faults/dossier-summary-audience-bypass.patch",
+      "sha256": "6082af74bd37c3b9de9f5ea18c6a082d14f099cd4f2f5212eaa3a0b0abe2d8fc",
+      "proofs": [
+        "pytest:python/tests/service/test_dossier_visibility_projection.py::test_dossier_visibility_filters_before_paging_without_widening_subject_access"
+      ],
+      "expected_failure": "Dossier projection widened audience or subject access",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "9c960dd49ec0e0c5c31b4976b33546ee7effe498ac1cc1ed6329550940583bf8"
+    },
+    {
+      "id": "pdf-location-early-completion",
+      "patch": "testdata/faults/pdf-location-early-completion.patch",
+      "sha256": "fa6c0d27f6f140d89b0da0ac1002f3eca428ced9194db1bf58ba14bb548c72b7",
+      "proofs": [
+        "vitest:apps/web/src/components/PdfReaderLocation.browser.test.tsx"
+      ],
+      "expected_failure": "PDF location completed before its pulse geometry retired",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "2958b428ce6ac1b89eab2bc18c9f8aac169f014356cdeaaa9533aeb5ffef7ab6"
+    },
+    {
+      "id": "pdf-location-cancelled-key-retention",
+      "patch": "testdata/faults/pdf-location-cancelled-key-retention.patch",
+      "sha256": "429ab4d2244ca5547780ef16489a366827ba61a163abd945e824b7ae34b2d5fa",
+      "proofs": [
+        "vitest:apps/web/src/components/PdfReaderLocationLifecycle.browser.test.tsx"
+      ],
+      "expected_failure": "PDF location stalled after its layout callback changed",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "e503ba6ab629621b79c1b3533181a601ff0b1f38264d25d5982ccbac80fcc209"
+    },
+    {
+      "id": "reader-completed-find-navigation-identity-loss",
+      "patch": "testdata/faults/reader-completed-navigation-identity-loss.patch",
+      "sha256": "a8a8baa5ddd3e80be98e1ea7166b6c8ef943fe9d61e9cb75f9df4be6955c0277",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/publicationFindSupersession.browser.test.tsx"
+      ],
+      "expected_failure": "completed navigation retained obsolete activation",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "e31046a71d90c0a465833620a6d5decf4079b4d5e0ebba3ef4ecb1249d3e9b50"
+    },
+    {
+      "id": "reader-completed-apparatus-navigation-identity-loss",
+      "patch": "testdata/faults/reader-completed-navigation-identity-loss.patch",
+      "sha256": "a8a8baa5ddd3e80be98e1ea7166b6c8ef943fe9d61e9cb75f9df4be6955c0277",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/publicationApparatusSupersession.browser.test.tsx"
+      ],
+      "expected_failure": "completed navigation retained obsolete activation",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "dca5e13882f44a423482101f5e97b0cca005bee353330ed7fe821f4f7ad88fd0"
+    },
+    {
+      "id": "reader-apparatus-pulse-completion-loss",
+      "patch": "testdata/faults/reader-apparatus-pulse-completion-loss.patch",
+      "sha256": "add4bb80db6813576cf18a931a8d0238a2c1294a99a8ddbd8bbc024e910cb9b8",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/apparatusPulse.browser.test.tsx"
+      ],
+      "expected_failure": "completed source-note pulse did not restart",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "f86c4bf0a21f0643d761b622a63b43de31e7ce4ba06161db20b0b69676af436a"
+    },
+    {
+      "id": "server-response-classification-loss",
+      "patch": "testdata/faults/server-response-classification-loss.patch",
+      "sha256": "777986b8ba006ea440ab114f42ff6bed5dc3d3638f1f6df109a8e8a397315e45",
+      "proofs": [
+        "vitest:apps/web/src/lib/api/serverTransport.unit.test.ts"
+      ],
+      "expected_failure": "server gateway lost its availability identity"
+    },
+    {
+      "id": "reader-apparatus-input-authority-loss",
+      "patch": "testdata/faults/reader-apparatus-input-authority-loss.patch",
+      "sha256": "6cdf3543383d04575f5ac578dbb306f0d7cb0d7afa3d5cdbd5b0daa871520c42",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/publicationApparatusInput.browser.test.tsx"
+      ],
+      "expected_failure": "late source-note read overrode genuine reader input",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "719e84906b64562a76a968ddf401f0fb0153563b55674906d92edb177884c6d3"
+    },
+    {
+      "id": "pdf-reattachment-unpainted-row-loss",
+      "patch": "testdata/faults/pdf-reattachment-unpainted-row-loss.patch",
+      "sha256": "74b9b4c0b4f556dff866476d53a8f79e4a2f5004e9d11f037c2608f467785f89",
+      "proofs": [
+        "vitest:apps/web/src/components/PdfReaderReattachment.browser.test.tsx"
+      ],
+      "expected_failure": "reattached PDF highlight required a previously painted row",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "314f430e659c77473138ebf259ad9c3f4964e8bb54a8c0bd6f79723e00fe967c"
+    },
+    {
+      "id": "pdf-highlight-source-filter-bypass",
+      "patch": "testdata/faults/pdf-highlight-source-filter-bypass.patch",
+      "sha256": "c646aa8df7f1f3d8f893fea85a4fb80b7d4c60e9369197922618eb2faa391d55",
+      "proofs": [
+        "pytest:python/tests/service/test_pdf_highlight_publication.py::test_pdf_selection_paint_and_reattachment_remain_bound_to_selected_source"
+      ],
+      "expected_failure": "pdf paint crossed its selected source",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "a341cb0b499d89bfb79033960000373bf018093c44aab4980425589c4b8811a2"
+    },
+    {
+      "id": "pdf-highlight-locked-refresh-bypass",
+      "patch": "testdata/faults/pdf-highlight-locked-refresh-bypass.patch",
+      "sha256": "2afe8a716deb56050601ccd06fa9901b6747cc8e0d698a6dee278f68453f31bd",
+      "proofs": [
+        "pytest:python/tests/service/test_pdf_highlight_write_race.py::test_pdf_bounds_acknowledge_state_reloaded_after_competing_commit"
+      ],
+      "expected_failure": "pdf bounds acknowledged a stale source",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "6a7874e66bc2ebda85409ee2b6b73f073c42bdb8fc19a1480a35646246577078"
+    },
+    {
+      "id": "reader-published-query-close-release",
+      "patch": "testdata/faults/reader-published-query-close-release.patch",
+      "sha256": "1785af5b61d87d5405fc3d035129f13d7c9544783062b2287ad9a9d0c5f06bd9",
+      "proofs": [
+        "vitest:apps/web/src/components/PdfReaderPaintLease.browser.test.tsx"
+      ],
+      "expected_failure": "session close released a published PDF layer or unfinished physical read",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "047533385129bb0c9233478258630738da8a4b7a15924428fc39a1222e53a145"
+    },
+    {
+      "id": "reader-evidence-page-dom-retention",
+      "patch": "testdata/faults/reader-evidence-page-dom-retention.patch",
+      "sha256": "ebb5dfc607f410b1fcc31ee6ef6dea8597343afc704241ed2946d558390250e2",
+      "proofs": [
+        "vitest:apps/web/src/components/reader/document-map/PublicationEvidence.browser.test.tsx"
+      ],
+      "expected_failure": "retired evidence page retained its DOM or source payload",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "83bff79aa567ba5d04b477bfa3ab216b7233f29e404b29ee3b11777f210a4616"
+    },
+    {
+      "id": "selection-history-range-owner-bypass",
+      "patch": "testdata/faults/selection-history-range-owner-bypass.patch",
+      "sha256": "73018708a2a284901a34aedf216b3e525d18a677a7652e80df3f81b70273f4a1",
+      "proofs": [
+        "vitest:apps/web/src/components/SelectionPopoverSelection.browser.test.tsx"
+      ],
+      "expected_failure": "selection history dismissal erased another reader's range"
+    },
+    {
+      "id": "native-publication-range-unit-reread",
+      "patch": "testdata/faults/native-publication-range-unit-reread.patch",
+      "sha256": "58c5fe90cdaabddc825797170cb1e26b7636a8fc7dc5dd773990e170ea4138cf",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReaderPublicationRangeReadTest.kt"
+      ],
+      "expected_failure": "table ranges reread complete source units",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "c69264d82fe80801be208db3281ab050b160fe04fc01838f2242aed9fb4509d5"
+    },
+    {
+      "id": "native-table-unready-publication",
+      "patch": "testdata/faults/native-table-unready-publication.patch",
+      "sha256": "08916c26abd25f4acf2aa3814a55d2f3c3e3b13048df9feab188dfb1522eb03e",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingTablePreparationTest.kt"
+      ],
+      "expected_failure": "failed table preparation exposed an unready package",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "bf2ccf02b4f27bdb02a4cecf324750ce00de5d2b236b14de0a4e9466acd94664"
+    },
+    {
+      "id": "reader-gutter-viewport-filter-loss",
+      "patch": "testdata/faults/reader-gutter-viewport-filter-loss.patch",
+      "sha256": "41a251b8d7bdd2eb9c81c46fbf8f9f146350ccdbf366546b9a62aed0108e0e9d",
+      "proofs": [
+        "pytest:python/tests/service/test_reader_publication_gutter.py::test_reader_gutter_counts_exact_visible_union_before_cap_and_keeps_note_stance"
+      ],
+      "expected_failure": "gutter counted hidden or duplicated visible occurrences",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "5dea9c78885cadc40fb239ab0ef9c6fc3809c68faa7f94955cdc5a2e74190ebb"
+    },
+    {
+      "id": "native-table-missing-target-bypass",
+      "patch": "testdata/faults/native-table-missing-target-bypass.patch",
+      "sha256": "fd8ea538b0af5696201d1c457fcca221366f08b7c26988bc43bf0ce8b09c7e1e",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingTableIngressTest.kt"
+      ],
+      "expected_failure": "unattested table references became prepared: table-missing-target",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "bae290c5293427b6c039365ef7212e3be428bc8360e1a14b0687274bd078d4a5"
+    },
+    {
+      "id": "native-legacy-table-downward-loss",
+      "patch": "testdata/faults/native-legacy-table-downward-loss.patch",
+      "sha256": "f4116de05af791b528e27cdf4c53b7a631869a0407d37816b858a152fa6b0418",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyTableGeometryTest.kt"
+      ],
+      "expected_failure": "legacy table source changed logical rectangles"
+    },
+    {
+      "id": "reader-gutter-visible-union-loss",
+      "patch": "testdata/faults/reader-gutter-visible-union-loss.patch",
+      "sha256": "38a61404c024644f93f7ee01a32a6208023286d7f5124c397f40561f7a1112f9",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/publicationGutter.browser.test.tsx"
+      ],
+      "expected_failure": "offscreen middle text entered the visible canonical union",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "6d720a4aa3c77254b5320d2b4488c8646db41c4707a935394834459d7bcbb7c0"
+    },
+    {
+      "id": "reader-margin-retired-source-retention",
+      "patch": "testdata/faults/reader-margin-retired-source-retention.patch",
+      "sha256": "d8b372e04f7a9c209fcf9a1ac8cebcf43bb24b3e7b60067c11186ee251f15448",
+      "proofs": [
+        "vitest:apps/web/src/components/reader/MarginRail.browser.test.tsx"
+      ],
+      "expected_failure": "held gutter response retained the retired source DOM",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "6ebbe88ae920c53cb25af973bdb050eabd678e1ebf429c1e6781287438643e35"
+    },
+    {
+      "id": "native-legacy-fitting-table-fragmentation",
+      "patch": "testdata/faults/native-legacy-fitting-table-fragmentation.patch",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyTableUnitsTest.kt"
+      ],
+      "expected_failure": "fitting table was fragmented or changed operative semantics",
+      "sha256": "a31323ebebe5e901a7dac37ead93fd6efb23ed08f752f4f91aff0ab8599f5ceb",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "3ac31cab37ca77098d62c55d3b55f2cc59493367e94678b4d6e2687f389d8553"
+    },
+    {
+      "id": "native-legacy-table-opening-continuation-loss",
+      "patch": "testdata/faults/native-legacy-table-opening-continuation-loss.patch",
+      "sha256": "35b876a01367629c1338bd39e410dd7f27ea910d63cc153e4a7bee18bc0ce99a",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyTableContinuationTest.kt"
+      ],
+      "expected_failure": "opening-only table excerpt lost continuation",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "917dfcecf5e6edc30a6bf471dd021635217eb16435c8c82af887fab2b25aee56"
+    },
+    {
+      "id": "reader-pdf-eager-source-streaming",
+      "patch": "testdata/faults/reader-pdf-eager-source-streaming.patch",
+      "proofs": [
+        "vitest:apps/web/src/components/PdfReaderLoading.browser.test.tsx"
+      ],
+      "expected_failure": "opening one PDF page eagerly consumed the complete source",
+      "sha256": "19cf5d9b46d7dc6be0a06c26467d139e5ac50f14932a8f16aa1656076d9fbf41"
+    },
+    {
+      "id": "reader-pdf-initial-load-cancellation-loss",
+      "patch": "testdata/faults/reader-pdf-initial-load-cancellation-loss.patch",
+      "proofs": [
+        "vitest:apps/web/src/components/PdfReaderOpeningCancellation.browser.test.tsx"
+      ],
+      "expected_failure": "retired reader left its unfinished PDF HTTP task running",
+      "sha256": "11e94a84f7c3526ffbcaef5509aa842160777a07a4b1b1e037ee19a4bc1c6445"
+    },
+    {
+      "id": "native-legacy-table-group-scope-loss",
+      "patch": "testdata/faults/native-legacy-table-group-scope-loss.patch",
+      "sha256": "33b3d0d587e1858abaf0e57b7d63c960ffaa3757253ad41b3d144c324d37a37a",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLegacyTableHeadersTest.kt"
+      ],
+      "expected_failure": "legacy source changed header associations"
+    },
+    {
+      "id": "reader-source-pulse-range-loss",
+      "patch": "testdata/faults/reader-source-pulse-range-loss.patch",
+      "sha256": "fb85836131c558671e0ce6f447216e81ac54d8e22afd14e4b09ac6405d711f77",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/publicationSourcePulse.browser.test.tsx"
+      ],
+      "expected_failure": "source cue lost its exact visible range"
+    },
+    {
+      "id": "reader-source-delivery-pane-loss",
+      "patch": "testdata/faults/reader-source-delivery-pane-loss.patch",
+      "sha256": "5817ac978881b5b9033bb942cb257bf69c22a6a0f956535f1a9e75d234c0e1f4",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/useReaderTarget.browser.test.tsx"
+      ],
+      "expected_failure": "source delivery entered another pane of the same media",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "8e84533e563797dd47080915a06f6526a267663c324992a3b67a962c12deb73f"
+    },
+    {
+      "id": "native-publication-anchor-first-identity-bypass",
+      "patch": "testdata/faults/native-publication-anchor-first-identity-bypass.patch",
+      "sha256": "cf09236466adf5ae2670711a1c302f507bd0299934186bd7ea5e6189e7952558",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReaderPublicationAnchorTest.kt"
+      ],
+      "expected_failure": "retained anchor accepted a foreign source occurrence",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "3a4e45eed522bd0b6f44c4eb28ee0dd90b16ca15fc31cab8fc9b0be67fc4c604"
+    },
+    {
+      "id": "offline-publication-member-closure-loss",
+      "patch": "testdata/faults/offline-publication-member-closure-loss.patch",
+      "sha256": "e7cd630df916e7058b3defc6a8af4bab5f0700fa7247d1deccdd13ed2ad5edec",
+      "proofs": [
+        "pytest:python/tests/kernel/test_offline_reading_publication_package.py::test_schema_two_packages_keep_exact_members_and_reject_an_unreachable_source"
+      ],
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "e84dc0f6b0057c415fdc0e82384d6ef8a39e1824801df1103f066a0d69d6f751"
+    },
+    {
+      "id": "reader-source-input-charge-loss",
+      "patch": "testdata/faults/reader-source-input-charge-loss.patch",
+      "sha256": "018c78bba53def8c3ffbebdc1944e7e4cf238671da52c5105e374d45a7cdeb53",
+      "proofs": [
+        "vitest:apps/web/src/lib/conversations/readerSourceActivation.browser.test.tsx"
+      ],
+      "expected_failure": "pending source input escaped account admission"
+    },
+    {
+      "id": "reader-account-cache-retirement-loss",
+      "patch": "testdata/faults/reader-account-cache-retirement-loss.patch",
+      "sha256": "75f2e0ae2f3c82816d2204ad4bcf2e8665b2d7dd65a65bd4756ae217b0f7462b",
+      "proofs": [
+        "vitest:apps/web/src/lib/api/resourceCacheAccount.browser.test.tsx"
+      ],
+      "expected_failure": "retired account kept an undelivered source quote"
+    },
+    {
+      "id": "document-fragment-read-guard-loss",
+      "patch": "testdata/faults/document-fragment-read-guard-loss.patch",
+      "sha256": "f9d481d72706b24617be87c0a6d4696a225a2fd2076684b8ec136527c075df07",
+      "proofs": [
+        "pytest:python/tests/service/test_timeline_fragment_read.py::test_authenticated_fragments_only_expose_readable_timelines"
+      ],
+      "expected_failure": "DID NOT RAISE"
+    },
+    {
+      "id": "reader-table-excerpt-role-loss",
+      "patch": "testdata/faults/reader-table-excerpt-role-loss.patch",
+      "sha256": "c0dadc1e3d8af49a0cfb115b9b03103af49cd668a3ebc133281e79a69bf20973",
+      "proofs": [
+        "vitest:apps/web/src/components/reader/ReaderTablePublication.browser.test.tsx"
+      ],
+      "expected_failure": "published table excerpt lost its accessible table role"
+    },
+    {
+      "id": "web-table-header-scope-loss",
+      "patch": "testdata/faults/web-table-header-scope-loss.patch",
+      "sha256": "f52374ca1930d9e248ae06a910c31a62b04255676228eba71317687201c17848",
+      "proofs": [
+        "pytest:python/tests/kernel/test_reader_source_table_scope.py::test_web_capture_preserves_authored_table_header_scope"
+      ],
+      "expected_failure": "web source sanitizer discarded authored table scope"
+    },
+    {
+      "id": "reader-body-classification-media-route-substitution",
+      "patch": "testdata/faults/reader-body-classification-media-route-substitution.patch",
+      "sha256": "57d91767f1ee996a9f89a2c99a13c75aaf7f3e06e335a3c5e9d3f2de41132a1b",
+      "proofs": [
+        "pytest:python/tests/service/test_reader_body_classification.py::test_reader_body_classification_preserves_timeline_and_visibility"
+      ],
+      "expected_failure": "compact reader classification changed timeline or private resource behavior"
+    },
+    {
+      "id": "reader-body-navigation-unheld-source",
+      "patch": "testdata/faults/reader-body-navigation-unheld-source.patch",
+      "sha256": "73f933ba650c44c3e9f013bde1850c73547bcc156d59ba4b52fa67b11d2129f9",
+      "proofs": [
+        "vitest:apps/web/src/app/(authenticated)/media/[id]/MediaPaneBodyNavigation.browser.test.tsx"
+      ],
+      "expected_failure": "actual section navigation did not save its chosen source locator"
+    },
+    {
+      "id": "reader-navigation-concurrent-hold-erasure",
+      "patch": "testdata/faults/reader-navigation-concurrent-hold-erasure.patch",
+      "sha256": "cff8714a405d6957958f11a3d798b92b699ac39504f3347c0c319a1074a5a10a",
+      "proofs": [
+        "vitest:apps/web/src/lib/reader/readerNavigationLease.browser.test.tsx"
+      ],
+      "expected_failure": "older completion released the newer navigation source"
+    },
+    {
+      "id": "reader-restored-hidden-body-mount",
+      "patch": "testdata/faults/reader-restored-hidden-body-mount.patch",
+      "sha256": "7f0bc6100ff664ab842e70c997bea38a480dbf5b162f4dca9eb24252b4f5357a",
+      "proofs": [
+        "vitest:apps/web/src/components/workspace/ReaderWorkspaceResidency.browser.test.tsx"
+      ],
+      "expected_failure": "minimized restored readers hydrated full media bodies"
+    },
+    {
+      "id": "reader-epub-caption-loss",
+      "patch": "testdata/faults/reader-epub-caption-loss.patch",
+      "sha256": "392b43c8f53d48ea57b1d80897ca49f87cc5bbe77c259131b14f0527043d9b36",
+      "proofs": [
+        "pytest:python/tests/service/test_reader_epub_caption.py::test_epub_caption_retains_its_source_relation_and_authored_anchor"
+      ],
+      "expected_failure": "epub sanitizer discarded the authored table caption",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "79df181bebc3335b9ce6b5dbf90fecf258ae8eba46b3a54f9954fe9bac85b463"
+    },
+    {
+      "id": "nexus-history-unbounded-frecency",
+      "patch": "testdata/faults/nexus-history-unbounded-frecency.patch",
+      "sha256": "de7e06f567968dd410a7a038410306fa8859210e6b0996f8982154f941b496f0",
+      "proofs": [
+        "pytest:python/tests/service/test_nexus_history.py::test_history_growth_keeps_database_results_bounded"
+      ],
+      "expected_failure": "history materialized unrelated retained rows",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "e8a30c9c8e941d344f14e94b3625e1b7cf2bade0ecdadc7e45eea3580949607f"
+    },
+    {
+      "id": "embedding-aggregate-envelope-loss",
+      "patch": "testdata/faults/embedding-aggregate-envelope-loss.patch",
+      "sha256": "2165948fda66bf800734d16886eceb8fa2357b6d148191a0e18eb3072e849a53",
+      "proofs": [
+        "pytest:python/tests/kernel/test_semantic_chunks_embedding_runtime.py"
+      ],
+      "expected_failure": "embedding request exceeded its aggregate byte envelope"
+    },
+    {
+      "id": "native-progress-missing-kind-defect",
+      "patch": "testdata/faults/native-progress-missing-kind-defect.patch",
+      "sha256": "f7b83d32efc5e1a882da0db196f0bb187149460e386afd2995f638e10b3b2f04",
+      "proofs": [
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingLifecycleTest.kt"
+      ],
+      "expected_failure": "expected:<java.lang.IllegalStateException> but was:<java.util.NoSuchElementException>"
+    },
+    {
+      "id": "resource-cleanup-tuple-expansion",
+      "patch": "testdata/faults/resource-cleanup-tuple-expansion.patch",
+      "sha256": "0d1d35731362d345f8ea2c76ed2d88c3de43193e6db860a56dc522617a1030cb",
+      "proofs": [
+        "pytest:python/tests/service/test_resource_graph_cleanup.py::test_content_index_cleanup_keeps_graph_semantics_at_large_cardinality"
+      ],
+      "expected_failure": "bulk graph cleanup failed in PostgreSQL: stack depth limit exceeded"
+    },
+    {
+      "id": "epub-source-scope-premature-close",
+      "patch": "testdata/faults/epub-source-scope-premature-close.patch",
+      "sha256": "ea81e3b87cdd1aa86a556c89957992783b0238813293caa7786fafdb01e13558",
+      "proofs": [
+        "pytest:python/tests/service/test_epub_fragment_spool.py::test_epub_source_keeps_exact_staged_bodies_through_publication"
+      ],
+      "expected_failure": "EPUB staged source disappeared during publication",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "b4ceabff570ab1c463bd907300b2a00095098599039074cb7b86b03dfd38c4fd"
     }
   ]
 }

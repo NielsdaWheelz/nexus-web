@@ -5,21 +5,40 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.db.models import Media, MediaFile, ProcessingStatus, ReaderPublication
+from nexus.db.models import (
+    Media,
+    MediaFile,
+    ProcessingStatus,
+    ReaderPublication,
+    ReaderPublicationAnchor,
+    ReaderPublicationApparatusEdge,
+    ReaderPublicationApparatusItem,
+    ReaderPublicationArtifact,
+    ReaderPublicationSearchMap,
+    ReaderPublicationSearchSource,
+    ReaderPublicationTarget,
+    ReaderPublicationUnit,
+)
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.ids import new_uuid7
+from nexus.schemas.media import DocumentEmbedSource, MediaNavigationOut, ReaderNavigationFragmentOut
 from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
+
+if TYPE_CHECKING:
+    from nexus.services.reader_publication_artifacts import (
+        PreparedReaderPublication,
+        PreparedReaderPublicationTitle,
+    )
 
 ReaderDocumentKind = Literal["pdf", "epub", "web_article"]
 _ELIGIBLE_KINDS = frozenset({"pdf", "epub", "web_article"})
 _MISSING_OBJECT_CODE = "E_STORAGE_MISSING"
-_OBJECT_READ_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -28,6 +47,7 @@ class ReaderPublicationObjectReference:
     storage_path: str
     content_type: str
     size_bytes: int
+    sha256: str | None = None
     asset_key: str | None = None
     package_href: str | None = None
 
@@ -53,6 +73,7 @@ class ReaderPublicationFragment:
     idx: int
     canonical_text: str
     html_sanitized: str
+    document_embeds: tuple[DocumentEmbedSource, ...]
 
 
 @dataclass(frozen=True)
@@ -98,12 +119,15 @@ class ReaderPublicationProjection:
     kind: ReaderDocumentKind
     title: str
     page_count: int | None
-    plain_text: str | None
     fragments: tuple[ReaderPublicationFragment, ...]
     epub_toc: tuple[ReaderPublicationEpubTocNode, ...]
     epub_sections: tuple[ReaderPublicationEpubSection, ...]
     epub_navigation: tuple[ReaderPublicationEpubNavigation, ...]
     object_references: tuple[ReaderPublicationObjectReference, ...]
+    web_navigation: MediaNavigationOut | None
+    pdf_plain_text: str | None
+    pdf_page_spans: tuple[tuple[int, int, int], ...]
+    pdf_page_heights: tuple[tuple[int, float | None], ...]
 
 
 @dataclass(frozen=True)
@@ -114,21 +138,12 @@ class CapturedReaderPublication[T]:
 
 
 class ReaderPublicationBusy(ApiError):
-    """The canonical document changed twice during one bounded capture."""
+    """The selected canonical state changed during capture or preparation."""
 
     def __init__(self) -> None:
         super().__init__(
             ApiErrorCode.E_READER_PUBLICATION_BUSY,
             "Reader publication is changing; retry the request.",
-        )
-
-
-class ReaderPublicationObjectReadExhausted(RuntimeError):
-    """Defect raised when bounded object reads for one capture stay unavailable."""
-
-    def __init__(self, attempts: int) -> None:
-        super().__init__(
-            f"Reader publication object read exhausted after {attempts} object-store attempts"
         )
 
 
@@ -205,6 +220,13 @@ def superseded_reader_source_paths(
     current = db.scalar(select(MediaFile.storage_path).where(MediaFile.media_id == media_id))
     if current is None or str(current) == source_file.storage_path:
         return []
+    retained = db.scalar(
+        select(ReaderPublicationArtifact.path)
+        .where(ReaderPublicationArtifact.storage_path == str(current))
+        .limit(1)
+    )
+    if retained is not None:
+        return []
     return [str(current)]
 
 
@@ -218,12 +240,20 @@ def unpublished_reader_source_paths(
 
     A stale source attempt must not move the reader-visible pointer, but its
     immutable object still needs post-transaction cleanup. If the current pointer
-    already names that exact path, the object is published and must survive.
+    or a retained generation names that exact path, the object is published and
+    must survive.
     """
     if source_file is None:
         return []
     current = db.scalar(select(MediaFile.storage_path).where(MediaFile.media_id == media_id))
     if current is not None and str(current) == source_file.storage_path:
+        return []
+    retained = db.scalar(
+        select(ReaderPublicationArtifact.path)
+        .where(ReaderPublicationArtifact.storage_path == source_file.storage_path)
+        .limit(1)
+    )
+    if retained is not None:
         return []
     return [source_file.storage_path]
 
@@ -234,12 +264,16 @@ def replace_reader_publication[T](
     media_id: UUID,
     expected_kind: ReaderDocumentKind,
     replace_projection: Callable[[Media], T],
+    prepared: PreparedReaderPublication | PreparedReaderPublicationTitle,
     source_file: ReaderPublicationSourceFile | None = None,
 ) -> T:
     """Atomically replace a document projection and advance its generation once.
 
     Object writes belong to the immutable preparation phase and must have completed
-    before entry. The callback performs database-only canonical projection writes.
+    before entry, so ``prepared`` is required: a generation can only be published
+    together with the members and expected-generation fence it was prepared under.
+    The memberless generation-1 row belongs to ``ensure_reader_publication``.
+    The callback performs database-only canonical projection writes.
     ``source_file`` is the reader-visible file pointer this publication installs;
     this owner writes it under the publication lock so no replaced pointer can
     commit without its generation bump. Omit it when the publication does not
@@ -262,10 +296,31 @@ def replace_reader_publication[T](
     publication = db.scalar(
         select(ReaderPublication).where(ReaderPublication.media_id == media_id).with_for_update()
     )
+    current_generation = publication.generation if publication is not None else None
+    if prepared.media_id != media_id or prepared.descriptor.kind != expected_kind:
+        raise ValueError("Prepared reader publication has a different identity")
+    if prepared.expected_generation != current_generation:
+        raise ReaderPublicationBusy()
+    if prepared.descriptor.reader_generation != (current_generation or 0) + 1:
+        raise ValueError("Prepared reader publication has a different successor generation")
     if source_file is not None:
         _install_reader_source_file(db, media_id=media_id, source_file=source_file)
     result = replace_projection(media)
     db.flush()
+    from nexus.services.reader_publication_artifacts import (
+        PreparedReaderPublicationTitle,
+        install_prepared_reader_publication,
+        install_prepared_reader_title,
+    )
+
+    if media.title != prepared.descriptor.title:
+        # justify-defect: canonical projection and immutable descriptor were
+        # prepared from the same accepted source/title command.
+        raise AssertionError("Published media title disagrees with its prepared descriptor")
+    if isinstance(prepared, PreparedReaderPublicationTitle):
+        install_prepared_reader_title(db, prepared)
+    else:
+        install_prepared_reader_publication(db, prepared)
     if publication is None:
         db.add(
             ReaderPublication(
@@ -310,16 +365,23 @@ def _install_reader_source_file(
     media_file.source_sha256 = source_file.source_sha256
 
 
-def replace_reader_document_title(db: Session, *, media: Media, title: str) -> bool:
+def replace_reader_document_title(
+    db: Session, *, media: Media, title: str, prepared: PreparedReaderPublicationTitle | None
+) -> bool:
     """Publish a new reader-visible title for one already published document.
 
     The title is part of the captured package projection, so replacing it on a
     published document is a publication that must bump the generation. The media
     row is locked before the publication row — the owner's lock order — so a
     concurrent first publication cannot appear between the check and the
-    replacement. Returns whether this owner published the title; ``False`` means
-    the media is not a published reader document and its caller keeps its own
-    title write.
+    replacement. A title identical to the one already published is not a
+    replacement: it would retain a second generation holding another copy of the
+    document's whole text for no reader-visible change, so this owner refuses it
+    here rather than leaving each caller to compare.
+
+    Returns whether this owner published the title. ``False`` means the media is
+    not a published reader document, or its published title is already exactly
+    this title; either way the caller keeps its own (then redundant) title write.
     """
     kind = str(media.kind)
     if kind not in _ELIGIBLE_KINDS:
@@ -329,6 +391,10 @@ def replace_reader_document_title(db: Session, *, media: Media, title: str) -> b
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     if read_publication_generation(db, media_id=locked.id) is None:
         return False
+    if locked.title == title:
+        return False
+    if prepared is None:
+        raise ValueError("Published reader title requires a prepared descriptor")
 
     def replace_projection(published: Media) -> None:
         published.title = title
@@ -338,6 +404,7 @@ def replace_reader_document_title(db: Session, *, media: Media, title: str) -> b
         media_id=locked.id,
         expected_kind=cast(ReaderDocumentKind, kind),
         replace_projection=replace_projection,
+        prepared=prepared,
     )
     return True
 
@@ -376,12 +443,55 @@ def ensure_reader_publication(db: Session, *, media_id: UUID) -> bool:
 
 def delete_reader_publication(db: Session, *, media_id: UUID) -> None:
     """Explicitly remove the publication row before its owning Media row."""
+    for model in (
+        ReaderPublicationSearchMap,
+        ReaderPublicationSearchSource,
+        ReaderPublicationApparatusEdge,
+        ReaderPublicationApparatusItem,
+        ReaderPublicationAnchor,
+        ReaderPublicationTarget,
+        ReaderPublicationUnit,
+        ReaderPublicationArtifact,
+    ):
+        db.execute(delete(model).where(model.media_id == media_id))
+    db.flush()
     publication = db.scalar(
         select(ReaderPublication).where(ReaderPublication.media_id == media_id).with_for_update()
     )
     if publication is not None:
         db.delete(publication)
         db.flush()
+
+
+def install_current_reader_publication(db: Session, *, prepared: PreparedReaderPublication) -> bool:
+    """Backfill one already published generation; never advance or replace it."""
+    from nexus.services.reader_publication_artifacts import install_prepared_reader_publication
+
+    generation = prepared.descriptor.reader_generation
+    if prepared.expected_generation != generation:
+        raise ValueError("Current-generation preparation requires its exact published generation")
+    media = db.scalar(select(Media).where(Media.id == prepared.media_id).with_for_update())
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    publication = db.scalar(
+        select(ReaderPublication)
+        .where(ReaderPublication.media_id == prepared.media_id)
+        .with_for_update()
+    )
+    if publication is None or publication.generation != generation:
+        raise ReaderPublicationBusy()
+    if media.kind != prepared.descriptor.kind or media.title != prepared.descriptor.title:
+        raise AssertionError("Current publication facts changed without advancing its generation")
+    existing = db.get(ReaderPublicationArtifact, (prepared.media_id, generation, "descriptor.json"))
+    if existing is not None:
+        descriptor_member = next(
+            member for member in prepared.members if member.role == "descriptor"
+        )
+        if existing.sha256 != descriptor_member.ref.sha256:
+            raise ReaderPublicationBusy()
+        return False
+    install_prepared_reader_publication(db, prepared)
+    return True
 
 
 def capture_current[T](
@@ -396,11 +506,19 @@ def capture_current[T](
     for attempt in range(2):
         projection = _read_projection(session_factory, media_id=media_id)
         object_reader = ReaderPublicationObjectReader(objects, projection.object_references)
-        value, assembly_error = _assemble_within_object_read_budget(
-            assemble,
-            projection=projection,
-            object_reader=object_reader,
-        )
+        value: T | None = None
+        assembly_error: StorageError | None = None
+        try:
+            value = assemble(projection, object_reader)
+        except StorageError as exc:
+            if exc.code != _MISSING_OBJECT_CODE:
+                # Transient object-store failure: the member read that owns the
+                # object already retried it, so this capture does not re-run an
+                # assembly that writes objects of its own.
+                raise
+            # A missing object is a captured-projection fact, classified below
+            # against the generation this capture read.
+            assembly_error = exc
 
         exists, generation = _read_current_identity(session_factory, media_id=media_id)
         if not exists or generation is None:
@@ -426,33 +544,6 @@ def capture_current[T](
     raise AssertionError("bounded Reader publication capture exhausted without an outcome")
 
 
-def _assemble_within_object_read_budget[T](
-    assemble: Callable[[ReaderPublicationProjection, ReaderPublicationObjectReader], T],
-    *,
-    projection: ReaderPublicationProjection,
-    object_reader: ReaderPublicationObjectReader,
-) -> tuple[T | None, StorageError | None]:
-    """Assemble one projection, retrying transient object-store failures.
-
-    A missing object is a captured-projection fact the caller classifies against the
-    generation it captured, so it is returned rather than raised. Every other
-    object-store failure is transient infrastructure: the assembly is retried from
-    the start of the same projection, and exhausting that bounded budget defects.
-    """
-    for attempt in range(_OBJECT_READ_ATTEMPTS):
-        try:
-            return assemble(projection, object_reader), None
-        except StorageError as exc:
-            if exc.code == _MISSING_OBJECT_CODE:
-                return None, exc
-            if attempt == _OBJECT_READ_ATTEMPTS - 1:
-                # justify-defect: reading the objects of a captured publication must
-                # succeed within the bounded object-store retry budget.
-                raise ReaderPublicationObjectReadExhausted(_OBJECT_READ_ATTEMPTS) from exc
-    # justify-defect: the bounded loop returns or raises on its final attempt.
-    raise AssertionError("bounded Reader publication object read exhausted without an outcome")
-
-
 def _read_projection(
     session_factory: sessionmaker[Session],
     *,
@@ -467,7 +558,7 @@ def _read_projection(
                 text(
                     """
                 SELECT rp.generation, rp.changed_at, m.kind, m.title,
-                       m.page_count, m.plain_text, m.processing_status
+                       m.page_count, m.processing_status
                 FROM reader_publications rp
                 JOIN media m ON m.id = rp.media_id
                 WHERE rp.media_id = :media_id
@@ -487,12 +578,16 @@ def _read_projection(
         if str(row["processing_status"]) != "ready_for_reading":
             raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
 
+        from nexus.services.document_embeds import capture_document_embed_sources
+
+        embed_sources = capture_document_embed_sources(db, media_id=media_id)
         fragments = tuple(
             ReaderPublicationFragment(
                 fragment_id=fragment.id,
                 idx=int(fragment.idx),
                 canonical_text=str(fragment.canonical_text),
                 html_sanitized=str(fragment.html_sanitized),
+                document_embeds=embed_sources.get(fragment.id, ()),
             )
             for fragment in db.execute(
                 text(
@@ -586,12 +681,12 @@ def _read_projection(
         object_rows = db.execute(
             text(
                 """
-                SELECT 'source' AS role, storage_path, content_type, size_bytes,
+                SELECT 'source' AS role, storage_path, content_type, size_bytes, source_sha256 AS sha256,
                        NULL::text AS asset_key, NULL::text AS package_href
                 FROM media_file
                 WHERE media_id = :media_id
                 UNION ALL
-                SELECT 'epub_asset' AS role, storage_path, content_type, size_bytes,
+                SELECT 'epub_asset' AS role, storage_path, content_type, size_bytes, NULL::text AS sha256,
                        asset_key, package_href
                 FROM epub_resources
                 WHERE media_id = :media_id
@@ -606,11 +701,47 @@ def _read_projection(
                 storage_path=str(item.storage_path),
                 content_type=str(item.content_type),
                 size_bytes=int(item.size_bytes),
+                sha256=str(item.sha256) if item.sha256 is not None else None,
                 asset_key=str(item.asset_key) if item.asset_key is not None else None,
                 package_href=str(item.package_href) if item.package_href is not None else None,
             )
             for item in object_rows
         )
+        web_navigation = None
+        if row["kind"] == "web_article":
+            from nexus.services.reader_navigation import load_web_navigation_projection
+
+            web_navigation = load_web_navigation_projection(
+                db,
+                media_id=media_id,
+                fragments=[
+                    ReaderNavigationFragmentOut(
+                        fragment_id=fragment.fragment_id,
+                        fragment_idx=fragment.idx,
+                        char_count=len(fragment.canonical_text),
+                    )
+                    for fragment in fragments
+                ],
+            )
+        pdf_plain_text = None
+        pdf_page_spans: tuple[tuple[int, int, int], ...] = ()
+        pdf_page_heights: tuple[tuple[int, float | None], ...] = ()
+        if row["kind"] == "pdf":
+            pdf_plain_text = db.scalar(select(Media.plain_text).where(Media.id == media_id)) or ""
+            pdf_pages = db.execute(
+                text(
+                    "SELECT page_number, start_offset, end_offset, page_height FROM pdf_page_text_spans "
+                    "WHERE media_id = :media_id ORDER BY page_number"
+                ),
+                {"media_id": media_id},
+            ).all()
+            pdf_page_spans = tuple(
+                (int(item.page_number), int(item.start_offset), int(item.end_offset))
+                for item in pdf_pages
+            )
+            pdf_page_heights = tuple(
+                (int(item.page_number), item.page_height) for item in pdf_pages
+            )
         projection = ReaderPublicationProjection(
             media_id=media_id,
             generation=_positive_generation(row["generation"]),
@@ -618,12 +749,15 @@ def _read_projection(
             kind=row["kind"],
             title=str(row["title"]),
             page_count=int(row["page_count"]) if row["page_count"] is not None else None,
-            plain_text=str(row["plain_text"]) if row["plain_text"] is not None else None,
             fragments=fragments,
             epub_toc=toc,
             epub_sections=sections,
             epub_navigation=navigation,
             object_references=references,
+            web_navigation=web_navigation,
+            pdf_plain_text=pdf_plain_text,
+            pdf_page_spans=pdf_page_spans,
+            pdf_page_heights=pdf_page_heights,
         )
         db.commit()
         return projection

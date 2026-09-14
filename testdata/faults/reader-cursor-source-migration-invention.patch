@@ -1,0 +1,12 @@
+diff --git a/migrations/alembic/versions/0228_reader_cursor_source.py b/migrations/alembic/versions/0228_reader_cursor_source.py
+--- a/migrations/alembic/versions/0228_reader_cursor_source.py
++++ b/migrations/alembic/versions/0228_reader_cursor_source.py
+@@ -26,7 +26,7 @@
+         UPDATE reader_media_state
+         SET source = CASE WHEN locator->>'kind' = 'transcript'
+             THEN '{"kind":"Timeline"}'::jsonb
+-            ELSE '{"kind":"Unresolved"}'::jsonb END
++            ELSE '{"kind":"Publication","reader_generation":88}'::jsonb END
+         WHERE locator IS NOT NULL
+         """
+     )

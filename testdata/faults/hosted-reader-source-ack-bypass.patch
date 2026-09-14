@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/lib/reader/hostedReaderProgress.ts b/apps/web/src/lib/reader/hostedReaderProgress.ts
+--- a/apps/web/src/lib/reader/hostedReaderProgress.ts
++++ b/apps/web/src/lib/reader/hostedReaderProgress.ts
+@@ -151,7 +151,8 @@
+         // A retained attempt may already have committed, so equality settles it
+         // without a duplicate mutation. A first dispatch always writes: the
+         // server treats an equal locator as engagement at the same revision.
+-        if (!acknowledges(snapshot, attempt.source, attempt.locator)
++        if (!(snapshot.state === "Positioned"
++          && readerResumeStatesEqual(snapshot.locator, attempt.locator))
+           || (!retained && snapshot.revision === attempt.baseRevision)) {
+           if (snapshot.revision !== attempt.baseRevision) {
+             return { kind: "Conflict", canonical: snapshot, source: row.desired.source, device: row.desired.locator };

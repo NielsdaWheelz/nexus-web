@@ -15,6 +15,7 @@ from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
 from nexus.storage.paths import ext_for_content_type
+from nexus.storage.read import read_object_checked
 
 logger = get_logger(__name__)
 
@@ -182,26 +183,20 @@ def read_oracle_plate_bytes(
 ) -> OraclePlateBytes:
     sc = storage_client or get_storage_client()
     try:
-        data = b"".join(sc.stream_object(metadata.storage_key))
+        # The metadata row's declared size bounds the read: an object larger than
+        # the row is refused mid-stream rather than materialized and measured.
+        data = read_object_checked(sc, metadata.storage_key, expected_size=metadata.byte_size)
     except StorageError as exc:
         logger.error(
             "oracle_plate_storage_read_failed",
             image_id=str(metadata.image_id),
             storage_key=metadata.storage_key,
+            expected_size=metadata.byte_size,
             error=str(exc),
         )
         raise ApiError(
             ApiErrorCode.E_STORAGE_ERROR, "Oracle plate object is missing or unreadable"
         ) from exc
-    if len(data) != metadata.byte_size:
-        logger.error(
-            "oracle_plate_storage_size_mismatch",
-            image_id=str(metadata.image_id),
-            storage_key=metadata.storage_key,
-            expected_size=metadata.byte_size,
-            actual_size=len(data),
-        )
-        raise ApiError(ApiErrorCode.E_STORAGE_ERROR, "Oracle plate object is invalid")
     return OraclePlateBytes(
         data=data,
         content_type=metadata.content_type,

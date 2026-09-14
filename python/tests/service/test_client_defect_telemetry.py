@@ -12,6 +12,7 @@ def test_client_defect_report_is_authenticated_bounded_and_structural(
     authenticated_client: TestClient, anonymous_client: TestClient
 ) -> None:
     payload = {
+        "scope": "Pane",
         "release": "a" * 40,
         "pane_id": "pane-proof",
         "visit_id": "visit-proof",
@@ -33,8 +34,22 @@ def test_client_defect_report_is_authenticated_bounded_and_structural(
         for key, value in payload.items():
             assert report.get(key) == value
 
+    for scope in ("Nexus", "Workspace", "ReaderProgress", "Imports"):
+        shared = {
+            key: value for key, value in payload.items() if key not in ("pane_id", "visit_id")
+        }
+        shared["scope"] = scope
+        with capture_logs() as logs:
+            response = authenticated_client.post("/telemetry/client-defects", json=shared)
+            assert response.status_code == 200
+            report = next(entry for entry in logs if entry.get("event") == "rum.client_defect")
+            assert report["scope"] == scope
+            assert "pane_id" not in report
+            assert "visit_id" not in report
+
     forbidden = "private draft, token, and provider output"
     invalid = (
+        {**payload, "scope": "Workspace"},
         {**payload, "message": forbidden},
         {**payload, "stack": forbidden},
         {**payload, "request": {"content": forbidden}},

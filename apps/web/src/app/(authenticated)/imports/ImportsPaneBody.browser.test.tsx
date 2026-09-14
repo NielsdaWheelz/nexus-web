@@ -1,3 +1,7 @@
+import { ArtworkProvider } from "@/lib/media/ArtworkProvider";
+import { ARTWORK_CAPACITY } from "@/lib/media/artworkCapacity";
+import { ResourceCacheProvider } from "@/lib/api/resourceCache";
+import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect, useRef, useState } from "react";
 import { userEvent } from "vitest/browser";
@@ -397,19 +401,26 @@ function ImportsPane({
                   <ShareControllerProvider>
                     <OfflineMediaProvider accountId={ACCOUNT_ID} transport={null}>
                       <ResourceOverlaysProvider>
-                        <GlobalPlayerProvider>
-                          <ResourceActionRuntimeProvider>
-                            <ImportsProvider>
-                              <ImportsPaneHost
-                                initialHref={href}
-                                isMobile={isMobile}
-                                paneMounted={paneMounted}
-                                fillsWindow={fillsWindow}
-                              />
-                            </ImportsProvider>
-                            <ResourceActionOverlays />
-                          </ResourceActionRuntimeProvider>
-                        </GlobalPlayerProvider>
+                        <ResourceCacheProvider
+                          value={{}}
+                          publicationLimits={READER_CAPACITY.cache}
+                        >
+                          <ArtworkProvider limits={ARTWORK_CAPACITY}>
+                            <GlobalPlayerProvider>
+                              <ResourceActionRuntimeProvider>
+                                <ImportsProvider>
+                                  <ImportsPaneHost
+                                    initialHref={href}
+                                    isMobile={isMobile}
+                                    paneMounted={paneMounted}
+                                    fillsWindow={fillsWindow}
+                                  />
+                                </ImportsProvider>
+                                <ResourceActionOverlays />
+                              </ResourceActionRuntimeProvider>
+                            </GlobalPlayerProvider>
+                          </ArtworkProvider>
+                        </ResourceCacheProvider>
                       </ResourceOverlaysProvider>
                     </OfflineMediaProvider>
                   </ShareControllerProvider>

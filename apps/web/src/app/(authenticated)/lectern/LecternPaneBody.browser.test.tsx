@@ -1,3 +1,7 @@
+import { ArtworkProvider } from "@/lib/media/ArtworkProvider";
+import { ARTWORK_CAPACITY } from "@/lib/media/artworkCapacity";
+import { ResourceCacheProvider } from "@/lib/api/resourceCache";
+import { READER_CAPACITY } from "@/lib/reader/readerCapacity";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "vitest/browser";
 import { useCallback, useState } from "react";
@@ -262,45 +266,52 @@ function LecternApp({
           >
             <PanePrimaryChromeProvider publish={publish}>
               <LecternProvider>
-                <GlobalPlayerProvider>
-                  <LibraryPlacementControllerProvider>
-                    <ShareControllerProvider>
-                      <AuthenticatedAccountProvider
-                        account={{
-                          accountId: RESOURCE_ACTION_ACCOUNT_ID,
-                          calendarTimeZone: "UTC",
-                        }}
-                      >
-                      <KeybindingsProvider>
-                      <WorkspaceStoreProvider
-                        initialState={createDefaultWorkspaceState(
-                          "/lectern",
-                          RESOURCE_ACTION_METRICS,
-                        )}
-                        workspacePrimaryMetrics={RESOURCE_ACTION_METRICS}
-                      >
-                      <OfflineMediaProvider
-                        accountId={RESOURCE_ACTION_ACCOUNT_ID}
-                        transport={null}
-                      >
-                      <ResourceOverlaysProvider>
-                      <ResourceActionRuntimeProvider>
-                      <div data-pane-content="true">
-                        {search ? (
-                          <PaneSearchBar publication={search} onClose={NOOP} />
-                        ) : null}
-                        <LecternPaneBody />
-                      </div>
-                      <ResourceActionOverlays />
-                      </ResourceActionRuntimeProvider>
-                      </ResourceOverlaysProvider>
-                      </OfflineMediaProvider>
-                      </WorkspaceStoreProvider>
-                      </KeybindingsProvider>
-                      </AuthenticatedAccountProvider>
-                    </ShareControllerProvider>
-                  </LibraryPlacementControllerProvider>
-                </GlobalPlayerProvider>
+                <ResourceCacheProvider
+                  value={{}}
+                  publicationLimits={READER_CAPACITY.cache}
+                >
+                  <ArtworkProvider limits={ARTWORK_CAPACITY}>
+                    <GlobalPlayerProvider>
+                      <LibraryPlacementControllerProvider>
+                        <ShareControllerProvider>
+                          <AuthenticatedAccountProvider
+                            account={{
+                              accountId: RESOURCE_ACTION_ACCOUNT_ID,
+                              calendarTimeZone: "UTC",
+                            }}
+                          >
+                          <KeybindingsProvider>
+                          <WorkspaceStoreProvider
+                            initialState={createDefaultWorkspaceState(
+                              "/lectern",
+                              RESOURCE_ACTION_METRICS,
+                            )}
+                            workspacePrimaryMetrics={RESOURCE_ACTION_METRICS}
+                          >
+                          <OfflineMediaProvider
+                            accountId={RESOURCE_ACTION_ACCOUNT_ID}
+                            transport={null}
+                          >
+                          <ResourceOverlaysProvider>
+                          <ResourceActionRuntimeProvider>
+                          <div data-pane-content="true">
+                            {search ? (
+                              <PaneSearchBar publication={search} onClose={NOOP} />
+                            ) : null}
+                            <LecternPaneBody />
+                          </div>
+                          <ResourceActionOverlays />
+                          </ResourceActionRuntimeProvider>
+                          </ResourceOverlaysProvider>
+                          </OfflineMediaProvider>
+                          </WorkspaceStoreProvider>
+                          </KeybindingsProvider>
+                          </AuthenticatedAccountProvider>
+                        </ShareControllerProvider>
+                      </LibraryPlacementControllerProvider>
+                    </GlobalPlayerProvider>
+                  </ArtworkProvider>
+                </ResourceCacheProvider>
               </LecternProvider>
             </PanePrimaryChromeProvider>
           </PaneRuntimeProvider>

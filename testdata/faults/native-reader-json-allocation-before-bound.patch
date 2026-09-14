@@ -1,0 +1,18 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingHttp.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingHttp.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingHttp.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingHttp.kt
+@@ -123,11 +123,11 @@
+     maximumBytes: Long = OFFLINE_READING_JSON_RESPONSE_LIMIT_BYTES.toLong(),
+ ): ByteArray {
+     require(contentLength() <= maximumBytes)
+-    val source = source()
+-    require(!source.request(maximumBytes + 1)) {
++    val content = bytes()
++    require(content.size <= maximumBytes) {
+         "offline reader JSON exceeds its byte limit"
+     }
+-    return source.readByteArray()
++    return content
+ }
+ 
+ internal class OfflineReadingCookieUnavailableException : RuntimeException()

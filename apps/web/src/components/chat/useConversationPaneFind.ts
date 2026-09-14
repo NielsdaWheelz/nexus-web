@@ -137,15 +137,18 @@ function createConversationFindAdapter({
         units: prepareConversationFindUnits({ snapshot, transcript }),
       };
       return {
-        sessionId: request.sessionId,
-        sourceKey: request.sourceKey,
-        scopes: [
-          {
-            kind: "EntireResource",
-            id: SELECTED_PATH_SCOPE_ID,
-            label: "Current fork",
-          },
-        ],
+        kind: "Prepared",
+        session: {
+          sessionId: request.sessionId,
+          sourceKey: request.sourceKey,
+          scopes: [
+            {
+              kind: "EntireResource",
+              id: SELECTED_PATH_SCOPE_ID,
+              label: "Current fork",
+            },
+          ],
+        },
       };
     },
     async find(request) {
@@ -214,6 +217,7 @@ function createConversationFindAdapter({
       if (!candidateOrigin) {
         return {
           kind: "Rejected",
+          returnAvailable: false,
           sessionId: request.sessionId,
           queryId: request.queryId,
           sourceKey: request.sourceKey,
@@ -259,11 +263,12 @@ function createConversationFindAdapter({
     async returnToReadingPosition(request) {
       assertCurrent(request.sourceKey);
       throwIfAborted(request.signal);
-      if (!origin) return;
+      if (!origin) return { kind: "Returned" };
       const savedOrigin = origin;
       highlightOwner.clear();
       scrollHandle().restoreReadingPosition(savedOrigin);
       origin = null;
+      return { kind: "Returned" };
     },
     errorMessage: conversationFindErrorMessage,
     invalidate,

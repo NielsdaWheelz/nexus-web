@@ -98,3 +98,68 @@ export function projectPdfQuadToViewportRect(
     height: Math.max(bottom - top, MIN_RECT_SIZE),
   };
 }
+
+export function readPdfPageViewportTransform(
+  pageElement: HTMLElement,
+): PdfPageViewportTransform | null {
+  const scale = Number.parseFloat(
+    pageElement.getAttribute("data-nexus-page-scale") ?? "",
+  );
+  const viewportWidth = Number.parseFloat(
+    pageElement.getAttribute("data-nexus-page-viewport-width") ?? "",
+  );
+  const viewportHeight = Number.parseFloat(
+    pageElement.getAttribute("data-nexus-page-viewport-height") ?? "",
+  );
+  const dpiScale = Number.parseFloat(
+    pageElement.getAttribute("data-nexus-page-dpi-scale") ?? "1",
+  );
+
+  if (
+    !Number.isFinite(scale) ||
+    scale <= 0 ||
+    !Number.isFinite(viewportWidth) ||
+    viewportWidth <= 0 ||
+    !Number.isFinite(viewportHeight) ||
+    viewportHeight <= 0 ||
+    !Number.isFinite(dpiScale) ||
+    dpiScale <= 0
+  ) {
+    return null;
+  }
+
+  const rotation = normalizeQuarterTurnRotation(
+    Number.parseInt(
+      pageElement.getAttribute("data-nexus-page-rotation") ?? "0",
+      10,
+    ),
+  );
+
+  return {
+    scale,
+    rotation,
+    dpiScale,
+    pageWidthPoints:
+      rotation === 90 || rotation === 270
+        ? viewportHeight / scale
+        : viewportWidth / scale,
+    pageHeightPoints:
+      rotation === 90 || rotation === 270
+        ? viewportWidth / scale
+        : viewportHeight / scale,
+  };
+}
+
+
+/** Inverse of the page transform used by selection and visible-source queries. */
+export function viewportPointToPagePoint(x: number, y: number, transform: PdfPageViewportTransform): PdfViewportPoint {
+  const scale = transform.scale * transform.dpiScale;
+  const left = x / scale;
+  const top = y / scale;
+  switch (transform.rotation) {
+    case 0: return { x: left, y: top };
+    case 90: return { x: top, y: transform.pageHeightPoints - left };
+    case 180: return { x: transform.pageWidthPoints - left, y: transform.pageHeightPoints - top };
+    case 270: return { x: transform.pageWidthPoints - top, y: left };
+  }
+}

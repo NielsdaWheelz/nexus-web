@@ -1,27 +1,16 @@
 diff --git a/apps/web/src/components/PdfReader.tsx b/apps/web/src/components/PdfReader.tsx
 --- a/apps/web/src/components/PdfReader.tsx
 +++ b/apps/web/src/components/PdfReader.tsx
-@@ -2539,23 +2539,3 @@ export default function PdfReader({
-         }
- 
--        if (
--          createdHighlight?.anchor.type === "pdf_page_geometry" &&
--          createdHighlight.anchor.media_id === mediaId
--        ) {
--          setPendingCommittedHighlights((current) => {
--            const pending: PendingCommittedHighlight = {
--              highlight: createdHighlight,
--              externalRefreshTokenAtCommit: highlightRefreshToken,
--            };
--            const existingIndex = current.findIndex(
--              (candidate) => candidate.highlight.id === createdHighlight.id,
--            );
--            if (existingIndex < 0) {
--              return [...current, pending];
--            }
--            return current.map((candidate, index) =>
--              index === existingIndex ? pending : candidate,
--            );
--          });
--        }
-         onHighlightsMutated?.();
+@@ -2433,11 +2433,7 @@ export default function PdfReader({
+             if (adopted.kind === "Capacity") {
+               setPaintNotice({ kind: "SavedUnpainted", pageNumber: paintPage, highlightId, capacity: adopted.reason });
+             } else {
+-              pendingCommittedHighlights.current.push({
+-                lease: adopted.lease,
+-                externalRefreshTokenAtCommit: highlightRefreshToken,
+-              });
+-              setPaintEpoch((value) => value + 1);
++              adopted.lease.release();
+             }
+           } catch {
+             setPaintNotice({ kind: "SavedUnpainted", pageNumber: paintPage, highlightId, capacity: null });

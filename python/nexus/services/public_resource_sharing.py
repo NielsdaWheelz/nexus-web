@@ -47,6 +47,7 @@ from nexus.schemas.public_resource_sharing import (
 from nexus.schemas.reader import (
     EpubTextOffsetsTargetOut,
     PdfPageGeometryTargetOut,
+    ResolvedHighlightReaderTarget,
     TranscriptTextOffsetsTargetOut,
     WebTextOffsetsTargetOut,
 )
@@ -174,15 +175,26 @@ class PublicRequestValidation(Exception):
     """Authorized public request has invalid route-local input."""
 
 
+def _public_highlight_target(
+    db: Session, *, highlight_id: UUID
+) -> ResolvedHighlightReaderTarget | None:
+    """Resolve the one disposition a public audience may be shown.
+
+    Only ``resolved`` is publicly projectable. ``source_unverified`` names
+    authored geometry that cannot be attributed to the published binary, so it
+    is withheld here explicitly rather than by whatever the target happens to be
+    for that member: a public link must never widen when the union gains a
+    disposition that carries a target.
+    """
+    resolution = locator_resolver.resolve_highlight_reader_target_disposition(
+        db, highlight_id=highlight_id
+    )
+    return resolution.target if resolution.status == "resolved" else None
+
+
 def highlight_target_available(db: Session, *, highlight_id: UUID) -> bool:
     """Return whether one highlight has an exact current format-total target."""
-    return (
-        locator_resolver.resolve_highlight_reader_target(
-            db,
-            highlight_id=highlight_id,
-        )
-        is not None
-    )
+    return _public_highlight_target(db, highlight_id=highlight_id) is not None
 
 
 def link_projection_availability(
@@ -885,10 +897,7 @@ def _highlight_shape_supported(
     media: _MediaFacts,
     highlight_id: UUID,
 ) -> bool:
-    target = locator_resolver.resolve_highlight_reader_target(
-        db,
-        highlight_id=highlight_id,
-    )
+    target = _public_highlight_target(db, highlight_id=highlight_id)
     metadata = (
         db.execute(
             text(
@@ -987,10 +996,7 @@ def _project_highlight(
 ) -> PublicHighlightOut | None:
     if subject.scheme != "highlight":
         return None
-    target = locator_resolver.resolve_highlight_reader_target(
-        db,
-        highlight_id=subject.id,
-    )
+    target = _public_highlight_target(db, highlight_id=subject.id)
     metadata = (
         db.execute(
             text(

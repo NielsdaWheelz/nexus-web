@@ -1,0 +1,11 @@
+diff --git a/apps/web/src/lib/api/resourceCache.tsx b/apps/web/src/lib/api/resourceCache.tsx
+--- a/apps/web/src/lib/api/resourceCache.tsx
++++ b/apps/web/src/lib/api/resourceCache.tsx
+@@ -357,7 +357,6 @@
+   }
+   useEffect(() => {
+     const cache = cacheRef.current!;
+-    return () => cache.clear();
+   }, []);
+   return (
+     <ResourceCacheContext.Provider value={cacheRef.current}>

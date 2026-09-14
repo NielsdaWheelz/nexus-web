@@ -9,9 +9,8 @@ import {
   type RefObject,
 } from "react";
 import {
-  normalizeQuarterTurnRotation,
+  readPdfPageViewportTransform,
   projectPdfQuadToViewportRect,
-  type PdfPageViewportTransform,
 } from "@/lib/highlights/coordinateTransforms";
 import { buildCanonicalCursor, type CanonicalNode } from "@/lib/highlights/canonicalCursor";
 import { canonicalCpToRawCp } from "@/lib/highlights/canonicalText";
@@ -67,56 +66,6 @@ export function findScrollParent(element: HTMLElement): HTMLElement {
   return document.documentElement;
 }
 
-function readPdfPageViewportTransform(
-  pageElement: HTMLElement,
-): PdfPageViewportTransform | null {
-  const scale = Number.parseFloat(
-    pageElement.getAttribute("data-nexus-page-scale") ?? "",
-  );
-  const viewportWidth = Number.parseFloat(
-    pageElement.getAttribute("data-nexus-page-viewport-width") ?? "",
-  );
-  const viewportHeight = Number.parseFloat(
-    pageElement.getAttribute("data-nexus-page-viewport-height") ?? "",
-  );
-  const dpiScale = Number.parseFloat(
-    pageElement.getAttribute("data-nexus-page-dpi-scale") ?? "1",
-  );
-
-  if (
-    !Number.isFinite(scale) ||
-    scale <= 0 ||
-    !Number.isFinite(viewportWidth) ||
-    viewportWidth <= 0 ||
-    !Number.isFinite(viewportHeight) ||
-    viewportHeight <= 0 ||
-    !Number.isFinite(dpiScale) ||
-    dpiScale <= 0
-  ) {
-    return null;
-  }
-
-  const rotation = normalizeQuarterTurnRotation(
-    Number.parseInt(
-      pageElement.getAttribute("data-nexus-page-rotation") ?? "0",
-      10,
-    ),
-  );
-
-  return {
-    scale,
-    rotation,
-    dpiScale,
-    pageWidthPoints:
-      rotation === 90 || rotation === 270
-        ? viewportHeight / scale
-        : viewportWidth / scale,
-    pageHeightPoints:
-      rotation === 90 || rotation === 270
-        ? viewportWidth / scale
-        : viewportHeight / scale,
-  };
-}
 
 function pickVisibleRect(
   rects: Array<{ top: number; bottom: number }>,

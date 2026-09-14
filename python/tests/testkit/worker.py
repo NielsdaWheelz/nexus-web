@@ -100,6 +100,20 @@ def wait_for_job(
     )
 
 
+def wait_for_backend_lock(engine: Engine, backend_pid: int) -> None:
+    """Block until `backend_pid` is waiting on a lock, so a race proof is deterministic."""
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        with engine.connect() as connection:
+            wait_event_type = connection.execute(
+                text("SELECT wait_event_type FROM pg_stat_activity WHERE pid = :pid"),
+                {"pid": backend_pid},
+            ).scalar_one_or_none()
+        if wait_event_type == "Lock":
+            return
+    raise AssertionError(f"backend {backend_pid} did not reach its expected lock wait")
+
+
 def assert_production_worker(
     process: test_services.StartedProcess,
     run: test_services.TestRun,

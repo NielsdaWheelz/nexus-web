@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -21,6 +22,9 @@ import okio.Buffer
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -31,6 +35,13 @@ internal data class NexusOriginResponse(
     val status: Int,
     val body: String,
 )
+
+internal sealed interface NexusArtworkResponse {
+    data class Image(val bytes: ByteArray, val width: Int, val height: Int) : NexusArtworkResponse
+    data class Rejected(val status: Int, val retryAfterMs: Long?) : NexusArtworkResponse
+}
+
+internal const val MAX_ARTWORK_ENCODED_BYTES = 10 * 1024 * 1024L
 
 internal interface NexusOriginTransport {
     suspend fun getListeningState(mediaId: UUID): NexusOriginResponse
@@ -88,8 +99,8 @@ private class WebViewCookieStore : NexusCookieStore {
 }
 
 /**
- * The only authenticated native HTTP boundary. Callers choose among three
- * fixed BFF operations; they cannot supply a host, path, or headers.
+ * The authenticated playback HTTP boundary. Callers choose fixed BFF
+ * operations; they cannot supply a product host, path, or headers.
  */
 internal class NexusOriginClient(
     baseUrl: String = BuildConfig.NEXUS_BASE_URL,
@@ -147,6 +158,51 @@ internal class NexusOriginClient(
                 .post(jsonBody.toRequestBody(JSON)),
         )
 
+    suspend fun getArtwork(remoteUrl: String, remainingMs: Long): NexusArtworkResponse {
+        require(remainingMs > 0)
+        val remote = remoteUrl.toHttpUrl()
+        require(remote.scheme == "https" || remote.scheme == "http")
+        val request = authenticatedRequest(
+            Request.Builder().url(base.newBuilder().addPathSegments("api/media/image")
+                .addQueryParameter("url", remoteUrl).build()).get()
+                .header("Accept-Encoding", "identity"),
+            accept = "image/*",
+        )
+        // Structured IO keeps the artwork producer alive through the actual
+        // bounded body read; cancellation cannot release a detached callback.
+        return withContext(Dispatchers.IO) {
+            val call = client.newCall(request)
+            call.timeout().timeout(minOf(remainingMs, NEXUS_ORIGIN_CALL_DEADLINE_MS), TimeUnit.MILLISECONDS)
+            call.execute().use { response ->
+                synchronizeCookies(response)
+                if (response.code != 200) {
+                    NexusArtworkResponse.Rejected(response.code, artworkRetryAfterMs(response.header("Retry-After")))
+                } else {
+                    require(response.header("Content-Encoding").let { it == null || it == "identity" }) {
+                        "artwork response changed its byte representation"
+                    }
+                    val type = response.header("Content-Type")?.substringBefore(';')
+                    require(type?.startsWith("image/") == true && type != "image/svg+xml") {
+                        "artwork response omitted its image representation"
+                    }
+                    fun dimension(name: String): Int? = response.header(name)
+                        ?.takeIf { it.matches(Regex("[1-9][0-9]*")) }?.toIntOrNull()
+                    val width = dimension("X-Nexus-Image-Width")
+                    val height = dimension("X-Nexus-Image-Height")
+                    require(width != null && height != null && width in 1..4096 && height in 1..4096) {
+                        "artwork response omitted validated display dimensions"
+                    }
+                    val declared = requireNotNull(response.body).contentLength()
+                    require(declared >= 1) { "artwork response omitted its encoded length" }
+                    require(declared <= MAX_ARTWORK_ENCODED_BYTES) {
+                        "artwork advertised more than the encoded byte limit"
+                    }
+                    NexusArtworkResponse.Image(readArtworkBytes(response), width, height)
+                }
+            }
+        }
+    }
+
     private fun listeningStateUrl(mediaId: UUID): HttpUrl =
         base.newBuilder()
             .addPathSegment("api")
@@ -155,20 +211,23 @@ internal class NexusOriginClient(
             .addPathSegment("listening-state")
             .build()
 
+    private fun authenticatedRequest(requestBuilder: Request.Builder, accept: String): Request {
+        val cookie = cookies.cookiesFor(origin)
+        return requestBuilder.header("Origin", origin).header("Accept", accept)
+            .header("Cache-Control", "no-store")
+            .apply { if (!cookie.isNullOrBlank()) header("Cookie", cookie) }.build()
+    }
+
+    private suspend fun synchronizeCookies(response: Response) {
+        val setCookies = response.headers("Set-Cookie")
+        for (setCookie in setCookies) cookies.install(origin, setCookie)
+        if (setCookies.isNotEmpty()) cookies.flush()
+    }
+
     private suspend fun execute(
         requestBuilder: Request.Builder,
     ): NexusOriginResponse = suspendCancellableCoroutine { continuation ->
-        val cookie = cookies.cookiesFor(origin)
-        val request = requestBuilder
-            .header("Origin", origin)
-            .header("Accept", "application/json")
-            .header("Cache-Control", "no-store")
-            .apply {
-                if (!cookie.isNullOrBlank()) {
-                    header("Cookie", cookie)
-                }
-            }
-            .build()
+        val request = authenticatedRequest(requestBuilder, "application/json")
         val call = client.newCall(request)
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(
@@ -182,7 +241,10 @@ internal class NexusOriginClient(
                 override fun onResponse(call: Call, response: Response) {
                     CoroutineScope(continuation.context + Dispatchers.IO).launch {
                         try {
-                            val result = response.use { decodeResponse(it) }
+                            val result = response.use {
+                                synchronizeCookies(it)
+                                decodeResponse(it)
+                            }
                             if (continuation.isActive) {
                                 continuation.resume(result)
                             }
@@ -197,14 +259,7 @@ internal class NexusOriginClient(
         )
     }
 
-    private suspend fun decodeResponse(response: Response): NexusOriginResponse {
-        val setCookies = response.headers("Set-Cookie")
-        for (setCookie in setCookies) {
-            cookies.install(origin, setCookie)
-        }
-        if (setCookies.isNotEmpty()) {
-            cookies.flush()
-        }
+    private fun decodeResponse(response: Response): NexusOriginResponse {
         val body = response.body?.let {
             val declared = it.contentLength()
             if (declared > MAX_ORIGIN_RESPONSE_BYTES) {
@@ -232,4 +287,29 @@ internal class NexusOriginClient(
     private companion object {
         val JSON = "application/json; charset=utf-8".toMediaType()
     }
+}
+
+/** The same bounded byte read serves authenticated preview and remote OS artwork. */
+internal fun readArtworkBytes(response: Response): ByteArray {
+    val body = requireNotNull(response.body) { "artwork response has no body" }
+    val declared = body.contentLength()
+    require(declared <= MAX_ARTWORK_ENCODED_BYTES) { "artwork exceeds encoded byte limit" }
+    val buffer = Buffer()
+    val source = body.source()
+    while (source.read(buffer, MAX_ARTWORK_ENCODED_BYTES + 1 - buffer.size) != -1L) {
+        require(buffer.size <= MAX_ARTWORK_ENCODED_BYTES) { "artwork exceeds encoded byte limit" }
+    }
+    require(buffer.size > 0 && (declared < 0 || buffer.size == declared)) { "artwork encoded length disagrees with its body" }
+    return buffer.readByteArray()
+}
+
+internal fun artworkRetryAfterMs(header: String?): Long? {
+    if (header == null) return null
+    if (header.matches(Regex("[0-9]+"))) {
+        val seconds = header.toLongOrNull() ?: return Long.MAX_VALUE
+        return if (seconds > Long.MAX_VALUE / 1000) Long.MAX_VALUE else seconds * 1000
+    }
+    return try {
+        (ZonedDateTime.parse(header, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli() - System.currentTimeMillis()).coerceAtLeast(0)
+    } catch (_: DateTimeParseException) { null }
 }

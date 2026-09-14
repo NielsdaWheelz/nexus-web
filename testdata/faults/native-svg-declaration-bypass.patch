@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt
+@@ -199,7 +199,7 @@
+         var rootSeen = false
+         val handler = object : DefaultHandler2() {
+             override fun startDTD(name: String?, publicId: String?, systemId: String?) {
+-                throw InvalidSvgSource("SVG declarations are forbidden")
++                return
+             }
+             override fun resolveEntity(publicId: String?, systemId: String?): InputSource {
+                 throw InvalidSvgSource("SVG external entities are forbidden")

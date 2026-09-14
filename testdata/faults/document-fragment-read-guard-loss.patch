@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/media.py b/python/nexus/services/media.py
+--- a/python/nexus/services/media.py
++++ b/python/nexus/services/media.py
+@@ -1294,8 +1294,6 @@
+     if media_row is None:
+         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+     media_kind = str(media_row[0])
+-    if media_kind not in {"podcast_episode", "video"}:
+-        raise ApiError(ApiErrorCode.E_INVALID_KIND, "Endpoint only supports timeline fragments")
+     if not is_text_document_ready(
+         media_kind,
+         str(media_row[1]),

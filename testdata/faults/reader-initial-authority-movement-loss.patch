@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/reader/useReaderProgress.ts b/apps/web/src/lib/reader/useReaderProgress.ts
+--- a/apps/web/src/lib/reader/useReaderProgress.ts
++++ b/apps/web/src/lib/reader/useReaderProgress.ts
+@@ -309,7 +309,7 @@
+       setInitialLocator((existing) => existing === undefined ? applicable : existing);
+     }
+     if (waitingMovement !== null && pendingLocator(next.local) !== null) {
+-      captureIntent(waitingMovement);
++      // Fault: initial authority drops movement captured while loading.
+     }
+     return next;
+   }, [apply, captureIntent, setSourceStatus]);

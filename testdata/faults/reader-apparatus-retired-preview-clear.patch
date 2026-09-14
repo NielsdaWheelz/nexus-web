@@ -1,0 +1,13 @@
+diff --git a/apps/web/src/components/reader/ReaderApparatusPreview.tsx b/apps/web/src/components/reader/ReaderApparatusPreview.tsx
+--- a/apps/web/src/components/reader/ReaderApparatusPreview.tsx
++++ b/apps/web/src/components/reader/ReaderApparatusPreview.tsx
+@@ -57,8 +57,8 @@ export default function ReaderApparatusPreview({ session, stableKey, classNames,
+       root.append(heading, excerpt);
+       setStatus({ kind: "Ready" });
+     })().catch((error: unknown) => {
+-      if (controller.signal.aborted || isAbortError(error)) return;
+       retire();
++      if (controller.signal.aborted || isAbortError(error)) return;
+       setStatus({ kind: "Failed" });
+       if (!isApiError(error) || isSameSystemApiDefect(error)) {
+         onDefect({ key: createRandomId("apparatus-preview"), error,

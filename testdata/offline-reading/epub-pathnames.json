@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {"href": "Text/café chapter.xhtml", "pathname": "Text/caf%C3%A9%20chapter.xhtml"},
+    {"href": "Text/100%real.xhtml", "pathname": "Text/100%real.xhtml"},
+    {"href": "Text/a%2Fb.xhtml", "pathname": "Text/a%2Fb.xhtml"},
+    {"href": "Text/a%2fb.xhtml", "pathname": "Text/a%2fb.xhtml"},
+    {"href": "Text/a%20b.xhtml", "pathname": "Text/a%20b.xhtml"},
+    {"href": "Text/a b.xhtml", "pathname": "Text/a%20b.xhtml"},
+    {"href": "Text/a%2520b.xhtml", "pathname": "Text/a%2520b.xhtml"},
+    {"href": " Text\\chapter.xhtml ", "pathname": "Text/chapter.xhtml"},
+    {"href": "Text/./x/../chapter.xhtml", "pathname": "Text/chapter.xhtml"},
+    {"href": "Text/%2e%2e/chapter.xhtml", "pathname": "chapter.xhtml"},
+    {"href": "Text/chapter.xhtml?foo#bar", "pathname": "Text/chapter.xhtml"},
+    {"href": "/Text/chapter.xhtml", "pathname": "Text/chapter.xhtml"},
+    {"href": "//epub.local/Text/chapter.xhtml", "pathname": "Text/chapter.xhtml"},
+    {"href": "chapter.xhtml#section", "pathname": "chapter.xhtml"},
+    {"href": "#section", "pathname": null},
+    {"href": "?query", "pathname": null},
+    {"href": "https://epub.local/chapter.xhtml", "pathname": null},
+    {"href": "  ", "pathname": null}
+  ]
+}

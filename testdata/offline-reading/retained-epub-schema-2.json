@@ -1,0 +1,41 @@
+{
+  "package_sha256": "bbb65eec37ef689832fdd1221824ed8a996bd571d4ccef353b4754bfa8d44019",
+  "expanded_bytes": 2735,
+  "canonical_text": "café 🧠\ncat",
+  "manifest": {
+    "packageSchemaVersion": 2,
+    "readerContractVersion": 1,
+    "minimumReaderBundleVersion": 2,
+    "mediaId": "189dfb01-8a18-448a-95a7-1b50b178c194",
+    "mediaKind": "Epub",
+    "title": "Legacy proof",
+    "readerGeneration": 7,
+    "readerRevisionKey": "ff69d4bb94c868272d6e995e4b56c4881dcbdb9abc410f3ee72f015be82c985e",
+    "entries": [
+      {
+        "path": "descriptor.json",
+        "mediaType": "application/json",
+        "sizeBytes": 629,
+        "sha256": "7eb2cbdd1f0eea593a3e7bac00005eabc12f7f0fcfb92a4474af198bff0a61cb"
+      },
+      {
+        "path": "index/0.json",
+        "mediaType": "application/json",
+        "sizeBytes": 999,
+        "sha256": "448b91fc84a0308ab384c0a714653de48643f12ef1c02c882bca0cad19585f06"
+      },
+      {
+        "path": "index/contents-0.json",
+        "mediaType": "application/json",
+        "sizeBytes": 293,
+        "sha256": "f4249098d4b3bc44716929b6c728d1977c36a036e34dfec51d058f82977e64ae"
+      },
+      {
+        "path": "units/01a09de2-2305-7d7e-a762-7a6340e1aaa1/0-10-0.json",
+        "mediaType": "application/json",
+        "sizeBytes": 814,
+        "sha256": "e8b55d57b5cae793897260edde5ce0c66f707168f1f3cbd7bc55835505e2c32c"
+      }
+    ]
+  }
+}

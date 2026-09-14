@@ -347,3 +347,24 @@ describe("canonical text Find presentation owner", () => {
     expect(activeOnly!.style.textDecorationStyle).toBe("double");
   });
 });
+
+it("paints one canonical occurrence across resident parts and reports an unadmitted tail", () => {
+  const first = mountFragment(null, "<p>BEA</p>");
+  const second = mountFragment(null, "<p>CON</p>");
+  const viewport = document.createElement("div");
+  viewport.append(first.content, second.content);
+  document.body.append(viewport);
+  const beacon = key("split-beacon");
+  const presentation = owner();
+  const request = {
+    viewport, targets: [{ key: beacon, fragmentId: "original", startCp: 100, endCp: 106 }], activeKey: beacon,
+    parts: [
+      { fragmentId: "original", startCp: 100, endCp: 103, renderStartCp: 100, cursor: first.cursor },
+      { fragmentId: "original", startCp: 103, endCp: 106, renderStartCp: 103, cursor: second.cursor },
+    ],
+  };
+  expect(presentation.publishWindow(request), "split match must be completely admitted").toEqual({ activeComplete: true });
+  expect(texts(CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME)).toEqual(["BEA", "CON"]);
+  expect(presentation.publishWindow({ ...request, parts: request.parts.slice(0, 1) })).toEqual({ activeComplete: false });
+  expect(texts(CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME)).toEqual(["BEA"]);
+});

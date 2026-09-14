@@ -1,0 +1,11 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingPackageVerifier.kt
+@@ -74,7 +74,6 @@
+                     input.readBounded(OFFLINE_READING_MAX_MANIFEST_JSON_BYTES.toLong())
+                 }
+                 val manifest = OfflineReadingManifestParser.parse(manifestBytes)
+-                if (manifest.packageSchemaVersion != 2) throw UnsupportedOfflineReadingPackageException()
+                 require(manifest.mediaId == expectedMediaId)
+                 require(manifest.readerGeneration == artifact.readerGeneration)
+                 require(manifest.entries.sumOf { it.sizeBytes } == artifact.expandedBytes)

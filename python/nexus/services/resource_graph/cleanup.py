@@ -10,18 +10,18 @@
 No ``ON DELETE CASCADE`` exists on ``resource_edges`` (database.md); media
 deletion calls the single-ref form once per deleted resource. Content reindex
 destroys every span/chunk at once and uses the batched form to apply the same
-two rules in two statements instead of N+1.
+two rules with fixed SQL structure instead of one predicate per identity.
 Flush-only: deletes run inside the caller's transaction.
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Iterable
 from uuid import UUID
 
-from sqlalchemy import and_, delete, or_, select, tuple_
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, delete, literal, or_, select, tuple_
+from sqlalchemy.orm import Session, aliased
+from sqlalchemy.sql.selectable import SelectBase
 
 from nexus.db.models import (
     MessageRetrieval,
@@ -33,56 +33,20 @@ from nexus.db.models import (
 )
 from nexus.services.resource_graph.refs import ResourceRef
 
-_Pair = tuple[str, UUID]
-
 
 def delete_edges_for_deleted_resource(db: Session, *, ref: ResourceRef) -> None:
-    # A dying endpoint takes its whole Link-note motif with it (both attachment
-    # halves, view states first); the sibling half targets a surviving endpoint,
-    # so Rule 2's touch-either-endpoint delete would otherwise leave it dangling.
-    _delete_link_note_motifs_for_targets(db, target_pairs=[(ref.scheme, ref.id)])
-    bare_edge_ids = select(ResourceEdge.id).where(
-        ResourceEdge.ordinal.is_(None),
-        or_(_source_is(ref), _target_is(ref)),
-    )
-    db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(bare_edge_ids)))
-    # Rule 2: bare edges die with either endpoint.
-    db.execute(
-        delete(ResourceEdge).where(
-            ResourceEdge.ordinal.is_(None),
-            or_(_source_is(ref), _target_is(ref)),
-        )
-    )
-    # Rule 1: cited edges survive target deletion but die with their source
-    # (the domain parent: message/conversation delete, reading delete).
-    cited_edge_ids = select(ResourceEdge.id).where(
-        ResourceEdge.ordinal.is_not(None), _source_is(ref)
-    )
-    db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(cited_edge_ids)))
-    deleted = db.execute(
-        delete(ResourceEdge)
-        .where(ResourceEdge.ordinal.is_not(None), _source_is(ref))
-        .returning(ResourceEdge.target_scheme, ResourceEdge.target_id)
-    ).all()
-    delete_orphaned_external_snapshots(
-        db, snapshot_ids=[tid for scheme, tid in deleted if scheme == "external_snapshot"]
-    )
+    delete_edges_for_deleted_resources(db, refs=select(literal(ref.scheme), literal(ref.id)))
 
 
-def delete_edges_for_deleted_resources(db: Session, *, refs: Iterable[ResourceRef]) -> None:
-    """Set-batched ``delete_edges_for_deleted_resource`` for a hot bulk path.
+def delete_edges_for_deleted_resources(db: Session, *, refs: SelectBase) -> None:
+    """Delete edges against a two-column SQL relation of ``(scheme, id)``.
 
-    Same two rules — bare edges die with either endpoint, cited edges die only
-    with their source — but in two statements over the whole ref set instead of
-    one pair per ref. Used by content reindex, which destroys every span/chunk
-    of an owner at once; a per-ref loop is an N+1 on that hot path.
+    The caller owns the deletion set and keeps its source rows alive until this
+    cleanup returns. SQL shape is independent of the number of dying resources.
     """
-    pairs = [(ref.scheme, ref.id) for ref in refs]
-    if not pairs:
-        return
-    _delete_link_note_motifs_for_targets(db, target_pairs=pairs)
-    source = tuple_(ResourceEdge.source_scheme, ResourceEdge.source_id).in_(pairs)
-    target = tuple_(ResourceEdge.target_scheme, ResourceEdge.target_id).in_(pairs)
+    _delete_link_note_motifs_for_targets(db, targets=refs)
+    source = tuple_(ResourceEdge.source_scheme, ResourceEdge.source_id).in_(refs)
+    target = tuple_(ResourceEdge.target_scheme, ResourceEdge.target_id).in_(refs)
     bare_edge_ids = select(ResourceEdge.id).where(
         ResourceEdge.ordinal.is_(None), or_(source, target)
     )
@@ -200,66 +164,37 @@ def detach_link_note_motif(db: Session, *, viewer_id: UUID, a: ResourceRef, b: R
     Delete Link note (which additionally deletes the note) both call this
     (§ Graph Shapes).
     """
-    a_key = (a.scheme, a.id)
-    b_key = (b.scheme, b.id)
-    targets_by_note: dict[_Pair, set[_Pair]] = defaultdict(set)
-    for ss, si, ts, ti in db.execute(
-        select(
-            ResourceEdge.source_scheme,
-            ResourceEdge.source_id,
-            ResourceEdge.target_scheme,
-            ResourceEdge.target_id,
-        ).where(
-            ResourceEdge.user_id == viewer_id,
-            ResourceEdge.origin == "link_note",
-            or_(_target_is(a), _target_is(b)),
-        )
-    ).all():
-        targets_by_note[(ss, si)].add((ts, ti))
-    note_pairs = [
-        note_key
-        for note_key, targets in targets_by_note.items()
-        if a_key in targets and b_key in targets
-    ]
-    _delete_link_note_edges_from_notes(db, note_pairs=note_pairs)
-
-
-def _delete_link_note_motifs_for_targets(db: Session, *, target_pairs: list[_Pair]) -> None:
-    """Delete every Link-note motif that attaches to any of ``target_pairs``.
-
-    Resource-death is global (no viewer filter): the whole motif dies when any
-    one endpoint does, so both attachment halves are removed together.
-    """
-    if not target_pairs:
-        return
-    note_pairs = [
-        (scheme, note_id)
-        for scheme, note_id in db.execute(
-            select(ResourceEdge.source_scheme, ResourceEdge.source_id)
-            .where(
-                ResourceEdge.origin == "link_note",
-                tuple_(ResourceEdge.target_scheme, ResourceEdge.target_id).in_(target_pairs),
-            )
-            .distinct()
-        ).all()
-    ]
-    _delete_link_note_edges_from_notes(db, note_pairs=note_pairs)
-
-
-def _delete_link_note_edges_from_notes(db: Session, *, note_pairs: list[_Pair]) -> None:
-    if not note_pairs:
-        return
-    motif_edge_ids = select(ResourceEdge.id).where(
+    sibling = aliased(ResourceEdge)
+    notes = select(ResourceEdge.source_scheme, ResourceEdge.source_id).where(
+        ResourceEdge.user_id == viewer_id,
         ResourceEdge.origin == "link_note",
-        tuple_(ResourceEdge.source_scheme, ResourceEdge.source_id).in_(note_pairs),
+        _target_is(a),
+        tuple_(ResourceEdge.source_scheme, ResourceEdge.source_id).in_(
+            select(sibling.source_scheme, sibling.source_id).where(
+                sibling.user_id == viewer_id,
+                sibling.origin == "link_note",
+                sibling.target_scheme == b.scheme,
+                sibling.target_id == b.id,
+            )
+        ),
     )
+    _delete_link_note_edges_from_notes(db, notes=notes)
+
+
+def _delete_link_note_motifs_for_targets(db: Session, *, targets: SelectBase) -> None:
+    """Remove both motif halves when either endpoint dies, across all viewers."""
+    notes = select(ResourceEdge.source_scheme, ResourceEdge.source_id).where(
+        ResourceEdge.origin == "link_note",
+        tuple_(ResourceEdge.target_scheme, ResourceEdge.target_id).in_(targets),
+    )
+    _delete_link_note_edges_from_notes(db, notes=notes)
+
+
+def _delete_link_note_edges_from_notes(db: Session, *, notes: SelectBase) -> None:
+    source = tuple_(ResourceEdge.source_scheme, ResourceEdge.source_id).in_(notes)
+    motif_edge_ids = select(ResourceEdge.id).where(ResourceEdge.origin == "link_note", source)
     db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id.in_(motif_edge_ids)))
-    db.execute(
-        delete(ResourceEdge).where(
-            ResourceEdge.origin == "link_note",
-            tuple_(ResourceEdge.source_scheme, ResourceEdge.source_id).in_(note_pairs),
-        )
-    )
+    db.execute(delete(ResourceEdge).where(ResourceEdge.origin == "link_note", source))
 
 
 def _source_is(ref: ResourceRef):

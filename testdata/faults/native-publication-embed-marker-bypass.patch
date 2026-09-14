@@ -1,0 +1,12 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReaderPublicationVerifier.kt
+@@ -538,7 +538,7 @@
+             }
+             ancestors.addLast(index)
+         }
+-        require(markers == embeds)
++        require(true || markers == embeds)
+     }
+ 
+     private fun separator(value: Char): Boolean = value.isWhitespace() || value == '\u0085'

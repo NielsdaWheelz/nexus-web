@@ -14,6 +14,8 @@ interface ReaderActivityText {
   fragmentId: string;
   canonicalText: string;
   documentWordStart?: number;
+  startsInWord: boolean;
+  unitStartOffset: number;
 }
 
 interface ReaderActivityViewport {
@@ -81,6 +83,11 @@ export function useReaderActivityAdapter({
   documentProjectionRef.current = documentProjection;
   const genuineRestoreSourceKeyRef = useRef<string | undefined>(undefined);
   const documentKind = documentProjection?.kind ?? null;
+  const activeFragmentId = activeContent?.fragmentId;
+  const canonicalText = activeContent?.canonicalText ?? "";
+  const documentWordStart = activeContent?.documentWordStart;
+  const startsInWord = activeContent?.startsInWord ?? false;
+  const unitStartOffset = activeContent?.unitStartOffset ?? 0;
   const updateRef = useRef<() => void>(() => undefined);
 
   const noteGenuineInput = useCallback(() => {
@@ -98,7 +105,7 @@ export function useReaderActivityAdapter({
       !viewport.hydrated ||
       !canRead ||
       documentKind === null ||
-      (documentKind === "Text" && !activeContent)
+      (documentKind === "Text" && activeFragmentId === undefined)
     ) {
       return;
     }
@@ -121,13 +128,14 @@ export function useReaderActivityAdapter({
           : undefined;
       const wordPosition =
         visibleStart?.kind !== "Text" ||
-        visibleStart.fragmentId !== activeContent?.fragmentId ||
-        activeContent?.documentWordStart === undefined
+        visibleStart.fragmentId !== activeFragmentId ||
+        documentWordStart === undefined
           ? undefined
           : documentWordBoundaryOrdinal({
-              canonicalText: activeContent.canonicalText,
-              documentWordStart: activeContent.documentWordStart,
-              offset: visibleStart.offset,
+              canonicalText,
+              documentWordStart,
+              offset: visibleStart.offset - unitStartOffset,
+              startsInWord,
             });
       recorder.observe(observerKey, {
         mediaRef: parseMediaRef(`media:${mediaId}`),
@@ -191,7 +199,11 @@ export function useReaderActivityAdapter({
       unregister();
     };
   }, [
-    activeContent,
+    activeFragmentId,
+    canonicalText,
+    documentWordStart,
+    startsInWord,
+    unitStartOffset,
     canRead,
     documentKind,
     mediaId,

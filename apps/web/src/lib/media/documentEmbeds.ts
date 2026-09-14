@@ -2,28 +2,74 @@ import type { MediaPlaybackSource } from "@/lib/media/playback";
 import {
   expectArray,
   expectBoolean,
+  expectCanonicalUuid,
   expectExactRecord,
   expectInteger,
   expectNonnegativeInteger,
+  expectNonemptyString,
   expectNullableNonnegativeInteger,
   expectNullableString,
   expectOneOf,
   expectString,
 } from "@/lib/validation";
 
-export type DocumentEmbedProvider =
-  "youtube" | "x" | "substack" | "vimeo" | "spotify" | "generic" | "unknown";
+const PROVIDERS = ["youtube", "x", "substack", "vimeo", "spotify", "generic", "unknown"] as const;
+const KINDS = ["video", "post", "audio", "link_preview", "unknown"] as const;
+const SOURCE_SHAPES = ["iframe", "blockquote", "anchor", "video_tag", "provider_json", "unknown"] as const;
+export type DocumentEmbedProvider = typeof PROVIDERS[number];
+export type DocumentEmbedKind = typeof KINDS[number];
+export type DocumentEmbedSourceShape = typeof SOURCE_SHAPES[number];
 
-export type DocumentEmbedKind =
-  "video" | "post" | "audio" | "link_preview" | "unknown";
+export interface DocumentEmbedSource {
+  readonly id: string;
+  readonly ordinal: number;
+  readonly occurrence_key: string;
+  readonly provider: DocumentEmbedProvider;
+  readonly embed_kind: DocumentEmbedKind;
+  readonly source_shape: DocumentEmbedSourceShape;
+  readonly source_url: string | null;
+  readonly canonical_source_url: string | null;
+  readonly provider_target_ref: string | null;
+  readonly title: string | null;
+  readonly authored_text: string | null;
+  readonly placeholder_text: string;
+  readonly canonical_start_offset: number | null;
+  readonly canonical_end_offset: number | null;
+  readonly target:
+    | { readonly kind: "materialized"; readonly media_id: string }
+    | { readonly kind: "terminal"; readonly status: "unsupported" | "failed"; readonly error_code: string | null; readonly error_message: string | null };
+}
 
-export type DocumentEmbedSourceShape =
-  | "iframe"
-  | "blockquote"
-  | "anchor"
-  | "video_tag"
-  | "provider_json"
-  | "unknown";
+/** Immutable authored occurrence; current access and display come from its live projection. */
+export function decodeDocumentEmbedSource(raw: unknown): DocumentEmbedSource {
+  const value = expectExactRecord(raw, ["id", "ordinal", "occurrence_key", "provider", "embed_kind", "source_shape",
+    "source_url", "canonical_source_url", "provider_target_ref", "title", "authored_text", "placeholder_text",
+    "canonical_start_offset", "canonical_end_offset", "target"], "Retained embed source");
+  const target = expectExactRecord(value.target,
+    typeof value.target === "object" && value.target !== null && "kind" in value.target && value.target.kind === "materialized"
+      ? ["kind", "media_id"] : ["kind", "status", "error_code", "error_message"], "Retained embed target");
+  const kind = expectOneOf(target.kind, ["materialized", "terminal"], "Retained embed target kind");
+  return {
+    id: expectCanonicalUuid(value.id, "Retained embed id"),
+    ordinal: expectNonnegativeInteger(value.ordinal, "Retained embed ordinal"),
+    occurrence_key: expectNonemptyString(value.occurrence_key, "Retained embed occurrence"),
+    provider: expectOneOf(value.provider, PROVIDERS, "Retained embed provider"),
+    embed_kind: expectOneOf(value.embed_kind, KINDS, "Retained embed kind"),
+    source_shape: expectOneOf(value.source_shape, SOURCE_SHAPES, "Retained embed source shape"),
+    source_url: expectNullableString(value.source_url, "Retained embed source url"),
+    canonical_source_url: expectNullableString(value.canonical_source_url, "Retained embed canonical url"),
+    provider_target_ref: expectNullableString(value.provider_target_ref, "Retained embed provider target"),
+    title: expectNullableString(value.title, "Retained embed title"),
+    authored_text: expectNullableString(value.authored_text, "Retained embed authored text"),
+    placeholder_text: expectString(value.placeholder_text, "Retained embed placeholder"),
+    canonical_start_offset: expectNullableNonnegativeInteger(value.canonical_start_offset, "Retained embed start"),
+    canonical_end_offset: expectNullableNonnegativeInteger(value.canonical_end_offset, "Retained embed end"),
+    target: kind === "materialized" ? { kind, media_id: expectCanonicalUuid(target.media_id, "Retained embed target media") }
+      : { kind, status: expectOneOf(target.status, ["unsupported", "failed"], "Retained embed terminal status"),
+        error_code: expectNullableString(target.error_code, "Retained embed error code"),
+        error_message: expectNullableString(target.error_message, "Retained embed error message") },
+  };
+}
 
 export type DocumentEmbedUrlStatus = "present" | "absent" | "malformed";
 
@@ -39,7 +85,7 @@ export interface DocumentEmbedLocator {
 }
 
 export type DocumentEmbedDisplayMode =
-  "resolved" | "pending" | "unsupported" | "failed";
+  "resolved" | "pending" | "unsupported" | "failed" | "forbidden" | "missing";
 
 export type DocumentEmbedActionKind =
   "open_child_media" | "open_original" | "retry_child" | "refresh_parent";
@@ -105,7 +151,7 @@ export interface DocumentEmbedSummary {
   failed_count: number;
 }
 
-interface DocumentEmbedClassNames {
+export interface DocumentEmbedClassNames {
   card: string;
   media: string;
   thumbnail: string;
@@ -218,14 +264,7 @@ export function decodeDocumentEmbed(
   decodeText(value.error_code, `${name}.error_code`);
   const sourceShape = expectOneOf(
     value.source_shape,
-    [
-      "iframe",
-      "blockquote",
-      "anchor",
-      "video_tag",
-      "provider_json",
-      "unknown",
-    ] as const,
+    SOURCE_SHAPES,
     `${name}.source_shape`,
   );
   expectOneOf(
@@ -245,20 +284,12 @@ export function decodeDocumentEmbed(
     ),
     provider: expectOneOf(
       value.provider,
-      [
-        "youtube",
-        "x",
-        "substack",
-        "vimeo",
-        "spotify",
-        "generic",
-        "unknown",
-      ] as const,
+      PROVIDERS,
       `${name}.provider`,
     ),
     kind: expectOneOf(
       value.kind,
-      ["video", "post", "audio", "link_preview", "unknown"] as const,
+      KINDS,
       `${name}.kind`,
     ),
     source_shape: sourceShape,
@@ -362,7 +393,7 @@ function decodeDisplay(raw: unknown, name: string): DocumentEmbedDisplay {
   return {
     mode: expectOneOf(
       value.mode,
-      ["resolved", "pending", "unsupported", "failed"] as const,
+      ["resolved", "pending", "unsupported", "failed", "forbidden", "missing"] as const,
       `${name}.mode`,
     ),
     label: expectString(value.label, `${name}.label`),
@@ -510,7 +541,8 @@ export function renderDocumentEmbedsInHtml(
   }
 
   for (const embed of normalizeDocumentEmbeds(embeds)) {
-    const card = buildDocumentEmbedCard(document, embed, classNames);
+    const card = buildDocumentEmbedCard(document, embed, classNames,
+      (image, source) => { image.src = source.kind === "SameOrigin" ? source.path : source.url; });
     const placeholder = findDocumentEmbedPlaceholder(
       root,
       embed.occurrence_key,
@@ -521,6 +553,44 @@ export function renderDocumentEmbedsInHtml(
   }
 
   return root.innerHTML;
+}
+
+/** Preserve authored nodes; the caller keeps its canonical cursor over source only. */
+export function planDocumentEmbedCards(
+  root: Element,
+  embeds: readonly DocumentEmbed[],
+  classNames: DocumentEmbedClassNames,
+  thumbnail: (image: HTMLImageElement, source: Exclude<DocumentEmbedThumbnail, { kind: "Absent" }>) => void,
+): { readonly additionalNodes: number; apply(): void } {
+  const placements = embeds.map((embed) => {
+    const placeholder = findDocumentEmbedPlaceholder(root, embed.occurrence_key);
+    if (placeholder === null) throw new Error("Retained embed has no admitted source anchor");
+    let placement = placeholder;
+    while (placement.parentElement !== root && placement.parentElement !== null &&
+      !["DIV", "SECTION", "ARTICLE", "ASIDE", "BLOCKQUOTE", "TD", "TH", "LI", "DD", "FIGCAPTION", "MAIN", "HEADER", "FOOTER"].includes(placement.parentElement.tagName)) {
+      placement = placement.parentElement;
+    }
+    return { embed, placeholder: placement };
+  });
+  let additionalNodes = 0;
+  for (const { embed } of placements) {
+    // Includes temporary empty action containers and every possible text node.
+    additionalNodes += embed.provider === "x" && embed.kind === "post" && embed.source_shape === "provider_json"
+      ? 3 : 12 + (documentEmbedThumbnail(embed.target.thumbnail_url).kind === "Absent" ? 0 : 2)
+        + (embed.target.title?.trim() && embed.display.description.trim() ? 2 : 0)
+        + 2 * embed.display.actions.length;
+  }
+  return { additionalNodes, apply() {
+    // Several inline occurrences can share one containing block. Insert in
+    // reverse source order so successive after() calls preserve their order.
+    for (let index = placements.length - 1; index >= 0; index -= 1) {
+      const { embed, placeholder } = placements[index];
+      const card = buildDocumentEmbedCard(root.ownerDocument, embed, classNames, thumbnail);
+      card.dataset.nexusReaderOverlay = "embed";
+      card.style.userSelect = "none";
+      placeholder.after(card);
+    }
+  } };
 }
 
 function findDocumentEmbedPlaceholder(
@@ -541,6 +611,7 @@ function buildDocumentEmbedCard(
   document: Document,
   embed: DocumentEmbed,
   classNames: DocumentEmbedClassNames,
+  thumbnail: (image: HTMLImageElement, source: Exclude<DocumentEmbedThumbnail, { kind: "Absent" }>) => void,
 ): HTMLElement {
   if (
     embed.provider === "x" &&
@@ -561,13 +632,13 @@ function buildDocumentEmbedCard(
     `${embed.display.label}: ${embed.display.description}`,
   );
 
-  const thumbnailUrl = normalizedHttpOrRelativeUrl(embed.target.thumbnail_url);
-  if (thumbnailUrl) {
+  const thumbnailSource = documentEmbedThumbnail(embed.target.thumbnail_url);
+  if (thumbnailSource.kind !== "Absent") {
     const media = document.createElement("div");
     media.className = classNames.media;
     const image = document.createElement("img");
     image.className = classNames.thumbnail;
-    image.src = thumbnailUrl;
+    thumbnail(image, thumbnailSource);
     image.alt = "";
     image.loading = "lazy";
     image.decoding = "async";
@@ -740,6 +811,26 @@ function documentEmbedActionHref(
   }
 }
 
+/**
+ * How one embed thumbnail reaches a reader. `thumbnail_url` is ingested
+ * third-party metadata, so this is the single place it is narrowed: a remote
+ * absolute URL is carried by the SSRF proxy, a same-origin path is already
+ * authorized and is served directly, and anything else is absent — the card
+ * renders without an image rather than demanding bytes no route can answer.
+ */
+export type DocumentEmbedThumbnail =
+  | { readonly kind: "ProxiedRemote"; readonly url: string }
+  | { readonly kind: "SameOrigin"; readonly path: string }
+  | { readonly kind: "Absent" };
+
+export function documentEmbedThumbnail(value: string | null): DocumentEmbedThumbnail {
+  const normalized = normalizedHttpOrRelativeUrl(value);
+  if (normalized === null) return { kind: "Absent" };
+  return normalized.startsWith("/")
+    ? { kind: "SameOrigin", path: normalized }
+    : { kind: "ProxiedRemote", url: normalized };
+}
+
 function normalizedHttpOrRelativeUrl(value: string | null): string | null {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -781,6 +872,10 @@ function formatDocumentEmbedState(state: DocumentEmbedDisplayMode): string {
       return "Unsupported";
     case "failed":
       return "Failed";
+    case "forbidden":
+      return "No access";
+    case "missing":
+      return "Unavailable";
   }
 }
 
