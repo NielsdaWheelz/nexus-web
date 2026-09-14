@@ -419,3 +419,25 @@ follow-up `e2d7393760e94077` was explicitly interrupted before a new claim.
   before the drag: the fixture targeted the pane's resize separator. the next
   attempt uses the separator's measured rectangle to reach actual blank chrome.
   drag and local-storage-failure retention remain unqualified.
+
+
+2026-09-14 consolidated preparation failure ownership (applied; validation pending):
+
+- the preparation effect could retry a failed source when the unit window changed,
+  despite an error belonging to the same session, render attempt and navigation
+  id. pending settlement also preferred a connected root over that exact error.
+  both are confirmed in source; the reviewed correction stops that attempt and
+  settles its failure first. explicit retry and new navigation keep their existing
+  identities. no counter, ref or retry owner was added.
+- prior receipt `29368beb978cb403` observed the retry button disappear after the
+  external DOM refusal was lifted. its trigger remains unobserved: neighbor-window
+  churn is a possible path, while normal viewport maintenance is suppressed during
+  Find preview. source inspection alone does not establish that causal chain.
+- patch `aff342b327c35c23e558b0b0d0886b6fc9038a8f291a2523d95650692a5bce3e`
+  changes only the existing body owner, from `518ad1b9b5218dc92a5a0bc4d8ac9b59eafc246b33f82022dfd673830b5734ab`
+  to `e852ee697956a6af4f2f4a0ddacaf87460830f7b58d4f0f66b486409951d3d3d`. the already-connected-unit fast path and proof assertions are unchanged.
+- acceptance still requires the exact old-source red and current-source green
+  for section preparation, Find preview and return, durable origin and geometry,
+  with trusted-input supersession preserved. no test ran during this batch and
+  no resolved status is claimed. if necessary, the reviewed public protocol/DOM
+  trace must establish the trigger during the next controller-owned run.

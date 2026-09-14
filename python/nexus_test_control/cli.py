@@ -50,12 +50,12 @@ from nexus_test_control.model import (
     Workflow,
 )
 from nexus_test_control.process import CommandInterrupted, controller_signal_handlers
+from nexus_test_control.redaction import environment_secrets
 from nexus_test_control.runner import (
     CapabilityContext,
     FirstFailureReporter,
     RunContextRecorder,
     WorkflowExecutionError,
-    environment_secrets,
     run_workflow,
 )
 from nexus_test_control.runtime import (

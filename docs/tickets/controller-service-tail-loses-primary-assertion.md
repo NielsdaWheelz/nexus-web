@@ -24,3 +24,9 @@ acceptance: this same failed service case retains its actual exception type,
 assertion message and owned frame even when captured application logging
 exceeds the log-tail bound. setup failures remain distinct from assertions;
 retention remains bounded.
+
+reviewed implementation now retains real pytest phase/type/message/frame in
+a bounded marker record, with redaction before encoding and strict incomplete
+evidence classification. the same failed deadline case and reporter sensitivity
+remain unrun on the combined candidate. do not close this ticket from source
+review alone.

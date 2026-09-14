@@ -1222,7 +1222,7 @@
       ],
       "expected_failure": "cancellation unwound request session ownership early",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "3f9afeaba68e6795793ba2ef55307c42418ee9a293bcc7b82ea27c81d34c05df"
+      "changed_owner_sha256": "9b9e0ea16c6cac36671613ecba1e163ad7cbf7aa4484a43a376ab03a5a70b8c0"
     },
     {
       "id": "image-fetch-before-byte-admission",
@@ -2260,7 +2260,7 @@
       ],
       "expected_failure": "EPUB staged source disappeared during publication",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "b4ceabff570ab1c463bd907300b2a00095098599039074cb7b86b03dfd38c4fd"
+      "changed_owner_sha256": "858819798233a35252ae507d8552166b7c8f472e291f375aa5e6afd2732561d5"
     },
     {
       "id": "article-semantic-main-bypass",

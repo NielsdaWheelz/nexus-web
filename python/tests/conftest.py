@@ -36,6 +36,9 @@ from tests.testkit.auth import StaticTokenVerifier, UserRecord
 from tests.testkit.database import require_test_database_url
 
 
+pytest_plugins = ("nexus_test_control.pytest_report",)
+
+
 @pytest.fixture(autouse=True)
 def deny_external_network(
     request: pytest.FixtureRequest, pytestconfig: pytest.Config

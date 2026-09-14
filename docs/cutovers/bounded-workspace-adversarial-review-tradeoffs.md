@@ -393,3 +393,21 @@ and exact long identities. their owner digests record these reviewed changes,
 not a new verdict. the direct highlight menu requires its upstream action-menu
 lock fault, with actual replay still owed. worker import fault blank context
 lines were normalized without changing its injected import.
+
+## bounded failure evidence and last-use cleanup
+
+the pytest reporter retains at most three 4 kib failed-phase records inside
+the existing 16 kib marker channel; logs remain capped at 64 kib. oversized
+fields are discarded and marked incomplete, so they cannot establish a
+behavioral sensitivity red. this loses partial diagnostic text but prevents
+secret fragments escaping when the child cannot know caller-only secrets.
+the existing secret selector moves unchanged into a small shared module so
+the baseline reporter does not import or replace the controller under test.
+
+the epub builder now retires only the temporary source archive after its
+archive owner closes. original object storage and retry-owned body, unit and
+search spools remain. the revised source-job proof observes the real zip close
+and preserves every existing body/publication/rollback assertion; its owner
+digest changes under that reviewed lifetime contract. the admission proof
+owner changes only for two shared imports; its original cancellation oracle
+and fault are unchanged. none of these digest updates is a passing verdict.

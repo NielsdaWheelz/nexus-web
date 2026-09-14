@@ -50,6 +50,7 @@ from nexus_test_control.evidence import (
     RunContextEvidence,
     RuntimeIdentity,
     compute_proof_digest,
+    redact_json,
     redact_text,
     write_evidence_json,
 )
@@ -95,6 +96,8 @@ from nexus_test_control.policy import (
     resource_capability_projection_violations,
 )
 from nexus_test_control.process import run_command
+from nexus_test_control.pytest_report import PYTEST_FAILURE_MARKER, read_pytest_failures
+from nexus_test_control.redaction import SENSITIVE_ENV_PARTS, environment_secrets
 from nexus_test_control.runtime import (
     EndpointKind,
     RuntimeContractError,
@@ -150,15 +153,7 @@ from nexus_test_control.services import (
 from nexus_test_control.setup_dependencies import LLM_AGENT_KERNEL_SOURCE, PinnedSuiteSource
 from nexus_test_control.storage import available_storage_mib
 
-_SENSITIVE_ENV_PARTS = (
-    "credential",
-    "fixture",
-    "key",
-    "password",
-    "promotion",
-    "secret",
-    "token",
-)
+
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _SAFE_HEAVY_ENV = (
     "HOME",
@@ -4081,6 +4076,7 @@ def _run_owned_commands(
                 env=dict(child_environment),
                 capture_output=True,
                 check=False,
+                retain_stdout_markers=(PYTEST_FAILURE_MARKER,) if "pytest" in argv else (),
             )
         except OSError as error:
             duration_ms = (time.monotonic_ns() - started) // 1_000_000
@@ -4095,7 +4091,9 @@ def _run_owned_commands(
             interrupted_by = _command_interruption_signal(completed.returncode)
             status = RunStatus.NOT_RUN if interrupted_by is not None else RunStatus.FAIL
             detail = redact_text(
-                _command_result_detail(index, completed, interrupted_by),
+                _command_result_detail(
+                    index, completed, interrupted_by, pytest_command="pytest" in argv
+                ),
                 environment_secrets(child_environment),
             )
             artifacts = _failure_artifacts(
@@ -7099,7 +7097,11 @@ def _run_fixed_commands_observed(
                 env=child_environment,
                 capture_output=True,
                 check=False,
-                retain_stdout_markers=retained_stdout_markers,
+                retain_stdout_markers=(
+                    (*retained_stdout_markers, PYTEST_FAILURE_MARKER)
+                    if "pytest" in argv
+                    else retained_stdout_markers
+                ),
             )
         except OSError as error:
             duration_ms = elapsed_ms + (time.monotonic_ns() - started) // 1_000_000
@@ -7127,7 +7129,12 @@ def _run_fixed_commands_observed(
                     capability,
                     RunStatus.NOT_RUN if interrupted_by is not None else RunStatus.FAIL,
                     duration_ms,
-                    _command_result_detail(index, completed, interrupted_by),
+                    redact_text(
+                        _command_result_detail(
+                            index, completed, interrupted_by, pytest_command="pytest" in argv
+                        ),
+                        environment_secrets(environment),
+                    ),
                     artifacts=artifacts,
                 ),
                 None,
@@ -7188,7 +7195,7 @@ def _redacted_command_argv(
             continue
         key, separator, value = part.partition("=")
         normalized_key = re.sub(r"[^a-z]", "", key.casefold())
-        sensitive_flag = any(token in normalized_key for token in _SENSITIVE_ENV_PARTS)
+        sensitive_flag = any(token in normalized_key for token in SENSITIVE_ENV_PARTS)
         if separator and sensitive_flag:
             redacted.append(f"{key}=[REDACTED]")
             continue
@@ -7210,7 +7217,34 @@ def _command_result_detail(
     index: int,
     completed: subprocess.CompletedProcess[str],
     interrupted_by: signal.Signals | None = None,
+    *,
+    pytest_command: bool = False,
 ) -> str:
+    if pytest_command and interrupted_by is None:
+        try:
+            failures = read_pytest_failures(completed.stdout or "")
+        except ValueError as error:
+            return (
+                "proof_result=setup_or_execution_failure|"
+                f"fixed command {index} exited {completed.returncode}: {error}"
+            )
+        behavioral = all(
+            failure.phase == "call"
+            and failure.assertion
+            and not failure.truncated
+            and not _is_timeout_failure(f"{failure.exception_type}: {failure.message}".casefold())
+            for failure in failures
+        )
+        kind = "behavioral_assertion_failure" if behavioral else "setup_or_execution_failure"
+        observed = " | ".join(
+            f"{failure.phase} {failure.exception_type}: {failure.message} "
+            f"at {failure.frame}:{failure.line} ({failure.node})"
+            + (" [truncated evidence]" if failure.truncated else "")
+            for failure in failures
+        )
+        return (
+            f"proof_result={kind}|fixed command {index} exited {completed.returncode}: {observed}"
+        )
     stdout = _decisive_output(completed.stdout or "")
     stderr = _decisive_output(completed.stderr or "")
     parts = []
@@ -7453,16 +7487,37 @@ def _failure_artifacts(
     log.parent.mkdir(parents=True, exist_ok=True)
     stdout = _bounded_diagnostic(completed.stdout or "")
     stderr = _bounded_diagnostic(completed.stderr or "")
+    secrets = environment_secrets(environment)
+    # Pytest records encode JSON strings before the parent receives stdout.
+    # Scrub that spelling too for caller-only secrets withheld from the child.
+    log_secrets = (*secrets, *(json.dumps(value, ensure_ascii=False)[1:-1] for value in secrets))
     log.write_text(
         redact_text(
             "command="
             + json.dumps(_redacted_command_argv(argv, environment_secrets(environment)))
             + f"\nexit={completed.returncode}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n",
-            environment_secrets(environment),
+            log_secrets if "pytest" in argv else secrets,
         ),
         encoding="utf-8",
     )
     artifacts = [relative.as_posix()]
+    if "pytest" in argv:
+        try:
+            failures = read_pytest_failures(completed.stdout or "")
+        except ValueError:
+            pass  # The bounded raw log retains malformed or absent evidence.
+        else:
+            report_relative = relative.with_suffix(".pytest.json")
+            write_evidence_json(
+                directory / report_relative.name,
+                {
+                    "failures": redact_json(
+                        [failure.as_json() for failure in failures],
+                        environment_secrets(environment),
+                    )
+                },
+            )
+            artifacts.append(report_relative.as_posix())
     if capability in {
         Capability.JOURNEYS_CRITICAL,
         Capability.JOURNEYS_ALL,
@@ -7476,11 +7531,3 @@ def _bounded_diagnostic(value: str, limit: int = 1_000_000) -> str:
     if len(value) <= limit:
         return value
     return f"[truncated to final {limit} characters]\n{value[-limit:]}"
-
-
-def environment_secrets(environment: Mapping[str, str]) -> tuple[str, ...]:
-    return tuple(
-        value
-        for key, value in environment.items()
-        if value and any(part in key.casefold() for part in _SENSITIVE_ENV_PARTS)
-    )

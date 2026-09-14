@@ -16,3 +16,10 @@ do not relax them to make the fixture pass.
 
 acceptance: the existing release proof passes through `./scripts/test` using the
 approved local setup, and ownership failures report an actionable cause.
+
+2026-09-14 delivery audit: the current tool process has uid 1000, zero effective
+capabilities and `NoNewPrivs: 1`. its descendants cannot gain the required root
+ownership through sudo. the merged controller now qualifies this prerequisite
+before any selected root-owner capability; exact non-root proofs remain
+eligible. complete kernel/release ownership evidence must come from the
+existing privileged ci boundary. no ownership oracle was weakened.

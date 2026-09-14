@@ -611,19 +611,24 @@ def build_epub_extraction_plan(
             error_message="Stored EPUB bytes do not match the immutable source identity",
             terminal=True,
         )
-    return _build_epub_extraction_plan_from_file(
-        session_factory=session_factory,
-        media_id=media_id,
-        attempt_id=attempt_id,
-        storage_path=storage_path,
-        source_size_bytes=source_size_bytes,
-        source_sha256_hex=expected_source_sha256,
-        storage_client=storage_client,
-        record_progress=record_progress,
-        epub_path=epub_path,
-        attempt_directory=attempt_directory,
-        now=now,
-    )
+    try:
+        return _build_epub_extraction_plan_from_file(
+            session_factory=session_factory,
+            media_id=media_id,
+            attempt_id=attempt_id,
+            storage_path=storage_path,
+            source_size_bytes=source_size_bytes,
+            source_sha256_hex=expected_source_sha256,
+            storage_client=storage_client,
+            record_progress=record_progress,
+            epub_path=epub_path,
+            attempt_directory=attempt_directory,
+            now=now,
+        )
+    finally:
+        # Extraction closed its archive; the prepared plan retains only the
+        # immutable storage identity and the body files still needed to publish.
+        epub_path.unlink()
 
 
 def _build_epub_extraction_plan_from_file(

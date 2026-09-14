@@ -1364,7 +1364,8 @@
         "pytest:python/tests/service/test_llm_tools_availability.py::test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch",
         "pytest:python/tests/kernel/nexus_test_control/test_coherent_file_fault_contract.py::test_reviewed_file_fault_routes_only_its_pinned_canonical_owner",
         "pytest:python/tests/kernel/nexus_test_control/test_literal_proof_owner.py::test_fault_owner_resolves_route_brackets_literally",
-        "pytest:python/tests/kernel/nexus_test_control/test_coherent_file_fault_contract.py"
+        "pytest:python/tests/kernel/nexus_test_control/test_coherent_file_fault_contract.py",
+        "pytest:python/tests/kernel/nexus_test_control/test_pytest_report.py::test_service_failure_keeps_actual_pytest_phase_type_message_and_frame"
       ],
       "capabilities": [
         "kernel-python",

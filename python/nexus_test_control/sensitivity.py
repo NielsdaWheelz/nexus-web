@@ -648,6 +648,8 @@ def _base_overlays(proof_path: str) -> tuple[str, ...]:
                 "python/tests/conftest.py",
                 "python/tests/testkit",
                 "python/nexus_test_control/provider_api_contract.py",
+                "python/nexus_test_control/pytest_report.py",
+                "python/nexus_test_control/redaction.py",
             )
         )
     elif proof_path.startswith("apps/web/"):

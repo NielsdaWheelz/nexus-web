@@ -35,6 +35,7 @@ def test_epub_source_keeps_exact_staged_bodies_through_publication(
     db_session: Session,
     test_user: UserRecord,
     interrupt_publication: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     first = (
         '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
@@ -96,10 +97,35 @@ def test_epub_source_keeps_exact_staged_bodies_through_publication(
     attempt_root = get_settings().parser_temp_root / str(accepted.source_attempt_id)
     snapshots: list[set[bytes]] = []
     interrupted = False
+    closed_archives: list[Path] = []
+    close_archive = zipfile.ZipFile.close
+
+    def observe_archive_close(archive: zipfile.ZipFile) -> None:
+        owned_path = (
+            Path(archive.filename)
+            if archive.fp is not None
+            and archive.filename is not None
+            and Path(archive.filename).is_relative_to(attempt_root)
+            else None
+        )
+        if owned_path is not None:
+            assert owned_path.read_bytes() == source, (
+                "EPUB source archive disappeared or changed before extraction closed it"
+            )
+        close_archive(archive)
+        if owned_path is not None:
+            assert archive.fp is None
+            closed_archives.append(owned_path)
+
+    monkeypatch.setattr(zipfile.ZipFile, "close", observe_archive_close)
 
     def observe_publication(_conn, _cursor, statement, _parameters, _context, _many):
         nonlocal interrupted
         if statement.lstrip().startswith("INSERT INTO fragments "):
+            assert closed_archives, "EPUB publication began before its source archive closed"
+            assert all(not path.exists() for path in closed_archives), (
+                "EPUB source archive outlived its last extraction read"
+            )
             snapshots.append(
                 {path.read_bytes() for path in attempt_root.rglob("*") if path.is_file()}
             )
@@ -203,9 +229,10 @@ def test_epub_source_keeps_exact_staged_bodies_through_publication(
             {text.encode() for text in expected} <= snapshot for snapshot in snapshots
         ), "EPUB body files were retired before source publication"
         for snapshot in snapshots:
-            assert source in snapshot
+            assert source not in snapshot
             for fragment in fragments:
                 assert fragment.html_sanitized.encode() in snapshot
+        assert len(closed_archives) == 1 + int(interrupt_publication)
         assert not attempt_root.exists(), "successful source attempt retained its body files"
     except FileNotFoundError as error:
         if error.filename is not None and Path(error.filename).is_relative_to(attempt_root):

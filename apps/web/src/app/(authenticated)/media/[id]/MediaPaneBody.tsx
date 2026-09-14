@@ -2654,6 +2654,9 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
   const resolvedPdfPageNumber = resolvedEvidenceHighlights.pdfPageNumber;
 
   useLayoutEffect(() => {
+    if (publicationRenderDefect?.session === documentReaderSession &&
+      publicationRenderDefect.attempt === publicationRenderAttempt &&
+      publicationRenderDefect.navigationId === publicationNavigationId) return;
     const prepared = preparedPublicationRef.current;
     let full = false;
     for (const item of documentReader.units) {
@@ -2675,7 +2678,7 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
       const entry = prepared.get(item.lease);
       return entry === undefined ? [] : [entry];
     }));
-  }, [documentReader.units, documentReaderSession, publicationNavigationId, publicationRenderAttempt]);
+  }, [documentReader.units, documentReaderSession, publicationNavigationId, publicationRenderAttempt, publicationRenderDefect]);
 
   useEffect(() => {
     const read = documentReaderSession.overlays;
@@ -2777,13 +2780,13 @@ function MediaPaneBodyReady({ progressRuntime, documentReaderSession }: {
     const pending = pendingPublicationRenderRef.current;
     if (pending === null) return;
     const prepared = preparedPublicationRef.current.get(pending.item.lease);
-    if (prepared?.view.root.isConnected) {
+    if (publicationRenderDefect?.session === documentReaderSession && publicationRenderDefect.attempt === publicationRenderAttempt &&
+        publicationRenderDefect.navigationId === publicationNavigationId) {
+      pending.settle({ kind: "Failed", error: publicationRenderDefect.error });
+    } else if (prepared?.view.root.isConnected) {
       pending.settle({ kind: "Rendered", part: { item: pending.item, root: prepared.view.root, cursor: prepared.view.cursor } });
     } else if (publicationDomCapacity) {
       pending.settle({ kind: "Capacity", reason: "Dom" });
-    } else if (publicationRenderDefect?.session === documentReaderSession && publicationRenderDefect.attempt === publicationRenderAttempt &&
-        publicationRenderDefect.navigationId === publicationNavigationId) {
-      pending.settle({ kind: "Failed", error: publicationRenderDefect.error });
     }
   }, [documentReaderSession, preparedPublication, publicationDomCapacity, publicationRenderDefect, publicationRenderAttempt, publicationNavigationId, readerLayoutReady]);
 

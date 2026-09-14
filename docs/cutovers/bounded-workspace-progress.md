@@ -8,6 +8,21 @@ implementation follows [the contract](bounded-workspace-implementation.md).
 three coding owners maintain runtime, publication, and client progress files beside this one.
 root owns browser pending writes, composition, integration and independent review.
 
+## consolidated delivery checkpoint
+
+`9a1ee26352` merges the retained implementation, reviewer fixes and compatible
+upstream changes into `codex/bounded-workspace`, draft pr #250. no delivery
+source files were lost in the rollback reconciliation. further development
+uses this worktree; old proof worktrees retain historical receipts only.
+
+the first combined linked-port check was stopped while waiting for the shared
+invocation lock, before any test ran. the holder was separate ci run
+`34889769985`; no foreign process or resource was changed. the next reviewed
+batch adds bounded primary pytest evidence, earlier epub archive retirement,
+and explicit reader retry ownership. admission deadline product fixes remain
+unapplied until their exact failure is observable. all combined gates remain
+open; the maximum epub profile last failed in `790372c5d74b0ca6`.
+
 ## reviewed decisions
 
 - retain object-first publication members. existing ingestion publishers must prepare stable ids and verified objects before their database publication transaction; no object i/o inside it.

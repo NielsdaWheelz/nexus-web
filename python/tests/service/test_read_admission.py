@@ -1,6 +1,8 @@
 """Expensive route work retains its permit across client cancellation and send."""
 
 import asyncio
+import subprocess
+import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from threading import Event
@@ -98,6 +100,164 @@ def test_cancelled_sync_read_retains_admission_until_its_response_finishes(
             )
 
     asyncio.run(scenario())
+
+
+def test_sync_read_deadline_retains_its_transaction_and_permit_until_worker_returns(
+    db_session: Session, test_user: UserRecord
+) -> None:
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        entered = asyncio.Event()
+        worker_finished = asyncio.Event()
+        release = Event()
+        transactions = []
+        calls = 0
+        app, headers = production_read_app(db_session, test_user)
+        app.state.read_admission = ReadAdmission(
+            max_concurrency=1, deadline_seconds=1, retry_after_seconds=1, request_bytes=262144
+        )
+        router = APIRouter(route_class=AdmittedReadRoute)
+
+        @router.get("/read")
+        def materialize(db: Annotated[Session, Depends(get_db)]) -> dict:
+            nonlocal calls
+            calls += 1
+            transaction = db.scalar(text("SELECT txid_current()"))
+            loop.call_soon_threadsafe(entered.set)
+            try:
+                assert release.wait(timeout=5), "the test did not release its materializing thread"
+                transactions.append((transaction, db.scalar(text("SELECT txid_current()"))))
+                return {"value": "read"}
+            finally:
+                loop.call_soon_threadsafe(worker_finished.set)
+
+        app.include_router(router)
+
+        @app.get("/progress")
+        def progress() -> dict:
+            return {"saved": True}
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers
+        ) as client:
+            opening = asyncio.create_task(client.get("/read"))
+            retired = None
+            finished_while_held = None
+            busy = None
+            progress = None
+            observed_calls = None
+            observation_error = None
+            worker_error = None
+            request_error = None
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=5)
+                # The actual one-second deadline must expire while the physical
+                # worker is held. wait() observes completion without cancelling it.
+                done, _ = await asyncio.wait({opening}, timeout=1.1)
+                retired = bool(done)
+                finished_while_held = worker_finished.is_set()
+                if not retired:
+                    busy = await client.get("/read")
+                    observed_calls = calls
+                    progress = await client.get("/progress")
+            except Exception as error:
+                observation_error = error
+            finally:
+                release.set()
+                try:
+                    await asyncio.wait_for(worker_finished.wait(), timeout=5)
+                except Exception as error:
+                    worker_error = error
+                try:
+                    await asyncio.wait_for(opening, timeout=5)
+                except (Exception, asyncio.CancelledError) as error:
+                    request_error = error
+            # Cleanup failures must not replace the ownership observation made
+            # while the worker was still held. Keep both exact causes available.
+            if observation_error is not None:
+                raise observation_error
+            assert retired is not None
+            assert not retired, "the deadline retired a live synchronous worker"
+            assert finished_while_held is False
+            assert worker_error is None, worker_error
+            assert busy is not None and busy.status_code == 503, (
+                "the expired live worker released its permit"
+            )
+            assert busy.json()["error"]["code"] == "E_READ_CAPACITY"
+            assert busy.headers["retry-after"] == "1"
+            assert observed_calls == 1, "overload entered a second materializing worker"
+            assert progress is not None and progress.json() == {"saved": True}
+            assert isinstance(request_error, RuntimeError), request_error
+            assert str(request_error) == "admitted read exceeded its qualified permit deadline"
+            assert len(transactions) == 1
+            assert transactions[0][0] == transactions[0][1], (
+                "deadline cleanup closed the live worker's transaction"
+            )
+            assert (await client.get("/read")).status_code == 200, (
+                "the completed worker never returned its permit"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_route_owned_timeout_settles_admission_instead_of_spinning() -> None:
+    # A timeout in this event loop is the fault itself. The parent bounds its
+    # direct child so the old implementation cannot wedge the test runner.
+    script = """
+import asyncio
+
+import httpx
+from fastapi import APIRouter, FastAPI
+
+from nexus.api.read_admission import AdmittedReadRoute, ReadAdmission
+
+
+async def scenario():
+    app = FastAPI()
+    app.state.read_admission = ReadAdmission(
+        max_concurrency=1, deadline_seconds=1, retry_after_seconds=1, request_bytes=1024
+    )
+    router = APIRouter(route_class=AdmittedReadRoute)
+    original = TimeoutError("timeout owned by the route")
+
+    @router.get("/timeout")
+    async def route_timeout():
+        print("route-timeout-entered", flush=True)
+        raise original
+
+    @router.get("/available")
+    async def available():
+        return {"available": True}
+
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        caught = None
+        try:
+            await client.get("/timeout")
+        except TimeoutError as error:
+            caught = error
+        assert caught is original, "admission replaced the route's original timeout"
+        assert str(caught) == "timeout owned by the route"
+        response = await client.get("/available")
+        assert response.status_code == 200
+        assert response.json() == {"available": True}
+    print("route-timeout-settled", flush=True)
+
+
+asyncio.run(scenario())
+"""
+    try:
+        completed = subprocess.run(
+            (sys.executable, "-c", script), capture_output=True, timeout=10, check=False
+        )
+    except subprocess.TimeoutExpired as error:
+        if b"route-timeout-entered" not in (error.stdout or b""):
+            raise RuntimeError("timeout probe did not reach its admitted route") from error
+        pytest.fail("route-owned timeout failed to settle admission")
+    assert completed.returncode == 0, completed.stderr.decode("utf-8", errors="replace")
+    assert b"route-timeout-settled" in completed.stdout
 
 
 def test_read_admission_precedes_dependencies_and_covers_body_transfer(
