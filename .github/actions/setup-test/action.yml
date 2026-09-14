@@ -42,7 +42,9 @@ runs:
       with:
         version: "0.12.1"
         enable-cache: true
-        prune-cache: true
+        cache-local-path: ${{ runner.temp }}/nexus-uv-cache-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        cache-suffix: nexus-offline-complete-v1
+        prune-cache: false
         cache-dependency-glob: |
           python/uv.lock
           ../llm-calling/uv.lock

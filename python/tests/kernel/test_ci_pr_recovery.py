@@ -371,3 +371,15 @@ def test_ci_routes_dispatch_only_to_exact_pr_recovery_and_keeps_full_on_main_pus
         "git rev-list --parents -n 1 HEAD",
     ):
         assert strict_fact in recovery
+
+
+def test_ci_uses_an_invocation_owned_offline_complete_uv_cache() -> None:
+    setup = SETUP_ACTION.read_text(encoding="utf-8")
+
+    assert (
+        "        enable-cache: true\n"
+        "        cache-local-path: ${{ runner.temp }}/nexus-uv-cache-"
+        "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}\n"
+        "        cache-suffix: nexus-offline-complete-v1\n"
+        "        prune-cache: false\n"
+    ) in setup
