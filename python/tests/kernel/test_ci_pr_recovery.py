@@ -409,3 +409,27 @@ def test_ci_recreates_the_locked_python_environment_with_a_safe_exact_target() -
         "uv sync --all-extras --locked --directory python",
     ):
         assert required_contract in setup
+
+
+def test_ci_recreates_the_generated_web_build_with_a_safe_exact_target() -> None:
+    setup = SETUP_ACTION.read_text(encoding="utf-8")
+
+    cleanup = setup.index("    - name: Recreate generated web build\n")
+    install = setup.index("    - name: Install locked JavaScript dependencies\n")
+    assert cleanup < install
+    for required_contract in (
+        "command -v mountpoint >/dev/null",
+        'checkout="$(realpath -e -- "$GITHUB_WORKSPACE")"',
+        'repository_root="$(realpath -e -- "$(git -C "$checkout" rev-parse --show-toplevel)")"',
+        'build="$checkout/apps/web/.next"',
+        'test "$checkout" = "$repository_root"',
+        'test "$(stat -c \'%u\' -- "$checkout")" = "$(id -u)"',
+        'test ! -L "$checkout/apps/web"',
+        'git -C "$checkout" check-ignore --quiet -- apps/web/.next',
+        'test ! -L "$build"',
+        '! mountpoint --quiet -- "$build"',
+        'test "$(stat -c \'%u\' -- "$build")" = "$(id -u)"',
+        'git -C "$checkout" clean -qfdx -- apps/web/.next',
+        'test ! -e "$build"',
+    ):
+        assert required_contract in setup
