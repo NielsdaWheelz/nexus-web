@@ -80,16 +80,20 @@ def test_reviewed_generation_plan_corpus_replays_the_shipped_policy_without_a_li
     assert corpus["background_operations"] == actual_background
     assert len(actual_background) == 14
 
+    reviewed_tool_plans = {
+        "ChatRead": "ReadOnly",
+        "ChatReadAdditiveWrite": "AdditiveWrites",
+        "LibraryDossierRead": "ReadOnly",
+        "IdeaDossierRead": "ReadOnly",
+        "MetadataRead": "ReadOnly",
+    }
+    assert reviewed_tool_plans.keys() <= TOOL_PLAN_DEFINITIONS_BY_ID.keys(), (
+        "a reviewed generation tool plan is absent from the shipped policy"
+    )
     assert corpus["tool_plans"] == {
         plan_id: {
             "authority_revision": TOOL_PLAN_DEFINITIONS_BY_ID[plan_id].authority_revision,
             "effect_mode": effect_mode,
         }
-        for plan_id, effect_mode in (
-            ("ChatRead", "ReadOnly"),
-            ("ChatReadAdditiveWrite", "AdditiveWrites"),
-            ("LibraryDossierRead", "ReadOnly"),
-            ("IdeaDossierRead", "ReadOnly"),
-            ("MetadataRead", "ReadOnly"),
-        )
+        for plan_id, effect_mode in reviewed_tool_plans.items()
     }
