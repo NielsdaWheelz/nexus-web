@@ -1554,6 +1554,149 @@ def test_web_source_promoted_to_journey_is_memory_admitted_before_static_web(
     assert not (tmp_path / "commands.jsonl").exists()
 
 
+def test_browser_runtime_retires_before_the_next_heavy_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class Ports(runner._RunnerPorts):
+        @contextmanager
+        def heavy_lock(self, _repo_root: Path) -> Iterator[Path]:
+            yield tmp_path / "heavy.lock"
+
+        def retire_run_processes(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            run_id: str,
+        ) -> None:
+            events.append(f"retire:{run_id}")
+
+        def clean_run(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            run_id: str,
+            *,
+            supabase: SupabaseCredentials,
+        ) -> None:
+            del supabase
+            events.append(f"clean:{run_id}")
+
+    def fake_run_capability(
+        _context: CapabilityContext,
+        capability: Capability,
+        _environment: Mapping[str, str],
+        execution: runner._WorkflowExecution | None,
+        *,
+        heavy_lock_held: bool = False,
+    ) -> CapabilityResult:
+        del heavy_lock_held
+        events.append(f"run:{capability.value}")
+        if capability in {Capability.JOURNEYS_ALL, Capability.EXTENSION}:
+            assert execution is not None
+            execution.run = _test_run(include_migration_database=True)
+            execution.external_protocol_started = True
+            execution.openai_protocol_started = True
+            execution.journey_runtime_started = True
+        return runner._pass(capability, "passed")
+
+    def available_memory() -> int:
+        events.append("memory")
+        return 8192
+
+    monkeypatch.setattr(runner, "_run_capability", fake_run_capability)
+    result = run_workflow(
+        CapabilityContext(tmp_path, Workflow.FULL, ()),
+        StringIO(),
+        {},
+        run_id="0123456789abcdef",
+        _ports=Ports(),
+        _available_memory=available_memory,
+        _available_storage=lambda _root, _docker: 16384,
+        _memory_sampler=runner.OwnedMemorySampler(
+            tmp_path,
+            process_reader=lambda _pid: 1024,
+            container_reader=lambda _root: 0,
+        ),
+    )
+
+    journey = events.index("run:journeys-all")
+    first_retirement = events.index("retire:0123456789abcdef")
+    next_admission = events.index("memory", journey)
+    extension = events.index("run:extension")
+    assert journey < first_retirement < next_admission < extension
+    assert events.count("retire:0123456789abcdef") == 2
+    assert all(item.status is RunStatus.PASS for item in result.capabilities)
+
+
+def test_browser_runtime_retirement_failure_blocks_later_capabilities(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Ports(runner._RunnerPorts):
+        @contextmanager
+        def heavy_lock(self, _repo_root: Path) -> Iterator[Path]:
+            yield tmp_path / "heavy.lock"
+
+        def retire_run_processes(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _run_id: str,
+        ) -> None:
+            raise RuntimeError("retirement failed")
+
+        def clean_run(
+            self,
+            _repo_root: Path,
+            _environment: Mapping[str, str],
+            _run_id: str,
+            *,
+            supabase: SupabaseCredentials,
+        ) -> None:
+            del supabase
+
+    def fake_run_capability(
+        _context: CapabilityContext,
+        capability: Capability,
+        _environment: Mapping[str, str],
+        execution: runner._WorkflowExecution | None,
+        *,
+        heavy_lock_held: bool = False,
+    ) -> CapabilityResult:
+        del heavy_lock_held
+        if capability is Capability.JOURNEYS_ALL:
+            assert execution is not None
+            execution.run = _test_run(include_migration_database=True)
+            execution.journey_runtime_started = True
+        return runner._pass(capability, "passed")
+
+    monkeypatch.setattr(runner, "_run_capability", fake_run_capability)
+    result = run_workflow(
+        CapabilityContext(tmp_path, Workflow.FULL, ()),
+        StringIO(),
+        {},
+        run_id="0123456789abcdef",
+        _ports=Ports(),
+        _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
+        _memory_sampler=runner.OwnedMemorySampler(
+            tmp_path,
+            process_reader=lambda _pid: 1024,
+            container_reader=lambda _root: 0,
+        ),
+    )
+
+    journeys = next(item for item in result.capabilities if item.id is Capability.JOURNEYS_ALL)
+    extension = next(item for item in result.capabilities if item.id is Capability.EXTENSION)
+    assert journeys.status is RunStatus.FAIL
+    assert journeys.detail == "owned browser runtime retirement failed: retirement failed"
+    assert extension.status is RunStatus.NOT_RUN
+    assert extension.detail == "blocked by earlier journeys-all result"
+
+
 def test_unknown_available_memory_fails_closed_before_heavy_work(tmp_path: Path) -> None:
     _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
     (tmp_path / "python/.venv").mkdir()

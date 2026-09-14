@@ -531,8 +531,11 @@ The controller may own one health-checked, workspace-local
 PostgreSQL/MinIO/Supabase-test stack recorded in `.nexus-test/runtime.json` and
 scoped to exactly one workload invocation. It clears stale recorded runtime
 state before starting work, reuses service processes across capabilities in
-that invocation, and tears down the exact stack, volumes, and runtime state
-after every normal, failing, or handled-interrupt terminal path. Immutable
+that invocation, and retires every exact run-owned app and protocol process
+after each browser capability before admitting another heavy capability. The
+migrated databases, object-store bucket, provider fixture, and standalone build
+remain reusable. It tears down the exact stack, volumes, and runtime state after
+every normal, failing, or handled-interrupt terminal path. Immutable
 evidence under `test-results/` survives. `clean` remains the recovery owner for
 an unhandled process death, and CI repeats cleanup in its always-run finalizer.
 Before replacing a persistent runner checkout, CI invokes the prior controller's
