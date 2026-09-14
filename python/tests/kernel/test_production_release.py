@@ -143,6 +143,26 @@ def host_release_harness(tmp_path: Path) -> Iterator[HostReleaseHarness]:
         yield harness
 
 
+def test_host_release_harness_does_not_write_privileged_python_bytecode(
+    host_release_harness: HostReleaseHarness,
+    tmp_path: Path,
+) -> None:
+    module = tmp_path / "privileged_release_import.py"
+    module.write_text("VALUE = 1\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        (sys.executable, "-c", "import privileged_release_import"),
+        cwd=tmp_path,
+        env=host_release_harness._environment(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert not (tmp_path / "__pycache__").exists()
+
+
 def test_host_apply_uses_verified_backup_and_migration_then_activates_only_apps(
     host_release_harness: HostReleaseHarness,
 ) -> None:
