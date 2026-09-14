@@ -1128,7 +1128,7 @@
       ],
       "expected_failure": "Native model-tool plan lost its provider publication",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "beef9bc531d3011c97f071788fa841f6a59a9e08efae42f2aa9d249779d9f566"
+      "changed_owner_sha256": "fbd1be8dc70c5d8e8bb1ff9fada6668fc2004ba18b6f39314ca306767b72deb4"
     },
     {
       "id": "generation-frozen-policy-substitution",
