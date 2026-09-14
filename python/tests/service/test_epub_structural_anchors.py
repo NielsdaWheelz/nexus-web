@@ -241,9 +241,9 @@ def test_epub_long_navigation_ids_preserve_distinct_targets_and_parentage(engine
         {
             "mimetype": b"application/epub+zip",
             "META-INF/container.xml": (
-                '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
-                '<rootfiles><rootfile full-path="book.opf"/></rootfiles></container>'
-            ).encode(),
+                b'<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                b'<rootfiles><rootfile full-path="book.opf"/></rootfiles></container>'
+            ),
             "book.opf": (
                 '<package xmlns="http://www.idpf.org/2007/opf" version="3.0">'
                 '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'

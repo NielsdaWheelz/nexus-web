@@ -2442,7 +2442,7 @@ def test_in_flight_source_progress_serializes_through_the_declared_media_wire(
         )
         attempt.job_id = job.id
         db.commit()
-        claimed = claim_job(
+        claimed = claim_job_row(
             db,
             job_id=job.id,
             worker_id=worker_id,
@@ -2459,6 +2459,7 @@ def test_in_flight_source_progress_serializes_through_the_declared_media_wire(
             worker_id=worker_id,
             attempt_no=1,
             resource_class="Heavy",
+            execution_id=claimed.execution_id,
         ),
     )
     session_factory = create_session_factory(engine)
@@ -2506,7 +2507,7 @@ def test_in_flight_source_progress_serializes_through_the_declared_media_wire(
     assert staged["source_progress"]["value"]["run_count"] == 1
 
     with Session(engine) as db:
-        assert complete_job(db, job_id=job.id, worker_id=worker_id)
+        assert complete_job(db, job_id=job.id, worker_id=worker_id, attempt_no=claimed.attempts)
         db.commit()
 
 
