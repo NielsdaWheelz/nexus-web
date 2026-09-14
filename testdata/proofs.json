@@ -730,10 +730,7 @@
         "python/nexus/api/routes/imports.py",
         "apps/web/src/app/(authenticated)/imports/**/*",
         "apps/web/src/app/api/imports/**/*",
-        "apps/web/src/lib/imports/**/*",
-        "python/nexus/schemas/publication_dates.py",
-        "python/nexus/services/epub_metadata.py",
-        "python/nexus/services/metadata_enrichment.py"
+        "apps/web/src/lib/imports/**/*"
       ],
       "proofs": [
         "pytest:python/tests/migrations/test_document_import_reliability_migration.py::test_0220_0221_backfill_is_resumable_fail_closed_and_hard_contracts_schema",
@@ -758,16 +755,13 @@
         "vitest:apps/web/src/lib/media/ingestionClient.unit.test.ts",
         "pytest:python/tests/migrations/test_imports_history_migration.py::test_0227_records_one_baseline_per_extant_upload_session_and_source_attempt",
         "pytest:python/tests/service/test_import_source_recovery.py::test_succeeded_attempt_with_a_later_dead_job_is_complete_and_unrepairable",
-        "pytest:python/tests/service/test_import_index_recovery.py::test_stale_revision_cannot_requeue_a_dead_reindex_job",
-        "pytest:python/tests/service/test_media_publication_metadata.py::test_epub_reprint_date_never_replaces_original_and_null_research_clears",
-        "pytest:python/tests/kernel/test_publication_dates.py::test_publication_dates_reject_impossible_or_unsupported_generated_values"
+        "pytest:python/tests/service/test_import_index_recovery.py::test_stale_revision_cannot_requeue_a_dead_reindex_job"
       ],
       "capabilities": [
         "migrations",
         "service",
         "component",
-        "kernel-web",
-        "kernel-python"
+        "kernel-web"
       ]
     },
     {
