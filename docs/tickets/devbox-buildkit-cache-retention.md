@@ -13,6 +13,16 @@ to 8.2 gb. four api/worker image builds were retained while the checkout was at
 builder cache owned the growth. that operator-wide prune could also remove cache
 belonging to another checkout, so it is diagnosis, not an acceptable fix.
 
+on 2026-09-14, overlapping devbox proofs reproduced the defect while ci run
+`34814677738` was active. an exact capacity proof created
+`nexus-container-b2a6870535f4fc71-api-candidate`; after its container retired,
+the engine builder reported 10.82 gb of cache, 10.21 gb reclaimable, and root
+free space reached 429 mb. separately, the generic ci setup's unique
+`builder-9c8b3120-a6a3-410a-9c59-58aefb98d3d6` held 3.339 gb. pruning only that
+idle, run-owned builder cache restored 3.769 gb free without touching the engine
+cache. this was emergency headroom recovery, not resolution of the engine-cache
+lifetime defect.
+
 ## prerequisites and fix
 
 coordinate with the backend candidate-image proof now under development in the
