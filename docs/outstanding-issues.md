@@ -362,3 +362,4 @@ behavior. See
 
 - [open] oi-098 · reader annotation · 2026-09-14 focus/submit review · failed highlight creation crashes the quick-note editor: [ticket](tickets/highlight-quick-note-create-failure-crashes-editor.md).
 - [open] test control · 2026-09-14 annotation verification · host oracle fixture ownership setup blocks local confidence: [ticket](tickets/host-oracle-fixture-ownership-blocks-confidence.md).
+- [open] resource actions · 2026-09-14 highlight popup verification · mobile parity journey finds the prior browse pane after reader navigation: [ticket](tickets/resource-action-parity-mobile-pane-readiness.md).

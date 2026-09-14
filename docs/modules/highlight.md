@@ -199,7 +199,12 @@ A fresh reader selection has no Highlight yet. Its `SelectionPopover` renders
 the dedicated icon-only `SelectionActionDock`; `buildSelectionActions` owns
 only this pre-resource gesture. Materialized Highlights mount
 `ResourceActionMenu`, whose snapshot, catalog, planner, and runtime own the same
-action list in every representation. The selection actions use the fixed names
+action list in every representation. Clicking a Highlight in reader text or a
+PDF opens that menu directly at the Highlight, with no intermediate overflow
+button. Loading and unavailable states explain themselves in the open surface;
+Escape, outside clicks, and reader scrolling dismiss it. Scrolling within the
+menu keeps its actions reachable. Evidence rows retain their overflow trigger.
+The selection actions use the fixed names
 **Highlight**, **Note**, **Link**, **Ask**, **Learn**,
 **Ask in existing chat…**, and **Share**. `projectSelectionActionPlan` is the sole
 owner of their presentation order: the direct icon row is **Highlight**,

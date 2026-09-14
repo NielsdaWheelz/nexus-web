@@ -52,7 +52,7 @@ interface ActionMenuTriggerProps extends ActionMenuTriggerAttributes {
 
 interface ActionMenuProps {
   options: readonly ActionDescriptor[];
-  /** Label for the trigger button (screen readers). Default: "Actions" */
+  /** Accessible name for the trigger or directly anchored menu. */
   label?: string;
   /** Optional class name for the container. */
   className?: string;
@@ -71,6 +71,11 @@ interface ActionMenuProps {
   triggerDisabled?: boolean;
   /** Required user-facing explanation for a disabled trigger. */
   triggerDisabledReason?: string;
+  /** Opens directly at an existing interaction target, without another trigger. */
+  anchored?: {
+    readonly anchor: DOMRect;
+    readonly onDismiss: () => void;
+  };
 }
 
 const MENU_ITEM_SELECTOR =
@@ -100,11 +105,15 @@ export default function ActionMenu({
   triggerRef,
   triggerDisabled = false,
   triggerDisabledReason,
+  anchored,
 }: ActionMenuProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const directlyAnchored = anchored !== undefined;
+  const menuOpen = directlyAnchored || expanded;
   const [initialFocus, setInitialFocus] = useState<"first" | "last">("first");
   const toggleRef = useRef<HTMLButtonElement>(null);
-  const menuContainerRef = useRef<HTMLDivElement>(null);
+  const priorFocusRef = useRef<HTMLElement | null>(null);
+  const [menuContainer, setMenuContainer] = useState<HTMLDivElement | null>(null);
   const triggerId = useId();
   const menuId = useId();
   const triggerDisabledReasonId = useId();
@@ -121,11 +130,12 @@ export default function ActionMenu({
     ref: menuRef,
     style: menuStyle,
     anchorRect,
-  } = useAnchoredPosition<HTMLUListElement>(toggleRef, {
-    enabled: menuOpen,
+  } = useAnchoredPosition<HTMLUListElement>(anchored?.anchor ?? toggleRef, {
+    enabled: menuOpen && (modalToken === null || menuContainer !== null),
     placement,
     align,
     gap: 4,
+    flip: directlyAnchored,
   });
 
   const getMenuItems = useCallback((): HTMLElement[] => {
@@ -149,24 +159,53 @@ export default function ActionMenu({
     ).filter((item) => item.tabIndex >= 0);
   }, [menuRef]);
 
-  const closeMenu = useCallback((restoreFocus: boolean = true) => {
-    setMenuOpen(false);
-    if (!restoreFocus) {
-      return;
-    }
-    requestAnimationFrame(() => {
-      toggleRef.current?.focus();
-    });
-  }, []);
+  const closeMenu = useCallback(
+    (restoreFocus: boolean = true) => {
+      if (anchored) {
+        // Restore before dispatch so a newly opened dialog owns the next focus.
+        if (restoreFocus) priorFocusRef.current?.focus({ preventScroll: true });
+        anchored.onDismiss();
+        return;
+      }
+      setExpanded(false);
+      if (restoreFocus) {
+        requestAnimationFrame(() => toggleRef.current?.focus());
+      }
+    },
+    [anchored],
+  );
 
   const openMenu = useCallback((focusTarget: "first" | "last" = "first") => {
     setInitialFocus(focusTarget);
-    setMenuOpen(true);
+    setExpanded(true);
   }, []);
 
   useEffect(() => {
-    if (menuOpen && options.length === 0) closeMenu();
-  }, [closeMenu, menuOpen, options.length]);
+    if (!directlyAnchored && menuOpen && options.length === 0) closeMenu();
+  }, [closeMenu, directlyAnchored, menuOpen, options.length]);
+
+  useEffect(() => {
+    if (!directlyAnchored || !menuOpen) return;
+    priorFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  }, [directlyAnchored, menuOpen]);
+
+  useEffect(() => {
+    if (!directlyAnchored || !menuOpen) return;
+    const dismissOnReaderScroll = (event: Event) => {
+      if (event.target instanceof Node && menuRef.current?.contains(event.target)) {
+        return;
+      }
+      closeMenu(false);
+    };
+    window.addEventListener("scroll", dismissOnReaderScroll, true);
+    const viewport = window.visualViewport;
+    viewport?.addEventListener("scroll", dismissOnReaderScroll);
+    return () => {
+      window.removeEventListener("scroll", dismissOnReaderScroll, true);
+      viewport?.removeEventListener("scroll", dismissOnReaderScroll);
+    };
+  }, [closeMenu, directlyAnchored, menuOpen, menuRef]);
 
   useEffect(() => {
     onOpenChange?.(menuOpen);
@@ -179,7 +218,7 @@ export default function ActionMenu({
 
   useDismissOnOutsideOrEscape({
     enabled: menuOpen,
-    refs: [menuRef, menuContainerRef],
+    refs: [menuRef, { current: menuContainer }],
     onDismiss: (reason) => closeMenu(reason === "escape"),
   });
   useHistoryDismiss(
@@ -191,10 +230,11 @@ export default function ActionMenu({
     { isTopmost: modalIsTopmost },
   );
 
+  const hasOptions = options.length > 0;
   useEffect(() => {
     if (!menuOpen || !anchorRect) return;
 
-    requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
       const menuItems = getMenuItems();
       const enabledMenuItems = getEnabledMenuItems();
       const tabbableItems = getTabbableItems();
@@ -203,8 +243,9 @@ export default function ActionMenu({
         initialFocus === "last"
           ? focusable[focusable.length - 1]
           : focusable[0];
-      target?.focus();
+      (target ?? menuRef.current)?.focus({ preventScroll: directlyAnchored });
     });
+    return () => cancelAnimationFrame(frame);
   }, [
     getEnabledMenuItems,
     getMenuItems,
@@ -212,6 +253,9 @@ export default function ActionMenu({
     initialFocus,
     menuOpen,
     anchorRect,
+    directlyAnchored,
+    hasOptions,
+    menuRef,
   ]);
 
   const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLUListElement>) => {
@@ -297,7 +341,7 @@ export default function ActionMenu({
     }
   };
 
-  if (options.length === 0 && !triggerDisabled) return null;
+  if (!directlyAnchored && options.length === 0 && !triggerDisabled) return null;
 
   const containerClassName = [styles.container, className]
     .filter(Boolean)
@@ -310,12 +354,19 @@ export default function ActionMenu({
       className={styles.menu}
       role="menu"
       style={menuStyle}
-      aria-labelledby={triggerId}
+      tabIndex={-1}
+      aria-label={directlyAnchored ? label : undefined}
+      aria-labelledby={directlyAnchored ? undefined : triggerId}
       // A portaled menu is logically inside its trigger, so an ancestor
       // dismissal owner must never treat a pointerdown here as "outside".
       data-dismiss-ignore="true"
       onKeyDown={handleMenuKeyDown}
     >
+      {!hasOptions && triggerDisabledReason ? (
+        <li role="none" className={styles.menuStatus}>
+          <span role="status">{triggerDisabledReason}</span>
+        </li>
+      ) : null}
       {options.map((option, index) => {
         const control = projectActionControlState(
           option.label,
@@ -488,24 +539,26 @@ export default function ActionMenu({
   return (
     <div
       className={containerClassName}
-      ref={menuContainerRef}
+      ref={setMenuContainer}
       data-open={menuOpen ? "true" : "false"}
     >
-      {renderTrigger ? (
+      {directlyAnchored ? null : renderTrigger ? (
         renderTrigger(triggerProps)
       ) : (
         <button {...triggerProps}>&hellip;</button>
       )}
-      {triggerDisabled && triggerDisabledReason ? (
+      {!directlyAnchored && triggerDisabled && triggerDisabledReason ? (
         <span id={triggerDisabledReasonId} className="sr-only">
           {triggerDisabledReason}
         </span>
       ) : null}
-      {menu && typeof document !== "undefined"
+      {menu &&
+      typeof document !== "undefined" &&
+      (modalToken === null || menuContainer !== null)
         ? createPortal(
             menu,
             resolveTransientPortalContainer(
-              toggleRef.current,
+              toggleRef.current ?? menuContainer,
               modalToken !== null,
             ),
           )

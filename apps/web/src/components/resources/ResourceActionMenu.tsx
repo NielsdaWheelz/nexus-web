@@ -11,7 +11,7 @@ type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 interface ResourceActionMenuProps {
   /** The one and only resource this menu acts on. */
   readonly actionSubject: ResourceActionSubject;
-  /** Trigger accessible label. Presentation only. */
+  /** Accessible name of the trigger or directly anchored menu. */
   readonly label?: string;
   /** Menu placement relative to the trigger. Presentation only. */
   readonly placement?: ActionMenuProps["placement"];
@@ -23,6 +23,8 @@ interface ResourceActionMenuProps {
   readonly triggerAttributes?: ActionMenuProps["triggerAttributes"];
   /** Shares the trigger node with presentation behavior such as dragging. */
   readonly triggerRef?: ActionMenuProps["triggerRef"];
+  /** A direct menu at an existing interaction target, with no overflow trigger. */
+  readonly anchored?: ActionMenuProps["anchored"];
 }
 
 /**
@@ -30,12 +32,12 @@ interface ResourceActionMenuProps {
  * resource-only surfaces render this directly. It owns no policy —
  * membership, current verb, ordering, danger-last, busy/blocked, and dispatch
  * all live in the resource-action runtime and the pure planner. It accepts no
- * actions, groups, capability flags, callbacks, projection, or surface id; only
- * a subject and presentation-only trigger options.
+ * actions, groups, capability flags, action callbacks, projection, or surface id; only
+ * a subject and menu presentation.
  *
- * The runtime prefetches the ref's snapshot when this mounts. The trigger
- * is always present: inert with an explanation while Loading, Retry-capable on
- * Error, and backed by descriptors whose ports fire only on selection.
+ * The runtime prefetches the ref's snapshot when this mounts. Loading explains
+ * itself on the trigger or inside a directly anchored menu; Error exposes Retry.
+ * Descriptors fire their ports only on selection.
  */
 export default function ResourceActionMenu({
   actionSubject,
@@ -45,6 +47,7 @@ export default function ResourceActionMenu({
   renderTrigger,
   triggerAttributes,
   triggerRef,
+  anchored,
 }: ResourceActionMenuProps) {
   const model = useResourceActionMenuModel(actionSubject);
   const { onOpenChange } = useMobileChromeActionMenuLock();
@@ -59,6 +62,7 @@ export default function ResourceActionMenu({
       renderTrigger={renderTrigger}
       triggerAttributes={triggerAttributes}
       triggerRef={triggerRef}
+      anchored={anchored}
       onOpenChange={onOpenChange}
     />
   );

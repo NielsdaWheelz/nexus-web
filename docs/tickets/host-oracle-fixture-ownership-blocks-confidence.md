@@ -15,6 +15,13 @@ evidence: `test-results/runs/d4ff867aa306ba96/summary.json` and
 `test-results/runs/d4ff867aa306ba96/kernel-python-1.log:437`.
 the annotation browser proofs and all static checks passed independently.
 
+the highlight popup pre-merge run `3437f4f57bad1930` reproduced the same
+fixture-setup failure after 1,141 python passes on candidate
+`91feee8a2c1ecf8047905220f11c40fe1c619e44`; see its
+`kernel-python-1.log:434` and `summary.json`. all policy and static checks
+passed. the affected CI workflow passed separately in run `2cbe5aecbc24dbf6`
+(GitHub Actions `34803311960`), including both affected browser journeys.
+
 prerequisite: decide the approved privilege boundary for this local host fixture.
 fix its ownership setup or route the privileged proof to its explicit capability;
 surface the captured command stderr when setup fails. preserve the root-ownership
