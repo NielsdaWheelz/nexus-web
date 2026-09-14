@@ -124,6 +124,11 @@ PR sensitivity MUST NOT dispatch paid hosted providers or require a physical
 device. The local executor/parser proof is sensitivity-gated in PR; the hosted
 or device boundary runs only in its named protected capability.
 
+CI MUST bind `UV_CACHE_DIR` to an invocation-owned directory beneath
+`RUNNER_TEMP` and retain downloaded wheels through proof completion. A shared
+runner cache or a cache pruned before an offline sensitivity environment is
+materialized is not a valid dependency boundary.
+
 The final work report for a defect or replacement MUST state how sensitivity was
 demonstrated. “Test passes” is insufficient.
 
