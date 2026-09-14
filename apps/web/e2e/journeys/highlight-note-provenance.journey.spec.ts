@@ -157,7 +157,7 @@ test("a highlight note remains attached to the exact canonical passage after a f
   await expect(mobilePassage).toBeVisible();
   await mobilePassage.click();
   await expect(
-    page.getByRole("button", { name: "Highlight actions" }),
+    page.getByRole("menu", { name: "Highlight actions" }),
     "A live highlight action must pin mobile reader chrome until dismissal.",
   ).toBeVisible();
   await expect(

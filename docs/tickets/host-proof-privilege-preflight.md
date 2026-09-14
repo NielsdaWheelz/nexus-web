@@ -16,6 +16,10 @@ not currently qualify that required host-proof boundary before work starts.
 An independent `./scripts/test confidence` run at candidate `eb0f408c44`
 failed at the same fixture after 1,121 passing tests (receipt
 `d4ff867aa306ba96`), but its failure report omitted the captured sudo stderr.
+A second pre-merge run reproduced the same fixture failure after 1,141 passing
+tests at candidate `91feee8a2c1ecf8047905220f11c40fe1c619e44` (receipt
+`3437f4f57bad1930`). Self-hosted CI run `34803311960` separately passed the
+affected browser workflows with receipt `2cbe5aecbc24dbf6`.
 
 ## Prerequisite and proposed fix
 
