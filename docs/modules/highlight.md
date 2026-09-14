@@ -136,7 +136,9 @@ the selection Note action focuses the quick-note textbox. enter flushes the
 existing save queue and closes only after the latest body is saved; shift+enter
 inserts a newline. composition and reference selection retain their enter
 handling. editing during submission cancels dismissal, and save failure keeps
-the draft open. inline highlight notes retain multiline enter. desktop and
+the draft open. an absent pending highlight is a modeled, non-retryable save
+failure with copy-and-reselect guidance; a rejected creation still reaches the
+defect boundary. inline highlight notes retain multiline enter. desktop and
 mobile composers own back dismissal throughout the selection-to-editor handoff.
 
 ## Learn

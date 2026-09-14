@@ -31,6 +31,18 @@ import styles from "./HighlightNoteEditor.module.css";
 
 type HighlightNoteOperation = "Save" | "OpenLinkedObject";
 
+interface HighlightNoteSaveFailure {
+  content: FeedbackContent;
+  retryable: boolean;
+}
+
+export class HighlightNoteTargetUnavailableError extends Error {
+  constructor() {
+    super("highlight target was not created");
+    this.name = "HighlightNoteTargetUnavailableError";
+  }
+}
+
 function highlightNoteErrorMessage(
   error: unknown,
   operation: HighlightNoteOperation,
@@ -83,6 +95,23 @@ function highlightNoteErrorMessage(
     default:
       throw error;
   }
+}
+
+function highlightNoteSaveFailure(error: unknown): HighlightNoteSaveFailure {
+  if (error instanceof HighlightNoteTargetUnavailableError) {
+    return {
+      content: {
+        tone: "Danger",
+        title: "Highlight wasn’t created",
+        message: "Your note is still here. Copy it, then select the passage and try again.",
+      },
+      retryable: false,
+    };
+  }
+  return {
+    content: highlightNoteErrorMessage(error, "Save"),
+    retryable: true,
+  };
 }
 
 function attachmentErrorMessage(error: unknown): FeedbackContent {
@@ -141,7 +170,7 @@ export default function HighlightNoteEditor({
   onSubmitted?: () => void;
 }) {
   const feedback = useFeedback();
-  const [saveFailure, setSaveFailure] = useState<FeedbackContent | null>(null);
+  const [saveFailure, setSaveFailure] = useState<HighlightNoteSaveFailure | null>(null);
   const [submitRequested, setSubmitRequested] = useState(false);
   // Announcement is decided by the situation, not derived from tone (Rule 10):
   // a blocking attachment failure is Assertive; a harmless "attached, but
@@ -252,7 +281,7 @@ export default function HighlightNoteEditor({
       setSubmitRequested(false);
       if (handleUnauthenticatedApiError(error)) return;
       try {
-        setSaveFailure(highlightNoteErrorMessage(error, "Save"));
+        setSaveFailure(highlightNoteSaveFailure(error));
       } catch (caughtDefect) {
         setDefect({ error: caughtDefect });
       }
@@ -393,16 +422,20 @@ export default function HighlightNoteEditor({
       ) : null}
       {saveStatus === "failed" && saveFailure ? (
         <FeedbackNotice
-          content={saveFailure}
+          content={saveFailure.content}
           announcement="Assertive"
           actions={[
-            {
-              label: "Retry",
-              onClick: () => {
-                setSaveFailure(null);
-                retrySession();
-              },
-            },
+            ...(saveFailure.retryable
+              ? [
+                  {
+                    label: "Retry",
+                    onClick: () => {
+                      setSaveFailure(null);
+                      retrySession();
+                    },
+                  },
+                ]
+              : []),
             {
               label: "Discard",
               onClick: () => {
