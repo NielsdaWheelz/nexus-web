@@ -17,7 +17,7 @@ before interruption, bounded reads of the owned pytest process
 are not formal passing gate receipts. the interrupted summary cannot substantiate
 the earlier completed policy/static results.
 
-corroboration: confidence run `583acfc1cd7c4f72` at `87c187bcf3` was
+corroboration: changed run `583acfc1cd7c4f72` at `87c187bcf3` was
 deliberately interrupted during `kernel-python` to integrate main `7a646cf5a5`
 and release the shared runner. its `test-results/runs/583acfc1cd7c4f72/run-context.json`
 retains eight command records owned by `static-python`, `static-web`,
