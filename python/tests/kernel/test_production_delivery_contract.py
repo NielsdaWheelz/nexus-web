@@ -30,6 +30,20 @@ def test_ci_setup_qualifies_root_owned_release_proofs_before_toolchain_work() ->
     assert 'if [ "$(id -u)" -ne 0 ]; then\n          sudo --non-interactive true' in setup
 
 
+def test_ci_setup_pins_and_rechecks_the_effective_bun_toolchain() -> None:
+    setup = (REPO_ROOT / ".github/actions/setup-test/action.yml").read_text(
+        encoding="utf-8",
+    )
+
+    assert (REPO_ROOT / ".bun-version").read_text(encoding="utf-8") == "1.3.10\n"
+    assert (
+        "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2\n"
+        "      with:\n"
+        "        bun-version-file: .bun-version"
+    ) in setup
+    assert 'test "$(bun --version)" = "$(cat .bun-version)"' in setup
+
+
 def test_ci_static_checks_use_engine_buildkit_without_an_isolated_daemon() -> None:
     setup = (REPO_ROOT / ".github/actions/setup-test/action.yml").read_text(
         encoding="utf-8",

@@ -49,6 +49,8 @@ runs:
           ../llm-tools/uv.lock
 
     - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      with:
+        bun-version-file: .bun-version
 
     - name: Install platform static tools
       shell: bash
@@ -79,9 +81,11 @@ runs:
       with:
         version: 2.112.0
 
-    - name: Verify the pinned Supabase CLI
+    - name: Verify the pinned Bun and Supabase CLIs
       shell: bash
-      run: test "$(supabase --version | sed -n '1p')" = "2.112.0"
+      run: |
+        test "$(bun --version)" = "$(cat .bun-version)"
+        test "$(supabase --version | sed -n '1p')" = "2.112.0"
 
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
