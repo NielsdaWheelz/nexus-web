@@ -281,7 +281,6 @@ describe("ActionMenu public resource-action contract", () => {
     });
     const open = within(reopened).getByRole("menuitem", {
       name: "Open",
-      exact: true,
     });
     await waitFor(() => expect(open).toHaveFocus());
     await userEvent.keyboard("{Enter}");
@@ -367,7 +366,7 @@ describe("ActionMenu public resource-action contract", () => {
     });
     await waitFor(() =>
       expect(
-        within(menu).getByRole("menuitem", { name: "Open", exact: true }),
+        within(menu).getByRole("menuitem", { name: "Open" }),
       ).toHaveFocus(),
     );
 

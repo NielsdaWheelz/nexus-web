@@ -545,7 +545,7 @@ describe("ResourceActionMenu component contract", () => {
     );
     await waitFor(() =>
       expect(
-        within(menu).getByRole("menuitem", { name: "Open", exact: true }),
+        within(menu).getByRole("menuitem", { name: "Open" }),
       ).toHaveFocus(),
     );
     expect(loading).not.toBeInTheDocument();
