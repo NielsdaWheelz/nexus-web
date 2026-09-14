@@ -351,3 +351,4 @@ unexpected timeouts. See
 
 - [open] oi-106 · generation policy · 2026-09-14 spec review · p2 · background context-token budget is recorded without enforcement: [ticket](tickets/background-generation-context-budget-is-not-enforced.md).
 - [open] metadata verification · 2026-09-14 implementation · live research judgments and external query contents still need smoke inspection: [ticket](tickets/metadata-live-research-smoke-unverified.md).
+- [open] test control · 2026-09-14 publication-date verification · host oracle fixture ownership setup blocks local confidence: [ticket](tickets/host-oracle-fixture-ownership-blocks-confidence.md).
