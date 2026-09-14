@@ -1278,8 +1278,10 @@ def test_browser_setup_failure_references_every_owned_process_log(tmp_path: Path
     )
 
 
-def test_heavy_capability_remains_truthfully_not_run() -> None:
-    context = CapabilityContext(REPO_ROOT, Workflow.FULL, ())
+def test_heavy_capability_remains_truthfully_not_run(tmp_path: Path) -> None:
+    (tmp_path / "python/.venv").mkdir(parents=True)
+    _write(tmp_path / "python/tests/service/test_owned.py", "def test_owned(): pass\n")
+    context = CapabilityContext(tmp_path, Workflow.FULL, ())
 
     result = run_capability(context, Capability.SERVICE)
 
