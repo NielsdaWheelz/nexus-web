@@ -25,6 +25,10 @@ and `nexus.resource.read` for one media resource and its admitted children.
 `requester_user_id` supplies authorization from the successful source attempt,
 podcast sync, retry, or explicit maintenance viewer. execution, replay, budgets,
 and uncertain dispatch remain owned by the shared generation runtime.
+metadata runs as a light job on the interactive worker, which owns the callable
+model-tool listener. parsing and indexing retain the bounded background worker.
+chat has higher queue priority, but waits for an already running metadata turn;
+research retains its 300-second generation limit and existing bounded drain.
 the plan requires the existing brave search configuration; unavailable bindings
 fail admission instead of silently reducing the research capability.
 

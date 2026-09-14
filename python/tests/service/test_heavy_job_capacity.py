@@ -600,12 +600,12 @@ def test_blocked_heavy_is_unchanged_and_light_work_proceeds(engine: Engine) -> N
 
 
 @pytest.mark.parametrize("holder_kind", ["ingest_media_source", "media_content_reindex_job"])
-def test_metadata_is_heavy_and_excludes_parser_and_reindex_capacity(
+def test_metadata_is_light_and_admitted_while_parser_or_reindex_holds_capacity(
     engine: Engine,
     holder_kind: str,
 ) -> None:
     registry = get_default_registry()
-    assert registry["enrich_metadata"].resource_class == "Heavy"
+    assert registry["enrich_metadata"].resource_class == "Light"
     assert registry[holder_kind].resource_class == "Heavy"
     heavy_kinds = tuple(
         definition.kind for definition in registry.values() if definition.resource_class == "Heavy"
@@ -636,32 +636,6 @@ def test_metadata_is_heavy_and_excludes_parser_and_reindex_capacity(
             db.commit()
             assert admitted is not None and admitted.id == holder.id
 
-            assert (
-                claim_job_row(
-                    db,
-                    job_id=metadata.id,
-                    worker_id="metadata-capacity-contender",
-                    lease_seconds=300,
-                    allowed_kinds=(holder_kind, "enrich_metadata"),
-                    heavy_kinds=heavy_kinds,
-                )
-                is None
-            )
-            unchanged = get_job(db, metadata.id)
-            assert unchanged is not None
-            assert (unchanged.status, unchanged.attempts, unchanged.claimed_by) == (
-                "pending",
-                0,
-                None,
-            )
-
-            assert complete_job(
-                db,
-                job_id=holder.id,
-                worker_id=f"{holder_kind}-capacity-holder",
-                attempt_no=admitted.attempts,
-            )
-            db.commit()
             metadata_claim = claim_job_row(
                 db,
                 job_id=metadata.id,
@@ -672,11 +646,24 @@ def test_metadata_is_heavy_and_excludes_parser_and_reindex_capacity(
             )
             db.commit()
             assert metadata_claim is not None and metadata_claim.id == metadata.id
+            holder_state = get_job(db, holder.id)
+            assert holder_state is not None
+            assert (holder_state.status, holder_state.attempts, holder_state.claimed_by) == (
+                "running",
+                admitted.attempts,
+                f"{holder_kind}-capacity-holder",
+            )
             assert complete_job(
                 db,
                 job_id=metadata.id,
                 worker_id="metadata-capacity-worker",
                 attempt_no=metadata_claim.attempts,
+            )
+            assert complete_job(
+                db,
+                job_id=holder.id,
+                worker_id=f"{holder_kind}-capacity-holder",
+                attempt_no=admitted.attempts,
             )
             db.commit()
     finally:

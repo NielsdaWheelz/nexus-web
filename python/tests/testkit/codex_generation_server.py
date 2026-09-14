@@ -12,9 +12,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+import httpx
 from pydantic import ValidationError
 
 from nexus.schemas.presence import Absent, Present
@@ -114,7 +115,13 @@ class CodexGenerationPeerServer(socketserver.ThreadingMixIn, socketserver.UnixSt
         self._pending: _ReservedAdmission | None = None
         super().__init__(str(socket_path), CodexGenerationPeerHandler)
 
-    def record_command(self, command: GenerationCommand) -> None:
+    def record_command(
+        self,
+        command: GenerationCommand,
+        *,
+        metadata_read_uri: str | None,
+        metadata_read_succeeded: bool | None,
+    ) -> None:
         plan = command.spec.model_tool_plan_snapshot
         row = {
             "catalog_definition_revision": command.spec.catalog_definition_revision,
@@ -127,6 +134,8 @@ class CodexGenerationPeerServer(socketserver.ThreadingMixIn, socketserver.UnixSt
             "request_id": str(command.request_id),
             "route": command.spec.selection.route,
             "tool_grant_present": command.tool_grant is not None,
+            "metadata_read_uri": metadata_read_uri,
+            "metadata_read_succeeded": metadata_read_succeeded,
         }
         with self._audit_lock, self.audit.open("a", encoding="utf-8") as audit:
             audit.write(json.dumps(row, separators=(",", ":"), sort_keys=True) + "\n")
@@ -322,6 +331,8 @@ class CodexGenerationPeerHandler(socketserver.StreamRequestHandler):
             raise RequestRejected(HTTPStatus.CONFLICT, "invalid_generation_admission") from error
         if str(admission_id) != raw_admission_id or not self.peer.consume(admission_id, command):
             raise RequestRejected(HTTPStatus.CONFLICT, "generation_admission_mismatch")
+        metadata_read_uri = None
+        metadata_read_succeeded = None
         if command.spec.operation == "chat":
             prompt = f"{command.intent.instructions}\n{command.intent.input}".casefold()
             if "sofia" not in prompt or "clavius crater" not in prompt:
@@ -330,8 +341,23 @@ class CodexGenerationPeerHandler(socketserver.StreamRequestHandler):
             structured_output = None
         else:
             structured_output = deterministic_synthesis_output(command)
+            if command.spec.operation == "metadata_enrichment":
+                metadata_read_uri, source = self._read_metadata_source(command)
+                metadata_read_succeeded = source is not None
+                original = re.search(r"first published in (\d{4})\.", source or "")
+                edition = re.search(r"edition was published in (\d{4})\.", source or "")
+                structured_output["original_published_date"] = (
+                    original.group(1) if original is not None else None
+                )
+                structured_output["edition_published_date"] = (
+                    edition.group(1) if edition is not None else None
+                )
             text = json.dumps(structured_output, separators=(",", ":"), sort_keys=True)
-        self.peer.record_command(command)
+        self.peer.record_command(
+            command,
+            metadata_read_uri=metadata_read_uri,
+            metadata_read_succeeded=metadata_read_succeeded,
+        )
         events = ((GenerationText(text=text),) if command.spec.operation == "chat" else ()) + (
             GenerationTerminal(
                 status="succeeded",
@@ -369,6 +395,79 @@ class CodexGenerationPeerHandler(socketserver.StreamRequestHandler):
         )
         payload = b"".join(frame.model_dump_json().encode("utf-8") + b"\n" for frame in frames)
         self._send_bytes(HTTPStatus.OK, payload, "application/x-ndjson")
+
+    def _read_metadata_source(self, command: GenerationCommand) -> tuple[str, str | None]:
+        """Cross the same HTTP MCP boundary as the external Codex host."""
+        from nexus_test_control.runtime import EndpointKind, runtime_endpoint
+
+        plan = command.spec.model_tool_plan_snapshot
+        scope = command.spec.admitted_tool_scope
+        if (
+            not isinstance(plan, Present)
+            or plan.value.plan_id != "MetadataRead"
+            or not isinstance(scope, Present)
+            or len(scope.value.admitted_refs) != 1
+            or command.tool_grant is None
+        ):
+            raise RequestRejected(HTTPStatus.UNPROCESSABLE_ENTITY, "invalid_metadata_authority")
+        uri = scope.value.admitted_refs[0]
+        endpoint = (
+            runtime_endpoint(
+                Path(__file__).resolve().parents[3],
+                {"NEXUS_ENV": "test"},
+                EndpointKind.AGENT_TOOLS_MCP,
+            )
+            + "/internal/agent-tools/mcp"
+        )
+        with httpx.Client(
+            timeout=10,
+            trust_env=False,
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": "2025-06-18",
+                "Authorization": f"Bearer {command.tool_grant.token.get_secret_value()}",
+            },
+        ) as client:
+
+            def call(request_id: int, method: str, params: dict[str, Any]) -> dict[str, Any]:
+                response = client.post(
+                    endpoint,
+                    json={"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
+                )
+                if response.status_code != 200:
+                    raise RequestRejected(
+                        HTTPStatus.BAD_GATEWAY, f"metadata_mcp_{method.replace('/', '_')}_refused"
+                    )
+                result = response.json()
+                if "error" in result:
+                    raise RequestRejected(HTTPStatus.BAD_GATEWAY, "metadata_mcp_protocol_error")
+                return result["result"]
+
+            initialized = call(
+                1,
+                "initialize",
+                {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "metadata-peer", "version": "1"},
+                },
+            )
+            if initialized["protocolVersion"] != "2025-06-18":
+                raise RequestRejected(HTTPStatus.BAD_GATEWAY, "metadata_mcp_version_mismatch")
+            listed = call(2, "tools/list", {})
+            if "nexus__resource__read" not in {tool["name"] for tool in listed["tools"]}:
+                raise RequestRejected(HTTPStatus.BAD_GATEWAY, "metadata_read_tool_absent")
+            read = call(
+                3, "tools/call", {"name": "nexus__resource__read", "arguments": {"uri": uri}}
+            )
+        if read["isError"]:
+            # Pending audio/video is eligible for metadata before readable text exists.
+            # The peer still crossed MCP; only the readable-source proof requires success.
+            return uri, None
+        receipt = json.loads(read["content"][0]["text"])
+        if receipt["type"] != "Success":
+            raise RequestRejected(HTTPStatus.BAD_GATEWAY, "metadata_source_read_not_successful")
+        return uri, receipt["value"]["text"]
 
     def _serve_control(
         self,

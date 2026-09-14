@@ -472,7 +472,7 @@ def test_source_controlled_receipts_fail_closed_on_source_drift() -> None:
         for model in route.models
         for row in model.reasoning
     )
-    with pytest.raises(AssertionError, match="target capability is not qualified"):
+    with pytest.raises(AssertionError, match="^metadata_enrichment tool plan is not qualified$"):
         validate_background_policy(snapshot, policy=generation_policy.GENERATION_POLICY)
 
 

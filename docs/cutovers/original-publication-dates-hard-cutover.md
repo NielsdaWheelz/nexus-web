@@ -34,6 +34,8 @@ publisher and language keep their current encountered-source meanings. no new or
 
 **capability contract and composition.** one metadata generation uses the existing job, shared agent kernel, strict structured output, and publication transaction.
 
+run `enrich_metadata` as `Light` on the existing interactive worker, beside its model-tool listener. remote generation and scoped reads do not consume the background parser's heavy slot. preserve chat's higher queue priority. tradeoff: chat can wait for a running metadata turn, within its existing generation/setup/drain bounds; metadata shares the interactive process's containment. do not add a second listener, cross-process authority routing, or a new worker lane.
+
 ```text
 source publication → enqueue with requester → freeze input/scope/policy
 → one metadata generation with scoped reads → validate output
@@ -86,7 +88,7 @@ use `rg 'published_date|publishedDate' python/nexus apps/web/src` to close the p
 1. a modern heart of darkness fixture resolves to original 1899 and its actual edition date; changing only the reprint year cannot change the original. include a collection and a same-title/different-author case in focused checks.
 2. epub isbn/date reach the prompt with their edition meanings; a uuid is not an isbn; pdf creation never populates either publication date.
 3. partial calendar dates retain precision; valid source instants convert to utc days. invalid source dates are ignored without failing ingestion; invalid generated dates reject the payload. source refresh obeys replacement rules; generated null clears; generation failure/staleness leaves dates untouched.
-4. the plan exposes exactly four usable reads; a scoped tool round trip works; foreign-resource access and writes are denied by authority. smoke-check untrusted instructions and external query contents as model behavior. completed-tool replay does not redispatch.
+4. the plan exposes exactly four usable reads; a queued metadata job completes a scoped mcp read through the actual worker process and listener; foreign-resource access and writes are denied by authority. smoke-check untrusted instructions and external query contents as model behavior. completed-tool replay does not redispatch.
 5. media info shows both dates; library/search/author chronology agree on the original; unknown originals do not borrow edition dates. media info works through the existing dialog/sheet keyboard and focus behavior.
 6. migration plus batched backfill completes with no old media date path, no old-output decoder, and no changes to source identity, highlights, progress, or operational timestamps.
 

@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
 from datetime import timedelta
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 from uuid import uuid4
 
@@ -16,25 +14,19 @@ from llm_tools import WEB_READ_SPEC, WEB_SEARCH_SPEC, HandlerSuccess, ToolId, We
 from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.config import get_settings
 from nexus.db.models import (
     ContentIndexState,
     Fragment,
     LibraryEntry,
+    LLMCall,
     LLMModelTurn,
     Media,
     ProcessingStatus,
 )
 from nexus.db.session import create_session_factory
-from nexus.jobs.queue import JobExecutionContext, complete_job, enqueue_job, get_job
-from nexus.jobs.registry import get_default_registry, resolve_job_handler
+from nexus.jobs.queue import JobExecutionContext, enqueue_job, get_job
 from nexus.schemas.presence import Present, absent, present
 from nexus.services import generation_policy
-from nexus.services.agent_tools_mcp import (
-    ActiveAgentToolRegistry,
-    active_agent_tool_registry,
-    set_active_agent_tool_registry,
-)
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.durable_step_journal import (
     Completed,
@@ -62,7 +54,11 @@ from nexus.services.llm_ledger import (
 from nexus.services.metadata_dispatch import METADATA_STEP_PATH, enqueue_metadata_enrichment
 from nexus.services.metadata_enrichment import MetadataEnrichmentOutput, get_content_sample
 from nexus.services.reader_publication import replace_reader_publication
-from nexus.services.tool_authority import ToolAuthorityRefused, compose_generation_tool_executor
+from nexus.services.tool_authority import (
+    ToolAuthorityRefused,
+    compose_generation_tool_executor,
+    read_tool_positions,
+)
 from nexus.services.tool_runtime.composition import compose_tool_runtime
 from nexus.tasks.enrich_metadata import (
     _CompletedMetadataResultEnvelope,
@@ -71,17 +67,34 @@ from nexus.tasks.enrich_metadata import (
     _metadata_user_content,
     _publish_completed_transaction,
 )
-from tests.testkit.codex_generation_server import CodexGenerationPeerServer
+from nexus_test_control import services as test_services
+from nexus_test_control.model import Resource, ResourceKind
+from nexus_test_control.runtime import (
+    EndpointKind,
+    codex_generation_peer_identity,
+    forget_cleaned,
+    process_resource_identity,
+)
 from tests.testkit.generation_catalog import configured_chat_catalog_service
 from tests.testkit.generation_tool_authority import controlled_tool_runtime, generation_tool_spec
 from tests.testkit.llm_tool_scenarios import compose_available_product_tool_runtime
 from tests.testkit.queue_claims import claim_job_row
 from tests.testkit.unreachable_state import (
     cleanup_committed_upload_user,
-    clear_heavy_capacity_holder,
     delete_generations_by_ids,
     delete_jobs_by_ids,
+    lose_metadata_queue_completion_after_published_checkpoint,
+    prioritize_job_for_worker_proof,
 )
+from tests.testkit.worker import (
+    assert_production_worker,
+    controller_run,
+    kill_and_forget_process,
+    wait_for_job,
+)
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_TEST_ENV = {"NEXUS_ENV": "test"}
 
 
 def test_metadata_web_and_local_reads_share_scope_replay_and_call_budget(engine: Engine) -> None:
@@ -257,152 +270,191 @@ async def _metadata_web_and_local_reads(engine: Engine) -> None:
         cleanup_committed_upload_user(engine, user_id=requester)
 
 
-def test_metadata_registry_worker_binds_research_accepts_unknown_dates_and_replays(
+def test_queued_metadata_worker_reads_its_source_over_mcp_and_publishes_dates(
     engine: Engine,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The real worker must own reachable tool authority through terminal publication."""
+    run = controller_run()
     factory = create_session_factory(engine)
     requester, media_id = uuid4(), uuid4()
-    job_id = library_id = None
-    previous_registry = active_agent_tool_registry()
-    registry = ActiveAgentToolRegistry(session_factory=factory)
-    operation = compose_available_product_tool_runtime().operations["MetadataRead"]
-    registry.bind_operations((operation,))
-    set_active_agent_tool_registry(registry)
+    job_id = None
+    processes: list[test_services.StartedProcess] = []
+    peer = None
+    foreign_jobs = None
     try:
-        with (
-            TemporaryDirectory(prefix="nexus-md-") as temporary,
-            monkeypatch.context() as environment,
-        ):
-            socket_path = Path(temporary) / "peer.sock"
-            audit_path = Path(temporary) / "requests.jsonl"
-            audit_path.touch()
-            environment.setenv("NEXUS_CODEX_AGENT_SOCKET", str(socket_path))
-            environment.setenv("BRAVE_SEARCH_API_KEY", "metadata-proof-unused-brave-key")
-            get_settings.cache_clear()
-            with CodexGenerationPeerServer(socket_path, audit_path) as server:
-                thread = threading.Thread(
-                    target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        with factory() as db:
+            library_id = ensure_user_and_default_library(
+                db, requester, f"metadata-worker-{requester}@example.invalid"
+            )
+            db.add(
+                Media(
+                    id=media_id,
+                    kind="web_article",
+                    title="Saved work",
+                    processing_status=ProcessingStatus.ready_for_reading,
+                    created_by_user_id=requester,
+                    original_published_date="1900",
+                    edition_published_date="2000",
                 )
-                thread.start()
-                try:
-                    with factory() as db:
-                        library_id = ensure_user_and_default_library(
-                            db, requester, f"metadata-worker-{requester}@example.invalid"
-                        )
-                        db.add(
-                            Media(
-                                id=media_id,
-                                kind="video",
-                                title="Saved work",
-                                processing_status=ProcessingStatus.pending,
-                                created_by_user_id=requester,
-                                original_published_date="1900",
-                                edition_published_date="2000",
-                            )
-                        )
-                        db.flush()
-                        db.add(LibraryEntry(library_id=library_id, media_id=media_id))
-                        assert enqueue_metadata_enrichment(
-                            db,
-                            media_id=media_id,
-                            requester_user_id=requester,
-                            request_id=None,
-                            dedupe_key=f"metadata-worker:{media_id}",
-                        )
-                        job_id = db.scalar(
-                            text("SELECT id FROM background_jobs WHERE dedupe_key = :key"),
-                            {"key": f"metadata-worker:{media_id}"},
-                        )
-                        assert job_id is not None
-                        definition = get_default_registry()["enrich_metadata"]
-                        claimed = claim_job_row(
-                            db,
-                            job_id=job_id,
-                            worker_id="metadata-worker-proof",
-                            lease_seconds=definition.lease_seconds,
-                            heavy_kinds=(definition.kind,),
-                        )
-                        assert claimed is not None
-                        context = JobExecutionContext(
-                            job_id=job_id,
-                            worker_id="metadata-worker-proof",
-                            attempt_no=claimed.attempts,
-                            resource_class=definition.resource_class,
-                            execution_id=claimed.execution_id,
-                        )
-                        payload = claimed.payload
-                        db.commit()
-                    handler = resolve_job_handler(definition.handler_path)
-                    result = handler(payload=payload, context=context)
-                    assert result == {
-                        "status": "success",
-                        "fields": ["original_published_date", "edition_published_date"],
-                    }
-                    assert handler(payload=payload, context=context) == result
-                    with factory() as db:
-                        media = db.get(Media, media_id)
-                        assert (
-                            media is not None
-                            and media.original_published_date is None
-                            and media.edition_published_date is None
-                        )
-                        job = get_job(db, job_id)
-                        assert job is not None and job.payload["requester_user_id"] == str(
-                            requester
-                        )
-                        admission = job.payload["generation_admissions"][METADATA_STEP_PATH]
-                        spec = decode_generation_spec_document(admission["spec"])
-                        assert (
-                            isinstance(spec.model_tool_plan_snapshot, Present)
-                            and spec.model_tool_plan_snapshot.value.plan_id == "MetadataRead"
-                        )
-                        assert isinstance(
-                            spec.admitted_tool_scope, Present
-                        ) and spec.admitted_tool_scope.value == FrozenToolScope(
-                            admitted_refs=(f"media:{media_id}",), predicates=()
-                        )
-                        assert str(requester) in admission["intent"]["input"]
-                        turns = db.scalars(
-                            select(LLMModelTurn).where(
-                                LLMModelTurn.generation_id
-                                == stable_generation_id(job_id, METADATA_STEP_PATH)
-                            )
-                        ).all()
-                        assert (
-                            len(turns) == 1
-                            and turns[0].accepted_at is not None
-                            and turns[0].completed_at is not None
-                        )
-                        assert complete_job(
-                            db,
-                            job_id=job_id,
-                            worker_id=context.worker_id,
-                            attempt_no=context.attempt_no,
-                            result_payload=result,
-                        )
-                        db.commit()
-                    audits = [json.loads(line) for line in audit_path.read_text().splitlines()]
-                    assert len(audits) == 1
-                    assert (
-                        audits[0]["model_tool_plan"] == "MetadataRead"
-                        and audits[0]["tool_grant_present"] is True
-                    )
-                finally:
-                    server.shutdown()
-                    thread.join(timeout=5)
-                    assert not thread.is_alive()
+            )
+            db.flush()
+            db.add(LibraryEntry(library_id=library_id, media_id=media_id))
+            source = "This work was first published in 1899. This edition was published in 2007."
+            db.add(
+                Fragment(
+                    media_id=media_id,
+                    idx=0,
+                    canonical_text=source,
+                    html_sanitized=f"<p>{source}</p>",
+                )
+            )
+            db.flush()
+            replace_reader_publication(
+                db,
+                media_id=media_id,
+                expected_kind="web_article",
+                replace_projection=lambda _: None,
+            )
+            assert enqueue_metadata_enrichment(
+                db,
+                media_id=media_id,
+                requester_user_id=requester,
+                request_id=None,
+                dedupe_key=f"metadata-worker:{media_id}",
+            )
+            job_id = db.scalar(
+                text("SELECT id FROM background_jobs WHERE dedupe_key = :key"),
+                {"key": f"metadata-worker:{media_id}"},
+            )
+            assert job_id is not None
+            prioritize_job_for_worker_proof(db, job_id=job_id)
+            db.commit()
+
+        peer = test_services.materialize_codex_generation_peer(_REPO_ROOT, _TEST_ENV, run)
+        peer_process = test_services.start_python_process(
+            _REPO_ROOT, _TEST_ENV, run, "codex-generation-peer"
+        )
+        processes.append(peer_process)
+        test_services.wait_codex_generation_peer_ready(
+            _REPO_ROOT, _TEST_ENV, peer_process, peer.socket
+        )
+        # The real worker skips these locked rows throughout both owned attempts.
+        foreign_jobs = engine.connect()
+        foreign_jobs.begin()
+        foreign_jobs.execute(
+            text("SELECT id FROM background_jobs WHERE id != :job_id FOR UPDATE"),
+            {"job_id": job_id},
+        ).all()
+        worker = test_services.start_python_process(
+            _REPO_ROOT,
+            _TEST_ENV,
+            run,
+            "worker-interactive",
+            overrides={
+                **peer.client_environment(),
+                "BRAVE_SEARCH_API_KEY": "metadata-proof-unused-brave-key",
+            },
+        )
+        processes.append(worker)
+        test_services.wait_process_ready(
+            _REPO_ROOT, _TEST_ENV, worker, EndpointKind.AGENT_TOOLS_MCP, "/internal/agent-tools/mcp"
+        )
+        assert_production_worker(worker, run)
+        terminal = wait_for_job(engine, job_id, status="succeeded", attempts=1)
+        assert terminal == (
+            "succeeded",
+            1,
+            None,
+            None,
+            {"status": "success", "fields": ["original_published_date", "edition_published_date"]},
+        ), f"metadata {media_id} did not publish from the queued worker: {terminal!r}"
+        with factory() as db:
+            media = db.get(Media, media_id)
+            assert media is not None
+            assert (media.original_published_date, media.edition_published_date) == ("1899", "2007")
+            lose_metadata_queue_completion_after_published_checkpoint(db, job_id=job_id)
+            db.commit()
+        replayed = wait_for_job(engine, job_id, status="succeeded", attempts=2)
+        kill_and_forget_process(worker)
+        processes.remove(worker)
+        assert replayed == ("succeeded", 2, None, None, terminal[4]), (
+            f"metadata {media_id} did not replay its published checkpoint: {replayed!r}"
+        )
+        generation_id = stable_generation_id(job_id, METADATA_STEP_PATH)
+        with factory() as db:
+            media = db.get(Media, media_id)
+            assert media is not None
+            assert (media.original_published_date, media.edition_published_date) == ("1899", "2007")
+            job = get_job(db, job_id)
+            assert job is not None and job.payload["requester_user_id"] == str(requester)
+            admission = job.payload["generation_admissions"][METADATA_STEP_PATH]
+            spec = decode_generation_spec_document(admission["spec"])
+            assert isinstance(spec.model_tool_plan_snapshot, Present)
+            assert spec.model_tool_plan_snapshot.value.plan_id == "MetadataRead"
+            assert isinstance(spec.admitted_tool_scope, Present)
+            assert spec.admitted_tool_scope.value == FrozenToolScope(
+                admitted_refs=(f"media:{media_id}",), predicates=()
+            )
+            assert db.scalars(
+                select(LLMCall.id).where(
+                    LLMCall.owner_kind == "media_enrichment", LLMCall.owner_id == media_id
+                )
+            ).all() == [generation_id]
+            turns = db.scalars(
+                select(LLMModelTurn).where(LLMModelTurn.generation_id == generation_id)
+            ).all()
+            assert len(turns) == 1 and turns[0].accepted_at is not None
+            assert turns[0].completed_at is not None
+            positions = read_tool_positions(db, generation_id=generation_id)
+            assert [
+                (position.canonical_tool_id, position.transport_kind, position.replay_status)
+                for position in positions
+            ] == [("nexus.resource.read", "CodexMcp", "Completed")]
+            assert not db.scalar(
+                text("SELECT 1 FROM background_job_capacity_leases WHERE job_id = :id"),
+                {"id": job_id},
+            )
+        audits = [json.loads(line) for line in peer.audit.read_text().splitlines()]
+        owned = [audit for audit in audits if audit["metadata_read_uri"] == f"media:{media_id}"]
+        assert [audit["request_id"] for audit in owned] == [str(generation_id)]
+        assert owned[0]["model_tool_plan"] == "MetadataRead"
+        assert owned[0]["tool_grant_present"] is True
+        assert owned[0]["metadata_read_uri"] == f"media:{media_id}"
+        assert owned[0]["metadata_read_succeeded"] is True
     finally:
-        set_active_agent_tool_registry(previous_registry)
-        registry.unbind_operations((operation,))
-        get_settings.cache_clear()
+        for process in reversed(processes):
+            identity = process_resource_identity(run.run_id, process.role)
+            test_services._stop_process_group(
+                _REPO_ROOT,
+                process.process_group_id,
+                process.process_start_token,
+                run.run_id,
+                process.owner_token,
+                identity,
+            )
+            forget_cleaned(
+                _REPO_ROOT, _TEST_ENV, run.run_id, Resource(ResourceKind.PROCESS, identity)
+            )
+        if foreign_jobs is not None:
+            foreign_jobs.rollback()
+            foreign_jobs.close()
+        if peer is not None:
+            # The controller deletes peer state; retain its exact, secret-free audit first.
+            retained = (
+                _REPO_ROOT / "test-results" / "runs" / run.run_id / "metadata-process-peer.jsonl"
+            )
+            retained.write_bytes(peer.audit.read_bytes())
+            test_services._delete_codex_generation_peer_state(_REPO_ROOT, run.run_id)
+            forget_cleaned(
+                _REPO_ROOT,
+                _TEST_ENV,
+                run.run_id,
+                Resource(
+                    ResourceKind.CODEX_GENERATION_PEER, codex_generation_peer_identity(run.run_id)
+                ),
+            )
         with factory() as db:
             if job_id is not None:
-                if db.scalar(
-                    text("SELECT 1 FROM background_job_capacity_leases WHERE job_id = :id"),
-                    {"id": job_id},
-                ):
-                    clear_heavy_capacity_holder(db, job_id=job_id)
                 delete_generations_by_ids(
                     db, generation_ids=(stable_generation_id(job_id, METADATA_STEP_PATH),)
                 )

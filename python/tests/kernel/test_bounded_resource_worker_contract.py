@@ -124,12 +124,13 @@ def test_worker_topology_and_task_digest_cover_resource_class(
         assert interactive | background | maintenance == set(registry)
         assert "ingest_media_source" not in interactive
         assert "ingest_media_source" in background
+        assert "enrich_metadata" in interactive
+        assert "enrich_metadata" not in background
         assert {
             definition.kind
             for definition in registry.values()
             if definition.resource_class == "Heavy"
         } == {
-            "enrich_metadata",
             "ingest_media_source",
             "media_content_reindex_job",
         }
@@ -151,11 +152,11 @@ def test_worker_topology_and_task_digest_cover_resource_class(
             metadata.never_prune_dead,
         ) == (
             "nexus.jobs.registry:_run_enrich_metadata",
-            "Heavy",
+            "Light",
             2,
             (0,),
             300,
-            "Llm",
+            "Base",
             (),
             True,
         )
