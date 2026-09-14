@@ -132,7 +132,9 @@
       "proofs": [
         "pytest:python/tests/migrations/test_original_publication_dates.py::test_publication_dates_require_drained_work_and_invalidate_chronology"
       ],
-      "expected_failure": "DID NOT RAISE"
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "b8347b0949b8718e381ad6c01c9ef0dc32850376fbf57c91753550da105925ca"
     },
     {
       "id": "podcast-subscription-notification-bypass",
@@ -1183,7 +1185,9 @@
       "proofs": [
         "pytest:python/tests/service/test_media_publication_metadata.py::test_epub_reprint_date_never_replaces_original_and_null_research_clears"
       ],
-      "expected_failure": "source edition populated the original publication date"
+      "expected_failure": "source edition populated the original publication date",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "905320fcd5e88dee2192ac31e79cd7ea72ee76bb58cedd0101fe4df7c9154faf"
     },
     {
       "id": "publication-calendar-validation-bypass",
@@ -1192,7 +1196,9 @@
       "proofs": [
         "pytest:python/tests/kernel/test_publication_dates.py::test_publication_dates_reject_impossible_or_unsupported_generated_values"
       ],
-      "expected_failure": "DID NOT RAISE"
+      "expected_failure": "DID NOT RAISE",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "47a965b94109a13bfaa816ffd1075fefebd89478b465320f704cb7b26daed1dd"
     },
     {
       "id": "reader-map-transitive-cluster-bypass",
