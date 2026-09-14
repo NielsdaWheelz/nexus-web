@@ -30,6 +30,13 @@ feature base `7fa89b88c8342bca9edfb46a6d20053c49555fb2`. see
 capabilities were blocked. focused metadata service/browser proofs and four
 targeted fault checks passed independently.
 
+the publication-date pre-merge `./scripts/test pr` run `8dcdec6b5d2f0d33`
+reproduced the same setup error after 1,141 python passes on integrated
+candidate `615929e72893294c21c546e46b226670d18fea41`. its policy and static
+capabilities passed; later capabilities were blocked. see that run’s
+`summary.json` and `kernel-python-1.log:438`. focused integration, including the
+populated reader/date upgrade, passed separately in `11259d09bf67a2b9`.
+
 prerequisite: decide the approved privilege boundary for this local host fixture.
 fix its ownership setup or route the privileged proof to its explicit capability;
 surface the captured command stderr when setup fails. preserve the root-ownership
