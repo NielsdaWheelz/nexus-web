@@ -359,3 +359,4 @@ SIGTERMs; twelve exact traced repetitions of the first case did not reproduce.
 Capture the sender under the full kernel portfolio before changing lifecycle
 behavior. See
 [docs/tickets/oracle-host-replay-received-unowned-sigterm.md](tickets/oracle-host-replay-received-unowned-sigterm.md).
+- [open] resource actions · 2026-09-14 highlight popup verification · mobile parity journey finds the prior browse pane after reader navigation: [ticket](tickets/resource-action-parity-mobile-pane-readiness.md).
