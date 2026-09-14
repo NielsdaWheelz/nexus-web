@@ -5,11 +5,12 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from nexus.api.read_admission import AdmittedReadRoute
+from nexus.api.storage_response import StorageResponse
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.config import require_reader_publication_limits
 from nexus.db.session import get_repeatable_read_db, release_connection
@@ -68,6 +69,7 @@ from nexus.services.reader_publication_resolve import (
     resolve_reader_publication_for_viewer,
 )
 from nexus.storage.client import get_storage_client
+from nexus.storage.read import HTTP_STORAGE_CHUNK_BYTES, stream_object_checked
 
 router = APIRouter(tags=["media"])
 reads = APIRouter(route_class=AdmittedReadRoute)
@@ -543,9 +545,12 @@ def _member_response(
                 "Content-Length": str(interval.length),
             }
         )
-        return StreamingResponse(
+        return StorageResponse(
             storage.stream_object_range(
-                source.storage_path, start=interval.start, end_inclusive=interval.end
+                source.storage_path,
+                start=interval.start,
+                end_inclusive=interval.end,
+                chunk_bytes=HTTP_STORAGE_CHUNK_BYTES,
             ),
             media_type=source.media_type,
             status_code=206,
@@ -554,8 +559,15 @@ def _member_response(
     headers["Content-Digest"] = f"sha-256=:{digest}:"
     if role == "asset":
         headers["Accept-Ranges"] = "bytes"
-    return StreamingResponse(
-        storage.stream_object(source.storage_path), media_type=source.media_type, headers=headers
+    return StorageResponse(
+        stream_object_checked(
+            storage,
+            source.storage_path,
+            expected_size=source.size_bytes,
+            chunk_bytes=HTTP_STORAGE_CHUNK_BYTES,
+        ),
+        media_type=source.media_type,
+        headers=headers,
     )
 
 

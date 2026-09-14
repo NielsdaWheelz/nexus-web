@@ -1,6 +1,6 @@
 # public epub assets bypass image admission
 
-- status: open
+- status: open; reviewed streaming/admission implementation integrated, verification pending
 - origin: 2026-09-14 bounded-workspace stream composition audit at `dd21213bfa`
 - area: public resource sharing / foreground memory
 

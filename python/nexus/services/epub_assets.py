@@ -1,7 +1,7 @@
 """Private EPUB asset access."""
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -13,7 +13,7 @@ from nexus.db.models import Media, MediaKind
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.services.capabilities import is_document_status_ready
 from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
-from nexus.storage.read import read_object_checked
+from nexus.storage.read import HTTP_STORAGE_CHUNK_BYTES, stream_object_checked
 
 _ASSET_KEY_RE = re.compile(r"^[a-zA-Z0-9_./-]+$")
 READER_ASSET_CONTENT_SECURITY_POLICY = (
@@ -42,7 +42,8 @@ _PUBLIC_EPUB_ASSET_CONTENT_TYPES = frozenset(
 
 @dataclass(frozen=True)
 class EpubAssetOut:
-    data: bytes
+    body: Generator[bytes, None, None]
+    size_bytes: int
     content_type: str
     cache_control: str
     content_security_policy: str | None
@@ -120,17 +121,19 @@ def get_epub_asset_for_viewer(
             asset_key=asset_key,
         )
 
-    try:
-        data = read_object_checked(
-            storage_client or get_storage_client(),
-            asset_metadata.storage_path,
-            expected_size=asset_metadata.size_bytes,
-        )
-    except StorageError as exc:
-        raise ApiError(
-            ApiErrorCode.E_STORAGE_ERROR,
-            "Stored EPUB asset object is missing or unreadable",
-        ) from exc
+    def body() -> Generator[bytes, None, None]:
+        try:
+            yield from stream_object_checked(
+                storage_client or get_storage_client(),
+                asset_metadata.storage_path,
+                expected_size=asset_metadata.size_bytes,
+                chunk_bytes=HTTP_STORAGE_CHUNK_BYTES,
+            )
+        except StorageError as exc:
+            raise ApiError(
+                ApiErrorCode.E_STORAGE_ERROR,
+                "Stored EPUB asset object is missing or unreadable",
+            ) from exc
 
     # SVG can carry script; lock served EPUB SVG assets down at the response level.
     content_security_policy = (
@@ -139,7 +142,8 @@ def get_epub_asset_for_viewer(
         else None
     )
     return EpubAssetOut(
-        data=data,
+        body=body(),
+        size_bytes=asset_metadata.size_bytes,
         content_type=asset_metadata.content_type,
         cache_control="private, max-age=86400",
         content_security_policy=content_security_policy,

@@ -19,6 +19,23 @@ slash, backslash, or empty value. Storage keys are owner IDs or stable source
 keys, not content hashes. Object reads enforce DB-owned byte-size metadata at
 read time.
 
+admitted http asset/member responses use `StorageResponse`. it opens lazily,
+reads before sending headers, and closes the synchronous generator before its
+route releases admission. the existing admitted route supplies cancellation
+ownership; the response shields its final close. a late storage error aborts the
+body because sent headers and bytes cannot be recalled.
+
+http source chunks are 64 kib; whole-object parser reads retain their 8 mib
+default. full-object verification withholds one chunk until the next read and
+releases the last only after exact-size eof. this retains at most two source
+chunks, excluding sdk/framework allocations. ranges use the storage client's
+existing exact-range verifier. smaller chunks add read/send work; throughput
+and whole-process memory require workload qualification.
+
+public epub assets share image admission; public pdf files share package-transfer
+admission with offline archives. their lightweight bootstrap stays outside these
+pools. concurrent downloads can therefore produce the existing retryable 503.
+
 Oracle plates remain a public owned-asset lane (`oracle/plates/...`) holding plate
 image metadata only — no embeddings. The Oracle public-domain corpus is ordinary
 media: its source files (EPUB/PDF/web-article) use the normal `media_file` /

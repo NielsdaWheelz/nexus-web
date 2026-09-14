@@ -1,6 +1,6 @@
 # immutable member streams lack explicit close ownership
 
-status: open; source audit, cancellation behavior not yet reproduced
+status: open; reviewed implementation integrated, behavior verification pending
 origin: 2026-09-14 bounded-workspace publication asset review
 area: object storage response lifetime and read admission
 

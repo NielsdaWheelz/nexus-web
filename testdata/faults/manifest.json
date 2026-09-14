@@ -685,7 +685,9 @@
       "proofs": [
         "pytest:python/tests/service/test_public_resource_sharing.py::test_anonymous_link_matrix_binds_each_token_to_one_postgres_and_minio_subject"
       ],
-      "expected_failure": "first Bearer [REDACTED] failed bootstrap"
+      "expected_failure": "first Bearer [REDACTED] failed bootstrap",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "37d424f9a8a63269311f1a4cfde6d68162cb6956c04e885e3067cc26bd564d52"
     },
     {
       "id": "document-import-digest-nullability-bypass",
@@ -2290,6 +2292,17 @@
         "pytest:python/tests/kernel/test_worker_runtime_health.py"
       ],
       "expected_failure": "the idle worker loaded provider execution modules"
+    },
+    {
+      "id": "storage-declared-tail-before-eof",
+      "patch": "testdata/faults/storage-declared-tail-before-eof.patch",
+      "sha256": "51d26b7b23efa785cb9eda096caefcb0cf1e561efbd5391a4ab9bb12f3bf5bcf",
+      "proofs": [
+        "pytest:python/tests/kernel/test_storage_streaming.py::test_storage_response_requires_exact_eof_before_completing_declared_body"
+      ],
+      "expected_failure": "stored object released the declared tail before exact EOF",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "392e259aa8793d59539678ee2fc6e1976b5cfc7d4b4392e02f06363791be2d07"
     }
   ]
 }

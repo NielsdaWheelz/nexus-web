@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Literal, NoReturn
 from uuid import UUID
@@ -76,7 +76,10 @@ from nexus.services.public_share_handles import (
 from nexus.services.public_source_urls import current_public_source_url
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
-from nexus.storage.read import read_object_checked
+from nexus.storage.read import (
+    HTTP_STORAGE_CHUNK_BYTES,
+    stream_object_checked,
+)
 
 _MAX_PAGE_BYTES = 8 * 1024 * 1024
 _MAX_ARTICLE_FIELD_BYTES = 2 * 1024 * 1024
@@ -150,13 +153,14 @@ class _Projection:
 
 @dataclass(frozen=True, slots=True)
 class PublicAssetBody:
-    data: bytes
+    chunks: Generator[bytes, None, None]
     content_type: str
+    size_bytes: int
 
 
 @dataclass(frozen=True, slots=True)
 class PublicFileBody:
-    chunks: Iterator[bytes]
+    chunks: Generator[bytes, None, None]
     status_code: Literal[200, 206]
     content_length: int
     content_range: str | None
@@ -472,15 +476,21 @@ def get_public_asset(
         or source.size_bytes > _MAX_EPUB_ASSET_BYTES
     ):
         _masked_not_found()
-    try:
-        data = read_object_checked(
-            storage_client or get_storage_client(),
-            source.storage_path,
-            expected_size=source.size_bytes,
-        )
-    except StorageError:
-        _masked_not_found()
-    return PublicAssetBody(data=data, content_type=source.content_type)
+
+    def chunks() -> Generator[bytes, None, None]:
+        try:
+            yield from stream_object_checked(
+                storage_client or get_storage_client(),
+                source.storage_path,
+                expected_size=source.size_bytes,
+                chunk_bytes=HTTP_STORAGE_CHUNK_BYTES,
+            )
+        except StorageError:
+            _masked_not_found()
+
+    return PublicAssetBody(
+        chunks=chunks(), content_type=source.content_type, size_bytes=source.size_bytes
+    )
 
 
 def get_public_pdf_file(
@@ -507,9 +517,11 @@ def get_public_pdf_file(
     filename = _pdf_filename(projection.media.title)
     if raw_range is None:
         return PublicFileBody(
-            chunks=_verified_stream(
-                storage.stream_object(source.storage_path),
-                expected_length=source.size_bytes,
+            chunks=stream_object_checked(
+                storage,
+                source.storage_path,
+                expected_size=source.size_bytes,
+                chunk_bytes=HTTP_STORAGE_CHUNK_BYTES,
             ),
             status_code=200,
             content_length=source.size_bytes,
@@ -521,13 +533,11 @@ def get_public_pdf_file(
     except ValueError as exc:
         raise PublicRangeNotSatisfiable(source.size_bytes) from exc
     return PublicFileBody(
-        chunks=_verified_stream(
-            storage.stream_object_range(
-                source.storage_path,
-                start=byte_range.start,
-                end_inclusive=byte_range.end,
-            ),
-            expected_length=byte_range.length,
+        chunks=storage.stream_object_range(
+            source.storage_path,
+            start=byte_range.start,
+            end_inclusive=byte_range.end,
+            chunk_bytes=HTTP_STORAGE_CHUNK_BYTES,
         ),
         status_code=206,
         content_length=byte_range.length,
@@ -1361,17 +1371,6 @@ def _pdf_filename(title: str) -> str:
     if not cleaned.lower().endswith(".pdf"):
         cleaned += ".pdf"
     return cleaned[:255].rstrip(" .") or "document.pdf"
-
-
-def _verified_stream(chunks: Iterator[bytes], *, expected_length: int) -> Iterator[bytes]:
-    seen = 0
-    for chunk in chunks:
-        seen += len(chunk)
-        if seen > expected_length:
-            raise StorageError("Stored object is larger than persisted metadata")
-        yield chunk
-    if seen != expected_length:
-        raise StorageError("Stored object integrity mismatch")
 
 
 def _parse_page_query(query_items: list[tuple[str, str]]) -> tuple[str | None, str | None]:

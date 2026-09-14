@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Generator
 from dataclasses import dataclass
 from typing import NoReturn
 from uuid import UUID
@@ -15,17 +15,9 @@ from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
 from nexus.storage.paths import ext_for_content_type
-from nexus.storage.read import read_object_checked
+from nexus.storage.read import HTTP_STORAGE_CHUNK_BYTES, stream_object_checked
 
 logger = get_logger(__name__)
-
-
-@dataclass(frozen=True)
-class OraclePlateBytes:
-    data: bytes
-    content_type: str
-    byte_size: int
-    etag: str
 
 
 @dataclass(frozen=True)
@@ -163,29 +155,18 @@ def get_oracle_plate_metadata(
     )
 
 
-def get_oracle_plate_bytes(
-    *,
-    session_factory: Callable[[], Session],
-    image_id: UUID,
-    storage_client: StorageClientBase | None = None,
-) -> OraclePlateBytes:
-    metadata = get_oracle_plate_metadata(
-        session_factory=session_factory,
-        image_id=image_id,
-    )
-    return read_oracle_plate_bytes(metadata, storage_client=storage_client)
-
-
-def read_oracle_plate_bytes(
+def stream_oracle_plate(
     metadata: OraclePlateMetadata,
     *,
     storage_client: StorageClientBase | None = None,
-) -> OraclePlateBytes:
-    sc = storage_client or get_storage_client()
+) -> Generator[bytes, None, None]:
     try:
-        # The metadata row's declared size bounds the read: an object larger than
-        # the row is refused mid-stream rather than materialized and measured.
-        data = read_object_checked(sc, metadata.storage_key, expected_size=metadata.byte_size)
+        yield from stream_object_checked(
+            storage_client or get_storage_client(),
+            metadata.storage_key,
+            expected_size=metadata.byte_size,
+            chunk_bytes=HTTP_STORAGE_CHUNK_BYTES,
+        )
     except StorageError as exc:
         logger.error(
             "oracle_plate_storage_read_failed",
@@ -197,12 +178,6 @@ def read_oracle_plate_bytes(
         raise ApiError(
             ApiErrorCode.E_STORAGE_ERROR, "Oracle plate object is missing or unreadable"
         ) from exc
-    return OraclePlateBytes(
-        data=data,
-        content_type=metadata.content_type,
-        byte_size=metadata.byte_size,
-        etag=metadata.etag,
-    )
 
 
 def oracle_plate_storage_metadata(db: Session) -> tuple[OraclePlateMetadata, ...]:

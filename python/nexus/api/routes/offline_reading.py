@@ -7,10 +7,11 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from nexus.api.read_admission import AdmittedPackageTransferRoute
+from nexus.api.storage_response import StorageResponse
 from nexus.auth.account_binding import require_expected_account
 from nexus.auth.bearer import parse_bearer_token
 from nexus.auth.middleware import Viewer, get_viewer
@@ -29,6 +30,7 @@ from nexus.services.offline_reading_preparation import (
     require_offline_publication_for_viewer,
 )
 from nexus.storage.client import get_storage_client
+from nexus.storage.read import HTTP_STORAGE_CHUNK_BYTES, stream_object_checked
 
 router = APIRouter(tags=["offline-reading"])
 # The package body is the largest response in the system. It draws on its own
@@ -111,7 +113,7 @@ def get_offline_reading_package(
     request: Request,
     media_id: UUID,
     db: Annotated[Session, Depends(get_db)],
-) -> StreamingResponse:
+) -> StorageResponse:
     encoded = parse_bearer_token(request.headers.get("authorization"))
     if encoded is None:
         raise ApiError(
@@ -126,10 +128,11 @@ def get_offline_reading_package(
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Verified offline archive not found")
     storage_path = archive.storage_path
     media_type = archive.media_type
+    size_bytes = archive.size_bytes
     digest = base64.b64encode(bytes.fromhex(archive.sha256)).decode("ascii")
     headers = {
         "Cache-Control": "private, no-store, no-transform",
-        "Content-Length": str(archive.size_bytes),
+        "Content-Length": str(size_bytes),
         "Content-Digest": f"sha-256=:{digest}:",
         "Nexus-Account-Id": str(token.user_id),
         "Nexus-Reader-Generation": str(token.reader_generation),
@@ -138,8 +141,15 @@ def get_offline_reading_package(
     }
     release_connection(db)
     stream_tokens.claim_offline_reading_package_token(token)
-    return StreamingResponse(
-        get_storage_client().stream_object(storage_path), media_type=media_type, headers=headers
+    return StorageResponse(
+        stream_object_checked(
+            get_storage_client(),
+            storage_path,
+            expected_size=size_bytes,
+            chunk_bytes=HTTP_STORAGE_CHUNK_BYTES,
+        ),
+        media_type=media_type,
+        headers=headers,
     )
 
 

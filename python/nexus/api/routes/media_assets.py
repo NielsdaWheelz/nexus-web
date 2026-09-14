@@ -12,13 +12,12 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 
 from nexus.api.read_admission import AdmittedImageRoute
+from nexus.api.storage_response import StorageResponse
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_session_factory
 from nexus.services import epub_assets, image_proxy
 
-# Both routes materialize whole image bytes in the API process, so both draw on
-# the one qualified image budget, whether the bytes come from upstream or from
-# our own object store.
+# Both routes retain the existing qualified image budget through body transfer.
 router = APIRouter(tags=["media"], route_class=AdmittedImageRoute)
 
 
@@ -71,9 +70,9 @@ def get_epub_asset(
     )
     headers = {
         "Cache-Control": result.cache_control,
-        "Content-Length": str(len(result.data)),
+        "Content-Length": str(result.size_bytes),
         "X-Content-Type-Options": "nosniff",
     }
     if result.content_security_policy:
         headers["Content-Security-Policy"] = result.content_security_policy
-    return Response(content=result.data, media_type=result.content_type, headers=headers)
+    return StorageResponse(result.body, media_type=result.content_type, headers=headers)

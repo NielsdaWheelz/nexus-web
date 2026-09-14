@@ -1,4 +1,4 @@
-status: open; source evidence, no executed reproduction
+status: open; reviewed transfer/close ownership integrated, verification pending
 origin: 2026-09-14 peer review of publication asset streaming proposal
 area: public PDF transfer admission and storage response ownership
 
@@ -18,7 +18,7 @@ attach the existing package-transfer admission to this one file route. preserve
 public security/error headers, authorization and ranges. share the existing
 transfer pool and acknowledge that an offline download may make a public file
 return 503. no new limits, registry or lifecycle framework. the source/proof
-option remains outside main until the explicit close owner is reviewed too.
+option and explicit close owner are now integrated after independent review.
 
 acceptance: the actual public route, current production ASGI 2.3, and a held SDK
 read establish capacity refusal, lightweight-read progress and caller completion

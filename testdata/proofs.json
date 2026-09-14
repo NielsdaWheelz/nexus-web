@@ -111,7 +111,10 @@
         "apps/web/src/lib/resources/resourceLocators.ts",
         "python/nexus/api/routes/me.py",
         "python/nexus/services/epub_ingest.py",
-        "apps/web/src/app/api/me/workspace-session/route.ts"
+        "apps/web/src/app/api/me/workspace-session/route.ts",
+        "python/nexus/api/storage_response.py",
+        "python/nexus/storage/client.py",
+        "python/nexus/storage/read.py"
       ],
       "proofs": [
         "pytest:python/tests/kernel/test_auth_config_verifier.py",
@@ -1190,7 +1193,13 @@
         "apps/web/src/lib/reader/readerCapacity.ts",
         "apps/web/src/lib/nexus/history.ts",
         "testdata/contracts/nexus-history.json",
-        "testdata/offline-reading/reader-raster-source-facts.json"
+        "testdata/offline-reading/reader-raster-source-facts.json",
+        "python/nexus/api/storage_response.py",
+        "python/nexus/storage/client.py",
+        "python/nexus/storage/read.py",
+        "python/nexus/services/epub_assets.py",
+        "python/nexus/services/oracle_plates.py",
+        "python/nexus/api/routes/oracle.py"
       ],
       "proofs": [
         "pytest:python/tests/kernel/test_bounded_resource_worker_contract.py",
@@ -1226,7 +1235,11 @@
         "vitest:apps/web/src/lib/media/artwork.browser.test.tsx",
         "vitest:apps/web/src/lib/media/ArtworkCapacity.browser.test.tsx",
         "vitest:apps/web/src/lib/nexus/history.unit.test.ts",
-        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingRasterDecoderTest.kt"
+        "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingRasterDecoderTest.kt",
+        "pytest:python/tests/service/test_storage_asset_streaming.py",
+        "pytest:python/tests/service/test_storage_asset_streaming.py::test_stored_asset_sends_bounded_bytes_before_reading_the_complete_object",
+        "pytest:python/tests/kernel/test_storage_streaming.py",
+        "pytest:python/tests/kernel/test_storage_streaming.py::test_storage_response_requires_exact_eof_before_completing_declared_body"
       ],
       "capabilities": [
         "kernel-python",

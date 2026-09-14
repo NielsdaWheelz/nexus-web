@@ -2,7 +2,7 @@
 
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import datetime
 from typing import BinaryIO
@@ -82,8 +82,10 @@ class StorageClientBase(ABC):
         ...
 
     @abstractmethod
-    def stream_object(self, path: str) -> Iterator[bytes]:
-        """Stream object bytes in chunks."""
+    def stream_object(
+        self, path: str, *, chunk_bytes: int = 8 * 1024 * 1024
+    ) -> Generator[bytes, None, None]:
+        """Own one SDK body, yielding at most chunk_bytes until exhausted or closed."""
         ...
 
     @abstractmethod
@@ -93,8 +95,9 @@ class StorageClientBase(ABC):
         *,
         start: int,
         end_inclusive: int,
-    ) -> Iterator[bytes]:
-        """Stream one validated inclusive object-byte range."""
+        chunk_bytes: int = 8 * 1024 * 1024,
+    ) -> Generator[bytes, None, None]:
+        """Own one SDK body for an inclusive range; close it on exhaustion or close()."""
         ...
 
     @abstractmethod
@@ -234,7 +237,11 @@ class StorageClient(StorageClientBase):
             size_bytes=int(response.get("ContentLength") or 0),
         )
 
-    def stream_object(self, path: str) -> Iterator[bytes]:
+    def stream_object(
+        self, path: str, *, chunk_bytes: int = 8 * 1024 * 1024
+    ) -> Generator[bytes, None, None]:
+        if chunk_bytes < 1:
+            raise ValueError("storage chunk size must be positive")
         try:
             response = self._client.get_object(Bucket=self._bucket, Key=path)
         except ClientError as exc:
@@ -247,7 +254,7 @@ class StorageClient(StorageClientBase):
         body = response["Body"]
         try:
             try:
-                while chunk := body.read(8 * 1024 * 1024):
+                while chunk := body.read(chunk_bytes):
                     yield chunk
             except (BotoCoreError, ClientError, OSError) as exc:
                 raise StorageError(f"Failed to stream object {path}") from exc
@@ -262,7 +269,10 @@ class StorageClient(StorageClientBase):
         *,
         start: int,
         end_inclusive: int,
-    ) -> Iterator[bytes]:
+        chunk_bytes: int = 8 * 1024 * 1024,
+    ) -> Generator[bytes, None, None]:
+        if chunk_bytes < 1:
+            raise ValueError("storage chunk size must be positive")
         if start < 0 or end_inclusive < start:
             raise ValueError("invalid inclusive object range")
         try:
@@ -283,7 +293,7 @@ class StorageClient(StorageClientBase):
         try:
             try:
                 while remaining > 0:
-                    chunk = body.read(min(8 * 1024 * 1024, remaining))
+                    chunk = body.read(min(chunk_bytes, remaining))
                     if not chunk:
                         raise StorageError("Stored object range ended before persisted metadata")
                     remaining -= len(chunk)

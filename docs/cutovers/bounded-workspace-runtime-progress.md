@@ -1770,3 +1770,31 @@ route, its event loop fails to settle and the parent stops/waits that child.
 original exception identity and following request acceptance remain candidate
 oracles. revised held-worker proof `16d948e0...` separately preserves its
 observation before physical cleanup; old-source replay is running.
+
+## shared storage transfer integration
+
+reviewed product patch `210f7107` and proof patch `d309f561` now enter the sole
+delivery worktree, with complete registry patch `122d141c`. private epub/oracle,
+immutable members and offline archives share an explicit response close owner.
+public assets use existing image admission; public pdf uses existing transfer
+admission. parser defaults, authorization, exact bytes/ranges and public masking
+remain at their existing owners. whole public source projection is still an
+independent open issue; this does not claim all public reads are bounded.
+
+price: two 64 kib source chunks can coexist; sdk/framework memory is additional.
+first body transfer waits for lookahead, and read/send work increases relative to
+8 mib chunks. public pdf can now receive retryable capacity refusal while an
+offline download owns the shared pool. no application limit is raised.
+
+new kernel proof cannot import the streaming interface on base. its exact eof
+canonical therefore uses the existing coherent-fault mechanism: releasing the
+pending chunk before checking the next chunk must falsify the unchanged emitted
+body assertion. no import failure counts as red. the public privacy canonical
+also uses its unchanged fault after a shared-support ownership refactor. each
+fault qualifies only its named invariant. separate close/admission and service
+base witnesses, followed by throughput and maximum-memory gates, remain pending.
+
+our focused controller invocation after `f1b8ea6bf4` waited on another ci run's
+shared lock and was interrupted before pytest started. it supplies no behavior
+verdict. the earlier preview at `0d3b2164ae` passed compilation; current combined
+controller, storage and native acceptance remain unverified.

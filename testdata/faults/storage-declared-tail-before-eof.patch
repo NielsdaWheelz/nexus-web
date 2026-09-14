@@ -1,0 +1,17 @@
+diff --git a/python/nexus/storage/read.py b/python/nexus/storage/read.py
+--- a/python/nexus/storage/read.py
++++ b/python/nexus/storage/read.py
+@@ -25,11 +25,11 @@
+     pending: bytes | None = None
+     try:
+         for chunk in chunks:
++            if pending is not None:
++                yield pending
+             total += len(chunk)
+             if total > expected_size:
+                 raise StorageError("Stored object is larger than persisted metadata")
+-            if pending is not None:
+-                yield pending
+             pending = chunk
+         if total != expected_size:
+             raise StorageError("Stored object integrity mismatch")

@@ -6,9 +6,11 @@ from typing import Annotated, Never
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from nexus.api.read_admission import AdmittedImageRoute, AdmittedPackageTransferRoute
+from nexus.api.storage_response import StorageResponse
 from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode
 from nexus.public_resource_security import apply_public_resource_share_headers
@@ -16,6 +18,8 @@ from nexus.responses import error_response, ok
 from nexus.services import public_resource_sharing
 
 router = APIRouter(prefix="/public/resource-share", tags=["public-resource-sharing"])
+file_transfers = APIRouter(route_class=AdmittedPackageTransferRoute)
+asset_transfers = APIRouter(route_class=AdmittedImageRoute)
 
 
 def _token(value: str | None) -> str:
@@ -112,7 +116,7 @@ def get_public_resource_share_section(
     return ok(result)
 
 
-@router.get("/assets/{asset_handle}")
+@asset_transfers.get("/assets/{asset_handle}")
 def get_public_resource_share_asset(
     asset_handle: str,
     request: Request,
@@ -128,18 +132,16 @@ def get_public_resource_share_asset(
         )
     except public_resource_sharing.PublicRequestValidation as exc:
         _raise_validation(exc)
-    response = Response(
-        content=result.data,
+    response = StorageResponse(
+        result.chunks,
         media_type=result.content_type,
-        headers={
-            "Content-Length": str(len(result.data)),
-        },
+        headers={"Content-Length": str(result.size_bytes)},
     )
     apply_public_resource_share_headers(response.headers)
     return response
 
 
-@router.get("/file")
+@file_transfers.get("/file")
 def get_public_resource_share_file(
     request: Request,
     db: Annotated[Session, Depends(get_db)],
@@ -178,7 +180,7 @@ def get_public_resource_share_file(
     }
     if result.content_range is not None:
         headers["Content-Range"] = result.content_range
-    response = StreamingResponse(
+    response = StorageResponse(
         result.chunks,
         status_code=result.status_code,
         media_type="application/pdf",
@@ -186,3 +188,7 @@ def get_public_resource_share_file(
     )
     apply_public_resource_share_headers(response.headers)
     return response
+
+
+router.include_router(file_transfers)
+router.include_router(asset_transfers)

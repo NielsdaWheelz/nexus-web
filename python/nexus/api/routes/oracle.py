@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.orm import Session
 
 from nexus.api.read_admission import AdmittedImageRoute
+from nexus.api.storage_response import StorageResponse
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_session_factory
 from nexus.responses import ok
@@ -19,8 +20,7 @@ from nexus.services import oracle as oracle_service
 from nexus.services import oracle_corpus, oracle_plates
 
 router = APIRouter(tags=["oracle"])
-# Plate reads materialize whole image bytes in the API process exactly as the
-# media image routes do, so they draw on the same qualified image budget.
+# Plate transfers retain the existing qualified image budget through body close.
 plates = APIRouter(tags=["oracle"], route_class=AdmittedImageRoute)
 
 
@@ -125,15 +125,14 @@ def get_oracle_plate(image_id: UUID, request: Request) -> Response:
     )
     if inm and etags_match(inm, metadata.etag):
         return Response(status_code=304, headers={"ETag": metadata.etag})
-    plate = oracle_plates.read_oracle_plate_bytes(metadata)
-    return Response(
-        content=plate.data,
-        media_type=plate.content_type,
+    return StorageResponse(
+        oracle_plates.stream_oracle_plate(metadata),
+        media_type=metadata.content_type,
         headers={
             "Cache-Control": "public, max-age=31536000, immutable",
-            "Content-Length": str(plate.byte_size),
+            "Content-Length": str(metadata.byte_size),
             "X-Content-Type-Options": "nosniff",
-            "ETag": plate.etag,
+            "ETag": metadata.etag,
         },
     )
 
