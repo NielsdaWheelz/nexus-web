@@ -2164,6 +2164,16 @@ account, URL, header, cookie, or filesystem path. Native state-changing BFF
 requests explicitly carry the exact pinned hosted `Origin`; OkHttp does not
 synthesize browser CSRF headers.
 
+native capacity refusals persist their optional `Retry-After` floor on the
+existing transfer row. eligibility is checked before origin requests, including
+after process recreation and network-policy changes. an early os wake finishes
+with retry requested through the existing exponential backoff; no delayed
+user-initiated job or in-memory sleep is introduced. retry may happen later than
+the floor. queued archive/verified staging remains owned on reopen and consumes
+disk until completion or cancellation. private database schema 4 adds a nullable
+floor; existing rows acquire no delay. malformed refusal headers remain integrity
+failures.
+
 Native Google sign-in
 (Credential Manager) and Custom-Tab OAuth both converge on a server-minted,
 single-use, PKCE-bound

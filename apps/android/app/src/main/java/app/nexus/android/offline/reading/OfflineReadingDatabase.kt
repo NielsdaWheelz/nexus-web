@@ -67,6 +67,7 @@ internal class OfflineReadingDatabase(
                 requested_at TEXT NOT NULL,
                 reader_generation INTEGER CHECK(reader_generation > 0),
                 preparation_started_at TEXT,
+                retry_not_before TEXT,
                 UNIQUE(binding_id, media_id),
                 FOREIGN KEY(binding_id) REFERENCES offline_reader_binding(binding_id)
             )
@@ -143,24 +144,26 @@ internal class OfflineReadingDatabase(
     }
 
     override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        check(oldVersion == 1 && newVersion == 3) {
+        check(oldVersion in setOf(1, 3) && newVersion == 4) {
             "unsupported offline reading database upgrade $oldVersion to $newVersion"
         }
-        migrateCursorSources(database)
-        database.execSQL("ALTER TABLE offline_reader_transfers ADD COLUMN reader_generation INTEGER CHECK(reader_generation > 0)")
-        database.execSQL("ALTER TABLE offline_reader_transfers ADD COLUMN preparation_started_at TEXT")
-        // Rebuild the two related tables within SQLiteOpenHelper's upgrade
-        // transaction. Keep foreign keys enabled throughout the replacement.
-        createPackageTables(database, replacement = true)
-        val columns = "id, binding_id, media_id, media_kind, title, reader_generation, reader_revision_key, package_schema_version, reader_contract_version, minimum_bundle_version, size_bytes, installed_at"
-        database.execSQL("INSERT INTO offline_reader_packages_new($columns) SELECT $columns FROM offline_reader_packages")
-        database.execSQL("INSERT INTO offline_reader_removals_new SELECT id, package_id, requested_at FROM offline_reader_removals")
-        database.execSQL("DROP TABLE offline_reader_removals")
-        database.execSQL("DROP TABLE offline_reader_packages")
-        database.execSQL("ALTER TABLE offline_reader_packages_new RENAME TO offline_reader_packages")
-        database.execSQL("ALTER TABLE offline_reader_removals_new RENAME TO offline_reader_removals")
-        database.rawQuery("PRAGMA foreign_key_check", null).use { check(!it.moveToFirst()) }
-
+        if (oldVersion == 1) {
+            migrateCursorSources(database)
+            database.execSQL("ALTER TABLE offline_reader_transfers ADD COLUMN reader_generation INTEGER CHECK(reader_generation > 0)")
+            database.execSQL("ALTER TABLE offline_reader_transfers ADD COLUMN preparation_started_at TEXT")
+            // Rebuild the two related tables within SQLiteOpenHelper's upgrade
+            // transaction. Keep foreign keys enabled throughout the replacement.
+            createPackageTables(database, replacement = true)
+            val columns = "id, binding_id, media_id, media_kind, title, reader_generation, reader_revision_key, package_schema_version, reader_contract_version, minimum_bundle_version, size_bytes, installed_at"
+            database.execSQL("INSERT INTO offline_reader_packages_new($columns) SELECT $columns FROM offline_reader_packages")
+            database.execSQL("INSERT INTO offline_reader_removals_new SELECT id, package_id, requested_at FROM offline_reader_removals")
+            database.execSQL("DROP TABLE offline_reader_removals")
+            database.execSQL("DROP TABLE offline_reader_packages")
+            database.execSQL("ALTER TABLE offline_reader_packages_new RENAME TO offline_reader_packages")
+            database.execSQL("ALTER TABLE offline_reader_removals_new RENAME TO offline_reader_removals")
+            database.rawQuery("PRAGMA foreign_key_check", null).use { check(!it.moveToFirst()) }
+        }
+        database.execSQL("ALTER TABLE offline_reader_transfers ADD COLUMN retry_not_before TEXT")
     }
 
     private fun migrateCursorSources(database: SQLiteDatabase) {
@@ -192,7 +195,7 @@ internal class OfflineReadingDatabase(
 
     companion object {
         internal const val DATABASE_NAME = "offline_reading.db"
-        private const val DATABASE_VERSION = 3
+        private const val DATABASE_VERSION = 4
     }
 }
 

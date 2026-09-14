@@ -1,12 +1,12 @@
 diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
 --- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
 +++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
-@@ -916,7 +916,7 @@
-         ) return null
+@@ -1139,7 +1139,7 @@
          val binding = requireBinding()
+         val now = clock.instant()
          return readTransfers(binding.bindingId).firstOrNull {
--            (it.id to it.stagingName) !in deferred && it.state !is ReadingTransferState.Failed
-+            it.state !is ReadingTransferState.Failed
+-            (it.id to it.stagingName) !in deferred && it.state !is ReadingTransferState.Failed &&
++            it.state !is ReadingTransferState.Failed &&
+                 (it.retryNotBefore == null || !now.isBefore(it.retryNotBefore))
          }
      }
- 

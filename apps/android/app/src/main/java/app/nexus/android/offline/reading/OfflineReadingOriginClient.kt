@@ -15,6 +15,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.security.MessageDigest
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.util.Base64
 import java.util.UUID
@@ -29,7 +30,9 @@ internal class OfflineReadingOriginException(
  * work, so nothing about the transfer is wrong and nothing was consumed: the
  * transfer returns to the queue instead of failing.
  */
-internal class OfflineReadingCapacityRefusedException : Exception("E_READ_CAPACITY")
+internal class OfflineReadingCapacityRefusedException(
+    val retryNotBefore: Instant?,
+) : Exception("E_READ_CAPACITY")
 
 internal sealed interface OfflineReadingDownloadResult {
     data object Preparing : OfflineReadingDownloadResult
@@ -436,7 +439,27 @@ internal class HttpOfflineReadingOriginClient(
         }.getOrNull()
         throw when (val refusal = offlineReadingRefusal(response.code, errorCode)) {
             is ReadingRefusal.Fail -> OfflineReadingOriginException(refusal.reason)
-            ReadingRefusal.Capacity -> OfflineReadingCapacityRefusedException()
+            ReadingRefusal.Capacity -> OfflineReadingCapacityRefusedException(retryNotBefore(response))
+        }
+    }
+
+    private fun retryNotBefore(response: Response): Instant? {
+        val values = response.headers.values("Retry-After")
+        if (values.isEmpty()) return null
+        require(values.size == 1) { "offline reading Retry-After is repeated" }
+        val value = values.single()
+        if (value.isNotEmpty() && value.all { it in '0'..'9' }) {
+            val seconds = requireNotNull(value.toLongOrNull()) {
+                "offline reading Retry-After is not representable"
+            }
+            val receivedAt = clock.instant()
+            require(seconds <= Duration.between(receivedAt, Instant.MAX).seconds) {
+                "offline reading Retry-After is not representable"
+            }
+            return receivedAt.plusSeconds(seconds)
+        }
+        return requireNotNull(response.headers.getInstant("Retry-After")) {
+            "offline reading Retry-After is malformed"
         }
     }
 

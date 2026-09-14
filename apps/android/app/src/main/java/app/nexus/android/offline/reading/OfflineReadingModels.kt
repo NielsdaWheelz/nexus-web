@@ -219,6 +219,8 @@ internal data class OfflineReadingTransfer(
     // Only queued requests made before schema 3 can lack a selected generation.
     val readerGeneration: Long?,
     val preparationStartedAt: Instant?,
+    // An owned-origin refusal survives policy changes and process recreation.
+    val retryNotBefore: Instant? = null,
 )
 
 internal enum class OfflineReadingConversionRefusal { GraphemeExceedsUnitCapacity }

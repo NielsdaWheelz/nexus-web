@@ -1,6 +1,6 @@
 # a server capacity refusal does not honour its Retry-After on the native transfer
 
-- status: open
+- status: open; reviewed durable-floor implementation integrated, verification pending
 - origin: 2026-09-14 adversarial review of the bounded-workspace implementation
 - area: native offline reading / transfer scheduling
 
@@ -16,6 +16,19 @@ rethrows it unchanged so it cannot be laundered into a failure, and
 `TransferStep.DeferUntilUnlocked` — the same delayed-retry shape a locked binding
 key already uses, so JobScheduler's exponential backoff owns the next attempt and
 the staged bytes survive.
+
+the reviewed correction persists the parsed floor separately from queue reason,
+because policy changes rewrite that reason. claims enforce eligibility and idle
+checkpoints retain os retry demand. reopen cleanup now preserves exact archive
+and verified names owned by nonfailed transfers; previously it deleted those
+queued bytes. migration, real-http refusal and store/checkpoint proofs are added.
+their current-source and sensitivity runs remain required before closure; a
+physical scheduler execution is not claimed from host proof.
+
+peer review also requires the actual job-service catch to be exercised: changing
+its forwarded `refusal.retryNotBefore` to null would evade the current separate
+http and store proofs. preserve the real service boundary when adding that
+composition case; its forwarding fault must produce an actual behavioral red.
 
 what is **not** honoured is the server's `Retry-After`. JobScheduler's backoff is
 configured once in `OfflineReadingScheduler.buildJob` (`setBackoffCriteria`,

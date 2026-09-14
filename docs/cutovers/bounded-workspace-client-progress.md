@@ -495,3 +495,21 @@ follow-up `e2d7393760e94077` was explicitly interrupted before a new claim.
 - failure-first settlement, explicit retries and stale command checks are
   unchanged. no test or build ran for this draft; actual paved type validation
   and preview success remain pending.
+
+## native server retry floor
+
+reviewed product `e094c28d` and proof `b58c9ee5` add the server's optional retry
+floor to the existing durable transfer row, independent of the queue reason
+rewritten by policy changes. schema 4 upgrades existing rows with a null floor.
+claims check eligibility; an idle early wake requests the existing os retry and
+exits rather than spinning. exact current id/staging and account fences remain.
+reopen retains archive/verified files still owned by nonfailed transfers while
+removing unowned staging.
+
+price: deferred staged files continue consuming disk, and os backoff can retry
+later than the server's floor. there is no new scheduler, time-delayed
+user-initiated job, partial-download protocol or local upper cap on valid delays.
+malformed/duplicate/unrepresentable headers remain integrity failures. actual
+http, sqlite migration/reopen and scheduler-checkpoint oracles are included;
+behavior and sensitivity execution remain pending. host proof cannot attest
+physical os delivery. the physical-device waiver is unchanged.

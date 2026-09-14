@@ -1137,8 +1137,10 @@ internal class OfflineReadingStore internal constructor(
             readAccountTransition() != null
         ) return null
         val binding = requireBinding()
+        val now = clock.instant()
         return readTransfers(binding.bindingId).firstOrNull {
-            (it.id to it.stagingName) !in deferred && it.state !is ReadingTransferState.Failed
+            (it.id to it.stagingName) !in deferred && it.state !is ReadingTransferState.Failed &&
+                (it.retryNotBefore == null || !now.isBefore(it.retryNotBefore))
         }
     }
 
@@ -1178,6 +1180,27 @@ internal class OfflineReadingStore internal constructor(
         replaceTransfer(current.copy(
             state = ReadingTransferState.Queued(ReadingQueueReason.Preparation),
             preparationStartedAt = current.preparationStartedAt ?: clock.instant(),
+        ))
+        notifySnapshotChanged()
+        return true
+    }
+
+    @Synchronized
+    internal fun deferForServerCapacity(
+        transferId: UUID,
+        expectedStagingName: String,
+        retryNotBefore: Instant?,
+    ): Boolean {
+        val current = readTransferById(transferId) ?: return false
+        if (current.stagingName != expectedStagingName) return false
+        val floor = when {
+            current.retryNotBefore == null -> retryNotBefore
+            retryNotBefore == null -> current.retryNotBefore
+            else -> maxOf(current.retryNotBefore, retryNotBefore)
+        }
+        replaceTransfer(current.copy(
+            state = ReadingTransferState.Queued(ReadingQueueReason.ServerCapacity),
+            retryNotBefore = floor,
         ))
         notifySnapshotChanged()
         return true
@@ -2026,7 +2049,7 @@ internal class OfflineReadingStore internal constructor(
         database.readableDatabase.rawQuery(
             """
             SELECT id, binding_id, media_id, requested_title, requested_media_kind, state_json,
-                   automatic_restart_count, staging_name, requested_at, reader_generation, preparation_started_at
+                   automatic_restart_count, staging_name, requested_at, reader_generation, preparation_started_at, retry_not_before
             FROM offline_reader_transfers
             WHERE binding_id = ?
             ORDER BY requested_at, id
@@ -2048,6 +2071,7 @@ internal class OfflineReadingStore internal constructor(
                     cursor.instant("requested_at"),
                     if (cursor.isNull(cursor.getColumnIndexOrThrow("reader_generation"))) null else cursor.long("reader_generation"),
                     if (cursor.isNull(cursor.getColumnIndexOrThrow("preparation_started_at"))) null else cursor.instant("preparation_started_at"),
+                    if (cursor.isNull(cursor.getColumnIndexOrThrow("retry_not_before"))) null else cursor.instant("retry_not_before"),
                 )
             }
         }
@@ -2063,8 +2087,8 @@ internal class OfflineReadingStore internal constructor(
             """
             INSERT INTO offline_reader_transfers(
                 id, binding_id, media_id, requested_title, requested_media_kind, state_json,
-                automatic_restart_count, staging_name, requested_at, reader_generation, preparation_started_at
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                automatic_restart_count, staging_name, requested_at, reader_generation, preparation_started_at, retry_not_before
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent(),
             arrayOf(
                 transfer.id.toString(),
@@ -2078,6 +2102,7 @@ internal class OfflineReadingStore internal constructor(
                 transfer.requestedAt.toString(),
                 transfer.readerGeneration,
                 transfer.preparationStartedAt?.toString(),
+                transfer.retryNotBefore?.toString(),
             ),
         )
     }
@@ -2089,6 +2114,7 @@ internal class OfflineReadingStore internal constructor(
             put("staging_name", transfer.stagingName)
             put("reader_generation", transfer.readerGeneration)
             put("preparation_started_at", transfer.preparationStartedAt?.toString())
+            put("retry_not_before", transfer.retryNotBefore?.toString())
         }
         check(
             database.writableDatabase.update(
@@ -2240,7 +2266,11 @@ internal class OfflineReadingStore internal constructor(
 
     private fun cleanupStaging(bindingId: UUID) {
         val retained = readPackages(bindingId).filter { it.packageSchemaVersion == 1 }
-            .map { migrationDirectory(bindingId, it.id).name }.toSet()
+            .map { migrationDirectory(bindingId, it.id).name }.toMutableSet()
+        readTransfers(bindingId).filter { it.state !is ReadingTransferState.Failed }.forEach {
+            retained += stagingArchive(bindingId, it.stagingName).name
+            retained += stagingVerified(bindingId, it.stagingName).name
+        }
         stagingDirectory(bindingId).listFiles().orEmpty().forEach { file ->
             if (file.name !in retained) check(file.deleteRecursively())
         }

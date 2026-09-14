@@ -4,6 +4,7 @@ import android.content.Context
 import app.nexus.android.offline.NetworkPolicy
 import app.nexus.android.offline.OfflineNetworkPolicyStore
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -327,6 +328,130 @@ class OfflineReadingSchedulerStoreBoundaryTest {
             OfflineReadingScheduler.runnerStopped()
             reopenedDatabase.close()
         }
+    }
+
+    @Test
+    fun `server retry floor survives durable reopen and policy replacement without spinning`() {
+        OfflineReadingScheduler.runnerStopped()
+        val startedAt = Instant.parse("2026-08-13T18:00:00Z")
+        var now = startedAt
+        val clock = object : Clock() {
+            override fun getZone() = ZoneOffset.UTC
+            override fun withZone(zone: java.time.ZoneId): Clock = Clock.fixed(now, zone)
+            override fun instant(): Instant = now
+        }
+        val jobs = context.getSystemService(android.app.job.JobScheduler::class.java)
+        val firstDatabase = OfflineReadingDatabase(context, databaseName)
+        val first = store(firstDatabase, clock = clock, schedulerFactory = { OfflineReadingScheduler(context, it) })
+        first.bindAccountAfterExternalPurge(accountId)
+        first.enqueue(mediaId, "Deferred source", OfflineReadingMediaKind.Epub, 7)
+        val transfer = first.nextRunnableTransfer()!!
+        val staged = first.stagingArchiveFor(transfer)
+        val bytes = byteArrayOf(1, 3, 5, 7, 9)
+        staged.writeBytes(bytes)
+        val verified = File(staged.parentFile, "${transfer.stagingName}.verified").apply { check(mkdirs()) }
+        val verifiedMember = File(verified, "source-member").apply { writeBytes(bytes.reversedArray()) }
+        val orphan = File(staged.parentFile, "unowned.zip").apply { writeBytes(byteArrayOf(42)) }
+        val floor = Instant.parse("2026-08-13T18:01:00Z")
+        try {
+            assertTrue(first.deferForServerCapacity(transfer.id, transfer.stagingName, floor))
+            assertTrue(first.hasQueuedWork())
+            assertEquals("server floor admitted an early transfer", OfflineReadingRunnableClaim.Idle,
+                first.claimRunnableTransfer(NetworkPolicy.UnmeteredOnly))
+            assertArrayEquals(bytes, staged.readBytes())
+
+            // A later eligible transfer is not blocked by the earlier server refusal.
+            now = startedAt.plusSeconds(1)
+            val other = UUID.fromString("028f2e74-5efc-7d0d-8a3a-142857142857")
+            first.enqueue(other, "Eligible source", OfflineReadingMediaKind.Pdf, 8)
+            assertEquals(other, (first.claimRunnableTransfer(NetworkPolicy.UnmeteredOnly)
+                as OfflineReadingRunnableClaim.Run).transfer.mediaId)
+            first.cancel(other)
+
+            OfflineReadingScheduler.runnerStarted()
+            var reschedule: Boolean? = null
+            assertFalse("future floor made the runner spin",
+                OfflineReadingScheduler.runnerCheckpoint(first) { reschedule = it })
+            assertEquals("durable deferred work lost its OS retry", true, reschedule)
+            assertFalse(OfflineReadingScheduler.runnerIsActive())
+            first.setNetworkPolicy(NetworkPolicy.AnyConnected)
+            val job = requireNotNull(jobs.getPendingJob(OFFLINE_READING_JOB_ID))
+            assertTrue(job.isUserInitiated)
+            assertTrue(job.isPersisted)
+            assertEquals("user-initiated job gained an invalid time delay", 0L, job.minLatencyMillis)
+            assertEquals(android.app.job.JobInfo.DEFAULT_INITIAL_BACKOFF_MILLIS, job.initialBackoffMillis)
+            assertEquals(android.app.job.JobInfo.BACKOFF_POLICY_EXPONENTIAL, job.backoffPolicy)
+            assertEquals(android.app.job.JobInfo.NETWORK_TYPE_ANY, job.networkType)
+        } finally {
+            OfflineReadingScheduler.runnerStopped()
+            firstDatabase.close()
+        }
+
+        val reopenedDatabase = OfflineReadingDatabase(context, databaseName)
+        try {
+            val reopened = store(reopenedDatabase, clock = clock, schedulerFactory = { OfflineReadingScheduler(context, it) })
+            assertTrue(reopened.hasQueuedWork())
+            assertEquals("process recreation forgot the server floor", OfflineReadingRunnableClaim.Idle,
+                reopened.claimRunnableTransfer(NetworkPolicy.AnyConnected))
+            assertTrue("recovery deleted the deferred archive", staged.isFile)
+            assertArrayEquals(bytes, staged.readBytes())
+            assertTrue("recovery deleted verified staged bytes", verifiedMember.isFile)
+            assertArrayEquals(bytes.reversedArray(), verifiedMember.readBytes())
+            assertFalse("recovery retained an unowned staging file", orphan.exists())
+
+            // The same durable attempt cannot have its floor shortened by an older refusal.
+            assertTrue(reopened.deferForServerCapacity(transfer.id, transfer.stagingName, startedAt.plusSeconds(30)))
+            assertTrue(reopened.deferForServerCapacity(transfer.id, transfer.stagingName, null))
+            now = floor.minusNanos(1)
+            assertEquals("server floor admitted an early transfer", OfflineReadingRunnableClaim.Idle,
+                reopened.claimRunnableTransfer(NetworkPolicy.AnyConnected))
+            now = floor
+            val resumed = (reopened.claimRunnableTransfer(NetworkPolicy.AnyConnected)
+                as OfflineReadingRunnableClaim.Run).transfer
+            assertEquals("eligible transfer lost its selected generation", 7L, resumed.readerGeneration)
+            assertEquals(transfer.id, resumed.id)
+            assertEquals(transfer.bindingId, resumed.bindingId)
+            assertEquals(transfer.stagingName, resumed.stagingName)
+            assertEquals(floor, resumed.retryNotBefore)
+            assertArrayEquals(bytes, staged.readBytes())
+            reopened.cancel(mediaId)
+            assertFalse(staged.exists())
+            assertFalse(verified.exists())
+            reopened.enqueue(mediaId, "Replacement source", OfflineReadingMediaKind.Epub, 8)
+            assertFalse("retired refusal changed replacement work",
+                reopened.deferForServerCapacity(transfer.id, transfer.stagingName, floor.plusSeconds(60)))
+            val replacement = reopened.nextRunnableTransfer()!!
+            assertEquals(8L, replacement.readerGeneration)
+            assertFalse("old staging identity changed replacement work",
+                reopened.deferForServerCapacity(replacement.id, transfer.stagingName, floor.plusSeconds(60)))
+            reopened.logoutAndPurge()
+            reopened.bindAccountAfterExternalPurge(UUID.fromString("33333333-3333-4333-8333-333333333333"))
+            reopened.enqueue(mediaId, "Other account source", OfflineReadingMediaKind.Epub, 9)
+            assertFalse("purged account refusal changed the current account",
+                reopened.deferForServerCapacity(replacement.id, replacement.stagingName, floor.plusSeconds(60)))
+            assertEquals(9L, reopened.nextRunnableTransfer()!!.readerGeneration)
+        } finally {
+            OfflineReadingScheduler.runnerStopped()
+            reopenedDatabase.close()
+        }
+    }
+
+    @Test
+    fun `capacity refusal without a header keeps durable work immediately eligible`() {
+        OfflineReadingScheduler.runnerStopped()
+        OfflineReadingDatabase(context, databaseName).use { database ->
+            val store = store(database, schedulerFactory = { OfflineReadingScheduler(context, it) })
+            store.bindAccountAfterExternalPurge(accountId)
+            store.enqueue(mediaId, "No server floor", OfflineReadingMediaKind.WebArticle, 7)
+            val transfer = store.nextRunnableTransfer()!!
+            assertTrue(store.deferForServerCapacity(transfer.id, transfer.stagingName, null))
+            val pending = (store.claimRunnableTransfer(NetworkPolicy.UnmeteredOnly)
+                as OfflineReadingRunnableClaim.Run).transfer
+            assertEquals(transfer.id, pending.id)
+            assertEquals(null, pending.retryNotBefore)
+            assertEquals(ReadingTransferState.Queued(ReadingQueueReason.ServerCapacity), pending.state)
+        }
+        OfflineReadingScheduler.runnerStopped()
     }
 
     private fun store(

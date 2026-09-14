@@ -1302,7 +1302,7 @@
       ],
       "expected_failure": "download selection changed before mint",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "57e5cc3fb3c3a22807817576d872ef6e12cfcb35a620f30ee5c7da6b0e2bf5d5"
+      "changed_owner_sha256": "9a302fe8787ceda38eb60bc53ef9f119233a4906286489aa7c22c05819552760"
     },
     {
       "id": "native-corrupt-package-pending-deletion",
@@ -1318,11 +1318,13 @@
     {
       "id": "native-preparation-queue-starvation",
       "patch": "testdata/faults/native-preparation-queue-starvation.patch",
-      "sha256": "9aa2ee8b0e950eba0a181f3e87226f8a0bd606c53822af617c96502249b4a4d8",
+      "sha256": "61fdb140c74f39eb42631c7be776ebc6f4913e53b673ecd9a71d939469476f07",
       "proofs": [
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingSchedulerStoreBoundaryTest.kt"
       ],
-      "expected_failure": "preparing publication blocked another transfer"
+      "expected_failure": "preparing publication blocked another transfer",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "8646a8a3525548df246d3126e09d937d5eb931f7f555260bb076406a2df67eb8"
     },
     {
       "id": "image-admission-exclusive-permit-bypass",
@@ -1631,13 +1633,13 @@
     {
       "id": "native-package-upgrade-retained-size-drift",
       "patch": "testdata/faults/native-package-upgrade-retained-size-drift.patch",
-      "sha256": "dd7f3259d1ad712746bd5f81adf9c27ad234a23b8c6bb267d703a8b20187ca79",
+      "sha256": "2c7289866f589b45b0674799c09054e4662931665550f355d866cd603ea678a2",
       "proofs": [
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingDatabaseTest.kt"
       ],
       "expected_failure": "database upgrade changed retained rows",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "b7f398009d3de76b20a0a2fbd7965afa15d7fbb35fe1369f76128e4bb9c24e8c"
+      "changed_owner_sha256": "63566eb28cde62cac2058a235464c5d3cc313494078d6a35646656ded80ad807"
     },
     {
       "id": "native-installed-access-corruption",

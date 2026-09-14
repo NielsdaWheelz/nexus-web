@@ -191,8 +191,8 @@ class OfflineReadingTransferJobService : JobService() {
                     is OfflineReadingRunnableClaim.Idle -> {
                         val continueDrain = synchronized(callbackLock) {
                             if (!readingJobCallbackOwnsFinish(stopped, runGeneration.get(), generation)) return
-                            OfflineReadingScheduler.runnerCheckpoint(store, deferredPreparations) {
-                                jobFinished(params, deferredPreparations.isNotEmpty() && store.hasQueuedWork())
+                            OfflineReadingScheduler.runnerCheckpoint(store, deferredPreparations) { reschedule ->
+                                jobFinished(params, reschedule)
                             }
                         }
                         if (!continueDrain) return
@@ -381,15 +381,14 @@ class OfflineReadingTransferJobService : JobService() {
                 )
             }
             return TransferStep.DeferUntilUnlocked
-        } catch (_: OfflineReadingCapacityRefusedException) {
-            // The origin admitted no work, so the transfer is still runnable and its
-            // staged bytes stay. JobScheduler's exponential backoff owns the next
-            // attempt, the same delayed retry a locked binding key gets.
+        } catch (refusal: OfflineReadingCapacityRefusedException) {
+            // Persist the server floor before releasing this attempt. The existing OS
+            // backoff may wake earlier; the durable claim gate will defer it again.
             mutateIfCurrent(fence) {
-                store.updateTransferState(
+                store.deferForServerCapacity(
                     transfer.id,
                     transfer.stagingName,
-                    ReadingTransferState.Queued(ReadingQueueReason.ServerCapacity),
+                    refusal.retryNotBefore,
                 )
             }
             return TransferStep.DeferUntilUnlocked

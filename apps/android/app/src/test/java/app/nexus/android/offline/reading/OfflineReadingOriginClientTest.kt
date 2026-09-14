@@ -348,6 +348,60 @@ class OfflineReadingOriginClientTest {
     }
 
     @Test
+    fun `capacity refusal carries the complete server retry floor through the real origin`() {
+        val receivedAt = Instant.parse("2026-08-13T18:00:00.123456789Z")
+        val client = realClient(Clock.fixed(receivedAt, ZoneOffset.UTC))
+        val cases = listOf(
+            null to null,
+            "0" to receivedAt,
+            "60" to Instant.parse("2026-08-13T18:01:00.123456789Z"),
+            // A server delay above ordinary OS backoff remains intact, without a local cap.
+            "8640000" to Instant.parse("2026-11-21T18:00:00.123456789Z"),
+            "Thu, 13 Aug 2026 18:01:00 GMT" to Instant.parse("2026-08-13T18:01:00Z"),
+            "Thu, 13 Aug 2026 17:59:00 GMT" to Instant.parse("2026-08-13T17:59:00Z"),
+        )
+        cases.forEachIndexed { index, (header, expected) ->
+            val response = MockResponse().setResponseCode(503)
+                .setBody("""{"error":{"code":"E_READ_CAPACITY","message":"Read capacity is busy"}}""")
+            if (header != null) response.setHeader("Retry-After", header)
+            server.enqueue(response)
+            val refusal = assertThrows(OfflineReadingCapacityRefusedException::class.java) {
+                OfflineReadingTransferOperations.register(transfer.id).use { operation ->
+                    client.selectLegacyGeneration(transfer.copy(readerGeneration = null), accountId, network(), operation)
+                }
+            }
+            assertEquals("capacity refusal lost or shortened the server floor", expected, refusal.retryNotBefore)
+            assertEquals("capacity refusal issued another HTTP request", index + 1, server.requestCount)
+            assertEquals("/api/media/$mediaId/reader-publication", server.takeRequest().path)
+        }
+    }
+
+    @Test
+    fun `malformed capacity retry headers remain integrity failures`() {
+        val client = realClient(Clock.fixed(Instant.parse("2026-08-13T18:00:00Z"), ZoneOffset.UTC))
+        val headers = listOf(
+            listOf("-1"), listOf("1.5"), listOf(""), listOf("not a date"),
+            listOf("999999999999999999999999999"), listOf(Long.MAX_VALUE.toString()),
+            listOf("60", "120"),
+        )
+        headers.forEachIndexed { index, values ->
+            val response = MockResponse().setResponseCode(503)
+                .setBody("""{"error":{"code":"E_READ_CAPACITY","message":"Read capacity is busy"}}""")
+            values.forEach { response.addHeader("Retry-After", it) }
+            server.enqueue(response)
+            val failure = assertThrows(OfflineReadingOriginException::class.java) {
+                OfflineReadingTransferOperations.register(transfer.id).use { operation ->
+                    client.selectLegacyGeneration(transfer.copy(readerGeneration = null), accountId, network(), operation)
+                }
+            }
+            assertEquals("malformed Retry-After was treated as permission to retry", ReadingFailureReason.Integrity, failure.reason)
+            assertTrue(failure.cause is IllegalArgumentException)
+            assertEquals(index + 1, server.requestCount)
+            server.takeRequest()
+        }
+    }
+
+    @Test
     fun `worker preparation observes status before minting the same selected generation`() {
         serve(baselineGeneration = 9)
         val origin = server.dispatcher

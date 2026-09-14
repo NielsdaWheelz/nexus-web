@@ -1,12 +1,12 @@
 diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingDatabase.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingDatabase.kt
 --- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingDatabase.kt
 +++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingDatabase.kt
-@@ -151,7 +151,7 @@
-         // transaction. Keep foreign keys enabled throughout the replacement.
-         createPackageTables(database, replacement = true)
-         val columns = "id, binding_id, media_id, media_kind, title, reader_generation, reader_revision_key, package_schema_version, reader_contract_version, minimum_bundle_version, size_bytes, installed_at"
--        database.execSQL("INSERT INTO offline_reader_packages_new($columns) SELECT $columns FROM offline_reader_packages")
-+        database.execSQL("INSERT INTO offline_reader_packages_new($columns) SELECT ${columns.replace("size_bytes", "size_bytes + 1")} FROM offline_reader_packages")
-         database.execSQL("INSERT INTO offline_reader_removals_new SELECT id, package_id, requested_at FROM offline_reader_removals")
-         database.execSQL("DROP TABLE offline_reader_removals")
-         database.execSQL("DROP TABLE offline_reader_packages")
+@@ -155,7 +155,7 @@
+             // transaction. Keep foreign keys enabled throughout the replacement.
+             createPackageTables(database, replacement = true)
+             val columns = "id, binding_id, media_id, media_kind, title, reader_generation, reader_revision_key, package_schema_version, reader_contract_version, minimum_bundle_version, size_bytes, installed_at"
+-            database.execSQL("INSERT INTO offline_reader_packages_new($columns) SELECT $columns FROM offline_reader_packages")
++            database.execSQL("INSERT INTO offline_reader_packages_new($columns) SELECT ${columns.replace("size_bytes", "size_bytes + 1")} FROM offline_reader_packages")
+             database.execSQL("INSERT INTO offline_reader_removals_new SELECT id, package_id, requested_at FROM offline_reader_removals")
+             database.execSQL("DROP TABLE offline_reader_removals")
+             database.execSQL("DROP TABLE offline_reader_packages")

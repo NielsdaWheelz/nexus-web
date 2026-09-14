@@ -126,13 +126,15 @@ internal class OfflineReadingScheduler(
         fun runnerCheckpoint(
             store: OfflineReadingStore,
             deferred: Set<Pair<java.util.UUID, String>> = emptySet(),
-            finishJob: () -> Unit,
+            finishJob: (reschedule: Boolean) -> Unit,
         ): Boolean {
             synchronized(QUEUE_LOCK) {
-                if (store.hasQueuedWork(deferred)) return true
+                if (store.nextRunnableTransfer(deferred) != null) return true
                 runnerActive = false
                 runnerTerminalizing = true
-                finishJob()
+                // A future server floor leaves durable demand but no eligible request.
+                // Keep the existing OS backoff owner; no delayed user-initiated job is built.
+                finishJob(store.hasQueuedWork())
                 return false
             }
         }
