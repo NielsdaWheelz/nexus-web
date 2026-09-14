@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Literal, cast
 from urllib.parse import quote, urljoin, urlsplit
 
 from llm_tools import (
@@ -52,6 +53,28 @@ class BraveArticle:
     site_name: str
 
 
+@dataclass(frozen=True, slots=True)
+class _BrowseWebSearchRequest:
+    """Brave request envelope with Browse-owned query validity.
+
+    The shared chat-tool request narrows valid queries to two characters and
+    fifty words. Browse owns a different public contract: exact NFC text of
+    1–200 code points. The Brave provider consumes this same structural
+    envelope and does not own those product-level restrictions.
+    """
+
+    query: str
+    result_type: WebSearchResultType
+    limit: int
+    freshness_days: int | None = None
+    allowed_domains: tuple[str, ...] = ()
+    blocked_domains: tuple[str, ...] = ()
+    country: str = "US"
+    search_lang: str = "en"
+    safe_search: Literal["off", "moderate", "strict"] = "moderate"
+    max_attempts: int = 2
+
+
 async def search(
     provider: WebSearchProvider | None,
     *,
@@ -63,10 +86,13 @@ async def search(
         raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor")
     try:
         result = await provider.search(
-            WebSearchRequest(
-                query=query.query,
-                result_type=WebSearchResultType.MIXED,
-                limit=query.limit,
+            cast(
+                WebSearchRequest,
+                _BrowseWebSearchRequest(
+                    query=query.query,
+                    result_type=WebSearchResultType.MIXED,
+                    limit=query.limit,
+                ),
             )
         )
     except WebSearchError as exc:

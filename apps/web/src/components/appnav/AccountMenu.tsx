@@ -1,39 +1,27 @@
 "use client";
 
-import { useState, type MouseEvent, type ReactNode } from "react";
-import { Download, LogOut } from "lucide-react";
+import { type MouseEvent, type ReactNode } from "react";
+import { Download, ListTodo, LogOut } from "lucide-react";
 import Link from "next/link";
-import ImportsBadge from "@/components/imports/ImportsBadge";
 import ActionMenu from "@/components/ui/ActionMenu";
-import { requestDownloadsOpen } from "@/components/offlineMedia/downloadsSurfaceIngress";
+import { useMediaActivity } from "@/lib/media/MediaActivityProvider";
+import { requestNexusOpen } from "@/lib/nexus/events";
 import { useOfflineMediaCapability } from "@/lib/offlineMedia/OfflineMediaProvider";
-import { useOfflineReadingCapability } from "@/lib/offlineReading/OfflineReadingProvider";
-import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import type {
-  AccountNavigation,
-  NavItem,
-  UtilityNavigation,
-} from "./navModel";
+import type { AccountNavigation, NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
-import { accountSignOutOwner } from "./accountSignOut";
 
 export default function AccountMenu({
   account,
-  utilities,
   activeId,
-  utilityActiveId,
   placement,
   align,
   renderTrigger,
   onNavigate,
 }: {
   account: AccountNavigation;
-  utilities: UtilityNavigation;
   activeId: NavItem["id"] | null;
-  /** The utility destination the workspace is on, which is not an Account one. */
-  utilityActiveId: NavItem["id"] | null;
   placement: "above" | "below";
   align: "start" | "center" | "end";
   renderTrigger: Parameters<typeof ActionMenu>[0]["renderTrigger"];
@@ -45,14 +33,11 @@ export default function AccountMenu({
   const { stats, settings } = account;
   const StatsIcon = stats.icon;
   const SettingsIcon = settings.icon;
+  const { snapshot } = useMediaActivity();
   const offlineMedia = useOfflineMediaCapability();
-  const offlineReading = useOfflineReadingCapability();
-  const androidShell = useAndroidShell();
-  const [signingOut, setSigningOut] = useState(false);
-  const [signOutError, setSignOutError] = useState<string | null>(null);
-  const signOutOwner = accountSignOutOwner(androidShell, offlineReading.kind);
-  const imports = utilities.imports;
-  const ImportsIcon = imports.icon;
+  const importCount = snapshot
+    ? snapshot.needsAttentionCount + snapshot.activeCount
+    : 0;
   const options: ActionDescriptor[] = [
     {
       kind: "custom",
@@ -78,30 +63,25 @@ export default function AccountMenu({
     },
     {
       kind: "custom",
-      id: "imports",
-      label: imports.label,
-      render: ({ closeMenu, closeMenuWithoutFocus }) => (
-        <Link
-          href={imports.href}
+      id: "import-activity",
+      label: "Import activity",
+      render: ({ closeMenuWithoutFocus }) => (
+        <button
+          type="button"
           role="menuitem"
           className={styles.menuItem}
-          aria-current={utilityActiveId === imports.id ? "page" : undefined}
-          onClick={(event) => {
-            const result = onNavigate(event, imports);
-            if (result === "unhandled") return;
-            if (result === "handled-source-focus") closeMenu();
-            else closeMenuWithoutFocus();
+          onClick={() => {
+            closeMenuWithoutFocus();
+            requestNexusOpen({ kind: "Activity" });
           }}
         >
-          <ImportsIcon size={16} aria-hidden="true" />
-          <ImportsBadge label={imports.label} labelVisible />
-        </Link>
+          <ListTodo size={16} aria-hidden="true" />
+          Import activity
+        </button>
       ),
     },
   ];
-  // The single Downloads surface lists both capabilities, so its entry point
-  // appears whenever either one is connected.
-  if (offlineMedia.kind === "Ready" || offlineReading.kind === "Ready") {
+  if (offlineMedia.kind === "Ready") {
     options.push({
       kind: "custom",
       id: "downloads",
@@ -113,7 +93,7 @@ export default function AccountMenu({
           className={styles.menuItem}
           onClick={() => {
             closeMenu();
-            requestDownloadsOpen();
+            offlineMedia.controller.openDownloads();
           }}
         >
           <Download size={16} aria-hidden="true" />
@@ -150,26 +130,7 @@ export default function AccountMenu({
       id: "signout",
       label: "Sign Out",
       separatorBefore: true,
-      render: ({ closeMenuWithoutFocus }) => signOutOwner === "Native" && offlineReading.kind === "Ready" ? (
-        <button
-          type="button"
-          role="menuitem"
-          className={`${styles.menuItem} ${styles.menuItemDanger}`}
-          disabled={signingOut}
-          onClick={() => {
-            closeMenuWithoutFocus();
-            setSigningOut(true);
-            setSignOutError(null);
-            void offlineReading.controller.logoutAndPurge().catch(() => {
-              setSigningOut(false);
-              setSignOutError("Sign out could not safely remove offline data. Try again.");
-            });
-          }}
-        >
-          <LogOut size={16} aria-hidden="true" />
-          Sign Out
-        </button>
-      ) : signOutOwner === "WebPost" ? (
+      render: () => (
         <form action="/auth/signout" method="post" className={styles.menuForm}>
           <button
             type="submit"
@@ -180,30 +141,26 @@ export default function AccountMenu({
             Sign Out
           </button>
         </form>
-      ) : (
-        <button
-          type="button"
-          role="menuitem"
-          className={`${styles.menuItem} ${styles.menuItemDanger}`}
-          disabled
-        >
-          <LogOut size={16} aria-hidden="true" />
-          Sign Out temporarily unavailable
-        </button>
       ),
     },
   );
   return (
-    <>
     <ActionMenu
       className={styles.account}
-      label="Account"
+      label={
+        importCount === 0
+          ? "Account"
+          : `Account, ${importCount} open ${
+              importCount === 1 ? "import" : "imports"
+            }`
+      }
       placement={placement}
       align={align}
       renderTrigger={renderTrigger}
+      triggerAttributes={{
+        "data-import-count": importCount > 0 ? String(importCount) : undefined,
+      }}
       options={options}
     />
-    {signOutError === null ? null : <p role="alert">{signOutError}</p>}
-    </>
   );
 }

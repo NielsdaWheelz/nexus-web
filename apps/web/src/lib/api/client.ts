@@ -8,39 +8,8 @@
 import { isAbortError } from "@/lib/errors";
 import { compareStableString } from "@/lib/display/format";
 import { isRecord } from "@/lib/validation";
-import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
 
 export type ApiPath = `/api/${string}`;
-export const TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection";
-export const TOOL_PROJECTION_RELOAD_REQUIRED_CODE =
-  "E_TOOL_PROJECTION_RELOAD_REQUIRED";
-
-const TOOL_PROJECTION_PATHS = [
-  /^\/api\/chat-runs$/,
-  /^\/api\/chat-runs\/[^/]+$/,
-  /^\/api\/chat-runs\/[^/]+\/cancel$/,
-  /^\/api\/conversations\/[^/]+\/(?:messages|tree|active-path)$/,
-  /^\/api\/conversations\/[^/]+\/tool-calls\/[^/]+\/undo$/,
-  /^\/api\/messages\/[^/]+\/(?:rerun|regenerate)$/,
-] as const;
-
-function carriesToolProjection(path: ApiPath): boolean {
-  const queryIndex = path.indexOf("?");
-  const pathname = queryIndex === -1 ? path : path.slice(0, queryIndex);
-  return TOOL_PROJECTION_PATHS.some((pattern) => pattern.test(pathname));
-}
-
-function jsonRequestHeaders(
-  path: ApiPath,
-  headersInit: HeadersInit | undefined,
-): Headers {
-  const headers = new Headers(headersInit);
-  headers.set("Content-Type", "application/json");
-  if (carriesToolProjection(path)) {
-    headers.set(TOOL_PROJECTION_HEADER, TOOL_PROJECTION_REVISION);
-  }
-  return headers;
-}
 
 /**
  * API error with status code and message.
@@ -97,19 +66,6 @@ export function isUnauthenticatedApiError(error: unknown): error is ApiError {
   );
 }
 
-export function isToolProjectionReloadRequired(
-  error: unknown,
-): error is ApiError & {
-  readonly status: 409;
-  readonly code: typeof TOOL_PROJECTION_RELOAD_REQUIRED_CODE;
-} {
-  return (
-    isApiError(error) &&
-    error.status === 409 &&
-    error.code === TOOL_PROJECTION_RELOAD_REQUIRED_CODE
-  );
-}
-
 /**
  * Translate a strict same-system payload decoder failure into the API defect
  * taxonomy without weakening the decoder or misclassifying the failure as a
@@ -157,31 +113,6 @@ function isErrorResponse(body: unknown): body is ErrorResponse {
     (body.error.request_id === undefined ||
       typeof body.error.request_id === "string") &&
     (body.error.details === undefined || isRecord(body.error.details))
-  );
-}
-
-/** Decode the common API error envelope without flattening its closed code. */
-export async function apiErrorFromResponse(
-  response: Response,
-): Promise<ApiError> {
-  try {
-    const body: unknown = await response.json();
-    if (isErrorResponse(body)) {
-      return new ApiError(
-        response.status,
-        body.error.code,
-        body.error.message,
-        body.error.request_id,
-        body.error.details,
-      );
-    }
-  } catch (error) {
-    if (isAbortError(error)) throw error;
-  }
-  return new ApiError(
-    response.status,
-    "E_UNKNOWN",
-    `Request failed with status ${response.status}`,
   );
 }
 
@@ -305,7 +236,10 @@ export async function apiFetch<T>(
   const init = {
     ...options,
     method: normalizeMethod(options.method),
-    headers: jsonRequestHeaders(path, options.headers),
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   } satisfies RequestInit;
 
   if (isPlainGetRequest(options)) {
@@ -336,7 +270,10 @@ export async function apiCommand204(
   const response = await fetchApiResponse(path, {
     ...options,
     method: normalizeMethod(options.method),
-    headers: jsonRequestHeaders(path, options.headers),
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });
   await parseApiResponse<unknown>(response);
   if (response.status !== 204) {

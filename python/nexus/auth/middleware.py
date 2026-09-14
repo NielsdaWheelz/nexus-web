@@ -5,7 +5,6 @@ Provides:
 - get_viewer: Dependency for accessing authenticated viewer identity
 """
 
-import asyncio
 import hmac
 import logging
 import re
@@ -25,7 +24,6 @@ from starlette.types import ASGIApp
 from nexus.auth.bearer import parse_bearer_token
 from nexus.auth.verifier import TokenVerifier
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.offline_reading_paths import is_offline_reading_package_path
 from nexus.responses import error_response
 from nexus.stream_paths import is_stream_path
 
@@ -203,12 +201,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # the Viewer projection is process-stable for this user; keep that
         # result here so ordinary authenticated requests do not pay a threadpool
         # handoff (or a database checkout) merely to hit a downstream cache.
-        # Concurrent cold misses fan into one shielded task per user so one
-        # request cancellation cannot cancel bootstrap for its peers. The LRU
-        # cap bounds completed state; in-flight state exists only while its
-        # owning bootstrap is running.
+        # Concurrent cold misses remain safe because the bootstrap operation is
+        # idempotent and each successful result is the same canonical library.
+        # The LRU cap bounds process memory; eviction only repeats that safe
+        # bootstrap on a later request.
         self._default_library_id_by_user: dict[UUID, UUID] = {}
-        self._bootstrap_task_by_user: dict[UUID, asyncio.Task[UUID]] = {}
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process the request through auth checks."""
@@ -220,11 +217,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # instead of Supabase auth. The iss/aud requirement on stream tokens prevents
         # accidental acceptance of supabase JWTs if one hits a stream endpoint.
         if is_stream_path(request.url.path):
-            return await call_next(request)
-
-        # This exact direct route verifies its scoped one-use bearer at the
-        # route boundary. No other offline-reading path skips BFF/Supabase auth.
-        if is_offline_reading_package_path(request.url.path):
             return await call_next(request)
 
         # Step 1: Check internal header if required
@@ -281,25 +273,27 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # post-response db.close() of in-flight requests — turning transient pool
         # pressure into a self-sustaining deadlock.
         if self.bootstrap_callback:
-            default_library_id = self._cached_default_library_id(user_id)
+            default_library_id = self._default_library_id_by_user.pop(user_id, None)
+            if default_library_id is not None:
+                self._default_library_id_by_user[user_id] = default_library_id
             if default_library_id is None:
-                bootstrap_task = self._bootstrap_task_by_user.get(user_id)
-                if bootstrap_task is None:
-                    bootstrap_task = asyncio.create_task(
-                        self._bootstrap_and_cache(user_id, email),
-                    )
-                    bootstrap_task.add_done_callback(self._consume_bootstrap_task_result)
-                    self._bootstrap_task_by_user[user_id] = bootstrap_task
                 try:
-                    default_library_id = await asyncio.shield(bootstrap_task)
-                # justify-ignore-error: the shared task logs the bootstrap defect once;
-                # each affected request receives the same generic boundary response.
-                except Exception:
+                    default_library_id = await run_in_threadpool(
+                        self.bootstrap_callback, user_id, email=email
+                    )
+                # justify-ignore-error: auth bootstrap boundary returns a generic 500
+                # while logging the server-side failure.
+                except Exception as e:
+                    logger.exception("Bootstrap failed for user %s: %s", user_id, e)
                     return self._error_json_response(
                         ApiErrorCode.E_INTERNAL,
                         "Internal server error",
                         500,
                     )
+                while len(self._default_library_id_by_user) >= BOOTSTRAP_CACHE_MAX_USERS:
+                    oldest_user_id = next(iter(self._default_library_id_by_user))
+                    del self._default_library_id_by_user[oldest_user_id]
+                self._default_library_id_by_user[user_id] = default_library_id
         else:
             # No bootstrap callback - use a placeholder (tests may not need it)
             default_library_id = user_id  # Placeholder
@@ -315,41 +309,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers.append("Server-Timing", f"nexus_auth;dur={auth_duration_ms:.2f}")
         return response
-
-    def _cached_default_library_id(self, user_id: UUID) -> UUID | None:
-        default_library_id = self._default_library_id_by_user.pop(user_id, None)
-        if default_library_id is not None:
-            self._default_library_id_by_user[user_id] = default_library_id
-        return default_library_id
-
-    @staticmethod
-    def _consume_bootstrap_task_result(task: asyncio.Task[UUID]) -> None:
-        if not task.cancelled():
-            task.exception()
-
-    async def _bootstrap_and_cache(self, user_id: UUID, email: str | None) -> UUID:
-        current_task = asyncio.current_task()
-        try:
-            if self.bootstrap_callback is None:
-                raise AssertionError("bootstrap task requires a configured callback")
-            default_library_id = await run_in_threadpool(
-                self.bootstrap_callback,
-                user_id,
-                email=email,
-            )
-            while len(self._default_library_id_by_user) >= BOOTSTRAP_CACHE_MAX_USERS:
-                oldest_user_id = next(iter(self._default_library_id_by_user))
-                del self._default_library_id_by_user[oldest_user_id]
-            self._default_library_id_by_user[user_id] = default_library_id
-            return default_library_id
-        # justify-ignore-error: the request boundary returns a generic 500 while
-        # this shared owner records the bootstrap defect exactly once.
-        except Exception as exc:
-            logger.exception("Bootstrap failed for user %s: %s", user_id, exc)
-            raise
-        finally:
-            if self._bootstrap_task_by_user.get(user_id) is current_task:
-                del self._bootstrap_task_by_user[user_id]
 
     def _verify_internal_header(self, request: Request) -> JSONResponse | None:
         """Verify the internal header using constant-time comparison.

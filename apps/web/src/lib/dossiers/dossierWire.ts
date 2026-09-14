@@ -8,32 +8,22 @@ import { expectExactRecord, expectRecord } from "@/lib/validation";
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import { decodeDurableExecution } from "@/lib/api/executionAdvisory";
 import {
-  decodeGenerationSelectionSpec,
-  decodeSelectionPresentation,
-} from "@/lib/conversations/generationCatalog";
-import {
   decodeCitationOut,
   type CitationOut,
 } from "@/lib/conversations/citationOut";
 import {
   DOSSIER_BUILD_FAILURE_CODES,
-  HISTORICAL_DOSSIER_BUILD_FAILURE_CODES,
-  type DossierAdmittedGeneration,
   type DossierBuildFailureCode,
   type DossierBuildSummary,
-  type DossierBuildToolPlan,
   type DossierCancelledFacts,
-  type DossierCapacityPause,
   type DossierFailedFacts,
   type DossierFreshness,
-  type HistoricalDossierBuildFailureCode,
   type DossierInputManifest,
   type DossierMediaDisposition,
   type DossierMediaManifestEntry,
   type DossierRevision,
   type DossierRevisionSummary,
   type MediaAbstract,
-  type ReadDossierBuildFailureCode,
 } from "@/lib/dossiers/dossierControllerTypes";
 import {
   normalizeResourceActivation,
@@ -61,39 +51,14 @@ function decodeInteger(value: unknown, field: string): number {
   return value;
 }
 
-function isListedString<const Values extends readonly string[]>(
-  value: unknown,
-  values: Values,
-): value is Values[number] {
-  return (
-    typeof value === "string" && values.some((candidate) => candidate === value)
-  );
-}
-
-/** Decode only the current backend write vocabulary. */
 export function decodeFailureCode(value: unknown): DossierBuildFailureCode {
-  if (isListedString(value, DOSSIER_BUILD_FAILURE_CODES)) {
-    return value;
+  if (
+    typeof value === "string" &&
+    (DOSSIER_BUILD_FAILURE_CODES as readonly string[]).includes(value)
+  ) {
+    return value as DossierBuildFailureCode;
   }
-  return fail(`unknown current failure code ${JSON.stringify(value)}`);
-}
-
-export function decodeReadDossierBuildFailureCode(
-  value: unknown,
-): ReadDossierBuildFailureCode {
-  return isListedString(value, HISTORICAL_DOSSIER_BUILD_FAILURE_CODES)
-    ? value
-    : decodeFailureCode(value);
-}
-
-/** Decode only migration-tagged, read-only historical failure vocabulary. */
-export function decodeHistoricalDossierBuildFailureCode(
-  value: unknown,
-): HistoricalDossierBuildFailureCode {
-  if (isListedString(value, HISTORICAL_DOSSIER_BUILD_FAILURE_CODES)) {
-    return value;
-  }
-  return fail(`unknown historical failure code ${JSON.stringify(value)}`);
+  return fail(`unknown failure code ${JSON.stringify(value)}`);
 }
 
 function decodeFreshness(value: unknown): DossierFreshness {
@@ -660,7 +625,7 @@ function decodeFailedFacts(raw: unknown): DossierFailedFacts {
     "failure facts",
   );
   return {
-    failureCode: decodeReadDossierBuildFailureCode(failure.failure_code),
+    failureCode: decodeFailureCode(failure.failure_code),
     detail: decodePresence(failure.detail, (v) => decodeString(v, "detail")),
     support: decodePresence(failure.support, decodeSupport),
   };
@@ -678,80 +643,6 @@ function decodeCancelledFacts(raw: unknown): DossierCancelledFacts {
   };
 }
 
-function decodeNonemptyString(value: unknown, field: string): string {
-  const text = decodeString(value, field);
-  if (text.length === 0) fail(`${field} must not be empty`);
-  return text;
-}
-
-function decodeToolPlan(raw: unknown): DossierBuildToolPlan {
-  const discriminated = expectRecord(raw, "tool plan");
-  switch (discriminated.kind) {
-    case "NoModelTools": {
-      expectExactRecord(discriminated, ["kind"], "NoModelTools plan");
-      return { kind: "NoModelTools" };
-    }
-    case "ExactModelTools": {
-      const plan = expectExactRecord(
-        discriminated,
-        ["kind", "plan_id", "plan_revision", "effect_mode"],
-        "ExactModelTools plan",
-      );
-      if (!isListedString(plan.effect_mode, ["ReadOnly", "AdditiveWrites"])) {
-        fail("effect_mode must be ReadOnly or AdditiveWrites");
-      }
-      return {
-        kind: "ExactModelTools",
-        planId: decodeNonemptyString(plan.plan_id, "plan_id"),
-        planRevision: decodeNonemptyString(plan.plan_revision, "plan_revision"),
-        effectMode: plan.effect_mode,
-      };
-    }
-    default:
-      return fail(`unknown tool plan kind ${String(discriminated.kind)}`);
-  }
-}
-
-function decodeAdmittedGeneration(raw: unknown): DossierAdmittedGeneration {
-  const generation = expectExactRecord(
-    raw,
-    ["selection", "display_at_dispatch", "tool_plan", "tool_positions"],
-    "admitted generation",
-  );
-  const toolPositions = decodeInteger(generation.tool_positions, "tool_positions");
-  if (toolPositions < 0) fail("tool_positions must not be negative");
-  return {
-    selection: decodeGenerationSelectionSpec(
-      generation.selection,
-      "admitted generation selection",
-    ),
-    displayAtDispatch: decodeSelectionPresentation(
-      generation.display_at_dispatch,
-      "admitted generation display_at_dispatch",
-    ),
-    toolPlan: decodeToolPlan(generation.tool_plan),
-    toolPositions,
-  };
-}
-
-function decodeCapacityPause(raw: unknown): DossierCapacityPause {
-  const pause = expectExactRecord(
-    raw,
-    ["kind", "code", "explanation", "reset_at", "next_check_at", "last_checked"],
-    "capacity pause",
-  );
-  if (pause.kind !== "CapacityPaused") fail("capacity pause kind must be CapacityPaused");
-  if (pause.code !== "quota_unavailable") {
-    fail("capacity pause code must be quota_unavailable");
-  }
-  return {
-    explanation: decodeNonemptyString(pause.explanation, "explanation"),
-    resetAt: decodePresence(pause.reset_at, (v) => decodeString(v, "reset_at")),
-    nextCheckAt: decodeString(pause.next_check_at, "next_check_at"),
-    lastChecked: decodeString(pause.last_checked, "last_checked"),
-  };
-}
-
 export function decodeDossierBuildSummary(raw: unknown): DossierBuildSummary {
   const build = expectExactRecord(
     raw,
@@ -763,8 +654,6 @@ export function decodeDossierBuildSummary(raw: unknown): DossierBuildSummary {
       "execution",
       "failure",
       "cancellation",
-      "admitted_generation",
-      "capacity_pause",
     ],
     "build summary",
   );
@@ -782,11 +671,6 @@ export function decodeDossierBuildSummary(raw: unknown): DossierBuildSummary {
     ),
     failure: decodePresence(build.failure, decodeFailedFacts),
     cancellation: decodePresence(build.cancellation, decodeCancelledFacts),
-    admittedGeneration: decodePresence(
-      build.admitted_generation,
-      decodeAdmittedGeneration,
-    ),
-    capacityPause: decodePresence(build.capacity_pause, decodeCapacityPause),
   };
 }
 

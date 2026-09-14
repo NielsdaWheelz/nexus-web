@@ -33,17 +33,17 @@ import { presentConversation } from "@/lib/collections/presenters/conversation";
 import { fetchConversationIndex } from "@/lib/conversations/indexApi";
 import { useConversationIndexRevision } from "@/lib/conversations/indexRevision";
 import {
-  CANONICAL_UPDATED_TITLE_INDEX_VIEW,
-  UPDATED_TITLE_SORT_OPTION_IDS,
-  decodeUpdatedTitleIndexView,
-  encodeUpdatedTitleIndexView,
-  type DecodedUpdatedTitleIndexView,
-  type UpdatedTitleIndexView,
-  type UpdatedTitleSortOptionId,
-  updatedTitleSortOptionLabel,
-  updatedTitleSortOptionOf,
-  updatedTitleViewForSortOption,
-} from "@/lib/collections/updatedTitleIndexView";
+  CANONICAL_CONVERSATION_INDEX_VIEW,
+  CONVERSATION_SORT_OPTION_IDS,
+  conversationSortOptionLabel,
+  conversationSortOptionOf,
+  conversationViewForSortOption,
+  decodeConversationIndexView,
+  encodeConversationIndexView,
+  type ConversationIndexView,
+  type ConversationSortOptionId,
+  type DecodedConversationIndexView,
+} from "@/lib/conversations/indexView";
 import type { ConversationListItem } from "@/lib/conversations/types";
 import usePaneScrollRetention from "@/lib/panes/usePaneScrollRetention";
 import {
@@ -64,7 +64,7 @@ import { isAbortError } from "@/lib/errors";
 
 /** The chats index committed as one exact view: rows, revision, and cursor. */
 interface CommittedChatsView extends ConversationsPaneSeed {
-  readonly view: UpdatedTitleIndexView;
+  readonly view: ConversationIndexView;
 }
 
 const CONVERSATIONS_VISIT_DATA = definePaneVisitDataKey<CommittedChatsView>(
@@ -135,15 +135,15 @@ export default function ConversationsPaneBody() {
   const chatsViewCodec = useMemo(
     () => ({
       basePath: "/conversations",
-      decode: decodeUpdatedTitleIndexView,
+      decode: decodeConversationIndexView,
       encode: (
-        decoded: DecodedUpdatedTitleIndexView,
+        decoded: DecodedConversationIndexView,
         current: URLSearchParams,
       ): URLSearchParams =>
-        encodeUpdatedTitleIndexView(
+        encodeConversationIndexView(
           decoded.kind === "Valid"
             ? decoded.view
-            : CANONICAL_UPDATED_TITLE_INDEX_VIEW,
+            : CANONICAL_CONVERSATION_INDEX_VIEW,
           current,
         ),
       replaceOptions: {
@@ -204,7 +204,7 @@ export default function ConversationsPaneBody() {
     requestAnimationFrame(() => element.focus());
   }, []);
   const setView = useCallback(
-    (next: UpdatedTitleIndexView) => {
+    (next: ConversationIndexView) => {
       capturePaneScroll();
       committedSnapshotRef.current = null;
       setDecodedView({ kind: "Valid", view: next });
@@ -490,7 +490,7 @@ export default function ConversationsPaneBody() {
   const clearDomainFilters = useCallback(() => {
     dismissFilterRowsRef.current();
     pendingCommitFocusRef.current = true;
-    setView(CANONICAL_UPDATED_TITLE_INDEX_VIEW);
+    setView(CANONICAL_CONVERSATION_INDEX_VIEW);
   }, [setView]);
   const domainFilterControls = useMemo(
     () =>
@@ -500,19 +500,19 @@ export default function ConversationsPaneBody() {
             layout="Stacked"
             label="Sort by"
             ref={sortSelectRef}
-            value={updatedTitleSortOptionOf(view)}
+            value={conversationSortOptionOf(view)}
             onChange={(event) => {
               pendingCommitFocusRef.current = true;
               setView(
-                updatedTitleViewForSortOption(
-                  event.target.value as UpdatedTitleSortOptionId,
+                conversationViewForSortOption(
+                  event.target.value as ConversationSortOptionId,
                 ),
               );
             }}
           >
-            {UPDATED_TITLE_SORT_OPTION_IDS.map((optionId) => (
+            {CONVERSATION_SORT_OPTION_IDS.map((optionId) => (
               <option key={optionId} value={optionId}>
-                {updatedTitleSortOptionLabel(optionId)}
+                {conversationSortOptionLabel(optionId)}
               </option>
             ))}
           </SelectField>
@@ -564,7 +564,6 @@ export default function ConversationsPaneBody() {
   usePanePrimaryChrome({
     search,
     refresh: {
-      kind: "Refreshable",
       sourceKey: "Conversations:mine",
       execute: executeRefresh,
     },
@@ -596,7 +595,7 @@ export default function ConversationsPaneBody() {
               search.onDismiss();
               setDecodedView({
                 kind: "Valid",
-                view: CANONICAL_UPDATED_TITLE_INDEX_VIEW,
+                view: CANONICAL_CONVERSATION_INDEX_VIEW,
               });
             },
           },

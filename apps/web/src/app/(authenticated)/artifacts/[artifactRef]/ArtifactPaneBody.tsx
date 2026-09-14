@@ -83,16 +83,10 @@ function useArtifactDossierStore(artifactRef: string): DossierControllerStore {
 
 function ArtifactBasePublications({
   chrome,
-  findResolving,
 }: {
   readonly chrome: PanePrimaryChromePublication;
-  readonly findResolving: boolean;
 }) {
-  usePanePrimaryChrome(
-    findResolving
-      ? { ...chrome, search: { kind: "Resolving", control: "Find" } }
-      : chrome,
-  );
+  usePanePrimaryChrome(chrome);
   usePaneSecondary(null);
   return null;
 }
@@ -329,9 +323,7 @@ export default function ArtifactPaneBody() {
               },
             }
           : {}),
-      // The dossier's canonical identity is its route ref, not a fact of the
-      // head read. The snapshot owns missing state.
-      actionSubject,
+      actionSubject: state.head.kind === "Ready" ? actionSubject : undefined,
     }),
     [actionSubject, identity, state.head.kind],
   );
@@ -377,12 +369,7 @@ export default function ArtifactPaneBody() {
           paneRuntime={paneRuntime}
         />
       ) : (
-        <ArtifactBasePublications
-          chrome={primaryChrome}
-          // A dossier that is still resolving promises Find once its document
-          // renders; a failed head never will.
-          findResolving={state.head.kind !== "Failed"}
-        />
+        <ArtifactBasePublications chrome={primaryChrome} />
       )}
       <DossierSurface
         store={store}

@@ -15,7 +15,6 @@ from nexus.schemas.contributors import (
 )
 from nexus.schemas.media import MediaProcessingStatus
 from nexus.schemas.presence import Presence, absent
-from nexus.schemas.publication_dates import PublicationDate
 from nexus.services.podcasts.handles import PodcastRefreshRunHandle
 from nexus.services.podcasts.types import PodcastRefreshRunStatus, PodcastSyncStatus
 from nexus.services.sealed_handles import DiscoveryTargetHandle
@@ -226,27 +225,6 @@ class PodcastSubscriptionStatusOut(BaseModel):
     backfill: PodcastBackfillOut
 
 
-class PodcastSubscriptionLifecycleBackfillOut(BaseModel):
-    """The lifecycle stream's stable, browser-shaped backfill projection."""
-
-    id: UUID
-    state: Literal["Pending", "Running", "Complete", "SourceLimited", "Failed"]
-    processed_count: int = Field(ge=0)
-    added_count: int = Field(ge=0)
-
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
-
-
-class PodcastSubscriptionLifecycleSnapshotOut(BaseModel):
-    """One viewer-owned subscription's live sync and initial-backfill state."""
-
-    podcast_id: UUID
-    sync_status: PodcastSyncStatus
-    backfill: PodcastSubscriptionLifecycleBackfillOut
-
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
-
-
 class PodcastSubscriptionSettingsOut(PodcastSubscriptionStatusOut):
     collection_revision: CollectionRevision = Field(alias="collectionRevision")
     library_entries_collection_revision: CollectionRevision = Field(
@@ -254,6 +232,12 @@ class PodcastSubscriptionSettingsOut(PodcastSubscriptionStatusOut):
     )
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class PodcastSubscriptionVisibleLibraryOut(BaseModel):
+    id: UUID
+    name: str
+    color: str | None = None
 
 
 class PodcastListItemOut(BaseModel):
@@ -335,7 +319,7 @@ class PodcastEpisodeListItemOut(BaseModel):
     capabilities: PodcastEpisodeListCapabilitiesOut
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
     author_mode: Literal["automatic", "manual"]
-    original_published_date: Presence[PublicationDate]
+    published_date: Presence[str]
     duration_seconds: Presence[int]
     has_show_notes: bool
     player_descriptor: Presence[PodcastEpisodeListPlayerDescriptorOut] = Field(

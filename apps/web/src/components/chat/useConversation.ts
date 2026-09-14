@@ -32,10 +32,8 @@ import {
 import type { MutableRefObject, RefObject } from "react";
 import {
   apiFetch,
-  decodeApiPayload,
   isApiError,
   isSameSystemApiDefect,
-  isToolProjectionReloadRequired,
   type ApiError,
   type ApiPath,
 } from "@/lib/api/client";
@@ -44,26 +42,17 @@ import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoun
 import { createRandomId } from "@/lib/createRandomId";
 import { isAbortError } from "@/lib/errors";
 import { useChatRunTail } from "@/components/chat/useChatRunTail";
-import { loadGenerationCatalog } from "@/components/chat/useGenerationCatalog";
 import { useStringIdSet, type StringIdSet } from "@/lib/useStringIdSet";
 import {
   activeBranchGraphForPath,
   activeForkOptionsForPath,
   selectedPathMessageIds,
 } from "@/lib/conversations/branching";
-import {
-  findGenerationCandidate,
-  sameGenerationSelection,
-  type GenerationSelectionSpec,
-  type RunSelectionOut,
-} from "@/lib/conversations/generationCatalog";
-import type { ChatRunCandidateRequest } from "@/lib/api/sse/requests";
-import type { ChatConnectionRecoveries } from "@/lib/conversations/chatConnectionRecovery";
+import type { InheritedChatProfileSelection } from "@/lib/conversations/chatProfileSelection";
 import type { SSEContextRefAddedEvent } from "@/lib/api/sse/events";
 import { messageUpdateReducer } from "@/lib/conversations/messageUpdateReducer";
 import {
-  decodeChatRunListResponse,
-  decodeChatRunResponse,
+  decodeChatRunData,
   decodeConversationMessages,
   decodeConversationTree,
 } from "@/lib/conversations/messageWire";
@@ -93,38 +82,26 @@ import {
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 
 type ChatRunData = ChatRunResponse["data"];
-import { readAdmittedChatRun } from "@/lib/conversations/chatAdmissionRead";
-type CandidateCommand = Readonly<{
-  idempotencyKey: string;
-  request: ChatRunCandidateRequest;
-}>;
-type ConversationHistorySnapshot = { adoptionVersion: number } &
-  (
-    | {
-        kind: "branching";
-        conversationId: string;
-        tree: ConversationTreeResponse;
-        activeRuns: ChatRunData[];
-      }
-    | {
-        kind: "linear";
-        conversationId: string;
-        messages: ConversationMessage[];
-        olderCursor: string | null;
-      }
-  );
+type ConversationHistorySnapshot =
+  | {
+      kind: "branching";
+      conversationId: string;
+      tree: ConversationTreeResponse;
+      activeRuns: ChatRunData[];
+    }
+  | {
+      kind: "linear";
+      conversationId: string;
+      messages: ConversationMessage[];
+      olderCursor: string | null;
+    };
 
 const MESSAGE_PAGE_SIZE = 30;
 
 function conversationOperationErrorMessage(
   error: ApiError,
   operation:
-    | "RefreshForks"
-    | "Load"
-    | "Rerun"
-    | "Regenerate"
-    | "Delete"
-    | "SwitchFork",
+    "RefreshForks" | "Load" | "Rerun" | "Regenerate" | "Delete" | "SwitchFork",
 ): FeedbackContent {
   switch (error.code) {
     case "E_NOT_FOUND":
@@ -148,7 +125,6 @@ function conversationOperationErrorMessage(
     case "E_UPSTREAM":
     case "E_UPSTREAM_TIMEOUT":
     case "E_NETWORK":
-    case "E_GENERATION_RUNTIME_UNAVAILABLE":
     case "E_TREE_REFRESH_FAILED":
     case "E_REGENERATION_NOT_ALLOWED":
       return {
@@ -166,25 +142,6 @@ function conversationOperationErrorMessage(
                   : operation === "RefreshForks"
                     ? "Forks couldn’t be refreshed."
                     : "This chat couldn’t be loaded.",
-      };
-    case "E_CATALOG_DEFINITION_STALE":
-      return {
-        tone: "Warning",
-        requestId: error.requestId,
-        title: "Model availability changed. Review the exact selection again.",
-      };
-    case "E_GENERATION_SELECTION_UNAVAILABLE":
-      return {
-        tone: "Warning",
-        requestId: error.requestId,
-        title: "That exact model and reasoning are unavailable.",
-        message: "Choose a different model; nothing was substituted.",
-      };
-    case "E_INVALID_GENERATION_SELECTION":
-      return {
-        tone: "Danger",
-        requestId: error.requestId,
-        title: "That model selection is invalid.",
       };
     default:
       throw error;
@@ -204,6 +161,8 @@ interface UseConversationOptions {
   branching?: boolean;
   /** Fired when a `context_ref_added` SSE event lands for this conversation. */
   onContextRefAdded?: (data: SSEContextRefAddedEvent["data"]) => void;
+  /** Fired the first time a run resolves a concrete conversation id. */
+  onConversationCreated?: (conversationId: string, runId: string) => void;
 }
 
 interface UseConversationBranch {
@@ -230,16 +189,12 @@ interface UseConversation {
   loadOlder: () => Promise<void>;
   loading: boolean;
   error: FeedbackContent | null;
-  /** Fail-closed browser/server tool-contract mismatch; cleared only by reload. */
-  projectionReloadRequestId: string | null;
   /** Complete assistant leaf — the default reply/continuation parent. */
   replyParentMessageId: string | null;
-  /** Immutable run selection inherited from the causal assistant parent. */
-  inheritedRunSelection: RunSelectionOut | null;
+  /** Product selection inherited from the causal assistant parent, if any. */
+  inheritedProfileSelection: InheritedChatProfileSelection | null;
   /** The one caller-owned send capability; ChatComposer owns its presentation. */
   sendCapability: ChatSendCapability;
-  /** Bumped by every admitted rerun/regenerate; each bump re-arms the composer's write grant to off. */
-  writeGrantResetVersion: number;
 
   // identity
   conversationId: string | null;
@@ -248,10 +203,7 @@ interface UseConversation {
 
   // send pipeline (passed straight into <ChatComposer/>). The atomic send
   // (destination:New) creates the conversation; there is no eager pre-create.
-  adoptAdmittedRun: (
-    receipt: Parameters<typeof readAdmittedChatRun>[0],
-    isCurrent: () => boolean,
-  ) => Promise<boolean>;
+  onChatRunCreated: (data: ChatRunResponse["data"]) => void;
   activeRunId: string | null;
   cancelActiveRun: () => Promise<void>;
 
@@ -259,26 +211,15 @@ interface UseConversation {
   rerunAssistantResponse: (
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
-  rerunAssistantResponseWithSelection: (
-    assistantMessageId: string,
-    selection: GenerationSelectionSpec,
-    catalogDefinitionRevision: string,
-  ) => Promise<MessageActionMutationOutcome>;
-  rerunningAssistantMessageIds: ReadonlySet<string>;
 
   // regenerate (a new sibling candidate from an eligible completed answer)
   regenerateAssistantResponse: (
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
-  regenerateAssistantResponseWithSelection: (
-    assistantMessageId: string,
-    selection: GenerationSelectionSpec,
-    catalogDefinitionRevision: string,
-  ) => Promise<MessageActionMutationOutcome>;
   deleteMessage: DeleteMessageMutation;
 
-  // client-only connection recovery; server failure/status remains canonical.
-  connectionRecoveries: ChatConnectionRecoveries;
+  // client-only connection-lost recovery (ConnectionLostStatusUnknown, §10)
+  connectionLostAssistantIds: Set<string>;
   reconnectAssistantResponse: (assistantMessageId: string) => void;
 
   // branching (present only when options.branching === true)
@@ -295,6 +236,7 @@ export function useConversation(
     conversationId: initialConversationId,
     branching = false,
     onContextRefAdded,
+    onConversationCreated,
   } = options;
 
   const scrollRef = useRef<ChatScrollHandle | null>(null);
@@ -317,19 +259,11 @@ export function useConversation(
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(initialConversationId));
   const [error, setError] = useState<FeedbackContent | null>(null);
-  const [projectionReloadRequestId, setProjectionReloadRequestId] = useState<
-    string | null
-  >(null);
   const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(
     null,
   );
   const reportAsyncDefect = useCallback((error: unknown) => {
     setAsyncDefect({ error });
-  }, []);
-  const reportProjectionReload = useCallback((operationError: unknown) => {
-    if (!isToolProjectionReloadRequired(operationError)) return false;
-    setProjectionReloadRequestId(operationError.requestId ?? "");
-    return true;
   }, []);
   const reportOperationError = useCallback(
     (
@@ -342,23 +276,16 @@ export function useConversation(
         | "Delete"
         | "SwitchFork",
     ) => {
-      if (reportProjectionReload(operationError)) return;
       try {
         setError(conversationOperationErrorMessage(operationError, operation));
       } catch (defect) {
         reportAsyncDefect(defect);
       }
     },
-    [reportAsyncDefect, reportProjectionReload],
+    [reportAsyncDefect],
   );
   const conversationIdRef = useRef(conversationId);
   conversationIdRef.current = conversationId;
-  // A history request begun before receipt adoption cannot replace its newer tree.
-  const adoptionVersionRef = useRef(0);
-  const historyRequestRef = useRef<{
-    signal: AbortSignal;
-    controller: AbortController;
-  } | null>(null);
 
   // Branch state (only meaningful in branching mode).
   const [forkOptionsByParentId, setForkOptionsByParentId] = useState<
@@ -373,7 +300,6 @@ export function useConversation(
     null,
   );
   const [branchDraft, setBranchDraft] = useState<BranchDraft | null>(null);
-  const [writeGrantResetVersion, setWriteGrantResetVersion] = useState(0);
 
   const rerunningAssistantMessageIds = useStringIdSet();
   const regeneratingAssistantMessageIds = useStringIdSet();
@@ -381,9 +307,13 @@ export function useConversation(
   // retry after an ambiguous network loss replays the SAME command instead of
   // minting a second candidate (spec §5.4). Cleared on success, a definite
   // rejection, or a conversation change.
-  const rerunKeysRef = useRef<Map<string, CandidateCommand>>(new Map());
-  const regenerateKeysRef = useRef<Map<string, CandidateCommand>>(new Map());
+  const rerunKeysRef = useRef<Map<string, string>>(new Map());
+  const regenerateKeysRef = useRef<Map<string, string>>(new Map());
 
+  // Conversations created on first send are seeded optimistically; their
+  // initial route adoption must not refetch history. Existing conversations
+  // must never enter this set, or route re-entry can skip a real reload.
+  const locallyCreatedIdsRef = useRef<Set<string>>(new Set());
   const selectedPathIdsRef = useRef<Set<string>>(new Set());
   const activePathSwitchSeqRef = useRef(0);
   const revealMessageRequestsRef = useRef<Map<string, Promise<boolean>>>(
@@ -438,7 +368,7 @@ export function useConversation(
     tailChatRun,
     abortAll,
     cancelRun,
-    connectionRecoveries,
+    lostConnections,
     reconnectRun,
   } = useChatRunTail(
     branching
@@ -446,16 +376,14 @@ export function useConversation(
           dispatch: dispatchMessages,
           setForkOptionsByParentId,
           onContextRefAdded,
-          onProjectionReloadRequired: reportProjectionReload,
-          onDefect: reportAsyncDefect,
+          onConversationAvailable: onConversationCreated,
           shouldStartRun: shouldStartRunForCurrentConversation,
           shouldApplyRun: shouldApplyRunToSelectedPath,
         }
       : {
           dispatch: dispatchMessages,
           onContextRefAdded,
-          onProjectionReloadRequired: reportProjectionReload,
-          onDefect: reportAsyncDefect,
+          onConversationAvailable: onConversationCreated,
           shouldStartRun: shouldStartRunForCurrentConversation,
         },
   );
@@ -484,35 +412,22 @@ export function useConversation(
         conversation_id: id,
         status: "active",
       })}` as ApiPath;
-      let activeRuns: ChatRunListResponse;
-      if (signal) {
-        const raw = await apiFetch<unknown>(path, { signal });
-        activeRuns = decodeApiPayload(
-          raw,
-          decodeChatRunListResponse,
-          "Active chat runs",
-        );
-      } else {
-        activeRuns = await (activeRunsRequestRef.current ??
-          (activeRunsRequestRef.current = apiFetch<unknown>(path)
-            .then((response) =>
-              decodeApiPayload(
-                response,
-                decodeChatRunListResponse,
-                "Active chat runs",
-              ),
-            )
-            .finally(() => {
+      const activeRuns = signal
+        ? await apiFetch<ChatRunListResponse>(path, { signal })
+        : await (activeRunsRequestRef.current ??
+            (activeRunsRequestRef.current = apiFetch<ChatRunListResponse>(
+              path,
+            ).finally(() => {
               activeRunsRequestRef.current = null;
             })));
-      }
       return activeRuns.data
         .filter(
           (runData) =>
             runData.conversation.id === id &&
             (visibleMessageIds.has(runData.user_message.id) ||
               visibleMessageIds.has(runData.assistant_message.id)),
-        );
+        )
+        .map(decodeChatRunData);
     },
     [],
   );
@@ -528,21 +443,11 @@ export function useConversation(
           void tailChatRunRef.current(runData);
         }
       } catch (err) {
-        if (reportProjectionReload(err)) return;
         if (handleUnauthenticatedApiError(err)) return;
-        if (!isApiError(err) || isSameSystemApiDefect(err)) {
-          reportAsyncDefect(err);
-          return;
-        }
         console.error("Failed to load active chat runs:", err);
       }
     },
-    [
-      conversationId,
-      loadVisibleActiveRuns,
-      reportAsyncDefect,
-      reportProjectionReload,
-    ],
+    [conversationId, loadVisibleActiveRuns],
   );
 
   const applyConversationTree = useCallback(
@@ -595,7 +500,6 @@ export function useConversation(
         setError(null);
         return true;
       } catch (err) {
-        if (reportProjectionReload(err)) return false;
         if (handleUnauthenticatedApiError(err)) return false;
         if (!isApiError(err) || isSameSystemApiDefect(err)) {
           reportAsyncDefect(err);
@@ -614,7 +518,6 @@ export function useConversation(
       loadConversationTree,
       reportAsyncDefect,
       reportOperationError,
-      reportProjectionReload,
     ],
   );
 
@@ -624,7 +527,6 @@ export function useConversation(
       nextBranching: boolean,
       signal: AbortSignal,
     ): Promise<ConversationHistorySnapshot> => {
-      const adoptionVersion = adoptionVersionRef.current;
       if (nextBranching) {
         const response = await loadConversationTree(id, signal);
         const visibleMessageIds = messageIdsForPath(
@@ -640,14 +542,11 @@ export function useConversation(
           );
         } catch (err) {
           if (isAbortError(err) || signal.aborted) throw err;
-          if (isToolProjectionReloadRequired(err)) throw err;
           if (handleUnauthenticatedApiError(err)) throw err;
-          if (!isApiError(err) || isSameSystemApiDefect(err)) throw err;
           console.error("Failed to load active chat runs:", err);
         }
         return {
           kind: "branching",
-          adoptionVersion,
           conversationId: id,
           tree: decodeConversationTree(response.data),
           activeRuns,
@@ -663,56 +562,30 @@ export function useConversation(
       );
       return {
         kind: "linear",
-        adoptionVersion,
         conversationId: id,
-        messages: decodeApiPayload(
-          history.data,
-          decodeConversationMessages,
-          "Conversation messages",
-        ),
+        messages: decodeConversationMessages(history.data),
         olderCursor: history.page.before_cursor ?? null,
       };
     },
     [loadConversationTree, loadVisibleActiveRuns, messageIdsForPath],
   );
 
+  const shouldLoadConversation =
+    conversationId !== null &&
+    !locallyCreatedIdsRef.current.has(conversationId);
   const titleResource = useResource<{ data: { title: string } }>({
-    cacheKey: !branching ? conversationId : null,
+    cacheKey: shouldLoadConversation && !branching ? conversationId : null,
     path: (id) => `/api/conversations/${id}` as ApiPath,
   });
   const historyResource = useResource<ConversationHistorySnapshot>({
-    cacheKey: conversationId !== null
+    cacheKey: shouldLoadConversation
       ? `${branching ? "branching" : "linear"}:${conversationId}`
       : null,
-    load: async (signal) => {
+    load: (signal) => {
       if (!conversationId) {
         throw new Error("Cannot load conversation history without an id");
       }
-      if (historyRequestRef.current?.signal !== signal)
-        historyRequestRef.current = {
-          signal,
-          controller: new AbortController(),
-        };
-      // Bind every retry of this resource request to the same cancellation owner.
-      const historySignal = AbortSignal.any([
-        signal,
-        historyRequestRef.current.controller.signal,
-      ]);
-      try {
-        historySignal.throwIfAborted();
-        const history = await loadConversationHistory(
-          conversationId,
-          branching,
-          historySignal,
-        );
-        historySignal.throwIfAborted();
-        return history;
-      } catch (error) {
-        // A transport may settle after abort. Preserve cancellation so the
-        // resource owner cannot publish its late modeled error or pane defect.
-        historySignal.throwIfAborted();
-        throw error;
-      }
+      return loadConversationHistory(conversationId, branching, signal);
     },
   });
 
@@ -728,6 +601,16 @@ export function useConversation(
     revealMessageRequestsRef.current.clear();
     activeRunsRequestRef.current = null;
     treeRequestRef.current = null;
+
+    if (
+      initialConversationId &&
+      locallyCreatedIdsRef.current.has(initialConversationId) &&
+      conversationId === initialConversationId
+    ) {
+      setLoading(false);
+      setError(null);
+      return;
+    }
 
     abortAll();
     setConversationId(initialConversationId);
@@ -774,7 +657,7 @@ export function useConversation(
 
   useEffect(() => {
     const id = conversationId;
-    if (!id) {
+    if (!id || locallyCreatedIdsRef.current.has(id)) {
       setLoading(false);
       return;
     }
@@ -791,7 +674,6 @@ export function useConversation(
     if (
       historyResource.status !== "ready" ||
       historyResource.data.conversationId !== id ||
-      historyResource.data.adoptionVersion !== adoptionVersionRef.current ||
       conversationIdRef.current !== id
     ) {
       return;
@@ -858,29 +740,14 @@ export function useConversation(
       scrollRef.current?.captureAnchor(null);
       dispatchMessages({
         type: "prepend_older",
-        messages: decodeApiPayload(
-          response.data,
-          decodeConversationMessages,
-          "Older conversation messages",
-        ),
+        messages: decodeConversationMessages(response.data),
       });
       setOlderCursor(response.page.before_cursor ?? null);
     } catch (err) {
-      if (reportProjectionReload(err)) return;
       if (handleUnauthenticatedApiError(err)) return;
-      if (!isApiError(err) || isSameSystemApiDefect(err)) {
-        reportAsyncDefect(err);
-        return;
-      }
       console.error("Failed to load older messages:", err);
     }
-  }, [
-    branching,
-    conversationId,
-    olderCursor,
-    reportAsyncDefect,
-    reportProjectionReload,
-  ]);
+  }, [branching, conversationId, olderCursor]);
 
   // --------------------------------------------------------------------------
   // Run created (optimistic seed + tail)
@@ -894,6 +761,9 @@ export function useConversation(
         currentConversationId !== runData.conversation.id
       ) {
         return;
+      }
+      if (!conversationIdRef.current) {
+        locallyCreatedIdsRef.current.add(runData.conversation.id);
       }
       conversationIdRef.current = runData.conversation.id;
       setConversationId(runData.conversation.id);
@@ -923,101 +793,6 @@ export function useConversation(
     },
     [abortAll, branching, tailChatRun],
   );
-  const adoptAdmittedRun = useCallback(
-    async (
-      receipt: Parameters<typeof readAdmittedChatRun>[0],
-      isCurrent: () => boolean,
-    ): Promise<boolean> => {
-      const data = await readAdmittedChatRun(receipt);
-      if (!isCurrent()) return false;
-      const id = receipt.outcome.conversation_id;
-      const response = await apiFetch<{ data: ConversationTreeResponse }>(
-        `/api/conversations/${id}/tree`,
-      );
-      if (!isCurrent()) return false;
-      let tree = decodeConversationTree(response.data);
-      const containsAdmittedPair = (path: ConversationMessage[]) => {
-        const userIndex = path.findIndex(
-          (message) => message.id === data.user_message.id,
-        );
-        return (
-          userIndex >= 0 &&
-          path[userIndex].role === "user" &&
-          path[userIndex + 1]?.id === receipt.outcome.assistant_message_id &&
-          path[userIndex + 1]?.role === "assistant"
-        );
-      };
-      if (tree.conversation.id !== id)
-        throw new Error("Acknowledged chat tree identity mismatch");
-      if (!containsAdmittedPair(tree.selected_path)) {
-        const target = Object.entries(tree.path_cache_by_leaf_id)
-          .filter(([, path]) => containsAdmittedPair(path))
-          .sort(
-            ([leftId, left], [rightId, right]) =>
-              left.length - right.length || leftId.localeCompare(rightId),
-          )[0];
-        if (!target)
-          throw new Error(
-            "Acknowledged chat target missing from canonical tree",
-          );
-        const selected = await apiFetch<{ data: ConversationTreeResponse }>(
-          `/api/conversations/${id}/active-path`,
-          {
-            method: "POST",
-            body: JSON.stringify({ active_leaf_message_id: target[0] }),
-          },
-        );
-        if (!isCurrent()) return false;
-        tree = decodeConversationTree(selected.data);
-        if (
-          tree.conversation.id !== id ||
-          !containsAdmittedPair(tree.selected_path)
-        )
-          throw new Error("Acknowledged chat target identity mismatch");
-      }
-      const visibleIds = messageIdsForPath(
-        tree.selected_path,
-        tree.active_leaf_message_id,
-      );
-      const activeRuns = await loadVisibleActiveRuns(
-        id,
-        visibleIds,
-        new AbortController().signal,
-      );
-      if (!isCurrent()) return false;
-      if (
-        data.assistant_message.status === "pending" &&
-        tree.selected_path.some(
-          (message) =>
-            message.id === data.assistant_message.id &&
-            message.status === "pending",
-        ) &&
-        !activeRuns.some((run) => run.run.id === data.run.id)
-      )
-        activeRuns.push(data);
-      adoptionVersionRef.current += 1;
-      historyRequestRef.current?.controller.abort();
-      conversationIdRef.current = id;
-      setConversationId(id);
-      applyConversationTree(tree);
-      setOlderCursor(null);
-      setLoading(false);
-      setError(null);
-      if (!branching) abortAll();
-      // Terminal receipt runs are already projected by the current tree. Replaying
-      // their candidate merge would truncate replies added after that old turn.
-      for (const run of activeRuns) void tailChatRun(run);
-      return true;
-    },
-    [
-      abortAll,
-      applyConversationTree,
-      branching,
-      loadVisibleActiveRuns,
-      messageIdsForPath,
-      tailChatRun,
-    ],
-  );
 
   // --------------------------------------------------------------------------
   // Candidate actions (one new sibling candidate from a source assistant turn)
@@ -1026,94 +801,29 @@ export function useConversation(
   // Rerun and Regenerate are the same client contract over different endpoints:
   // one durable sibling candidate from an owning source run. While a POST is
   // unresolved the source is busy-locked; a network loss retains its key so an
-  // identical explicit retry replays the same command; a confirmed replacement
-  // is a different answer identity (spec 5.2) and mints a fresh one; a definite
-  // rejection consumes the key so the next invocation mints a fresh one.
+  // explicit retry replays the same command; a definite rejection consumes the
+  // key so the next invocation mints a fresh one.
   const runCandidateAction = useCallback(
     async (
       assistantMessageId: string,
       endpoint: ApiPath,
       busy: StringIdSet,
-      keysRef: MutableRefObject<Map<string, CandidateCommand>>,
+      keysRef: MutableRefObject<Map<string, string>>,
       operation: "Rerun" | "Regenerate",
-      explicitSelection?: Readonly<{
-        selection: GenerationSelectionSpec;
-        catalogDefinitionRevision: string;
-      }>,
     ): Promise<MessageActionMutationOutcome> => {
       if (busy.has(assistantMessageId)) return "Failed";
+      const idempotencyKey =
+        keysRef.current.get(assistantMessageId) ?? createRandomId();
+      keysRef.current.set(assistantMessageId, idempotencyKey);
       busy.add(assistantMessageId);
       setError(null);
       try {
-        let command = keysRef.current.get(assistantMessageId);
-        if (
-          command !== undefined &&
-          explicitSelection !== undefined &&
-          !sameGenerationSelection(
-            command.request.selection,
-            explicitSelection.selection,
-          )
-        ) {
-          command = undefined;
-        }
-        if (command === undefined) {
-          let selected = explicitSelection;
-          if (selected === undefined) {
-            const source = messages.find(
-              (message) => message.id === assistantMessageId,
-            );
-            const sourceSelection = source?.trust_trail?.run?.run_selection;
-            if (source?.role !== "assistant" || sourceSelection === undefined) {
-              throw new Error(
-                "Candidate generation requires an immutable source run selection",
-              );
-            }
-            const catalog = await loadGenerationCatalog({ refresh: true });
-            const candidate = findGenerationCandidate(
-              catalog,
-              sourceSelection.selection,
-            );
-            if (
-              !sourceSelection.rerun_eligibility ||
-              candidate?.reasoning.chat_state.kind !== "Selectable"
-            ) {
-              setError({
-                tone: "Warning",
-                title: "The original model selection is unavailable.",
-                message:
-                  "Choose a different model for this new run; nothing was substituted. Writes are off for reruns.",
-              });
-              return "Failed";
-            }
-            selected = {
-              selection: sourceSelection.selection,
-              catalogDefinitionRevision: catalog.definition_revision,
-            };
-          }
-          command = {
-            idempotencyKey: createRandomId(),
-            request: {
-              catalog_definition_revision:
-                selected.catalogDefinitionRevision,
-              selection: selected.selection,
-              tool_authority: "ReadOnly",
-            },
-          };
-          keysRef.current.set(assistantMessageId, command);
-        }
-        const rawResponse = await apiFetch<unknown>(endpoint, {
+        const response = await apiFetch<ChatRunResponse>(endpoint, {
           method: "POST",
-          headers: { "Idempotency-Key": command.idempotencyKey },
-          body: JSON.stringify(command.request),
+          headers: { "Idempotency-Key": idempotencyKey },
         });
-        const response = decodeApiPayload(
-          rawResponse,
-          decodeChatRunResponse,
-          `${operation} assistant response`,
-        );
         keysRef.current.delete(assistantMessageId);
-        setWriteGrantResetVersion((version) => version + 1);
-        onChatRunCreated(response.data);
+        onChatRunCreated(decodeChatRunData(response.data));
         return "Committed";
       } catch (err) {
         if (handleUnauthenticatedApiError(err)) return "Failed";
@@ -1121,13 +831,9 @@ export function useConversation(
           reportAsyncDefect(err);
           return "Failed";
         }
-        // Operational uncertainty retains the exact command for an explicit retry.
-        if (
-          err.code !== "E_NETWORK" &&
-          err.code !== "E_UPSTREAM" &&
-          err.code !== "E_UPSTREAM_TIMEOUT" &&
-          err.code !== "E_GENERATION_RUNTIME_UNAVAILABLE"
-        ) {
+        // A network loss is ambiguous: retain the key so a re-invocation replays
+        // the same command. Every other rejection is definite and consumes it.
+        if (err.code !== "E_NETWORK") {
           keysRef.current.delete(assistantMessageId);
         }
         reportOperationError(err, operation);
@@ -1136,7 +842,7 @@ export function useConversation(
         busy.remove(assistantMessageId);
       }
     },
-    [messages, onChatRunCreated, reportAsyncDefect, reportOperationError],
+    [onChatRunCreated, reportAsyncDefect, reportOperationError],
   );
 
   const rerunAssistantResponse = useCallback(
@@ -1151,23 +857,6 @@ export function useConversation(
     [rerunningAssistantMessageIds, runCandidateAction],
   );
 
-  const rerunAssistantResponseWithSelection = useCallback(
-    (
-      assistantMessageId: string,
-      selection: GenerationSelectionSpec,
-      catalogDefinitionRevision: string,
-    ) =>
-      runCandidateAction(
-        assistantMessageId,
-        `/api/messages/${assistantMessageId}/rerun` as ApiPath,
-        rerunningAssistantMessageIds,
-        rerunKeysRef,
-        "Rerun",
-        { selection, catalogDefinitionRevision },
-      ),
-    [rerunningAssistantMessageIds, runCandidateAction],
-  );
-
   const regenerateAssistantResponse = useCallback(
     (assistantMessageId: string) =>
       runCandidateAction(
@@ -1176,23 +865,6 @@ export function useConversation(
         regeneratingAssistantMessageIds,
         regenerateKeysRef,
         "Regenerate",
-      ),
-    [regeneratingAssistantMessageIds, runCandidateAction],
-  );
-
-  const regenerateAssistantResponseWithSelection = useCallback(
-    (
-      assistantMessageId: string,
-      selection: GenerationSelectionSpec,
-      catalogDefinitionRevision: string,
-    ) =>
-      runCandidateAction(
-        assistantMessageId,
-        `/api/messages/${assistantMessageId}/regenerate` as ApiPath,
-        regeneratingAssistantMessageIds,
-        regenerateKeysRef,
-        "Regenerate",
-        { selection, catalogDefinitionRevision },
       ),
     [regeneratingAssistantMessageIds, runCandidateAction],
   );
@@ -1304,6 +976,11 @@ export function useConversation(
       reportOperationError,
       rerunningAssistantMessageIds,
     ],
+  );
+
+  const connectionLostAssistantIds = useMemo(
+    () => new Set(Object.keys(lostConnections)),
+    [lostConnections],
   );
 
   const reconnectAssistantResponse = useCallback(
@@ -1518,7 +1195,7 @@ export function useConversation(
     return null;
   }, [messages]);
 
-  const inheritedRunSelection = useMemo(() => {
+  const inheritedProfileSelection = useMemo(() => {
     const assistant = branchDraft
       ? messages.find((message) => message.id === branchDraft.parentMessageId)
       : messages[messages.length - 1];
@@ -1533,7 +1210,21 @@ export function useConversation(
 
     const run = assistant.trust_trail?.run;
     if (!run) return null;
-    return run.run_selection;
+    if (run.profile_id === null && run.reasoning_option_id === null)
+      return null;
+    if (run.profile_id === null || run.reasoning_option_id === null) {
+      // justify-defect: a ChatRun writes its product profile and reasoning
+      // selection together, so a same-system trust trail cannot contain half.
+      throw new Error("Assistant run selection must be complete");
+    }
+    return {
+      selection: {
+        profileId: run.profile_id,
+        reasoningOptionId: run.reasoning_option_id,
+      },
+      assistantMessageId: assistant.id,
+      runId: run.run_id,
+    };
   }, [branchDraft, messages]);
 
   const sendCapability = useMemo<ChatSendCapability>(() => {
@@ -1572,23 +1263,18 @@ export function useConversation(
     loadOlder,
     loading,
     error,
-    projectionReloadRequestId,
     replyParentMessageId,
-    inheritedRunSelection,
+    inheritedProfileSelection,
     sendCapability,
-    writeGrantResetVersion,
     conversationId,
     title,
-    adoptAdmittedRun,
+    onChatRunCreated,
     activeRunId,
     cancelActiveRun,
     rerunAssistantResponse,
-    rerunAssistantResponseWithSelection,
-    rerunningAssistantMessageIds: rerunningAssistantMessageIds.ids,
     regenerateAssistantResponse,
-    regenerateAssistantResponseWithSelection,
     deleteMessage,
-    connectionRecoveries,
+    connectionLostAssistantIds,
     reconnectAssistantResponse,
     branch,
     scrollRef,

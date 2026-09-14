@@ -1,7 +1,5 @@
 .viewer {
   display: flex;
-  flex: 1 1 0%;
-  height: 100%;
   flex-direction: column;
   gap: var(--space-3);
   min-height: 0;
@@ -27,16 +25,16 @@
 .canvasWrap {
   position: relative;
   width: 100%;
-  flex: 1;
-  min-height: 0;
+  min-height: 360px;
 }
 
 .pdfViewport {
   position: relative;
   width: 100%;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
+  min-width: 280px;
+  min-height: 360px;
+  height: min(78vh, 980px);
+  height: min(78dvh, 980px);
   border: 1px solid var(--edge-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-1);
@@ -144,20 +142,13 @@
   font-size: var(--text-sm);
 }
 
-.errorRetry {
-  display: block;
-  margin-top: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--danger);
-  font-size: var(--text-sm);
-  cursor: pointer;
-}
-
 @media (max-width: 768px),
   (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
+  .pdfViewport {
+    height: min(78vh, 980px); /* fallback */
+    height: min(78dvh, 980px); /* dynamic viewport for mobile address bar */
+  }
+
   .viewerContainer {
     padding-top: var(--mobile-pane-content-offset);
     padding-bottom: var(--mobile-content-bottom-clearance);

@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 from uuid import UUID
 
+from provider_runtime import ReasoningLevel
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -26,8 +27,7 @@ from nexus.services.artifacts.bindings._shared import (
 from nexus.services.artifacts.bindings.base import (
     DossierBindingBase,
     DossierInputTooLarge,
-    DossierOperation,
-    PublishableDossier,
+    MaterializedDossier,
     require_resource_subject,
 )
 from nexus.services.artifacts.coordination import DossierBuildRuntime
@@ -45,6 +45,7 @@ from nexus.services.artifacts.subject_policy import (
     ResolvedSubject,
     decode_resource_locator,
 )
+from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.resource_graph.adjacency import load_page_surface
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import CitationSnapshot
@@ -75,7 +76,10 @@ class PageCoverage:
 
 class PageBinding(DossierBindingBase):
     subject_scheme: str = "page"
-    llm_operation: DossierOperation = "dossier_page"
+    llm_operation: BackgroundLlmOperation = "dossier_page"
+    profile: str = "fast"
+    reasoning: ReasoningLevel = "low"
+    max_output_tokens: int = 3500
     schema: type[BaseModel] = StandardSynthesis
     system_prompt: str = synthesis_prompt("a note page and its current connections")
 
@@ -125,7 +129,7 @@ class PageBinding(DossierBindingBase):
         collected: _PageCollected,  # noqa: ARG002
         decoded_output: BaseModel,
         witness: _PageWitness,
-    ) -> PublishableDossier:
+    ) -> MaterializedDossier:
         return materialize_standard(decoded_output, witness.candidates)
 
     def input_manifest(self, collected: _PageCollected) -> InputManifestV1:
@@ -190,7 +194,7 @@ class PageSubjectPolicy:
     def collection_viewer(self, resolved: ResolvedSubject, audience: AudienceScope) -> UUID | None:
         return _audience_user(audience)
 
-    def requester_admission(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
+    def requester_billing(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
         return requester_user_id
 
     def citation_owner(

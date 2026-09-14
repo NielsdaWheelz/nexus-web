@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 from uuid import UUID
 
+from provider_runtime import ReasoningLevel
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -27,8 +28,7 @@ from nexus.services.artifacts.bindings._shared import (
 from nexus.services.artifacts.bindings.base import (
     DossierBindingBase,
     DossierInputTooLarge,
-    DossierOperation,
-    PublishableDossier,
+    MaterializedDossier,
     require_resource_subject,
 )
 from nexus.services.artifacts.coordination import DossierBuildRuntime
@@ -46,6 +46,7 @@ from nexus.services.artifacts.subject_policy import (
     ResolvedSubject,
     decode_resource_locator,
 )
+from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import CitationSnapshot
 
@@ -73,7 +74,10 @@ class NoteCoverage:
 
 class NoteBinding(DossierBindingBase):
     subject_scheme: str = "note_block"
-    llm_operation: DossierOperation = "dossier_note"
+    llm_operation: BackgroundLlmOperation = "dossier_note"
+    profile: str = "fast"
+    reasoning: ReasoningLevel = "low"
+    max_output_tokens: int = 3000
     schema: type[BaseModel] = StandardSynthesis
     system_prompt: str = synthesis_prompt("one atomic note and its current connections")
 
@@ -126,7 +130,7 @@ class NoteBinding(DossierBindingBase):
         collected: _NoteCollected,  # noqa: ARG002
         decoded_output: BaseModel,
         witness: _NoteWitness,
-    ) -> PublishableDossier:
+    ) -> MaterializedDossier:
         return materialize_standard(decoded_output, witness.candidates)
 
     def input_manifest(self, collected: _NoteCollected) -> InputManifestV1:
@@ -193,7 +197,7 @@ class NoteSubjectPolicy:
     def collection_viewer(self, resolved: ResolvedSubject, audience: AudienceScope) -> UUID | None:
         return _audience_user(audience)
 
-    def requester_admission(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
+    def requester_billing(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
         return requester_user_id
 
     def citation_owner(

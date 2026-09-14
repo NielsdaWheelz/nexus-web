@@ -7,7 +7,6 @@ from typing import Any, Literal
 from uuid import UUID
 
 from nexus.schemas.contributors import ContributorCreditOut
-from nexus.schemas.presence import presence_from_nullable
 from nexus.schemas.retrieval import retrieval_result_ref_json
 from nexus.schemas.search import SearchResultSourceOut
 from nexus.services.resource_graph.refs import ResourceRef
@@ -218,7 +217,7 @@ def _build_search_source(
     media_kind: str,
     title: str,
     contributors: Any,
-    original_published_date: Any,
+    published_date: Any,
 ) -> SearchResultSourceOut:
     parsed_contributors = _parse_contributor_credits(contributors)
     return SearchResultSourceOut(
@@ -226,7 +225,7 @@ def _build_search_source(
         media_kind=media_kind,
         title=title,
         contributors=parsed_contributors,
-        original_published_date=presence_from_nullable(original_published_date),
+        published_date=str(published_date) if published_date is not None else None,
     )
 
 

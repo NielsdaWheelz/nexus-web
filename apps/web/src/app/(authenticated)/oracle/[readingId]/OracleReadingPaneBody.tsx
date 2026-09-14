@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   FeedbackNotice,
   type FeedbackContent,
@@ -14,6 +14,7 @@ import {
 } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useGenerationRun } from "@/lib/api/useGenerationRun";
+import type { CitationOut } from "@/lib/conversations/citationOut";
 import { toReaderCitationData } from "@/lib/conversations/citations";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
@@ -22,19 +23,14 @@ import {
   type ResourceActivation,
 } from "@/lib/resources/activation";
 import { createRandomId } from "@/lib/createRandomId";
+import {
+  parseOraclePlateImageSrc,
+  requireOraclePlateImageSrc,
+  type OraclePlateImageSrc,
+} from "@/lib/media/oraclePlateImage";
 import { toRoman } from "@/lib/toRoman";
 import { useResource } from "@/lib/api/useResource";
-import {
-  decodeOracleCreateResponse,
-  decodeOracleReadingDetailResponse,
-  decodeOracleStreamEvent,
-  type OracleImagePayload,
-  type OraclePassagePayload,
-  type OracleReadingDetail,
-  type OracleReadingEvent,
-  type OracleReadingPhase,
-  type ReadOracleReadingFailureCode,
-} from "@/lib/oracle/oracleReadingWire";
+import { isRecord } from "@/lib/validation";
 import {
   usePaneParam,
   usePaneReturnReady,
@@ -45,6 +41,7 @@ import {
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
+import type { OracleCreateResponse } from "../types";
 import BorderFrame from "../BorderFrame";
 import IlluminatedCapital from "../IlluminatedCapital";
 import OracleConcordance from "../OracleConcordance";
@@ -52,7 +49,7 @@ import OracleThemeWrapper from "../OracleThemeWrapper";
 import Sidenote from "./Sidenote";
 import styles from "../oracle.module.css";
 
-type Phase = OracleReadingPhase;
+type Phase = "descent" | "ordeal" | "ascent";
 
 const PHASE_ORDER: readonly Phase[] = ["descent", "ordeal", "ascent"] as const;
 
@@ -62,8 +59,52 @@ const PHASE_LABEL: Record<Phase, string> = {
   ascent: "III. The Ascent",
 };
 
-type PassagePayload = OraclePassagePayload;
-export type ReadingDetail = OracleReadingDetail;
+interface ApiImagePayload {
+  url: string;
+  attribution_text: string;
+  artist: string;
+  work_title: string;
+  year: string | null;
+  width: number;
+  height: number;
+}
+
+interface ImagePayload extends Omit<ApiImagePayload, "url"> {
+  url: OraclePlateImageSrc;
+}
+
+interface PassagePayload {
+  phase: Phase;
+  source_kind: "user_media" | "public_domain";
+  exact_snippet: string;
+  locator_label: string;
+  attribution_text: string;
+  marginalia_text: string;
+  deep_link: string | null;
+  // Server-built CitationOut for passages with a live shared locator, including
+  // resolved public-domain anchors; null for stale or span-less targets.
+  citation: CitationOut | null;
+}
+
+export interface ReadingDetail {
+  id: string;
+  folio_number: number;
+  folio_motto: string | null;
+  folio_motto_gloss: string | null;
+  folio_theme: string | null;
+  argument_text: string | null;
+  question_text: string;
+  status: "pending" | "streaming" | "complete" | "failed";
+  image: ApiImagePayload | null;
+  passages: PassagePayload[];
+  events: {
+    seq: number;
+    event_type: string;
+    payload: Record<string, unknown>;
+  }[];
+  created_at: string;
+  error_code: string | null;
+}
 
 interface ReadingState {
   question: string;
@@ -74,15 +115,19 @@ interface ReadingState {
   argument: string | null;
   createdAt: string | null;
   status: "pending" | "streaming" | "complete" | "failed";
-  image: OracleImagePayload | null;
+  image: ImagePayload | null;
   passages: PassagePayload[];
   delta: string;
   omens: string[];
-  errorCode: ReadOracleReadingFailureCode | null;
+  errorCode: string | null;
   cursor: number;
 }
 
-type OracleStreamEvent = OracleReadingEvent;
+type OracleStreamEvent = {
+  seq: number;
+  event_type: string;
+  payload: Record<string, unknown>;
+};
 
 const ORACLE_RECONNECT_MAX_ATTEMPTS = 3;
 const STREAM_ERROR_MESSAGE =
@@ -127,6 +172,13 @@ function oracleRetryErrorMessage(error: unknown): FeedbackContent {
         message: "Wait a moment, then retry.",
         requestId: error.requestId,
       };
+    case "E_TOKEN_BUDGET_EXCEEDED":
+      return {
+        tone: "Danger",
+        title: "The retry couldn’t begin",
+        message: "The platform AI allowance has been reached.",
+        requestId: error.requestId,
+      };
     default:
       throw error;
   }
@@ -149,6 +201,108 @@ const initialState = (): ReadingState => ({
   cursor: 0,
 });
 
+function stringPayloadValue(
+  payload: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = payload[key];
+  return typeof value === "string" ? value : null;
+}
+
+function nullableStringPayloadValue(
+  payload: Record<string, unknown>,
+  key: string,
+): string | null | undefined {
+  const value = payload[key];
+  if (value === null) return null;
+  return typeof value === "string" ? value : undefined;
+}
+
+function isPhase(value: unknown): value is Phase {
+  return value === "descent" || value === "ordeal" || value === "ascent";
+}
+
+function parseImagePayload(
+  payload: Record<string, unknown>,
+): ImagePayload | null {
+  const url = stringPayloadValue(payload, "url");
+  const attributionText = stringPayloadValue(payload, "attribution_text");
+  const artist = stringPayloadValue(payload, "artist");
+  const workTitle = stringPayloadValue(payload, "work_title");
+  const year = nullableStringPayloadValue(payload, "year");
+  const width = payload.width;
+  const height = payload.height;
+  if (
+    url === null ||
+    attributionText === null ||
+    artist === null ||
+    workTitle === null ||
+    year === undefined ||
+    typeof width !== "number" ||
+    typeof height !== "number"
+  ) {
+    return null;
+  }
+  const plateUrl = parseOraclePlateImageSrc(url);
+  if (plateUrl === null) return null;
+  return {
+    url: plateUrl,
+    attribution_text: attributionText,
+    artist,
+    work_title: workTitle,
+    year,
+    width,
+    height,
+  };
+}
+
+function normalizeDetailImagePayload(
+  image: ApiImagePayload | null,
+): ImagePayload | null {
+  if (image === null) return null;
+  return {
+    ...image,
+    url: requireOraclePlateImageSrc(image.url),
+  };
+}
+
+function parsePassagePayload(
+  payload: Record<string, unknown>,
+): PassagePayload | null {
+  const phase = payload.phase;
+  const sourceKind = payload.source_kind;
+  const exactSnippet = stringPayloadValue(payload, "exact_snippet");
+  const locatorLabel = stringPayloadValue(payload, "locator_label");
+  const attributionText = stringPayloadValue(payload, "attribution_text");
+  const marginaliaText = stringPayloadValue(payload, "marginalia_text");
+  const deepLink = nullableStringPayloadValue(payload, "deep_link");
+  if (
+    !isPhase(phase) ||
+    (sourceKind !== "user_media" && sourceKind !== "public_domain") ||
+    exactSnippet === null ||
+    locatorLabel === null ||
+    attributionText === null ||
+    marginaliaText === null ||
+    deepLink === undefined
+  ) {
+    return null;
+  }
+  return {
+    phase,
+    source_kind: sourceKind,
+    exact_snippet: exactSnippet,
+    locator_label: locatorLabel,
+    attribution_text: attributionText,
+    marginalia_text: marginaliaText,
+    deep_link: deepLink,
+    // The backend ships a well-formed CitationOut (or null); trust it at this
+    // SSE boundary the way the GET-fed LI pane trusts its citations array.
+    citation: isRecord(payload.citation)
+      ? (payload.citation as unknown as CitationOut)
+      : null,
+  };
+}
+
 function stateFromDetail(detail: ReadingDetail): ReadingState {
   let next: ReadingState = {
     ...initialState(),
@@ -160,7 +314,7 @@ function stateFromDetail(detail: ReadingDetail): ReadingState {
     argument: detail.argument_text,
     createdAt: detail.created_at,
     status: detail.status,
-    image: detail.image,
+    image: normalizeDetailImagePayload(detail.image),
     passages: [...detail.passages].sort(
       (a, b) => PHASE_ORDER.indexOf(a.phase) - PHASE_ORDER.indexOf(b.phase),
     ),
@@ -176,41 +330,44 @@ function applyEvent(
   state: ReadingState,
   event: OracleStreamEvent,
 ): ReadingState {
-  if (event.seq !== state.cursor + 1) {
-    throw new Error(
-      `Invalid SSE payload for Oracle reading: expected event ${state.cursor + 1}, received ${event.seq}`,
-    );
-  }
+  if (event.seq <= state.cursor) return state;
   const cursor = event.seq;
   switch (event.event_type) {
     case "meta": {
-      return {
-        ...state,
-        cursor,
-        question: event.payload.question,
-        folioNumber: event.payload.folio_number,
-        status: "streaming",
-      };
+      const question = String(event.payload.question ?? state.question);
+      const rawFolio = event.payload.folio_number;
+      const folioNumber =
+        typeof rawFolio === "number" ? rawFolio : state.folioNumber;
+      return { ...state, cursor, question, folioNumber, status: "streaming" };
     }
     case "bind":
       return {
         ...state,
         cursor,
-        folioMotto: event.payload.folio_motto,
-        folioMottoGloss: event.payload.folio_motto_gloss,
-        folioTheme: event.payload.folio_theme,
+        folioMotto:
+          typeof event.payload.folio_motto === "string"
+            ? event.payload.folio_motto
+            : state.folioMotto,
+        folioMottoGloss:
+          typeof event.payload.folio_motto_gloss === "string"
+            ? event.payload.folio_motto_gloss
+            : null,
+        folioTheme:
+          typeof event.payload.folio_theme === "string"
+            ? event.payload.folio_theme
+            : state.folioTheme,
       };
     case "argument":
-      return { ...state, cursor, argument: event.payload.text };
+      return { ...state, cursor, argument: String(event.payload.text ?? "") };
     case "plate": {
-      return {
-        ...state,
-        cursor,
-        image: event.payload,
-      };
+      const image = parseImagePayload(event.payload);
+      return image === null
+        ? { ...state, cursor }
+        : { ...state, cursor, image };
     }
     case "passage": {
-      const incoming = event.payload;
+      const incoming = parsePassagePayload(event.payload);
+      if (incoming === null) return { ...state, cursor };
       const next = state.passages
         .filter((p) => p.phase !== incoming.phase)
         .concat(incoming);
@@ -220,39 +377,56 @@ function applyEvent(
       return { ...state, cursor, passages: next };
     }
     case "delta":
-      return { ...state, cursor, delta: event.payload.text };
-    case "omens":
-      return { ...state, cursor, omens: [...event.payload.lines] };
+      return { ...state, cursor, delta: String(event.payload.text ?? "") };
+    case "omens": {
+      const lines = Array.isArray(event.payload.lines)
+        ? event.payload.lines.filter((line) => typeof line === "string")
+        : [];
+      return { ...state, cursor, omens: lines };
+    }
     case "done": {
       if (event.payload.status === "failed") {
         return {
           ...state,
           cursor,
           status: "failed",
-          errorCode: event.payload.error_code,
+          errorCode:
+            stringPayloadValue(event.payload, "error_code") ?? "E_UNKNOWN",
         };
       }
       return { ...state, cursor, status: "complete" };
     }
-    case "historical_done":
-      return {
-        ...state,
-        cursor,
-        status: "failed",
-        errorCode: event.payload.error_code,
-      };
+    default:
+      return { ...state, cursor };
   }
+}
+
+function decodeOracleStreamEvent(
+  type: string,
+  data: unknown,
+  eventId: string,
+): OracleStreamEvent {
+  const seq = Number(eventId);
+  if (!Number.isSafeInteger(seq) || seq <= 0 || !isRecord(data)) {
+    // Prefix matches the shared SSE client's fatal-error allowlist.
+    throw new Error("Invalid SSE payload for oracle reading");
+  }
+  return {
+    seq,
+    event_type: type,
+    payload: data,
+  };
 }
 
 async function loadReadingDetail(
   readingId: string,
   signal: AbortSignal,
 ): Promise<ReadingDetail> {
-  const detail = await apiFetch<unknown>(
+  const detail = await apiFetch<{ data: ReadingDetail }>(
     `/api/oracle/readings/${readingId}`,
     { signal },
   );
-  return decodeOracleReadingDetailResponse(detail);
+  return detail.data;
 }
 
 const MONTHS = [
@@ -313,57 +487,20 @@ function FleuronBreak() {
   );
 }
 
-export type OracleGenerationFailureCode = ReadOracleReadingFailureCode;
-
-export function oracleFailureFeedback(
-  errorCode: ReadOracleReadingFailureCode | null,
-): FeedbackContent {
-  if (errorCode === null) {
-    throw new Error("Failed Oracle reading has no terminal error code");
-  }
+function oracleFailureFeedback(errorCode: string | null): FeedbackContent {
   switch (errorCode) {
-    case "auth":
+    case "E_BILLING_REQUIRED":
       return {
         tone: "Danger",
         title: "The reading could not finish.",
-        message: "The reading service could not authenticate. Please try again later.",
+        message: "Platform model access requires an AI tier. Upgrade to continue.",
       };
-    case "quota":
+    case "E_TOKEN_BUDGET_EXCEEDED":
+    case "budget_exceeded":
       return {
         tone: "Danger",
         title: "The reading could not finish.",
-        message: "The reading service has reached its usage limit. Please try again later.",
-      };
-    case "timeout":
-      return {
-        tone: "Danger",
-        title: "The reading could not finish.",
-        message: "The reading took too long to complete. Please start a new reading.",
-      };
-    case "output_limit":
-      return {
-        tone: "Danger",
-        title: "The reading could not finish.",
-        message: "The reading was too long to complete. Please start a new reading.",
-      };
-    case "invalid_output":
-    case "policy_violation":
-      return {
-        tone: "Danger",
-        title: "The reading could not finish.",
-        message: "The reading could not be completed. Please start a new reading.",
-      };
-    case "runtime_unavailable":
-      return {
-        tone: "Danger",
-        title: "The reading could not finish.",
-        message: "The reading service is temporarily unavailable. Please try again later.",
-      };
-    case "capacity_unavailable":
-      return {
-        tone: "Danger",
-        title: "The reading could not finish.",
-        message: "The reading service is busy. Please try again shortly.",
+        message: "The platform AI allowance has been reached.",
       };
     case "context_too_large":
       return {
@@ -372,12 +509,6 @@ export function oracleFailureFeedback(
         message:
           "The reading could not be completed. Start a new reading with a simpler question.",
       };
-    case "cancelled":
-      return {
-        tone: "Danger",
-        title: "The reading was cancelled.",
-        message: "Start a new reading when you’re ready.",
-      };
     case "E_ORACLE_CORPUS_NOT_READY":
     case "E_APP_SEARCH_FAILED":
       return {
@@ -385,38 +516,23 @@ export function oracleFailureFeedback(
         title: "The reading could not finish.",
         message: "The oracle’s source material is not ready. Start a new reading later.",
       };
-    case "E_RATE_LIMITED":
-      return {
-        tone: "Danger",
-        title: "The oracle is busy.",
-        message: "Wait a moment, then start a new reading.",
-      };
-    case "E_GENERATION_SOURCE_CHANGED":
-      return {
-        tone: "Danger",
-        title: "The source material changed.",
-        message: "Start a new reading from the current material.",
-      };
-    case "defect":
-    case "E_INTERNAL":
-    case "E_BILLING_REQUIRED":
-    case "E_TOKEN_BUDGET_EXCEEDED":
-    case "budget_exceeded":
     case "invalid_structured_output":
     case "refused":
     case "incomplete":
+    case "cancelled":
     case "rate_limited":
+    case "timeout":
     case "provider_unavailable":
     case "stream_interrupted":
       return {
         tone: "Danger",
-        title: "This earlier reading could not finish.",
-        message: "Start a new reading under the current generation system.",
+        title: "The reading could not finish.",
+        message: "The reading could not be completed. Please start a new reading.",
       };
-    default: {
-      const exhaustive: never = errorCode;
-      throw new Error(`Unsupported Oracle terminal error code: ${exhaustive}`);
-    }
+    default:
+      throw new Error(
+        `Unsupported oracle terminal error code: ${errorCode ?? "null"}`,
+      );
   }
 }
 
@@ -438,7 +554,6 @@ export default function OracleReadingPaneBody() {
   const [retryingReading, setRetryingReading] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
-  const streamCursorRef = useRef({ readingId, cursor: 0 });
   const detailResource = useResource<ReadingDetail>({
     cacheKey: `${readingId}:${retryNonce}`,
     load: (signal) => loadReadingDetail(readingId, signal),
@@ -470,7 +585,7 @@ export default function OracleReadingPaneBody() {
     setRetryingReading(true);
     setRetryError(null);
     try {
-      const raw = await apiFetch<unknown>(
+      const body = await apiFetch<{ data: OracleCreateResponse }>(
         "/api/oracle/readings",
         {
           method: "POST",
@@ -478,9 +593,8 @@ export default function OracleReadingPaneBody() {
           body: JSON.stringify({ question }),
         },
       );
-      const body = decodeOracleCreateResponse(raw);
       paneRuntime.activateTarget({
-        target: { href: `/oracle/${body.reading_id}` },
+        target: { href: `/oracle/${body.data.reading_id}` },
         disposition: { kind: "Follow" },
       });
     } catch (error) {
@@ -528,34 +642,12 @@ export default function OracleReadingPaneBody() {
     streamSeed !== null &&
     (streamSeed.status === "pending" || streamSeed.status === "streaming");
 
-  useEffect(() => {
-    streamCursorRef.current = {
-      readingId,
-      cursor: streamSeed?.cursor ?? 0,
-    };
-  }, [readingId, streamSeed]);
-
-  const onStreamEvent = useCallback(
-    (event: OracleStreamEvent) => {
-      const cursor = streamCursorRef.current;
-      if (cursor.readingId !== readingId || event.seq !== cursor.cursor + 1) {
-        throw new Error(
-          `Invalid SSE payload for Oracle reading: expected event ${cursor.cursor + 1}, received ${event.seq}`,
-        );
-      }
-      cursor.cursor = event.seq;
-      setState((current) => applyEvent(current, event));
-    },
-    [readingId],
-  );
-
   const { phase: streamPhase } = useGenerationRun<OracleStreamEvent>({
     kind: "oracle-readings",
     id: shouldStream ? readingId : null,
     decode: decodeOracleStreamEvent,
-    isTerminal: (event) =>
-      event.event_type === "done" || event.event_type === "historical_done",
-    onEvent: onStreamEvent,
+    isTerminal: (event) => event.event_type === "done",
+    onEvent: (event) => setState((current) => applyEvent(current, event)),
     resume: shouldStream
       ? {
           lastEventId:

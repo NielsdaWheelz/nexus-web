@@ -288,7 +288,7 @@ def acquire_slate_candidates(
                 normalized AS (
                     SELECT
                         eligible_media.*,
-                        ({exact_day_date_sql("original_published_date")}) AS published_on
+                        ({exact_day_date_sql("published_date")}) AS published_on
                     FROM eligible_media
                 ),
                 qualifying AS (
@@ -483,7 +483,7 @@ def acquire_slate_candidates(
         created_at = row["created_at"]
         if created_at is not None:
             arrivals.append(AddedToNexusEvidence(kind="AddedToNexus", added_at=created_at))
-        published_on = _day_precision_published_on(row["original_published_date"])
+        published_on = _day_precision_published_on(row["published_date"])
         if published_on is not None:
             arrivals.append(PublishedEvidence(kind="Published", published_on=published_on))
         published_at = row["published_at"]
@@ -534,7 +534,7 @@ def _relational_target_relation(
     nonrelational_exclusion = ""
     normalized_published_on = "NULL::date"
     if exclude_nonrelational:
-        normalized_published_on = exact_day_date_sql("original_published_date")
+        normalized_published_on = exact_day_date_sql("published_date")
         nonrelational_exclusion = """
             AND NOT COALESCE(
                 read_state = 'InProgress'

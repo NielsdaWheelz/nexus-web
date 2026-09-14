@@ -43,62 +43,6 @@ def test_captured_child_output_is_drained_without_retaining_unbounded_logs(
     assert completed.stderr.endswith("stderr-tail")
 
 
-def test_captured_child_output_retains_requested_marker_line_with_a_bounded_tail(
-    tmp_path: Path,
-) -> None:
-    marker = "NEXUS_CONTROL_GESTURE_DIAGNOSTICS: navigationMode=2"
-    command = (
-        "import sys; "
-        f"sys.stdout.write('p' * 200000 + {marker!r} + '\\n' + 'x' * 200000 + 'stdout-tail')"
-    )
-
-    completed = run_command(
-        (sys.executable, "-c", command),
-        cwd=tmp_path,
-        env={},
-        capture_output=True,
-        check=True,
-        retain_stdout_markers=("NEXUS_CONTROL_GESTURE_DIAGNOSTICS:",),
-    )
-
-    assert completed.stdout is not None
-    assert len(completed.stdout.encode()) <= 64 * 1024
-    assert marker in completed.stdout
-    assert completed.stdout.endswith("stdout-tail")
-
-
-def test_owned_child_inherits_only_the_controller_runner_tracking_identity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    command = (
-        sys.executable,
-        "-c",
-        "import os; print(os.environ.get('RUNNER_TRACKING_ID', 'absent'))",
-    )
-    monkeypatch.setenv("RUNNER_TRACKING_ID", "controller-owned-identity")
-
-    inherited = run_command(
-        command,
-        cwd=tmp_path,
-        env={"RUNNER_TRACKING_ID": "untrusted-replacement"},
-        capture_output=True,
-        check=True,
-    )
-
-    assert inherited.stdout == "controller-owned-identity\n"
-
-    monkeypatch.delenv("RUNNER_TRACKING_ID")
-    absent = run_command(
-        command,
-        cwd=tmp_path,
-        env={"RUNNER_TRACKING_ID": "untrusted-replacement"},
-        capture_output=True,
-        check=True,
-    )
-
-    assert absent.stdout == "absent\n"
-
-
 def test_sigterm_to_controller_terminates_its_current_child_process_group(
     tmp_path: Path,
 ) -> None:

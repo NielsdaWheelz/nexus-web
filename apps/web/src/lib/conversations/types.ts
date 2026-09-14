@@ -4,19 +4,13 @@ import type {
   SearchCitationResultType,
   WebCitationEventData,
 } from "@/lib/api/sse/citations";
+import type { ChatToolStatus } from "@/lib/api/sse/events";
 import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import type { CitationOut } from "@/lib/conversations/citationOut";
 import type { ReaderSelectionOut } from "@/lib/conversations/readerSelection";
-import type { RunSelectionOut } from "@/lib/conversations/generationCatalog";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { Presence } from "@/lib/api/presence";
 import type { DurableExecution } from "@/lib/api/executionAdvisory";
-import type {
-  ToolEffect,
-  ToolErrorType,
-  ToolRecordKind,
-  ToolResultKind,
-} from "@/lib/conversations/toolContractProjection";
 
 export interface ConversationSummary {
   id: string;
@@ -34,6 +28,40 @@ export interface ConversationListItem {
   updated_at: string;
 }
 
+/** One reasoning option a profile offers (GET /llm-profiles). */
+export interface LlmReasoningOption {
+  id: string;
+  label: string;
+}
+
+export type LlmProfilePrivacy =
+  | { readonly kind: "Standard"; readonly notice: string }
+  | { readonly kind: "ExceptionalRetention"; readonly notice: string };
+
+/**
+ * A product-facing LLM profile (GET /llm-profiles). The browser owns no
+ * provider/model/reasoning enum, ordering, default, capability, key, or
+ * availability policy — it renders exactly what this endpoint returns.
+ * Deliberately has no resolved provider/model field: that pair is an
+ * internal runtime fact, not a selection control (§10).
+ */
+export interface LlmProfile {
+  id: string;
+  label: string;
+  description: string;
+  provider_label: string;
+  model_label: string;
+  reasoning_options: LlmReasoningOption[];
+  default_reasoning_option_id: string;
+  privacy: LlmProfilePrivacy;
+}
+
+/** Response schema for GET /llm-profiles. */
+export interface LlmProfilesOut {
+  default_profile_id: string;
+  profiles: LlmProfile[];
+}
+
 export type ChatSendCapability =
   | { readonly kind: "Available" }
   | { readonly kind: "HistoryLoading" }
@@ -45,54 +73,101 @@ export type ChatSendCapability =
 //
 // Closed, discriminated union (discriminator `code`) exposed by ChatRunOut,
 // message hydration, terminal SSE, reconnect folding, and the trust trail.
-// Its fields are deliberately only `code` and `can_rerun`; the browser does
-// not carry backend diagnostics or retry-attempt bookkeeping.
+// A DEFECT (internal error) exposes NO variant — `failure` is null but the
+// run status is terminal-failed with a run-owned support_id; render the same generic,
+// non-rerunnable card (see chatFailureMessage in lib/llm/failure.ts).
 // =============================================================================
 
 interface ExpectedChatFailureBase {
   can_rerun: boolean;
 }
 
-/** Run status `cancelled` alone drives this variant. */
-export interface CancelledChatFailure extends ExpectedChatFailureBase {
-  code: "cancelled";
-  can_rerun: boolean;
+/** Streamed Fable refusal (provider_stream) or non-streamed provider refusal
+ * (provider_http). Never rerunnable. */
+export interface RefusedChatFailure extends ExpectedChatFailureBase {
+  code: "refused";
+  origin: "provider_http" | "provider_stream";
 }
 
-export interface ContextTooLargeChatFailure extends ExpectedChatFailureBase {
-  code: "context_too_large";
-  can_rerun: false;
-}
-
-export interface InvalidOutputChatFailure extends ExpectedChatFailureBase {
-  code: "invalid_output";
-  can_rerun: false;
-}
-
-/** A completion that ended early, or local truncation folded to the same
- * closed code. */
+/** Provider-declared incomplete completion, or local truncation folded to the
+ * same closed code. */
 export interface IncompleteChatFailure extends ExpectedChatFailureBase {
   code: "incomplete";
-  can_rerun: boolean;
+  origin: "provider_response";
 }
 
-export interface AssistantUnavailableChatFailure extends ExpectedChatFailureBase {
-  code: "assistant_unavailable";
-  can_rerun: boolean;
+/** Run status `cancelled` alone drives this variant — a cancelled run's error
+ * columns are NULL, so it carries no `origin`. */
+export interface CancelledChatFailure extends ExpectedChatFailureBase {
+  code: "cancelled";
 }
 
-export interface OperatorDefectChatFailure extends ExpectedChatFailureBase {
-  code: "operator_defect";
-  can_rerun: false;
+/** Owner-side assembly rejected the intent before generation began (`intent`,
+ * ledgerless), or the provider rejected an in-bound request as oversize
+ * (`provider_http`). */
+export interface ContextTooLargeChatFailure extends ExpectedChatFailureBase {
+  code: "context_too_large";
+  origin: "intent" | "provider_http";
+}
+
+export interface InvalidToolArgumentsChatFailure extends ExpectedChatFailureBase {
+  code: "invalid_tool_arguments";
+  origin: "tool_arguments";
+}
+
+/** Platform-token-reservation denial. Never rerunnable. */
+export interface BudgetExceededChatFailure extends ExpectedChatFailureBase {
+  code: "budget_exceeded";
+  origin: "budget";
+}
+
+/** Transient: mapped from the runtime's TransientExhausted(cause=
+ * ProviderRateLimit) leaf. */
+export interface RateLimitedChatFailure extends ExpectedChatFailureBase {
+  code: "rate_limited";
+  origin: "provider_http";
+  attempts: number;
+}
+
+/** Transient: mapped from the runtime's TransientExhausted(cause=
+ * ProviderTimeout) leaf. */
+export interface TimeoutChatFailure extends ExpectedChatFailureBase {
+  code: "timeout";
+  origin: "transport";
+  attempts: number;
+}
+
+/** Transient: mapped from either TransientExhausted(cause=
+ * ProviderHttpUnavailable) (provider_http) or TransientExhausted(cause=
+ * TransportUnavailable) (transport). */
+export interface ProviderUnavailableChatFailure extends ExpectedChatFailureBase {
+  code: "provider_unavailable";
+  origin: "provider_http" | "transport";
+  attempts: number;
+}
+
+/** Transient: mapped from TransientExhausted(cause=
+ * ProviderStreamInterrupted), and from crashed/interrupted-run recovery when
+ * provider output existed without a terminal. This is the SERVER-side
+ * variant — distinct from the CLIENT-only ConnectionLostStatusUnknown owned
+ * by useChatRunTail.ts, which is never persisted and never SSE. */
+export interface StreamInterruptedChatFailure extends ExpectedChatFailureBase {
+  code: "stream_interrupted";
+  origin: "provider_stream";
+  attempts: number;
 }
 
 export type ExpectedChatFailure =
+  | RefusedChatFailure
+  | IncompleteChatFailure
   | CancelledChatFailure
   | ContextTooLargeChatFailure
-  | InvalidOutputChatFailure
-  | IncompleteChatFailure
-  | AssistantUnavailableChatFailure
-  | OperatorDefectChatFailure;
+  | InvalidToolArgumentsChatFailure
+  | BudgetExceededChatFailure
+  | RateLimitedChatFailure
+  | TimeoutChatFailure
+  | ProviderUnavailableChatFailure
+  | StreamInterruptedChatFailure;
 
 export interface ChatPublicationWarning {
   code: "CitationsUnavailable";
@@ -107,7 +182,6 @@ export interface MessageRetrieval {
   source_id: string;
   media_id: string | null;
   evidence_span_id?: string | null;
-  scope?: string;
   context_ref: RetrievalContextRef;
   result_ref: MessageRetrievalResultRef;
   deep_link: string | null;
@@ -143,51 +217,24 @@ export type MessageEvidenceRetrievalStatus =
   | "excluded_by_scope"
   | "web_result";
 
-export const MESSAGE_TOOL_STATUSES = [
-  "pending",
-  "running",
-  "complete",
-  "error",
-  "cancelled",
-] as const;
-
-export type MessageToolStatus = (typeof MESSAGE_TOOL_STATUSES)[number];
-
-export interface MachineAuthorship {
-  target_kind:
-    | "library_entry"
-    | "note_block"
-    | "highlight"
-    | "resource_edge"
-    | "queue_item";
-  target_id: string;
-  generation_id: string;
-  generation_seq: number;
-  tool_position: number;
-  position_path: string;
-  effect_id: string;
-}
-
 export interface MessageToolCall {
   id?: string;
-  record_kind: ToolRecordKind;
-  canonical_tool_id: string | null;
-  provider_wire_name: string | null;
-  effect: ToolEffect | null;
-  result_kind: ToolResultKind;
-  activity_label: string;
-  error_type: ToolErrorType | null;
+  conversation_id?: string;
+  user_message_id?: string;
+  assistant_message_id?: string;
+  tool_name: string;
   tool_call_index: number;
+  query_hash?: string | null;
   scope?: string;
   requested_types?: string[];
   result_refs: Array<Record<string, unknown>>;
   selected_context_refs: Array<Record<string, unknown>>;
-  machine_authorships?: MachineAuthorship[];
   provider_request_ids: string[];
   latency_ms?: number | null;
   result_count?: number;
   selected_count?: number;
-  status: MessageToolStatus;
+  status: ChatToolStatus;
+  error_code?: string | null;
   input_preview?: string;
   // Undo lifecycle for assistant write tool calls; set once reverted (amanuensis).
   reverted_at?: string | null;
@@ -213,17 +260,23 @@ export interface AssistantTrustTrail {
   status: "pending" | "running" | "complete" | "error" | "cancelled";
   run: {
     run_id: string;
-    run_selection: RunSelectionOut;
+    profile_id: string | null;
+    reasoning_option_id: string | null;
+    provider: string | null;
+    model_name: string | null;
     status: "pending" | "running" | "complete" | "error" | "cancelled";
     usage: Record<string, unknown> | null;
     error_code: string | null;
+    error_origin: string | null;
     failure: ExpectedChatFailure | null;
     execution: Presence<DurableExecution>;
+    reasoning_effort: Presence<string>;
     support_id: Presence<string>;
     publication_warning: Presence<ChatPublicationWarning>;
     final_chars: number | null;
     started_at: string | null;
     completed_at: string | null;
+    total_cost_usd_micros: number | null;
   } | null;
   prompt: {
     id: string;
@@ -314,7 +367,7 @@ export interface ConversationMessage {
    * The immutable reader-quote snapshot projection, decoded at the message
    * boundary. Present only on a quoted user message; Absent everywhere else.
    */
-  reader_selection: Presence<ReaderSelectionOut>;
+  reader_selection?: Presence<ReaderSelectionOut>;
   status: "pending" | "complete" | "error" | "cancelled";
   can_rerun: boolean;
   /** True only for a currently-eligible completed assistant message; false for
@@ -451,8 +504,16 @@ export interface ChatRun {
   conversation_id: string;
   user_message_id: string;
   assistant_message_id: string;
-  /** Immutable dispatch projection plus separately refreshed current state. */
-  run_selection: RunSelectionOut;
+  /** Product-selection snapshot taken at creation; null only before the run
+   * record has been fully hydrated. */
+  profile_id: string | null;
+  reasoning_option_id: string | null;
+  /** Resolved operator facts filled from runtime execution — null until then.
+   * Not selection controls. */
+  provider: string | null;
+  model_name: string | null;
+  reasoning_effort: string | null;
+  error_origin: string | null;
   support_id: Presence<string>;
   publication_warning: Presence<ChatPublicationWarning>;
   /** The one chat_failure_projection read. Null for a run that is not a
@@ -470,7 +531,7 @@ export interface ChatRun {
 
 export interface ChatRunStreamState {
   status:
-    "queued" | "running" | "complete" | "error" | "cancelled";
+    "queued" | "running" | "complete" | "error" | "cancelled" | "interrupted";
   last_event_seq: number;
   folded_event_seq: number;
   assistant_current_text: string;

@@ -55,9 +55,8 @@ function-parameters,operation-types,retries}.md` and
 Build:
 
 - one shared command registry and pure intent compiler;
-- one shared `NexusEntry` / `NexusGroup` semantic projection whose composer
-  owns surface-specific membership, order, and caps while renderers own
-  geometry;
+- one shared `NexusEntry` / `NexusGroup` semantic projection with a declared
+  desktop/mobile layout policy;
 - explicit blank-query and typed-query section contracts;
 - query-seeded Today Note, Page, Chat, and Library workflows;
 - typed Browse intent and a Browse-kind chooser;
@@ -164,10 +163,11 @@ Rules:
 - Places use canonical `DESTINATIONS`; delete the mobile-only projection.
 - Desktop flow order is Open, Continue, Recent, Quick Actions. Places remain
   searchable and in the desktop rail.
-- Mobile flow order is Open, Quick Actions, Continue, Recent, Places. Every
-  group uses the canonical vertical row treatment inside one content scroller.
+- Mobile flow order is Open, Quick Actions, Continue, Recent, Places. Each
+  group is a compact horizontal rail so the keyboard does not turn the blank
+  state into a long dashboard.
 - The shared composer, not either renderer, applies this closed projection
-  policy. Renderers receive ordered semantic groups and own platform geometry.
+  policy. Renderers receive ordered groups and layout modes.
 
 ### Typed query
 
@@ -213,8 +213,7 @@ Progressive stability is exact:
   disappears, select the nearest surviving index, then the first result;
 - at a canonical-owner boundary, admit its parent/group identity and only the
   highest-ranked children that fit; never soft-cap past eight or orphan a child;
-- Query-aware Quick Actions are outside this merge and never consume the eight
-  slots.
+- Query Actions are outside this merge and never consume the eight slots.
 
 For every nonblank, non-URL query, render `Do with query` in this order:
 
@@ -224,9 +223,9 @@ For every nonblank, non-URL query, render `Do with query` in this order:
 4. `Create “{query}”…`;
 5. `See all results for “{query}”`.
 
-Both surfaces render Results followed by the shared `QuickActions` section
-labelled **Do with query**. These rows reuse the normal platform row treatment;
-they are not a distinct section identity or layout mode.
+Desktop renders Query Actions after Results. Mobile renders the same group as
+a compact horizontal rail pinned below the search field and before Results.
+This is declared section layout, not different command semantics.
 
 A bare URL remains the exact `Import URL` result. Import never starts on
 selection; it opens Add prefilled.
@@ -319,8 +318,8 @@ outside this cutover.
 
 ### Shared
 
-- One sticky search field and one vertical result scroller. Nexus Root has no
-  horizontal result scroller or command-card rail.
+- One sticky search field and one vertical result scroller. Declared compact
+  rails may scroll horizontally.
 - Quiet text headings; no card wall, rainbow taxonomy, or permanent scope-chip
   row.
 - Use existing color, type, spacing, radius, motion, and focus tokens.
@@ -367,11 +366,10 @@ outside this cutover.
   keyboard without a user gesture.
 - Rows retain 48 px minimum targets and the existing sibling action-menu
   button. No action depends on hover, long press, or a hardware keyboard.
-- Blank groups use the declared mobile order above as one sectioned vertical
-  list. For typed queries, Results precede **Do with query** in the same content
-  scroller.
+- Blank groups use the declared compact-rail order above. Query Actions remain
+  pinned below the search input; Results own the content scroller below them.
 - Remove Root -> Find, Places grid, Quick grid, scope chips, and bottom Find
-  button. Keep canonical Places as one vertical section.
+  button. Keep canonical Places as one compact group.
 - Advanced filtering lives in See All Search, not Nexus Root.
 - Hardware keyboards honor the desktop command vocabulary.
 - Mobile Back/Escape clears a nonblank Root query first. Nested pages return to
@@ -407,11 +405,13 @@ type NexusSectionId =
   | "Recent"
   | "QuickActions"
   | "Places"
-  | "Results";
+  | "Results"
+  | "QueryActions";
 
 interface NexusGroup {
   readonly id: NexusSectionId;
   readonly label: string;
+  readonly layout: "Flow" | "CompactRail" | "PinnedBelowInput";
   readonly entries: readonly NexusEntry[];
 }
 
@@ -459,9 +459,8 @@ Rules:
   of reserved parameterized verbs and `/a ` / `/b `; no token is duplicated.
 - `NexusEntry` continues to own key, factual presentation, primary/secondary
   actions, rank, and canonical parent identity.
-- `composeNexusProjection(surface, …)` owns section membership, order, and
-  caps. Renderers own platform geometry but do not regroup, hide, or rerank
-  entries.
+- `composeNexusProjection(surface, …)` owns section membership, order, caps,
+  and layout enum. Renderers do not regroup, hide, or rerank entries.
 - Commands produce typed targets. Presentational components never infer
   behavior from strings, command ids, URLs, or icons. The named platform
   adapter may exhaustively switch on `NexusAction.activation` only.
@@ -695,8 +694,8 @@ One hard-cut branch; no partial production state.
    contracts with pure ranking/group/stability tests.
 4. Compose projections from existing providers, history, and player state.
 5. Cut desktop to the sectioned grid and sole `ActionMenu` action surface.
-6. Cut mobile Root to `SwitchboardSearch`, gesture-owned autofocus, one
-   sectioned vertical command list, and the typed handoff adapter.
+6. Cut mobile Root to `SwitchboardSearch`, gesture-owned autofocus, compact
+   canonical groups, and the typed handoff adapter.
 7. Add seeded Create/Browse/Today workflows, direct/recovery Manage Tabs, and
    remove rail Quick Note/Today.
 8. Consolidate performance ownership; delete superseded result, Find, action,
@@ -735,8 +734,8 @@ owners reachable.
   no navigation or mutation.
 - Browse kind intent routes to the existing typed Browse surface; ambiguous
   Browse never fans out `All`.
-- Both surfaces place Ask, Add to Today, Browse, Create, and See All in
-  `QuickActions`, labelled **Do with query**, after at most eight owned Results.
+- Desktop places Ask, Add to Today, Browse, Create, and See All after at most
+  eight owned results. Mobile keeps the same actions pinned below search.
 - A bare URL remains exact Import and does not ingest on selection.
 - Continue resumes the current session from the sole player provider; media
   result actions expose only operations valid for their owned subject.
@@ -801,8 +800,7 @@ owners reachable.
   fallback.
 - Pure group/rank fixtures independently assert section order, caps, dedupe,
   exact-before-keyword/generic-Create, matching-tabs-only, score-before-
-  frecency, href-only frecency, query-aware Quick Actions, and surface group
-  order.
+  frecency, href-only frecency, fixed query actions, and surface layout.
 - Progressive fixtures prove the active/stable-prefix reservation never exceeds
   eight entries and deterministic fallback occurs only when a key disappears.
 - Architecture fixtures prove provider ancestry, one materializer/dispatch,
@@ -811,8 +809,8 @@ owners reachable.
   wrong rank, dropped seed, cap eviction, duplicate identity, or duplicate
   dispatch.
 - Real Chromium component proof covers desktop grid/action semantics and mobile
-  flush focus, Back, one vertical content scroller, unavailable Today append,
-  action menus, and progressive results.
+  flush focus, Back, compact/pinned layout, unavailable Today append, action
+  menus, and progressive results.
 - Thin real-stack journeys cover Page/Library replay, Today Note persistence,
   Browse routing, Continue/player wiring, Search, and Openables without
   repeating kernel cases.

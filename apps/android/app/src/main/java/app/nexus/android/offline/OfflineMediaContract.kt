@@ -11,6 +11,11 @@ import java.util.UUID
 internal const val OFFLINE_MEDIA_PROTOCOL_VERSION = 1
 internal const val OFFLINE_MEDIA_MESSAGE_LIMIT_BYTES = 64 * 1024
 
+internal enum class NetworkPolicy {
+    UnmeteredOnly,
+    AnyConnected,
+}
+
 internal enum class QueueReason {
     Capacity,
     WaitingForNetwork,

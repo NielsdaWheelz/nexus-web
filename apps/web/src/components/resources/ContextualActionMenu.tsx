@@ -2,10 +2,11 @@
 
 import type { ComponentProps } from "react";
 import ActionMenu from "@/components/ui/ActionMenu";
-import { useOptionalResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
+import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useMobileChromeActionMenuLock } from "@/lib/workspace/useMobileChromeActionMenuLock";
+import ResourceActionMenu from "./ResourceActionMenu";
 
 type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 
@@ -112,6 +113,39 @@ function resourceLoadingDescriptor(): ActionDescriptor {
   };
 }
 
+function ComposedResourceActionMenu({
+  actionSubject,
+  local,
+  ...props
+}: Omit<ContextualActionMenuProps, "sections" | "actionSubject"> & {
+  readonly actionSubject: ResourceActionSubject;
+  readonly local: readonly ActionDescriptor[];
+}) {
+  const resource = useResourceActionMenuModel(actionSubject);
+  const { onOpenChange } = useMobileChromeActionMenuLock();
+  const resourceDescriptors =
+    resource.status === "Loading"
+      ? [resourceLoadingDescriptor()]
+      : resource.descriptors;
+  const suffix = resourceDescriptors.map((action, index) =>
+    index === 0 ? { ...action, separatorBefore: true } : action,
+  );
+  const options = [...local, ...suffix];
+  assertUniqueActionIds(options);
+
+  return <ActionMenu {...props} options={options} onOpenChange={onOpenChange} />;
+}
+
+function LocalActionMenu({
+  options,
+  ...props
+}: Omit<ContextualActionMenuProps, "sections" | "actionSubject"> & {
+  readonly options: readonly ActionDescriptor[];
+}) {
+  const { onOpenChange } = useMobileChromeActionMenuLock();
+  return <ActionMenu {...props} options={options} onOpenChange={onOpenChange} />;
+}
+
 /**
  * A presentation-only composition of pane, occurrence, or view commands with
  * the unchanged canonical resource plan. Resource policy remains in the
@@ -125,36 +159,18 @@ export default function ContextualActionMenu({
   const nonEmptySections = validateSections(sections);
   validateLocalDangerPolicy(nonEmptySections, actionSubject !== undefined);
   const local = localDescriptors(nonEmptySections);
-  const resource = useOptionalResourceActionMenuModel(actionSubject);
-  const { onOpenChange } = useMobileChromeActionMenuLock();
-  const resourceDescriptors =
-    resource === null
-      ? []
-      : resource.status === "Loading"
-        ? local.length === 0
-          ? []
-          : [resourceLoadingDescriptor()]
-        : resource.descriptors;
-  const suffix = resourceDescriptors.map((action, index) =>
-    index === 0 ? { ...action, separatorBefore: true } : action,
-  );
-  const options = [...local, ...suffix];
-  assertUniqueActionIds(options);
-  const resourceOnly = actionSubject !== undefined && local.length === 0;
 
+  if (!actionSubject) {
+    return <LocalActionMenu {...props} options={local} />;
+  }
+  if (local.length === 0) {
+    return <ResourceActionMenu actionSubject={actionSubject} {...props} />;
+  }
   return (
-    <ActionMenu
+    <ComposedResourceActionMenu
       {...props}
-      options={options}
-      onOpenChange={onOpenChange}
-      triggerDisabled={
-        resourceOnly ? (resource?.triggerDisabled ?? true) : undefined
-      }
-      triggerDisabledReason={
-        resourceOnly
-          ? (resource?.triggerDisabledReason ?? "Actions are still loading.")
-          : undefined
-      }
+      actionSubject={actionSubject}
+      local={local}
     />
   );
 }

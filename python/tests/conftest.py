@@ -29,7 +29,7 @@ _restore_collection_network = install_network_guard()
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine
+from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session
 
 from tests.testkit.auth import StaticTokenVerifier, UserRecord
@@ -64,9 +64,7 @@ def deny_external_network(
 
 @pytest.fixture(scope="session")
 def engine() -> Generator[Engine, None, None]:
-    from nexus.db.engine import create_db_engine
-
-    database = create_db_engine(require_test_database_url(os.environ))
+    database = create_engine(require_test_database_url(os.environ), pool_pre_ping=True)
     yield database
     database.dispose()
 

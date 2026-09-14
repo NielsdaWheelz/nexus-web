@@ -9,8 +9,10 @@ from nexus.services.contributor_credits import (
     contributor_credits_rollup_cte_sql as contributor_credits_rollup_cte_sql,
 )
 
-# Recency half-life term appended to the document hybrid score (media only).
-# Notes omit it so a note's age never reorders it.
+# Recency half-life term appended to the document hybrid score (media only). Notes omit
+# it so a note's age never reorders it. Whitespace/placement here is load-bearing: the
+# media query string must stay byte-identical (modulo whitespace) so document ranking is
+# unchanged — see hybrid_content_chunk_tail_sql.
 _RECENCY_DECAY_TERM = """
                     + (
                         0.05 * GREATEST(
@@ -36,14 +38,14 @@ def hybrid_content_chunk_tail_sql(
     leading_ctes: str,
     embedding_dims: int,
     scored_passthrough_columns: str,
-    final_projection_sql: str,
+    final_select_columns: str,
     order_by_id: str,
     include_recency_decay: bool,
 ) -> str:
     """Build the hybrid content-chunk retrieval query (lexical ∪ semantic).
 
     This is the single owner of the hybrid pipeline shared by document
-    (`content_chunks._search_content_chunks`) and note-block
+    (`library_content._search_content_chunks`) and note-block
     (`notes._search_note_chunks`) search: the `semantic_candidates` / `lexical_candidates`
     / `candidate_ids` (UNION) / `scored_candidates` CTEs, the ANN candidate logic, the
     content_embeddings provider/model/dimensions join predicate, the 0.45/0.35/0.15 hybrid
@@ -53,12 +55,11 @@ def hybrid_content_chunk_tail_sql(
 
     The caller supplies the owner-gated leading CTE block (everything from the first CTE
     through `eligible_chunks` and the `query_embedding` CTE, owner-gated and projecting its
-    narrow ranking columns), the extra `scored_candidates` pass-through columns,
-    the final projection (and any bounded metadata CTEs) from `ranked_candidates`,
-    the tie column, and the recency term
+    own columns), the extra `scored_candidates` pass-through columns, the extra final-SELECT
+    columns, the `id` column to break ties on, and whether to apply the recency-decay term
     (True for documents, False for notes).
 
-    `leading_ctes`, `scored_passthrough_columns`, `final_projection_sql`, and `order_by_id`
+    `leading_ctes`, `scored_passthrough_columns`, `final_select_columns`, and `order_by_id`
     are caller-owned fixed internal SQL literals (never user input), so interpolating them is
     safe — mirroring contributor_credits_rollup_cte_sql. `embedding_dims` is a fixed integer.
     """
@@ -112,9 +113,9 @@ def hybrid_content_chunk_tail_sql(
                         AND ce.embedding_dimensions = {embedding_dims}
                         AND ec.active_embedding_provider = :query_embedding_provider
                         AND ec.active_embedding_model = :query_embedding_model
-                ),
-                ranked_candidates AS MATERIALIZED (
-            SELECT *,
+                )
+            SELECT
+                {final_select_columns}
                 (
                     (0.45 * CASE WHEN lexical_score > 0.0 THEN 1.0 ELSE 0.0 END)
                     + (0.35 * GREATEST(semantic_similarity, 0.0))
@@ -126,8 +127,6 @@ def hybrid_content_chunk_tail_sql(
                 OR semantic_similarity >= :min_semantic_similarity
             ORDER BY raw_score DESC, {order_by_id} ASC
             LIMIT :limit
-                )
-            {final_projection_sql}
         """
 
 

@@ -123,20 +123,6 @@ def retry_serializable[T](db: Session, label: str, op: Callable[[], T], *, retri
     )
 
 
-def admit_serializable[T](db: Session, label: str, op: Callable[[], T], *, retries: int = 3) -> T:
-    """``retry_serializable`` for an admission that owns its transaction outright.
-
-    A refused admission (any exception ``op`` raises past the retry policy) rolls
-    back before it propagates, so the locks the refusal took never outlive the
-    call on the caller's session.
-    """
-    try:
-        return retry_serializable(db, label, op, retries=retries)
-    except Exception:
-        db.rollback()
-        raise
-
-
 def retry_read_committed[T](db: Session, label: str, op: Callable[[], T], *, retries: int = 3) -> T:
     """Run ``op`` in bounded READ COMMITTED transaction attempts.
 

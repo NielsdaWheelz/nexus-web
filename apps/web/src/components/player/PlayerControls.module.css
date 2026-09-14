@@ -124,44 +124,6 @@
   );
 }
 
-/* The Solar — §8.9, the lamp moves along the branch. Only the elapsed span
-   changes hands: it ramps from dark brass at the start to bright brass at the
-   leading edge, while the buffered and remaining spans keep their tokens and
-   every stop keeps its position, so the bar's geometry and its three readable
-   segments are exactly as before. */
-:global([data-theme="elvish"]) .seekTrack {
-  position: relative;
-  background: linear-gradient(
-    90deg,
-    var(--gilt-a) 0,
-    var(--gilt-b) var(--player-progress),
-    var(--edge-strong) var(--player-progress) var(--player-buffered),
-    var(--edge) var(--player-buffered) 100%
-  );
-}
-
-/* And the leading edge carries the moon-metal along with it. `box-shadow`, not
-   the theme's `drop-shadow`: this bar repaints on every position update, and a
-   filtered layer would be re-rasterised each frame. The bud is absolutely
-   positioned and pointer-inert, so at `--ornament: 0` it goes silent without
-   moving the track a pixel. */
-:global([data-theme="elvish"]) .seekTrack::after {
-  content: "";
-  position: absolute;
-  inset-block-start: 50%;
-  inset-inline-start: var(--player-progress);
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--ithildin);
-  box-shadow:
-    0 0 5px color-mix(in srgb, var(--ithildin) 85%, transparent),
-    0 0 14px color-mix(in srgb, var(--ithildin) 45%, transparent);
-  opacity: calc(0.9 * var(--ornament));
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-
 .chapterTicks {
   position: relative;
   height: 12px;
@@ -258,17 +220,6 @@
   );
 }
 
-/* The 2px collapsed bar takes the same gilt elapsed span; it carries no bud —
-   a 6px bloom on a 2px rule is the lamp without the branch. */
-:global([data-theme="elvish"]) .miniProgress {
-  background: linear-gradient(
-    90deg,
-    var(--gilt-a) 0,
-    var(--gilt-b) var(--player-progress),
-    var(--edge) var(--player-progress) 100%
-  );
-}
-
 .effectsFeedback {
   display: flex;
   flex-wrap: wrap;
@@ -309,40 +260,7 @@
     background: CanvasText;
   }
 
-  /* The Solar's gilt fill is a two-class selector and would otherwise outrank
-     the forced palette above on specificity alone; the travelling bud needs no
-     restatement, since forced colors already zeroes the room's --ornament. */
-  :global([data-theme="elvish"]) .seekTrack {
-    background: CanvasText;
-  }
-
   .seekInput {
     opacity: 1;
-  }
-}
-
-/* The elapsed span is not ornament, so zeroing `--ornament` does not reach it:
-   the ramp starts at `--gilt-a`, which is 1.29:1 against the `--edge` remainder,
-   and the head of the bar stops reading as elapsed at all. Both constructions
-   hand the fill back to the flat `--accent` hard stop the Study and the Press
-   use — every stop keeps its position, so only the colour moves — and the
-   travelling bud needs no restatement, since this context already zeroes the
-   room's --ornament. */
-@media (prefers-contrast: more) {
-  :global([data-theme="elvish"]) .seekTrack {
-    background: linear-gradient(
-      to right,
-      var(--accent) 0 var(--player-progress),
-      var(--edge-strong) var(--player-progress) var(--player-buffered),
-      var(--edge) var(--player-buffered) 100%
-    );
-  }
-
-  :global([data-theme="elvish"]) .miniProgress {
-    background: linear-gradient(
-      to right,
-      var(--accent) 0 var(--player-progress),
-      var(--edge) var(--player-progress) 100%
-    );
   }
 }

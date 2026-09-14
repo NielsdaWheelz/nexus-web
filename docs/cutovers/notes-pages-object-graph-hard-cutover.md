@@ -15,15 +15,11 @@ Current hard-cutover state:
 
 - Public `/api/notes/blocks` mutation routes, frontend mutation clients, legacy
   service-level block mutation helpers, and their request DTOs have been
-  removed. `GET /api/notes/blocks/{blockId}` remains as a read-only resolver
-  lane for external/read-only consumers and object-ref resolution; no in-repo
-  frontend response client uses it. Page and Note panes hydrate content through
-  the ResourceSurface owner. Page/block edits persist through the versioned
-  page-document command path; highlight notes
+  removed. `GET /api/notes/blocks/{blockId}` remains as a read-only resource
+  resolver path for block panes and object-ref resolution. Page/block edits
+  persist through the versioned page-document command path; highlight notes
   write through `/api/highlights/{highlightId}/note`; quick-note empty-delete
-  writes through the page document command helper. The Highlight-note request
-  wire is exact snake_case (`note_block_id`, `client_mutation_id`,
-  `body_pm_json`); camel-case and generic `id` aliases are deleted.
+  writes through the page document command helper.
 - User graph tags were removed by
   `docs/cutovers/user-graph-tags-hard-cutover.md`. `#tag` is plain note text;
   the editor has no `#` autocomplete and note body sync creates no tag edges.
@@ -863,11 +859,9 @@ storage rows.
 the daily page and delegates to the graph-backed document patch command; it does
 not write `resource_edges` directly.
 
-`GET /api/notes/blocks/{blockId}` is read-only. It remains an external/read-only
-resource-resolution lane, but no in-repo frontend response client hydrates from
-it. Page and Note panes hydrate through the ResourceSurface read owner. Public
-block creation, update, delete, move, split, and merge routes are not part of
-the cutover contract.
+`GET /api/notes/blocks/{blockId}` is read-only. It exists for resource
+resolution and block-pane hydration only. Public block creation, update,
+delete, move, split, and merge routes are not part of the cutover contract.
 
 Highlight note capture uses a highlight-shaped product route:
 
@@ -1583,8 +1577,7 @@ Grep/head assertions:
       controller.
 - [x] Replace public `/api/notes/blocks` mutation clients/routes with product
       routes or document-command helpers. Keep only read-only
-      `GET /api/notes/blocks/{blockId}` as an external/read-only resolution
-      lane; in-repo Page/Note panes use ResourceSurface hydration.
+      `GET /api/notes/blocks/{blockId}` for resource resolution.
 - [x] Remove first-class `#tag` autocomplete from the writing surface.
 - [x] Resolve pasted URLs in the writing surface. URL-only paste uses the
       existing media URL intake path and inserts graph-backed media embeds;

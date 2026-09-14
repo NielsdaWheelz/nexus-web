@@ -318,7 +318,7 @@ def main() -> None:
                     processing_status=ProcessingStatus.ready_for_reading,
                     created_by_user_id=user_id,
                     publisher="Paul Graham",
-                    original_published_date="2003-04",
+                    published_date="2003-04",
                     language="en",
                 )
             )
@@ -389,7 +389,7 @@ def main() -> None:
                     processing_status=ProcessingStatus.ready_for_reading,
                     created_by_user_id=user_id,
                     publisher="Poetry Foundation",
-                    original_published_date="1850",
+                    published_date="1850",
                     language="en",
                 )
             )
@@ -450,7 +450,7 @@ def main() -> None:
                     processing_status=ProcessingStatus.ready_for_reading,
                     created_by_user_id=user_id,
                     publisher="Infinity Plus",
-                    original_published_date="2000",
+                    published_date="2000",
                     language="en",
                 )
             )
@@ -524,7 +524,7 @@ def main() -> None:
                     plain_text=pdf_plain_text,
                     page_count=15,
                     publisher="arXiv",
-                    original_published_date="2017-06",
+                    published_date="2017-06",
                     language="en",
                     description="Vaswani et al. — the paper that introduced the Transformer architecture.",
                 )
@@ -607,7 +607,7 @@ def main() -> None:
                     processing_status=ProcessingStatus.ready_for_reading,
                     created_by_user_id=user_id,
                     publisher="Project Gutenberg",
-                    original_published_date="1885",
+                    published_date="1885",
                     language="en",
                     description="Friedrich Nietzsche — a philosophical novel.",
                 )
@@ -657,7 +657,7 @@ def main() -> None:
                     provider_id="VMj-3S1tku0",
                     processing_status=ProcessingStatus.ready_for_reading,
                     created_by_user_id=user_id,
-                    original_published_date="2022-08",
+                    published_date="2022-08",
                     language="en",
                 )
             )
@@ -724,7 +724,7 @@ def main() -> None:
                     provider_id="pdN-BjDx1_0",
                     processing_status=ProcessingStatus.ready_for_reading,
                     created_by_user_id=user_id,
-                    original_published_date="2023-03",
+                    published_date="2023-03",
                     language="en",
                 )
             )

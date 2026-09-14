@@ -3,25 +3,27 @@
 The generic dossier engine carries no Resource-kind branches. Every
 scheme-specific decision — how a route locator resolves to a private subject id,
 whether the requester may read/generate (404-masked), which closed
-:class:`AudienceScope` the head is keyed by, who owns per-user concurrency and
+:class:`AudienceScope` the head is keyed by, who owns the billing identity and
 the citation graph edges, and how a canonical resource activates — lives behind
 one :class:`SubjectPolicy` per eligible subject scheme. The internal Idea
 subject is the one explicit typed non-Resource branch because it has no public
 ``ResourceRef``.
 
-The closed policy-plus-binding composition lives in
-:mod:`nexus.services.artifacts.registry`. A scheme absent from that immutable
-registration map is not an eligible dossier subject.
+The closed registry is installed by :mod:`nexus.services.artifacts.bindings`,
+the composition owner imported by the generic engine. A scheme absent from
+:data:`SUBJECT_POLICIES` is not an eligible dossier subject.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import is_library_member
+from nexus.errors import NotFoundError
 from nexus.services.artifacts.dossier_types import (
     AudienceScope,
     DossierSubjectLocator,
@@ -29,6 +31,7 @@ from nexus.services.artifacts.dossier_types import (
     SubjectResource,
 )
 from nexus.services.artifacts.idea_identity import IdeaKey
+from nexus.services.artifacts.idea_seeds import get_idea_subject
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
 
@@ -110,8 +113,8 @@ class SubjectPolicy(Protocol):
         library anchors on its owner, not the triggering member)."""
         ...
 
-    def requester_admission(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
-        """The user identity charged against the in-flight concurrency limit."""
+    def requester_billing(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
+        """The billing/entitlement identity a provider call is attributed to."""
         ...
 
     def citation_owner(
@@ -133,6 +136,10 @@ class SubjectPolicy(Protocol):
         ...
 
 
+# Installed atomically with the binding registry by ``bindings.__init__``.
+SUBJECT_POLICIES: dict[str, SubjectPolicy] = {}
+
+
 def decode_resource_locator(
     *, subject_scheme: ResourceScheme, subject_handle: str
 ) -> SubjectResource:
@@ -141,3 +148,69 @@ def decode_resource_locator(
     except ValueError as exc:
         raise InvalidSubjectLocator() from exc
     return SubjectResource(ref=ResourceRef(scheme=subject_scheme, id=subject_id))
+
+
+def visible_persisted_subject(
+    db: Session,
+    *,
+    subject_scheme: str,
+    subject_id: UUID,
+    audience_scheme: str,
+    audience_id: str,
+    viewer_id: UUID,
+) -> ResolvedSubject | None:
+    """Resolve a stored Dossier subject only while head and subject stay visible."""
+    if audience_scheme == "user":
+        if audience_id != str(viewer_id):
+            return None
+    elif audience_scheme == "library":
+        try:
+            library_id = UUID(audience_id)
+        except ValueError:
+            return None
+        if not is_library_member(db, viewer_id, library_id):
+            return None
+    else:
+        return None
+
+    if subject_scheme == "idea":
+        if audience_scheme != "user":
+            return None
+        idea = get_idea_subject(
+            db,
+            user_id=viewer_id,
+            idea_subject_id=subject_id,
+        )
+        if idea is None:
+            return None
+        return ResolvedIdeaSubject(
+            scheme="idea",
+            subject_id=idea.id,
+            idea_key=idea.idea_key,
+            display_title=idea.display_title,
+            user_id=idea.user_id,
+        )
+
+    policy = SUBJECT_POLICIES.get(subject_scheme)
+    if policy is None:
+        # The registry composition owner may not have been imported by a direct
+        # resource-hydration caller. Importing it here is runtime-only; concrete
+        # bindings themselves never call this read projection while installing.
+        from nexus.services.artifacts import bindings as _bindings  # noqa: F401
+
+        policy = SUBJECT_POLICIES.get(subject_scheme)
+    if policy is None:
+        raise AssertionError(f"no policy for persisted subject scheme {subject_scheme!r}")
+    resolved = ResolvedResourceSubject(
+        scheme=cast("ResourceScheme", subject_scheme),
+        subject_id=subject_id,
+        ref=ResourceRef(
+            scheme=cast("ResourceScheme", subject_scheme),
+            id=subject_id,
+        ),
+    )
+    try:
+        policy.authorize_read(db, resolved, viewer_id)
+    except NotFoundError:
+        return None
+    return resolved

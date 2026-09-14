@@ -162,3 +162,16 @@ def test_podcast_index_rss_and_transcript_are_one_authentic_local_protocol() -> 
             assert wav.getnchannels() == 1
             assert wav.getframerate() == 8_000
             assert wav.getnframes() / wav.getframerate() == 24
+
+
+def test_external_fixture_has_no_llm_provider_gateway() -> None:
+    with running_external_protocol_server(fixture_root=_FIXTURES) as address:
+        status, _, body = _request(
+            address,
+            "POST",
+            "/v1/responses",
+            headers={"Content-Type": "application/json"},
+            body=b"{}",
+        )
+    assert status == 404
+    assert json.loads(body) == {"error": {"code": "unknown_path"}}

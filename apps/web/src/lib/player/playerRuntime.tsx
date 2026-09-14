@@ -37,7 +37,6 @@ import type {
 
 export type GlobalPlayerState =
   | { kind: "Absent" }
-  | { kind: "UpdateRequired" }
   | {
       kind: "RuntimeFailed";
       error: PlayerError;

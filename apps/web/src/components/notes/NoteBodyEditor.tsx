@@ -21,7 +21,7 @@ import {
 } from "prosemirror-state";
 import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
 import { history } from "prosemirror-history";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { isApiError } from "@/lib/api/client";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { usePaneReturnDescendantReady } from "@/lib/panes/paneRuntime";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
@@ -40,10 +40,10 @@ import {
 import { extractUrls } from "@/lib/extractUrls";
 import {
   getFileUploadError,
-  UploadSessionError,
+  isMediaIngestionDefect,
+  projectUploadReference,
   uploadIngestFile,
 } from "@/lib/media/ingestionClient";
-import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
 import {
   captureSourceUrl,
   isSourceUrlCaptureDefect,
@@ -468,27 +468,29 @@ export default function NoteBodyEditor({
       attachmentBusyRef.current = true;
       view.setProps({ editable: () => false });
       try {
+        let referenced = false;
         const upload = await uploadIngestFile({
           file,
           libraryIds: [],
+          onAcceptedIdentity: ({ mediaId }) => {
+            referenced = insertMedia(view, mediaId, file.name);
+            if (!referenced) {
+              throw new MediaAttachmentContractDefect(
+                "The accepted attachment target changed unexpectedly.",
+              );
+            }
+          },
         });
-        if (!insertMedia(view, upload.mediaId, file.name)) {
-          throw new MediaAttachmentContractDefect(
-            "The published attachment target changed unexpectedly.",
-          );
-        }
+        const { warning } = projectUploadReference({
+          result: upload,
+          processingFailureFeedback: {
+            tone: "Warning",
+            title: "File was attached, but source processing failed.",
+          },
+        });
+        if (warning) onFeedbackRef.current?.(warning);
       } catch (caught: unknown) {
         if (handleUnauthenticatedApiError(caught)) return;
-        if (caught instanceof UploadSessionError) {
-          try {
-            onFeedbackRef.current?.(
-              mediaCaptureErrorMessage(caught, "AddAttachment"),
-            );
-          } catch (caughtDefect: unknown) {
-            setDefect({ error: caughtDefect });
-          }
-          return;
-        }
         if (isMediaAttachmentDefect(caught)) {
           setDefect({ error: caught });
           return;
@@ -847,7 +849,7 @@ function noteBodyPositionForTextOffset(
 function isMediaAttachmentDefect(error: unknown): boolean {
   return (
     error instanceof MediaAttachmentContractDefect ||
-    isSameSystemApiDefect(error) ||
+    isMediaIngestionDefect(error) ||
     (!isApiError(error) &&
       !(error instanceof TypeError) &&
       !(error instanceof DOMException))

@@ -13,11 +13,10 @@ from nexus.auth.middleware import Viewer, get_viewer
 from nexus.config import get_settings
 from nexus.db.models import DawnWrite
 from nexus.db.session import get_db
-from nexus.responses import ok
+from nexus.responses import ok, success_response
 from nexus.schemas.notes import (
     CreatePageRequest,
     DailyCaptureRequest,
-    NotePagesOut,
     UpdatePageRequest,
 )
 from nexus.services import notes as notes_service
@@ -45,7 +44,9 @@ def list_pages(
     """
     view = notes_service.parse_notes_index_query(request.query_params.multi_items())
     pages = notes_service.list_pages(db, viewer.user_id, view=view)
-    return ok(NotePagesOut(pages=pages), by_alias=True)
+    return success_response(
+        {"pages": [page.model_dump(mode="json", by_alias=True) for page in pages]}
+    )
 
 
 @router.post("/pages", status_code=201)

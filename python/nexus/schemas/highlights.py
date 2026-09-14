@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from nexus.schemas.resource_items import validate_note_body_pm_json
 
@@ -219,13 +219,27 @@ class UpdateHighlightRequest(BaseModel):
 
 
 class SetHighlightNoteRequest(BaseModel):
-    """Canonical Highlight note save payload."""
+    """Product-level highlight note save payload."""
 
-    note_block_id: UUID
-    client_mutation_id: str = Field(min_length=1, max_length=120)
-    body_pm_json: dict[str, Any]
+    note_block_id: UUID = Field(
+        ...,
+        validation_alias=AliasChoices("note_block_id", "noteBlockId", "id"),
+        serialization_alias="noteBlockId",
+    )
+    client_mutation_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=120,
+        validation_alias=AliasChoices("client_mutation_id", "clientMutationId"),
+        serialization_alias="clientMutationId",
+    )
+    body_pm_json: dict[str, Any] = Field(
+        ...,
+        validation_alias=AliasChoices("body_pm_json", "bodyPmJson"),
+        serialization_alias="bodyPmJson",
+    )
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     @field_validator("body_pm_json")
     @classmethod

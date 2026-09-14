@@ -7,8 +7,7 @@
 import { dossierBuildFailureMessage } from "@/lib/dossiers/dossierErrorMessage";
 import type { DurableExecutionPhase } from "@/lib/api/executionAdvisory";
 import type {
-  DossierAdmittedGeneration,
-  DossierCapacityPause,
+  DossierBuildFailureCode,
   DossierControllerState,
   DossierFreshness,
   DossierHistoryStatus,
@@ -17,7 +16,6 @@ import type {
   DossierRevisionSummary,
   DossierTerminalOutcome,
   MediaAbstract,
-  ReadDossierBuildFailureCode,
 } from "@/lib/dossiers/dossierControllerTypes";
 
 /** What occupies the reading area. */
@@ -60,9 +58,7 @@ export type DossierActivityView =
       progress: string | null;
     }
   | { kind: "Suspended" }
-  /** Codex quota parked the admission durably (spec 3.4); cancel stays available. */
-  | { kind: "CapacityPaused"; pause: DossierCapacityPause }
-  | { kind: "Failed"; code: ReadDossierBuildFailureCode; message: string }
+  | { kind: "Failed"; code: DossierBuildFailureCode; message: string }
   | { kind: "Cancelled" };
 
 export interface DossierControls {
@@ -82,9 +78,6 @@ export interface DossierViewModel {
   activity: DossierActivityView;
   controls: DossierControls;
   mediaAbstract: MediaAbstract | null;
-  /** Read-only admitted selection and tool plan of the build the activity
-   * concerns (active, else the latest unsuccessful); never a control. */
-  generationDetail: DossierAdmittedGeneration | null;
   /** One polite status-region line (progress / suspended / cancellation). */
   statusMessage: string | null;
   /** Terminal build failure → visible alert, WITHOUT moving focus. */
@@ -156,7 +149,6 @@ export function deriveDossierViewModel(
 ): DossierViewModel {
   const base = {
     mediaAbstract: null,
-    generationDetail: null,
     statusMessage: null,
     alert: null,
     actionError: state.actionError ? state.actionError.message : null,
@@ -208,12 +200,6 @@ export function deriveDossierViewModel(
   const suspended =
     hasEffectiveActive &&
     (activePhase === "Suspended" || state.stream.kind === "Suspended");
-  const capacityPause: DossierCapacityPause | null =
-    hasEffectiveActive &&
-    ready.activeBuild.kind === "Present" &&
-    ready.activeBuild.value.capacityPause.kind === "Present"
-      ? ready.activeBuild.value.capacityPause.value
-      : null;
   const lub = ready.latestUnsuccessfulBuild;
   const failureFacts =
     lub.kind === "Present" && lub.value.failure.kind === "Present"
@@ -280,9 +266,6 @@ export function deriveDossierViewModel(
     activity = terminalActivity(terminalOutcome);
   } else if (suspended) {
     activity = { kind: "Suspended" };
-  } else if (capacityPause !== null) {
-    // The durable wait outranks transport liveness: no worker is generating.
-    activity = { kind: "CapacityPaused", pause: capacityPause };
   } else if (hasEffectiveActive && state.stream.kind === "Connecting") {
     activity = { kind: "Connecting" };
   } else if (hasEffectiveActive && state.stream.kind === "Reconnecting") {
@@ -351,8 +334,6 @@ export function deriveDossierViewModel(
     statusMessage = "Dossier generated.";
   } else if (suspended) {
     statusMessage = "Generation stopped; it needs attention.";
-  } else if (activity.kind === "CapacityPaused") {
-    statusMessage = "Waiting for Codex capacity";
   } else if (activity.kind === "Connecting") {
     statusMessage = "Connecting to dossier generation…";
   } else if (activity.kind === "Reconnecting") {
@@ -370,27 +351,12 @@ export function deriveDossierViewModel(
 
   const alert = activity.kind === "Failed" ? { message: activity.message } : null;
 
-  // --- Read-only generation detail (spec 3.4, AC 15) ----------------------
-  const detailBuild =
-    hasEffectiveActive && ready.activeBuild.kind === "Present"
-      ? ready.activeBuild.value
-      : !hasEffectiveActive &&
-          lub.kind === "Present" &&
-          (failureFacts !== null || cancelledFacts !== null)
-        ? lub.value
-        : null;
-  const generationDetail =
-    detailBuild !== null && detailBuild.admittedGeneration.kind === "Present"
-      ? detailBuild.admittedGeneration.value
-      : null;
-
   return {
     body,
     activity,
     controls,
     mediaAbstract:
       ready.mediaAbstract.kind === "Present" ? ready.mediaAbstract.value : null,
-    generationDetail,
     statusMessage,
     alert,
     actionError: base.actionError,

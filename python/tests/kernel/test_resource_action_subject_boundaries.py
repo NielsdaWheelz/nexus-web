@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from nexus.schemas.browse import ExternalOnlyResolution, InNexusResolution, PreviewResolution
-from nexus.schemas.presence import absent
 from nexus.schemas.search import (
     SearchResponse,
     SearchResultContextRefOut,
@@ -25,7 +24,6 @@ def _source() -> SearchResultSourceOut:
         media_kind="web_article",
         title="Field Notes",
         contributors=[],
-        original_published_date=absent(),
     )
 
 

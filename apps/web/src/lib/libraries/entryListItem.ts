@@ -7,14 +7,13 @@ import { decodeContributorCredit } from "@/lib/contributors/credit";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import {
   decodePublicationDate,
-  decodePublicationDateOnly,
   type PublicationDate,
 } from "@/lib/dates/publicationDate";
-import type { MediaActionCapabilities } from "@/lib/media/mediaActionCapabilities";
+import type { MediaActionCapabilities } from "@/lib/media/ingestionClient";
 import {
-  MEDIA_KINDS,
-  type MediaKind,
-} from "@/lib/media/kind";
+  LIBRARY_MEDIA_KINDS,
+  type LibraryMediaKind,
+} from "@/lib/libraries/mediaKind";
 import {
   decodePodcastSyncStatus,
   type PodcastSyncStatus,
@@ -52,12 +51,12 @@ const AUTHOR_MODES = ["automatic", "manual"] as const;
 
 export interface LibraryMediaListValue {
   readonly id: string;
-  readonly kind: MediaKind;
+  readonly kind: LibraryMediaKind;
   readonly title: string;
   readonly created_at: string;
   readonly contributors: ContributorCredit[];
   readonly author_mode: "automatic" | "manual";
-  readonly original_published_date: Presence<PublicationDate>;
+  readonly published_date: string | null;
   readonly publicationDate: Presence<PublicationDate>;
   readonly canonical_source_url: string | null;
   readonly sourceHost: Presence<string>;
@@ -134,7 +133,7 @@ function decodeMedia(raw: unknown): LibraryMediaListWire {
       "created_at",
       "contributors",
       "author_mode",
-      "original_published_date",
+      "published_date",
       "canonical_source_url",
       "processing_status",
       "read_state",
@@ -161,7 +160,7 @@ function decodeMedia(raw: unknown): LibraryMediaListWire {
     id: expectString(media.id, "Library media list item.id"),
     kind: expectOneOf(
       media.kind,
-      MEDIA_KINDS,
+      LIBRARY_MEDIA_KINDS,
       "Library media list item.kind",
     ),
     title: expectString(media.title, "Library media list item.title"),
@@ -184,13 +183,9 @@ function decodeMedia(raw: unknown): LibraryMediaListWire {
       AUTHOR_MODES,
       "Library media list item.author_mode",
     ),
-    original_published_date: decodePresence(
-      media.original_published_date,
-      (date) =>
-        decodePublicationDateOnly(
-          date,
-          "Library media list item.original_published_date",
-        ),
+    published_date: expectNullableString(
+      media.published_date,
+      "Library media list item.published_date",
     ),
     canonical_source_url: expectNullableString(
       media.canonical_source_url,

@@ -34,7 +34,7 @@ export interface SearchSourceMetadata {
   media_kind: string;
   title: string;
   contributors: ContributorCredit[];
-  original_published_date: Presence<PublicationDate>;
+  published_date: string | null;
   summary_md: string | null;
 }
 

@@ -9,7 +9,6 @@ Reuses existing sanitization/canonicalization/fragment-block primitives.
 
 from __future__ import annotations
 
-import codecs
 import hashlib
 import logging
 import posixpath
@@ -20,17 +19,12 @@ import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from html.entities import name2codepoint
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, Literal, cast
 from urllib.parse import unquote, urlparse
-from uuid import UUID, uuid5
+from uuid import UUID
 from xml.etree import ElementTree as ET
 
-from defusedxml import ElementTree as DefusedET
-from defusedxml.common import DefusedXmlException, DTDForbidden
-from defusedxml.ElementTree import DefusedXMLParser
 from lxml.etree import LxmlError
 from lxml.html import Element, HtmlElement
 from sqlalchemy import text
@@ -45,17 +39,8 @@ from nexus.db.models import (
     EpubTocNode,
     Fragment,
 )
-from nexus.errors import ApiErrorCode, ResourceFailureDimension
-from nexus.ids import new_uuid7
-from nexus.schemas.presence import Presence, Present, absent, nullable_from_presence, present
-from nexus.schemas.publication_dates import PublicationDate, normalize_source_publication_date
-from nexus.services.canonicalize import canonicalize_structure
-from nexus.services.epub_structure import (
-    EpubStructureFragment,
-    EpubStructureSection,
-    EpubStructureTocNode,
-    build_epub_structure,
-)
+from nexus.errors import ApiErrorCode
+from nexus.services.canonicalize import generate_canonical_text_with_element_offsets
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.html5_shape import normalize_html5_shape
 from nexus.services.html_tree import (
@@ -66,7 +51,6 @@ from nexus.services.html_tree import (
     unwrap_element,
 )
 from nexus.services.parser_temp import (
-    StorageObjectIntegrityError,
     parser_attempt_directory,
     stream_storage_object_to_file,
     utf8_byte_length,
@@ -92,40 +76,6 @@ EPUB_RENDERED_TEXT_MAX_BYTES = 64 * 1024 * 1024
 EPUB_APPARATUS_MAX_TARGETS = 10_000
 EPUB_APPARATUS_MAX_BACKLINKS = 10_000
 EPUB_APPARATUS_MAX_RETAINED_UTF8_BYTES = 8 * 1024 * 1024
-EPUB_XHTML_MAX_DECODED_BYTES = 16 * 1024 * 1024
-EPUB_XML_MAX_DEPTH = 128
-EPUB_XML_MAX_ELEMENTS_PER_ENTRY = 100_000
-EPUB_XML_MAX_ELEMENTS_PER_BOOK = 1_000_000
-EPUB_XML_MAX_ATTRIBUTES_PER_ELEMENT = 64
-EPUB_XML_MAX_ATTRIBUTES_PER_BOOK = 1_000_000
-
-_XHTML_DECODED_BYTES_MESSAGE = "EPUB XHTML decoded bytes exceed the 16 MiB per-entry limit"
-_XHTML_SCAN_CHUNK_BYTES = 64 * 1024
-
-# XHTML 1.x content documents and NCX navigation files reference the HTML named
-# entities their (never fetched) external DTD would declare. Resolving them from
-# this fixed local table keeps every reference a single bounded substitution.
-_XHTML_NAMED_ENTITIES = {name: chr(codepoint) for name, codepoint in name2codepoint.items()}
-
-# Void elements have no end tag, so they never open a nesting level.
-_HTML_VOID_TAGS = frozenset(
-    {
-        "area",
-        "base",
-        "br",
-        "col",
-        "embed",
-        "hr",
-        "img",
-        "input",
-        "link",
-        "meta",
-        "param",
-        "source",
-        "track",
-        "wbr",
-    }
-)
 
 # ---------------------------------------------------------------------------
 # Public result types
@@ -135,7 +85,7 @@ _HTML_VOID_TAGS = frozenset(
 @dataclass(frozen=True)
 class EpubExtractionResult:
     status: str = "success"
-    fragment_count: int = 0
+    chapter_count: int = 0
     toc_node_count: int = 0
     asset_count: int = 0
     title: str | None = None
@@ -143,8 +93,7 @@ class EpubExtractionResult:
     publisher: str | None = None
     language: str | None = None
     description: str | None = None
-    edition_published_date: Presence[PublicationDate] = field(default_factory=absent)
-    edition_isbn: Presence[str] = field(default_factory=absent)
+    published_date: str | None = None
 
 
 @dataclass(frozen=True)
@@ -153,7 +102,6 @@ class EpubExtractionError:
     error_code: str = ""
     error_message: str = ""
     terminal: bool = False
-    resource_limit_dimension: ResourceFailureDimension | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -271,9 +219,6 @@ _EPUB_GLOBAL_ATTRS = frozenset(
         "lang",
         "dir",
         "xml:lang",
-        "hidden",
-        "aria-hidden",
-        "aria-labelledby",
         "data-reader-apparatus-item-id",
         "data-reader-apparatus-kind",
         "data-reader-apparatus-confidence",
@@ -452,6 +397,18 @@ class _StagedChapter:
 
 
 @dataclass
+class _TocNodeSpec:
+    nav_type: str
+    node_id: str
+    parent_node_id: str | None
+    label: str
+    href: str | None
+    fragment_idx: int | None
+    depth: int
+    order_key: str
+
+
+@dataclass
 class _AssetEntry:
     epub_path: str
     manifest_id: str | None
@@ -460,6 +417,20 @@ class _AssetEntry:
     size_bytes: int
     fallback_id: str | None
     properties: str | None
+
+
+@dataclass
+class _NavLocationSpec:
+    location_id: str
+    ordinal: int
+    source_node_id: str | None
+    label: str
+    fragment_idx: int
+    href_path: str | None
+    href_fragment: str | None
+    start_offset: int
+    end_offset: int
+    source: str
 
 
 @dataclass
@@ -487,8 +458,8 @@ class EpubExtractionPlan:
         ...,
     ]
     all_block_specs: tuple[list, ...]
-    toc_nodes: tuple[EpubStructureTocNode, ...]
-    nav_locations: tuple[EpubStructureSection, ...]
+    toc_nodes: tuple[_TocNodeSpec, ...]
+    nav_locations: tuple[_NavLocationSpec, ...]
     asset_entries: tuple[_AssetEntry, ...]
     asset_storage_paths: dict[str, str]
     apparatus_source_fingerprint: str
@@ -496,33 +467,6 @@ class EpubExtractionPlan:
 
 class _EpubExtractionFailure(Exception):
     """Modeled failure caused by the EPUB payload, not service infrastructure."""
-
-
-class _EpubResourceLimitExceeded(_EpubExtractionFailure):
-    dimension: ResourceFailureDimension
-
-    def __init__(self, message: str, *, dimension: ResourceFailureDimension):
-        super().__init__(message)
-        self.dimension = dimension
-
-
-@dataclass
-class _XmlStructuralBudget:
-    element_count: int = 0
-    attribute_count: int = 0
-
-
-def _epub_resource_limit_error(
-    message: str,
-    *,
-    dimension: ResourceFailureDimension,
-) -> EpubExtractionError:
-    return EpubExtractionError(
-        error_code=ApiErrorCode.E_RESOURCE_LIMIT.value,
-        error_message=message,
-        terminal=True,
-        resource_limit_dimension=dimension,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -537,7 +481,6 @@ def build_epub_extraction_plan(
     attempt_id: UUID,
     storage_path: str,
     source_size_bytes: int,
-    expected_source_sha256: str,
     storage_client: StorageClientBase,
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
     now: datetime | None = None,
@@ -545,20 +488,12 @@ def build_epub_extraction_plan(
     """Materialize and parse one immutable EPUB without retaining source bytes."""
     with parser_attempt_directory(attempt_id) as attempt_directory:
         epub_path = attempt_directory / "source.epub"
-        try:
-            stream_storage_object_to_file(
-                storage_client,
-                storage_path=storage_path,
-                destination=epub_path,
-                expected_size_bytes=source_size_bytes,
-                expected_source_sha256=expected_source_sha256,
-            )
-        except StorageObjectIntegrityError:
-            return EpubExtractionError(
-                error_code=ApiErrorCode.E_SOURCE_INTEGRITY.value,
-                error_message="Stored EPUB bytes do not match the immutable source identity",
-                terminal=True,
-            )
+        stream_storage_object_to_file(
+            storage_client,
+            storage_path=storage_path,
+            destination=epub_path,
+            expected_size_bytes=source_size_bytes,
+        )
         return _build_epub_extraction_plan_from_file(
             session_factory=session_factory,
             media_id=media_id,
@@ -571,46 +506,6 @@ def build_epub_extraction_plan(
             attempt_directory=attempt_directory,
             now=now,
         )
-
-
-def extract_epub_metadata(epub_path: Path) -> EpubExtractionResult | EpubExtractionError:
-    """Read OPF metadata only, retaining archive/XML bounds without publishing content."""
-    settings = get_settings()
-    structural_budget = _XmlStructuralBudget()
-    try:
-        with zipfile.ZipFile(epub_path) as zf:
-            safety_error = _check_archive_safety(
-                zf,
-                _ArchiveSafetyConfig(
-                    max_entries=settings.max_epub_archive_entries,
-                    max_total_uncompressed_bytes=settings.max_epub_archive_total_uncompressed_bytes,
-                    max_single_entry_uncompressed_bytes=settings.max_epub_archive_single_entry_uncompressed_bytes,
-                    max_compression_ratio=settings.max_epub_archive_compression_ratio,
-                    max_parse_time_ms=settings.max_epub_archive_parse_time_ms,
-                ),
-            )
-            if safety_error is not None:
-                return safety_error
-            opf_path = _find_opf_path(zf, structural_budget)
-            if opf_path is None:
-                return EpubExtractionError(
-                    error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
-                    error_message="Cannot locate OPF rootfile",
-                )
-            opf = _parse_xml_entry(zf, opf_path, structural_budget, decoded_bytes_limit=None)
-            if opf is None:
-                return EpubExtractionError(
-                    error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
-                    error_message="Failed to parse OPF",
-                )
-            return _extract_opf_metadata(opf)
-    except zipfile.BadZipFile as exc:
-        return EpubExtractionError(
-            error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
-            error_message=f"Invalid ZIP: {exc}",
-        )
-    except _EpubResourceLimitExceeded as exc:
-        return _epub_resource_limit_error(str(exc), dimension=exc.dimension)
 
 
 def _build_epub_extraction_plan_from_file(
@@ -631,7 +526,6 @@ def _build_epub_extraction_plan_from_file(
         now = datetime.now(UTC)
 
     settings = get_settings()
-    structural_budget = _XmlStructuralBudget()
     safety_cfg = _ArchiveSafetyConfig(
         max_entries=settings.max_epub_archive_entries,
         max_total_uncompressed_bytes=settings.max_epub_archive_total_uncompressed_bytes,
@@ -654,7 +548,7 @@ def _build_epub_extraction_plan_from_file(
         safety_err = _check_archive_safety(zf, safety_cfg)
         if safety_err is not None:
             return safety_err
-        opf_path = _find_opf_path(zf, structural_budget)
+        opf_path = _find_opf_path(zf)
         if opf_path is None:
             return EpubExtractionError(
                 error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
@@ -662,7 +556,7 @@ def _build_epub_extraction_plan_from_file(
             )
 
         opf_dir = posixpath.dirname(opf_path)
-        opf_tree = _parse_xml_entry(zf, opf_path, structural_budget, decoded_bytes_limit=None)
+        opf_tree = _parse_xml_entry(zf, opf_path)
         if opf_tree is None:
             return EpubExtractionError(
                 error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
@@ -695,12 +589,12 @@ def _build_epub_extraction_plan_from_file(
                 asset_entries=asset_entries,
                 asset_key_map=asset_key_map,
                 readable_paths=readable_paths,
-                structural_budget=structural_budget,
             )
         except HtmlApparatusTargetLimitExceeded as exc:
-            return _epub_resource_limit_error(
-                f"EPUB apparatus exceeds its bounded index: {exc}",
-                dimension=exc.dimension,
+            return EpubExtractionError(
+                error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
+                error_message=f"EPUB apparatus exceeds its bounded index: {exc}",
+                terminal=True,
             )
         if not staged_chapters:
             return EpubExtractionError(
@@ -753,9 +647,10 @@ def _build_epub_extraction_plan_from_file(
                 continue
             rendered_text_bytes += utf8_byte_length(html_sanitized)
             if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
-                return _epub_resource_limit_error(
-                    "EPUB rendered text exceeds the 64 MiB limit",
-                    dimension="Output",
+                return EpubExtractionError(
+                    error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
+                    error_message="EPUB rendered text exceeds the 64 MiB limit",
+                    terminal=True,
                 )
             sanitized_chapters.append((ch, html_sanitized, apparatus_items, apparatus_edges))
             retained_hrefs.append(ch.href)
@@ -781,15 +676,16 @@ def _build_epub_extraction_plan_from_file(
         href_to_frag_idx = _build_href_to_frag_idx(retained_hrefs)
 
         # ---- TOC materialization -------------------------------------------
-        toc_nodes = _materialize_toc(
-            zf,
-            opf_tree,
-            manifest,
-            href_to_frag_idx,
-            structural_budget,
-            media_id,
-        )
-        # ---- canonicalize once with exact source structure -----------------
+        toc_nodes = _materialize_toc(zf, opf_tree, manifest, href_to_frag_idx)
+        requested_targets: dict[int, dict[str, str]] = {}
+        for node in toc_nodes:
+            if node.fragment_idx is None:
+                continue
+            _href_path, href_fragment = _split_href_parts(node.href)
+            if href_fragment is not None:
+                requested_targets.setdefault(node.fragment_idx, {})[href_fragment] = str(node.href)
+
+        # ---- canonicalize once with exact requested anchor starts ----------
         fragment_specs: list[
             tuple[
                 Fragment,
@@ -798,30 +694,43 @@ def _build_epub_extraction_plan_from_file(
                 list[dict[str, object]],
             ]
         ] = []
-        structure_fragments: list[EpubStructureFragment] = []
+        anchor_offsets_by_fragment: dict[int, dict[str, int]] = {}
         canonical_text_digest = hashlib.sha256()
         for fragment_idx, (ch, html_sanitized, apparatus_items, apparatus_edges) in enumerate(
             sanitized_chapters
         ):
+            targets = requested_targets.get(fragment_idx, {})
             try:
-                canonical = canonicalize_structure(html_sanitized)
-                canonical_text = canonical.text
+                canonical_text, offsets = generate_canonical_text_with_element_offsets(
+                    html_sanitized,
+                    set(targets),
+                )
             except ValueError as exc:
                 return EpubExtractionError(
                     error_code=ApiErrorCode.E_SANITIZATION_FAILED.value,
                     error_message=f"Canonicalization failed for spine item {ch.spine_idx}: {exc}",
                 )
+            missing = targets.keys() - offsets.keys()
+            if missing:
+                anchor_id = min(missing)
+                return EpubExtractionError(
+                    error_code=ApiErrorCode.E_SOURCE_NOT_READABLE.value,
+                    error_message=(
+                        f"EPUB navigation target {targets[anchor_id]} names a missing anchor"
+                    ),
+                )
             rendered_text_bytes += utf8_byte_length(canonical_text)
             if rendered_text_bytes > EPUB_RENDERED_TEXT_MAX_BYTES:
-                return _epub_resource_limit_error(
-                    "EPUB rendered text exceeds the 64 MiB limit",
-                    dimension="Output",
+                return EpubExtractionError(
+                    error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
+                    error_message="EPUB rendered text exceeds the 64 MiB limit",
+                    terminal=True,
                 )
             if fragment_idx:
                 canonical_text_digest.update(b"\n")
             canonical_text_digest.update(canonical_text.encode("utf-8"))
+            anchor_offsets_by_fragment[fragment_idx] = offsets
             fragment = Fragment(
-                id=new_uuid7(),
                 media_id=media_id,
                 idx=fragment_idx,
                 html_sanitized=html_sanitized,
@@ -829,18 +738,15 @@ def _build_epub_extraction_plan_from_file(
                 created_at=now,
             )
             fragment_specs.append((fragment, ch, apparatus_items, apparatus_edges))
-            structure_fragments.append(
-                EpubStructureFragment(fragment.id, fragment_idx, ch.href, canonical)
-            )
             all_block_specs.append(parse_fragment_blocks(canonical_text))
 
         fragments = [frag for frag, _ch, _items, _edges in fragment_specs]
         try:
-            nav_locations = build_epub_structure(
-                media_id=media_id,
-                fragments=structure_fragments,
-                toc_nodes=toc_nodes,
-                existing_location_ids={},
+            nav_locations = _materialize_nav_locations(
+                toc_nodes,
+                fragments,
+                retained_hrefs,
+                anchor_offsets_by_fragment,
             )
         except ValueError as exc:
             return EpubExtractionError(
@@ -851,9 +757,10 @@ def _build_epub_extraction_plan_from_file(
         # ---- check parse-time budget ---------------------------------------
         elapsed_ms = int((time.monotonic() - t_start) * 1000)
         if elapsed_ms > safety_cfg.max_parse_time_ms:
-            return _epub_resource_limit_error(
-                f"Parse time {elapsed_ms}ms exceeded limit {safety_cfg.max_parse_time_ms}ms",
-                dimension="Time",
+            return EpubExtractionError(
+                error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
+                error_message=f"Parse time {elapsed_ms}ms exceeded limit {safety_cfg.max_parse_time_ms}ms",
+                terminal=True,
             )
 
         asset_storage_paths: dict[str, str] = {}
@@ -881,7 +788,6 @@ def _build_epub_extraction_plan_from_file(
                                 cast(BinaryIO, asset_stream),
                                 sanitized_stream,
                                 ae.epub_path,
-                                structural_budget,
                             )
                             ae.size_bytes = sanitized_stream.tell()
                             sanitized_stream.seek(0)
@@ -901,16 +807,15 @@ def _build_epub_extraction_plan_from_file(
                 raise StorageError(exc.message, exc.code) from exc
 
         result = EpubExtractionResult(
-            fragment_count=len(fragments),
+            chapter_count=len(fragments),
             toc_node_count=len(toc_nodes),
             asset_count=len(asset_entries),
             title=title,
-            creators=opf_meta.creators,
-            publisher=opf_meta.publisher,
-            language=opf_meta.language,
-            description=opf_meta.description,
-            edition_published_date=opf_meta.edition_published_date,
-            edition_isbn=opf_meta.edition_isbn,
+            creators=opf_meta.get("creators", []),
+            publisher=opf_meta.get("publisher"),
+            language=opf_meta.get("language"),
+            description=opf_meta.get("description"),
+            published_date=opf_meta.get("published_date"),
         )
         return EpubExtractionPlan(
             result=result,
@@ -934,8 +839,6 @@ def _build_epub_extraction_plan_from_file(
             ),
         )
 
-    except _EpubResourceLimitExceeded as exc:
-        return _epub_resource_limit_error(str(exc), dimension=exc.dimension)
     except _EpubExtractionFailure as exc:
         error_code = ApiErrorCode.E_INVALID_FILE_TYPE.value
         return EpubExtractionError(
@@ -1002,7 +905,6 @@ def publish_epub_extraction_plan(
     fragments: list[Fragment] = []
     for template, _chapter, _items, _edges in plan.fragment_specs:
         fragment = Fragment(
-            id=template.id,
             media_id=media_id,
             idx=template.idx,
             html_sanitized=template.html_sanitized,
@@ -1050,7 +952,6 @@ def publish_epub_extraction_plan(
                 fragment_idx=node.fragment_idx,
                 depth=node.depth,
                 order_key=node.order_key,
-                target_offset=node.target_offset,
                 created_at=plan.now,
             )
         )
@@ -1070,23 +971,19 @@ def publish_epub_extraction_plan(
             )
         )
     db.flush()
-    for ordinal, nav in enumerate(plan.nav_locations):
+    for nav in plan.nav_locations:
         db.add(
             EpubNavLocation(
                 media_id=media_id,
                 location_id=nav.location_id,
-                ordinal=ordinal,
-                source_node_id=nullable_from_presence(nav.source_node_id),
+                ordinal=nav.ordinal,
+                source_node_id=nav.source_node_id,
                 label=nav.label,
                 fragment_idx=nav.fragment_idx,
                 href_path=nav.href_path,
-                href_fragment=nullable_from_presence(nav.href_fragment),
+                href_fragment=nav.href_fragment,
                 start_offset=nav.start_offset,
-                parent_section_id=nullable_from_presence(nav.parent_section_id),
-                end_fragment_idx=nav.end.value.fragment_idx
-                if isinstance(nav.end, Present)
-                else None,
-                end_offset=nav.end.value.offset if isinstance(nav.end, Present) else None,
+                end_offset=nav.end_offset,
                 source=nav.source,
                 created_at=plan.now,
             )
@@ -1136,9 +1033,10 @@ def _check_archive_safety(
     infos = zf.infolist()
 
     if len(infos) > cfg.max_entries:
-        return _epub_resource_limit_error(
-            f"Archive has {len(infos)} entries (limit {cfg.max_entries})",
-            dimension="Structure",
+        return EpubExtractionError(
+            error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
+            error_message=f"Archive has {len(infos)} entries (limit {cfg.max_entries})",
+            terminal=True,
         )
 
     total_uncompressed = 0
@@ -1177,32 +1075,35 @@ def _check_archive_safety(
         compressed = info.compress_size
 
         if uncompressed > cfg.max_single_entry_uncompressed_bytes:
-            return _epub_resource_limit_error(
-                (
+            return EpubExtractionError(
+                error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
+                error_message=(
                     f"Entry '{name}' uncompressed size {uncompressed} "
                     f"exceeds limit {cfg.max_single_entry_uncompressed_bytes}"
                 ),
-                dimension="Output",
+                terminal=True,
             )
 
         total_uncompressed += uncompressed
 
         if compressed > 0 and uncompressed / compressed > cfg.max_compression_ratio:
-            return _epub_resource_limit_error(
-                (
+            return EpubExtractionError(
+                error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
+                error_message=(
                     f"Entry '{name}' compression ratio {uncompressed / compressed:.1f} "
                     f"exceeds limit {cfg.max_compression_ratio}"
                 ),
-                dimension="Output",
+                terminal=True,
             )
 
     if total_uncompressed > cfg.max_total_uncompressed_bytes:
-        return _epub_resource_limit_error(
-            (
+        return EpubExtractionError(
+            error_code=ApiErrorCode.E_ARCHIVE_UNSAFE.value,
+            error_message=(
                 f"Total uncompressed {total_uncompressed} "
                 f"exceeds limit {cfg.max_total_uncompressed_bytes}"
             ),
-            dimension="Output",
+            terminal=True,
         )
 
     return None
@@ -1213,13 +1114,8 @@ def _check_archive_safety(
 # ---------------------------------------------------------------------------
 
 
-def _find_opf_path(zf: zipfile.ZipFile, structural_budget: _XmlStructuralBudget) -> str | None:
-    container = _parse_xml_entry(
-        zf,
-        "META-INF/container.xml",
-        structural_budget,
-        decoded_bytes_limit=None,
-    )
+def _find_opf_path(zf: zipfile.ZipFile) -> str | None:
+    container = _parse_xml_entry(zf, "META-INF/container.xml")
     if container is None:
         return None
     rootfile = container.find(
@@ -1234,214 +1130,13 @@ def _find_opf_path(zf: zipfile.ZipFile, structural_budget: _XmlStructuralBudget)
     return None
 
 
-def _parse_xml_entry(
-    zf: zipfile.ZipFile,
-    path: str,
-    structural_budget: _XmlStructuralBudget,
-    *,
-    decoded_bytes_limit: int | None,
-) -> ET.Element | None:
-    """Preflight XML structure before any full tree is materialized.
-
-    DefusedXML disables entity expansion and external resolution. The streaming
-    pass bounds entry-local shape and book-wide cumulative structure before the
-    ordinary ElementTree consumer receives a DOM. An absent or malformed entry
-    is absence; only a declared budget breach escapes.
-    """
+def _parse_xml_entry(zf: zipfile.ZipFile, path: str) -> ET.Element | None:
     try:
-        _preflight_xml_entry(
-            zf,
-            path,
-            structural_budget,
-            decoded_bytes_limit=decoded_bytes_limit,
-        )
-        with zf.open(path) as source:
-            return DefusedET.parse(
-                source,
-                parser=_new_safe_doctype_parser(),
-            ).getroot()
-    # justify-ignore-error: absent or malformed optional EPUB XML entries are absence.
+        raw = zf.read(path)
+        return ET.fromstring(raw)
+    # justify-ignore-error: malformed optional EPUB XML entries are absence.
     except _XML_ENTRY_READ_ERRORS:
         return None
-    # justify-ignore-error: an entry declaring DTD entities is not a usable XML entry.
-    except DefusedXmlException:
-        return None
-
-
-def _preflight_xml_entry(
-    zf: zipfile.ZipFile,
-    path: str,
-    structural_budget: _XmlStructuralBudget,
-    *,
-    decoded_bytes_limit: int | None,
-) -> None:
-    """Bound one strict XML entry's decoded size and shape before a DOM exists."""
-    info = zf.getinfo(path)
-    if decoded_bytes_limit is not None and info.file_size > decoded_bytes_limit:
-        raise _EpubResourceLimitExceeded(_XHTML_DECODED_BYTES_MESSAGE, dimension="Output")
-    with zf.open(info) as source:
-        _scan_xml_stream(cast(BinaryIO, source), structural_budget)
-
-
-def _scan_xml_stream(source: BinaryIO, structural_budget: _XmlStructuralBudget) -> None:
-    """Charge one strict XML stream against the declared structural budgets."""
-    depth = 0
-    entry_elements = 0
-    for event, element in DefusedET.iterparse(
-        source,
-        events=("start", "end"),
-        parser=_new_safe_doctype_parser(),
-    ):
-        if event == "start":
-            depth += 1
-            entry_elements += 1
-            _charge_structural_budget(
-                structural_budget,
-                depth=depth,
-                entry_elements=entry_elements,
-                attributes=len(element.attrib),
-            )
-        else:
-            depth -= 1
-            element.clear()
-
-
-def _preflight_xhtml_entry(
-    zf: zipfile.ZipFile,
-    path: str,
-    structural_budget: _XmlStructuralBudget,
-) -> None:
-    """Bound one content document's decoded size and shape before any rewrite.
-
-    Content documents are rendered by the recovering HTML parser, so this pass
-    scans the same tolerant grammar: markup that is not well-formed XML stays
-    as readable as it was, while its shape stays inside the declared budgets.
-    """
-    # `zipfile` hands out at most the declared uncompressed size and fails the
-    # entry's CRC otherwise, so the declared size is the decoded-byte bound and
-    # the entry never has to be inflated to learn it is too large.
-    info = zf.getinfo(path)
-    if info.file_size > EPUB_XHTML_MAX_DECODED_BYTES:
-        raise _EpubResourceLimitExceeded(_XHTML_DECODED_BYTES_MESSAGE, dimension="Output")
-    scan = _XhtmlStructureScan(structural_budget)
-    with zf.open(info) as source:
-        decoder: codecs.IncrementalDecoder | None = None
-        while chunk := source.read(_XHTML_SCAN_CHUNK_BYTES):
-            if decoder is None:
-                decoder = _incremental_epub_text_decoder(chunk)
-            scan.feed(decoder.decode(chunk))
-    scan.close()
-
-
-class _XhtmlStructureScan(HTMLParser):
-    """Charge a streamed content document's elements against the same budgets."""
-
-    def __init__(self, structural_budget: _XmlStructuralBudget) -> None:
-        super().__init__(convert_charrefs=True)
-        self._structural_budget = structural_budget
-        self._open_tags: list[str] = []
-        self._entry_elements = 0
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self._charge_element(tag, len(attrs), closes_itself=tag in _HTML_VOID_TAGS)
-
-    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self._charge_element(tag, len(attrs), closes_itself=True)
-
-    def handle_endtag(self, tag: str) -> None:
-        for position in range(len(self._open_tags) - 1, -1, -1):
-            if self._open_tags[position] == tag:
-                del self._open_tags[position:]
-                return
-
-    def handle_decl(self, decl: str) -> None:
-        if "[" in decl:
-            raise _EpubExtractionFailure("EPUB XML entities and external resolution are disabled")
-
-    def _charge_element(self, tag: str, attributes: int, *, closes_itself: bool) -> None:
-        self._entry_elements += 1
-        _charge_structural_budget(
-            self._structural_budget,
-            depth=len(self._open_tags) + 1,
-            entry_elements=self._entry_elements,
-            attributes=attributes,
-        )
-        if not closes_itself:
-            self._open_tags.append(tag)
-
-
-def _charge_structural_budget(
-    structural_budget: _XmlStructuralBudget,
-    *,
-    depth: int,
-    entry_elements: int,
-    attributes: int,
-) -> None:
-    """Charge one opening element against the entry-local and book-wide budgets."""
-    structural_budget.element_count += 1
-    structural_budget.attribute_count += attributes
-    if depth > EPUB_XML_MAX_DEPTH:
-        raise _EpubResourceLimitExceeded(
-            "EPUB XML depth exceeds the 128-level limit",
-            dimension="Structure",
-        )
-    if entry_elements > EPUB_XML_MAX_ELEMENTS_PER_ENTRY:
-        raise _EpubResourceLimitExceeded(
-            "EPUB XML elements exceed the per-entry limit",
-            dimension="Structure",
-        )
-    if structural_budget.element_count > EPUB_XML_MAX_ELEMENTS_PER_BOOK:
-        raise _EpubResourceLimitExceeded(
-            "EPUB XML elements exceed the per-book limit",
-            dimension="Structure",
-        )
-    if attributes > EPUB_XML_MAX_ATTRIBUTES_PER_ELEMENT:
-        raise _EpubResourceLimitExceeded(
-            "EPUB XML attributes exceed the per-element limit",
-            dimension="Structure",
-        )
-    if structural_budget.attribute_count > EPUB_XML_MAX_ATTRIBUTES_PER_BOOK:
-        raise _EpubResourceLimitExceeded(
-            "EPUB XML attributes exceed the per-book limit",
-            dimension="Structure",
-        )
-
-
-def _incremental_epub_text_decoder(prefix: bytes) -> codecs.IncrementalDecoder:
-    """Pick the codec `_decode_epub_text` would pick, on a stream read once."""
-    if prefix.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
-        return codecs.getincrementaldecoder("utf-16")(errors="replace")
-    return codecs.getincrementaldecoder("utf-8-sig")(errors="replace")
-
-
-def _new_safe_doctype_parser() -> DefusedXMLParser:
-    """Read an inert external DTD declaration without ever resolving one.
-
-    Expat reads an external subset only when parameter-entity parsing is
-    enabled, which ElementTree never enables, and ``forbid_external`` refuses
-    any external reference that would still be attempted. An internal subset is
-    the one doctype form that can declare entities here, so it stays refused,
-    and the XHTML named entities a conformant content document may reference
-    resolve from this parser's own fixed table.
-    """
-    parser = DefusedXMLParser(
-        forbid_dtd=False,
-        forbid_entities=True,
-        forbid_external=True,
-    )
-
-    def reject_internal_subset(
-        name: str,
-        system_id: str | None,
-        public_id: str | None,
-        has_internal_subset: bool,
-    ) -> None:
-        if has_internal_subset:
-            raise DTDForbidden(name, system_id, public_id)
-
-    parser.parser.StartDoctypeDeclHandler = reject_internal_subset
-    parser.entity.update(_XHTML_NAMED_ENTITIES)
-    return parser
 
 
 def _parse_manifest(
@@ -1514,73 +1209,39 @@ def _normalize_title(raw: str) -> str:
     return t[:255]
 
 
-def _extract_opf_metadata(opf: ET.Element) -> EpubExtractionResult:
+def _extract_opf_metadata(opf: ET.Element) -> dict:
     """Extract Dublin Core metadata from OPF document."""
-    creators = [
-        el.text.strip()
-        for el in opf.findall(".//opf:metadata/dc:creator", _NS)
-        if el.text and el.text.strip()
-    ]
-    publisher = opf.findtext(".//opf:metadata/dc:publisher", namespaces=_NS)
-    language = opf.findtext(".//opf:metadata/dc:language", namespaces=_NS)
-    description = opf.findtext(".//opf:metadata/dc:description", namespaces=_NS)
-    date_elements = opf.findall(".//opf:metadata/dc:date", _NS)
-    publication_elements = [
-        element
-        for element in date_elements
-        if element.get(f"{{{_NS['opf']}}}event") == "publication"
-    ]
-    if not publication_elements:
-        publication_elements = [
-            element for element in date_elements if element.get(f"{{{_NS['opf']}}}event") is None
-        ]
-    publication_dates: set[str] = set()
-    for element in publication_elements:
-        normalized = normalize_source_publication_date(element.text)
-        if isinstance(normalized, Present):
-            publication_dates.add(normalized.value)
-    isbns: set[str] = set()
-    primary_isbns: set[str] = set()
-    primary_id = opf.get("unique-identifier")
-    for identifier in opf.findall(".//opf:metadata/dc:identifier", _NS):
-        raw = re.sub(
-            r"^(?:urn:isbn:|isbn(?:-1[03])?:?)[ \t]*",
-            "",
-            (identifier.text or "").strip(),
-            flags=re.IGNORECASE,
-        )
-        value = re.sub(r"[\s-]", "", raw).upper()
-        if re.fullmatch(r"[0-9]{9}[0-9X]", value):
-            digits = [10 if char == "X" else int(char) for char in value]
-            if sum((10 - index) * digit for index, digit in enumerate(digits)) % 11:
-                continue
-            body = "978" + value[:9]
-            checksum = sum(
-                int(char) * (1 if index % 2 == 0 else 3) for index, char in enumerate(body)
-            )
-            value = body + str((-checksum) % 10)
-        elif re.fullmatch(r"97[89][0-9]{10}", value):
-            checksum = sum(
-                int(char) * (1 if index % 2 == 0 else 3) for index, char in enumerate(value)
-            )
-            if checksum % 10:
-                continue
-        else:
-            continue
-        isbns.add(value)
-        if primary_id is not None and identifier.get("id") == primary_id:
-            primary_isbns.add(value)
-    selected = primary_isbns if primary_isbns else isbns
-    return EpubExtractionResult(
-        creators=creators,
-        publisher=publisher.strip() or None if publisher is not None else None,
-        language=language.strip() or None if language is not None else None,
-        description=description.strip() or None if description is not None else None,
-        edition_published_date=present(next(iter(publication_dates)))
-        if len(publication_dates) == 1
-        else absent(),
-        edition_isbn=present(next(iter(selected))) if len(selected) == 1 else absent(),
-    )
+    meta: dict = {}
+
+    # dc:creator (multiple allowed)
+    creators = []
+    for el in opf.findall(".//opf:metadata/dc:creator", _NS):
+        if el.text and el.text.strip():
+            creators.append(el.text.strip())
+    if creators:
+        meta["creators"] = creators
+
+    # dc:publisher
+    pub_el = opf.find(".//opf:metadata/dc:publisher", _NS)
+    if pub_el is not None and pub_el.text and pub_el.text.strip():
+        meta["publisher"] = pub_el.text.strip()
+
+    # dc:language
+    lang_el = opf.find(".//opf:metadata/dc:language", _NS)
+    if lang_el is not None and lang_el.text and lang_el.text.strip():
+        meta["language"] = lang_el.text.strip()
+
+    # dc:description
+    desc_el = opf.find(".//opf:metadata/dc:description", _NS)
+    if desc_el is not None and desc_el.text and desc_el.text.strip():
+        meta["description"] = desc_el.text.strip()
+
+    # dc:date
+    date_el = opf.find(".//opf:metadata/dc:date", _NS)
+    if date_el is not None and date_el.text and date_el.text.strip():
+        meta["published_date"] = date_el.text.strip()
+
+    return meta
 
 
 def _filename_from_storage_path(path: str) -> str:
@@ -1662,7 +1323,6 @@ def _stage_epub_chapters(
     asset_entries: list[_AssetEntry],
     asset_key_map: dict[str, str],
     readable_paths: set[str],
-    structural_budget: _XmlStructuralBudget,
 ) -> tuple[list[_StagedChapter], dict[str, dict[str, object]]]:
     """Rewrite each readable spine item once and index its apparatus targets.
 
@@ -1677,7 +1337,6 @@ def _stage_epub_chapters(
     backlink_count = 0
     for ch in chapter_specs:
         try:
-            _preflight_xhtml_entry(zf, ch.href, structural_budget)
             raw = zf.read(ch.href)
         # justify-ignore-error: an unreadable spine entry is not a renderable chapter.
         except _ZIP_ENTRY_READ_ERRORS:
@@ -1996,25 +1655,13 @@ def _write_sanitized_svg_asset(
     source: BinaryIO,
     destination: BinaryIO,
     epub_path: str,
-    structural_budget: _XmlStructuralBudget,
 ) -> None:
     try:
-        # SVG is XML too: apply the same entry and book-wide structural limits
-        # before DefusedET builds the asset DOM, reading the caller's own entry
-        # handle. The XHTML-only decoded-size budget intentionally does not
-        # apply to referenced SVG assets.
-        _scan_xml_stream(source, structural_budget)
-        source.seek(0)
-        root = DefusedET.parse(
-            source,
-            parser=_new_safe_doctype_parser(),
-        ).getroot()
-    except (ET.ParseError, DefusedXmlException) as exc:
+        root = ET.parse(source).getroot()
+    except ET.ParseError as exc:
         raise _EpubExtractionFailure(f"Referenced SVG asset cannot be parsed: {epub_path}") from exc
 
-    # `ElementTree.getroot()` is typed as optional, so this states the same
-    # rejection for an empty tree and for a non-SVG root.
-    if root is None or _local_name(root.tag) != "svg":
+    if _local_name(root.tag) != "svg":
         raise _EpubExtractionFailure(f"Referenced SVG asset is not an SVG document: {epub_path}")
 
     _sanitize_svg_asset_element(root)
@@ -2283,14 +1930,12 @@ def _materialize_toc(
     opf: ET.Element,
     manifest: dict[str, _ManifestItem],
     href_to_frag_idx: dict[str, int],
-    structural_budget: _XmlStructuralBudget,
-    media_id: UUID,
-) -> list[EpubStructureTocNode]:
+) -> list[_TocNodeSpec]:
     """Parse EPUB navigation sources into one persisted node list."""
-    nodes = _parse_epub3_nav(zf, opf, manifest, href_to_frag_idx, structural_budget, media_id)
+    nodes = _parse_epub3_nav(zf, opf, manifest, href_to_frag_idx)
     if any(node.nav_type == "toc" for node in nodes):
         return nodes
-    return nodes + _parse_ncx_toc(zf, opf, manifest, href_to_frag_idx, structural_budget, media_id)
+    return nodes + _parse_ncx_toc(zf, opf, manifest, href_to_frag_idx)
 
 
 def _parse_epub3_nav(
@@ -2298,9 +1943,7 @@ def _parse_epub3_nav(
     opf: ET.Element,
     manifest: dict[str, _ManifestItem],
     href_to_frag_idx: dict[str, int],
-    structural_budget: _XmlStructuralBudget,
-    media_id: UUID,
-) -> list[EpubStructureTocNode]:
+) -> list[_TocNodeSpec]:
     nav_id = None
     for item in opf.findall(".//opf:manifest/opf:item", _NS):
         props = item.get("properties", "")
@@ -2311,17 +1954,12 @@ def _parse_epub3_nav(
         return []
 
     nav_href = manifest[nav_id].href
-    nav_tree = _parse_xml_entry(
-        zf,
-        nav_href,
-        structural_budget,
-        decoded_bytes_limit=EPUB_XHTML_MAX_DECODED_BYTES,
-    )
+    nav_tree = _parse_xml_entry(zf, nav_href)
     if nav_tree is None:
         return []
 
     nav_dir = posixpath.dirname(nav_href)
-    nodes: list[EpubStructureTocNode] = []
+    nodes: list[_TocNodeSpec] = []
     for nav_el in nav_tree.iter():
         tag = nav_el.tag if isinstance(nav_el.tag, str) else ""
         if not (tag == "nav" or tag.endswith("}nav")):
@@ -2345,8 +1983,7 @@ def _parse_epub3_nav(
             nav_dir,
             href_to_frag_idx,
             nodes,
-            media_id,
-            parent_path=None,
+            parent_id=None,
             depth=0,
             prefix="",
         )
@@ -2358,9 +1995,8 @@ def _walk_nav_ol(
     nav_type: str,
     nav_dir: str,
     href_to_frag_idx: dict[str, int],
-    nodes: list[EpubStructureTocNode],
-    media_id: UUID,
-    parent_path: str | None,
+    nodes: list[_TocNodeSpec],
+    parent_id: str | None,
     depth: int,
     prefix: str,
 ) -> None:
@@ -2407,14 +2043,13 @@ def _walk_nav_ol(
         # generate node_id
         raw_id = _generate_node_id_token(nav_id_attr, href, label)
         raw_id = _ensure_sibling_unique(raw_id, sibling_ids)
-        node_path = f"{parent_path}/{raw_id}" if parent_path else f"{nav_type}/{raw_id}"
-        node_id = _enforce_id_length(media_id, node_path)
-        parent_id = _enforce_id_length(media_id, parent_path) if parent_path else None
+        node_id = f"{parent_id}/{raw_id}" if parent_id else f"{nav_type}/{raw_id}"
+        node_id = _enforce_id_length(node_id)
 
         order_key = f"{prefix}{ordinal:04d}" if not prefix else f"{prefix}.{ordinal:04d}"
 
         nodes.append(
-            EpubStructureTocNode(
+            _TocNodeSpec(
                 nav_type=nav_type,
                 node_id=node_id,
                 parent_node_id=parent_id,
@@ -2433,8 +2068,7 @@ def _walk_nav_ol(
             nav_dir,
             href_to_frag_idx,
             nodes,
-            media_id,
-            parent_path=node_path,
+            parent_id=node_id,
             depth=depth + 1,
             prefix=order_key,
         )
@@ -2446,9 +2080,7 @@ def _parse_ncx_toc(
     opf: ET.Element,
     manifest: dict[str, _ManifestItem],
     href_to_frag_idx: dict[str, int],
-    structural_budget: _XmlStructuralBudget,
-    media_id: UUID,
-) -> list[EpubStructureTocNode]:
+) -> list[_TocNodeSpec]:
     ncx_id = None
     spine = opf.find(".//opf:spine", _NS)
     if spine is not None:
@@ -2462,7 +2094,7 @@ def _parse_ncx_toc(
         return []
 
     ncx_href = manifest[ncx_id].href
-    ncx_tree = _parse_xml_entry(zf, ncx_href, structural_budget, decoded_bytes_limit=None)
+    ncx_tree = _parse_xml_entry(zf, ncx_href)
     if ncx_tree is None:
         return []
 
@@ -2473,15 +2105,14 @@ def _parse_ncx_toc(
     if nav_map is None:
         return []
 
-    nodes: list[EpubStructureTocNode] = []
+    nodes: list[_TocNodeSpec] = []
     _walk_ncx_navpoints(
         nav_map,
         ncx_dir,
         href_to_frag_idx,
         nodes,
-        media_id,
         nav_type="toc",
-        parent_path=None,
+        parent_id=None,
         depth=0,
         prefix="",
     )
@@ -2492,10 +2123,9 @@ def _walk_ncx_navpoints(
     parent_el: ET.Element,
     ncx_dir: str,
     href_to_frag_idx: dict[str, int],
-    nodes: list[EpubStructureTocNode],
-    media_id: UUID,
+    nodes: list[_TocNodeSpec],
     nav_type: str,
-    parent_path: str | None,
+    parent_id: str | None,
     depth: int,
     prefix: str,
 ) -> None:
@@ -2524,14 +2154,13 @@ def _walk_ncx_navpoints(
 
         raw_id = _generate_node_id_token(nav_id_attr, href, label)
         raw_id = _ensure_sibling_unique(raw_id, sibling_ids)
-        node_path = f"{parent_path}/{raw_id}" if parent_path else f"{nav_type}/{raw_id}"
-        node_id = _enforce_id_length(media_id, node_path)
-        parent_id = _enforce_id_length(media_id, parent_path) if parent_path else None
+        node_id = f"{parent_id}/{raw_id}" if parent_id else f"{nav_type}/{raw_id}"
+        node_id = _enforce_id_length(node_id)
 
         order_key = f"{prefix}{ordinal:04d}" if not prefix else f"{prefix}.{ordinal:04d}"
 
         nodes.append(
-            EpubStructureTocNode(
+            _TocNodeSpec(
                 nav_type=nav_type,
                 node_id=node_id,
                 parent_node_id=parent_id,
@@ -2548,9 +2177,8 @@ def _walk_ncx_navpoints(
             ncx_dir,
             href_to_frag_idx,
             nodes,
-            media_id,
             nav_type=nav_type,
-            parent_path=node_path,
+            parent_id=node_id,
             depth=depth + 1,
             prefix=order_key,
         )
@@ -2569,7 +2197,7 @@ def _resolve_nav_target(
     if parsed.scheme:
         return href, None
 
-    path_part = parsed.path or ""
+    path_part = unquote(parsed.path or "")
     anchor = parsed.fragment or None
     resolved_path = _resolve_epub_path(base_dir, path_part) if path_part else None
     canonical_href = resolved_path
@@ -2577,6 +2205,145 @@ def _resolve_nav_target(
         canonical_href = f"{canonical_href}#{anchor}"
     frag_idx = href_to_frag_idx.get(resolved_path) if resolved_path else None
     return canonical_href, frag_idx
+
+
+# ---------------------------------------------------------------------------
+# Navigation location materialization
+# ---------------------------------------------------------------------------
+
+
+def _materialize_nav_locations(
+    toc_nodes: list[_TocNodeSpec],
+    fragments: list[Fragment],
+    retained_hrefs: list[str],
+    anchor_offsets_by_fragment: dict[int, dict[str, int]],
+) -> list[_NavLocationSpec]:
+    """Build canonical section rows in fragment/spine order."""
+    locations: list[_NavLocationSpec] = []
+    toc_by_fragment: dict[int, list[_TocNodeSpec]] = {}
+    seen_section_ids: set[str] = set()
+    ordinal = 0
+
+    for tn in toc_nodes:
+        if tn.nav_type != "toc" or tn.fragment_idx is None:
+            continue
+        toc_by_fragment.setdefault(tn.fragment_idx, []).append(tn)
+
+    for frag in sorted(fragments, key=lambda f: f.idx):
+        chapter_href = retained_hrefs[frag.idx] if 0 <= frag.idx < len(retained_hrefs) else None
+        fragment_toc_nodes = toc_by_fragment.get(frag.idx, [])
+
+        if fragment_toc_nodes:
+            for tn in fragment_toc_nodes:
+                href_path, href_fragment = _split_href_parts(tn.href)
+                href_path = href_path or chapter_href
+                if href_path is None:
+                    continue
+                location_id = _section_location_id(href_path, href_fragment, seen_section_ids)
+                locations.append(
+                    _NavLocationSpec(
+                        location_id=location_id,
+                        ordinal=ordinal,
+                        source_node_id=tn.node_id,
+                        label=tn.label[:512],
+                        fragment_idx=frag.idx,
+                        href_path=href_path,
+                        href_fragment=href_fragment,
+                        start_offset=0,
+                        end_offset=0,
+                        source="toc",
+                    )
+                )
+                ordinal += 1
+            continue
+
+        if chapter_href is None:
+            continue
+
+        location_id = _section_location_id(chapter_href, None, seen_section_ids)
+        locations.append(
+            _NavLocationSpec(
+                location_id=location_id,
+                ordinal=ordinal,
+                source_node_id=None,
+                label=_fallback_fragment_label(frag.canonical_text, frag.idx),
+                fragment_idx=frag.idx,
+                href_path=chapter_href,
+                href_fragment=None,
+                start_offset=0,
+                end_offset=0,
+                source="spine",
+            )
+        )
+        ordinal += 1
+
+    fragments_by_idx = {fragment.idx: fragment for fragment in fragments}
+    indexes_by_fragment: dict[int, list[int]] = {}
+    for index, location in enumerate(locations):
+        location.start_offset = (
+            0
+            if location.href_fragment is None
+            else anchor_offsets_by_fragment[location.fragment_idx][location.href_fragment]
+        )
+        indexes_by_fragment.setdefault(location.fragment_idx, []).append(index)
+
+    for fragment_idx, indexes in indexes_by_fragment.items():
+        fragment = fragments_by_idx[fragment_idx]
+        ordered_starts = sorted({locations[index].start_offset for index in indexes})
+        end_by_start = {
+            start: ordered_starts[position + 1]
+            if position + 1 < len(ordered_starts)
+            else len(fragment.canonical_text)
+            for position, start in enumerate(ordered_starts)
+        }
+        for index in indexes:
+            location = locations[index]
+            location.end_offset = end_by_start[location.start_offset]
+
+    return locations
+
+
+def _split_href_parts(href: str | None) -> tuple[str | None, str | None]:
+    if not href:
+        return None, None
+    if "#" not in href:
+        return href, None
+    path_part, frag_part = href.split("#", 1)
+    return (path_part or None, unquote(frag_part) or None)
+
+
+def _section_location_id(
+    href_path: str,
+    href_fragment: str | None,
+    seen: set[str],
+) -> str:
+    base = href_path if not href_fragment else f"{href_path}#{href_fragment}"
+    candidate = _truncate_section_id(base)
+    if candidate not in seen:
+        seen.add(candidate)
+        return candidate
+
+    suffix = 2
+    while True:
+        unique = _truncate_section_id(f"{base}~{suffix}")
+        if unique not in seen:
+            seen.add(unique)
+            return unique
+        suffix += 1
+
+
+def _truncate_section_id(value: str) -> str:
+    if len(value) <= 255:
+        return value
+    return value[:255]
+
+
+def _fallback_fragment_label(canonical_text: str, idx: int) -> str:
+    for line in canonical_text.splitlines():
+        trimmed = line.strip()
+        if trimmed:
+            return trimmed[:512]
+    return f"Chapter {idx + 1}"
 
 
 # ---------------------------------------------------------------------------
@@ -2613,10 +2380,10 @@ def _ensure_sibling_unique(raw: str, seen: dict[str, int]) -> str:
     return f"{raw}~{seen[raw]}"
 
 
-def _enforce_id_length(media_id: UUID, node_id: str) -> str:
+def _enforce_id_length(node_id: str) -> str:
     if len(node_id) <= 255:
         return node_id
-    return str(uuid5(media_id, node_id))
+    return node_id[:255]
 
 
 def _text_content(el: ET.Element) -> str:

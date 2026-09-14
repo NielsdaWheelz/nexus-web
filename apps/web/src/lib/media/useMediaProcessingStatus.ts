@@ -1,44 +1,41 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { decodePresence, type Presence } from "@/lib/api/presence";
 import { useGenerationRun } from "@/lib/api/useGenerationRun";
+import { optionalString } from "@/lib/api/sse/guards";
 import {
   isDocumentProcessingTerminal,
-  MEDIA_PROCESSING_PROJECTION_STATUSES,
+  requireDocumentProcessingStatus,
   type MediaProcessingProjectionStatus,
 } from "@/lib/media/documentReadiness";
-import {
-  decodeMediaActionCapabilities,
-  type MediaActionCapabilities,
-} from "@/lib/media/mediaActionCapabilities";
-import {
-  decodeMediaSourceProgress,
-  type MediaSourceProgress,
-} from "@/lib/media/sourceProgress";
-import {
-  decodeTranscriptCoverage,
-  decodeTranscriptState,
-  type TranscriptCoverage,
-  type TranscriptState,
+import { isRecord } from "@/lib/validation";
+import type {
+  TranscriptState,
+  TranscriptCoverage,
 } from "@/lib/media/transcriptView";
-import {
-  expectExactRecord,
-  expectIsoInstant,
-  expectNullableString,
-  expectOneOf,
-} from "@/lib/validation";
 
 export interface MediaProcessingSnapshot {
   processing_status: MediaProcessingProjectionStatus;
-  source_progress: Presence<MediaSourceProgress>;
-  last_error_code: string | null;
-  failure_stage: string | null;
+  last_error_code?: string | null;
+  failure_stage?: string | null;
   retrieval_status: string | null;
   retrieval_status_reason: string | null;
-  capabilities: MediaActionCapabilities;
-  transcript_state: TranscriptState;
-  transcript_coverage: TranscriptCoverage;
+  capabilities?: {
+    can_read: boolean;
+    can_highlight: boolean;
+    can_quote: boolean;
+    can_search: boolean;
+    can_play: boolean;
+    can_download_file: boolean;
+    can_delete?: boolean;
+    can_retry?: boolean;
+    can_refresh_source?: boolean;
+    can_retry_metadata?: boolean;
+    can_read_embeds?: boolean;
+    can_edit_authors?: boolean;
+  };
+  transcript_state?: TranscriptState;
+  transcript_coverage?: TranscriptCoverage;
   updated_at: string;
 }
 
@@ -46,67 +43,156 @@ type MediaSSEEvent =
   | { type: "state"; data: MediaProcessingSnapshot }
   | { type: "done"; data: MediaProcessingSnapshot };
 
-export function decodeMediaProcessingSnapshot(
-  raw: unknown,
-): MediaProcessingSnapshot {
-  const value = expectExactRecord(
-    raw,
-    [
-      "processing_status",
-      "source_progress",
-      "last_error_code",
-      "failure_stage",
-      "retrieval_status",
-      "retrieval_status_reason",
-      "capabilities",
-      "transcript_state",
-      "transcript_coverage",
-      "updated_at",
-    ],
-    "Media processing snapshot",
-  );
+function optionalTranscriptState(value: unknown): TranscriptState | undefined {
+  if (value === undefined) return undefined;
+  if (
+    value === null ||
+    value === "not_requested" ||
+    value === "queued" ||
+    value === "running" ||
+    value === "failed_provider" ||
+    value === "failed_quota" ||
+    value === "unavailable" ||
+    value === "ready" ||
+    value === "partial"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function optionalTranscriptCoverage(
+  value: unknown,
+): TranscriptCoverage | undefined {
+  if (value === undefined) return undefined;
+  if (
+    value === null ||
+    value === "none" ||
+    value === "partial" ||
+    value === "full"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function requiredBoolean(
+  record: Record<string, unknown>,
+  key: string,
+): boolean | null {
+  const value = record[key];
+  return typeof value === "boolean" ? value : null;
+}
+
+function optionalBoolean(
+  record: Record<string, unknown>,
+  key: string,
+): boolean | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function parseCapabilities(
+  value: unknown,
+): MediaProcessingSnapshot["capabilities"] {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) return undefined;
+  const canRead = requiredBoolean(value, "can_read");
+  const canHighlight = requiredBoolean(value, "can_highlight");
+  const canQuote = requiredBoolean(value, "can_quote");
+  const canSearch = requiredBoolean(value, "can_search");
+  const canPlay = requiredBoolean(value, "can_play");
+  const canDownloadFile = requiredBoolean(value, "can_download_file");
+  const canDelete = optionalBoolean(value, "can_delete");
+  const canRetry = optionalBoolean(value, "can_retry");
+  const canRefreshSource = optionalBoolean(value, "can_refresh_source");
+  const canRetryMetadata = optionalBoolean(value, "can_retry_metadata");
+  const canReadEmbeds = optionalBoolean(value, "can_read_embeds");
+  const canEditAuthors = optionalBoolean(value, "can_edit_authors");
+  if (
+    canRead === null ||
+    canHighlight === null ||
+    canQuote === null ||
+    canSearch === null ||
+    canPlay === null ||
+    canDownloadFile === null ||
+    (canDelete === undefined && "can_delete" in value) ||
+    (canRetry === undefined && "can_retry" in value) ||
+    (canRefreshSource === undefined && "can_refresh_source" in value) ||
+    (canRetryMetadata === undefined && "can_retry_metadata" in value) ||
+    (canReadEmbeds === undefined && "can_read_embeds" in value) ||
+    (canEditAuthors === undefined && "can_edit_authors" in value)
+  ) {
+    return undefined;
+  }
   return {
-    processing_status: expectOneOf(
-      value.processing_status,
-      MEDIA_PROCESSING_PROJECTION_STATUSES,
-      "Media processing snapshot.processing_status",
-    ),
-    source_progress: decodePresence(
-      value.source_progress,
-      decodeMediaSourceProgress,
-    ),
-    last_error_code: expectNullableString(
-      value.last_error_code,
-      "Media processing snapshot.last_error_code",
-    ),
-    failure_stage: expectNullableString(
-      value.failure_stage,
-      "Media processing snapshot.failure_stage",
-    ),
-    retrieval_status: expectNullableString(
-      value.retrieval_status,
-      "Media processing snapshot.retrieval_status",
-    ),
-    retrieval_status_reason: expectNullableString(
-      value.retrieval_status_reason,
-      "Media processing snapshot.retrieval_status_reason",
-    ),
-    capabilities: decodeMediaActionCapabilities(
-      value.capabilities,
-      "Media processing snapshot.capabilities",
-    ),
-    transcript_state: decodeTranscriptState(
-      value.transcript_state,
-      "Media processing snapshot.transcript_state",
-    ),
-    transcript_coverage: decodeTranscriptCoverage(
-      value.transcript_coverage,
-      "Media processing snapshot.transcript_coverage",
-    ),
-    updated_at: expectIsoInstant(
-      value.updated_at,
-      "Media processing snapshot.updated_at",
-    ),
+    can_read: canRead,
+    can_highlight: canHighlight,
+    can_quote: canQuote,
+    can_search: canSearch,
+    can_play: canPlay,
+    can_download_file: canDownloadFile,
+    ...(canDelete !== undefined ? { can_delete: canDelete } : {}),
+    ...(canRetry !== undefined ? { can_retry: canRetry } : {}),
+    ...(canRefreshSource !== undefined
+      ? { can_refresh_source: canRefreshSource }
+      : {}),
+    ...(canRetryMetadata !== undefined
+      ? { can_retry_metadata: canRetryMetadata }
+      : {}),
+    ...(canReadEmbeds !== undefined ? { can_read_embeds: canReadEmbeds } : {}),
+    ...(canEditAuthors !== undefined
+      ? { can_edit_authors: canEditAuthors }
+      : {}),
+  };
+}
+
+function parseMediaProcessingSnapshot(
+  value: unknown,
+): MediaProcessingSnapshot | null {
+  if (!isRecord(value)) return null;
+  const processingStatus = value.processing_status;
+  const updatedAt = value.updated_at;
+  const lastErrorCode = optionalString(value.last_error_code);
+  const failureStage = optionalString(value.failure_stage);
+  const retrievalStatus = optionalString(value.retrieval_status);
+  const retrievalStatusReason = optionalString(value.retrieval_status_reason);
+  const capabilities = parseCapabilities(value.capabilities);
+  const transcriptState = optionalTranscriptState(value.transcript_state);
+  const transcriptCoverage = optionalTranscriptCoverage(
+    value.transcript_coverage,
+  );
+  if (
+    typeof processingStatus !== "string" ||
+    typeof updatedAt !== "string" ||
+    lastErrorCode === undefined ||
+    failureStage === undefined ||
+    retrievalStatus === undefined ||
+    retrievalStatusReason === undefined ||
+    (capabilities === undefined && "capabilities" in value) ||
+    (transcriptState === undefined && "transcript_state" in value) ||
+    (transcriptCoverage === undefined && "transcript_coverage" in value)
+  ) {
+    return null;
+  }
+  return {
+    processing_status:
+      processingStatus === "suspended"
+        ? processingStatus
+        : requireDocumentProcessingStatus(processingStatus),
+    last_error_code: lastErrorCode,
+    failure_stage: failureStage,
+    retrieval_status: retrievalStatus,
+    retrieval_status_reason: retrievalStatusReason,
+    ...(capabilities !== undefined ? { capabilities } : {}),
+    ...(transcriptState !== undefined
+      ? { transcript_state: transcriptState }
+      : {}),
+    ...(transcriptCoverage !== undefined
+      ? { transcript_coverage: transcriptCoverage }
+      : {}),
+    updated_at: updatedAt,
   };
 }
 
@@ -114,7 +200,11 @@ function decodeMediaSSEEvent(type: string, data: unknown): MediaSSEEvent {
   if (type !== "state" && type !== "done") {
     throw new Error(`Unknown SSE event type: ${type}`);
   }
-  return { type, data: decodeMediaProcessingSnapshot(data) };
+  const snapshot = parseMediaProcessingSnapshot(data);
+  if (snapshot === null) {
+    throw new Error("Invalid SSE payload for media processing status");
+  }
+  return { type, data: snapshot };
 }
 
 /**

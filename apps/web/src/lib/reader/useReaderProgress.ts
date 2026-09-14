@@ -6,35 +6,27 @@
  * One in-flight PUT per mounted coordinator with one queued latest locator;
  * saves fire after 500 ms idle with a 5 s maximum wait during continuous
  * movement. Revalidation is event-driven only (pane activation, visible,
- * focus, pageshow, online) — no timers or realtime transport. Decisions are
- * pure in `readerProgress.ts`; this hook owns timers, generations, and
- * listeners while `ReaderProgressPort` exclusively owns persistence transport.
+ * focus, pageshow, online) — no timers, no realtime transport. Decisions are
+ * pure in `readerProgress.ts`; this hook owns fetches, timers, generations,
+ * and listeners.
  */
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useReducer,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { apiFetch } from "@/lib/api/client";
+import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
 import {
   canScheduleSave,
   initialReaderProgressState,
+  parseReaderCursorSnapshot,
   pendingLocator,
+  readerStateConflictCurrent,
   reduceReaderProgress,
   saveBaseRevision,
   type ReaderCursorSnapshot,
   type ReaderProgressEvent,
   type ReaderProgressState,
 } from "./readerProgress";
-import type {
-  ReaderProgressPort,
-  ReaderProgressSaveResult,
-  ReaderProgressView,
-} from "./ReaderProgressPort";
 import { readerResumeStatesEqual, type ReaderResumeState } from "./types";
 
 const SAVE_IDLE_MS = 500;
@@ -42,11 +34,7 @@ const SAVE_MAX_WAIT_MS = 5_000;
 
 export type ReaderCapability =
   | { state: "Unavailable" }
-  | {
-      state: "Readable";
-      mediaId: string;
-      locatorKind: ReaderResumeState["kind"];
-    };
+  | { state: "Readable"; mediaId: string; locatorKind: ReaderResumeState["kind"] };
 
 export type ApplyCursorResult = "applied" | "cancelled_by_user" | "failed";
 
@@ -71,32 +59,14 @@ export interface ReaderProgressHandoffState {
   captureUnavailable: boolean;
 }
 
-/**
- * The composed session load projected as authority input. Structurally a
- * subset of `AsyncResource<ReaderProgressView>`; the composition supplies the
- * live resource states, and `retry` re-runs the whole composed load (content
- * and progress) under its single invalidation identity.
- */
-export interface ComposedProgressAuthority {
-  resource:
-    | { readonly status: "idle" }
-    | { readonly status: "loading" }
-    | { readonly status: "ready"; readonly data: ReaderProgressView }
-    | { readonly status: "error"; readonly error: unknown };
-  retry: () => void;
-}
+type ApiFetchFn = typeof apiFetch;
 
-export interface UseReaderProgressOptions {
+interface UseReaderProgressOptions {
   capability: ReaderCapability;
   /** Pane activity from the workspace host; adoption versus handoff depends on it. */
   isPaneActive: boolean;
-  /** Persistence transport; hosted and native readers share this semantic seam. */
-  port: ReaderProgressPort;
-  /**
-   * Host-injected unauthenticated-error policy (the hosted composition passes
-   * the sign-in redirect handler). Returning true consumes the failure.
-   */
-  handleUnauthenticatedError: (error: unknown) => boolean;
+  /** Fetch boundary; injectable so tests exercise the real coordinator. */
+  apiFetch?: ApiFetchFn;
   /** Synchronous freshest-position capture; null when no position is available. */
   captureCurrentLocator: () => ReaderResumeState | null;
   /** Format-owned application of a remote cursor or canonical reset snapshot. */
@@ -107,13 +77,6 @@ export interface UseReaderProgressOptions {
   previewLease: {
     isActive(): boolean;
   };
-  /**
-   * Initial authority supplied by the session's composed load transaction.
-   * Consumed once per readable media/locator identity: a later
-   * re-establishment of the same capability re-reads canonical state through
-   * `port.load` instead of adopting the memoized composed snapshot.
-   */
-  composedAuthority?: ComposedProgressAuthority;
 }
 
 export interface ReaderProgress {
@@ -151,53 +114,18 @@ function isTerminalReaderLocator(locator: ReaderResumeState): boolean {
   );
 }
 
-function canonicalProgressSnapshot(
-  view: ReaderProgressView,
-): ReaderCursorSnapshot {
-  if (view.kind !== "Canonical") {
-    throw new Error(
-      `Hosted reader received unsupported ${view.kind} progress view`,
-    );
-  }
-  return view.snapshot;
-}
+export function useReaderProgress(options: UseReaderProgressOptions): ReaderProgress {
+  const { capability, isPaneActive, apiFetch: fetchFn = apiFetch } = options;
+  const readableMediaId = capability.state === "Readable" ? capability.mediaId : null;
+  const readableLocatorKind = capability.state === "Readable" ? capability.locatorKind : null;
 
-function canonicalSaveSnapshot(
-  result: ReaderProgressSaveResult,
-): ReaderCursorSnapshot | null {
-  switch (result.kind) {
-    case "Canonical":
-      return result.snapshot;
-    case "Conflict":
-      return null;
-    case "DurablyPending":
-    case "ContentChanged":
-    case "SourceUnavailable":
-      throw new Error(
-        `Hosted reader received unsupported ${result.kind} save result`,
-      );
-  }
-}
-
-export function useReaderProgress(
-  options: UseReaderProgressOptions,
-): ReaderProgress {
-  const { capability, isPaneActive, port } = options;
-  const readableMediaId =
-    capability.state === "Readable" ? capability.mediaId : null;
-  const readableLocatorKind =
-    capability.state === "Readable" ? capability.locatorKind : null;
-
-  const [state, dispatch] = useReducer(
-    reduceReaderProgress,
-    initialReaderProgressState,
-  );
+  const [state, dispatch] = useReducer(reduceReaderProgress, initialReaderProgressState);
   const stateRef = useRef<ReaderProgressState>(state);
   stateRef.current = state;
 
-  const [initialSnapshot, setInitialSnapshot] = useState<
-    ReaderCursorSnapshot | undefined
-  >(undefined);
+  const [initialSnapshot, setInitialSnapshot] = useState<ReaderCursorSnapshot | undefined>(
+    undefined,
+  );
   const [announcement, setAnnouncement] = useState("");
   const [applyFailed, setApplyFailed] = useState(false);
   const [captureUnavailable, setCaptureUnavailable] = useState(false);
@@ -218,33 +146,16 @@ export function useReaderProgress(
   captureRef.current = options.captureCurrentLocator;
   const applyCursorRef = useRef(options.applyCursor);
   applyCursorRef.current = options.applyCursor;
-  const onTerminalWriteAcknowledgedRef = useRef(
-    options.onTerminalWriteAcknowledged,
-  );
+  const onTerminalWriteAcknowledgedRef = useRef(options.onTerminalWriteAcknowledged);
   onTerminalWriteAcknowledgedRef.current = options.onTerminalWriteAcknowledged;
-  const handleUnauthenticatedErrorRef = useRef(
-    options.handleUnauthenticatedError,
-  );
-  handleUnauthenticatedErrorRef.current = options.handleUnauthenticatedError;
-  const composedAuthorityRef = useRef(options.composedAuthority);
-  composedAuthorityRef.current = options.composedAuthority;
-  // "composed" while the current generation's authority mirrors the session's
-  // composed load; "port" once this hook owns its own `port.load` reads. The
-  // consumed key makes composed adoption once-per-identity so a re-established
-  // capability re-reads canonical state (fresh CAS base) from the port.
-  const authorityChannelRef = useRef<"composed" | "port">("port");
-  const composedConsumedKeyRef = useRef<string | null>(null);
 
   /** Reduce, mirror synchronously, and dispatch — callers act on the result. */
-  const apply = useCallback(
-    (event: ReaderProgressEvent): ReaderProgressState => {
-      const next = reduceReaderProgress(stateRef.current, event);
-      stateRef.current = next;
-      dispatch(event);
-      return next;
-    },
-    [],
-  );
+  const apply = useCallback((event: ReaderProgressEvent): ReaderProgressState => {
+    const next = reduceReaderProgress(stateRef.current, event);
+    stateRef.current = next;
+    dispatch(event);
+    return next;
+  }, []);
 
   /**
    * Send the pending locator. `baseRevision` defaults to the acknowledged
@@ -264,22 +175,17 @@ export function useReaderProgress(
         const generation = generationRef.current;
         requestSeqRef.current += 1;
         apply({ type: "save_started" });
+        const body = { locator, base_revision: baseRevision };
         try {
-          const result = await port.save(mediaId, locator, {
-            baseRevision,
-            ...(keepalive ? { keepalive: true } : {}),
+          const res = await fetchFn<{ data: unknown }>(`/api/media/${mediaId}/reader-state`, {
+            method: "PUT",
+            body: JSON.stringify(body),
+            ...(keepalive ? { keepalive } : {}),
           });
           if (generationRef.current !== generation) {
             return;
           }
-          if (result.kind === "Conflict") {
-            apply({ type: "save_conflicted", current: result.canonical });
-            return;
-          }
-          const snapshot = canonicalSaveSnapshot(result);
-          if (snapshot === null) {
-            return;
-          }
+          const snapshot = parseReaderCursorSnapshot(res.data);
           if (snapshot.state !== "Positioned") {
             throw new Error("Cursor write returned an Empty snapshot");
           }
@@ -296,17 +202,26 @@ export function useReaderProgress(
             } catch (error) {
               // The cursor has already been acknowledged. A consumer-owned
               // follow-up cannot turn that durable success into a save failure.
-              console.error(
-                "Terminal reader cursor acknowledgement failed:",
-                error,
-              );
+              console.error("Terminal reader cursor acknowledgement failed:", error);
             }
           }
         } catch (err) {
           if (generationRef.current !== generation) {
             return;
           }
-          if (handleUnauthenticatedErrorRef.current(err)) {
+          if (handleUnauthenticatedApiError(err)) {
+            return;
+          }
+          let conflictCurrent: ReaderCursorSnapshot | null = null;
+          try {
+            conflictCurrent = readerStateConflictCurrent(err);
+          } catch (contractErr) {
+            console.error("Malformed reader-state conflict response:", contractErr);
+            apply({ type: "save_failed" });
+            return;
+          }
+          if (conflictCurrent !== null) {
+            apply({ type: "save_conflicted", current: conflictCurrent });
             return;
           }
           console.error("Failed to save reader cursor:", err);
@@ -329,7 +244,7 @@ export function useReaderProgress(
       );
       return pending;
     },
-    [apply, port, readableMediaId],
+    [apply, fetchFn, readableMediaId],
   );
 
   const load = useCallback(async (): Promise<ReaderProgressState | null> => {
@@ -340,11 +255,11 @@ export function useReaderProgress(
     const generation = generationRef.current;
     apply({ type: "load_started" });
     try {
-      const view = await port.load(mediaId);
+      const res = await fetchFn<{ data: unknown }>(`/api/media/${mediaId}/reader-state`);
       if (generationRef.current !== generation) {
         return null;
       }
-      const snapshot = canonicalProgressSnapshot(view);
+      const snapshot = parseReaderCursorSnapshot(res.data);
       const next = apply({ type: "load_succeeded", snapshot });
       setInitialSnapshot((existing) => existing ?? snapshot);
       return next;
@@ -352,31 +267,14 @@ export function useReaderProgress(
       if (generationRef.current !== generation) {
         return null;
       }
-      if (handleUnauthenticatedErrorRef.current(err)) {
+      if (handleUnauthenticatedApiError(err)) {
         return null;
       }
       // Failure is failure — never an empty cursor and never a default write.
       console.error("Failed to load reader cursor:", err);
       return apply({ type: "load_failed" });
     }
-  }, [apply, port, readableMediaId]);
-
-  /**
-   * Re-establish failed authority through its owning channel: the composed
-   * session load retries as one identity (content and progress together);
-   * port-owned authority re-reads canonical state directly.
-   */
-  const recoverAuthority = useCallback(() => {
-    if (stateRef.current.authority.status !== "load_failed") {
-      return;
-    }
-    const composed = composedAuthorityRef.current;
-    if (authorityChannelRef.current === "composed" && composed !== undefined) {
-      composed.retry();
-      return;
-    }
-    void load();
-  }, [load]);
+  }, [apply, fetchFn, readableMediaId]);
 
   const applyRemote = useCallback(
     async (snapshot: ReaderCursorSnapshot, auto: boolean): Promise<void> => {
@@ -497,24 +395,21 @@ export function useReaderProgress(
     if (
       current.authority.status === "ready" &&
       current.remote.status === "none" &&
-      (current.local.status === "dirty" ||
-        current.local.status === "save_failed")
+      (current.local.status === "dirty" || current.local.status === "save_failed")
     ) {
       await sendCursor(saveBaseRevision(current));
     }
   }, [sendCursor]);
 
   const revalidate = useCallback(
-    async (
-      trigger: "activation" | "visible" | "focus" | "pageshow" | "online",
-    ) => {
+    async (trigger: "activation" | "visible" | "focus" | "pageshow" | "online") => {
       const mediaId = readableMediaId;
       if (mediaId === null || revalidateInFlightRef.current) {
         return;
       }
       if (stateRef.current.authority.status !== "ready") {
         if (stateRef.current.authority.status === "load_failed") {
-          recoverAuthority();
+          void load();
         }
         return;
       }
@@ -523,11 +418,11 @@ export function useReaderProgress(
       const startedDormant = trigger === "pageshow" || dormantRef.current;
       const inputSeqAtStart = inputSeqRef.current;
       try {
-        const view = await port.load(mediaId);
+        const res = await fetchFn<{ data: unknown }>(`/api/media/${mediaId}/reader-state`);
         if (generationRef.current !== generation) {
           return;
         }
-        const snapshot = canonicalProgressSnapshot(view);
+        const snapshot = parseReaderCursorSnapshot(res.data);
         const before = stateRef.current;
         const next = apply({ type: "revalidated", snapshot });
         const becameCandidate =
@@ -546,17 +441,14 @@ export function useReaderProgress(
       } catch (err) {
         // Background revalidation failure preserves the current Ready reader
         // and pending work; it never becomes Empty.
-        if (
-          generationRef.current === generation &&
-          !handleUnauthenticatedErrorRef.current(err)
-        ) {
+        if (generationRef.current === generation && !handleUnauthenticatedApiError(err)) {
           console.error("Reader cursor revalidation failed:", err);
         }
       } finally {
         revalidateInFlightRef.current = false;
       }
     },
-    [apply, applyRemote, port, readableMediaId, recoverAuthority],
+    [apply, applyRemote, fetchFn, load, readableMediaId],
   );
 
   /**
@@ -573,10 +465,7 @@ export function useReaderProgress(
     if (mediaId === null) {
       return;
     }
-    if (
-      current.authority.status !== "ready" ||
-      current.remote.status !== "none"
-    ) {
+    if (current.authority.status !== "ready" || current.remote.status !== "none") {
       // No authority to save against, or an open handoff — never clobber it.
       return;
     }
@@ -595,10 +484,7 @@ export function useReaderProgress(
       }
       return;
     }
-    if (
-      current.local.status === "dirty" ||
-      current.local.status === "save_failed"
-    ) {
+    if (current.local.status === "dirty" || current.local.status === "save_failed") {
       if (!isTerminalReaderLocator(current.local.locator)) {
         const captured = captureRef.current();
         if (
@@ -633,21 +519,7 @@ export function useReaderProgress(
     if (readableMediaId === null || readableLocatorKind === null) {
       return;
     }
-    const composedKey = `${readableMediaId} ${readableLocatorKind}`;
-    if (
-      composedAuthorityRef.current !== undefined &&
-      composedConsumedKeyRef.current !== composedKey
-    ) {
-      // First establishment for this identity adopts the session's composed
-      // load; the composed-resource effect below mirrors its lifecycle. A
-      // re-established identical capability re-reads canonical state through
-      // the port so a memoized composed revision never becomes the CAS base.
-      composedConsumedKeyRef.current = composedKey;
-      authorityChannelRef.current = "composed";
-    } else {
-      authorityChannelRef.current = "port";
-      void load();
-    }
+    void load();
     const flushOnTeardown = () => {
       lifecycleFlush();
       generationRef.current += 1;
@@ -655,49 +527,6 @@ export function useReaderProgress(
     return flushOnTeardown;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readableMediaId, readableLocatorKind]);
-
-  // Composed-authority mirror: while this generation's authority is sourced
-  // from the composed session load, project that resource's lifecycle into
-  // the reducer. Retry/backoff, unauthenticated redirect, and defect routing
-  // live in the resource owner, so this only mirrors settled states.
-  const composedResource = options.composedAuthority?.resource;
-  useEffect(() => {
-    if (
-      authorityChannelRef.current !== "composed" ||
-      composedResource === undefined
-    ) {
-      return;
-    }
-    switch (composedResource.status) {
-      case "idle":
-        return;
-      case "loading":
-        if (stateRef.current.authority.status !== "loading") {
-          apply({ type: "load_started" });
-        }
-        return;
-      case "ready": {
-        if (stateRef.current.authority.status === "ready") {
-          return;
-        }
-        const snapshot = canonicalProgressSnapshot(composedResource.data);
-        apply({ type: "load_succeeded", snapshot });
-        setInitialSnapshot((existing) => existing ?? snapshot);
-        return;
-      }
-      case "error":
-        if (stateRef.current.authority.status !== "load_failed") {
-          // Failure is failure — never an empty cursor and never a default
-          // write.
-          console.error(
-            "Failed to load reader cursor:",
-            composedResource.error,
-          );
-          apply({ type: "load_failed" });
-        }
-        return;
-    }
-  }, [apply, composedResource]);
 
   // Save scheduling: idle debounce with a maximum wait during continuous
   // movement. Only one PUT is in flight; queued movement follows the ack.
@@ -802,8 +631,7 @@ export function useReaderProgress(
       inputSeqRef.current += 1;
       const current = stateRef.current;
       const canonical =
-        current.authority.status === "ready" &&
-        current.authority.snapshot.state === "Positioned"
+        current.authority.status === "ready" && current.authority.snapshot.state === "Positioned"
           ? current.authority.snapshot.locator
           : null;
       const baseline = pendingLocator(current.local) ?? canonical;
@@ -824,8 +652,10 @@ export function useReaderProgress(
   }, []);
 
   const retryLoad = useCallback(() => {
-    recoverAuthority();
-  }, [recoverAuthority]);
+    if (stateRef.current.authority.status === "load_failed") {
+      void load();
+    }
+  }, [load]);
 
   const retrySave = useCallback(() => {
     // Recovery revalidates before retrying: the failed request may have
@@ -837,28 +667,22 @@ export function useReaderProgress(
       }
       const generation = generationRef.current;
       try {
-        const view = await port.load(mediaId);
+        const res = await fetchFn<{ data: unknown }>(`/api/media/${mediaId}/reader-state`);
         if (generationRef.current !== generation) {
           return;
         }
-        const snapshot = canonicalProgressSnapshot(view);
+        const snapshot = parseReaderCursorSnapshot(res.data);
         const next = apply({ type: "revalidated", snapshot });
-        if (
-          next.local.status === "save_failed" &&
-          next.remote.status === "none"
-        ) {
+        if (next.local.status === "save_failed" && next.remote.status === "none") {
           void sendCursor(saveBaseRevision(next));
         }
       } catch (err) {
-        if (
-          generationRef.current === generation &&
-          !handleUnauthenticatedErrorRef.current(err)
-        ) {
+        if (generationRef.current === generation && !handleUnauthenticatedApiError(err)) {
           console.error("Reader cursor save retry failed:", err);
         }
       }
     })();
-  }, [apply, port, readableMediaId, sendCursor]);
+  }, [apply, fetchFn, readableMediaId, sendCursor]);
 
   const acceptRemoteCursor = useCallback(() => {
     const current = stateRef.current;

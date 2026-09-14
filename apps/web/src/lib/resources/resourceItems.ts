@@ -9,10 +9,7 @@ import type {
 } from "@/lib/resources/resourceCapabilities";
 import { isLibraryPlacementMode } from "@/lib/resources/resourceCapabilities";
 import { isShareMode, type ShareMode } from "@/lib/sharing/types";
-import {
-  decodeCamelCaseResourceActivation,
-  type ResourceActivation,
-} from "@/lib/resources/activation";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import {
   isResourceScheme,
   parseResourceRef,
@@ -20,7 +17,6 @@ import {
 } from "@/lib/resourceGraph/resourceRef";
 import {
   expectBoolean,
-  expectCanonicalUuid,
   expectExactRecord,
   expectInteger,
   expectNullableString,
@@ -110,6 +106,12 @@ const RESOURCE_ITEM_KEYS = [
   "capabilities",
   "versionByLane",
 ] as const;
+const RESOURCE_ACTIVATION_KEYS = [
+  "resourceRef",
+  "kind",
+  "href",
+  "unresolvedReason",
+] as const;
 const RESOURCE_CAPABILITY_KEYS = [
   "userRelation",
   "sharing",
@@ -155,6 +157,44 @@ function decodeUserRelation(raw: unknown): ResourceUserRelation {
       "resource user relation.noteReferenceTarget",
     ),
   };
+}
+
+export function decodeResourceActivation(
+  raw: unknown,
+  ref: string,
+): ResourceActivation {
+  const activation = expectExactRecord(
+    raw,
+    RESOURCE_ACTIVATION_KEYS,
+    "resource activation",
+  );
+  const resourceRef = expectString(
+    activation.resourceRef,
+    "resource activation.resourceRef",
+  );
+  if (resourceRef !== ref) {
+    throw new TypeError("resource activation.resourceRef must match resource ref");
+  }
+  const kind = expectOneOf(
+    activation.kind,
+    ["route", "external", "none"] as const,
+    "resource activation.kind",
+  );
+  const href = expectNullableString(
+    activation.href,
+    "resource activation.href",
+  );
+  const unresolvedReason = expectNullableString(
+    activation.unresolvedReason,
+    "resource activation.unresolvedReason",
+  );
+  if ((kind === "route" || kind === "external") && href === null) {
+    throw new TypeError(`${kind} resource activation requires href`);
+  }
+  if (kind === "none" && href !== null) {
+    throw new TypeError("none resource activation requires null href");
+  }
+  return { resourceRef, kind, href, unresolvedReason };
 }
 
 /**
@@ -208,15 +248,7 @@ export function decodeResourceItem(raw: unknown): ResourceItem {
     }),
   );
   const route = expectNullableString(item.route, "resource item.route");
-  const activation = decodeCamelCaseResourceActivation(
-    item.activation,
-    "resource item.activation",
-  );
-  if (activation.resourceRef !== ref) {
-    throw new TypeError(
-      "resource item.activation.resourceRef must match resource item.ref",
-    );
-  }
+  const activation = decodeResourceActivation(item.activation, ref);
   if (
     (activation.kind === "route" && route !== activation.href) ||
     (activation.kind !== "route" && route !== null)
@@ -312,48 +344,25 @@ export function decodeResourceItem(raw: unknown): ResourceItem {
 }
 
 function normalizeResourceSurfaceContent(raw: unknown): ResourceSurfaceContent {
-  const record = expectRecord(raw, "surface content");
-  switch (expectString(record.kind, "surface content.kind")) {
+  const content = expectRecord(raw, "surface content");
+  switch (expectString(content.kind, "surface content kind")) {
     case "page_title":
-      return {
-        kind: "page_title",
-        title: expectString(
-          expectExactRecord(
-            raw,
-            ["kind", "title"],
-            "page title surface content",
-          ).title,
-          "page title surface content.title",
-        ),
-      };
-    case "note_body": {
-      const content = expectExactRecord(
-        raw,
-        ["kind", "body_pm_json", "body_text"],
-        "note body surface content",
-      );
+      return { kind: "page_title", title: String(content.title ?? "") };
+    case "note_body":
       return {
         kind: "note_body",
-        bodyPmJson: expectRecord(
-          content.body_pm_json,
-          "note body surface content.body_pm_json",
-        ),
-        bodyText: expectString(
-          content.body_text,
-          "note body surface content.body_text",
-        ),
+        bodyPmJson: expectRecord(content.body_pm_json, "note body JSON"),
+        bodyText: String(content.body_text ?? ""),
       };
-    }
     case "resource_summary":
-      expectExactRecord(raw, ["kind"], "resource summary surface content");
       return { kind: "resource_summary" };
     default:
-      throw new TypeError("surface content.kind is invalid");
+      throw new Error("Invalid surface content kind");
   }
 }
 
 function normalizeResourceSurfaceNode(raw: unknown): ResourceSurfaceNode {
-  const node = expectExactRecord(raw, ["item", "content"], "surface node");
+  const node = expectRecord(raw, "surface node");
   return {
     item: decodeResourceItem(node.item),
     content: normalizeResourceSurfaceContent(node.content),
@@ -362,118 +371,20 @@ function normalizeResourceSurfaceNode(raw: unknown): ResourceSurfaceNode {
 
 /** Decodes only the canonical snake_case resource-surface wire contract. */
 export function normalizeResourceSurface(raw: unknown): ResourceSurface {
-  const surface = expectExactRecord(
-    raw,
-    ["source", "ordered_items"],
-    "resource surface",
-  );
+  const surface = expectRecord(raw, "resource surface");
   if (!Array.isArray(surface.ordered_items)) {
     throw new Error("Resource surface is missing ordered_items");
   }
   return {
     source: normalizeResourceSurfaceNode(surface.source),
     orderedItems: surface.ordered_items.map((rawOccurrence) => {
-      const occurrence = expectExactRecord(
-        rawOccurrence,
-        ["occurrence_id", "target"],
-        "surface occurrence",
-      );
+      const occurrence = expectRecord(rawOccurrence, "surface occurrence");
       return {
-        occurrenceId: expectCanonicalUuid(
+        occurrenceId: expectString(
           occurrence.occurrence_id,
-          "surface occurrence.occurrence_id",
+          "surface occurrence id",
         ),
         target: normalizeResourceSurfaceNode(occurrence.target),
-      };
-    }),
-  };
-}
-
-function decodeResourceSurfaceSnapshotContent(
-  raw: unknown,
-): ResourceSurfaceContent {
-  const record = expectRecord(raw, "resource surface snapshot content");
-  switch (expectString(record.kind, "resource surface snapshot content.kind")) {
-    case "page_title": {
-      const content = expectExactRecord(
-        raw,
-        ["kind", "title"],
-        "page title resource surface snapshot content",
-      );
-      return {
-        kind: "page_title",
-        title: expectString(
-          content.title,
-          "page title resource surface snapshot content.title",
-        ),
-      };
-    }
-    case "note_body": {
-      const content = expectExactRecord(
-        raw,
-        ["kind", "bodyPmJson", "bodyText"],
-        "note body resource surface snapshot content",
-      );
-      return {
-        kind: "note_body",
-        bodyPmJson: expectRecord(
-          content.bodyPmJson,
-          "note body resource surface snapshot content.bodyPmJson",
-        ),
-        bodyText: expectString(
-          content.bodyText,
-          "note body resource surface snapshot content.bodyText",
-        ),
-      };
-    }
-    case "resource_summary":
-      expectExactRecord(
-        raw,
-        ["kind"],
-        "resource summary resource surface snapshot content",
-      );
-      return { kind: "resource_summary" };
-    default:
-      throw new TypeError("resource surface snapshot content.kind is invalid");
-  }
-}
-
-function decodeResourceSurfaceSnapshotNode(raw: unknown): ResourceSurfaceNode {
-  const node = expectExactRecord(
-    raw,
-    ["item", "content"],
-    "resource surface snapshot node",
-  );
-  return {
-    item: decodeResourceItem(node.item),
-    content: decodeResourceSurfaceSnapshotContent(node.content),
-  };
-}
-
-/** Exact decoder for the camel-case browser-persisted surface snapshot. */
-export function decodeResourceSurfaceSnapshot(raw: unknown): ResourceSurface {
-  const surface = expectExactRecord(
-    raw,
-    ["source", "orderedItems"],
-    "resource surface snapshot",
-  );
-  if (!Array.isArray(surface.orderedItems)) {
-    throw new TypeError("resource surface snapshot.orderedItems must be an array");
-  }
-  return {
-    source: decodeResourceSurfaceSnapshotNode(surface.source),
-    orderedItems: surface.orderedItems.map((rawOccurrence) => {
-      const occurrence = expectExactRecord(
-        rawOccurrence,
-        ["occurrenceId", "target"],
-        "resource surface snapshot occurrence",
-      );
-      return {
-        occurrenceId: expectCanonicalUuid(
-          occurrence.occurrenceId,
-          "resource surface snapshot occurrence.occurrenceId",
-        ),
-        target: decodeResourceSurfaceSnapshotNode(occurrence.target),
       };
     }),
   };

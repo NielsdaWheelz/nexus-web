@@ -16,7 +16,7 @@ from nexus.db.models import (
     NoteBlock,
     Page,
 )
-from nexus.db.retries import retry_read_committed, retry_serializable
+from nexus.db.retries import retry_serializable
 from nexus.db.session import transaction
 from nexus.errors import (
     ApiErrorCode,
@@ -37,7 +37,6 @@ from nexus.schemas.notes import (
     NotePageSummaryOut,
     UpdatePageRequest,
 )
-from nexus.schemas.presence import presence_from_nullable
 from nexus.services import note_bodies, passage_anchors
 from nexus.services.collection_keyset import Direction
 from nexus.services.content_indexing import IndexOwner, delete_content_index
@@ -291,15 +290,6 @@ def update_page(
 
 
 def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
-    def attempt() -> None:
-        delete_page_in_current_transaction(db, viewer_id, page_id)
-        db.commit()
-
-    retry_read_committed(db, "delete_page", attempt)
-
-
-def delete_page_in_current_transaction(db: Session, viewer_id: UUID, page_id: UUID) -> None:
-    """Stage one Page deletion inside its composing caller's retry attempt."""
     page = get_page_for_owner_or_404(db, viewer_id, page_id)
     ref = _page_ref(page.id)
     from nexus.services.artifacts import engine as artifact_engine
@@ -314,6 +304,7 @@ def delete_page_in_current_transaction(db: Session, viewer_id: UUID, page_id: UU
     )
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
     db.delete(page)
+    db.commit()
 
 
 def read_daily_page(
@@ -526,23 +517,9 @@ def remove_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> None:
     notes-cutover's banned single-block editing command surface. Idempotent — an
     already-absent block is a no-op so undo tolerates a manually-deleted target
     (R-5)."""
-
-    def attempt() -> None:
-        if remove_note_block_in_current_transaction(db, viewer_id, block_id):
-            db.commit()
-
-    retry_read_committed(db, "remove_note_block", attempt)
-
-
-def remove_note_block_in_current_transaction(
-    db: Session,
-    viewer_id: UUID,
-    block_id: UUID,
-) -> bool:
-    """Stage one idempotent NoteBlock deletion in the caller transaction."""
     block = db.get(NoteBlock, block_id)
     if block is None or block.user_id != viewer_id:
-        return False
+        return
     ref = _note_ref(block.id)
     from nexus.services.artifacts import engine as artifact_engine
 
@@ -554,7 +531,7 @@ def remove_note_block_in_current_transaction(
     delete_content_index(db, owner=IndexOwner("note_block", block.id))
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
     db.delete(block)
-    return True
+    db.commit()
 
 
 def set_highlight_note_body_pm_json(
@@ -671,30 +648,10 @@ def delete_highlight_note(
     note_block_id: UUID | None,
     client_mutation_id: str,
 ) -> None:
-    def attempt() -> None:
-        if delete_highlight_note_in_current_transaction(
-            db,
-            viewer_id,
-            highlight_id=highlight_id,
-            note_block_id=note_block_id,
-        ):
-            db.commit()
-
-    retry_read_committed(db, "delete_highlight_note", attempt)
-
-
-def delete_highlight_note_in_current_transaction(
-    db: Session,
-    viewer_id: UUID,
-    *,
-    highlight_id: UUID,
-    note_block_id: UUID | None,
-) -> bool:
-    """Stage one idempotent Highlight-note deletion in the caller transaction."""
     get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
     existing = graph_highlight_notes.first_note_block_for_highlight(db, viewer_id, highlight_id)
     if existing is None:
-        return False
+        return
     if note_block_id is not None and existing.id != note_block_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
     ref = _note_ref(existing.id)
@@ -706,7 +663,7 @@ def delete_highlight_note_in_current_transaction(
     passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=existing.id)
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
     db.delete(existing)
-    return True
+    db.commit()
 
 
 def _upsert_note_body(
@@ -771,7 +728,7 @@ def _page_out(db: Session, viewer_id: UUID, page: Page) -> NotePageOut:
         id=page.id,
         title=page.title,
         updated_at=page.updated_at,
-        daily_page=presence_from_nullable(
+        daily_page=(
             DailyPageSummaryOut(local_date=daily_local_date)
             if daily_local_date is not None
             else None

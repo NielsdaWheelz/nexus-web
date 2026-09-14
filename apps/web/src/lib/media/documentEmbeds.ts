@@ -4,7 +4,6 @@ import {
   expectBoolean,
   expectExactRecord,
   expectInteger,
-  expectNonnegativeInteger,
   expectNullableNonnegativeInteger,
   expectNullableString,
   expectOneOf,
@@ -99,10 +98,6 @@ export type DocumentEmbedAggregateStatus =
 
 export interface DocumentEmbedSummary {
   status: DocumentEmbedAggregateStatus;
-  total_count: number;
-  resolved_count: number;
-  unsupported_count: number;
-  failed_count: number;
 }
 
 interface DocumentEmbedClassNames {
@@ -129,53 +124,6 @@ export function decodeDocumentEmbeds(
     (embed, index) => decodeDocumentEmbed(embed, `${name}[${index}]`),
     name,
   );
-}
-
-export function decodeDocumentEmbedSummary(
-  raw: unknown,
-  name = "DocumentEmbedSummary",
-): DocumentEmbedSummary {
-  const value = expectExactRecord(
-    raw,
-    [
-      "status",
-      "total_count",
-      "resolved_count",
-      "unsupported_count",
-      "failed_count",
-    ],
-    name,
-  );
-  return {
-    status: expectOneOf(
-      value.status,
-      [
-        "unsupported",
-        "empty",
-        "resolving",
-        "ready",
-        "partial",
-        "failed",
-      ] as const,
-      `${name}.status`,
-    ),
-    total_count: expectNonnegativeInteger(
-      value.total_count,
-      `${name}.total_count`,
-    ),
-    resolved_count: expectNonnegativeInteger(
-      value.resolved_count,
-      `${name}.resolved_count`,
-    ),
-    unsupported_count: expectNonnegativeInteger(
-      value.unsupported_count,
-      `${name}.unsupported_count`,
-    ),
-    failed_count: expectNonnegativeInteger(
-      value.failed_count,
-      `${name}.failed_count`,
-    ),
-  };
 }
 
 export function decodeDocumentEmbed(
@@ -445,14 +393,11 @@ function decodeTarget(raw: unknown, name: string): DocumentEmbedTarget {
     playback:
       value.playback === null
         ? null
-        : decodeMediaPlaybackSource(value.playback, `${name}.playback`),
+        : decodePlaybackSource(value.playback, `${name}.playback`),
   };
 }
 
-export function decodeMediaPlaybackSource(
-  raw: unknown,
-  name = "MediaPlaybackSource",
-): MediaPlaybackSource {
+function decodePlaybackSource(raw: unknown, name: string): MediaPlaybackSource {
   const value = expectExactRecord(
     raw,
     [

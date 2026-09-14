@@ -1,8 +1,7 @@
-"""Reader navigation over one canonical publication snapshot."""
+"""Reader navigation read model."""
 
 from __future__ import annotations
 
-from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -12,17 +11,12 @@ from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.media import (
     MediaNavigationOut,
-    NavigationTextPointOut,
-    NavigationTextRangeOut,
     ReaderNavigationFragmentOut,
     ReaderNavigationSectionOut,
     ReaderNavigationTocNodeOut,
 )
-from nexus.schemas.presence import absent, presence_from_nullable, present
 from nexus.services.capabilities import is_document_status_ready
-from nexus.services.epub_read import read_epub_navigation
-from nexus.services.reader_publication import read_publication_generation
-from nexus.services.reader_structure import DocumentPoint, SectionRangeInput, resolve_section_ends
+from nexus.services.epub_read import get_epub_navigation_for_viewer
 
 
 def get_media_navigation_for_viewer(
@@ -32,140 +26,152 @@ def get_media_navigation_for_viewer(
 ) -> MediaNavigationOut:
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
     row = db.execute(
         text("SELECT kind, processing_status FROM media WHERE id = :media_id"),
         {"media_id": media_id},
-    ).one_or_none()
+    ).fetchone()
     if row is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if row.kind not in {"epub", "web_article"}:
+
+    kind = str(row[0])
+    status = str(row[1])
+    if kind == "epub":
+        return get_epub_navigation_for_viewer(db, viewer_id, media_id)
+    if kind != "web_article":
         error = ApiError(ApiErrorCode.E_INVALID_KIND, "Endpoint only supports reader navigation")
         error.status_code = 409
         raise error
-    if not is_document_status_ready(str(row.processing_status)):
+    if not is_document_status_ready(status):
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
-    generation = read_publication_generation(db, media_id=media_id)
-    if generation is None:
-        # justify-defect: canonical document content is installed by the publication owner.
-        raise AssertionError("Readable document has no reader publication")
-    return read_media_navigation(db, media_id=media_id, kind=row.kind, generation=generation)
 
+    ready = db.execute(
+        text(
+            """
+            SELECT 1
+            FROM content_index_states mcis
+            WHERE mcis.owner_kind = 'media' AND mcis.owner_id = :media_id
+              AND mcis.status = 'ready'
+            """
+        ),
+        {"media_id": media_id},
+    ).fetchone()
+    if ready is None:
+        raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media navigation is not ready")
 
-def read_media_navigation(
-    db: Session,
-    *,
-    media_id: UUID,
-    kind: Literal["epub", "web_article"],
-    generation: int,
-) -> MediaNavigationOut:
-    """Read navigation for an authorized, captured source publication."""
-    if kind == "epub":
-        return read_epub_navigation(db, media_id=media_id, generation=generation)
-    from nexus.services.web_article_structure import build_web_article_index_blocks
-
-    fragment_rows = (
-        db.execute(
-            text("""
-            SELECT f.id, f.idx, char_length(f.canonical_text) AS char_count,
-                   f.canonical_text, f.html_sanitized
-            FROM fragments f
-            WHERE f.media_id = :media_id ORDER BY f.idx
-        """),
-            {"media_id": media_id},
-        )
-        .mappings()
-        .all()
-    )
+    fragment_rows = db.execute(
+        text(
+            """
+            SELECT id, idx, char_length(canonical_text)
+            FROM fragments
+            WHERE media_id = :media_id
+            ORDER BY idx ASC
+            """
+        ),
+        {"media_id": media_id},
+    ).fetchall()
     fragments = [
         ReaderNavigationFragmentOut(
-            fragment_id=row["id"],
-            fragment_idx=row["idx"],
-            char_count=row["char_count"],
+            fragment_id=row[0],
+            fragment_idx=row[1],
+            char_count=row[2],
         )
         for row in fragment_rows
     ]
-    fragment_ids = {fragment.fragment_idx: fragment.fragment_id for fragment in fragments}
-    inputs: list[SectionRangeInput] = []
-    labels: dict[str, str] = {}
-    anchors: dict[str, str | None] = {}
-    for fragment in fragment_rows:
-        headings = build_web_article_index_blocks(
-            html_sanitized=fragment["html_sanitized"],
-            canonical_text=fragment["canonical_text"],
-            fragment_idx=fragment["idx"],
-        )
-        for heading in headings:
-            if heading.section_id is None:
-                continue
-            container_end = heading.container_end_offset
-            inputs.append(
-                SectionRangeInput(
-                    section_id=heading.section_id,
-                    target=DocumentPoint(fragment["idx"], heading.start_offset),
-                    parent_section_id=heading.parent_section_id,
-                    container_end=present(DocumentPoint(fragment["idx"], container_end.value))
-                    if container_end.kind == "Present"
-                    else absent(),
-                    owns_container=heading.owns_container,
-                )
-            )
-            labels[heading.section_id] = fragment["canonical_text"][
-                heading.start_offset : heading.end_offset
-            ].strip()
-            anchors[heading.section_id] = heading.anchor_id
+
+    rows = db.execute(
+        text(
+            """
+            SELECT cb.canonical_text,
+                   cb.block_idx,
+                   cb.locator,
+                   cb.metadata
+            FROM content_blocks cb
+            WHERE cb.owner_kind = 'media' AND cb.owner_id = :media_id
+              AND cb.block_kind = 'heading'
+              AND cb.locator ? 'section_id'
+            ORDER BY cb.block_idx ASC
+            """
+        ),
+        {"media_id": media_id},
+    ).fetchall()
+
     sections: list[ReaderNavigationSectionOut] = []
-    nodes: dict[str, ReaderNavigationTocNodeOut] = {}
-    roots: list[ReaderNavigationTocNodeOut] = []
-    if inputs:
-        last = fragments[-1]
-        ends = resolve_section_ends(inputs, DocumentPoint(last.fragment_idx, last.char_count))
-        for section in inputs:
-            target = NavigationTextPointOut(
-                fragment_id=fragment_ids[section.target.fragment_idx],
-                offset=section.target.offset,
+    for row in rows:
+        locator = _required_mapping(row[2], "heading locator")
+        metadata = _required_mapping(row[3], "heading metadata")
+        sections.append(
+            ReaderNavigationSectionOut(
+                section_id=_required_str(locator.get("section_id"), "heading section_id"),
+                label=str(row[0]).strip(),
+                ordinal=_required_int(metadata.get("ordinal"), "heading ordinal"),
+                fragment_id=UUID(_required_str(locator.get("fragment_id"), "heading fragment_id")),
+                fragment_idx=_required_int(locator.get("fragment_idx"), "heading fragment_idx"),
+                level=_optional_int(locator.get("heading_level")),
+                depth=_optional_int(metadata.get("depth")),
+                start_offset=_required_int(locator.get("start_offset"), "heading start_offset"),
+                end_offset=_required_int(locator.get("end_offset"), "heading end_offset"),
+                anchor_id=_optional_str(locator.get("anchor_id")),
             )
-            end = ends[section.section_id]
-            sections.append(
-                ReaderNavigationSectionOut(
-                    section_id=section.section_id,
-                    label=labels[section.section_id],
-                    parent_section_id=section.parent_section_id,
-                    target=target,
-                    anchor_id=presence_from_nullable(anchors[section.section_id]),
-                    source="Heading",
-                    extent=present(
-                        NavigationTextRangeOut(
-                            start=target,
-                            end=NavigationTextPointOut(
-                                fragment_id=fragment_ids[end.value.fragment_idx],
-                                offset=end.value.offset,
-                            ),
-                        )
-                    )
-                    if end.kind == "Present"
-                    else absent(),
-                )
-            )
-            node = ReaderNavigationTocNodeOut(
-                id=section.section_id,
-                label=labels[section.section_id],
-                section_id=present(section.section_id),
-                children=[],
-            )
-            nodes[section.section_id] = node
-        for section in inputs:
-            node = nodes[section.section_id]
-            if section.parent_section_id.kind == "Present":
-                nodes[section.parent_section_id.value].children.append(node)
-            else:
-                roots.append(node)
+        )
+
     return MediaNavigationOut(
         media_id=media_id,
         kind="web_article",
-        generation=generation,
         fragments=fragments,
         sections=sections,
-        toc_nodes=roots,
+        toc_nodes=_toc_nodes(sections),
         landmarks=[],
         page_list=[],
     )
+
+
+def _toc_nodes(sections: list[ReaderNavigationSectionOut]) -> list[ReaderNavigationTocNodeOut]:
+    roots: list[ReaderNavigationTocNodeOut] = []
+    stack: list[tuple[int, ReaderNavigationTocNodeOut]] = []
+    for section in sections:
+        depth = section.depth if section.depth is not None else 1
+        node = ReaderNavigationTocNodeOut(
+            id=section.section_id,
+            label=section.label,
+            ordinal=section.ordinal,
+            fragment_idx=section.fragment_idx,
+            level=section.level,
+            depth=depth,
+            section_id=section.section_id,
+            children=[],
+        )
+        while stack and stack[-1][0] >= depth:
+            stack.pop()
+        if stack:
+            stack[-1][1].children.append(node)
+        else:
+            roots.append(node)
+        stack.append((depth, node))
+    return roots
+
+
+def _optional_int(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _required_int(value: object, name: str) -> int:
+    if not isinstance(value, int):
+        raise RuntimeError(f"Ready web navigation is missing {name}")
+    return value
+
+
+def _required_str(value: object, name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise RuntimeError(f"Ready web navigation is missing {name}")
+    return value
+
+
+def _required_mapping(value: object, name: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise RuntimeError(f"Ready web navigation has invalid {name}")
+    return value

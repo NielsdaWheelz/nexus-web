@@ -5,6 +5,14 @@ import { undoToolCall } from "@/lib/conversations/toolCallUndo";
 import type { MessageToolCall } from "@/lib/conversations/types";
 import styles from "./MessageRow.module.css";
 
+const WRITE_TOOL_NAMES = new Set([
+  "add_to_library",
+  "jot_note",
+  "create_highlight",
+  "mint_edge",
+  "queue_add",
+]);
+
 function truncate(value: string, max = 80): string {
   return value.length > max ? `${value.slice(0, max - 1).trimEnd()}…` : value;
 }
@@ -22,16 +30,15 @@ function describeWrite(tool: MessageToolCall): {
   const stringAt = (ref: Record<string, unknown>, key: string) =>
     typeof ref[key] === "string" ? ref[key].trim() : "";
 
-  const kind = refs.find((ref) => typeof ref.kind === "string")?.kind;
-  switch (kind) {
-    case "entry":
+  switch (tool.tool_name) {
+    case "add_to_library":
       return { kicker: "Filed to", target: label || "library" };
-    case "highlight":
+    case "create_highlight":
       return {
         kicker: "Highlighted",
         target: label ? `“${truncate(label)}”` : "passage",
       };
-    case "edge": {
+    case "mint_edge": {
       const edge = refs.find((ref) => ref.kind === "edge");
       const source = edge
         ? stringAt(edge as Record<string, unknown>, "source_label")
@@ -52,15 +59,12 @@ function describeWrite(tool: MessageToolCall): {
       }
       return { kicker: "Connected", target: label || "two resources" };
     }
-    case "note_block":
+    case "jot_note":
       return { kicker: "Noted in", target: label || "note" };
-    case "queue":
+    case "queue_add":
       return { kicker: "Queued", target: label || "item" };
     default:
-      return {
-        kicker: "Assistant action",
-        target: label || tool.activity_label,
-      };
+      return { kicker: tool.tool_name, target: label };
   }
 }
 
@@ -71,13 +75,10 @@ export default function AssistantWriteTrail({
   conversationId: string;
   toolCalls: MessageToolCall[];
 }) {
-  const writes = toolCalls.filter(
-    (tool) =>
-      Boolean(tool.id) &&
-      tool.effect === "Write" &&
-      tool.result_kind === "mutation" &&
-      tool.status === "complete" &&
-      tool.machine_authorships !== undefined,
+  const writes = toolCalls.filter((tool) =>
+    Boolean(tool.id) &&
+    WRITE_TOOL_NAMES.has(tool.tool_name) &&
+    tool.status === "complete",
   );
   const [reverted, setReverted] = useState(
     () =>
@@ -109,12 +110,6 @@ export default function AssistantWriteTrail({
       {writes.map((tool) => {
         const id = tool.id as string;
         const { kicker, target, detail } = describeWrite(tool);
-        const authorship = tool.machine_authorships?.[0] ?? null;
-        if (tool.result_refs.length > 0 && authorship === null) {
-          throw new Error(
-            "Successful assistant write lacks proven machine authorship",
-          );
-        }
         const isReverted = reverted.has(id) || Boolean(tool.reverted_at);
         return (
           <div key={id} className={styles.writeRow} role="listitem">
@@ -124,11 +119,6 @@ export default function AssistantWriteTrail({
               {detail ? (
                 <span className={styles.writeDetail}>{detail}</span>
               ) : null}
-              <span className={styles.writeAuthorship}>
-                {authorship
-                  ? `Assistant-created · ${authorship.position_path}`
-                  : "No new target created"}
-              </span>
             </span>
             {isReverted ? (
               <span className={styles.writeUndone}>Undone</span>

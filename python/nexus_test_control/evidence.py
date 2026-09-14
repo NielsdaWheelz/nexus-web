@@ -11,7 +11,6 @@ from typing import Any
 
 from nexus_test_control.model import (
     WORKFLOW_REGISTRY,
-    AndroidVisualInputs,
     Capability,
     PeakOwnedMemory,
     RunStatus,
@@ -50,15 +49,19 @@ _EXACT_EXECUTION_INPUTS = frozenset(
         "ANDROID_HOME",
         "ANDROID_RELEASE_TAG",
         "ANDROID_SDK_ROOT",
+        "ANTHROPIC_API_KEY",
         "CI",
         "DOCKER_CONTEXT",
         "DOCKER_HOST",
+        "GEMINI_API_KEY",
         "GRADLE_USER_HOME",
         "HOME",
         "JAVA_HOME",
         "LANG",
         "LC_ALL",
         "NO_COLOR",
+        "MOONSHOT_API_KEY",
+        "DEEPSEEK_API_KEY",
         "OPENAI_API_KEY",
         "PATH",
         "PLAYWRIGHT_BROWSERS_PATH",
@@ -70,12 +73,7 @@ _EXACT_EXECUTION_INPUTS = frozenset(
     }
 )
 _IGNORED_EXECUTION_INPUTS = frozenset(
-    {
-        "NEXUS_TEST_EVIDENCE_RUN_ID",
-        "NEXUS_TEST_RESULTS_DIR",
-        "NEXUS_TEST_RUN_CLAIM_FD",
-        "NEXUS_TEST_RUN_ID",
-    }
+    {"NEXUS_TEST_EVIDENCE_RUN_ID", "NEXUS_TEST_RESULTS_DIR", "NEXUS_TEST_RUN_ID"}
 )
 
 
@@ -133,32 +131,15 @@ class CapabilityEvidence:
 
 
 @dataclass(frozen=True, slots=True)
-class StandardInvocationInputs:
-    pass
-
-
-type InvocationInputs = StandardInvocationInputs | AndroidVisualInputs
-
-
-@dataclass(frozen=True, slots=True)
 class InvocationEvidence:
     ui: bool = False
     input_fingerprint: str = hashlib.sha256(b"{}").hexdigest()
-    inputs: InvocationInputs = field(default_factory=StandardInvocationInputs)
 
     def __post_init__(self) -> None:
         if not isinstance(self.ui, bool):
             raise ValueError("invocation UI mode must be boolean")
         if _FINGERPRINT.fullmatch(self.input_fingerprint) is None:
             raise ValueError("invocation input fingerprint must be SHA-256")
-        if not isinstance(self.inputs, StandardInvocationInputs | AndroidVisualInputs):
-            raise ValueError("invocation inputs must be typed")
-
-
-def _validate_workflow_invocation(workflow: Workflow, invocation: InvocationEvidence) -> None:
-    carries_android_inputs = isinstance(invocation.inputs, AndroidVisualInputs)
-    if (workflow is Workflow.ANDROID_VISUAL) != carries_android_inputs:
-        raise ValueError("workflow and invocation inputs must agree")
 
 
 def execution_input_fingerprint(environment: Mapping[str, str]) -> str:
@@ -276,7 +257,6 @@ class RunEvidence:
             raise ValueError("workflow must be a typed Workflow")
         if not isinstance(self.invocation, InvocationEvidence):
             raise ValueError("invocation must be typed evidence")
-        _validate_workflow_invocation(self.workflow, self.invocation)
         if _RUN_ID.fullmatch(self.run_id) is None:
             raise ValueError("run id must be 16 lowercase hex characters")
         if self.git_sha is not None and re.fullmatch(r"[0-9a-f]{40}", self.git_sha) is None:
@@ -298,8 +278,6 @@ class RunEvidence:
         _artifact_path("run context artifact", self.run_context_artifact)
         if self.git_sha is None and self.status is RunStatus.PASS:
             raise ValueError("a passing run requires an exact Git SHA")
-        if self.status is RunStatus.PASS and not self.peak_owned_mib.measurement_complete:
-            raise ValueError("a passing run requires complete memory measurement")
 
         selected_proofs = {item.proof for item in self.selection if item.proof is not None}
         sensitivity_by_proof = {item.proof: item for item in self.sensitivity}
@@ -363,8 +341,6 @@ class ProveEvidence:
             raise ValueError("prove method and status must be typed enums")
         if not isinstance(self.invocation, InvocationEvidence):
             raise ValueError("prove invocation must be typed evidence")
-        if not isinstance(self.invocation.inputs, StandardInvocationInputs):
-            raise ValueError("prove invocation cannot carry workflow-specific inputs")
         if self.git_sha is not None and re.fullmatch(r"[0-9a-f]{40}", self.git_sha) is None:
             raise ValueError("prove Git SHA must be full and lowercase when resolved")
         _nonnegative("prove duration", self.duration_ms)
@@ -373,8 +349,6 @@ class ProveEvidence:
         for artifact in self.artifacts:
             _artifact_path("prove artifact", artifact)
         if self.status is RunStatus.PASS:
-            if not self.peak_owned_mib.measurement_complete:
-                raise ValueError("passing prove evidence requires complete memory measurement")
             if self.git_sha is None or len(self.sensitivity) != 1 or self.detail or self.artifacts:
                 raise ValueError("passing prove evidence requires one result and an exact Git SHA")
             record = self.sensitivity[0]
@@ -414,7 +388,6 @@ class DiagnosticRerunEvidence:
             raise ValueError("diagnostic workflow must be typed")
         if not isinstance(self.invocation, InvocationEvidence):
             raise ValueError("diagnostic invocation must be typed evidence")
-        _validate_workflow_invocation(self.workflow, self.invocation)
         if (
             _RUN_ID.fullmatch(self.run_id) is None
             or _RUN_ID.fullmatch(self.diagnostic_of_run_id) is None
@@ -569,36 +542,14 @@ def _parse_memory(value: object) -> PeakOwnedMemory:
 
 
 def _parse_invocation(value: object) -> InvocationEvidence:
-    payload = _exact_object(value, {"ui", "input_fingerprint", "inputs"}, "invocation")
+    payload = _exact_object(value, {"ui", "input_fingerprint"}, "invocation")
     ui = payload["ui"]
     if type(ui) is not bool:
         raise ValueError("invocation UI mode must be boolean")
     return InvocationEvidence(
         ui=ui,
         input_fingerprint=_string(payload["input_fingerprint"], "input fingerprint"),
-        inputs=_parse_invocation_inputs(payload["inputs"]),
     )
-
-
-def _parse_invocation_inputs(value: object) -> InvocationInputs:
-    if not isinstance(value, dict):
-        raise ValueError("invocation inputs must be an object")
-    kind = value.get("kind")
-    if kind == "Standard":
-        _exact_object(value, {"kind"}, "standard invocation inputs")
-        return StandardInvocationInputs()
-    if kind == "AndroidVisual":
-        payload = _exact_object(
-            value,
-            {"kind", "sha", "path", "device"},
-            "Android visual invocation inputs",
-        )
-        return AndroidVisualInputs(
-            sha=_string(payload["sha"], "Android visual SHA"),
-            path=_string(payload["path"], "Android visual path"),
-            device=_string(payload["device"], "Android visual device"),
-        )
-    raise ValueError("invocation input kind is unknown")
 
 
 def _parse_selection(value: object) -> Selection:
@@ -877,25 +828,6 @@ def _capabilities_json(
     ]
 
 
-def _invocation_json(invocation: InvocationEvidence) -> dict[str, JsonValue]:
-    if isinstance(invocation.inputs, StandardInvocationInputs):
-        inputs: dict[str, JsonValue] = {"kind": "Standard"}
-    elif isinstance(invocation.inputs, AndroidVisualInputs):
-        inputs = {
-            "kind": "AndroidVisual",
-            "sha": invocation.inputs.sha,
-            "path": invocation.inputs.path,
-            "device": invocation.inputs.device,
-        }
-    else:
-        raise AssertionError("unreachable invocation input variant")
-    return {
-        "ui": invocation.ui,
-        "input_fingerprint": invocation.input_fingerprint,
-        "inputs": inputs,
-    }
-
-
 def evidence_json(evidence: RunEvidence, secrets: Iterable[str] = ()) -> dict[str, JsonValue]:
     payload: dict[str, JsonValue] = {
         "version": EVIDENCE_SCHEMA_VERSION,
@@ -908,7 +840,10 @@ def evidence_json(evidence: RunEvidence, secrets: Iterable[str] = ()) -> dict[st
         "first_actionable_failure_ms": evidence.first_actionable_failure_ms,
         "peak_owned_mib": _memory_json(evidence.peak_owned_mib),
         "run_context_artifact": evidence.run_context_artifact,
-        "invocation": _invocation_json(evidence.invocation),
+        "invocation": {
+            "ui": evidence.invocation.ui,
+            "input_fingerprint": evidence.invocation.input_fingerprint,
+        },
         "selection": [
             {
                 "path": selection.path,
@@ -944,7 +879,10 @@ def prove_evidence_json(
         "first_actionable_failure_ms": evidence.first_actionable_failure_ms,
         "peak_owned_mib": _memory_json(evidence.peak_owned_mib),
         "run_context_artifact": evidence.run_context_artifact,
-        "invocation": _invocation_json(evidence.invocation),
+        "invocation": {
+            "ui": evidence.invocation.ui,
+            "input_fingerprint": evidence.invocation.input_fingerprint,
+        },
         "sensitivity": [_sensitivity_json(item) for item in evidence.sensitivity],
         "artifacts": list(evidence.artifacts),
         "detail": evidence.detail,
@@ -1035,7 +973,10 @@ def diagnostic_evidence_json(
         "workflow": evidence.workflow.value,
         "git_sha": evidence.git_sha,
         "status": evidence.status.value,
-        "invocation": _invocation_json(evidence.invocation),
+        "invocation": {
+            "ui": evidence.invocation.ui,
+            "input_fingerprint": evidence.invocation.input_fingerprint,
+        },
         "diagnostic_of": {
             "run_id": evidence.diagnostic_of_run_id,
             "status": RunStatus.FAIL.value,

@@ -8,7 +8,6 @@ from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
-from nexus.schemas.presence import Presence
 from nexus.schemas.resource_items import ResourceSurfaceOut, validate_note_body_pm_json
 
 
@@ -41,18 +40,13 @@ class NoteBlockOut(BaseModel):
 
 class NotePageSummaryOut(BaseModel):
     id: UUID
-    title: str = Field(..., min_length=1, max_length=200)
+    title: str
     updated_at: datetime = Field(
+        validation_alias=AliasChoices("updated_at", "updatedAt"),
         serialization_alias="updatedAt",
     )
 
-    model_config = ConfigDict(from_attributes=True, extra="forbid")
-
-
-class NotePagesOut(BaseModel):
-    pages: list[NotePageSummaryOut]
-
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class DailyPageSummaryOut(BaseModel):
@@ -60,11 +54,12 @@ class DailyPageSummaryOut(BaseModel):
         serialization_alias="localDate",
     )
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class NotePageOut(NotePageSummaryOut):
-    daily_page: Presence[DailyPageSummaryOut] = Field(
+    daily_page: DailyPageSummaryOut | None = Field(
+        None,
         serialization_alias="dailyPage",
     )
 

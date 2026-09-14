@@ -6,7 +6,7 @@
  * canonical cursor never projects into the URL. `apparatus`, other
  * unrelated query state, and the hash are feature-owned and always
  * preserved by repair. EPUB relative-document resolution stays
- * publication-owned; its rendered target adapter lives in `epubInternalLinks.ts`.
+ * format-local in `epubHelpers.ts`.
  */
 
 const PANE_HREF_BASE = "https://pane.local";

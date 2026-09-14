@@ -29,6 +29,7 @@ import {
   EPISODE_WIDE_COMMAND_LABELS,
   deriveEpisodeState,
   decodeEpisodeTimingFacts,
+  decodeEpisodePublicationDate,
   shouldPollTranscriptProvisioningForEpisode,
   type PodcastEpisodeMedia,
 } from "./episodeTranscript";
@@ -123,7 +124,7 @@ export default function PodcastEpisodeList({
       offline_download_eligible: episode.offline_download_eligible,
       contributors: episode.contributors,
       capabilities: episode.capabilities,
-      publicationDate: episode.original_published_date,
+      publicationDate: decodeEpisodePublicationDate(episode.published_date),
       activityFacts: decodeEpisodeTimingFacts(episode.listening_state),
     },
     context: {},

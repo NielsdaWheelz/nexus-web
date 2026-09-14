@@ -20,9 +20,7 @@ import {
   NAV_ACCOUNT,
   NAV_HOME,
   NAV_MODEL,
-  NAV_UTILITIES,
   isAccountDestinationId,
-  utilityActiveId,
   type NavItem,
 } from "./navModel";
 import NavRail from "./NavRail";
@@ -118,9 +116,7 @@ export default function AppNav() {
     <NavRail
       items={NAV_MODEL}
       home={NAV_HOME}
-      utilities={NAV_UTILITIES}
       account={NAV_ACCOUNT}
-      utilityActiveId={utilityActiveId(activeDestinationId)}
       accountActiveId={accountActiveId}
       activeId={activeId}
       collapsed={collapsed}

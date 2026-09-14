@@ -241,12 +241,8 @@ current only once. Application deploy captures but never changes either config.
 | API `GET /livez` | `200 {"data":{"status":"alive"}}`; process only |
 | API `GET /readyz` | `200` iff DB is reachable and sole revision equals baked expected revision; otherwise bounded `503` |
 | API `GET /version` | no-cache baked SHA, expected DB revision, expected Oracle digest, task-contract digest |
-| Web `GET /version` | public dynamic no-cache exact source SHA plus `player_protocol` identity |
+| Web `GET /version` | public dynamic no-cache `{"source_sha":"<VERCEL_GIT_COMMIT_SHA>"}` |
 | Worker health | recent heartbeat, live PID, baked SHA, lane/kinds/task contract, DB, schema |
-
-The exact nested web `player_protocol` shape and stable signed-APK preflight
-supersede the earlier source-only web shape through
-`android-player-protocol-release-hard-cutover.md`.
 
 Each worker's main polling/scheduler loop advances its lane-owned `/tmp`
 heartbeat only after a successful cycle and exact database/schema readiness (at
@@ -334,8 +330,6 @@ calls/waits for reconcile.
 Manual PR-check recovery accepts `pull_request_number`, `expected_head_sha`, and
 `expected_base_sha`; requires an open same-repository PR to `main`; proves the
 synthetic merge's parents; then runs the same `Deterministic PR proof` job.
-The optional `proof` choice defaults to `changed`; `pr` runs the complete PR
-portfolio with same-run sensitivity on the same verified merge and Linux runner.
 SHA tags are discoverability only; production consumes manifest digests.
 
 ### Application release

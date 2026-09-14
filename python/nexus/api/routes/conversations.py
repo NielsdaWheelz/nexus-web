@@ -20,14 +20,12 @@ from fastapi import APIRouter, Body, Depends, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_generation_catalog_service, require_tool_projection_revision
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.responses import ok, ok_page
 from nexus.schemas.collection_page import parse_manual_page_query
 from nexus.services import conversations as conversations_service
-from nexus.services.generation_catalog import GenerationCatalogService
 
 router = APIRouter(tags=["conversations"])
 
@@ -121,7 +119,7 @@ def create_conversation(
 def get_conversation(
     conversation_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_repeatable_read_db)],
+    db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Get a conversation by ID.
 
@@ -136,16 +134,12 @@ def get_conversation(
     return ok(result)
 
 
-@router.post(
-    "/conversations/{conversation_id}/tool-calls/{tool_call_id}/undo",
-    dependencies=[Depends(require_tool_projection_revision)],
-)
-async def undo_tool_call(
+@router.post("/conversations/{conversation_id}/tool-calls/{tool_call_id}/undo")
+def undo_tool_call(
     conversation_id: UUID,
     tool_call_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
 ) -> dict:
     """Revert one assistant write tool call's created refs (amanuensis §6).
 
@@ -158,23 +152,14 @@ async def undo_tool_call(
     from nexus.services.agent_tools.writes import undo_tool_call as revert_tool_call
     from nexus.services.message_trust_trails import build_assistant_trust_trail
 
-    catalog_snapshot = await catalog.read_chat()
     assistant_message_id = revert_tool_call(
         db,
         viewer_id=viewer.user_id,
         conversation_id=conversation_id,
         tool_call_id=tool_call_id,
     )
-    # The write owner committed (or performed a read-only replay). Hydrate the
-    # returned trail from a fresh snapshot, never its retained pre-commit rows.
-    db.rollback()
-    get_repeatable_read_db(db)
-    db.expire_all()
     trail = build_assistant_trust_trail(
-        db,
-        viewer_id=viewer.user_id,
-        assistant_message_id=assistant_message_id,
-        catalog_snapshot=catalog_snapshot,
+        db, viewer_id=viewer.user_id, assistant_message_id=assistant_message_id
     )
     tool_call = next((call for call in trail.tool_calls if call.id == tool_call_id), None)
     if tool_call is None:

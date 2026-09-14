@@ -1,4 +1,4 @@
-import { resolveCanonicalTextRanges } from "@/lib/reader/canonicalTextAnchor";
+import { resolveCanonicalTextRanges } from "@/app/(authenticated)/media/[id]/paneTextAnchor";
 import type { CanonicalCursorResult } from "@/lib/highlights/canonicalCursor";
 import type { PaneFindResultKey } from "@/lib/panes/paneSearch";
 import type { PaneFindAdapter } from "@/lib/panes/usePaneFind";

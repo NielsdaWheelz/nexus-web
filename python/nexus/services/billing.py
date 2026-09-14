@@ -23,8 +23,19 @@ def get_billing_account(db: Session, user_id: UUID) -> BillingAccountOut:
     entitlements = get_effective_entitlements(db, user_id)
     period_start = entitlements.usage_period_start
     period_end = entitlements.usage_period_end
+    token_usage = get_platform_token_usage(db, user_id, period_start.date(), period_end.date())
     transcription_usage = get_transcription_usage(
         db, user_id, period_start.date(), period_end.date()
+    )
+    token_remaining = (
+        None
+        if entitlements.platform_token_limit_monthly is None
+        else max(
+            0,
+            entitlements.platform_token_limit_monthly
+            - token_usage["used"]
+            - token_usage["reserved"],
+        )
     )
     transcription_remaining = (
         None
@@ -49,7 +60,16 @@ def get_billing_account(db: Session, user_id: UUID) -> BillingAccountOut:
         entitlement_source=entitlements.entitlement_source,
         entitlement_expires_at=entitlements.entitlement_expires_at,
         can_share=entitlements.can_share,
+        can_use_platform_llm=entitlements.can_use_platform_llm,
         can_transcribe=entitlements.can_transcribe,
+        ai_token_usage=BillingUsageBucketOut(
+            used=token_usage["used"],
+            reserved=token_usage["reserved"],
+            limit=entitlements.platform_token_limit_monthly,
+            remaining=token_remaining,
+            period_start=period_start,
+            period_end=period_end,
+        ),
         transcription_usage=BillingUsageBucketOut(
             used=transcription_usage["used"],
             reserved=transcription_usage["reserved"],
@@ -182,6 +202,29 @@ def process_stripe_webhook(db: Session, raw_body: bytes, signature: str | None) 
     db.add(StripeWebhookEvent(stripe_event_id=event_id, event_type=event_type))
     db.commit()
     return {"processed": True}
+
+
+def get_platform_token_usage(
+    db: Session,
+    user_id: UUID,
+    start_date: date,
+    end_date: date,
+) -> dict[str, int]:
+    row = db.execute(
+        text(
+            """
+            SELECT
+                COALESCE(SUM(spent_tokens), 0),
+                COALESCE(SUM(reserved_tokens), 0)
+            FROM token_budget_daily_usage
+            WHERE user_id = :user_id
+              AND usage_date >= :start_date
+              AND usage_date < :end_date
+            """
+        ),
+        {"user_id": user_id, "start_date": start_date, "end_date": end_date},
+    ).one()
+    return {"used": int(row[0] or 0), "reserved": int(row[1] or 0)}
 
 
 def get_transcription_usage(

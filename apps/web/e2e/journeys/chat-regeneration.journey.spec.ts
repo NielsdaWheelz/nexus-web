@@ -1,8 +1,4 @@
-import { captureReadableArticle } from "../articleFixture";
-import { TOOL_PROJECTION_HEADER } from "@/lib/api/client";
-import { decodeChatAdmissionResponse } from "@/lib/conversations/chatAdmission";
-import { decodeChatRunData } from "@/lib/conversations/messageWire";
-import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
+import { captureCanonicalArticle } from "../articleFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -13,13 +9,6 @@ import {
 import { matchesResponse, pageRequest } from "../request";
 
 test.use({ journeyId: "chat-regeneration" });
-
-function acceptedChatTarget(raw: unknown, commandKey: string) {
-  const receipt = decodeChatAdmissionResponse(raw, commandKey);
-  if (receipt.outcome.kind !== "Accepted")
-    throw new Error("The source chat was not admitted");
-  return receipt.outcome;
-}
 
 interface TreeMessage {
   id: string;
@@ -37,9 +26,7 @@ async function loadTree(
   api: ReturnType<typeof pageRequest>,
   conversationId: string,
 ): Promise<ConversationTree> {
-  const response = await api.get(`/api/conversations/${conversationId}/tree`, {
-    headers: { [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION },
-  });
+  const response = await api.get(`/api/conversations/${conversationId}/tree`);
   expect(
     response.ok(),
     `Tree load for conversation ${conversationId} failed: ${response.status()} ${(await response.text()).slice(0, 300)}`,
@@ -55,9 +42,25 @@ test("regenerating a completed answer creates a navigable sibling that survives 
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
-  test.setTimeout(300_000);
   const api = pageRequest(page, webOrigin);
-  const mediaId = await captureReadableArticle(page, "regeneration-source");
+  const mediaId = await captureCanonicalArticle(page, "regeneration-source");
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(`/api/media/${mediaId}`);
+        if (!response.ok()) return `http-${response.status()}`;
+        return (
+          (await response.json()) as {
+            data: { retrieval_status: string | null };
+          }
+        ).data.retrieval_status;
+      },
+      {
+        message: `Expected source ${mediaId} to publish searchable evidence.`,
+        timeout: 25_000,
+      },
+    )
+    .toBe("ready");
 
   const conversationResponse = await api.post("/api/conversations", {
     headers: { origin: webOrigin },
@@ -74,19 +77,11 @@ test("regenerating a completed answer creates a navigable sibling that survives 
   await gotoWithStrictCsp(page, `/conversations/${conversationId}`);
   const input = page.getByRole("textbox", { name: /ask anything/i });
   await expect(input).toBeVisible();
+  await page.getByRole("combobox", { name: "Model" }).selectOption("fast");
+  await page.getByRole("combobox", { name: "Effort" }).selectOption("high");
   await input.fill(
     "What did SOFIA establish about water in Clavius Crater? Use the attached source.",
   );
-  let chatCommandKey = "";
-  page.on("request", (request) => {
-    const url = new URL(request.url());
-    if (
-      request.method() === "POST" &&
-      url.origin === webOrigin &&
-      url.pathname === "/api/chat-runs"
-    )
-      chatCommandKey = request.headers()["idempotency-key"];
-  });
   const firstRunPromise = page.waitForResponse((response) =>
     matchesResponse(response, webOrigin, "POST", "/api/chat-runs"),
   );
@@ -96,40 +91,11 @@ test("regenerating a completed answer creates a navigable sibling that survives 
     firstRun.ok(),
     `Chat admission for conversation ${conversationId} failed: ${firstRun.status()}`,
   ).toBeTruthy();
-  expect(
-    chatCommandKey,
-    "Chat admission omitted its operation identity",
-  ).toBeTruthy();
-  const target = acceptedChatTarget(
-    JSON.parse(await firstRun.text()),
-    chatCommandKey,
-  );
-  const canonicalResponse = await api.get(
-    `/api/chat-runs/${target.run_id}`,
-    { headers: { [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION } },
-  );
-  expect(
-    canonicalResponse.ok(),
-    `Accepted chat ${target.run_id} could not be hydrated: ${canonicalResponse.status()}`,
-  ).toBeTruthy();
-  const admitted = decodeChatRunData(
-    ((await canonicalResponse.json()) as { data: unknown }).data,
-  );
-  expect({
-    run_id: admitted.run.id,
-    run_conversation_id: admitted.run.conversation_id,
-    conversation_id: admitted.conversation.id,
-    run_assistant_message_id: admitted.run.assistant_message_id,
-    assistant_message_id: admitted.assistant_message.id,
-  }).toEqual({
-    run_id: target.run_id,
-    run_conversation_id: target.conversation_id,
-    conversation_id: target.conversation_id,
-    run_assistant_message_id: target.assistant_message_id,
-    assistant_message_id: target.assistant_message_id,
-  });
-  const originalAssistantId = admitted.assistant_message.id;
-  expect(admitted.run.run_selection.selection).toBeTruthy();
+  const originalAssistantId = (
+    JSON.parse(await firstRun.text()) as {
+      data: { assistant_message: { id: string } };
+    }
+  ).data.assistant_message.id;
   await expect(
     page.getByText(/SOFIA helped confirm water on the Moon/i).first(),
     `Conversation ${conversationId} did not complete its first grounded answer.`,
@@ -155,17 +121,6 @@ test("regenerating a completed answer creates a navigable sibling that survives 
     "A completed answer must not offer failed-turn Rerun.",
   ).toHaveCount(0);
 
-  let regeneratePostData: string | null | undefined;
-  page.on("request", (request) => {
-    const url = new URL(request.url());
-    if (
-      request.method() === "POST" &&
-      url.origin === webOrigin &&
-      /\/api\/messages\/[^/]+\/regenerate$/.test(url.pathname)
-    ) {
-      regeneratePostData = request.postData();
-    }
-  });
   const regenPromise = page.waitForResponse((response) =>
     matchesResponse(
       response,
@@ -180,21 +135,12 @@ test("regenerating a completed answer creates a navigable sibling that survives 
     regen.ok(),
     `Regenerate failed: ${regen.status()} ${(await regen.text()).slice(0, 300)}`,
   ).toBeTruthy();
-  expect(JSON.parse(regeneratePostData ?? "null")).toMatchObject({
-    tool_authority: "ReadOnly",
-  });
   const regenData = (
     JSON.parse(await regen.text()) as {
-      data: {
-        run: { run_selection: { selection: unknown } };
-        assistant_message: { id: string };
-      };
+      data: { assistant_message: { id: string } };
     }
   ).data;
   const regeneratedAssistantId = regenData.assistant_message.id;
-  expect(regenData.run.run_selection.selection).toEqual(
-    admitted.run.run_selection.selection,
-  );
   // A new sibling candidate, not an overwrite of the original answer.
   expect(regeneratedAssistantId).not.toBe(originalAssistantId);
 

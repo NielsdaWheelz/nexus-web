@@ -17,8 +17,6 @@ import type {
 } from "@/lib/conversations/types";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
-import type { ChatConnectionRecoveries } from "@/lib/conversations/chatConnectionRecovery";
-import type { GenerationSelectionSpec } from "@/lib/conversations/generationCatalog";
 import type {
   DeleteMessageMutation,
   MessageActionMutationOutcome,
@@ -51,22 +49,11 @@ interface ChatSurfaceProps {
   onRerunAssistantResponse?: (
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
-  rerunningAssistantMessageIds?: ReadonlySet<string>;
-  onRerunAssistantResponseWithSelection?: (
-    assistantMessageId: string,
-    selection: GenerationSelectionSpec,
-    catalogDefinitionRevision: string,
-  ) => Promise<MessageActionMutationOutcome>;
   onRegenerateAssistantResponse?: (
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
-  onRegenerateAssistantResponseWithSelection?: (
-    assistantMessageId: string,
-    selection: GenerationSelectionSpec,
-    catalogDefinitionRevision: string,
-  ) => Promise<MessageActionMutationOutcome>;
   onDeleteMessage?: DeleteMessageMutation;
-  connectionRecoveries?: ChatConnectionRecoveries;
+  connectionLostAssistantIds?: Set<string>;
   onReconnectAssistant?: (assistantMessageId: string) => void;
   onReaderSourceActivate?: (
     activation: ResourceActivation,
@@ -92,12 +79,9 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       onSelectFork,
       onReplyToAssistant,
       onRerunAssistantResponse,
-      rerunningAssistantMessageIds,
-      onRerunAssistantResponseWithSelection,
       onRegenerateAssistantResponse,
-      onRegenerateAssistantResponseWithSelection,
       onDeleteMessage,
-      connectionRecoveries,
+      connectionLostAssistantIds,
       onReconnectAssistant,
       onReaderSourceActivate,
     },
@@ -222,16 +206,9 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
                 onSelectFork={onSelectFork}
                 onReplyToAssistant={onReplyToAssistant}
                 onRerunAssistantResponse={onRerunAssistantResponse}
-                rerunning={rerunningAssistantMessageIds?.has(msg.id) === true}
-                onRerunAssistantResponseWithSelection={
-                  onRerunAssistantResponseWithSelection
-                }
                 onRegenerateAssistantResponse={onRegenerateAssistantResponse}
-                onRegenerateAssistantResponseWithSelection={
-                  onRegenerateAssistantResponseWithSelection
-                }
                 onDeleteMessage={onDeleteMessage}
-                connectionRecovery={connectionRecoveries?.[msg.id]}
+                connectionLostAssistantIds={connectionLostAssistantIds}
                 onReconnectAssistant={onReconnectAssistant}
                 onReaderSourceActivate={onReaderSourceActivate}
                 onStartWalk={onStartWalk}

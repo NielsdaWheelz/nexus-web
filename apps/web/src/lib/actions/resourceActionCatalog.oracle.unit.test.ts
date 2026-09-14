@@ -7,7 +7,7 @@ import {
   RESOURCE_SCHEMES as ORACLE_RESOURCE_SCHEMES,
 } from "../../../e2e/resourceActionProductOracle";
 import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
-import { MEDIA_KINDS } from "@/lib/media/kind";
+import { LIBRARY_MEDIA_KINDS } from "@/lib/libraries/mediaKind";
 import { RESOURCE_SCHEMES } from "@/lib/resourceGraph/resourceRef";
 
 function confirmationOf(
@@ -29,12 +29,12 @@ describe("RESOURCE_ACTION_CATALOG product oracle", () => {
       "the frontend ResourceRef grammar diverged from the independent 19-scheme oracle",
     ).toEqual(ORACLE_RESOURCE_SCHEMES);
     expect(
-      [...MEDIA_KINDS].sort(),
+      [...LIBRARY_MEDIA_KINDS].sort(),
       "the frontend Media taxonomy does not cover every reviewed subtype",
     ).toEqual([...MEDIA_SUBTYPES].sort());
   });
 
-  it("matches all 45 independently reviewed identities and presentation fields exactly", () => {
+  it("matches all 43 independently reviewed identities and presentation fields exactly", () => {
     const actual = Object.values(RESOURCE_ACTION_CATALOG).map((entry) => {
       const oracle = RESOURCE_ACTION_LEDGER.find(({ id }) => id === entry.id);
       if (!oracle) throw new Error(`Unclassified production action ${entry.id}`);
@@ -69,7 +69,7 @@ describe("RESOURCE_ACTION_CATALOG product oracle", () => {
 
     expect(
       actual,
-      `the production catalog must match the independent 45-action ledger exactly; actual=${JSON.stringify(actual)}`,
+      `the production catalog must match the independent 43-action ledger exactly; actual=${JSON.stringify(actual)}`,
     ).toEqual(expected);
   });
 

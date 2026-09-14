@@ -21,7 +21,7 @@ import {
   readSupabaseSessionCookie,
   type SessionState,
 } from "@/lib/auth/session-cookie";
-import type { SessionRefreshOutcome } from "@/lib/auth/refresh";
+import { refreshSession } from "@/lib/auth/refresh";
 import {
   AuthDependencyError,
   finalizeSessionResponse,
@@ -50,7 +50,6 @@ const ALLOWED_REQUEST_HEADERS = new Set([
   "if-none-match",
   "if-modified-since",
   "idempotency-key",
-  "x-nexus-tool-projection",
 ]);
 
 /**
@@ -88,17 +87,6 @@ const ALLOWED_RESPONSE_HEADERS = new Set([
 const MEDIA_ASSET_RESPONSE_HEADERS = new Set([
   ...ALLOWED_RESPONSE_HEADERS,
   "content-length",
-]);
-
-const OFFLINE_READER_PROGRESS_REQUEST_HEADERS = new Set([
-  ...ALLOWED_REQUEST_HEADERS,
-  "x-nexus-expected-account-id",
-]);
-
-const OFFLINE_READER_PROGRESS_RESPONSE_HEADERS = new Set([
-  ...ALLOWED_RESPONSE_HEADERS,
-  "nexus-account-id",
-  "nexus-reader-generation",
 ]);
 
 /**
@@ -154,7 +142,7 @@ const PUBLIC_RESOURCE_SHARE_SECURITY_HEADERS = {
 
 interface ProxyDeps {
   readSession: (request: Request) => SessionState;
-  refreshSession: () => Promise<SessionRefreshOutcome>;
+  refreshSession: typeof refreshSession;
   fetch: typeof fetch;
   generateRequestId: () => string;
   appPublicOrigin: string;
@@ -165,27 +153,18 @@ interface ProxyDeps {
 }
 
 interface AuthenticatedProxyResponsePolicy {
-  readonly allowedRequestHeaders: ReadonlySet<string>;
   readonly allowedHeaders: ReadonlySet<string>;
   readonly requireIdentityEncoding: boolean;
 }
 
 const STRUCTURED_RESPONSE_POLICY: AuthenticatedProxyResponsePolicy = {
-  allowedRequestHeaders: ALLOWED_REQUEST_HEADERS,
   allowedHeaders: ALLOWED_RESPONSE_HEADERS,
   requireIdentityEncoding: false,
 };
 
 const MEDIA_ASSET_RESPONSE_POLICY: AuthenticatedProxyResponsePolicy = {
-  allowedRequestHeaders: ALLOWED_REQUEST_HEADERS,
   allowedHeaders: MEDIA_ASSET_RESPONSE_HEADERS,
   requireIdentityEncoding: true,
-};
-
-const OFFLINE_READER_PROGRESS_RESPONSE_POLICY: AuthenticatedProxyResponsePolicy = {
-  allowedRequestHeaders: OFFLINE_READER_PROGRESS_REQUEST_HEADERS,
-  allowedHeaders: OFFLINE_READER_PROGRESS_RESPONSE_HEADERS,
-  requireIdentityEncoding: false,
 };
 
 interface ExtensionProxyOptions {
@@ -229,10 +208,7 @@ function shouldForwardResponseHeader(
   return allowedHeaders.has(lowerName);
 }
 
-function shouldForwardRequestHeader(
-  headerName: string,
-  allowedHeaders: ReadonlySet<string>,
-): boolean {
+function shouldForwardRequestHeader(headerName: string): boolean {
   const lowerName = headerName.toLowerCase();
 
   // Explicitly blocked headers are never forwarded
@@ -241,7 +217,7 @@ function shouldForwardRequestHeader(
   }
 
   // Only forward headers on the allowlist
-  return allowedHeaders.has(lowerName);
+  return ALLOWED_REQUEST_HEADERS.has(lowerName);
 }
 
 type TimedFetchController = {
@@ -304,7 +280,6 @@ function upstreamUnavailableResponse(requestId: string): NextResponse {
 
 async function createDefaultDeps(): Promise<ProxyDeps> {
   const env = getEnv();
-  const { refreshSession } = await import("@/lib/auth/refresh");
   return {
     readSession: (request) =>
       readSupabaseSessionCookie(
@@ -498,7 +473,7 @@ async function proxyAuthenticatedToFastAPIWithDeps(
 
   // Forward allowed request headers
   request.headers.forEach((value, key) => {
-    if (shouldForwardRequestHeader(key, responsePolicy.allowedRequestHeaders)) {
+    if (shouldForwardRequestHeader(key)) {
       headers.set(key, value);
     }
   });
@@ -642,27 +617,6 @@ export async function proxyMediaAssetToFastAPI(
     path,
     deps,
     MEDIA_ASSET_RESPONSE_POLICY,
-  );
-}
-
-export async function proxyOfflineReaderProgressToFastAPI(
-  request: Request,
-  path: string,
-): Promise<Response> {
-  const deps = await createDefaultDeps();
-  return proxyOfflineReaderProgressToFastAPIWithDeps(request, path, deps);
-}
-
-export async function proxyOfflineReaderProgressToFastAPIWithDeps(
-  request: Request,
-  path: string,
-  deps: ProxyDeps,
-): Promise<Response> {
-  return proxyAuthenticatedToFastAPIWithDeps(
-    request,
-    path,
-    deps,
-    OFFLINE_READER_PROGRESS_RESPONSE_POLICY,
   );
 }
 

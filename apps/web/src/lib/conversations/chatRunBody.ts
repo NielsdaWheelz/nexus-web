@@ -4,7 +4,6 @@ import type {
   ChatRunCreateRequest,
   ReaderSelectionInput,
 } from "@/lib/api/sse/requests";
-import type { GenerationSelectionSpec } from "@/lib/conversations/generationCatalog";
 import type { BranchAnchor, BranchDraft } from "@/lib/conversations/types";
 
 /**
@@ -22,9 +21,8 @@ import type { BranchAnchor, BranchDraft } from "@/lib/conversations/types";
 export function buildChatRunBody(input: {
   conversationId: string | null;
   content: string;
-  catalogDefinitionRevision: string;
-  selection: GenerationSelectionSpec;
-  toolAuthority: "ReadOnly" | "AdditiveWrites";
+  profileId: string;
+  reasoningOptionId: string;
   branchDraft: BranchDraft | null;
   parentMessageId: string | null;
   readerSelection?: ReaderSelectionInput | null;
@@ -32,9 +30,8 @@ export function buildChatRunBody(input: {
   return {
     destination: buildChatDestination(input),
     content: input.content,
-    catalog_definition_revision: input.catalogDefinitionRevision,
-    selection: input.selection,
-    tool_authority: input.toolAuthority,
+    profile_id: input.profileId,
+    reasoning_option_id: input.reasoningOptionId,
     reader_selection: input.readerSelection ? present(input.readerSelection) : absent(),
   };
 }

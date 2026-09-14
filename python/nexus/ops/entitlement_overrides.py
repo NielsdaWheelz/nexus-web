@@ -28,6 +28,7 @@ def main() -> None:
     grant_parser = subparsers.add_parser("grant")
     _add_subject_args(grant_parser)
     grant_parser.add_argument("--plan", choices=["plus", "ai_plus", "ai_pro"], required=True)
+    grant_parser.add_argument("--platform-tokens", default="plan")
     grant_parser.add_argument("--transcription-minutes", default="plan")
     grant_parser.add_argument("--expires-at")
     grant_parser.add_argument("--reason", required=True)
@@ -43,11 +44,14 @@ def main() -> None:
     try:
         user_id = _resolve_user_id(db, args)
         if args.command == "grant":
+            platform_mode, platform_limit = _parse_quota(args.platform_tokens)
             transcription_mode, transcription_limit = _parse_quota(args.transcription_minutes)
             grant_entitlement_override(
                 db,
                 user_id=user_id,
                 plan_tier=args.plan,
+                platform_token_quota_mode=platform_mode,
+                platform_token_limit_monthly=platform_limit,
                 transcription_quota_mode=transcription_mode,
                 transcription_minutes_limit_monthly=transcription_limit,
                 expires_at=_parse_expires_at(args.expires_at),
@@ -93,10 +97,8 @@ def _resolve_user_id(db, args) -> UUID:
 
 def _parse_quota(raw_value: str) -> tuple[QuotaMode, int | None]:
     value = raw_value.strip().lower()
-    if value == "plan":
-        return "plan", None
-    if value == "unlimited":
-        return "unlimited", None
+    if value in {"plan", "unlimited"}:
+        return value, None
     try:
         limit = int(value)
     except ValueError as exc:

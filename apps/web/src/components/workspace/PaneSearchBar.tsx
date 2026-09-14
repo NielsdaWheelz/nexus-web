@@ -23,7 +23,7 @@ import SelectField from "@/components/ui/SelectField";
 import Toggle from "@/components/ui/Toggle";
 import type {
   PaneFindResult,
-  PaneReadySearchPublication,
+  PaneSearchPublication,
 } from "@/lib/panes/paneSearch";
 import { truncatePaneSearchQuery } from "@/lib/panes/paneSearch";
 import styles from "./PaneSearchBar.module.css";
@@ -80,7 +80,7 @@ function SearchInput({
   onStep,
   ref,
 }: {
-  readonly publication: PaneReadySearchPublication;
+  readonly publication: PaneSearchPublication;
   readonly describedBy?: string;
   readonly onQueryChange: (query: string) => void;
   readonly onStep: (direction: "Previous" | "Next") => void;
@@ -131,7 +131,7 @@ function FilterRowsStatus({
   publication,
   statusId,
 }: {
-  readonly publication: Extract<PaneReadySearchPublication, { kind: "FilterRows" }>;
+  readonly publication: Extract<PaneSearchPublication, { kind: "FilterRows" }>;
   readonly statusId: string;
 }) {
   const [announcement, setAnnouncement] = useState("");
@@ -198,7 +198,7 @@ function FindOptions({
   publication,
 }: {
   readonly publication: Extract<
-    PaneReadySearchPublication,
+    PaneSearchPublication,
     { kind: "FindOccurrences" }
   >;
 }) {
@@ -246,7 +246,7 @@ function FindControls({
   onDismiss,
 }: {
   readonly publication: Extract<
-    PaneReadySearchPublication,
+    PaneSearchPublication,
     { kind: "FindOccurrences" }
   >;
   readonly statusId: string;
@@ -343,7 +343,7 @@ function FindControls({
 const PaneSearchBar = forwardRef<
   HTMLInputElement,
   {
-    readonly publication: PaneReadySearchPublication;
+    readonly publication: PaneSearchPublication;
     readonly onClose: () => void;
   }
 >(function PaneSearchBar({ publication, onClose }, ref) {

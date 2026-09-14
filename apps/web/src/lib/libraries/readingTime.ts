@@ -3,11 +3,14 @@ import type {
   PositiveMinutes,
   ProgressFraction,
 } from "@/lib/consumption/activityFacts";
-import type { PublicationDate } from "@/lib/dates/publicationDate";
 import {
-  MEDIA_KINDS,
-  type MediaKind,
-} from "@/lib/media/kind";
+  decodeOptionalPublicationDate,
+  type PublicationDate,
+} from "@/lib/dates/publicationDate";
+import {
+  LIBRARY_MEDIA_KINDS,
+  type LibraryMediaKind,
+} from "@/lib/libraries/mediaKind";
 import {
   expectBoolean,
   expectExactRecord,
@@ -97,7 +100,7 @@ function decodeEstimate(raw: unknown): ReadingTimeEstimate {
 }
 
 function decodeSourceHost(
-  kind: MediaKind,
+  kind: LibraryMediaKind,
   raw: unknown,
 ): Presence<string> {
   if (kind !== "web_article" || raw === null) return { kind: "Absent" };
@@ -143,9 +146,13 @@ export function decodeLibraryReadingTimeEntry(
   }
 
   const media = expectRecord(entry.media, "Library entry media");
+  const publicationDate = decodeOptionalPublicationDate(
+    media.published_date,
+    "Library media published_date",
+  );
   const mediaKind = expectOneOf(
     media.kind,
-    MEDIA_KINDS,
+    LIBRARY_MEDIA_KINDS,
     "Library media kind",
   );
   const sourceHost = decodeSourceHost(mediaKind, media.canonical_source_url);
@@ -225,7 +232,7 @@ export function decodeLibraryReadingTimeEntry(
     media: {
       ...media,
       progressFraction: decodedProgressFraction,
-      publicationDate: media.original_published_date,
+      publicationDate,
       sourceHost,
     },
     readingTimeEstimate: estimate,

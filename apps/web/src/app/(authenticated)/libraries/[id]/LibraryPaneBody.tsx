@@ -48,10 +48,8 @@ import {
   paneResourceLoaders,
   type LibraryPaneSeed,
 } from "@/lib/panes/paneResourceLoaders";
-import {
-  subscribePodcastSubscriptionSettingsInstalls,
-  type PodcastSubscriptionSettingsResponse,
-} from "@/lib/podcasts/subscriptionSettings";
+import type { PodcastSubscriptionSettingsResponse } from "@/lib/podcasts/subscriptionSettings";
+import { usePodcastSubscriptionSettingsModal } from "@/app/(authenticated)/podcasts/usePodcastSubscriptionSettingsModal";
 import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
 import Toggle from "@/components/ui/Toggle";
@@ -130,7 +128,7 @@ import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
-import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
+import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { isAbortError } from "@/lib/errors";
 import { runPodcastRefresh } from "@/lib/podcasts/refresh";
@@ -550,15 +548,10 @@ export default function LibraryPaneBody() {
     },
     [installEntryCollectionRevision, setEntries],
   );
-  useEffect(
-    () =>
-      subscribePodcastSubscriptionSettingsInstalls((install) => {
-        if (install.kind === "Settings") {
-          handlePodcastSettingsSaved(install.settings);
-        }
-      }),
-    [handlePodcastSettingsSaved],
-  );
+  // The settings overlay is owned app-level (ResourceActionOverlays); this hook
+  // is kept only for its install subscription, which keeps the pane's list rows
+  // current after an app-level settings save.
+  usePodcastSubscriptionSettingsModal({ onSaved: handlePodcastSettingsSaved });
   const typeSelectRef = useRef<HTMLSelectElement | null>(null);
   const viewSelectRef = useRef<HTMLSelectElement | null>(null);
   const sortSelectRef = useRef<HTMLSelectElement | null>(null);
@@ -1891,7 +1884,7 @@ export default function LibraryPaneBody() {
       });
   }, [id, presentFailure, revalidateLibraryEntries]);
   retryLibraryRefreshRef.current = retryLibraryRefresh;
-  const executeRefresh = useCallback<PaneRefreshExecute>(
+  const executeRefresh = useCallback<PaneRefreshPublication["execute"]>(
     async ({ signal, reportProgress }) => {
       try {
         const result = await runPodcastRefresh(
@@ -1943,19 +1936,19 @@ export default function LibraryPaneBody() {
     refresh:
       currentLibrary && requestedViewKey && viewIsCommitted
         ? {
-            kind: "Refreshable",
             sourceKey: requestedViewKey,
             execute: executeRefresh,
           }
         : undefined,
     companionAction: companionAction ?? undefined,
-    // The pane's canonical identity is its route key, not a fact of any read it
-    // is still waiting on. Publishing it late leaves the menu with no subject,
-    // so it renders no resource suffix and no loading row either: the surface
-    // looks settled while it is not. The snapshot owns missing state.
-    actionSubject: {
-      ref: canonicalResourceRef({ scheme: "library", id }),
-    },
+    actionSubject: currentLibrary
+      ? {
+          ref: canonicalResourceRef({
+            scheme: "library",
+            id: currentLibrary.id,
+          }),
+        }
+      : undefined,
     menuActions: addContentAction,
     header: { kind: "Section", meta: entryMeta },
   });

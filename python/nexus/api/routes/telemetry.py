@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.logging import get_logger
 from nexus.responses import success_response
-from nexus.schemas.telemetry import ClientDefectRequest, WebVitalRequest
+from nexus.schemas.telemetry import WebVitalRequest
 
 router = APIRouter(tags=["telemetry"])
 
@@ -34,19 +34,5 @@ def post_web_vital(
         metric_id=body.id,
         href=body.href,
         nav_id=body.nav_id,
-    )
-    return success_response({})
-
-
-@router.post("/telemetry/client-defects")
-def post_client_defect(
-    body: ClientDefectRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-) -> dict:
-    """Log the first client failure with its originating command/read identity."""
-    logger.error(
-        "rum.client_defect",
-        viewer_id=str(viewer.user_id),
-        **body.model_dump(mode="json"),
     )
     return success_response({})

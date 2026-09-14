@@ -34,10 +34,7 @@ const ACCOUNT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const PAGE_ID = "11111111-1111-4111-8111-111111111111";
 const DRAFT_NOTE_ID = "22222222-2222-4222-8222-222222222222";
 const SERVER_NOTE_ID = "33333333-3333-4333-8333-333333333333";
-const SERVER_OCCURRENCE_ID = "44444444-4444-4444-8444-444444444444";
-const DAILY_NOTE_OCCURRENCE_ID = "55555555-5555-4555-8555-555555555555";
 const LOCAL_DATE = "2026-07-30";
-const UPDATED_AT = "2026-07-30T16:00:00Z";
 const DEFAULT_TITLE = "Thursday, July 30";
 const RENAMED_TITLE = "Field Notes";
 const WORKSPACE_METRICS: WorkspacePrimaryMetrics = {
@@ -279,14 +276,10 @@ function PageRefApp({
                   initialPage={{
                     id: PAGE_ID,
                     title: DEFAULT_TITLE,
-                    updatedAt: UPDATED_AT,
                     actionSubject: {
                       ref: canonicalResourceRef({ scheme: "page", id: PAGE_ID }),
                     },
-                    dailyPage: {
-                      kind: "Present",
-                      value: { localDate: LOCAL_DATE },
-                    },
+                    dailyPage: { localDate: LOCAL_DATE },
                   }}
                 />
               </PanePrimaryChromeProvider>
@@ -353,7 +346,7 @@ describe("PagePaneBody daily hydration", () => {
             },
             ordered_items: [
               {
-                occurrence_id: SERVER_OCCURRENCE_ID,
+                occurrence_id: "server-row",
                 target: {
                   item: noteItem(SERVER_NOTE_ID),
                   content: {
@@ -501,7 +494,7 @@ describe("PagePaneBody daily hydration", () => {
       },
       ordered_items: [
         {
-          occurrence_id: DAILY_NOTE_OCCURRENCE_ID,
+          occurrence_id: "daily-note-row",
           target: {
             item: {
               ...noteItem(noteId),
@@ -544,11 +537,8 @@ describe("PagePaneBody daily hydration", () => {
               page: {
                 id: PAGE_ID,
                 title: DEFAULT_TITLE,
-                updatedAt: UPDATED_AT,
-                dailyPage: {
-                  kind: "Present",
-                  value: { localDate: LOCAL_DATE },
-                },
+                updatedAt: null,
+                dailyPage: { localDate: LOCAL_DATE },
               },
               surface: surface(
                 capturedNoteId,
@@ -740,11 +730,8 @@ describe("PagePaneBody daily hydration", () => {
           page: {
             id: PAGE_ID,
             title: RENAMED_TITLE,
-            updatedAt: UPDATED_AT,
-            dailyPage: {
-              kind: "Present",
-              value: { localDate: LOCAL_DATE },
-            },
+            updatedAt: null,
+            dailyPage: { localDate: LOCAL_DATE },
           },
           surface: {
             source: {
@@ -756,7 +743,7 @@ describe("PagePaneBody daily hydration", () => {
             },
             ordered_items: [
               {
-                occurrence_id: SERVER_OCCURRENCE_ID,
+                occurrence_id: "server-row",
                 target: {
                   item: noteItem(SERVER_NOTE_ID),
                   content: {

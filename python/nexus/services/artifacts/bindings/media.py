@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from uuid import UUID
 
+from provider_runtime import ReasoningLevel
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -44,8 +45,7 @@ from nexus.services.artifacts.bindings._shared import (
 )
 from nexus.services.artifacts.bindings.base import (
     DossierBindingBase,
-    DossierOperation,
-    PublishableDossier,
+    MaterializedDossier,
     require_resource_subject,
 )
 from nexus.services.artifacts.coordination import DossierBuildRuntime
@@ -67,6 +67,7 @@ from nexus.services.artifacts.subject_policy import (
     ResolvedSubject,
     decode_resource_locator,
 )
+from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.media_intelligence import (
     MediaUnit,
     current_content_fingerprint,
@@ -76,6 +77,7 @@ from nexus.services.media_intelligence import (
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import CitationSnapshot
 
+MEDIA_DOSSIER_MAX_OUTPUT_TOKENS = 4000
 # Budget the offered claim context in characters (~4 chars/token); claims past the
 # budget are dropped and recorded as omitted evidence (coverage, A18) rather than
 # silently capped.
@@ -165,7 +167,10 @@ class MediaBinding(DossierBindingBase):
     own MI unit; citations are the unit's evidence spans."""
 
     subject_scheme: str = "media"
-    llm_operation: DossierOperation = "dossier_media"
+    llm_operation: BackgroundLlmOperation = "dossier_media"
+    profile: str = "balanced"
+    reasoning: ReasoningLevel = "medium"
+    max_output_tokens: int = MEDIA_DOSSIER_MAX_OUTPUT_TOKENS
     system_prompt: str = synthesis_prompt("one source document")
     schema: type[BaseModel] = StandardSynthesis
 
@@ -348,7 +353,7 @@ class MediaBinding(DossierBindingBase):
         collected: _MediaCollected,  # noqa: ARG002 - candidates come from the witness (A10)
         decoded_output: BaseModel,
         witness: _MediaWitness,
-    ) -> PublishableDossier:
+    ) -> MaterializedDossier:
         return materialize_standard(
             decoded_output,
             [_standard_candidate(candidate) for candidate in witness.candidates],
@@ -454,7 +459,7 @@ class MediaSubjectPolicy:
     def collection_viewer(self, resolved: ResolvedSubject, audience: AudienceScope) -> UUID | None:
         return _viewer(audience)
 
-    def requester_admission(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
+    def requester_billing(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
         return requester_user_id
 
     def citation_owner(

@@ -22,7 +22,10 @@ import ResourceSurfaceBodyEditor from "@/components/resource-surface/ResourceSur
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { createRandomId } from "@/lib/createRandomId";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import {
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { activateResource } from "@/lib/resources/activation";
 import { fetchResourceSurface } from "@/lib/resourceSurface/api";
 import {
@@ -43,7 +46,7 @@ import {
 import { getPaneScrollContainer } from "@/lib/reader/paneScroll";
 import { ClipboardWriteUnavailableError } from "@/lib/ui/copyText";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { resolveResourceLocator } from "@/lib/resources/resourceLocators";
+import { resolveResourceLocators } from "@/lib/resources/resourceLocators";
 import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import type {
   PaneEntryDelivery,
@@ -57,7 +60,10 @@ const EMPTY_NOTE_BODY = {
 } as Record<string, unknown>;
 
 export type ResourceSurfaceOperation =
-  "Load" | "Save" | "OpenLinkedObject" | "Edit";
+  | "Load"
+  | "Save"
+  | "OpenLinkedObject"
+  | "Edit";
 
 function resourceSurfaceOperationTitle(
   operation: ResourceSurfaceOperation,
@@ -96,8 +102,7 @@ export function resourceSurfaceErrorMessage(
       return {
         tone: "Danger",
         title,
-        message:
-          "Nexus couldn’t complete the request. Wait a moment, then retry.",
+        message: "Nexus couldn’t complete the request. Wait a moment, then retry.",
         requestId,
       };
     case "E_RATE_LIMITED":
@@ -126,8 +131,7 @@ export function resourceSurfaceErrorMessage(
       return {
         tone: "Danger",
         title,
-        message:
-          "That change is no longer valid. Reload the surface and review it.",
+        message: "That change is no longer valid. Reload the surface and review it.",
         requestId,
       };
     case "E_RESOURCE_CONFLICT":
@@ -135,8 +139,7 @@ export function resourceSurfaceErrorMessage(
       return {
         tone: "Danger",
         title,
-        message:
-          "This resource changed elsewhere. Reload it, then retry your saved draft.",
+        message: "This resource changed elsewhere. Reload it, then retry your saved draft.",
         requestId,
       };
     default:
@@ -160,14 +163,20 @@ function useDailyDraftSnapshot(daily?: DailyResourceSurfaceEditorSource) {
   const subscribe = useCallback(
     (listener: () => void) =>
       accountId && localDate
-        ? subscribeDailyDraft(accountId, localDate, () => listener())
+        ? subscribeDailyDraft(
+            accountId,
+            localDate,
+            () => listener(),
+          )
         : () => undefined,
     [accountId, localDate],
   );
   const getSnapshot = useCallback(
     () =>
       accountId && localDate && typeof window !== "undefined"
-        ? window.localStorage.getItem(dailyDraftKey(accountId, localDate))
+        ? window.localStorage.getItem(
+            dailyDraftKey(accountId, localDate),
+          )
         : null,
     [accountId, localDate],
   );
@@ -308,9 +317,7 @@ export default function ResourceSurfaceEditor({
         );
       }
       if (!loaded) {
-        return (
-          <PaneLoadingState label="Loading resource…" announcement="Polite" />
-        );
+        return <PaneLoadingState label="Loading resource…" announcement="Polite" />;
       }
     }
     return (
@@ -427,7 +434,9 @@ function LoadedResourceSurfaceEditor({
   const editorSessionKey = daily
     ? `daily:${daily.accountId}:${daily.localDate}`
     : sourceRef!;
-  const dailyIdentity = daily ? `${daily.accountId}:${daily.localDate}` : null;
+  const dailyIdentity = daily
+    ? `${daily.accountId}:${daily.localDate}`
+    : null;
   const dailyDraft = useDailyDraftSnapshot(daily);
   const surfaceRootRef = useRef<HTMLDivElement | null>(null);
   const prependAnchorRef = useRef<{
@@ -440,9 +449,7 @@ function LoadedResourceSurfaceEditor({
   >(null);
   const titleChangedSinceFocusRef = useRef(false);
   const sourceBodyChangedSinceFocusRef = useRef(false);
-  const [defectState, setDefectState] = useState<{ error: unknown } | null>(
-    null,
-  );
+  const [defectState, setDefectState] = useState<{ error: unknown } | null>(null);
   const [recoveryCopyFeedback, setRecoveryCopyFeedback] =
     useState<FeedbackContent | null>(null);
   const presentFailure = useCallback(
@@ -484,7 +491,8 @@ function LoadedResourceSurfaceEditor({
         (row) => row.target.item.ref === noteRef,
       );
       setBodyFocus((current) => ({
-        occurrenceId: canonical?.occurrenceId ?? `daily-provisional:${noteId}`,
+        occurrenceId:
+          canonical?.occurrenceId ?? `daily-provisional:${noteId}`,
         serial: current.serial + 1,
       }));
       daily?.onDeliveryClaimed(delivery);
@@ -521,7 +529,7 @@ function LoadedResourceSurfaceEditor({
           onError: reportError,
           onTitleMutationStarted,
           onSourceBodyMutationStarted,
-        },
+      },
   );
   const copyRecovery = useCallback(() => {
     setRecoveryCopyFeedback(null);
@@ -582,19 +590,21 @@ function LoadedResourceSurfaceEditor({
   const insertNote = useCallback(
     (position: { kind: "start" } | { kind: "after"; occurrenceId: string }) => {
       const noteId = createRandomId();
-      const occurrenceId = session.command({
+      session.command({
         type: "insert_note",
         noteId,
         position,
         bodyPmJson: EMPTY_NOTE_BODY,
       });
-      if (occurrenceId === null) return;
       setBodyFocus((current) => ({
-        occurrenceId,
+        occurrenceId:
+          daily && !surface
+            ? `daily-provisional:${noteId}`
+            : `local:${noteId}`,
         serial: current.serial + 1,
       }));
     },
-    [session, setBodyFocus],
+    [daily, session, setBodyFocus, surface],
   );
 
   const splitNote = useCallback(
@@ -604,16 +614,15 @@ function LoadedResourceSurfaceEditor({
       rightBodyPmJson: Record<string, unknown>;
     }) => {
       const noteId = createRandomId();
-      const occurrenceId = session.command({
+      session.command({
         type: "split_note",
         occurrenceId: input.occurrenceId,
         noteId,
         leftBodyPmJson: input.leftBodyPmJson,
         rightBodyPmJson: input.rightBodyPmJson,
       });
-      if (occurrenceId === null) return;
       setBodyFocus((current) => ({
-        occurrenceId,
+        occurrenceId: `local:${noteId}`,
         serial: current.serial + 1,
       }));
     },
@@ -665,11 +674,10 @@ function LoadedResourceSurfaceEditor({
       const ref = `${objectType}:${objectId}`;
       if (!parseResourceRef(ref)) return;
       try {
-        const resolved = await resolveResourceLocator({
-          kind: "resource_ref",
-          ref,
-        });
-        const href = resolved.resourceItem.route;
+        const [resolved] = await resolveResourceLocators([
+          { kind: "resource_ref", ref },
+        ]);
+        const href = resolved?.resourceItem.route;
         if (!href) {
           setFeedback({
             tone: "Warning",
@@ -764,10 +772,18 @@ function LoadedResourceSurfaceEditor({
         >
           <span
             role={
-              recoveryCopyFeedback ? undefined : failed ? "alert" : "status"
+              recoveryCopyFeedback
+                ? undefined
+                : failed
+                  ? "alert"
+                  : "status"
             }
             aria-live={
-              recoveryCopyFeedback ? undefined : failed ? "assertive" : "polite"
+              recoveryCopyFeedback
+                ? undefined
+                : failed
+                  ? "assertive"
+                  : "polite"
             }
           >
             {failed
@@ -785,7 +801,11 @@ function LoadedResourceSurfaceEditor({
             >
               Reload
             </Button>
-            <Button size="sm" variant="ghost" onClick={copyRecovery}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={copyRecovery}
+            >
               Copy
             </Button>
           </span>

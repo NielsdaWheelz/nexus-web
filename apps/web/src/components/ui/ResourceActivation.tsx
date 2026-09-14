@@ -2,6 +2,10 @@
 
 import type { ReactNode } from "react";
 import type { WorkspaceSecondaryActivation } from "@/lib/panes/paneSecondaryModel";
+import {
+  secondaryActivationForResource,
+  type ResourceActivation as ResourceActivationContract,
+} from "@/lib/resources/activation";
 import { isNestedInteractiveTarget } from "@/lib/ui/isNestedInteractiveTarget";
 
 export type ResourceRowPrimary =
@@ -12,6 +16,7 @@ export type ResourceRowPrimary =
       target?: "_self" | "_blank";
       rel?: string;
       viewTransition?: "media-reader";
+      resourceActivation?: ResourceActivationContract;
       secondaryActivation?: WorkspaceSecondaryActivation;
     }
   | {
@@ -35,7 +40,13 @@ export default function ResourceActivation({
   dataRowFocusable?: boolean;
 }) {
   if (primary.kind === "link") {
-    const secondaryActivation = primary.secondaryActivation;
+    const secondaryActivation =
+      primary.secondaryActivation ??
+      (
+        primary.resourceActivation
+          ? secondaryActivationForResource(primary.resourceActivation)
+          : null
+      );
     return (
       <a
         className={className}

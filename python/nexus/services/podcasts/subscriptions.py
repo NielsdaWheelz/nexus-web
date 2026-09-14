@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -36,8 +35,6 @@ from nexus.schemas.podcast import (
     PodcastSubscribeDestinationOutcomeOut,
     PodcastSubscribeOut,
     PodcastSubscribeRequest,
-    PodcastSubscriptionLifecycleBackfillOut,
-    PodcastSubscriptionLifecycleSnapshotOut,
     PodcastSubscriptionSettingsOut,
     PodcastSubscriptionSettingsPatchRequest,
     PodcastSubscriptionStatusOut,
@@ -88,18 +85,6 @@ PODCAST_OPML_MAX_OUTLINES = 200
 PODCAST_OPML_MAX_TITLE_LENGTH = 512
 PODCAST_OPML_MAX_URL_LENGTH = 2048
 PODCAST_OPML_MAX_ERROR_LENGTH = 300
-PODCAST_SUBSCRIPTION_NOTIFY_CHANNEL = "podcast_subscription_events"
-_TERMINAL_SYNC_STATUSES = frozenset({"Complete", "SourceLimited", "Failed"})
-_TERMINAL_BACKFILL_STATES = frozenset({"Complete", "SourceLimited", "Failed"})
-
-
-@dataclass(frozen=True)
-class PodcastSubscriptionLifecycle:
-    """Private listener identity paired with the browser-visible snapshot."""
-
-    subscription_id: UUID
-    snapshot: PodcastSubscriptionLifecycleSnapshotOut
-    terminal: bool
 
 
 def _lookup_replay_before_resolution(
@@ -723,11 +708,18 @@ def _load_backfill_out(db: Session, *, subscription_id: UUID) -> PodcastBackfill
         .mappings()
         .one()
     )
-    state = _backfill_state(
-        started_at=row["started_at"],
-        completed_at=row["completed_at"],
-        source_limited_at=row["source_limited_at"],
-        failed_at=row["failed_at"],
+    state = (
+        "Failed"
+        if row["failed_at"] is not None
+        else (
+            "SourceLimited"
+            if row["source_limited_at"] is not None
+            else (
+                "Complete"
+                if row["completed_at"] is not None
+                else ("Running" if row["started_at"] is not None else "Pending")
+            )
+        )
     )
     return PodcastBackfillOut(
         id=row["id"],
@@ -735,22 +727,6 @@ def _load_backfill_out(db: Session, *, subscription_id: UUID) -> PodcastBackfill
         processed_count=int(row["processed_count"]),
         added_count=int(row["added_count"]),
     )
-
-
-def _backfill_state(
-    *,
-    started_at: datetime | None,
-    completed_at: datetime | None,
-    source_limited_at: datetime | None,
-    failed_at: datetime | None,
-) -> str:
-    if failed_at is not None:
-        return "Failed"
-    if source_limited_at is not None:
-        return "SourceLimited"
-    if completed_at is not None:
-        return "Complete"
-    return "Running" if started_at is not None else "Pending"
 
 
 def get_subscription_status(
@@ -802,80 +778,6 @@ def get_subscription_status(
         last_checked_at=row[12],
         updated_at=row[13],
         backfill=_load_backfill_out(db, subscription_id=UUID(str(row[1]))),
-    )
-
-
-def read_subscription_lifecycle(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    podcast_id: UUID,
-    expected_subscription_id: UUID | None = None,
-) -> PodcastSubscriptionLifecycle:
-    """Read one owner-checked lifecycle epoch driving a subscription stream."""
-
-    row = (
-        db.execute(
-            text(
-                """
-            SELECT
-                ps.id AS subscription_id,
-                ps.podcast_id,
-                ps.sync_status,
-                backfill.id AS backfill_id,
-                backfill.started_at AS backfill_started_at,
-                backfill.completed_at AS backfill_completed_at,
-                backfill.source_limited_at AS backfill_source_limited_at,
-                backfill.failed_at AS backfill_failed_at,
-                backfill.processed_count AS backfill_processed_count,
-                backfill.added_count AS backfill_added_count
-            FROM podcast_subscriptions ps
-            LEFT JOIN podcast_subscription_backfills backfill
-              ON backfill.subscription_id = ps.id
-            WHERE ps.user_id = :user_id AND ps.podcast_id = :podcast_id
-            """
-            ),
-            {"user_id": viewer_id, "podcast_id": podcast_id},
-        )
-        .mappings()
-        .first()
-    )
-    if row is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription not found")
-    subscription_id = UUID(str(row["subscription_id"]))
-    if expected_subscription_id is not None and subscription_id != expected_subscription_id:
-        # A caller bound its LISTEN connection to the prior subscription epoch.
-        # Treat replacement as gone; returning its state here would pair the new
-        # snapshot with a listener that can receive only the old epoch's events.
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Podcast subscription was replaced")
-    if row["backfill_id"] is None:
-        # justify-service-invariant-check: the only subscription writer seeds one
-        # fenced backfill in the same transaction; a live row without it is corruption.
-        raise RuntimeError("Podcast subscription is missing its lifecycle backfill")
-
-    backfill_state = _backfill_state(
-        started_at=row["backfill_started_at"],
-        completed_at=row["backfill_completed_at"],
-        source_limited_at=row["backfill_source_limited_at"],
-        failed_at=row["backfill_failed_at"],
-    )
-    terminal = (
-        row["sync_status"] in _TERMINAL_SYNC_STATUSES
-        and backfill_state in _TERMINAL_BACKFILL_STATES
-    )
-    return PodcastSubscriptionLifecycle(
-        subscription_id=subscription_id,
-        snapshot=PodcastSubscriptionLifecycleSnapshotOut(
-            podcast_id=UUID(str(row["podcast_id"])),
-            sync_status=row["sync_status"],
-            backfill=PodcastSubscriptionLifecycleBackfillOut(
-                id=UUID(str(row["backfill_id"])),
-                state=backfill_state,
-                processed_count=int(row["backfill_processed_count"]),
-                added_count=int(row["backfill_added_count"]),
-            ),
-        ),
-        terminal=terminal,
     )
 
 

@@ -48,6 +48,22 @@ function failureCopy(source: MobileNexusFailureSource): string {
   }
 }
 
+function groupClassName(group: NexusGroup): string {
+  switch (group.layout) {
+    case "Flow":
+      return styles.rows;
+    case "CompactRail":
+    case "PinnedBelowInput":
+      return styles.compactRail;
+    default: {
+      const exhaustive: never = group.layout;
+      throw new Error(
+        `Unhandled mobile Nexus group layout: ${JSON.stringify(exhaustive)}`,
+      );
+    }
+  }
+}
+
 export default function SwitchboardSearch({
   active,
   focusKey,
@@ -95,9 +111,16 @@ export default function SwitchboardSearch({
   const inputRef = useRef<HTMLInputElement>(null);
   const composingRef = useRef(false);
   const handledActionsRequestRef = useRef<number | null>(null);
-  const visibleResultCount =
-    projection.groups.find((group) => group.id === "Results")?.entries.length ??
-    0;
+  const pinnedGroups = projection.groups.filter(
+    (group) => group.layout === "PinnedBelowInput",
+  );
+  const scrollingGroups = projection.groups.filter(
+    (group) => group.layout !== "PinnedBelowInput",
+  );
+  const visibleResultCount = scrollingGroups.reduce(
+    (count, group) => count + group.entries.length,
+    0,
+  );
   const typed = query.trim().length > 0;
   const orderedEntries = projection.groups.flatMap((group) => group.entries);
   const activeKeyValue =
@@ -186,11 +209,15 @@ export default function SwitchboardSearch({
   const renderGroup = (group: NexusGroup) => (
     <section
       key={group.id}
-      className={styles.section}
+      className={
+        group.layout === "PinnedBelowInput"
+          ? styles.pinnedGroup
+          : styles.section
+      }
       aria-labelledby={`mobile-nexus-group-${group.id}`}
     >
       <h3 id={`mobile-nexus-group-${group.id}`}>{group.label}</h3>
-      <ul className={styles.rows}>
+      <ul className={groupClassName(group)}>
         {group.entries.map((entry) => {
           const entryKey = nexusEntryKeyValue(entry.key);
           return (
@@ -201,6 +228,7 @@ export default function SwitchboardSearch({
                 projection.activeKey !== null &&
                 nexusEntryKeyValue(projection.activeKey) === entryKey
               }
+              compact={group.layout !== "Flow"}
               onActive={() => onActive(entry.key)}
               onActivate={onActivate}
               onUnavailable={onUnavailable}
@@ -252,6 +280,8 @@ export default function SwitchboardSearch({
         />
       </label>
 
+      {pinnedGroups.map(renderGroup)}
+
       <div
         className={styles.searchScroll}
         data-testid="switchboard-search-scroll"
@@ -270,7 +300,7 @@ export default function SwitchboardSearch({
           </div>
         ) : null}
 
-        {projection.groups.map(renderGroup)}
+        {scrollingGroups.map(renderGroup)}
 
         {typed && visibleResultCount === 0 && !pending ? (
           <p className={styles.empty}>No results for “{query.trim()}”</p>
@@ -281,7 +311,7 @@ export default function SwitchboardSearch({
         className={styles.liveRegion}
         role="status"
         aria-label="Nexus status"
-        aria-live="polite"
+      aria-live="polite"
       >
         {announcement ||
           [

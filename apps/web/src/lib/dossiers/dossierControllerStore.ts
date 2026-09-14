@@ -323,16 +323,6 @@ export function createDossierControllerStore(
               }
             : ready,
         );
-        // A phase change is the only live signal that the durable build was
-        // parked (Codex capacity) or resumed; those facts live on the head.
-        if (
-          state.head.kind === "Ready" &&
-          state.head.ready.activeBuild.kind === "Present" &&
-          state.head.ready.activeBuild.value.execution.kind === "Present" &&
-          state.head.ready.activeBuild.value.execution.value.phase !== event.phase
-        ) {
-          void loadHead(true);
-        }
         return;
       case "Succeeded":
         // Project the persisted terminal immediately. The authoritative head

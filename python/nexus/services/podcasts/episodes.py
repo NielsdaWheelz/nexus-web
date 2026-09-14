@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from hashlib import sha256
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
@@ -172,20 +171,21 @@ def _episode_keyset_predicate(
 
 def _episode_after_values(
     sort: PodcastEpisodeSort,
-    row: RowMapping,
+    row: object,
 ) -> tuple[KeysetValue, ...]:
+    mapped = cast(dict[str, object], row)
     published = (
-        KeysetValue(KeysetValueKind.Int, int(row["published_missing"])),
-        KeysetValue(KeysetValueKind.DateTimeOrNull, row["published_at"]),
-        KeysetValue(KeysetValueKind.Uuid, UUID(str(row["media_id"]))),
+        KeysetValue(KeysetValueKind.Int, int(mapped["published_missing"])),
+        KeysetValue(KeysetValueKind.DateTimeOrNull, mapped["published_at"]),
+        KeysetValue(KeysetValueKind.Uuid, UUID(str(mapped["media_id"]))),
     )
     if sort in {"newest", "oldest"}:
         return published
     return (
-        KeysetValue(KeysetValueKind.Int, int(row["duration_missing"])),
+        KeysetValue(KeysetValueKind.Int, int(mapped["duration_missing"])),
         KeysetValue(
             KeysetValueKind.Int,
-            int(row["duration_seconds"]) if row["duration_seconds"] is not None else 0,
+            int(mapped["duration_seconds"]) if mapped["duration_seconds"] is not None else 0,
         ),
         *published,
     )
@@ -454,20 +454,22 @@ def list_podcast_episodes_for_viewer(
     has_next = len(episode_rows) > limit
     page_rows = episode_rows[:limit]
     ordered_media_ids: list[UUID] = []
-    row_by_media_id: dict[UUID, RowMapping] = {}
+    episode_state_by_media_id: dict[UUID, str] = {}
+    row_by_media_id: dict[UUID, object] = {}
     for row in page_rows:
         media_id = row["media_id"]
         if media_id is None:
             continue
         normalized_media_id = UUID(str(media_id))
         ordered_media_ids.append(normalized_media_id)
+        episode_state_by_media_id[normalized_media_id] = str(row["episode_state"])
         row_by_media_id[normalized_media_id] = row
 
     if not ordered_media_ids:
         return CollectionPage(
             items=[],
-            collectionRevision=revision,
-            nextCursor=absent(),
+            collection_revision=revision,
+            next_cursor=absent(),
         )
 
     episodes = media_service.list_collection_media_for_viewer_by_ids(
@@ -477,7 +479,7 @@ def list_podcast_episodes_for_viewer(
     )
     compact: list[PodcastEpisodeListItemOut] = []
     for episode in episodes:
-        row = row_by_media_id[episode.id]
+        row = cast(dict[str, object], row_by_media_id[episode.id])
         listening = episode.listening_state
         compact.append(
             PodcastEpisodeListItemOut(
@@ -507,7 +509,7 @@ def list_podcast_episodes_for_viewer(
                     if listening is not None
                     else absent()
                 ),
-                episode_state=row["episode_state"],
+                episode_state=episode_state_by_media_id[episode.id],
                 progress_resettable=episode.progress_resettable,
                 capabilities=PodcastEpisodeListCapabilitiesOut(
                     can_retry=episode.capabilities.can_retry,
@@ -518,7 +520,11 @@ def list_podcast_episodes_for_viewer(
                 ),
                 contributors=episode.contributors,
                 author_mode=episode.author_mode,
-                original_published_date=episode.original_published_date,
+                published_date=(
+                    present(episode.published_date)
+                    if episode.published_date is not None
+                    else absent()
+                ),
                 duration_seconds=(
                     present(int(row["duration_seconds"]))
                     if row["duration_seconds"] is not None
@@ -545,6 +551,6 @@ def list_podcast_episodes_for_viewer(
     )
     return CollectionPage(
         items=compact,
-        collectionRevision=revision,
-        nextCursor=next_cursor,
+        collection_revision=revision,
+        next_cursor=next_cursor,
     )

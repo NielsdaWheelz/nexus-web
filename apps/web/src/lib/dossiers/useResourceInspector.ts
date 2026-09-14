@@ -49,7 +49,10 @@ import {
   type InspectorDomainBodies,
 } from "@/components/resource-inspector/inspectorSurfaces";
 import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
-import { activateResource } from "@/lib/resources/activation";
+import {
+  activateResource,
+  secondaryActivationForResource,
+} from "@/lib/resources/activation";
 import { hasSamePaneResource } from "@/lib/panes/paneIdentity";
 
 export interface UseResourceInspectorParams {
@@ -184,9 +187,14 @@ export function useResourceInspector({
         });
         return;
       }
+      const isSecondaryActivation =
+        secondaryActivationForResource(activation) !== null;
       if (
-        runtime.resourceRef === activation.resourceRef ||
-        (activation.href && hasSamePaneResource(runtime.href, activation.href))
+        !isSecondaryActivation &&
+        (runtime?.resourceRef === activation.resourceRef ||
+          (runtime &&
+            activation.href &&
+            hasSamePaneResource(runtime.href, activation.href)))
       ) {
         return;
       }

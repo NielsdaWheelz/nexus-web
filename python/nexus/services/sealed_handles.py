@@ -59,7 +59,6 @@ _LIBRARY_INVITATION = _EntityHandleSpec(
     prefix="nli1",
     domain="library-invitation",
 )
-_UPLOAD_SESSION = _EntityHandleSpec(prefix="nup1", domain="upload-session")
 _SHARE_TOKEN_RE = re.compile(rf"^nxshr1_[A-Za-z0-9_-]{{{_SHARE_TOKEN_CHARS}}}$")
 
 
@@ -111,10 +110,6 @@ class UserHandle(_CanonicalEntityHandle):
 
 class LibraryInvitationHandle(_CanonicalEntityHandle):
     _spec = _LIBRARY_INVITATION
-
-
-class UploadSessionHandle(_CanonicalEntityHandle):
-    _spec = _UPLOAD_SESSION
 
 
 class ShareToken(str):
@@ -330,14 +325,6 @@ def parse_library_invitation_handle(raw: str) -> LibraryInvitationHandle:
 
 def unseal_library_invitation(raw: str) -> UUID:
     return _unseal(raw, _LIBRARY_INVITATION, "Invalid library invitation handle")
-
-
-def seal_upload_session(session_id: UUID) -> UploadSessionHandle:
-    return _seal(session_id, _UPLOAD_SESSION, UploadSessionHandle)
-
-
-def unseal_upload_session(raw: str) -> UUID:
-    return _unseal(raw, _UPLOAD_SESSION, "Invalid upload session handle")
 
 
 def seal_discovery_target(canonical_payload: bytes) -> DiscoveryTargetHandle:

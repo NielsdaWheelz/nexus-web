@@ -1,11 +1,13 @@
 diff --git a/python/nexus/jobs/queue.py b/python/nexus/jobs/queue.py
 --- a/python/nexus/jobs/queue.py
 +++ b/python/nexus/jobs/queue.py
-@@ -1353,7 +1353,6 @@ def _lock_running_job_attempt(
+@@ -1611,9 +1611,6 @@ def complete_job(
+                     finished_at = now(),
+                     updated_at = now()
                  WHERE id = :job_id
-                   AND status = 'running'
-                   AND claimed_by = :worker_id
--                  AND attempts = :attempt_no
-                   AND lease_expires_at > clock_timestamp()
-                 FOR UPDATE
+-                  AND status = 'running'
+-                  AND claimed_by = :worker_id
+-                  AND lease_expires_at > now()
+                 RETURNING id, attempts
                  """
+         ),

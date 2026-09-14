@@ -5,13 +5,6 @@
 Implemented in `/home/niels/src/personal/nexus-web-current-only` on 2026-06-05.
 This document records the target contract and acceptance checklist.
 
-**Uploaded-file clauses superseded by
-`document-import-reliability-hard-cutover.md` (IMPLEMENTED):** upload sessions
-now own pre-publication intent, `media_files.source_sha256` is required source
-provenance, and `python/nexus/services/media_upload_sessions.py` is the sole
-uploaded-file acceptance owner. Historical owner/file lists below record this
-cutover's original implementation rather than the current upload contract.
-
 **Superseded by `universal-link-authoring-hard-cutover.md` (IMPLEMENTED):**
 current-only destructive replacement remains authoritative for readable
 artifacts, transcripts, search/evidence projections, and Oracle/notes. It is
@@ -534,15 +527,12 @@ The service does not create source snapshots or index runs.
 
 Public commands:
 
-- `request_media_content_reindex(...)`
-- `prepare_media_content_reindex(...)`
-- `publish_media_content_reindex(...)`
-- `rebuild_content_index(...)` for the synchronous note doorway
-- `build_fragment_indexable_blocks(...)`
-- `build_transcript_indexable_blocks(...)`
+- `rebuild_media_content_index(...)`
+- `rebuild_fragment_content_index(...)`
+- `rebuild_transcript_content_index(...)`
 - `build_pdf_indexable_blocks(...)`
-- `deactivate_content_index(...)`
-- `delete_content_index(...)`
+- `mark_content_index_failed(...)`
+- `delete_media_content_index(...)`
 
 #### Transcript owner
 

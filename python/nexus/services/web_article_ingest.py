@@ -10,12 +10,9 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.config import Environment, get_settings
 from nexus.db.models import Fragment, Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.schemas.presence import Present
-from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_all_collection_families,
@@ -32,19 +29,12 @@ from nexus.services.document_embeds import (
 )
 from nexus.services.fragment_blocks import insert_fragment_blocks
 from nexus.services.media_author_observation_seam import attach_author_observation
-from nexus.services.node_ingest import (
-    IngestError,
-    IngestResult,
-    NodeIngestCommand,
-    local_node_ingest_command,
-    run_node_ingest,
-)
+from nexus.services.node_ingest import IngestError, IngestResult, run_node_ingest
 from nexus.services.reader_apparatus import (
     attach_fragment_locators,
     replace_media_apparatus,
     source_fingerprint,
 )
-from nexus.services.reader_publication import replace_reader_publication
 from nexus.services.source_publication import (
     SourcePublicationFence,
     run_source_publication_phase,
@@ -57,27 +47,6 @@ from nexus.services.web_article_structure import (
 )
 
 logger = get_logger(__name__)
-
-
-def _node_ingest_command_for_environment(environment: Environment) -> NodeIngestCommand | None:
-    """Compose the checked-out adapter only for local and test workers."""
-
-    if environment in {Environment.LOCAL, Environment.TEST}:
-        return local_node_ingest_command()
-    return None
-
-
-def run_web_article_node_ingest(
-    url: str,
-    *,
-    environment: Environment,
-) -> IngestResult | IngestError:
-    """Run the environment-owned Node composition for one accepted URL."""
-
-    return run_node_ingest(
-        url,
-        command=_node_ingest_command_for_environment(environment),
-    )
 
 
 def materialize_web_article_source(
@@ -108,10 +77,7 @@ def materialize_web_article_source(
     finally:
         snapshot.close()
 
-    ingest_result = run_web_article_node_ingest(
-        url,
-        environment=get_settings().nexus_env,
-    )
+    ingest_result = run_node_ingest(url)
 
     if isinstance(ingest_result, IngestError):
         logger.warning(
@@ -181,6 +147,7 @@ def materialize_web_article_source(
             embed_source_html=ingest_result.source_html,
             base_url=ingest_result.base_url,
             fragment_idx=0,
+            media_title=ingest_result.title,
             extract_embeds=extract_embeds,
         )
         source_apparatus = (
@@ -190,6 +157,7 @@ def materialize_web_article_source(
                 html=ingest_result.source_html,
                 base_url=ingest_result.base_url,
                 fragment_idx=0,
+                media_title=ingest_result.title,
                 extract_embeds=extract_embeds,
             )
         )
@@ -226,7 +194,10 @@ def materialize_web_article_source(
         finally:
             discovery.close()
 
-        def replace_projection(db: Session, media: Media) -> UUID:
+        def publish_artifacts(db: Session, _attempt: object) -> UUID:
+            media = db.get(Media, media_id)
+            if media is None:
+                raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
             owner_user_id = media.created_by_user_id or actor_user_id
             delete_web_article_artifacts(
                 db,
@@ -296,14 +267,6 @@ def materialize_web_article_source(
             )
             return fragment.id
 
-        def publish_artifacts(db: Session, _attempt: object) -> UUID:
-            return replace_reader_publication(
-                db,
-                media_id=media_id,
-                expected_kind="web_article",
-                replace_projection=lambda media: replace_projection(db, media),
-            )
-
         try:
             fragment_id = run_source_publication_phase(
                 session_factory=session_factory,
@@ -345,9 +308,8 @@ def _persist_web_metadata(db: Session, media: Media, ingest_result: IngestResult
         media.publisher = ingest_result.site_name[:255]
         changed = True
 
-    edition_date = normalize_source_publication_date(ingest_result.published_time)
-    if isinstance(edition_date, Present):
-        media.edition_published_date = edition_date.value
+    if ingest_result.published_time and not media.published_date:
+        media.published_date = ingest_result.published_time[:64]
         changed = True
     if ingest_result.title:
         changed = True

@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { TOOL_PROJECTION_HEADER } from "./client";
-import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
 import {
   sseClientDirect,
   type SseBackoffConfig,
@@ -12,7 +10,6 @@ import {
 import { fetchStreamToken } from "./streamToken";
 
 export type GenerationRunKind =
-  | "artifact-builds"
   | "chat-runs"
   | "oracle-readings"
   | "media";
@@ -26,12 +23,11 @@ export type GenerationRunPhase =
 
 /**
  * Stream path prefix per run kind, joined as `${prefix}/${id}/events` under
- * the stream base URL. All four browser-callable generation-run SSE
+ * the stream base URL. All three browser-callable generation-run SSE
  * endpoints live under `/stream/` (one prefix predicate guards the
  * bearer-auth boundary).
  */
 export const GENERATION_RUN_STREAM_PATHS: Record<GenerationRunKind, string> = {
-  "artifact-builds": "/stream/artifact-builds",
   "chat-runs": "/stream/chat-runs",
   "oracle-readings": "/stream/oracle-readings",
   media: "/stream/media",
@@ -45,7 +41,6 @@ export const GENERATION_RUN_STREAM_PATHS: Record<GenerationRunKind, string> = {
  * wiring here, so no surface re-implements it. The caller owns the stream
  * lifecycle callbacks/options; this helper owns the lazy initial URL/token
  * acquisition that runs inside `sseClientDirect`'s bounded reconnect loop.
- * Run identities are encoded at this owner before entering the path.
  *
  * Honors `sseArgs.signal`: if the caller aborted during the mint, returns a
  * no-op without connecting (mirroring the hook's post-mint abort check).
@@ -59,18 +54,14 @@ export async function openGenerationRunStream<TEvent>(
   >,
 ): Promise<() => void> {
   return sseClientDirect<TEvent>({
-    ...sseArgs,
     initialConnection: async () => {
       const connection = await fetchStreamToken();
       return {
-        url: `${connection.stream_base_url}${GENERATION_RUN_STREAM_PATHS[kind]}/${encodeURIComponent(id)}/events`,
+        url: `${connection.stream_base_url}${GENERATION_RUN_STREAM_PATHS[kind]}/${id}/events`,
         token: connection.token,
       };
     },
-    requestHeaders:
-      kind === "chat-runs"
-        ? { [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION }
-        : undefined,
+    ...sseArgs,
   });
 }
 

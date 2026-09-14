@@ -9,12 +9,14 @@
  * noncanonical value. Only these two functions produce a `ReaderSelectionKey`.
  */
 
-import { isCanonicalUuid } from "@/lib/validation";
-
 export type ReaderSelectionKey = Readonly<{
   mediaId: string;
   highlightId: string;
 }>;
+
+// Canonical lowercase UUID, matching the backend's `str(UUID(x)) == x` check.
+const CANONICAL_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** Parse an untrusted (mediaId, highlightId) pair; returns `null` on any
  *  noncanonical value. Never throws. */
@@ -23,8 +25,8 @@ export function parseReaderSelectionKey(raw: {
   highlightId: unknown;
 }): ReaderSelectionKey | null {
   const { mediaId, highlightId } = raw;
-  if (!isCanonicalUuid(mediaId)) return null;
-  if (!isCanonicalUuid(highlightId)) {
+  if (typeof mediaId !== "string" || !CANONICAL_UUID_RE.test(mediaId)) return null;
+  if (typeof highlightId !== "string" || !CANONICAL_UUID_RE.test(highlightId)) {
     return null;
   }
   return { mediaId, highlightId };

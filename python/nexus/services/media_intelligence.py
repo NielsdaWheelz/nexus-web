@@ -27,11 +27,14 @@ the facade (single / batch / bounded-many) and STOP reading ``media_summaries`` 
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from enum import Enum
 from typing import Annotated, Any, Literal, assert_never, cast
 from uuid import UUID
 
+from provider_runtime import Succeeded
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -41,67 +44,33 @@ from nexus.db.models import MediaSummary
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import (
+    ApiError,
     ApiErrorCode,
     InvalidRequestError,
     NotFoundError,
 )
 from nexus.jobs.queue import (
     JobExecutionContext,
-    JobRow,
-    RescheduleRequested,
+    enqueue_unique_job,
     get_job,
-    lock_jobs_for_payload,
-    replace_dead_job_payload,
     requeue_dead_job,
+    revoke_jobs_by_dedupe_keys,
     running_job_claim_is_current,
 )
 from nexus.logging import get_logger
 from nexus.schemas.media import MediaUnitStatus
 from nexus.schemas.presence import Presence, Present, absent, nullable_from_presence, present
 from nexus.services import durable_step_journal as step_journal
-from nexus.services import generation_policy
-from nexus.services.codex_generation_contract import (
-    GenerationCommandDraft,
-    GenerationTerminal,
-)
-from nexus.services.generation_intent import GenerationIntent
-from nexus.services.generation_spec import (
-    ImmutablePromptPayloadRef,
-    decode_generation_spec_document,
-    generation_fact_digest,
-)
 from nexus.services.llm_execution import (
-    AcceptedGenerationFailure,
-    AttachReconciledGenerationTerminal,
-    CompletedGeneration,
-    EncodedGenerationTerminal,
+    DispatchAborted,
+    DispatchTransferred,
     ExecutionRuntime,
-    GenerationAdmissionInputsChanged,
-    GenerationDispatchAborted,
-    GenerationFailureCode,
-    GenerationReconciliationRequest,
-    GenerationUncertain,
-    GenerationUncertainResolution,
-    JobGenerationJournal,
-    admit_job_generation,
-    cancel_prepared_generation_without_dispatch_in_current_transaction,
-    codex_terminal_evidence,
+    GenerationRequest,
     execute_generation,
-    prove_uncertain_generation_not_dispatched_in_current_transaction,
-    reconcile_uncertain_generation_in_current_transaction,
 )
-from nexus.services.llm_ledger import (
-    LlmCallOwner,
-    lock_generation_owner_in_current_transaction,
-)
-from nexus.services.media_intelligence_lifecycle import (
-    MEDIA_UNIT_JOB_KIND as _MEDIA_UNIT_JOB_KIND,
-)
-from nexus.services.media_intelligence_lifecycle import (
-    MEDIA_UNIT_OPERATION,
-    current_content_fingerprint,
-    ensure_media_unit,
-)
+from nexus.services.llm_ledger import LlmCallOwner
+from nexus.services.llm_profiles import operation_profile
+from nexus.services.rate_limit import get_rate_limiter
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.structured_synthesis import (
     INDEX_GROUNDING_RULE,
@@ -116,6 +85,9 @@ from nexus.services.structured_synthesis import (
 
 logger = get_logger(__name__)
 
+MEDIA_UNIT_OPERATION = "media_summary"
+MEDIA_UNIT_MAX_OUTPUT_TOKENS = 2000
+_MEDIA_UNIT_JOB_KIND = "media_unit_build"
 _MEDIA_UNIT_STEP_PATH = "synthesis"
 # Budget the candidate context to leave output headroom inside the model window.
 # Approximated in characters (~4 chars/token); chunks past the budget are dropped
@@ -130,6 +102,17 @@ ENSURE_CURRENT_MANY_DEFAULT_CONCURRENCY = 8
 
 
 # ---------- public contract -------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MediaUnitRef:
+    """The find-or-create outcome of ``ensure_media_unit``."""
+
+    media_id: UUID
+    summary_id: UUID
+    status: MediaUnitStatus
+    content_fingerprint: str
+    enqueued: bool
 
 
 @dataclass(frozen=True)
@@ -214,6 +197,77 @@ class MediaOmission:
 MediaProjectionOrOmission = MediaProjection | MediaOmission
 
 
+def ensure_media_unit(db: Session, *, media_id: UUID) -> MediaUnitRef:
+    """Find-or-create the current unit head and enqueue a build when needed.
+
+    Standalone entry (the on-demand route): owns the SERIALIZABLE transaction +
+    commit + bounded serialization retry. Idempotent on ``content_fingerprint``:
+    a head already at the current fingerprint and in ('ready', 'building') is
+    returned untouched (``enqueued=False``). Otherwise the head is (re)set to
+    ``building`` at the new fingerprint, prior claims are cleared, and a deduped
+    build job is enqueued.
+    """
+
+    def op() -> MediaUnitRef:
+        ref = _ensure_media_unit_core(db, media_id=media_id)
+        db.commit()
+        return ref
+
+    return retry_serializable(db, "ensure_media_unit", op)
+
+
+def ensure_media_unit_in_tx(db: Session, *, media_id: UUID) -> MediaUnitRef:
+    """Find-or-create the unit head inside the caller's open transaction.
+
+    The ingest hook: flushes but does not commit and does not switch isolation,
+    so the unit (re)build enqueue is committed atomically with the caller's
+    content-index writes (per concurrency.md, do not widen/split a caller-owned
+    transaction). The enqueue is a DB-only insert + ``pg_notify``.
+    """
+    return _ensure_media_unit_core(db, media_id=media_id)
+
+
+def clear_media_claims_for_reindex(db: Session, *, media_id: UUID) -> None:
+    """Delete this media's unit claims so its evidence spans can be re-extracted.
+
+    Called by the content-index teardown (sole owner of the chunk/span lifecycle)
+    inside its transaction, before it deletes the ``evidence_spans`` the claims
+    reference (the FK is non-cascading). The summary head is left in place; the
+    re-ingest hook re-points it to ``building`` at the new fingerprint.
+    """
+    db.execute(
+        text(
+            """
+            DELETE FROM media_claims
+            WHERE summary_id IN (
+                SELECT id FROM media_summaries WHERE media_id = :media_id
+            )
+            """
+        ),
+        {"media_id": media_id},
+    )
+
+
+def delete_media_unit(db: Session, *, media_id: UUID) -> None:
+    """Tear down this media's whole unit (claims then head) inside the caller's tx.
+
+    The canonical unit teardown for media deletion: claims (child, FK the head and
+    ``evidence_spans``) are deleted before the ``media_summaries`` head, and both
+    must run before the ``media`` row and the media's ``evidence_spans`` go (both
+    FKs are non-cascading per database.md). Idempotent: a no-op when no unit
+    exists. The sole writer of these tables; media_deletion calls this rather than
+    deleting the owned tables directly (cleanliness.md).
+    """
+    db.execute(
+        text("DELETE FROM media_claims WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    db.execute(
+        text("DELETE FROM media_summaries WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+
+
 def media_summary_orm_or_none(db: Session, *, media_id: UUID) -> MediaSummary | None:
     """Load the unit head ORM by media id (the single home for head-ORM access)."""
     return db.scalars(
@@ -221,6 +275,105 @@ def media_summary_orm_or_none(db: Session, *, media_id: UUID) -> MediaSummary | 
         .where(MediaSummary.media_id == media_id)
         .execution_options(populate_existing=True)
     ).first()
+
+
+def _ensure_media_unit_core(db: Session, *, media_id: UUID) -> MediaUnitRef:
+    fingerprint = current_content_fingerprint(db, media_id=media_id)
+    summary = (
+        db.execute(
+            text("SELECT * FROM media_summaries WHERE media_id = :media_id"),
+            {"media_id": media_id},
+        )
+        .mappings()
+        .first()
+    )
+
+    if summary is not None:
+        summary_id = UUID(str(summary["id"]))
+        if summary["content_fingerprint"] == fingerprint and summary["status"] in (
+            "ready",
+            "building",
+        ):
+            return MediaUnitRef(
+                media_id=media_id,
+                summary_id=summary_id,
+                status=cast("MediaUnitStatus", summary["status"]),
+                content_fingerprint=fingerprint,
+                enqueued=False,
+            )
+        db.execute(
+            text(
+                """
+                UPDATE media_summaries
+                SET content_fingerprint = :fingerprint,
+                    summary_md = '',
+                    model_name = :model_name,
+                    status = 'building',
+                    error_code = NULL,
+                    error_detail = NULL,
+                    updated_at = now()
+                WHERE id = :summary_id
+                """
+            ),
+            {
+                "fingerprint": fingerprint,
+                "model_name": operation_profile(MEDIA_UNIT_OPERATION).target.model,
+                "summary_id": summary_id,
+            },
+        )
+        db.execute(
+            text("DELETE FROM media_claims WHERE summary_id = :summary_id"),
+            {"summary_id": summary_id},
+        )
+    else:
+        summary_id = db.execute(
+            text(
+                """
+                INSERT INTO media_summaries (
+                    media_id, content_fingerprint, summary_md, model_name, status
+                )
+                VALUES (:media_id, :fingerprint, '', :model_name, 'building')
+                RETURNING id
+                """
+            ),
+            {
+                "media_id": media_id,
+                "fingerprint": fingerprint,
+                "model_name": operation_profile(MEDIA_UNIT_OPERATION).target.model,
+            },
+        ).scalar_one()
+        summary_id = UUID(str(summary_id))
+
+    dedupe_key = f"media_unit_build:{media_id}:{fingerprint}"
+    # Drop any terminal/stale build row holding this dedupe_key so enqueue_unique_job
+    # inserts a fresh runnable row. A unit failure completes its background_jobs row
+    # as SUCCEEDED (or FAILED/DEAD), which would otherwise own the partial-unique key
+    # and make enqueue_unique_job no-op, leaving the re-set 'building' head stuck.
+    # No-op for the new-head branch (no prior row) and the changed-fingerprint case
+    # (the old row's key differs). An in-flight build never reaches here: a head in
+    # ('ready', 'building') at the current fingerprint short-circuits above.
+    revoke_jobs_by_dedupe_keys(
+        db,
+        kind="media_unit_build",
+        dedupe_keys=[dedupe_key],
+    )
+    _, inserted = enqueue_unique_job(
+        db,
+        kind=_MEDIA_UNIT_JOB_KIND,
+        dedupe_key=dedupe_key,
+        payload={
+            "media_id": str(media_id),
+            "content_fingerprint": fingerprint,
+        },
+    )
+    db.flush()
+    return MediaUnitRef(
+        media_id=media_id,
+        summary_id=summary_id,
+        status="building",
+        content_fingerprint=fingerprint,
+        enqueued=inserted,
+    )
 
 
 def get_media_unit(db: Session, *, media_id: UUID) -> MediaUnit | NotReady:
@@ -544,7 +697,7 @@ class _CompletedGroundedClaim(BaseModel):
 
 
 class _CompletedSuccess(BaseModel):
-    """Normalized accepted generation output carried by the replay memo."""
+    """Normalized accepted provider output carried by the replay memo."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -563,129 +716,16 @@ class _CompletedFailure(BaseModel):
     error_detail: Presence[str]
 
 
-class _CompletedSkip(BaseModel):
-    """Owner no-op proven before a new generation could be accepted."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    outcome: Literal["skip"] = "skip"
-    reason: str = Field(min_length=1, max_length=120)
-
-
 type _CompletedResult = Annotated[
-    _CompletedSuccess | _CompletedFailure | _CompletedSkip,
+    _CompletedSuccess | _CompletedFailure,
     Field(discriminator="outcome"),
 ]
 
 _COMPLETED_RESULT_ADAPTER: TypeAdapter[_CompletedResult] = TypeAdapter(_CompletedResult)
 
 
-def _complete_prepared_media_unit_without_dispatch(
-    db: Session,
-    *,
-    owner: LlmCallOwner,
-    ctx: JobExecutionContext,
-    state: step_journal.StepReplayState,
-    result: _CompletedResult,
-    reason: str,
-) -> bool:
-    """Atomically cancel a preaccept start and complete the owner journal."""
-
-    # Earlier owner checks are snapshot reads. Start a fresh transaction so the
-    # generation-owner advisory lock remains the first lock in this transition.
-    db.rollback()
-    terminal_result = _COMPLETED_RESULT_ADAPTER.dump_json(result).decode("utf-8")
-    next_state = cancel_prepared_generation_without_dispatch_in_current_transaction(
-        db,
-        owner=owner,
-        state=state,
-        terminal_result=terminal_result,
-        reason=reason,
-    )
-    job = get_job(db, ctx.job_id)
-    if job is None or step_journal.read_step_states(job).get(_MEDIA_UNIT_STEP_PATH) != state:
-        db.rollback()
-        return False
-    if not step_journal.checkpoint_step_state(
-        db,
-        ctx=ctx,
-        job=job,
-        step_path=_MEDIA_UNIT_STEP_PATH,
-        state=next_state,
-    ):
-        db.rollback()
-        return False
-    db.commit()
-    return True
-
-
-def _media_unit_intent(*, user_content: str) -> GenerationIntent:
-    return build_synthesis_intent(
-        system_prompt=_MEDIA_UNIT_SYSTEM_PROMPT,
-        user_content=user_content,
-        schema=MediaUnitSynthesis,
-    )
-
-
-def _encode_media_unit_terminal(
-    terminal: GenerationTerminal,
-    *,
-    candidates: list[_Candidate],
-) -> EncodedGenerationTerminal:
-    accepted_failure: AcceptedGenerationFailure | None = None
-    if terminal.status == "succeeded":
-        try:
-            value = decode_structured_synthesis(terminal, schema=MediaUnitSynthesis)
-            grounded_claims = _map_claims_to_spans(value, candidates)
-            if len(grounded_claims) != len(value.claims):
-                raise StructuredSynthesisError(
-                    "media summary output references a candidate index that was not offered"
-                )
-        except StructuredSynthesisError as exc:
-            detail = str(exc)
-            completed: _CompletedResult = _CompletedFailure(
-                error_code="invalid_output",
-                error_detail=present(detail),
-            )
-            accepted_failure = AcceptedGenerationFailure(
-                code="invalid_output",
-                detail=detail,
-            )
-        else:
-            completed = _CompletedSuccess(
-                summary_md=value.summary_md,
-                claims=tuple(
-                    _CompletedGroundedClaim(
-                        claim_text=claim_text,
-                        evidence_span_id=evidence_span_id,
-                        ordinal=ordinal,
-                    )
-                    for claim_text, evidence_span_id, ordinal in grounded_claims
-                ),
-            )
-    else:
-        code, detail = outcome_failure_facts(terminal)
-        completed = _CompletedFailure(
-            error_code=code,
-            error_detail=present(detail) if detail is not None else absent(),
-        )
-    return EncodedGenerationTerminal(
-        terminal_result=_COMPLETED_RESULT_ADAPTER.dump_json(completed).decode("utf-8"),
-        accepted_failure=accepted_failure,
-    )
-
-
-def _encode_media_unit_failure(
-    code: GenerationFailureCode,
-    detail: str,
-) -> str:
-    return _COMPLETED_RESULT_ADAPTER.dump_json(
-        _CompletedFailure(error_code=code, error_detail=present(detail))
-    ).decode("utf-8")
-
-
 class _UncertainMediaUnitReplayDefect(RuntimeError):
-    """A generation dispatch may have landed and has no reconciliation key."""
+    """A provider dispatch may have landed and has no reconciliation key."""
 
 
 def reconcile_uncertain_media_unit(
@@ -693,47 +733,29 @@ def reconcile_uncertain_media_unit(
     *,
     media_id: UUID,
     content_fingerprint: str,
-    resolution: GenerationUncertainResolution,
+    resolution: step_journal.UncertainStepResolution,
 ) -> None:
-    """Repair one dead uncertain generation and requeue the same durable job.
+    """Repair one dead uncertain provider step and requeue the same durable job.
 
     ``ProveNotDispatched`` returns the step to Prepared so the next claimed
-    attempt may dispatch. Terminal attachment accepts only the raw, strict host
-    terminal and routes it through the same ledger + domain codec used by live
-    landing. The serializable snapshot must reproduce the original command
-    fingerprint from the still-current content version before attachment can
-    land. The non-dispatch proof uses only journal/ledger identity. Ledger
-    terminalization, journal completion, and same-job requeue share one
-    caller-owned transaction; publication remains the worker's later replay.
+    attempt may dispatch. ``AttachReconciledResult`` strictly decodes and
+    normalizes the recovered Media Intelligence terminal result, records
+    Completed, and therefore guarantees that the next attempt publishes without
+    dispatch. The locked canonical head, exact dedupe key, payload identity, and
+    stable generation id must all still name the requested content version.
     """
 
     def invalid(message: str) -> InvalidRequestError:
         return InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, message)
 
-    if not isinstance(
-        resolution,
-        (step_journal.ProveNotDispatched, AttachReconciledGenerationTerminal),
-    ):
-        raise invalid("Media Intelligence requires generation reconciliation evidence")
-
     def op() -> None:
-        summary_id = db.execute(
-            text("SELECT id FROM media_summaries WHERE media_id = :media_id"),
-            {"media_id": media_id},
-        ).scalar_one_or_none()
-        if summary_id is None:
-            raise invalid("Media Intelligence version is not suspended and current")
-        summary_id = UUID(str(summary_id))
-        owner = LlmCallOwner(kind="media_summary", id=summary_id)
-        # The shared owner key is the first lock in every live and repair path.
-        lock_generation_owner_in_current_transaction(db, owner)
         summary = (
             db.execute(
                 text(
                     "SELECT id, status, content_fingerprint FROM media_summaries "
-                    "WHERE id = :summary_id AND media_id = :media_id FOR UPDATE"
+                    "WHERE media_id = :media_id FOR UPDATE"
                 ),
-                {"summary_id": summary_id, "media_id": media_id},
+                {"media_id": media_id},
             )
             .mappings()
             .one_or_none()
@@ -763,11 +785,10 @@ def reconcile_uncertain_media_unit(
             .one_or_none()
         )
         if row is None:
-            raise invalid("Media Intelligence has no dead generation step to reconcile")
+            raise invalid("Media Intelligence has no dead provider step to reconcile")
         payload = dict(row["payload"])
         if (
             str(payload.get("media_id")) != str(media_id)
-            or str(payload.get("summary_id")) != str(summary_id)
             or payload.get("content_fingerprint") != content_fingerprint
         ):
             raise AssertionError("dead media unit job payload identity changed")
@@ -775,10 +796,10 @@ def reconcile_uncertain_media_unit(
         raw_states = dict(payload.get("coordination") or {})
         raw_state = raw_states.get(_MEDIA_UNIT_STEP_PATH)
         if raw_state is None:
-            raise invalid("Media Intelligence has no uncertain generation step to reconcile")
+            raise invalid("Media Intelligence has no uncertain provider step to reconcile")
         state = step_journal.StepReplayState.model_validate(raw_state)
         if state.dispatch_phase is not step_journal.Uncertain:
-            raise invalid("Media Intelligence generation step is not uncertain")
+            raise invalid("Media Intelligence provider step is not uncertain")
         expected_generation_id = step_journal.stable_generation_id(
             media_id, f"{content_fingerprint}:{_MEDIA_UNIT_STEP_PATH}"
         )
@@ -789,61 +810,61 @@ def reconcile_uncertain_media_unit(
         if isinstance(state.terminal_result, Present):
             raise AssertionError("uncertain media unit step already has a terminal result")
 
-        if isinstance(resolution, step_journal.ProveNotDispatched):
-            next_state = prove_uncertain_generation_not_dispatched_in_current_transaction(
-                db,
-                owner=owner,
-                state=state,
+        if isinstance(resolution, step_journal.AttachReconciledResult):
+            normalized = _COMPLETED_RESULT_ADAPTER.validate_json(resolution.terminal_result)
+            candidates = _load_candidates(db, media_id=media_id)
+            user_content = _build_media_unit_user_content(candidates)
+            profile = operation_profile(MEDIA_UNIT_OPERATION)
+            request_fingerprint = _media_unit_request_fingerprint(
+                content_fingerprint=content_fingerprint,
+                candidates=candidates,
+                user_content=user_content,
+                provider=str(profile.target.provider),
+                model=str(profile.target.model),
+                reasoning=str(profile.default_reasoning_option_id),
+            )
+            if state.request_fingerprint.value != request_fingerprint:
+                raise invalid("Media Intelligence inputs changed since provider dispatch")
+            if isinstance(normalized, _CompletedSuccess):
+                candidate_ids = {candidate.evidence_span_id for candidate in candidates}
+                if any(claim.evidence_span_id not in candidate_ids for claim in normalized.claims):
+                    raise invalid(
+                        "Recovered Media Intelligence claims must use offered evidence spans"
+                    )
+                if [claim.ordinal for claim in normalized.claims] != list(
+                    range(len(normalized.claims))
+                ):
+                    raise invalid("Recovered Media Intelligence claim ordinals must be dense")
+            terminal_result = _COMPLETED_RESULT_ADAPTER.dump_json(normalized).decode("utf-8")
+            next_state = state.model_copy(
+                update={
+                    "dispatch_phase": step_journal.Completed,
+                    "terminal_result": present(terminal_result),
+                }
+            )
+        elif isinstance(resolution, step_journal.ProveNotDispatched):
+            next_state = state.model_copy(
+                update={
+                    "dispatch_phase": step_journal.Prepared,
+                    "terminal_result": absent(),
+                }
             )
         else:
-            candidates = _load_candidates(db, media_id=media_id)
-            raw_admissions = payload.get("generation_admissions")
-            if not isinstance(raw_admissions, dict):
-                raise invalid("Media Intelligence has no frozen generation admission")
-            raw_admission = raw_admissions.get(_MEDIA_UNIT_STEP_PATH)
-            if not isinstance(raw_admission, dict) or set(raw_admission) != {
-                "spec",
-                "intent",
-            }:
-                raise invalid("Media Intelligence frozen admission is invalid")
-            spec = decode_generation_spec_document(raw_admission["spec"])
-            raw_intent = raw_admission["intent"]
-            if not isinstance(raw_intent, dict):
-                raise invalid("Media Intelligence frozen intent is invalid")
-            intent = GenerationIntent.model_validate(raw_intent)
-            current_intent = _media_unit_intent(
-                user_content=_build_media_unit_user_content(candidates)
-            )
-            if state.request_fingerprint.value != spec.fingerprint or intent != current_intent:
-                raise invalid("Media Intelligence inputs changed since generation dispatch")
-            draft = GenerationCommandDraft(
-                request_id=state.generation_id,
-                spec=spec,
-                intent=intent,
-            )
-            next_state = reconcile_uncertain_generation_in_current_transaction(
-                db,
-                GenerationReconciliationRequest(
-                    owner=owner,
-                    draft=draft,
-                    state=state,
-                    resolution=resolution,
-                ),
-                encode_terminal=lambda terminal: _encode_media_unit_terminal(
-                    codex_terminal_evidence(terminal),
-                    candidates=candidates,
-                ),
-            )
+            assert_never(resolution)
 
         payload = step_journal.payload_with_step_state(
             payload,
             step_path=_MEDIA_UNIT_STEP_PATH,
             state=next_state,
         )
-        job_id = UUID(str(row["id"]))
-        if not replace_dead_job_payload(db, job_id=job_id, payload=payload):
-            raise AssertionError("locked dead media unit job changed during reconciliation")
-        if not requeue_dead_job(db, job_id=job_id):
+        db.execute(
+            text("UPDATE background_jobs SET payload = CAST(:payload AS jsonb) WHERE id = :job_id"),
+            {
+                "payload": json.dumps(payload),
+                "job_id": row["id"],
+            },
+        )
+        if not requeue_dead_job(db, job_id=UUID(str(row["id"]))):
             raise AssertionError("locked dead media unit job could not be requeued")
         db.commit()
 
@@ -857,11 +878,11 @@ async def run_media_unit_build(
     content_fingerprint: str,
     ctx: JobExecutionContext,
     runtime: ExecutionRuntime,
-) -> Literal["ok", "failed"] | RescheduleRequested:
+) -> Literal["ok", "failed"]:
     """Worker body: synthesize the summary + grounded claims for one media unit.
 
     The exact claimed job attempt owns one stable ``(media_id, fingerprint,
-    synthesis)`` generation transition. It commits Prepared, then Uncertain
+    synthesis)`` provider transition. It commits Prepared, then Uncertain
     immediately before dispatch, and Completed with a normalized result after
     dispatch. Completed replays reuse that memo; Uncertain replays defect and
     never automatically repeat a possibly billable call.
@@ -881,11 +902,6 @@ async def run_media_unit_build(
         or job.payload.get("content_fingerprint") != content_fingerprint
     ):
         raise AssertionError(f"job {job.id} does not own media unit {media_id}")
-    try:
-        summary_id = UUID(str(job.payload["summary_id"]))
-    except (KeyError, ValueError) as exc:
-        raise AssertionError(f"job {job.id} has no valid media summary owner") from exc
-    owner = LlmCallOwner(kind="media_summary", id=summary_id)
     if not running_job_claim_is_current(
         db,
         job_id=ctx.job_id,
@@ -895,139 +911,82 @@ async def run_media_unit_build(
         db.rollback()
         return "ok"
 
+    summary = media_summary_orm_or_none(db, media_id=media_id)
+    if summary is None or summary.content_fingerprint != content_fingerprint:
+        db.commit()
+        return "ok"
+    if current_content_fingerprint(db, media_id=media_id) != content_fingerprint:
+        db.commit()
+        return "ok"
+    summary_id = summary.id
+
     state = step_journal.read_step_states(job).get(_MEDIA_UNIT_STEP_PATH)
     generation_id = step_journal.stable_generation_id(
         media_id, f"{content_fingerprint}:{_MEDIA_UNIT_STEP_PATH}"
     )
     if state is not None and state.generation_id != generation_id:
         raise AssertionError("media unit replay generation identity changed")
+    if summary.status != "building":
+        # A prior attempt already applied the Completed result.
+        db.commit()
+        return "ok"
     if state is not None and state.dispatch_phase is step_journal.Uncertain:
         raise _UncertainMediaUnitReplayDefect(
             f"media {media_id} fingerprint {content_fingerprint} synthesis is uncertain"
         )
-
-    summary = media_summary_orm_or_none(db, media_id=media_id)
-    if summary is None:
-        if state is not None and state.dispatch_phase is step_journal.Prepared:
-            _complete_prepared_media_unit_without_dispatch(
-                db,
-                owner=owner,
-                ctx=ctx,
-                state=state,
-                result=_CompletedSkip(reason="summary_missing"),
-                reason="media summary was removed before redispatch",
-            )
-            return "ok"
-        db.commit()
-        return "ok"
-    if summary.id != summary_id:
-        raise AssertionError("media unit job summary owner changed")
-    if summary.content_fingerprint != content_fingerprint:
-        if state is not None and state.dispatch_phase is step_journal.Prepared:
-            _complete_prepared_media_unit_without_dispatch(
-                db,
-                owner=owner,
-                ctx=ctx,
-                state=state,
-                result=_CompletedSkip(reason="summary_superseded"),
-                reason="media summary fingerprint was superseded before redispatch",
-            )
-        else:
-            db.commit()
-        return "ok"
-    if current_content_fingerprint(db, media_id=media_id) != content_fingerprint:
-        if state is not None and state.dispatch_phase is step_journal.Prepared:
-            _complete_prepared_media_unit_without_dispatch(
-                db,
-                owner=owner,
-                ctx=ctx,
-                state=state,
-                result=_CompletedSkip(reason="content_fingerprint_changed"),
-                reason="media content fingerprint changed before redispatch",
-            )
-        else:
-            db.commit()
-        return "ok"
-    if summary.status != "building":
-        # A prior attempt already applied the Completed result.
-        if state is not None and state.dispatch_phase is step_journal.Prepared:
-            _complete_prepared_media_unit_without_dispatch(
-                db,
-                owner=owner,
-                ctx=ctx,
-                state=state,
-                result=_CompletedSkip(reason="summary_not_building"),
-                reason="media summary was no longer building before redispatch",
-            )
-        else:
-            db.commit()
-        return "ok"
 
     owner_row = db.execute(
         text("SELECT created_by_user_id FROM media WHERE id = :media_id"),
         {"media_id": media_id},
     ).scalar_one_or_none()
     if owner_row is None:
-        completed = _CompletedFailure(
-            error_code="no_owner",
-            error_detail=present("media has no owning user to attribute the generation to"),
-        )
-        if state is not None and state.dispatch_phase is step_journal.Prepared:
-            if not _complete_prepared_media_unit_without_dispatch(
-                db,
-                owner=owner,
-                ctx=ctx,
-                state=state,
-                result=completed,
-                reason="media owner was absent before redispatch",
-            ):
-                return "ok"
-        else:
-            db.commit()
+        db.commit()
         fail_media_unit(
             db,
             summary_id=summary_id,
             expected_fingerprint=content_fingerprint,
             ctx=ctx,
-            error_code=completed.error_code,
-            error_detail=nullable_from_presence(completed.error_detail),
+            error_code="no_owner",
+            error_detail="media has no owning user to attribute the provider call to",
         )
         return "failed"
     owner_user_id = UUID(str(owner_row))
 
     candidates = _load_candidates(db, media_id=media_id)
     if not candidates:
-        completed = _CompletedFailure(
-            error_code="no_candidates",
-            error_detail=present("media has no indexed content chunks with evidence spans"),
-        )
-        if state is not None and state.dispatch_phase is step_journal.Prepared:
-            if not _complete_prepared_media_unit_without_dispatch(
-                db,
-                owner=owner,
-                ctx=ctx,
-                state=state,
-                result=completed,
-                reason="media candidates were absent before redispatch",
-            ):
-                return "ok"
-        else:
-            db.commit()
+        db.commit()
         fail_media_unit(
             db,
             summary_id=summary_id,
             expected_fingerprint=content_fingerprint,
             ctx=ctx,
-            error_code=completed.error_code,
-            error_detail=nullable_from_presence(completed.error_detail),
+            error_code="no_candidates",
+            error_detail="media has no indexed content chunks with evidence spans",
         )
         return "failed"
 
     user_content = _build_media_unit_user_content(candidates)
-    intent = _media_unit_intent(user_content=user_content)
+    profile = operation_profile(MEDIA_UNIT_OPERATION)
+    intent = build_synthesis_intent(
+        profile=profile,
+        system_prompt=_MEDIA_UNIT_SYSTEM_PROMPT,
+        user_content=user_content,
+        max_output_tokens=MEDIA_UNIT_MAX_OUTPUT_TOKENS,
+        schema=MediaUnitSynthesis,
+    )
+    request_fingerprint = _media_unit_request_fingerprint(
+        content_fingerprint=content_fingerprint,
+        candidates=candidates,
+        user_content=user_content,
+        provider=str(profile.target.provider),
+        model=str(profile.target.model),
+        reasoning=str(profile.default_reasoning_option_id),
+    )
     if state is not None:
         if not isinstance(state.request_fingerprint, Present):
             raise AssertionError("media unit replay state has no request fingerprint")
+        if state.request_fingerprint.value != request_fingerprint:
+            raise AssertionError("media unit synthesis request changed on replay")
         if state.dispatch_phase is step_journal.Completed:
             if not isinstance(state.terminal_result, Present):
                 raise AssertionError("Completed media unit step has no terminal result")
@@ -1045,113 +1004,202 @@ async def run_media_unit_build(
         if state.dispatch_phase is not step_journal.Prepared:
             raise AssertionError(f"unknown media unit dispatch phase {state.dispatch_phase!r}")
 
-    # All request-shaping reads are complete before the generation boundary.
+    # All request-shaping reads are complete before the external rate-limit and
+    # provider boundaries.
     db.commit()
-
-    def lock_dispatch(dispatch_db: Session) -> JobRow | None:
-        locked_summary = dispatch_db.scalar(
-            select(MediaSummary).where(MediaSummary.id == summary_id).with_for_update()
-        )
-        jobs = lock_jobs_for_payload(
-            dispatch_db,
-            kind=_MEDIA_UNIT_JOB_KIND,
-            expected_payload_match={
-                "media_id": str(media_id),
-                "content_fingerprint": content_fingerprint,
-            },
-        )
-        locked_job = next(
-            (candidate for candidate in jobs if candidate.id == ctx.job_id),
-            None,
-        )
-        if (
-            locked_summary is None
-            or locked_summary.status != "building"
-            or locked_summary.content_fingerprint != content_fingerprint
-            or current_content_fingerprint(dispatch_db, media_id=media_id) != content_fingerprint
-        ):
-            return None
-        return locked_job
-
-    # A first dispatch reloads the prepared job; a replay may retain an earlier
-    # read snapshot. Neither may cross the generation host I/O boundary.
-    db.commit()
-    journal = JobGenerationJournal(
-        context=ctx,
-        step_path=_MEDIA_UNIT_STEP_PATH,
-        lock_dispatch=lock_dispatch,
-    )
+    rate_limiter = get_rate_limiter()
     try:
-        execution_request = await admit_job_generation(
-            owner=LlmCallOwner(kind="media_summary", id=summary_id),
-            generation_id=generation_id,
-            operation="media_summary",
-            intent=intent,
-            prompt_template_revision=generation_policy.operation_revision(MEDIA_UNIT_OPERATION),
-            prompt_payload_ref=ImmutablePromptPayloadRef(
-                owner_kind="media_summary",
-                owner_id=str(summary_id),
-                revision=generation_policy.operation_revision(MEDIA_UNIT_OPERATION),
-                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
-            ),
-            journal=journal,
-            session_factory=get_session_factory(),
-            runtime=runtime,
+        rate_limiter.acquire_inflight_slot(owner_user_id)
+    except ApiError as exc:
+        fail_media_unit(
+            db,
+            summary_id=summary_id,
+            expected_fingerprint=content_fingerprint,
+            ctx=ctx,
+            error_code=exc.code.value,
+            error_detail=exc.message,
         )
-        execution_result = await execute_generation(
-            execution_request,
-            session_factory=get_session_factory(),
-            runtime=runtime,
-            encode_terminal=lambda terminal: _encode_media_unit_terminal(
-                codex_terminal_evidence(terminal),
-                candidates=candidates,
-            ),
-            encode_failure=_encode_media_unit_failure,
-        )
-    except GenerationAdmissionInputsChanged:
-        current_job = get_job(db, ctx.job_id)
-        current_state = (
-            None
-            if current_job is None
-            else step_journal.read_step_states(current_job).get(_MEDIA_UNIT_STEP_PATH)
-        )
-        if current_state is not None and current_state.dispatch_phase is step_journal.Prepared:
-            _complete_prepared_media_unit_without_dispatch(
+        return "failed"
+    try:
+        if state is None:
+            if not _media_unit_attempt_active(
                 db,
-                owner=owner,
+                media_id=media_id,
+                content_fingerprint=content_fingerprint,
                 ctx=ctx,
-                state=current_state,
-                result=_CompletedSkip(reason="request_fingerprint_changed"),
-                reason="media synthesis inputs changed before redispatch",
+            ):
+                db.rollback()
+                return "ok"
+            prepared = step_journal.StepReplayState(
+                generation_id=generation_id,
+                dispatch_phase=step_journal.Prepared,
+                request_fingerprint=present(request_fingerprint),
+                terminal_result=absent(),
             )
-        return "ok"
-    except GenerationDispatchAborted:
-        if state is not None and state.dispatch_phase is step_journal.Prepared:
-            _complete_prepared_media_unit_without_dispatch(
+            if not step_journal.checkpoint_step_state(
                 db,
-                owner=owner,
                 ctx=ctx,
-                state=state,
-                result=_CompletedSkip(reason="dispatch_aborted"),
-                reason="media owner fence aborted generation before redispatch",
+                job=job,
+                step_path=_MEDIA_UNIT_STEP_PATH,
+                state=prepared,
+            ):
+                db.rollback()
+                return "ok"
+            db.commit()
+            job = get_job(db, ctx.job_id)
+            if job is None:
+                return "ok"
+
+        def mark_dispatch_uncertain() -> None:
+            if not _media_unit_attempt_active(
+                db,
+                media_id=media_id,
+                content_fingerprint=content_fingerprint,
+                ctx=ctx,
+            ):
+                db.rollback()
+                if not running_job_claim_is_current(
+                    db,
+                    job_id=ctx.job_id,
+                    worker_id=ctx.worker_id,
+                    attempt_no=ctx.attempt_no,
+                ):
+                    raise DispatchTransferred
+                raise DispatchAborted("media unit became ineligible before dispatch")
+            if not step_journal.checkpoint_step_state(
+                db,
+                ctx=ctx,
+                job=job,
+                step_path=_MEDIA_UNIT_STEP_PATH,
+                state=step_journal.StepReplayState(
+                    generation_id=generation_id,
+                    dispatch_phase=step_journal.Uncertain,
+                    request_fingerprint=present(request_fingerprint),
+                    terminal_result=absent(),
+                ),
+            ):
+                db.rollback()
+                raise DispatchTransferred
+            db.commit()
+
+        try:
+            call = await execute_generation(
+                GenerationRequest(
+                    generation_id=generation_id,
+                    owner=LlmCallOwner(kind="media_summary", id=summary_id, user_id=owner_user_id),
+                    operation=MEDIA_UNIT_OPERATION,
+                    profile=profile,
+                    reasoning=profile.default_reasoning_option_id,
+                    intent=intent,
+                ),
+                session_factory=get_session_factory(),
+                runtime=runtime,
+                before_dispatch=mark_dispatch_uncertain,
             )
-        return "ok"
-    except GenerationUncertain as exc:
-        raise _UncertainMediaUnitReplayDefect(str(exc)) from exc
-    if isinstance(execution_result, RescheduleRequested):
-        return execution_result
-    if not isinstance(execution_result, CompletedGeneration):
-        raise AssertionError("media unit generation result is not exhaustive")
-    completed = _COMPLETED_RESULT_ADAPTER.validate_json(execution_result.terminal_result)
-    return _apply_completed_result(
-        db,
-        media_id=media_id,
-        owner_user_id=owner_user_id,
-        summary_id=summary_id,
-        content_fingerprint=content_fingerprint,
-        ctx=ctx,
-        result=completed,
-    )
+        except (DispatchAborted, DispatchTransferred):
+            return "ok"
+        except ApiError as exc:
+            completed: _CompletedResult = _CompletedFailure(
+                error_code=exc.code.value,
+                error_detail=present(exc.message),
+            )
+        else:
+            if isinstance(call.outcome, Succeeded):
+                try:
+                    value = decode_structured_synthesis(call.outcome, schema=MediaUnitSynthesis)
+                except StructuredSynthesisError as exc:
+                    logger.warning(
+                        "media_unit_build.llm_failure",
+                        media_id=str(media_id),
+                        error_code="invalid_structured_output",
+                    )
+                    completed = _CompletedFailure(
+                        error_code="invalid_structured_output",
+                        error_detail=present(str(exc)),
+                    )
+                else:
+                    completed = _CompletedSuccess(
+                        summary_md=value.summary_md,
+                        claims=tuple(
+                            _CompletedGroundedClaim(
+                                claim_text=claim_text,
+                                evidence_span_id=evidence_span_id,
+                                ordinal=ordinal,
+                            )
+                            for claim_text, evidence_span_id, ordinal in _map_claims_to_spans(
+                                value, candidates
+                            )
+                        ),
+                    )
+            else:
+                code, detail = outcome_failure_facts(call.outcome)
+                logger.warning(
+                    "media_unit_build.llm_failure", media_id=str(media_id), error_code=code
+                )
+                completed = _CompletedFailure(
+                    error_code=code,
+                    error_detail=present(detail) if detail is not None else absent(),
+                )
+
+        fresh_job = get_job(db, ctx.job_id)
+        if fresh_job is None:
+            return "ok"
+        if not step_journal.checkpoint_step_state(
+            db,
+            ctx=ctx,
+            job=fresh_job,
+            step_path=_MEDIA_UNIT_STEP_PATH,
+            state=step_journal.StepReplayState(
+                generation_id=generation_id,
+                dispatch_phase=step_journal.Completed,
+                request_fingerprint=present(request_fingerprint),
+                terminal_result=present(
+                    _COMPLETED_RESULT_ADAPTER.dump_json(completed).decode("utf-8")
+                ),
+            ),
+        ):
+            db.rollback()
+            return "ok"
+        db.commit()
+        return _apply_completed_result(
+            db,
+            media_id=media_id,
+            owner_user_id=owner_user_id,
+            summary_id=summary_id,
+            content_fingerprint=content_fingerprint,
+            ctx=ctx,
+            result=completed,
+        )
+    finally:
+        rate_limiter.release_inflight_slot(owner_user_id)
+
+
+def _media_unit_request_fingerprint(
+    *,
+    content_fingerprint: str,
+    candidates: list[_Candidate],
+    user_content: str,
+    provider: str,
+    model: str,
+    reasoning: str,
+) -> str:
+    encoded = json.dumps(
+        {
+            "operation": MEDIA_UNIT_OPERATION,
+            "content_fingerprint": content_fingerprint,
+            "provider": provider,
+            "model": model,
+            "reasoning": reasoning,
+            "system_prompt": _MEDIA_UNIT_SYSTEM_PROMPT,
+            "user_content": user_content,
+            "max_output_tokens": MEDIA_UNIT_MAX_OUTPUT_TOKENS,
+            "schema": MediaUnitSynthesis.model_json_schema(),
+            "evidence_span_ids": [str(candidate.evidence_span_id) for candidate in candidates],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _media_unit_attempt_active(
@@ -1201,8 +1249,6 @@ def _apply_completed_result(
     ctx: JobExecutionContext,
     result: _CompletedResult,
 ) -> Literal["ok", "failed"]:
-    if isinstance(result, _CompletedSkip):
-        return "ok"
     if isinstance(result, _CompletedFailure):
         fail_media_unit(
             db,
@@ -1235,12 +1281,11 @@ def _map_claims_to_spans(
     synthesis: MediaUnitSynthesis,
     candidates: list[_Candidate],
 ) -> list[tuple[str, UUID, int]]:
-    """Map each claim's candidate_index to a span.
+    """Map each claim's candidate_index to a span, dropping out-of-range claims.
 
-    The bounds check is :func:`ground_indices`; the terminal codec compares the
-    survivor count with the proposed count and normalizes any dropped index to
-    ``invalid_output`` before this value can reach publication. Survivors keep
-    model order and are reassigned dense ordinals 0..M.
+    The bounds check is :func:`ground_indices` (policy ``"drop"``; AC-2: an
+    ungrounded claim never reaches persistence). Survivors keep model order and
+    are reassigned dense ordinals 0..M (caller-side concern).
     """
     survivors = (
         ground_indices(
@@ -1258,6 +1303,68 @@ def _map_claims_to_spans(
 
 
 # ---------- internal: fingerprint / candidates / persistence ----------------
+
+
+def current_content_fingerprint(db: Session, *, media_id: UUID) -> str:
+    """Public, no-LLM content fingerprint: the current staleness signal for a media.
+
+    SHA-256 of the active embedding model plus the ordered chunk-text hashes.
+    Changes whenever the media is re-extracted (chunk set or active index run
+    changes), which is the staleness signal for units and every Dossier that
+    depends on the media. Works for not-ready media (an empty content index hashes
+    to a stable value). Sole reader/definer of this fingerprint; callers (freshness
+    checks, publish fencing, aggregate dedup) MUST route through here rather than
+    reading the stored ``media_summaries.content_fingerprint`` column.
+    """
+    index_state = (
+        db.execute(
+            text(
+                """
+            SELECT active_embedding_provider, active_embedding_model, updated_at
+            FROM content_index_states
+            WHERE owner_kind = 'media' AND owner_id = :media_id
+            """
+            ),
+            {"media_id": media_id},
+        )
+        .mappings()
+        .first()
+    )
+    provider = (index_state or {}).get("active_embedding_provider")
+    model = (index_state or {}).get("active_embedding_model")
+    index_generation = (index_state or {}).get("updated_at")
+
+    chunk_rows = (
+        db.execute(
+            text(
+                """
+            SELECT chunk_idx, chunk_text
+            FROM content_chunks
+            WHERE owner_kind = 'media' AND owner_id = :media_id
+            ORDER BY chunk_idx
+            """
+            ),
+            {"media_id": media_id},
+        )
+        .mappings()
+        .all()
+    )
+    canonical = {
+        "active_embedding_provider": provider,
+        "active_embedding_model": model,
+        "active_index_generation": (
+            index_generation.isoformat() if index_generation is not None else None
+        ),
+        "chunks": [
+            [
+                int(row["chunk_idx"]),
+                hashlib.sha256(str(row["chunk_text"]).encode("utf-8")).hexdigest(),
+            ]
+            for row in chunk_rows
+        ],
+    }
+    serialized = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def _load_candidates(db: Session, *, media_id: UUID) -> list[_Candidate]:
@@ -1479,7 +1586,7 @@ class MediaUnitSynthesis(BaseModel):
 
 
 # Prompt decomposition for the shared synthesis scaffold; the assembled bytes
-# are pinned (golden) in tests/kernel/test_structured_synthesis_contract.py.
+# are pinned (golden) in tests/test_structured_synthesis.py.
 _MEDIA_UNIT_PERSONA = (
     "You are a careful research assistant building a reusable unit for one "
     "document: a concise summary plus a set of atomic, grounded claims."

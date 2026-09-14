@@ -355,7 +355,6 @@ export function canonicalSessionOfGlobalState(
 ): AudioSession | null {
   switch (state.kind) {
     case "Absent":
-    case "UpdateRequired":
     case "RuntimeFailed":
     case "PreviewAudio":
     case "PreviewAudioFailed":
@@ -381,7 +380,6 @@ export function previewSessionOfGlobalState(
     case "PreviewAudioAtEnd":
       return state.session;
     case "Absent":
-    case "UpdateRequired":
     case "RuntimeFailed":
     case "Active":
     case "Completing":

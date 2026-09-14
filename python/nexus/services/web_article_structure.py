@@ -4,19 +4,14 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
 from typing import assert_never, cast
 from uuid import UUID
 
 from lxml.html import HtmlElement, fragment_fromstring
 
-from nexus.schemas.presence import Presence, Present, absent, present
-from nexus.services.canonicalize import (
-    HEADING_TAGS,
-    canonicalize_structure,
-    generate_canonical_text,
-)
+from nexus.services.canonicalize import generate_canonical_text
 from nexus.services.document_embed_extraction import DetectedDocumentEmbed, extract_document_embeds
 from nexus.services.document_embeds import (
     DocumentEmbedArtifactOccurrence,
@@ -30,6 +25,7 @@ from nexus.services.reader_apparatus import extract_html_apparatus
 from nexus.services.sanitize_html import sanitize_html
 from nexus.text import normalize_whitespace
 
+HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 WEB_ARTICLE_HTML_MAX_BYTES = 2 * 1024 * 1024
 
 
@@ -40,14 +36,11 @@ class WebArticleIndexBlockSpec:
     start_offset: int
     end_offset: int
     heading_path: tuple[str, ...]
-    owns_container: bool
-    parent_section_id: Presence[str]
     heading_level: int | None = None
     section_id: str | None = None
     anchor_id: str | None = None
     depth: int | None = None
     ordinal: int | None = None
-    container_end_offset: Presence[int] = field(default_factory=absent)
 
 
 @dataclass(frozen=True)
@@ -75,11 +68,9 @@ class _Heading:
     label: str
     level: int
     section_id: str
-    anchor_id: str | None
+    anchor_id: str
     ordinal: int
-    container_end_offset: Presence[int]
-    owns_container: bool
-    parent_section_id: Presence[str]
+    visible: bool
 
 
 def document_embed_artifact_occurrences(
@@ -132,6 +123,7 @@ def prepare_web_article_fragment(
     html: str,
     base_url: str,
     fragment_idx: int,
+    media_title: str | None = None,
     extract_embeds: bool = False,
     embed_source_html: str | None = None,
 ) -> WebArticlePreparedFragment:
@@ -185,6 +177,7 @@ def prepare_web_article_fragment(
         html_sanitized=html_sanitized,
         canonical_text=canonical_text,
         fragment_idx=fragment_idx,
+        media_title=media_title,
     )
     return WebArticlePreparedFragment(
         html_sanitized=html_sanitized,
@@ -284,17 +277,19 @@ def build_web_article_index_blocks(
     html_sanitized: str,
     canonical_text: str,
     fragment_idx: int,
+    media_title: str | None = None,
 ) -> list[WebArticleIndexBlockSpec]:
-    headings = _headings(html_sanitized, canonical_text, fragment_idx)
+    headings = _headings(html_sanitized, canonical_text, fragment_idx, media_title)
     heading_by_start = {start: heading for start, heading in headings}
     stack: list[tuple[int, str]] = []
     blocks: list[WebArticleIndexBlockSpec] = []
     for start, end, _text_value in _line_ranges(canonical_text):
         heading = heading_by_start.get(start)
         if heading is not None:
-            while stack and stack[-1][0] >= heading.level:
-                stack.pop()
-            stack.append((heading.level, heading.label))
+            if heading.visible:
+                while stack and stack[-1][0] >= heading.level:
+                    stack.pop()
+                stack.append((heading.level, heading.label))
             blocks.append(
                 WebArticleIndexBlockSpec(
                     block_idx=len(blocks),
@@ -303,13 +298,10 @@ def build_web_article_index_blocks(
                     end_offset=end,
                     heading_path=tuple(label for _, label in stack),
                     heading_level=heading.level,
-                    section_id=heading.section_id,
-                    anchor_id=heading.anchor_id,
-                    depth=len(stack),
-                    ordinal=heading.ordinal,
-                    container_end_offset=heading.container_end_offset,
-                    owns_container=heading.owns_container,
-                    parent_section_id=heading.parent_section_id,
+                    section_id=heading.section_id if heading.visible else None,
+                    anchor_id=heading.anchor_id if heading.visible else None,
+                    depth=len(stack) if heading.visible else None,
+                    ordinal=heading.ordinal if heading.visible else None,
                 )
             )
             continue
@@ -320,8 +312,6 @@ def build_web_article_index_blocks(
                 start_offset=start,
                 end_offset=end,
                 heading_path=tuple(label for _, label in stack),
-                owns_container=False,
-                parent_section_id=absent(),
             )
         )
     return blocks
@@ -331,102 +321,47 @@ def _headings(
     html_sanitized: str,
     canonical_text: str,
     fragment_idx: int,
+    media_title: str | None,
 ) -> list[tuple[int, _Heading]]:
-    source = canonicalize_structure(html_sanitized)
-    if source.text != canonical_text:
-        raise ValueError("Web heading extraction disagrees with persisted canonical text")
-    anchors_by_element = {index: anchor for anchor, index in source.anchors.items()}
+    root = cast(HtmlElement, fragment_fromstring(html_sanitized, create_parent=True))
+    title = normalize_whitespace(media_title or "")
+    seen_first = False
+    cursor = 0
     headings: list[tuple[int, _Heading]] = []
-    source_indices: list[int] = []
     ordinal = 0
-    for index, element in enumerate(source.elements):
-        if element.tag not in HEADING_TAGS:
+    for element in root.iter():
+        if not isinstance(element, HtmlElement):
             continue
-        label = normalize_whitespace(source.text[element.start_offset : element.end_offset])
+        tag = str(element.tag).lower()
+        if tag not in HEADING_TAGS:
+            continue
+        label = _label(serialize_html(element))
         if not label:
             continue
+        match = _find_line(canonical_text, label, cursor)
+        if match is None:
+            continue
+        start, end = match
         slug = _slug(label)
+        visible = not (not seen_first and title and normalize_whitespace(label) == title)
         headings.append(
             (
-                element.start_offset,
+                start,
                 _Heading(
                     label=label,
-                    level=int(element.tag[1]),
+                    level=int(tag[1]),
                     section_id=f"web-heading:{fragment_idx}:{ordinal}:{slug}",
-                    anchor_id=anchors_by_element.get(index),
+                    anchor_id=element.get("id")
+                    or f"nexus-web-heading-{fragment_idx}-{ordinal}-{slug}",
                     ordinal=ordinal,
-                    container_end_offset=(
-                        present(source.elements[element.parent_container.value].end_offset)
-                        if isinstance(element.parent_container, Present)
-                        else absent()
-                    ),
-                    owns_container=False,
-                    parent_section_id=absent(),
+                    visible=visible,
                 ),
             )
         )
-        source_indices.append(index)
+        seen_first = True
         ordinal += 1
-    container_owners: dict[int, str] = {}
-    for index, container in enumerate(source.elements):
-        if container.tag not in {"section", "article"}:
-            continue
-        labelled = {
-            source.anchors[label] for label in container.labelled_by if label in source.anchors
-        }
-        owners = [
-            heading.section_id
-            for source_index, (_, heading) in zip(source_indices, headings, strict=True)
-            if source.elements[source_index].parent_container == present(index)
-            and (
-                source_index in labelled
-                if labelled
-                else source.elements[source_index].start_offset == container.start_offset
-            )
-        ]
-        if len(owners) == 1:
-            container_owners[index] = owners[0]
-    stack: list[_Heading] = []
-    resolved: list[tuple[int, _Heading]] = []
-    resolved_by_id: dict[str, _Heading] = {}
-    for source_index, (start, heading) in zip(source_indices, headings, strict=True):
-        while stack and (
-            stack[-1].level >= heading.level
-            or (
-                isinstance(stack[-1].container_end_offset, Present)
-                and stack[-1].container_end_offset.value <= start
-            )
-        ):
-            stack.pop()
-        parent: Presence[str] = absent()
-        owns_container = False
-        container = source.elements[source_index].parent_container
-        while isinstance(container, Present):
-            owner = container_owners.get(container.value)
-            if owner == heading.section_id:
-                owns_container = True
-            elif owner is not None:
-                parent = present(
-                    stack[-1].section_id
-                    if stack and any(ancestor.section_id == owner for ancestor in stack)
-                    else owner
-                )
-                break
-            container = source.elements[container.value].parent_container
-        if not isinstance(parent, Present) and stack:
-            parent = present(stack[-1].section_id)
-        heading = dataclass_replace(
-            heading, owns_container=owns_container, parent_section_id=parent
-        )
-        resolved.append((start, heading))
-        resolved_by_id[heading.section_id] = heading
-        chain = [heading]
-        while isinstance(parent, Present):
-            ancestor = resolved_by_id[parent.value]
-            chain.append(ancestor)
-            parent = ancestor.parent_section_id
-        stack = list(reversed(chain))
-    return resolved
+        cursor = end
+    return headings
 
 
 def _fragment_blocks(
@@ -462,6 +397,13 @@ def _line_ranges(canonical_text: str) -> list[tuple[int, int, str]]:
         if text_value.strip():
             ranges.append((start, cursor, text_value))
     return ranges
+
+
+def _find_line(canonical_text: str, label: str, cursor: int) -> tuple[int, int] | None:
+    for start, end, text_value in _line_ranges(canonical_text):
+        if start >= cursor and text_value == label:
+            return start, end
+    return None
 
 
 def _label(html: str) -> str:

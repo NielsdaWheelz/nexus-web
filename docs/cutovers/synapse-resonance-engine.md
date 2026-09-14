@@ -71,9 +71,9 @@ G2. Explicit: a scan button on the Connections section; machine rows are
 visibly machine; one-tap dismiss with permanent suppression.
 G3. Grounded: every proposed edge points at a real object the retriever
 actually returned (index-grounded, `ground_indices` policy `drop`).
-G4. Bounded: the fixed `synapse` operation uses the `routine`
-(`gpt-5.6-luna` / `low`) plan with a 120s turn bound; domain limits remain
-≤12 candidates, ≤4 connections, and the reviewed structured-output schema.
+G4. Cheap: light-tier pinned model, ≤12 candidates, ≤4 connections, ≤1000
+output tokens, 45s timeout, BYOK-or-platform via `resolve_api_key("auto")`,
+full rate-limit envelope.
 G5. Honest flatness: zero new connection stores; one new domain table
 (`synapse_suppressions`) holding the only thing edges cannot: a negative
 assertion.
@@ -137,12 +137,12 @@ Vocabulary changes:
 
 ## 5. The sole writer — `python/nexus/services/synapse.py`
 
-Constants (validated at import): `SYNAPSE_OPERATION = "synapse"`,
-`SYNAPSE_CANDIDATE_LIMIT = 12`, `SYNAPSE_MAX_CONNECTIONS = 4`,
+Constants (validated at import): `SYNAPSE_PROVIDER = "anthropic"`,
+`SYNAPSE_MODEL = require_catalog_model("anthropic", "claude-haiku-4-5-20251001")`
+(light tier), `SYNAPSE_CANDIDATE_LIMIT = 12`, `SYNAPSE_MAX_CONNECTIONS = 4`,
+`SYNAPSE_MAX_OUTPUT_TOKENS = 1000`, `SYNAPSE_LLM_TIMEOUT_SECONDS = 45`,
 `SYNAPSE_QUERY_CHAR_BUDGET = 800`, `SYNAPSE_DOSSIER_CHAR_BUDGET = 12_000`,
 `SYNAPSE_SOURCE_SCHEMES = ("media", "page", "note_block", "highlight")`.
-Model, effort, capability, transport deadline, and output bounds are resolved
-only by `generation_policy.py`; Synapse has no local override.
 
 ```python
 def queue_synapse_scan(db: Session, *, user_id: UUID, ref: ResourceRef, reason: str) -> bool
@@ -163,14 +163,7 @@ def scan_status(db: Session, *, user_id: UUID, ref: ResourceRef) -> Literal["idl
 One SELECT on `background_jobs` by `dedupe_key` + non-terminal status.
 
 ```python
-async def run_synapse_scan(
-    db: Session,
-    *,
-    user_id: UUID,
-    ref: ResourceRef,
-    context: JobExecutionContext,
-    runtime: ExecutionRuntime,
-) -> ScanResult | RescheduleRequested
+async def run_synapse_scan(db: Session, *, user_id: UUID, ref: ResourceRef, llm: LLMRouter) -> Literal["ok", "skipped", "failed"]
 ```
 1. **Dossier.** Per scheme (all permission-checked through existing loaders):
    - `media`: `get_media_unit` (media_intelligence.py:293) — `summary_md` +
@@ -203,11 +196,13 @@ async def run_synapse_scan(
    direction, any kind/origin (`resource_graph.connections.query_connections`);
    (d) suppressed pairs, both directions (`synapse_suppressions`).
 5. **Judge.** Zero candidates → replace-set to `[]`, `"ok"` (current-only:
-   the engine currently sees nothing). Else build one bounded structured
-   `GenerationIntent` and execute operation `synapse` through the shared Codex
-   boundary with ledger owner
-   `LlmCallOwner(kind="synapse_scan", id=<source object id>)`. Decode the closed
-   terminal through the same `SynapseSynthesis` schema:
+   the engine currently sees nothing). Else one structured synthesis:
+   `run_structured_synthesis(llm=LedgeredLLM(db=db,
+   owner=LlmCallOwner(kind="synapse_scan", id=<source object id>),
+   router=llm, llm_operation="synapse_scan", key_mode_requested="auto",
+   key_mode_used=resolved.mode), request=SynthesisRequest(provider=...,
+   llm_request=build_synthesis_request(...), api_key=..., timeout_s=45),
+   schema=SynapseSynthesis)` with
    `SynapseSynthesis{connections: list[{candidate_index: int,
    kind: Literal["context","supports","contradicts"],
    rationale: str (1..240)}]}` (`extra="forbid"`), grounded via
@@ -226,18 +221,12 @@ async def run_synapse_scan(
    `replace_edges_for_origin(db, viewer_id=user_id, source=ref,
    origin="synapse", edges=[...])` (skips pairs owned by other origins,
    edges.py:151 — DB backstop for step 4c races); commit.
-7. **Generation envelope.** The job owns a stable payload-derived generation id
-   and `Prepared | Uncertain | Completed` checkpoint at `synthesis`. The shared
-   boundary stages the one price-free `llm_calls` start beside `Uncertain`,
-   dispatches once over private v2 UDS to `auth_profile=codex-personal`, and
-   stages the closed terminal beside `Completed`. A proven pre-accept capacity
-   refusal alone may reschedule the same `Prepared` generation; accepted
-   ambiguity stays `Uncertain` and is never automatically redispatched.
-   Structured/terminal failure leaves prior edges intact. Synapse supports
-   command-free `ProveNotDispatched`; recovered-terminal attachment is absent
-   because the mutable dossier/candidate set is not durable command truth. See
-   [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
-   and [`../modules/llms.md`](../modules/llms.md).
+7. **Envelope.** Key resolve (`resolve_api_key(db, user_id, provider,
+   "auto")`; no key → `"skipped"` + log), rate-limit slots/rpm/token-budget
+   identical to media units (media_intelligence.py:466-568 incl.
+   release-on-failure finally; BYOK skips token budget).
+   `LLMError`/`StructuredSynthesisError` → log + `"failed"` (prior edges
+   intact; queue retry ladder applies).
 
 ```python
 def dismiss_synapse_edge(db: Session, *, viewer_id: UUID, edge_id: UUID) -> None
@@ -251,8 +240,7 @@ Load via `get_owned_edge` (edges.py:59); absent → NotFoundError; origin ≠
 - `python/nexus/tasks/synapse_scan.py` — copy `tasks/media_unit_build.py`:
   `run_llm_task(LlmTaskSpec(label="synapse_scan"), handler)`; handler parses
   `{user_id, ref}`, awaits `run_synapse_scan`, returns `{"status": result}`;
-  unexpected defects propagate to the queue ladder (there is no head row to
-  fail).
+  `on_worker_exception=None` (queue ladder owns retries; no head row to fail).
 - `jobs/registry.py`: `JobDefinition(kind="synapse_scan", handler=<lazy shim>,
   max_attempts=3, lease_seconds=300, failed_result_statuses=("failed",))`;
   `USER_FACING_JOB_KINDS` += `"synapse_scan"`.
@@ -346,18 +334,15 @@ on the same source survive byte-identical).
 AC3. Dismissing a synapse edge deletes it, writes a suppression, and the next
 scan does not re-propose the pair in either direction.
 AC4. A pair already connected by a `user` edge is never proposed.
-AC5. A completed generation/schema failure leaves the previous synapse edge set
-intact and is not redispatched at the same identity; a pre-dispatch defect may
-use the queue ladder. Disabled or unit-not-ready scans succeed quietly with no
-edge changes.
+AC5. Scan failure (LLM error) leaves the previous synapse edge set intact and
+the job retries per ladder; scan skip (no key / disabled / unit-not-ready)
+succeeds quietly with no edge changes.
 AC6. `POST /synapse/scans` is idempotent while a scan is in flight (one
 non-terminal job per ref); status endpoint reflects pending/running/idle.
 AC7. Self/kin exclusion: a highlight never resonates with its own media; a
 note block never with its own page or page-siblings.
-AC8. Exactly one `llm_calls` row exists for a dispatched scan with
-`owner_kind='synapse_scan'`, `owner_id=<source id>`, operation `synapse`, its
-fixed plan/revision, `backend=codex`, and `auth_profile=codex-personal`; it has
-no provider attempt, credential-mode, or price fields.
+AC8. `llm_calls` rows exist with `owner_kind='synapse_scan'`,
+`owner_id=<source id>`, `llm_operation='synapse_scan'`.
 AC9. Gates: `origin="synapse"` edge construction appears only in
 `services/synapse.py` (+ tests); allowlist drift guards pass; FE lint/css
 gates pass; `proxy-routes` count updated.
@@ -365,17 +350,15 @@ AC10. `SYNAPSE_ENABLED=false` → every trigger no-ops (no job rows).
 
 ## 11. Test plan
 
-Backend (new `python/tests/test_synapse.py`, integration; deterministic
-protocol-valid Codex peer behind the production generation client):
+Backend (new `python/tests/test_synapse.py`, integration; fake-router pattern
+from `test_media_intelligence.py:179-199`; platform-key env fixture +
+entitlement grant + `_RecordingRateLimiter`):
 - scan over seeded corpus (`create_searchable_media` ×2 with lexical overlap
   + a note page indexed synchronously via `rebuild_page_content_index`)
   writes expected edges (AC1, AC8); empty-pick → empty set; zero-candidate →
   clears; replace-set (AC2); suppression round-trip (AC3); connected-pair
-  skip (AC4); schema-invalid terminal preserves prior edges and completes the
-  generation identity (AC5); kin exclusion (AC7).
-- Generation proof covers the exact fixed policy, one v2 UDS dispatch, staged
-  journal/ledger transitions, pre-accept capacity reschedule, and accepted-loss
-  suspension without redispatch (AC5, AC8).
+  skip (AC4); failure preserves via `_RawTextRouter`-style bad output →
+  repair → `StructuredSynthesisError` (AC5); kin exclusion (AC7).
 - `queue_synapse_scan`: dedupe (one non-terminal row), disabled no-op (AC10),
   SAVEPOINT-soft (host write survives forced enqueue failure).
 - Trigger tests: highlight create / page reindex task / media-unit promote

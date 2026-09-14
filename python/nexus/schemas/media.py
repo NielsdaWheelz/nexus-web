@@ -8,23 +8,17 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, FiniteFloat, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, JsonValue
 from pydantic.alias_generators import to_camel
 
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import Presence
-from nexus.schemas.publication_dates import PublicationDate
-from nexus.schemas.upload_failures import (
-    UploadTransportFailure,
-    UploadVerificationFailureCode,
-)
 from nexus.services.offline_download_source import (
     OFFLINE_DOWNLOAD_SOURCE_URL_MAX_LENGTH,
     OFFLINE_DOWNLOAD_TITLE_MAX_LENGTH,
 )
-from nexus.services.sealed_handles import UploadSessionHandle
 
 MediaProcessingStatus = Literal[
     "pending",
@@ -310,8 +304,7 @@ class MediaOut(BaseModel):
     # media.authors_manually_managed; the five camel author endpoints expose the
     # camel `authorMode` separately.
     author_mode: Literal["automatic", "manual"] = "automatic"
-    original_published_date: Presence[PublicationDate]
-    edition_published_date: Presence[PublicationDate]
+    published_date: str | None = None
     publisher: str | None = None
     language: str | None = None
     description: str | None = None
@@ -415,159 +408,22 @@ class FragmentOut(BaseModel):
 # =============================================================================
 
 
-class CreateUploadSessionRequest(BaseModel):
-    kind: Literal["Pdf", "Epub"]
+class UploadInitRequest(BaseModel):
+    """Request schema for POST /media/upload/init."""
+
+    kind: Literal["pdf", "epub"]
     filename: str = Field(min_length=1, max_length=255)
     content_type: str
     size_bytes: int = Field(gt=0)
     library_ids: list[UUID] = Field(default_factory=list)
 
-    model_config = ConfigDict(extra="forbid")
 
+class MediaIngestRequest(BaseModel):
+    """Request schema for POST /media/{id}/ingest."""
 
-def _canonical_uuid_text(value: str) -> str:
-    """Replay keys are text columns, so two spellings of one UUID would be two
-    different memo rows for one intent. Only the canonical spelling is a key."""
-    try:
-        parsed = UUID(value)
-    except ValueError as exc:
-        raise ValueError("client_mutation_id must be canonical lowercase UUID text") from exc
-    if str(parsed) != value:
-        raise ValueError("client_mutation_id must be canonical lowercase UUID text")
-    return value
-
-
-ClientMutationUuidText = Annotated[str, AfterValidator(_canonical_uuid_text)]
-
-
-class RetryUploadSessionRequest(BaseModel):
-    filename: str = Field(min_length=1, max_length=255)
-    content_type: str
-    size_bytes: int = Field(gt=0)
-    client_mutation_id: ClientMutationUuidText
-    expected_generation: int = Field(ge=1)
+    library_ids: list[UUID] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="forbid")
-
-
-class ConfirmUploadSessionRequest(BaseModel):
-    generation: int = Field(ge=1)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class _UploadTransportFailureBase(BaseModel):
-    generation: int = Field(ge=1)
-    duration_ms: int = Field(ge=0)
-    request_id: str = Field(min_length=1, max_length=255)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class UploadNetworkFailureRequest(_UploadTransportFailureBase):
-    kind: Literal["Network"]
-
-
-class UploadTimeoutFailureRequest(_UploadTransportFailureBase):
-    kind: Literal["Timeout"]
-
-
-class UploadHttpRejectedFailureRequest(_UploadTransportFailureBase):
-    kind: Literal["HttpRejected"]
-    status: int = Field(ge=100, le=599)
-
-
-class UploadAbortedFailureRequest(_UploadTransportFailureBase):
-    kind: Literal["Aborted"]
-
-
-UploadTransportFailureRequest = Annotated[
-    UploadNetworkFailureRequest
-    | UploadTimeoutFailureRequest
-    | UploadHttpRejectedFailureRequest
-    | UploadAbortedFailureRequest,
-    Field(discriminator="kind"),
-]
-
-
-class UploadRequiredHeaders(BaseModel):
-    content_type: str = Field(alias="Content-Type")
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class UploadRequired(BaseModel):
-    kind: Literal["UploadRequired"] = "UploadRequired"
-    session_handle: UploadSessionHandle
-    generation: int = Field(ge=1)
-    method: Literal["PUT"] = "PUT"
-    upload_url: str
-    required_headers: UploadRequiredHeaders
-    expires_at: datetime
-    idempotency_outcome: Literal["Created", "Reused"]
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class Published(BaseModel):
-    kind: Literal["Published"] = "Published"
-    session_handle: UploadSessionHandle
-    media_id: UUID
-    source_attempt_id: UUID
-    idempotency_outcome: Literal["Created", "Reused"]
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class VerificationFailed(BaseModel):
-    kind: Literal["VerificationFailed"] = "VerificationFailed"
-    code: UploadVerificationFailureCode
-    failed_at: datetime
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class TransportFailed(BaseModel):
-    kind: Literal["TransportFailed"] = "TransportFailed"
-    reason: UploadTransportFailure
-    failed_at: datetime
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class CapabilityExpired(BaseModel):
-    kind: Literal["CapabilityExpired"] = "CapabilityExpired"
-    expired_at: datetime
-
-    model_config = ConfigDict(extra="forbid")
-
-
-UploadSessionFailure = Annotated[
-    VerificationFailed | TransportFailed | CapabilityExpired,
-    Field(discriminator="kind"),
-]
-
-
-class UploadSessionCapabilities(BaseModel):
-    can_retry_upload: bool
-    can_remove: bool
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class NeedsAttention(BaseModel):
-    kind: Literal["NeedsAttention"] = "NeedsAttention"
-    session_handle: UploadSessionHandle
-    failure: UploadSessionFailure
-    capabilities: UploadSessionCapabilities
-
-    model_config = ConfigDict(extra="forbid")
-
-
-UploadSessionResponse = Annotated[
-    UploadRequired | Published | NeedsAttention,
-    Field(discriminator="kind"),
-]
 
 
 class ArticleCaptureRequest(BaseModel):
@@ -596,85 +452,10 @@ class ArticleCaptureResponse(BaseModel):
     ingest_enqueued: bool
 
 
-class RetrySourceRequest(BaseModel):
-    """Body for POST /media/{id}/retry that admits a new source attempt."""
+class RetryRequest(BaseModel):
+    """Body for POST /media/{id}/retry."""
 
-    from_stage: Literal["source"]
-    client_mutation_id: ClientMutationUuidText
-    expected_attempt_id: UUID
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class RetryMetadataRequest(BaseModel):
-    """Body for POST /media/{id}/retry that re-enriches metadata; its owner and
-    its (absent) idempotency contract are unchanged by the imports cutover."""
-
-    from_stage: Literal["metadata"]
-
-    model_config = ConfigDict(extra="forbid")
-
-
-RetryRequest = Annotated[
-    RetrySourceRequest | RetryMetadataRequest,
-    Field(discriminator="from_stage"),
-]
-
-
-class SourceRepairRequest(BaseModel):
-    """Requeue the exact dead job of one nonterminal source attempt."""
-
-    kind: Literal["Source"]
-    client_mutation_id: ClientMutationUuidText
-    expected_attempt_id: UUID
-    expected_job_id: UUID
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class SearchRepairRequest(BaseModel):
-    """Requeue the exact dead reindex job of one content-index revision."""
-
-    kind: Literal["Search"]
-    client_mutation_id: ClientMutationUuidText
-    expected_revision: int = Field(ge=1)
-    expected_job_id: UUID
-
-    model_config = ConfigDict(extra="forbid")
-
-
-MediaRepairRequest = Annotated[
-    SourceRepairRequest | SearchRepairRequest,
-    Field(discriminator="kind"),
-]
-
-
-class SourceRetryAdmission(BaseModel):
-    """The immutable receipt of an admitted source retry: the new attempt and
-    the one job that will run it."""
-
-    kind: Literal["SourceRetry"] = "SourceRetry"
-    media_id: UUID
-    source_attempt_id: UUID
-    job_id: UUID
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class SourceRepairAdmission(BaseModel):
-    kind: Literal["SourceRepair"] = "SourceRepair"
-    media_id: UUID
-    source_attempt_id: UUID
-    job_id: UUID
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class SearchRepairAdmission(BaseModel):
-    kind: Literal["SearchRepair"] = "SearchRepair"
-    media_id: UUID
-    revision: int = Field(ge=1)
-    job_id: UUID
+    from_stage: Literal["source", "metadata"]
 
     model_config = ConfigDict(extra="forbid")
 
@@ -798,6 +579,7 @@ class MediaEvidenceEpubHighlightOut(BaseModel):
     kind: Literal["epub_text"]
     evidence_span_id: UUID
     fragment_id: UUID
+    section_id: str | None = None
     start_offset: int = Field(ge=0)
     end_offset: int = Field(ge=0)
     text_quote: MediaEvidenceTextQuoteOut
@@ -905,28 +687,8 @@ class ReaderNavigationFragmentOut(BaseModel):
     """One unique canonical text unit in document order."""
 
     fragment_id: UUID
-    fragment_idx: int = Field(ge=0, strict=True)
-    char_count: int = Field(ge=0, strict=True)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class NavigationTextPointOut(BaseModel):
-    """An exact canonical codepoint boundary within one source fragment."""
-
-    fragment_id: UUID
-    offset: int = Field(ge=0, strict=True)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class NavigationTextRangeOut(BaseModel):
-    """A semantic extent, potentially spanning several canonical fragments."""
-
-    start: NavigationTextPointOut
-    end: NavigationTextPointOut
-
-    model_config = ConfigDict(extra="forbid")
+    fragment_idx: int = Field(ge=0)
+    char_count: int = Field(ge=0)
 
 
 class ReaderNavigationSectionOut(BaseModel):
@@ -934,13 +696,16 @@ class ReaderNavigationSectionOut(BaseModel):
 
     section_id: str
     label: str
-    parent_section_id: Presence[str]
-    target: NavigationTextPointOut
-    anchor_id: Presence[str]
-    extent: Presence[NavigationTextRangeOut]
-    source: Literal["Publisher", "Heading", "Both", "InferredNumberedEntry"]
-
-    model_config = ConfigDict(extra="forbid")
+    ordinal: int = Field(ge=0)
+    fragment_id: UUID
+    fragment_idx: int = Field(ge=0)
+    level: int | None = None
+    depth: int | None = None
+    start_offset: int = Field(ge=0)
+    end_offset: int | None = Field(ge=0)
+    href_path: str | None = None
+    href_fragment: str | None = None
+    anchor_id: str | None = None
 
 
 class ReaderNavigationTocNodeOut(BaseModel):
@@ -948,10 +713,13 @@ class ReaderNavigationTocNodeOut(BaseModel):
 
     id: str
     label: str
-    section_id: Presence[str]
+    ordinal: int
+    href: str | None = None
+    fragment_idx: int | None = None
+    level: int | None = None
+    depth: int | None = None
+    section_id: str | None = None
     children: list["ReaderNavigationTocNodeOut"]
-
-    model_config = ConfigDict(extra="forbid")
 
 
 class ReaderNavigationLocationOut(BaseModel):
@@ -959,9 +727,10 @@ class ReaderNavigationLocationOut(BaseModel):
 
     id: str
     label: str
-    target: Presence[NavigationTextPointOut]
-
-    model_config = ConfigDict(extra="forbid")
+    ordinal: int
+    href: str | None = None
+    fragment_idx: int | None = None
+    section_id: str | None = None
 
 
 class MediaNavigationOut(BaseModel):
@@ -969,28 +738,30 @@ class MediaNavigationOut(BaseModel):
 
     media_id: UUID
     kind: Literal["epub", "web_article"]
-    generation: int = Field(ge=1, strict=True)
     fragments: list[ReaderNavigationFragmentOut]
     sections: list[ReaderNavigationSectionOut]
     toc_nodes: list[ReaderNavigationTocNodeOut]
     landmarks: list[ReaderNavigationLocationOut]
     page_list: list[ReaderNavigationLocationOut]
 
-    model_config = ConfigDict(extra="forbid")
 
+class EpubSectionOut(BaseModel):
+    """Canonical EPUB section payload backed by a persisted nav location."""
 
-class EpubFragmentOut(BaseModel):
-    """One EPUB render unit, independent of the publication's outline."""
-
+    section_id: str
+    label: str
     fragment_id: UUID
-    fragment_idx: int = Field(ge=0, strict=True)
-    href_path: str = Field(min_length=1)
-    generation: int = Field(ge=1, strict=True)
+    fragment_idx: int
+    href_path: str | None
+    anchor_id: str | None
+    source_node_id: str | None
+    source: Literal["toc", "spine"]
+    ordinal: int
+    prev_section_id: str | None
+    next_section_id: str | None
     html_sanitized: str
     canonical_text: str
-    char_count: int = Field(ge=0, strict=True)
-    word_count: int = Field(ge=0, strict=True)
-    document_word_start: int = Field(ge=0, strict=True)
+    char_count: int
+    word_count: int
+    document_word_start: int
     created_at: datetime
-
-    model_config = ConfigDict(extra="forbid")

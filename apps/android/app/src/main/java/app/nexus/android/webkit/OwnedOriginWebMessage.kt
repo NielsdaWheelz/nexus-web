@@ -13,7 +13,6 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.net.URI
 import java.nio.charset.StandardCharsets
-import java.util.IdentityHashMap
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
@@ -23,30 +22,8 @@ private const val MAX_JSON_DEPTH = 16
 internal data class OwnedWebMessage(
     val data: String,
     val replyProxy: JavaScriptReplyProxy,
-    /** Exact origin of the document that sent this message. */
-    val sourceOrigin: Uri,
-    /** Navigation generation of the document that sent it, not of the delivery. */
     val documentGeneration: Long,
 )
-
-/**
- * Binds every inbound reply channel to the navigation generation that was
- * current when its document first spoke. Delivery order is not ordered against
- * `onPageStarted`, so stamping a message with the generation observed at
- * delivery time would let a superseded document's late message claim the
- * current document's identity.
- *
- * Keys are compared by identity: one WebView document owns exactly one reply
- * proxy instance. A known channel is retained for this capability's lifetime;
- * evicting it would let a superseded document be re-stamped as current after
- * enough navigations. Only the UI thread touches this map.
- */
-internal class OwnedDocumentChannels {
-    private val generations = IdentityHashMap<Any, Long>()
-
-    fun generationOf(channel: Any, currentGeneration: Long): Long =
-        generations.getOrPut(channel) { currentGeneration }
-}
 
 internal class OwnedOrigin(baseUrl: String) {
     private val origin = Uri.parse(baseUrl)
@@ -95,19 +72,11 @@ internal class OwnedOrigin(baseUrl: String) {
 internal class OwnedOriginWebMessage(
     private val webView: WebView,
     private val objectName: String,
-    baseUrls: Set<String>,
+    baseUrl: String,
     private val onMessage: (OwnedWebMessage) -> Unit,
 ) {
-    constructor(
-        webView: WebView,
-        objectName: String,
-        baseUrl: String,
-        onMessage: (OwnedWebMessage) -> Unit,
-    ) : this(webView, objectName, setOf(baseUrl), onMessage)
-
-    private val ownedOrigins = baseUrls.map(::OwnedOrigin)
+    private val ownedOrigin = OwnedOrigin(baseUrl)
     private val documentGeneration = AtomicLong(0)
-    private val channels = OwnedDocumentChannels()
     private var installed = false
 
     fun install(): Boolean {
@@ -117,11 +86,11 @@ internal class OwnedOriginWebMessage(
         WebViewCompat.addWebMessageListener(
             webView,
             objectName,
-            ownedOrigins.mapTo(mutableSetOf()) { it.rule },
+            setOf(ownedOrigin.rule),
         ) { _, message, sourceOrigin, isMainFrame, replyProxy ->
             if (
                 !isMainFrame ||
-                ownedOrigins.none { it.matches(sourceOrigin) } ||
+                !ownedOrigin.matches(sourceOrigin) ||
                 message.type != WebMessageCompat.TYPE_STRING
             ) {
                 return@addWebMessageListener
@@ -134,8 +103,7 @@ internal class OwnedOriginWebMessage(
                 OwnedWebMessage(
                     data = data,
                     replyProxy = replyProxy,
-                    sourceOrigin = sourceOrigin,
-                    documentGeneration = channels.generationOf(replyProxy, documentGeneration.get()),
+                    documentGeneration = documentGeneration.get(),
                 )
             )
         }
@@ -215,17 +183,11 @@ internal fun JSONObject.requireExactKeys(vararg expected: String) {
     }
 }
 
-// Android's org.json.JSONException is a checked Exception (the JVM test
-// artifact's is a RuntimeException). Every strict accessor therefore reads
-// through `opt`, which never throws, so a missing key is always the owned
-// IllegalStateException and a RuntimeException catch is sound on both runtimes.
-private fun JSONObject.present(key: String): Any = opt(key) ?: error("$key is absent")
-
 internal fun JSONObject.requireObject(key: String): JSONObject =
-    present(key) as? JSONObject ?: error("$key must be an object")
+    get(key) as? JSONObject ?: error("$key must be an object")
 
 internal fun JSONObject.requireArray(key: String, maximum: Int): JSONArray {
-    val value = present(key) as? JSONArray ?: error("$key must be an array")
+    val value = get(key) as? JSONArray ?: error("$key must be an array")
     require(value.length() <= maximum)
     return value
 }
@@ -235,7 +197,7 @@ internal fun JSONObject.requireBoundedString(
     minimum: Int,
     maximum: Int,
 ): String {
-    val value = present(key) as? String ?: error("$key must be a string")
+    val value = get(key) as? String ?: error("$key must be a string")
     require(value.codePointCount(0, value.length) in minimum..maximum)
     return value
 }
@@ -252,7 +214,7 @@ internal fun JSONObject.requireCanonicalUuid(key: String): UUID {
 }
 
 internal fun JSONObject.requireLong(key: String, minimum: Long, maximum: Long): Long {
-    val value = when (val raw = present(key)) {
+    val value = when (val raw = get(key)) {
         is Int -> raw.toLong()
         is Long -> raw
         else -> error("$key must be an integer")
@@ -266,7 +228,7 @@ internal fun JSONObject.requireFiniteDouble(
     minimum: Double,
     maximum: Double,
 ): Double {
-    val value = when (val raw = present(key)) {
+    val value = when (val raw = get(key)) {
         is Number -> raw.toDouble()
         else -> error("$key must be a number")
     }
@@ -275,4 +237,4 @@ internal fun JSONObject.requireFiniteDouble(
 }
 
 internal fun JSONObject.requireBoolean(key: String): Boolean =
-    present(key) as? Boolean ?: error("$key must be a boolean")
+    get(key) as? Boolean ?: error("$key must be a boolean")

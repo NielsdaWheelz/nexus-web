@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { page } from "vitest/browser";
 import { describe, expect, it } from "vitest";
 import "@/app/globals.css";
@@ -44,7 +44,7 @@ function ReaderColumn({
           height: COLUMN_HEIGHT_PX,
         }}
       >
-        <MobileReaderPositionRibbon visibleRange={visibleRange} onOpenMap={() => undefined} />
+        <MobileReaderPositionRibbon visibleRange={visibleRange} />
       </div>
     </div>
   );
@@ -57,17 +57,6 @@ function localClearance(element: HTMLElement): string {
 }
 
 describe("MobileReaderPositionRibbon placement", () => {
-  it("opens the map through a named touch-sized control without making the tiny ribbon a seek target", () => {
-    let opened = false;
-    render(<MobileReaderPositionRibbon visibleRange={{ start: 0.25, end: 0.5 }} onOpenMap={() => { opened = true; }} />);
-    const control = screen.getByRole("button", { name: "Open document map" });
-    expect(control.getBoundingClientRect().height).toBeGreaterThanOrEqual(24);
-    expect(control.getBoundingClientRect().width).toBeGreaterThanOrEqual(24);
-    fireEvent.click(control);
-    expect(opened).toBe(true);
-    expect(screen.getByTestId("mobile-reader-position-ribbon")).toHaveAttribute("aria-hidden", "true");
-  });
-
   it("paints at the reader column bottom regardless of the local content clearance", async () => {
     await page.viewport(390, 844);
     const visibleRange: ReaderDocumentOverviewRange = { start: 0.25, end: 0.5 };

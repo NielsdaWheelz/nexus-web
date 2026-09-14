@@ -1,18 +1,10 @@
 "use client";
 
-import {
-  useLayoutEffect,
-  useRef,
-  type MouseEvent,
-  type PointerEvent,
-  type ReactNode,
-} from "react";
+import { useRef, type MouseEvent, type ReactNode } from "react";
 import AccountMenu from "@/components/appnav/AccountMenu";
 import {
   isAccountDestinationId,
   NAV_ACCOUNT,
-  NAV_UTILITIES,
-  utilityActiveId,
   type NavItem,
 } from "@/components/appnav/navModel";
 import {
@@ -26,6 +18,7 @@ import AddPanelBoundary from "@/components/nexus/AddPanelBoundary";
 import ChooseBrowsePage from "@/components/nexus/ChooseBrowsePage";
 import ChooseCreatePage from "@/components/nexus/ChooseCreatePage";
 import ManageTabsPage from "@/components/nexus/ManageTabsPage";
+import MediaActivityPage from "@/components/nexus/MediaActivityPage";
 import type { AddContentSessionController } from "@/components/nexus/useAddContentSession";
 import type {
   NexusManagedClosedPane,
@@ -171,10 +164,6 @@ export default function SwitchboardTask({
 }) {
   const activationAdapterRef =
     useRef<MobileNexusActivationAdapterHandle>(null);
-  const taskPointerIdRef = useRef<number | null>(null);
-  useLayoutEffect(() => {
-    taskPointerIdRef.current = null;
-  }, [active]);
   const { state: workspaceState } = useWorkspaceStore();
   const activePane = getWorkspacePrimaryPanes(workspaceState).find(
     (pane) => pane.id === workspaceState.activePrimaryPaneId,
@@ -211,37 +200,10 @@ export default function SwitchboardTask({
     controller.announceUnavailable("");
     controller.escape();
   };
-  const recordTaskPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    taskPointerIdRef.current = event.pointerId;
-  };
-  const cancelTaskPointer = (event: PointerEvent<HTMLDivElement>) => {
-    if (taskPointerIdRef.current === event.pointerId) {
-      taskPointerIdRef.current = null;
-    }
-  };
-  const handleTaskClickCapture = (event: MouseEvent<HTMLDivElement>) => {
-    if (event.detail === 0) {
-      taskPointerIdRef.current = null;
-      return;
-    }
-    const nativeEvent = event.nativeEvent;
-    const pointerId =
-      "pointerId" in nativeEvent && typeof nativeEvent.pointerId === "number"
-        ? nativeEvent.pointerId
-        : null;
-    const admitted =
-      pointerId !== null && taskPointerIdRef.current === pointerId;
-    taskPointerIdRef.current = null;
-    if (admitted) return;
-    event.preventDefault();
-    event.stopPropagation();
-  };
   const accountMenu = (
     <AccountMenu
       account={NAV_ACCOUNT}
       activeId={accountActiveId}
-      utilities={NAV_UTILITIES}
-      utilityActiveId={utilityActiveId(activeDestinationId)}
       placement="below"
       align="end"
       renderTrigger={(trigger) => (
@@ -296,6 +258,20 @@ export default function SwitchboardTask({
             onEscapeRoot={escape}
             onUnavailable={controller.announceUnavailable}
             onRetry={controller.retry}
+          />
+        );
+      case "Activity":
+        return (
+          <MediaActivityPage
+            visible={active}
+            onBack={back}
+            onOpenMedia={(mediaId) =>
+              controller.openTarget({
+                kind: "InternalHref",
+                href: `/media/${mediaId}`,
+                labelHint: "Media",
+              })
+            }
           />
         );
       case "EntryActions":
@@ -359,11 +335,6 @@ export default function SwitchboardTask({
             onRetryRetained={controller.retryRetainedActivation}
             onCancelRetained={controller.cancelRetainedActivation}
             feedback={controller.managedTabsFeedback}
-            teachAdjacentSwipe={
-              controller.managedPanes.filter(
-                (pane) => pane.visibility === "visible",
-              ).length >= 2
-            }
           />
         );
       case "OperationBlocked":
@@ -488,25 +459,18 @@ export default function SwitchboardTask({
         skipReturnFocus={controller.shouldSuppressReturnFocusOnClose}
         focusKey={controller.focusKey}
       >
-        <div
-          className={styles.taskActivationAdmission}
-          onPointerDownCapture={recordTaskPointerDown}
-          onPointerCancelCapture={cancelTaskPointer}
-          onClickCapture={handleTaskClickCapture}
-        >
-          {renderPage()}
-          {controller.page.kind !== "Root" &&
-          controller.page.kind !== "EntryActions" ? (
-            <div
-              className={styles.liveRegion}
-              role="status"
-              aria-label="Nexus status"
-              aria-live="polite"
-            >
-              {controller.announcement}
-            </div>
-          ) : null}
-        </div>
+        {renderPage()}
+        {controller.page.kind !== "Root" &&
+        controller.page.kind !== "EntryActions" ? (
+          <div
+            className={styles.liveRegion}
+            role="status"
+            aria-label="Nexus status"
+            aria-live="polite"
+          >
+            {controller.announcement}
+          </div>
+        ) : null}
       </MobileFullScreenTask>
       <MobileNexusActivationAdapter
         ref={activationAdapterRef}

@@ -46,9 +46,7 @@ export default function PaneSurface({
       {hasContent ? (
         <div className={styles.content}>{children}</div>
       ) : empty ? (
-        <div className={styles.empty} data-pane-empty="">
-          {empty}
-        </div>
+        <div className={styles.empty}>{empty}</div>
       ) : null}
       {footer ? <div className={styles.footer}>{footer}</div> : null}
     </div>

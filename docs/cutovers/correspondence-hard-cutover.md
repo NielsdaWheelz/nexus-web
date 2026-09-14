@@ -11,7 +11,7 @@ This cutover owns the retained correspondence substrate:
 - full-measure user inquiries with a quiet accent rail;
 - flat composer geometry;
 - superscript inline citation markers;
-- backend run usage facts on the trust trail.
+- backend run usage and cost facts on the trust trail.
 
 The chat-interface cutover owns the final transcript hierarchy, typography,
 disclosures, and responsive behavior.
@@ -32,11 +32,11 @@ disclosures, and responsive behavior.
 - Inline citations remain superscript links/buttons at the cited claim.
 - `MessageSourcesDisclosure` owns the numbered `Sources (N)` apparatus and is
   closed by default.
-- `AssistantDetails` owns model, usage, tool/retrieval, context-reference,
+- `AssistantDetails` owns model, usage, cost, tool/retrieval, context-reference,
   and integrity diagnostics and is closed by default.
 - `AssistantWriteTrail` remains visible because completed writes and Undo are
   immediately actionable.
-- No colophon exists. Its model/token/source line duplicated Details and
+- No colophon exists. Its model/token/cost/source line duplicated Details and
   permanently displaced the answer.
 
 ### Composer
@@ -59,12 +59,12 @@ disclosures, and responsive behavior.
 | Source apparatus | `components/chat/MessageSourcesDisclosure.tsx` |
 | Run diagnostics | `components/chat/AssistantDetails.tsx` |
 | Consequential write trail | `components/chat/AssistantWriteTrail.tsx` |
-| Run usage data | `TrustRunOut` in the assistant trust trail |
+| Run usage/cost data | `TrustRunOut` in the assistant trust trail |
 
 ## Data contract
 
-Correspondence adds no message-level provenance object. Model identity and
-usage facts stay on the persisted run projection inside
+Correspondence adds no message-level provenance object. Model, token usage, and
+`total_cost_usd_micros` stay on the persisted run projection inside
 `message.trust_trail.run`. Sources remain derived from citation edges. The
 frontend does not duplicate either fact.
 
@@ -85,7 +85,7 @@ frontend does not duplicate either fact.
    register without visible role headings.
 2. Inline citation activation is unchanged.
 3. `Sources (N)` and `Details` are native, closed disclosures.
-4. Model, token, and source facts have one display home.
+4. Model, token, cost, and source facts have one display home.
 5. Writes and Undo remain visible; read-only diagnostics are opt-in.
 6. The composer presents routine capability state without error chrome.
 7. Deleted component names have no production or test import.

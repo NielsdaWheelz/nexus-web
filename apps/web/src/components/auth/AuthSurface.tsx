@@ -1,44 +1,37 @@
 import type { ReactNode } from "react";
 import AsterismMark from "@/components/AsterismMark";
-import EntryCanvas from "@/components/EntryCanvas";
-import { PRODUCT_DESCRIPTOR, PRODUCT_NAME } from "@/lib/productIdentity";
 import styles from "./AuthSurface.module.css";
-
-interface AuthSurfaceProps {
-  readonly title: string;
-  readonly description?: string;
-  readonly children: ReactNode;
-}
 
 export default function AuthSurface({
   title,
   description,
   children,
-}: AuthSurfaceProps) {
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
   return (
-    <EntryCanvas>
-      <main className={styles.surface}>
-        <div className={styles.identity}>
-          <AsterismMark
-            size={64}
-            className={styles.brandMark}
-            aria-hidden="true"
-          />
-          <div className={styles.identityCopy}>
-            <p className={styles.wordmark}>{PRODUCT_NAME}</p>
-            <p className={styles.descriptor}>{PRODUCT_DESCRIPTOR}</p>
+    <div className={styles.container}>
+      <main className={styles.frame}>
+        <header className={styles.header}>
+          <div className={styles.brand}>
+            <AsterismMark
+              size={40}
+              className={styles.brandMark}
+              aria-hidden="true"
+            />
+            <p className={styles.wordmark}>Nexus</p>
           </div>
-        </div>
-        <section className={styles.task}>
           <div className={styles.introduction}>
             <h1 className={styles.title}>{title}</h1>
             {description ? (
               <p className={styles.description}>{description}</p>
             ) : null}
           </div>
-          {children}
-        </section>
+        </header>
+        {children}
       </main>
-    </EntryCanvas>
+    </div>
   );
 }

@@ -1,4 +1,4 @@
-"""Podcast ingest retains its operational instant and a separate edition day."""
+"""Ingest proof: Podcast publication becomes one exact canonical UTC instant."""
 
 from __future__ import annotations
 
@@ -55,17 +55,14 @@ def test_feedparser_datetime_ingest_persists_and_returns_canonical_utc(
     )
 
     persisted = db_session.execute(
-        select(
-            Media.id,
-            Media.original_published_date,
-            Media.edition_published_date,
-            PodcastEpisode.published_at,
-        )
+        select(Media.id, Media.published_date, PodcastEpisode.published_at)
         .join(PodcastEpisode, PodcastEpisode.media_id == Media.id)
         .where(PodcastEpisode.podcast_id == podcast_id)
     ).one()
-    assert persisted.original_published_date is None, "source ingest cannot infer the original"
-    assert persisted.edition_published_date == "2026-03-02"
+    assert persisted.published_date == "2026-03-02T06:00:00Z", (
+        "Podcast ingest persisted a non-canonical Media publication instant: "
+        f"{persisted.published_date!r}"
+    )
     assert persisted.published_at == feedparser_datetime, (
         f"Podcast ingest changed the exact episode publication instant: {persisted.published_at!r}"
     )
@@ -74,8 +71,7 @@ def test_feedparser_datetime_ingest_persists_and_returns_canonical_utc(
     assert response.status_code == 200, (
         f"canonical Podcast Media was not readable through the API: {response.text}"
     )
-    assert response.json()["data"]["original_published_date"] == {"kind": "Absent"}
-    assert response.json()["data"]["edition_published_date"] == {
-        "kind": "Present",
-        "value": "2026-03-02",
-    }
+    assert response.json()["data"]["published_date"] == "2026-03-02T06:00:00Z", (
+        "Podcast API returned a non-canonical publication instant: "
+        f"{response.json()['data']['published_date']!r}"
+    )

@@ -2,18 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 from datetime import date
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from nexus_test_control.model import (
-    PRIORITY_RISK_FLOOR,
-    TEST_ROUTING_SHA256,
-    PriorityRiskId,
-)
+from nexus_test_control.model import PRIORITY_RISK_FLOOR, TEST_ROUTING_SHA256
 from nexus_test_control.policy import (
     corpus_manifest_schema_violations,
     corpus_violations,
@@ -25,8 +20,6 @@ from nexus_test_control.policy import (
     repository_violations,
     resource_capability_projection_violations,
 )
-from nexus_test_control.proof_owner import python_exact_proof_owner_sha256
-from nexus_test_control.sensitivity import SensitivityError, declared_fault_for_proof
 
 REPO_ROOT = Path(__file__).parents[4]
 
@@ -53,37 +46,6 @@ def _rules(violations: tuple[Any, ...]) -> set[str]:
         (
             "import nexus.services.reader as owner\n"
             "monkeypatch.setattr(owner, 'read', lambda: None)\n",
-            "python-owned-monkeypatch",
-        ),
-        (
-            "from apps.codex_agent import host\nmonkeypatch.setattr(host, 'DEADLINE', 0.2)\n",
-            "python-owned-monkeypatch",
-        ),
-        (
-            "from apps import codex_agent\n"
-            "monkeypatch.setattr(codex_agent.host, 'DEADLINE', 0.2)\n",
-            "python-owned-monkeypatch",
-        ),
-        (
-            "import apps\nmonkeypatch.setattr(apps.codex_agent.host, 'DEADLINE', 0.2)\n",
-            "python-owned-monkeypatch",
-        ),
-        (
-            "import apps.codex_agent.host\n"
-            "monkeypatch.setattr(apps.codex_agent.host, 'DEADLINE', 0.2)\n",
-            "python-owned-monkeypatch",
-        ),
-        (
-            "import apps.codex_agent.host as h\nmonkeypatch.setattr(h, 'DEADLINE', 0.2)\n",
-            "python-owned-monkeypatch",
-        ),
-        (
-            "from apps.codex_agent.host import create_codex_agent_app as build\n"
-            "monkeypatch.setattr(build, '__defaults__', ())\n",
-            "python-owned-monkeypatch",
-        ),
-        (
-            "monkeypatch.setattr('apps.codex_agent.host.DEADLINE', 0.2)\n",
             "python-owned-monkeypatch",
         ),
         ("import time\ntime.sleep(1)\n", "python-sleep"),
@@ -123,21 +85,10 @@ def test_python_ast_guard_rejects_invalid_source() -> None:
 
 def test_python_ast_guard_allows_external_boundary_patch_and_owned_exceptions() -> None:
     external_patch = "import httpx\nmonkeypatch.setattr(httpx, 'get', lambda: None)\n"
-    # `apps` is owned only through `apps.codex_agent`; the worker entrypoint
-    # harness is the sanctioned residue outside the gate.
-    sibling_package_patch = (
-        "import apps\nmonkeypatch.setattr(apps.worker.health, 'PROBE', lambda: None)\n"
-    )
-    lookalike_patch = (
-        "import apps.codex_agent_tools as t\nmonkeypatch.setattr(t, 'X', 1)\n"
-        "monkeypatch.setattr('apps.codex_agentry.host.X', 1)\n"
-    )
     hosted_socket = "from pytest_socket import enable_socket\nenable_socket()\n"
     query_oracle = "from sqlalchemy import text\ntext('SELECT 1')\n"
     migration_sql = "from sqlalchemy import text\ntext('INSERT INTO users DEFAULT VALUES')\n"
     assert not python_ast_violations("python/tests/kernel/test_ok.py", external_patch)
-    assert not python_ast_violations("python/tests/kernel/test_ok.py", sibling_package_patch)
-    assert not python_ast_violations("python/tests/kernel/test_ok.py", lookalike_patch)
     assert not python_ast_violations("python/tests/service/test_query_oracle.py", query_oracle)
     assert not python_ast_violations("python/tests/hosted/test_provider.py", hosted_socket)
     assert not python_ast_violations("python/tests/migrations/test_head.py", migration_sql)
@@ -201,30 +152,11 @@ def _minimal_repository(root: Path) -> None:
     )
     _write(
         root,
-        "scripts/ci-proof-artifact.sh",
-        "test-results/.nexus-ignore-contract\n"
-        "CI evidence staging admits only changed, pr, or full\n"
-        "nexus-test-run-claim.XXXXXXXX\n"
-        "NEXUS_TEST_RUN_CLAIM_FD\n"
-        "test controller did not publish one exact run claim\n"
-        "test controller claimed a pre-existing run evidence directory\n"
-        "run evidence contains a symlink, special file, or foreign owner\n"
-        "terminal run evidence does not match the CI invocation\n"
-        "nexus-ci-evidence.XXXXXXXX\n"
-        'cp --archive --reflink=auto -- "$run_directory" "$evidence_workspace/runs/"\n'
-        'rm --recursive --force --one-file-system -- "$evidence_workspace"\n',
-    )
-    _write(
-        root,
         ".github/workflows/ci.yml",
         "workflow_dispatch:\n"
         "pull_request_number:\n"
         "expected_head_sha:\n"
         "expected_base_sha:\n"
-        "type: choice\n"
-        "default: changed\n"
-        "NEXUS_CI_EVENT_NAME: ${{ github.event_name }}\n"
-        "NEXUS_CI_PROOF: ${{ inputs.proof }}\n"
         "permissions: {}\n"
         "pull-requests: read\n"
         "refs/pull/{0}/head\n"
@@ -236,24 +168,27 @@ def _minimal_repository(root: Path) -> None:
         'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"\n'
         'GIT_COMMITTER_DATE="$merge_timestamp"\n'
         "git rev-list --parents -n 1 HEAD\n"
-        'scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"\n'
-        "scripts/ci-proof-artifact.sh run pr\n"
-        "pull_request:*|workflow_dispatch:changed)\n"
-        "workflow_dispatch:pr)\n"
-        "unsupported CI proof selection\n"
+        "Retire prior checkout test runtime\n"
+        'test -x "$checkout/scripts/test"\n'
+        '            cd "$checkout"\n'
+        "            ./scripts/test clean\n"
+        "run: ./scripts/test pr\n"
+        "Retire current checkout test runtime\n"
+        "            ./scripts/test clean\n"
         "if: github.event_name == 'push'\n"
-        "run: scripts/ci-proof-artifact.sh run full\n"
-        "if: ${{ always() && steps.proof.outputs.path != '' }}\n"
-        "path: ${{ steps.proof.outputs.path }}/\n"
-        "if-no-files-found: error\n"
-        "include-hidden-files: true\n"
-        'scripts/ci-proof-artifact.sh cleanup "$NEXUS_CI_EVIDENCE_PATH"\n'
-        'scripts/ci-proof-artifact.sh enforce "$NEXUS_CI_PROOF_RESULT"\n',
+        "Retire prior checkout test runtime\n"
+        'test -x "$checkout/scripts/test"\n'
+        '            cd "$checkout"\n'
+        "            ./scripts/test clean\n"
+        "run: ./scripts/test full\n"
+        "Retire current checkout test runtime\n"
+        "            ./scripts/test clean\n"
+        "if: always()\n",
     )
     _write(
         root,
         ".github/workflows/nightly.yml",
-        "runs-on: ubuntu-latest\n"
+        'NEXUS_HOSTED_CANARY: "1"\n'
         "uses: reactivecircus/android-emulator-runner@example\n"
         "          api-level: 36\n"
         "          system-image-api-level: 36-ext19\n"
@@ -263,9 +198,9 @@ def _minimal_repository(root: Path) -> None:
     _write(
         root,
         ".github/workflows/release.yml",
-        "runs-on: ${{ inputs.bootstrap_no_device && 'ubuntu-latest' || "
-        'fromJSON(\'["self-hosted", "linux", "x64", "nexus-android-usb"]\') }}\n'
-        "run: ./scripts/test release\n",
+        'NEXUS_PROVIDER_CERTIFICATION: "1"\n'
+        "uses: reactivecircus/android-emulator-runner@example\n"
+        "script: ./scripts/test release\n",
     )
     _write(
         root,
@@ -323,65 +258,6 @@ def test_repository_guard_rejects_resurrected_resource_action_module(
 
 
 @pytest.mark.parametrize(
-    "relative",
-    [
-        "apps/web/src/app/(authenticated)/oracle/atlas/page.tsx",
-        "apps/web/src/lib/conversations/indexView.ts",
-        "apps/web/src/lib/conversations/indexView.unit.test.ts",
-        "apps/web/src/lib/notes/pageIndexView.ts",
-        "apps/web/src/lib/notes/pageIndexView.unit.test.ts",
-        "python/nexus/ops/browse_cutover.py",
-        "python/nexus/ops/epub_navigation_offsets_cutover.py",
-        "python/tests/kernel/test_epub_navigation_offsets_cutover.py",
-        "testdata/faults/epub-cutover-failed-attempt-admission.patch",
-    ],
-)
-def test_repository_guard_rejects_retired_cleanup_path(tmp_path: Path, relative: str) -> None:
-    _minimal_repository(tmp_path)
-    _write(tmp_path, relative, "retired\n")
-
-    violations = repository_violations(tmp_path)
-
-    assert any(
-        violation.rule == "repository-retired-cleanup-path" and violation.path == relative
-        for violation in violations
-    )
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        'export const retiredHref = "/oracle/atlas";\n',
-        'export const retiredRouteId = "oracleAtlas";\n',
-    ],
-)
-def test_repository_guard_rejects_retired_oracle_atlas_source(tmp_path: Path, source: str) -> None:
-    _minimal_repository(tmp_path)
-    relative = "apps/web/src/lib/oracleAtlasRoute.ts"
-    _write(tmp_path, relative, source)
-
-    violations = repository_violations(tmp_path)
-
-    assert any(
-        violation.rule == "repository-retired-oracle-atlas-source" and violation.path == relative
-        for violation in violations
-    )
-
-
-def test_repository_guard_rejects_search_package_reexports(tmp_path: Path) -> None:
-    _minimal_repository(tmp_path)
-    relative = "python/nexus/services/search/__init__.py"
-    _write(tmp_path, relative, "from nexus.services.search.service import search\n")
-
-    violations = repository_violations(tmp_path)
-
-    assert any(
-        violation.rule == "repository-search-barrel" and violation.path == relative
-        for violation in violations
-    )
-
-
-@pytest.mark.parametrize(
     ("relative", "source"),
     [
         (
@@ -400,10 +276,6 @@ def test_repository_guard_rejects_search_package_reexports(tmp_path: Path) -> No
             "apps/web/src/lib/search.ts",
             'if (process.env.NODE_ENV === "test") return cannedResults;\n',
         ),
-        (
-            "apps/codex_agent/host.py",
-            'if os.environ.get("NEXUS_TEST_FAKE_AGENT"):\n    return canned_response\n',
-        ),
     ],
 )
 def test_repository_guard_rejects_retired_product_test_seams(
@@ -420,66 +292,6 @@ def test_repository_guard_rejects_retired_product_test_seams(
     )
 
 
-def test_repository_guard_keeps_agent_runtime_construction_behind_confinement_owner(
-    tmp_path: Path,
-) -> None:
-    _minimal_repository(tmp_path)
-    _write(
-        tmp_path,
-        "apps/codex_agent/main.py",
-        "from provider_runtime.agent_runtime import AgentRuntime as RawRuntime\n"
-        "Runtime = RawRuntime\n"
-        "def build(config) -> RawRuntime:\n"
-        "    return Runtime(config)\n",
-    )
-    _write(
-        tmp_path,
-        "apps/codex_agent/confined_runtime.py",
-        "from provider_runtime import agent_runtime as runtime\n"
-        "def build(config) -> runtime.AgentRuntime:\n"
-        "    return runtime.AgentRuntime(config)\n",
-    )
-    _write(
-        tmp_path,
-        "apps/codex_agent/host.py",
-        "from provider_runtime.agent_runtime import AgentRuntime\n"
-        "def consume(runtime: AgentRuntime) -> None:\n"
-        "    return None\n",
-    )
-    _write(
-        tmp_path,
-        "apps/codex_agent/deep.py",
-        "from provider_runtime.agent_runtime.runtime import AgentRuntime as DeepRuntime\n"
-        "from provider_runtime.agent_runtime import runtime as runtime_module\n"
-        "\n"
-        "def build_direct(config):\n"
-        "    return DeepRuntime(config)\n"
-        "\n"
-        "def build_module(config):\n"
-        "    return runtime_module.AgentRuntime(config)\n",
-    )
-
-    violations = repository_violations(tmp_path)
-
-    assert [
-        (violation.rule, violation.path, violation.line)
-        for violation in violations
-        if violation.rule == "codex-agent-runtime-confinement"
-    ] == [
-        ("codex-agent-runtime-confinement", "apps/codex_agent/deep.py", 5),
-        ("codex-agent-runtime-confinement", "apps/codex_agent/deep.py", 8),
-        ("codex-agent-runtime-confinement", "apps/codex_agent/main.py", 4),
-    ]
-    assert {
-        violation.message
-        for violation in violations
-        if violation.rule == "codex-agent-runtime-wiring"
-    } == {
-        "runtime_factory must construct only the confined runtime",
-        "_probe_chatgpt_auth must construct only the confined runtime",
-    }
-
-
 def test_repository_guard_rejects_route_drift(tmp_path: Path) -> None:
     _minimal_repository(tmp_path)
     _write(tmp_path, "scripts/agency_verify.sh", "exec make test\n")
@@ -487,48 +299,26 @@ def test_repository_guard_rejects_route_drift(tmp_path: Path) -> None:
     assert "repository-route-contract" in _rules(repository_violations(tmp_path))
 
 
-def test_repository_guard_does_not_match_retired_route_inside_active_identifier(
+def test_repository_guard_rejects_direct_precheckout_runtime_cleanup(
     tmp_path: Path,
 ) -> None:
     _minimal_repository(tmp_path)
-    setup = tmp_path / "scripts/agency_setup.sh"
-    setup.write_text(
-        setup.read_text(encoding="utf-8") + "python -m nexus_test_control.setup_dependencies\n",
+    workflow = tmp_path / ".github/workflows/ci.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            '            cd "$checkout"',
+            '            cd "$checkout/python"',
+        ),
         encoding="utf-8",
     )
 
-    assert not any(
-        violation.rule == "repository-route-contract"
-        and violation.path == "scripts/agency_setup.sh"
-        for violation in repository_violations(tmp_path)
-    )
-
-
-@pytest.mark.parametrize(
-    "legacy_name",
-    (
-        "DATABASE_URL_TEST",
-        "DATABASE_URL_TEST_MIGRATIONS",
-        "nexus_test",
-        "nexus_test_migrations",
-    ),
-)
-def test_repository_guard_rejects_each_retired_setup_identifier(
-    tmp_path: Path,
-    legacy_name: str,
-) -> None:
-    _minimal_repository(tmp_path)
-    setup = tmp_path / "scripts/agency_setup.sh"
-    setup.write_text(
-        setup.read_text(encoding="utf-8") + f"retired={legacy_name}\n",
-        encoding="utf-8",
-    )
+    violations = repository_violations(tmp_path)
 
     assert any(
         violation.rule == "repository-route-contract"
-        and violation.path == "scripts/agency_setup.sh"
-        and legacy_name in violation.message
-        for violation in repository_violations(tmp_path)
+        and violation.path == ".github/workflows/ci.yml"
+        and 'cd "$checkout"' in violation.message
+        for violation in violations
     )
 
 
@@ -575,11 +365,9 @@ def test_repository_guard_rejects_legacy_test_routes_in_unlisted_active_docs(
         ("api-level: 36", "api-level: 35"),
         ("system-image-api-level: 36-ext19", "system-image-api-level: 35"),
         ("channel: canary", "channel: stable"),
-        ("runs-on: ubuntu-latest", "runs-on: [self-hosted, linux, x64, nexus-android-usb]"),
-        ("script: ./scripts/test nightly", "script: ./scripts/test confidence"),
     ],
 )
-def test_repository_guard_rejects_nightly_without_its_hosted_emulator_route(
+def test_repository_guard_rejects_nightly_without_modern_system_webview_route(
     tmp_path: Path, current: str, stale: str
 ) -> None:
     _minimal_repository(tmp_path)
@@ -607,35 +395,6 @@ def test_repository_guard_rejects_rogue_workflow_test_route(tmp_path: Path) -> N
     )
 
     assert "repository-test-route-owner" in _rules(repository_violations(tmp_path))
-
-
-@pytest.mark.parametrize(
-    "route",
-    (
-        "scripts/ci-proof-artifact.sh run full",
-        "./scripts/ci-proof-artifact.sh run full",
-        "scripts/ci-proof-artifact.sh run pr",
-        "./scripts/ci-proof-artifact.sh run pr",
-    ),
-)
-def test_repository_guard_rejects_rogue_ci_artifact_adapter_route(
-    tmp_path: Path,
-    route: str,
-) -> None:
-    _minimal_repository(tmp_path)
-    _write(
-        tmp_path,
-        ".github/workflows/rogue.yml",
-        f"steps:\n  - run: {route}\n",
-    )
-
-    violations = repository_violations(tmp_path)
-
-    assert any(
-        violation.rule == "repository-test-route-owner"
-        and violation.path == ".github/workflows/rogue.yml"
-        for violation in violations
-    )
 
 
 def test_repository_guard_rejects_rogue_composite_action_test_route(tmp_path: Path) -> None:
@@ -849,108 +608,9 @@ def test_priority_floor_and_journey_inventory_are_complete() -> None:
     assert not proof_contract_violations(REPO_ROOT)
 
 
-def test_android_player_protocol_skew_is_a_typed_priority_risk() -> None:
-    assert PriorityRiskId.ANDROID_PLAYER_PROTOCOL_SKEW.value == "android-player-protocol-skew"
-
-
-def test_android_player_protocol_corpus_has_canonical_repository_bytes() -> None:
-    raw = (REPO_ROOT / "testdata/android/player-protocol.json").read_bytes()
-
-    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-        value: dict[str, object] = {}
-        for key, item in pairs:
-            assert key not in value, f"duplicate Android player corpus key: {key}"
-            value[key] = item
-        return value
-
-    assert raw.decode("utf-8").encode("utf-8") == raw
-    assert not raw.startswith(b"\xef\xbb\xbf")
-    assert b"\r" not in raw
-    assert raw.endswith(b"\n")
-    assert not raw.endswith(b"\n\n")
-    corpus = json.loads(raw, object_pairs_hook=unique_object)
-    assert set(corpus) == {
-        "version",
-        "inventory",
-        "commands",
-        "snapshots",
-        "replies",
-        "rejections",
-        "events",
-        "nestedVariants",
-    }
-    inventory = corpus["inventory"]
-    assert isinstance(inventory, dict)
-    assert set(inventory) == {
-        "commands",
-        "replies",
-        "events",
-        "snapshots",
-        "rejectionCodes",
-        "presence",
-        "origins",
-        "playbackRateStates",
-        "playbackRateSources",
-        "playbackPhases",
-        "persistence",
-        "persistenceSuspensions",
-        "pauseShorteningModes",
-        "pauseShorteningProvenance",
-        "activityCapture",
-        "activityCaptureBlocks",
-        "activitySync",
-    }
-    nested_variants = corpus["nestedVariants"]
-    assert isinstance(nested_variants, dict)
-    assert set(nested_variants) == {
-        "activityCapture",
-        "activitySync",
-        "origins",
-        "persistence",
-        "playbackRateSources",
-        "playbackPhases",
-        "pauseShorteningModes",
-        "pauseShorteningProvenance",
-        "presence",
-    }
-    assert corpus["version"] == 2
-    token = "$PROTOCOL_CONTRACT_SHA256"
-    envelope_count = 0
-    for collection in ("commands", "replies", "rejections", "events"):
-        for envelope in corpus[collection]:
-            assert envelope["protocolVersion"] == 2
-            assert envelope["protocolContractSha256"] == token
-            envelope_count += 1
-    assert raw.decode("utf-8").count(token) == envelope_count
-
-
 def test_populated_proof_inventory_has_valid_paths_and_owners(tmp_path: Path) -> None:
     _complete_proof_repository(tmp_path)
     assert not proof_contract_violations(tmp_path)
-
-
-def test_proof_contract_rejects_different_nodes_from_one_file_across_priority_risks(
-    tmp_path: Path,
-) -> None:
-    manifest = _complete_proof_repository(tmp_path)
-    proof_path = "python/tests/kernel/test_split_priority_owner.py"
-    _write(
-        tmp_path,
-        proof_path,
-        "def test_first_owner():\n    assert 1 == 1\n\n"
-        "def test_second_owner():\n    assert 2 == 2\n",
-    )
-    manifest["priority_risks"][0]["proofs"] = [f"pytest:{proof_path}::test_first_owner"]
-    manifest["priority_risks"][1]["proofs"] = [f"pytest:{proof_path}::test_second_owner"]
-    _dump(tmp_path, "testdata/proofs.json", manifest)
-
-    violations = proof_contract_violations(tmp_path)
-    assert any(
-        violation.rule == "proof-unique-owner"
-        and violation.path == f"testdata/proofs.json#{manifest['priority_risks'][1]['id']}"
-        and proof_path in violation.message
-        for violation in violations
-    ), violations
 
 
 def test_proof_schema_rejects_risk_floor_deletion(tmp_path: Path) -> None:
@@ -996,22 +656,6 @@ def test_proof_contract_rejects_a_nonexistent_exact_node(tmp_path: Path) -> None
     _dump(tmp_path, "testdata/proofs.json", manifest)
 
     assert "proof-node" in _rules(proof_contract_violations(tmp_path))
-
-
-def test_proof_contract_rejects_multiple_exact_sensitivity_owners_per_file(
-    tmp_path: Path,
-) -> None:
-    manifest = _complete_proof_repository(tmp_path)
-    codex_generation_host = next(
-        risk for risk in manifest["priority_risks"] if risk["id"] == "codex-generation-host"
-    )
-    codex_generation_host["proofs"].append(
-        "pytest:python/tests/service/test_codex_capacity_canary_contract.py::"
-        "test_release_controller_mirrors_the_canary_exit_and_phase_contract"
-    )
-    _dump(tmp_path, "testdata/proofs.json", manifest)
-
-    assert "proof-sensitivity-owner" in _rules(proof_contract_violations(tmp_path))
 
 
 def test_proof_contract_rejects_declared_capability_without_a_proof_owner(
@@ -1224,175 +868,12 @@ def _fault_repository(root: Path) -> dict[str, Any]:
     }
     manifest = {"version": 1, "faults": [fault]}
     _write(root, "python/tests/kernel/test_example.py", "def test_example():\n    assert True\n")
-    _dump(
-        root,
-        "testdata/proofs.json",
-        {"priority_risks": [{"proofs": fault["proofs"]}]},
-    )
     _dump(root, "testdata/faults/manifest.json", manifest)
     return manifest
 
 
-def _mark_coherent_owner(root: Path, manifest: dict[str, Any]) -> None:
-    proof = manifest["faults"][0]["proofs"][0]
-    identity = proof.partition(":")[2]
-    path, _, node = identity.partition("::")
-    digest = python_exact_proof_owner_sha256(
-        (root / path).read_text(encoding="utf-8"),
-        node,
-    )
-    assert digest is not None
-    manifest["faults"][0]["changed_owner_red"] = "coherent-fault"
-    manifest["faults"][0]["changed_owner_sha256"] = digest
-
-
-def test_fault_manifest_is_complete_and_every_patch_applies() -> None:
+def test_empty_fault_manifest_is_valid() -> None:
     assert not fault_manifest_violations(REPO_ROOT)
-
-
-def test_fault_guard_allows_one_exact_pytest_owner_to_use_coherent_candidate_red(
-    tmp_path: Path,
-) -> None:
-    manifest = _fault_repository(tmp_path)
-    _mark_coherent_owner(tmp_path, manifest)
-    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
-
-    assert not fault_manifest_violations(tmp_path)
-
-
-def test_fault_guard_rejects_unregistered_coherent_candidate_owner(tmp_path: Path) -> None:
-    manifest = _fault_repository(tmp_path)
-    _mark_coherent_owner(tmp_path, manifest)
-    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
-    (tmp_path / "testdata/proofs.json").unlink()
-
-    assert "fault-coherent-owner" in _rules(fault_manifest_violations(tmp_path))
-
-
-@pytest.mark.parametrize(
-    ("proofs", "changed_owner_red", "rule"),
-    (
-        (
-            ["pytest:python/tests/kernel/test_example.py::test_example"],
-            "unknown",
-            "fault-schema",
-        ),
-        (
-            ["pytest:python/tests/kernel/test_example.py::test_example"],
-            None,
-            "fault-schema",
-        ),
-        (
-            ["pytest:python/tests/kernel/test_example.py"],
-            "coherent-fault",
-            "fault-coherent-owner",
-        ),
-        (
-            [
-                "pytest:python/tests/kernel/test_example.py::test_example",
-                "pytest:python/tests/kernel/test_example.py::test_other",
-            ],
-            "coherent-fault",
-            "fault-coherent-owner",
-        ),
-        (
-            ["pytest:python/tests/kernel/test_example.py::TestExample::test_example"],
-            "coherent-fault",
-            "fault-coherent-owner",
-        ),
-    ),
-)
-def test_fault_guard_rejects_ambiguous_changed_owner_red(
-    tmp_path: Path,
-    proofs: list[str],
-    changed_owner_red: str | None,
-    rule: str,
-) -> None:
-    manifest = _fault_repository(tmp_path)
-    manifest["faults"][0]["proofs"] = proofs
-    manifest["faults"][0]["changed_owner_red"] = changed_owner_red
-    manifest["faults"][0]["changed_owner_sha256"] = "0" * 64
-    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
-
-    assert rule in _rules(fault_manifest_violations(tmp_path))
-
-
-def test_fault_guard_rejects_coherent_owner_content_drift(tmp_path: Path) -> None:
-    manifest = _fault_repository(tmp_path)
-    _mark_coherent_owner(tmp_path, manifest)
-    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
-    _write(
-        tmp_path,
-        "python/tests/kernel/test_example.py",
-        "VALUE = 2\n\ndef test_example():\n    assert VALUE == 2\n",
-    )
-
-    assert "fault-coherent-owner-drift" in _rules(fault_manifest_violations(tmp_path))
-
-
-def test_fault_guard_rejects_an_owner_digest_without_the_coherent_strategy(
-    tmp_path: Path,
-) -> None:
-    manifest = _fault_repository(tmp_path)
-    manifest["faults"][0]["changed_owner_sha256"] = "0" * 64
-    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
-
-    assert "fault-schema" in _rules(fault_manifest_violations(tmp_path))
-
-
-def test_fault_guard_never_reads_a_traversal_or_symlinked_coherent_owner(
-    tmp_path: Path,
-) -> None:
-    manifest = _fault_repository(tmp_path)
-    outside = tmp_path.parent / f"{tmp_path.name}-outside-owner.py"
-    outside.write_text("def test_example():\n    assert True\n", encoding="utf-8")
-    manifest["faults"][0]["changed_owner_red"] = "coherent-fault"
-    manifest["faults"][0]["changed_owner_sha256"] = "0" * 64
-    proof_root = tmp_path / "python/tests/kernel"
-    external_symlink = proof_root / "test_external_owner.py"
-    external_symlink.symlink_to(outside)
-    internal_symlink = proof_root / "test_internal_owner.py"
-    internal_symlink.symlink_to("test_example.py")
-    loop_symlink = proof_root / "test_loop_owner.py"
-    loop_symlink.symlink_to(loop_symlink.name)
-
-    for escaped_path in (
-        f"../{outside.name}",
-        "python/tests/kernel/test_external_owner.py",
-        "python/tests/kernel/test_internal_owner.py",
-        "python/tests/kernel/test_loop_owner.py",
-    ):
-        proof = f"pytest:{escaped_path}::test_example"
-        manifest["faults"][0]["proofs"] = [proof]
-        _dump(
-            tmp_path,
-            "testdata/proofs.json",
-            {"priority_risks": [{"proofs": [proof]}]},
-        )
-        _dump(tmp_path, "testdata/faults/manifest.json", manifest)
-
-        rules = _rules(fault_manifest_violations(tmp_path))
-        assert {"fault-coherent-owner", "fault-proof"}.issubset(rules)
-        assert "fault-coherent-owner-drift" not in rules
-
-
-def test_fault_guard_rejects_a_stale_patch_in_a_git_worktree(tmp_path: Path) -> None:
-    manifest = _fault_repository(tmp_path)
-    _write(tmp_path, "python/nexus/owner.py", "VALUE = 2\n")
-    patch = (
-        b"diff --git a/python/nexus/owner.py b/python/nexus/owner.py\n"
-        b"--- a/python/nexus/owner.py\n"
-        b"+++ b/python/nexus/owner.py\n"
-        b"@@ -1 +1 @@\n"
-        b"-VALUE = 1\n"
-        b"+VALUE = 0\n"
-    )
-    (tmp_path / "testdata/faults/example.patch").write_bytes(patch)
-    manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
-    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
-    subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
-
-    assert "fault-applicability" in _rules(fault_manifest_violations(tmp_path))
 
 
 @pytest.mark.parametrize(
@@ -1410,69 +891,6 @@ def test_fault_guard_allows_the_exact_controller_execution_owner(
     _dump(tmp_path, "testdata/faults/manifest.json", manifest)
 
     assert not fault_manifest_violations(tmp_path)
-
-
-@pytest.mark.parametrize(
-    "owner",
-    (
-        "apps/api/main.py",
-        "apps/codex_agent/host.py",
-        "deploy/hetzner/release.py",
-    ),
-)
-def test_fault_guard_allows_declared_product_owner(
-    tmp_path: Path,
-    owner: str,
-) -> None:
-    manifest = _fault_repository(tmp_path)
-    patch = f"diff --git a/{owner} b/{owner}\n".encode()
-    (tmp_path / "testdata/faults/example.patch").write_bytes(patch)
-    manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
-    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
-
-    assert not fault_manifest_violations(tmp_path)
-
-
-def test_fault_guard_allows_node_ingest_product_modules_but_not_tests(
-    tmp_path: Path,
-) -> None:
-    manifest = _fault_repository(tmp_path)
-    patch_path = tmp_path / "testdata/faults/example.patch"
-
-    production_patch = (
-        b"diff --git a/node/ingest/accepted_url_egress.mjs b/node/ingest/accepted_url_egress.mjs\n"
-    )
-    patch_path.write_bytes(production_patch)
-    manifest["faults"][0]["sha256"] = hashlib.sha256(production_patch).hexdigest()
-    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
-
-    assert not fault_manifest_violations(tmp_path)
-
-    test_patch = b"diff --git a/node/ingest/test/accepted_url_egress.test.mjs b/node/ingest/test/accepted_url_egress.test.mjs\n"
-    patch_path.write_bytes(test_patch)
-    manifest["faults"][0]["sha256"] = hashlib.sha256(test_patch).hexdigest()
-    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
-
-    assert "fault-product-only" in _rules(fault_manifest_violations(tmp_path))
-
-
-@pytest.mark.parametrize(
-    "owner",
-    ("deploy/hetzner/deploy.sh", "deploy/hetzner/docker-compose.yml"),
-)
-def test_fault_guard_keeps_deployment_fault_authority_on_the_release_controller(
-    tmp_path: Path,
-    owner: str,
-) -> None:
-    manifest = _fault_repository(tmp_path)
-    patch = f"diff --git a/{owner} b/{owner}\n".encode()
-    (tmp_path / "testdata/faults/example.patch").write_bytes(patch)
-    manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
-    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
-
-    assert any(
-        violation.rule == "fault-product-only" for violation in fault_manifest_violations(tmp_path)
-    )
 
 
 @pytest.mark.parametrize(
@@ -1511,62 +929,6 @@ def test_fault_guard_rejects_each_violation(tmp_path: Path, mutation: str, rule:
         manifest["faults"][0]["sha256"] = hashlib.sha256(patch).hexdigest()
     _dump(tmp_path, "testdata/faults/manifest.json", manifest)
     assert rule in _rules(fault_manifest_violations(tmp_path))
-
-
-def test_fault_guard_rejects_two_faults_claiming_one_proof(tmp_path: Path) -> None:
-    """Two faults for one proof make the sensitivity owner unresolvable.
-
-    `declared_fault_for_proof` refuses to guess and raises before any workflow
-    can produce evidence, so the ambiguity must surface as a policy verdict.
-    """
-    manifest = _fault_repository(tmp_path)
-    original = manifest["faults"][0]
-    manifest["faults"].append({**original, "id": "example-fault-twin"})
-    _dump(tmp_path, "testdata/faults/manifest.json", manifest)
-
-    assert "fault-proof-owner" in _rules(fault_manifest_violations(tmp_path))
-    with pytest.raises(SensitivityError) as unresolvable:
-        declared_fault_for_proof(tmp_path, original["proofs"][0])
-    assert "fault-proof-owner" in str(unresolvable.value)
-
-
-def test_fault_guard_rejects_a_proof_that_is_not_its_owner_canonical_node(
-    tmp_path: Path,
-) -> None:
-    """A fault may only claim the node the registry resolves for that owner.
-
-    `canonical_proof` rewrites every request on a registered owner to that
-    owner's one priority node, so a fault naming any other node of the same
-    file silently becomes unresolvable instead of demonstrating red.
-    """
-    manifest = _complete_proof_repository(tmp_path)
-    risk = next(item for item in manifest["priority_risks"] if item["id"] == "reading-progress")
-    canonical = next(proof for proof in risk["proofs"] if proof.startswith("pytest:"))
-    owner_path = canonical.partition(":")[2].split("::", 1)[0]
-    patch = b"diff --git a/python/nexus/owner.py b/python/nexus/owner.py\n"
-    _write(tmp_path, "testdata/faults/example.patch", patch.decode())
-    _dump(
-        tmp_path,
-        "testdata/faults/manifest.json",
-        {
-            "version": 1,
-            "faults": [
-                {
-                    "id": "example-fault",
-                    "patch": "testdata/faults/example.patch",
-                    "sha256": hashlib.sha256(patch).hexdigest(),
-                    "proofs": [f"pytest:{owner_path}::test_some_other_scenario"],
-                    "expected_failure": "expected value differs",
-                }
-            ],
-        },
-    )
-
-    rules = _rules(fault_manifest_violations(tmp_path))
-
-    assert "fault-canonical-proof" in rules
-    with pytest.raises(SensitivityError):
-        declared_fault_for_proof(tmp_path, canonical)
 
 
 _RESOURCE_CAPABILITY_GENERATOR = "python/scripts/generate_resource_capabilities.py"

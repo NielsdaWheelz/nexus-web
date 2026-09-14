@@ -81,15 +81,7 @@ const MEDIA_SNAPSHOT = {
       availability: { kind: "Available" },
       state: "Unread",
     },
-    {
-      kind: "Recovery",
-      availability: { kind: "Available" },
-      offer: {
-        kind: "RetrySource",
-        expectedAttemptId: "44444444-4444-4444-8444-444444444444",
-        input: "RefetchSource",
-      },
-    },
+    { kind: "RetryProcessing", availability: { kind: "Available" } },
     { kind: "Share", availability: { kind: "Available" } },
     {
       kind: "LecternMembership",
@@ -112,7 +104,7 @@ const EXPECTED_MENU_ORDER = [
   "Add to Lectern",
   "Chat about this…",
   "Share…",
-  "Retry source processing",
+  "Retry processing",
   "Refresh source",
   "Remove from Nexus",
 ];
@@ -375,10 +367,26 @@ function installBff(options: BffOptions = {}): Bff {
         if (options.retryCompletes) {
           return jsonResponse({
             data: {
-              kind: "SourceRetry",
               media_id: MEDIA_ID,
               source_attempt_id: "33333333-3333-4333-8333-333333333333",
-              job_id: "44444444-4444-4444-8444-444444444444",
+              source_type: "url",
+              source_attempt_status: "queued",
+              idempotency_outcome: "retrying",
+              processing_status: "extracting",
+              ingest_enqueued: true,
+              capabilities: {
+                can_read: false,
+                can_highlight: false,
+                can_quote: false,
+                can_search: false,
+                can_play: false,
+                can_download_file: false,
+                can_delete: true,
+                can_retry: false,
+                can_refresh_source: false,
+                can_retry_metadata: false,
+                can_edit_authors: true,
+              },
             },
           });
         }
@@ -606,7 +614,7 @@ describe("ResourceActionMenu component contract", () => {
     const menu = await openMenu();
     // Invoke a real dispatch whose BFF call is held in flight forever.
     await userEvent.click(
-      within(menu).getByRole("menuitem", { name: "Retry source processing" }),
+      within(menu).getByRole("menuitem", { name: "Retry processing" }),
     );
     await waitFor(() => expect(bff.retryCalls).toHaveLength(1));
 
@@ -614,7 +622,7 @@ describe("ResourceActionMenu component contract", () => {
     // by the shared (subject, action ID) busy key.
     const reopened = await openMenu();
     const busy = within(reopened).getByRole("menuitem", {
-      name: "Retry source processing",
+      name: "Retry processing",
     });
     expect(busy.getAttribute("aria-disabled")).toBe("true");
     expect(busy).toHaveAccessibleDescription("This action is in progress.");
@@ -820,7 +828,7 @@ describe("ResourceActionMenu component contract", () => {
 
     const initial = await openMenu();
     await userEvent.click(
-      within(initial).getByRole("menuitem", { name: "Retry source processing" }),
+      within(initial).getByRole("menuitem", { name: "Retry processing" }),
     );
     await waitFor(() => expect(bff.resolveCalls).toHaveLength(2));
 

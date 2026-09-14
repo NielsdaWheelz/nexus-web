@@ -4,12 +4,16 @@ import {
   type RetrievalLocator,
 } from "@/lib/api/sse/locators";
 import type { ContributorCredit } from "@/lib/contributors/types";
-import { decodePresence } from "@/lib/api/presence";
-import { decodePublicationDateOnly } from "@/lib/dates/publicationDate";
 import { hasLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { decodeSnakeCaseResourceActivation } from "@/lib/resources/activation";
+import type { ResourceActivation } from "@/lib/resources/activation";
 import { decodeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
+import {
+  expectExactRecord,
+  expectNullableString,
+  expectOneOf,
+  expectString,
+} from "@/lib/validation";
 import {
   RESULT_TYPE_VALUES,
   type SearchApiResult,
@@ -17,11 +21,7 @@ import {
   type SearchType,
 } from "./types";
 
-function isValidSource(
-  value: unknown,
-): value is Omit<SearchSourceMetadata, "original_published_date"> & {
-  original_published_date: unknown;
-} {
+function isValidSource(value: unknown): value is SearchSourceMetadata {
   if (typeof value !== "object" || value === null) {
     return false;
   }
@@ -33,13 +33,15 @@ function isValidSource(
       "media_kind",
       "title",
       "contributors",
-      "original_published_date",
+      "published_date",
       "summary_md",
     ]) &&
     typeof source.media_id === "string" &&
     typeof source.media_kind === "string" &&
     typeof source.title === "string" &&
     Array.isArray(source.contributors) &&
+    (source.published_date === null ||
+      typeof source.published_date === "string") &&
     (source.summary_md === null || typeof source.summary_md === "string")
   );
 }
@@ -50,14 +52,7 @@ function resolveSource(
   if (!isValidSource(result.source)) {
     return null;
   }
-  return {
-    ...result.source,
-    original_published_date: decodePresence(
-      result.source.original_published_date,
-      (date) =>
-        decodePublicationDateOnly(date, "Search source.original_published_date"),
-    ),
-  };
+  return result.source;
 }
 
 function stringField(record: Record<string, unknown>, key: string): string {
@@ -158,6 +153,32 @@ function hasExactKeys(
     keys.length === expected.length &&
     keys.every((key) => expected.includes(key))
   );
+}
+
+function decodeSearchActivation(raw: unknown): ResourceActivation {
+  // justify-defect: /search is an owned same-system snake_case transport;
+  // alternate casing or malformed activation facts are contract drift.
+  const value = expectExactRecord(
+    raw,
+    ["resource_ref", "kind", "href", "unresolved_reason"],
+    "SearchResult.activation",
+  );
+  return {
+    resourceRef: expectString(
+      value.resource_ref,
+      "SearchResult.activation.resource_ref",
+    ),
+    kind: expectOneOf(
+      value.kind,
+      ["route", "external", "none"] as const,
+      "SearchResult.activation.kind",
+    ),
+    href: expectNullableString(value.href, "SearchResult.activation.href"),
+    unresolvedReason: expectNullableString(
+      value.unresolved_reason,
+      "SearchResult.activation.unresolved_reason",
+    ),
+  };
 }
 
 function normalizeContributorCredit(value: unknown): ContributorCredit | null {
@@ -284,10 +305,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
   if (typeof row.actionSubjectRef !== "string") {
     return null;
   }
-  const activation = decodeSnakeCaseResourceActivation(
-    row.activation,
-    "SearchResult.activation",
-  );
+  const activation = decodeSearchActivation(row.activation);
   if (
     activation.resourceRef !== row.resource_ref ||
     activation.kind === "none"
@@ -447,7 +465,6 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
       };
     }
     case "content_chunk": {
-      const source = resolveSource(row);
       if (
         typeof row.source_kind !== "string" ||
         !Array.isArray(row.evidence_span_ids) ||
@@ -458,13 +475,13 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
         base.context_ref.type !== "content_chunk" ||
         !base.context_ref.evidence_span_ids ||
         base.context_ref.evidence_span_ids.length === 0 ||
-        !source ||
+        !isValidSource(row.source) ||
         !isRetrievalLocator(row.locator) ||
         !locatorMatchesSearchType("content_chunk", row.locator)
       ) {
         return null;
       }
-      const contributors = normalizeContributorCredits(source.contributors);
+      const contributors = normalizeContributorCredits(row.source.contributors);
       if (!contributors) {
         return null;
       }
@@ -476,23 +493,22 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
         media_kind: row.media_kind,
         citation_label: row.citation_label,
         source: {
-          ...source,
+          ...row.source,
           contributors,
         },
         locator: row.locator,
       };
     }
     case "fragment": {
-      const source = resolveSource(row);
       if (
         !isRetrievalLocator(row.locator) ||
         !locatorMatchesSearchType("fragment", row.locator) ||
-        !source ||
+        !isValidSource(row.source) ||
         base.context_ref.type !== "fragment"
       ) {
         return null;
       }
-      const contributors = normalizeContributorCredits(source.contributors);
+      const contributors = normalizeContributorCredits(row.source.contributors);
       if (!contributors) {
         return null;
       }
@@ -503,7 +519,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
           typeof row.citation_label === "string" ? row.citation_label : null,
         locator: row.locator,
         source: {
-          ...source,
+          ...row.source,
           contributors,
         },
       };
@@ -535,17 +551,16 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
         locator: row.locator,
       };
     case "highlight": {
-      const source = resolveSource(row);
       if (
         typeof row.color !== "string" ||
         typeof row.exact !== "string" ||
         !isRetrievalLocator(row.locator) ||
         !locatorMatchesSearchType("highlight", row.locator) ||
-        !source
+        !isValidSource(row.source)
       ) {
         return null;
       }
-      const contributors = normalizeContributorCredits(source.contributors);
+      const contributors = normalizeContributorCredits(row.source.contributors);
       if (!contributors) {
         return null;
       }
@@ -558,7 +573,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
           typeof row.citation_label === "string" ? row.citation_label : null,
         locator: row.locator,
         source: {
-          ...source,
+          ...row.source,
           contributors,
         },
       };
@@ -581,18 +596,17 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
         locator: row.locator,
       };
     case "evidence_span": {
-      const source = resolveSource(row);
       if (
         typeof row.evidence_span_id !== "string" ||
         typeof row.citation_label !== "string" ||
         !isRetrievalLocator(row.locator) ||
         !locatorMatchesSearchType("evidence_span", row.locator) ||
-        !source ||
+        !isValidSource(row.source) ||
         base.context_ref.type !== "evidence_span"
       ) {
         return null;
       }
-      const contributors = normalizeContributorCredits(source.contributors);
+      const contributors = normalizeContributorCredits(row.source.contributors);
       if (!contributors) {
         return null;
       }
@@ -603,23 +617,22 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
         citation_label: row.citation_label,
         locator: row.locator,
         source: {
-          ...source,
+          ...row.source,
           contributors,
         },
       };
     }
     case "reader_apparatus_item": {
-      const source = resolveSource(row);
       if (
         typeof row.apparatus_kind !== "string" ||
         !isRetrievalLocator(row.locator) ||
         !locatorMatchesSearchType("reader_apparatus_item", row.locator) ||
-        !source ||
+        !isValidSource(row.source) ||
         base.context_ref.type !== "reader_apparatus_item"
       ) {
         return null;
       }
-      const contributors = normalizeContributorCredits(source.contributors);
+      const contributors = normalizeContributorCredits(row.source.contributors);
       if (!contributors) {
         return null;
       }
@@ -629,7 +642,7 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
         apparatus_kind: row.apparatus_kind,
         locator: row.locator,
         source: {
-          ...source,
+          ...row.source,
           contributors,
         },
       };

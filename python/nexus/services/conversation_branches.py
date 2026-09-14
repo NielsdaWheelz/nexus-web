@@ -15,7 +15,6 @@ from nexus.db.models import (
     ConversationBranch,
     Message,
 )
-from nexus.db.session import get_repeatable_read_db
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import (
     BRANCH_ANCHOR_KINDS,
@@ -41,7 +40,6 @@ from nexus.services.conversations import (
     regeneratable_assistant_message_ids,
     rerunnable_assistant_message_ids,
 )
-from nexus.services.generation_catalog import GenerationCatalogSnapshot
 from nexus.services.message_trust_trails import build_assistant_trust_trails
 
 
@@ -185,7 +183,6 @@ def set_active_path(
     viewer_id: UUID,
     conversation_id: UUID,
     active_leaf_message_id: UUID,
-    catalog_snapshot: GenerationCatalogSnapshot,
 ) -> ConversationTreeOut:
     get_conversation_for_visible_read_or_404(db, viewer_id, conversation_id)
     load_leaf_message_path(
@@ -200,17 +197,7 @@ def set_active_path(
         active_leaf_message_id=active_leaf_message_id,
     )
     db.commit()
-    get_repeatable_read_db(db)
-    db.expire_all()
-    try:
-        return get_conversation_tree(
-            db,
-            viewer_id=viewer_id,
-            conversation_id=conversation_id,
-            catalog_snapshot=catalog_snapshot,
-        )
-    finally:
-        db.rollback()
+    return get_conversation_tree(db, viewer_id=viewer_id, conversation_id=conversation_id)
 
 
 def persist_active_leaf(
@@ -238,7 +225,6 @@ def get_conversation_tree(
     *,
     viewer_id: UUID,
     conversation_id: UUID,
-    catalog_snapshot: GenerationCatalogSnapshot,
 ) -> ConversationTreeOut:
     conversation = get_conversation_for_visible_read_or_404(db, viewer_id, conversation_id)
     messages = _conversation_messages(db, conversation_id)
@@ -285,14 +271,8 @@ def get_conversation_tree(
         branch_graph=branch_graph,
         fork_options_by_parent_id=fork_options_by_parent_id,
         messages_by_id=messages_by_id,
-        catalog_snapshot=catalog_snapshot,
     )
-    selected_messages_by_id = _message_outs_by_id(
-        db,
-        viewer_id,
-        selected_path,
-        catalog_snapshot=catalog_snapshot,
-    )
+    selected_messages_by_id = _message_outs_by_id(db, viewer_id, selected_path)
     return ConversationTreeOut(
         conversation=conversation_to_out(
             db,
@@ -413,20 +393,17 @@ def rename_branch(
         ),
         {"branch_id": branch.id, "title": title.strip() if title is not None else None},
     )
-    branch_user_message_id = branch.branch_user_message_id
+    db.flush()
+    db.refresh(branch)
+    option = _fork_option_for_user_message(
+        db,
+        branch_user_message_id=branch.branch_user_message_id,
+        active_path_message_ids=set(
+            active_path_message_ids(db, viewer_id=viewer_id, conversation_id=conversation_id)
+        ),
+    )
     db.commit()
-    get_repeatable_read_db(db)
-    db.expire_all()
-    try:
-        return _fork_option_for_user_message(
-            db,
-            branch_user_message_id=branch_user_message_id,
-            active_path_message_ids=set(
-                active_path_message_ids(db, viewer_id=viewer_id, conversation_id=conversation_id)
-            ),
-        )
-    finally:
-        db.rollback()
+    return option
 
 
 def delete_branch(
@@ -756,7 +733,6 @@ def build_path_cache_by_leaf_id(
     conversation_id: UUID,
     branch_graph: BranchGraphOut,
     fork_options_by_parent_id: Mapping[str, Sequence[ForkOptionOut]],
-    catalog_snapshot: GenerationCatalogSnapshot,
     messages_by_id: Mapping[UUID, Message] | None = None,
 ) -> dict[str, list[MessageOut]]:
     leaf_ids = {node.leaf_message_id for node in branch_graph.nodes if node.leaf}
@@ -780,7 +756,6 @@ def build_path_cache_by_leaf_id(
         db,
         viewer_id,
         [message for path in path_messages_by_leaf_id.values() for message in path],
-        catalog_snapshot=catalog_snapshot,
     )
     return {
         str(leaf_id): [message_outs_by_id[message.id] for message in path]
@@ -901,11 +876,14 @@ def _run_status_by_assistant_id(
     if not assistant_message_ids:
         return {}
     rows = db.execute(
-        select(ChatRun.assistant_message_id, ChatRun.status).where(
-            ChatRun.assistant_message_id.in_(list(assistant_message_ids))
-        )
+        select(ChatRun.assistant_message_id, ChatRun.status)
+        .where(ChatRun.assistant_message_id.in_(list(assistant_message_ids)))
+        .order_by(ChatRun.created_at.desc(), ChatRun.id.desc())
     ).all()
-    return {assistant_message_id: status for assistant_message_id, status in rows}
+    statuses: dict[UUID, str] = {}
+    for assistant_message_id, status in rows:
+        statuses.setdefault(assistant_message_id, status)
+    return statuses
 
 
 def _subtree_metadata(
@@ -1112,9 +1090,9 @@ def _fork_status(
 ) -> Literal["complete", "pending", "error", "cancelled"]:
     if assistant_message is None:
         return "pending"
-    run_status = db.execute(
-        select(ChatRun.status).where(ChatRun.assistant_message_id == assistant_message.id)
-    ).scalar_one_or_none()
+    run_status = db.scalar(
+        select(ChatRun.status).where(ChatRun.assistant_message_id == assistant_message.id).limit(1)
+    )
     if run_status == "cancelled":
         return "cancelled"
     if assistant_message.status == "pending":
@@ -1130,8 +1108,6 @@ def _message_outs_by_id(
     db: Session,
     viewer_id: UUID,
     messages: Sequence[Message],
-    *,
-    catalog_snapshot: GenerationCatalogSnapshot,
 ) -> dict[UUID, MessageOut]:
     messages_by_id = {message.id: message for message in messages}
     message_ids = list(messages_by_id)
@@ -1151,7 +1127,6 @@ def _message_outs_by_id(
         assistant_message_ids=[
             message.id for message in messages_by_id.values() if message.role == "assistant"
         ],
-        catalog_snapshot=catalog_snapshot,
     )
     outs: dict[UUID, MessageOut] = {}
     for message_id, message in messages_by_id.items():

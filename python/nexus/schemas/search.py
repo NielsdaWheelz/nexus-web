@@ -11,16 +11,41 @@ Search returns mixed typed results from different content types:
 - messages (content)
 """
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from nexus.schemas.contributors import ContributorCreditOut
-from nexus.schemas.presence import Presence
-from nexus.schemas.publication_dates import PublicationDate
 from nexus.schemas.retrieval import RetrievalLocator, validate_locator_for_result_type
-from nexus.schemas.search_types import SEARCH_RESULT_TYPES
+
+# Valid search result types — the canonical result-discriminant authority for the
+# whole codebase (HTTP response union, chat telemetry, retriever dispatch). The
+# runtime tuple/set below are derived from the Literal so the two can never drift.
+SEARCH_RESULT_TYPES = Literal[
+    "media",
+    "podcast",
+    "episode",
+    "video",
+    "content_chunk",
+    "fragment",
+    "contributor",
+    "page",
+    "note_block",
+    "highlight",
+    "message",
+    "evidence_span",
+    "conversation",
+    "artifact",
+    "web_result",
+    "reader_apparatus_item",
+]
+
+# Runtime view of SEARCH_RESULT_TYPES (declaration order preserved) for iteration,
+# default-all expansion, and membership checks. Single authority; do not redefine.
+ALL_RESULT_TYPES: tuple[str, ...] = get_args(SEARCH_RESULT_TYPES)
+VALID_RESULT_TYPES: frozenset[str] = frozenset(ALL_RESULT_TYPES)
+
 
 # =============================================================================
 # Response Schemas
@@ -34,7 +59,7 @@ class SearchResultSourceOut(BaseModel):
     media_kind: str
     title: str
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
-    original_published_date: Presence[PublicationDate]
+    published_date: str | None = None
     summary_md: str | None = None
 
     model_config = ConfigDict(extra="forbid")

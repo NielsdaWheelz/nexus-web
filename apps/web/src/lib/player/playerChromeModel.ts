@@ -24,7 +24,6 @@ type PreviewState = Extract<
 
 export type PlayerChromeModel =
   | { readonly kind: "Absent" }
-  | { readonly kind: "UpdateRequired" }
   | {
       readonly kind: "RuntimeFailure";
       readonly state: Extract<GlobalPlayerState, { kind: "RuntimeFailed" }>;
@@ -50,8 +49,6 @@ export function projectPlayerChrome(
   switch (player.state.kind) {
     case "Absent":
       return { kind: "Absent" };
-    case "UpdateRequired":
-      return { kind: "UpdateRequired" };
     case "RuntimeFailed":
       return { kind: "RuntimeFailure", state: player.state };
     case "Active":

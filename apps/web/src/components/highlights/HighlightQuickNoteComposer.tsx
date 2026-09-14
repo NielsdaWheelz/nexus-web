@@ -1,10 +1,12 @@
 "use client";
 
 import { useRef } from "react";
-import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
+import HighlightNoteEditor, {
+  HighlightNoteTargetUnavailableError,
+} from "@/components/notes/HighlightNoteEditor";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import MobileSheet from "@/components/ui/MobileSheet";
-import type { HighlightLinkedNoteBlock } from "@/lib/highlights/highlightContract";
+import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { useInitialFocus } from "@/lib/ui/useInitialFocus";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
@@ -98,7 +100,7 @@ export default function HighlightQuickNoteComposer({
           session.kind === "pending-create"
             ? async (_sessionId, noteBlockId, createBlockId, bodyPmJson, clientMutationId) => {
                 const resolved = await session.creation; // memoizes its own resolution
-                if (!resolved) throw new Error("Highlight was not created");
+                if (!resolved) throw new HighlightNoteTargetUnavailableError();
                 return onSaveNote(
                   resolved.id,
                   noteBlockId,
@@ -113,7 +115,7 @@ export default function HighlightQuickNoteComposer({
           session.kind === "pending-create"
             ? async (_sessionId, noteBlockId, clientMutationId, shouldApply) => {
                 const resolved = await session.creation;
-                if (!resolved) throw new Error("Highlight was not created");
+                if (!resolved) throw new HighlightNoteTargetUnavailableError();
                 return onDeleteNote(resolved.id, noteBlockId, clientMutationId, shouldApply);
               }
             : onDeleteNote

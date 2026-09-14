@@ -14,14 +14,28 @@ from pydantic import (
     model_validator,
 )
 
-from nexus.schemas.search_types import SEARCH_RESULT_TYPES
-
 ProviderResultRef = NewType("ProviderResultRef", str)
 ExternalSnapshotId = NewType("ExternalSnapshotId", UUID)
 
 
 class RetrievalContextRef(BaseModel):
-    type: SEARCH_RESULT_TYPES
+    type: Literal[
+        "media",
+        "podcast",
+        "episode",
+        "video",
+        "content_chunk",
+        "fragment",
+        "contributor",
+        "page",
+        "note_block",
+        "highlight",
+        "message",
+        "evidence_span",
+        "conversation",
+        "web_result",
+        "reader_apparatus_item",
+    ]
     id: UUID | str
     evidence_span_ids: list[UUID | str] = Field(default_factory=list)
 
@@ -456,38 +470,6 @@ class ConversationRetrievalResultRef(BaseModel):
         return self
 
 
-class ArtifactRetrievalResultRef(BaseModel):
-    type: Literal["artifact"]
-    id: UUID | str
-    result_type: Literal["artifact"]
-    source_id: str
-    revision_id: UUID | str
-    subject_ref: str
-    title: str
-    source_label: str | None = None
-    snippet: str
-    deep_link: str
-    citation_target: str | None = None
-    context_ref: RetrievalContextRef
-    locator: None = None
-    media_id: None = None
-    media_kind: None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_artifact_ref(self) -> ArtifactRetrievalResultRef:
-        if self.context_ref.type != "artifact":
-            raise ValueError("artifact context_ref.type must be artifact")
-        if str(self.id) != self.source_id or str(self.context_ref.id) != self.source_id:
-            raise ValueError("artifact id, source_id, and context_ref.id must match")
-        if self.subject_ref != f"conversation:{self.source_id}":
-            raise ValueError("artifact subject_ref must identify its conversation")
-        return self
-
-
 RetrievalResultRef = Annotated[
     MediaRetrievalResultRef
     | PodcastRetrievalResultRef
@@ -503,8 +485,7 @@ RetrievalResultRef = Annotated[
     | WebRetrievalResultRef
     | EvidenceSpanRetrievalResultRef
     | ReaderApparatusItemRetrievalResultRef
-    | ConversationRetrievalResultRef
-    | ArtifactRetrievalResultRef,
+    | ConversationRetrievalResultRef,
     Field(discriminator="type"),
 ]
 

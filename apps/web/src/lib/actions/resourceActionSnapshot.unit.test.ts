@@ -10,8 +10,6 @@ const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const MEDIA_REF = `media:${MEDIA_ID}`;
 const LECTERN_ITEM_ID = "22222222-2222-4222-8222-222222222222";
 const NOTE_BLOCK_ID = "33333333-3333-4333-8333-333333333333";
-const ATTEMPT_ID = "44444444-4444-4444-8444-444444444444";
-const JOB_ID = "55555555-5555-4555-8555-555555555555";
 
 const SIMPLE_KINDS = [
   "Open",
@@ -20,6 +18,7 @@ const SIMPLE_KINDS = [
   "Chat",
   "PlayNext",
   "DownloadOriginal",
+  "RetryProcessing",
   "RefreshSource",
   "RetryMetadata",
   "EditAuthors",
@@ -117,16 +116,6 @@ function everyCapability(): Record<string, unknown>[] {
       state: "Present",
       noteBlockId: NOTE_BLOCK_ID,
     },
-    {
-      kind: "Recovery",
-      availability: AVAILABLE,
-      offer: {
-        kind: "RepairSource",
-        expectedAttemptId: ATTEMPT_ID,
-        expectedJobId: JOB_ID,
-        input: "StoredSource",
-      },
-    },
   ];
 }
 
@@ -166,41 +155,12 @@ describe("decodeResourceActionSnapshotResolveResponse", () => {
       "LecternMembership",
       "Transcript",
       "HighlightNote",
-      "Recovery",
     ]);
-    expect(snapshot.capabilities.find(({ kind }) => kind === "Recovery")).toEqual({
-      kind: "Recovery",
-      availability: AVAILABLE,
-      offer: {
-        kind: "RepairSource",
-        expectedAttemptId: ATTEMPT_ID,
-        expectedJobId: JOB_ID,
-        input: "StoredSource",
-      },
-    });
     expect(snapshot.capabilities.find(({ kind }) => kind === "Playback")).toEqual({
       kind: "Playback",
       availability: AVAILABLE,
       playerDescriptor: playerDescriptor(),
     });
-  });
-
-  it("refuses a recovery offer that does not name a resource", () => {
-    expect(() =>
-      decodeResourceActionSnapshotResolveResponse(
-        validRaw([
-          {
-            kind: "Recovery",
-            availability: AVAILABLE,
-            offer: {
-              kind: "RetryUpload",
-              expectedGeneration: 2,
-              input: "ChooseOriginalFile",
-            },
-          },
-        ]),
-      ),
-    ).toThrow("offer must name a media recovery");
   });
 
   it("decodes PermissionDenied and every other server-owned blocked reason", () => {
@@ -304,31 +264,6 @@ describe("decodeResourceActionSnapshotResolveResponse", () => {
         validRaw([{ kind: "Open", availability: { kind: "Deferred" } }]),
       ),
     ).toThrow(TypeError);
-  });
-
-  it("strictly decodes server-owned offline-reading kind and visible title", () => {
-    const [snapshot] = decodeResourceActionSnapshotResolveResponse(validRaw([{
-      kind: "OfflineReading",
-      availability: AVAILABLE,
-      mediaKind: "web_article",
-      requestedTitle: "Signal on the Train",
-    }]));
-    expect(snapshot.capabilities[0]).toEqual({
-      kind: "OfflineReading",
-      availability: AVAILABLE,
-      mediaKind: "web_article",
-      requestedTitle: "Signal on the Train",
-    });
-    for (const mutation of [
-      { mediaKind: "audio", requestedTitle: "Signal" },
-      { mediaKind: "pdf", requestedTitle: "   " },
-    ]) {
-      expect(() => decodeResourceActionSnapshotResolveResponse(validRaw([{
-        kind: "OfflineReading",
-        availability: AVAILABLE,
-        ...mutation,
-      }]))).toThrow(TypeError);
-    }
   });
 
   it("decodes only an explicit unrouteable, capability-free missing snapshot", () => {

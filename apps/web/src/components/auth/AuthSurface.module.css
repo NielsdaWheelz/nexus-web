@@ -1,42 +1,39 @@
-.surface {
+.container {
+  min-height: 100dvh;
+  height: 100dvh;
+  overflow-y: auto;
   display: flex;
+  padding: max(var(--space-10), var(--viewport-safe-top))
+    max(var(--space-6), var(--viewport-safe-right))
+    max(var(--space-10), var(--viewport-safe-bottom))
+    max(var(--space-6), var(--viewport-safe-left));
+  background: var(--surface-canvas);
+}
+
+.frame {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
   width: 100%;
-  min-width: 0;
-  min-height: 100%;
   max-width: 24rem;
-  margin-inline: auto;
-  flex-direction: column;
-  justify-content: center;
-  gap: var(--space-10);
+  margin: auto;
 }
 
-.identity,
-.identityCopy,
-.task,
+.header,
+.brand,
 .introduction {
   display: flex;
-  min-width: 0;
   flex-direction: column;
+  align-items: center;
 }
 
-.identity,
-.introduction {
-  align-items: center;
+.header {
+  gap: var(--space-6);
   text-align: center;
 }
 
-.identity {
-  gap: var(--space-6);
-}
-
-.identityCopy {
-  align-items: inherit;
-  gap: var(--space-2);
-}
-
-.task {
-  width: 100%;
-  gap: var(--space-6);
+.brand {
+  gap: var(--space-3);
 }
 
 .introduction {
@@ -44,14 +41,10 @@
 }
 
 .brandMark {
-  width: var(--space-12);
-  height: var(--space-12);
-  flex: 0 0 auto;
   color: var(--accent);
 }
 
 .wordmark,
-.descriptor,
 .title,
 .description {
   margin: 0;
@@ -59,23 +52,15 @@
 
 .wordmark {
   color: var(--ink);
-  font-size: var(--text-3xl);
+  font-size: var(--text-2xl);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-tight);
   line-height: var(--leading-tight);
 }
 
-.descriptor {
-  max-width: 24ch;
-  color: var(--ink-muted);
-  font-family: var(--font-serif);
-  font-size: var(--text-lg);
-  line-height: var(--leading-normal);
-}
-
 .title {
   color: var(--ink);
-  font-size: var(--text-2xl);
+  font-size: var(--text-xl);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-tight);
   line-height: var(--leading-tight);
@@ -88,31 +73,9 @@
   line-height: var(--leading-relaxed);
 }
 
-@media (min-width: 60rem) {
-  .surface {
-    display: grid;
-    max-width: 70rem;
-    grid-template-columns: minmax(0, 1fr) minmax(20rem, 24rem);
-    align-items: center;
-    gap: clamp(var(--space-12), 8vw, var(--space-24));
-  }
-
-  .identity,
-  .introduction {
-    align-items: flex-start;
-    text-align: left;
-  }
-
-  .brandMark {
-    width: var(--space-16);
-    height: var(--space-16);
-  }
-
-  .wordmark {
-    font-size: var(--text-display-1);
-  }
-
-  .descriptor {
-    font-size: var(--text-xl);
+@media (max-width: 480px) {
+  .container {
+    padding-right: max(var(--space-4), var(--viewport-safe-right));
+    padding-left: max(var(--space-4), var(--viewport-safe-left));
   }
 }

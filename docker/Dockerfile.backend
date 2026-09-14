@@ -15,14 +15,6 @@ COPY python/nexus ./nexus
 RUN uv sync --frozen --no-dev --no-editable
 
 
-# The subscription-authenticated host is part of the worker release identity,
-# never the API/migration artifact.  Keep its SDK/runtime dependency out of the
-# base environment so an API compromise cannot read or use Codex credentials.
-FROM python-builder AS worker-python-builder
-
-RUN uv sync --frozen --no-dev --no-editable --extra codex-agent
-
-
 FROM python-builder AS release-metadata
 
 ARG SOURCE_SHA
@@ -83,29 +75,18 @@ EXPOSE 8000
 CMD ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 
-FROM backend-runtime AS worker-runtime
+FROM backend-runtime AS worker
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends bubblewrap \
-    && rm -rf /var/lib/apt/lists/* \
-    && install --directory --owner=nexus --group=nexus --mode=0700 /var/lib/nexus-codex \
-    && install --directory --owner=nexus --group=nexus --mode=0770 /run/nexus-codex
-
-
-FROM worker-runtime AS worker
-
-COPY --from=worker-python-builder /app/.venv /app/.venv
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-builder /app/node/ingest/node_modules ./node/ingest/node_modules
 COPY node/ingest/ingest.mjs ./node/ingest/ingest.mjs
-COPY node/ingest/accepted_url_egress.mjs ./node/ingest/accepted_url_egress.mjs
 COPY apps/worker ./apps/worker
-COPY apps/codex_agent ./apps/codex_agent
 COPY scripts/oracle ./scripts/oracle
 
 RUN node --version
 
 ENV NODE_ENV="production"
+ENV NODE_INGEST_SCRIPT="/app/node/ingest/ingest.mjs"
 
 USER nexus:nexus
 

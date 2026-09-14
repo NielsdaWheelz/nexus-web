@@ -505,7 +505,7 @@ def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) ->
 
 def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDeleteOut:
     """Delete a non-default library. Owner-only; non-owner admins get E_OWNER_REQUIRED."""
-    from nexus.services import library_entries, media_deletion, media_upload_sessions
+    from nexus.services import library_entries, media_deletion
     from nexus.services.artifacts import engine as artifact_engine
     from nexus.services.artifacts.dossier_types import AudienceUser
     from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
@@ -574,10 +574,6 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDel
             # the same way.
             delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme="library", id=library_id))
 
-            media_upload_sessions.delete_library_destination_support_in_current_transaction(
-                db,
-                library_id=library_id,
-            )
             library_entries.delete_library_entries(db, library_id)
             db.execute(
                 text("DELETE FROM libraries WHERE id = :library_id"),

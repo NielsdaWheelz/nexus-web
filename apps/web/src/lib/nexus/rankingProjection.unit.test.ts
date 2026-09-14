@@ -12,9 +12,7 @@ import {
   commitNexusRevision,
   composeNexusProjection,
   mergeProgressiveNexusEntries,
-  projectNexusLocalEntries,
   type NexusPane,
-  type NexusRecentTarget,
 } from "./results";
 
 const TIERS: readonly NexusRankTier[] = [
@@ -68,21 +66,10 @@ function pane(id: string): NexusPane {
   };
 }
 
-function recent(id: string): NexusRecentTarget {
-  return {
-    target_href: `/pages/recent-${id}`,
-    label_snapshot: `Recent ${id}`,
-    source: "Nexus",
-    last_used_at: "2026-08-26T00:00:00Z",
-  };
-}
-
 function projection(input: {
   readonly surface: "Desktop" | "Mobile";
   readonly query?: string;
   readonly panes?: readonly NexusPane[];
-  readonly currentPlayback?: NexusEntry | null;
-  readonly recent?: readonly NexusRecentTarget[];
   readonly results?: readonly NexusEntry[];
   readonly activeKey?: NexusEntryKey | null;
   readonly todayAppend?:
@@ -93,8 +80,8 @@ function projection(input: {
     surface: input.surface,
     query: input.query ?? "",
     panes: input.panes ?? [],
-    currentPlayback: input.currentPlayback ?? null,
-    recent: input.recent ?? [],
+    currentPlayback: null,
+    recent: [],
     destinations: DESTINATIONS,
     frecencyByHref: {},
     commandShortcutHints: {},
@@ -134,38 +121,18 @@ describe("Nexus ranking and projection", () => {
   });
 
   it.each([
-    [
-      "Desktop",
-      [
-        ["Open", 6],
-        ["Continue", 1],
-        ["Recent", 4],
-        ["QuickActions", 6],
-      ],
-    ],
-    [
-      "Mobile",
-      [
-        ["Open", 6],
-        ["QuickActions", 6],
-        ["Continue", 1],
-        ["Recent", 4],
-        ["Places", 6],
-      ],
-    ],
+    ["Desktop", ["Open", "QuickActions"], "Flow"],
+    ["Mobile", ["Open", "QuickActions", "Places"], "CompactRail"],
   ] as const)(
-    "preserves the blank %s group order and caps",
-    (surface, expectedGroups) => {
+    "owns the blank %s group order, layout, and open-pane cap",
+    (surface, groupIds, layout) => {
       const view = projection({
         surface,
         panes: ["a", "b", "c", "d", "e", "f", "g"].map(pane),
-        currentPlayback: entry("Now playing"),
-        recent: ["a", "b", "c", "d", "e", "f"].map(recent),
       });
 
-      expect(
-        view.groups.map((group) => [group.id, group.entries.length]),
-      ).toEqual(expectedGroups);
+      expect(view.groups.map((group) => group.id)).toEqual(groupIds);
+      expect(view.groups.every((group) => group.layout === layout)).toBe(true);
       expect(view.groups[0]?.entries.map((candidate) => candidate.label)).toEqual([
         "Pane a",
         "Pane b",
@@ -174,223 +141,36 @@ describe("Nexus ranking and projection", () => {
         "Pane e",
         "Manage tabs…",
       ]);
-      expect(
-        view.groups
-          .find((group) => group.id === "Recent")
-          ?.entries.map((candidate) => candidate.label),
-      ).toEqual(["Recent a", "Recent b", "Recent c", "Recent d"]);
     },
   );
 
-  it("removes only redundant mobile blank support facts", () => {
-    const input = {
-      panes: [pane("a")],
-      recent: [recent("z")],
-    } as const;
-    const desktop = projection({ surface: "Desktop", ...input });
-    const mobile = projection({ surface: "Mobile", ...input });
-
-    expect(
-      desktop.groups.find((group) => group.id === "Open")?.entries[0],
-    ).toMatchObject({
-      label: "Pane a",
-      typeLabel: "Tab",
-      metadata: "Current tab",
-      openState: "Active",
-    });
-    expect(
-      mobile.groups.find((group) => group.id === "Open")?.entries[0],
-    ).toMatchObject({
-      label: "Pane a",
-      typeLabel: "Tab",
-      openState: "Active",
-    });
-    expect(
-      mobile.groups.find((group) => group.id === "Open")?.entries[0]?.metadata,
-    ).toBeUndefined();
-
-    const desktopRecent = desktop.groups.find(
-      (group) => group.id === "Recent",
-    )?.entries[0];
-    const mobileRecent = mobile.groups.find(
-      (group) => group.id === "Recent",
-    )?.entries[0];
-    expect(desktopRecent).toMatchObject({
-      label: "Recent z",
-      typeLabel: "Recent",
-      metadata: "/pages/recent-z",
-    });
-    expect(mobileRecent).toMatchObject({
-      label: "Recent z",
-      metadata: "/pages/recent-z",
-    });
-    expect(mobileRecent?.typeLabel).toBeUndefined();
-
-    const desktopQuickNote = desktop.groups.find(
-      (group) => group.id === "QuickActions",
-    )?.entries[0];
-    const mobileQuickActions = mobile.groups.find(
-      (group) => group.id === "QuickActions",
-    )?.entries;
-    expect(desktopQuickNote).toMatchObject({
-      label: "Quick Note",
-      typeLabel: "Command",
-      metadata: "Create · /n",
-    });
-    expect(mobileQuickActions?.[0]).toMatchObject({
-      label: "Quick Note",
-      metadata: "Create · /n",
-    });
-    expect(mobileQuickActions?.[0]?.typeLabel).toBeUndefined();
-    expect(mobileQuickActions?.[1]).toMatchObject({
-      label: "Today",
-      typeLabel: "Place",
-    });
-
-    const mobileLectern = mobile.groups
-      .find((group) => group.id === "Places")
-      ?.entries.find(
-        (candidate) =>
-          candidate.key.kind === "Destination" &&
-          candidate.key.destinationId === "lectern",
-      );
-    expect(mobileLectern).toMatchObject({ label: "Lectern" });
-    expect(mobileLectern?.typeLabel).toBeUndefined();
-  });
-
-  it.each(["Desktop", "Mobile"] as const)(
-    "projects a non-URL %s query as capped Results followed by five Do with query actions",
-    (surface) => {
-      const rawQuery = "  Quantum Gardens  ";
-      const trimmedQuery = "Quantum Gardens";
+  it.each([
+    ["Desktop", ["Results", "QueryActions"]],
+    ["Mobile", ["QueryActions", "Results"]],
+  ] as const)(
+    "keeps fixed %s query actions outside the eight-result cap",
+    (surface, groupIds) => {
       const reason = "Today contains an atomic draft";
       const view = projection({
         surface,
-        query: rawQuery,
+        query: "Quantum Gardens",
         results: Array.from({ length: 9 }, (_, index) =>
           entry(`result-${index}`, { score: 1 - index / 10 }),
         ),
         todayAppend: { kind: "Unavailable", reason },
       });
 
-      expect(
-        view.groups.map(({ id, label }) => ({ id, label })),
-      ).toEqual([
-        { id: "Results", label: "Results" },
-        { id: "QuickActions", label: "Do with query" },
-      ]);
+      expect(view.groups.map((group) => group.id)).toEqual(groupIds);
       expect(
         view.groups.find((group) => group.id === "Results")?.entries,
       ).toHaveLength(8);
-      const queryActions = view.groups.find(
-        (group) => group.id === "QuickActions",
-      );
-      expect(queryActions?.entries).toHaveLength(5);
-      expect(view.groups.flatMap((group) => group.entries)).toHaveLength(13);
-
-      const labels =
-        queryActions?.entries.map((candidate) => candidate.label) ?? [];
-      expect(labels).toEqual([
-        `Ask Nexus about “${trimmedQuery}”`,
-        `Add “${trimmedQuery}” to Today`,
-        `Browse for “${trimmedQuery}”…`,
-        `Create “${trimmedQuery}”…`,
-        `See all results for “${trimmedQuery}”`,
-      ]);
-      expect(labels.map((label) => label.split(" ", 1)[0])).toEqual([
-        "Ask",
-        "Add",
-        "Browse",
-        "Create",
-        "See",
-      ]);
-      expect(
-        labels.map((label) => label.split(trimmedQuery).length - 1),
-      ).toEqual([1, 1, 1, 1, 1]);
-      expect(
-        queryActions?.entries.map((candidate) =>
-          (candidate.metadata ?? "").includes(trimmedQuery),
-        ),
-      ).toEqual([false, false, false, false, false]);
-      expect(
-        queryActions?.entries.map(({ typeLabel, metadata }) => ({
-          typeLabel,
-          metadata,
-        })),
-      ).toEqual(
-        surface === "Desktop"
-          ? [
-              { typeLabel: "Chat", metadata: "Ask Nexus" },
-              { typeLabel: "Today", metadata: "Append note" },
-              { typeLabel: "Browse", metadata: "Choose a kind" },
-              { typeLabel: "Create", metadata: "Choose a type" },
-              { typeLabel: "Search", metadata: "All results" },
-            ]
-          : [
-              { typeLabel: "Chat", metadata: undefined },
-              { typeLabel: undefined, metadata: "Append note" },
-              { typeLabel: undefined, metadata: "Choose a kind" },
-              { typeLabel: undefined, metadata: "Choose a type" },
-              { typeLabel: "Search", metadata: undefined },
-            ],
-      );
-
       const addToToday = view.groups
-        .find((group) => group.id === "QuickActions")
+        .find((group) => group.id === "QueryActions")
         ?.entries.find((candidate) => candidate.label.startsWith("Add "));
       expect(addToToday?.primaryAction).toMatchObject({
         activation: { kind: "DailyTextHandoff" },
         availability: { kind: "Unavailable", reason },
       });
-    },
-  );
-
-  it.each(["Desktop", "Mobile"] as const)(
-    "keeps Do with query actions when a non-URL %s query has no Results",
-    (surface) => {
-      const view = projection({
-        surface,
-        query: "No owned matches",
-      });
-
-      expect(
-        view.groups.map(({ id, label, entries }) => ({
-          id,
-          label,
-          entryCount: entries.length,
-        })),
-      ).toEqual([
-        { id: "QuickActions", label: "Do with query", entryCount: 5 },
-      ]);
-    },
-  );
-
-  it.each(["Desktop", "Mobile"] as const)(
-    "projects a bare URL as the exact Import URL Result only on %s",
-    (surface) => {
-      const rawUrl = "  https://Example.com  ";
-      const results = projectNexusLocalEntries({
-        query: rawUrl,
-        panes: [],
-        destinations: DESTINATIONS,
-        frecencyByHref: {},
-        commandShortcutHints: {},
-      });
-      const view = projection({ surface, query: rawUrl, results });
-
-      expect(
-        view.groups.map(({ id, label }) => ({ id, label })),
-      ).toEqual([{ id: "Results", label: "Results" }]);
-      expect(view.groups[0]?.entries).toMatchObject([
-        {
-          key: {
-            kind: "ImportUrl",
-            normalizedUrl: "https://example.com/",
-          },
-          label: "Import URL",
-          metadata: "https://example.com/",
-        },
-      ]);
     },
   );
 

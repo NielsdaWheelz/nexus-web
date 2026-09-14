@@ -2,17 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import type { NoteBodyValue } from "@/lib/notes/prosemirror/schema";
+import { createRandomId } from "@/lib/createRandomId";
 import {
-  clearStoredNoteEditorDraft,
-  createNoteEditorClientMutationId,
-  storeNoteEditorDraft,
-  type StoredNoteEditorDraft,
-} from "@/lib/notes/noteEditorDraftStore";
+  createNoteBodyDoc,
+  noteBodyValueFromDoc,
+  type NoteBodyValue,
+} from "@/lib/notes/prosemirror/schema";
 
 export const NOTE_AUTOSAVE_IDLE_DELAY_MS = 1500;
 export const NOTE_AUTOSAVE_MAX_WAIT_MS = 5000;
 export const NOTE_LAYOUT_MEASURE_DELAY_MS = 100;
+const NOTE_DRAFT_STORAGE_PREFIX = "nexus.noteBodyDraft:";
 
 export type NoteEditorSessionStatus =
   | "clean"
@@ -44,6 +44,15 @@ export interface NoteEditorSession {
   retry(): void;
   discardDraft(): void;
   reset(): void;
+}
+
+export interface StoredNoteEditorDraft {
+  version: 1;
+  body: NoteBodyValue;
+  metadata: unknown;
+  sequence: number;
+  clientMutationId: string;
+  updatedAt: string;
 }
 
 export function useNoteEditorSession({
@@ -214,7 +223,7 @@ export function useNoteEditorSession({
       if (doc && pendingDocRef.current) {
         const clientMutationId =
           pendingClientMutationIdRef.current ??
-          createNoteEditorClientMutationId(pendingSequenceRef.current);
+          createClientMutationId(pendingSequenceRef.current);
         pendingDocRef.current = doc;
         pendingClientMutationIdRef.current = clientMutationId;
         storeNoteEditorDraft(
@@ -247,7 +256,7 @@ export function useNoteEditorSession({
   const scheduleSave = useCallback(
     (doc: NoteBodyValue) => {
       const nextSequence = localSequenceRef.current + 1;
-      const clientMutationId = createNoteEditorClientMutationId(nextSequence);
+      const clientMutationId = createClientMutationId(nextSequence);
       localSequenceRef.current = nextSequence;
       pendingDocRef.current = doc;
       pendingSequenceRef.current = nextSequence;
@@ -376,4 +385,109 @@ export function useNoteEditorSession({
     discardDraft,
     reset,
   };
+}
+
+function createClientMutationId(sequence: number): string {
+  return `note-${sequence}-${createRandomId()}`;
+}
+
+export function readStoredNoteEditorDraft(resourceKey: string): StoredNoteEditorDraft | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const raw = window.localStorage.getItem(`${NOTE_DRAFT_STORAGE_PREFIX}${resourceKey}`);
+  if (!raw) {
+    return null;
+  }
+  try {
+    const draft = JSON.parse(raw) as {
+      version?: unknown;
+      bodyPmJson?: unknown;
+      bodyText?: unknown;
+      metadata?: unknown;
+      sequence?: unknown;
+      clientMutationId?: unknown;
+      updatedAt?: unknown;
+    };
+    if (
+      typeof draft !== "object" ||
+      draft === null ||
+      draft.version !== 1 ||
+      typeof draft.bodyPmJson !== "object" ||
+      draft.bodyPmJson === null ||
+      typeof draft.bodyText !== "string" ||
+      !isStoredDraftSequence(draft.sequence) ||
+      typeof draft.clientMutationId !== "string" ||
+      draft.clientMutationId.length === 0 ||
+      typeof draft.updatedAt !== "string" ||
+      draft.updatedAt.length === 0
+    ) {
+      window.localStorage.removeItem(`${NOTE_DRAFT_STORAGE_PREFIX}${resourceKey}`);
+      return null;
+    }
+    const body = noteBodyValueFromDoc(
+      createNoteBodyDoc({
+        bodyPmJson: draft.bodyPmJson as Record<string, unknown>,
+        fallbackBodyText: draft.bodyText,
+      }),
+    );
+    return {
+      version: 1,
+      body,
+      metadata: draft.metadata,
+      sequence: draft.sequence,
+      clientMutationId: draft.clientMutationId,
+      updatedAt: draft.updatedAt,
+    };
+  } catch {
+    window.localStorage.removeItem(`${NOTE_DRAFT_STORAGE_PREFIX}${resourceKey}`);
+    return null;
+  }
+}
+
+function storeNoteEditorDraft(
+  resourceKey: string,
+  body: NoteBodyValue,
+  metadata: unknown,
+  sequence: number,
+  clientMutationId: string
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      `${NOTE_DRAFT_STORAGE_PREFIX}${resourceKey}`,
+      JSON.stringify({
+        version: 1,
+        bodyPmJson: body.bodyPmJson,
+        bodyText: body.bodyText,
+        metadata,
+        sequence,
+        clientMutationId,
+        updatedAt: new Date().toISOString(),
+      })
+    );
+  } catch {
+    // Storage can be unavailable or full; autosave still continues through the network path.
+  }
+}
+
+function isStoredDraftSequence(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value > 0
+  );
+}
+
+export function clearStoredNoteEditorDraft(resourceKey: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(`${NOTE_DRAFT_STORAGE_PREFIX}${resourceKey}`);
+  } catch {
+    // Nothing useful to do if the browser refuses storage access.
+  }
 }

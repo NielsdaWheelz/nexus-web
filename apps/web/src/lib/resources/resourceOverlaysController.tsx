@@ -16,17 +16,27 @@ import Dialog from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import LibrarySettingsDialog from "@/components/LibrarySettingsDialog";
 import AcquisitionControl from "@/components/browse/AcquisitionControl";
-import PodcastSubscriptionSettingsOverlay from "@/components/podcasts/PodcastSubscriptionSettingsOverlay";
+import PodcastSubscriptionSettingsModal from "@/app/(authenticated)/podcasts/PodcastSubscriptionSettingsModal";
+import type { PodcastSubscriptionSettingsModal as PodcastSubscriptionSettingsModalState } from "@/app/(authenticated)/podcasts/usePodcastSubscriptionSettingsModal";
 import { mapMediaAuthorCredits } from "@/app/(authenticated)/media/[id]/mediaFormatting";
 import { apiFetch, isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { absent, type Presence } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
-import { useFeedback } from "@/components/feedback/Feedback";
+import {
+  useFeedback,
+  type FeedbackContent,
+} from "@/components/feedback/Feedback";
 import {
   deleteMemberLibrary,
   getMemberLibrary,
   renameMemberLibrary,
 } from "@/lib/libraries/client";
+import {
+  fetchPodcastSubscriptionSettingsSource,
+  savePodcastSubscriptionSettings,
+} from "@/lib/podcasts/subscriptionSettings";
+import type { PauseShorteningMode } from "@/lib/player/pauseShortening";
 import { subscribeToPodcast } from "@/lib/podcasts/acquisition";
 import type {
   ResourceActionMutationBoundary,
@@ -309,7 +319,7 @@ export function ResourceActionOverlays() {
         />
       ) : null}
       {podcastSettings ? (
-        <PodcastSubscriptionSettingsOverlay
+        <PodcastSettingsOverlay
           key={podcastSettings.key}
           podcastId={podcastSettings.id}
           mutation={podcastSettings.mutation}
@@ -584,6 +594,187 @@ function LibrarySettingsOverlay({
           setDefect({ error });
         }
       }}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Podcast subscription settings
+// ---------------------------------------------------------------------------
+
+function podcastSettingsErrorContent(error: unknown): FeedbackContent {
+  const requestId = isApiError(error) ? error.requestId : undefined;
+  return {
+    tone: "Danger",
+    title: "Subscription settings weren’t saved",
+    requestId,
+  };
+}
+
+function usePodcastSettingsOverlayState(
+  podcastId: string,
+  mutation: ResourceActionMutationBoundary,
+  onSaved: (lease: ResourceActionMutationLease) => Promise<void>,
+): PodcastSubscriptionSettingsModalState & { seed: (open: boolean) => void } {
+  const [active, setActive] = useState(false);
+  const [defaultPlaybackSpeed, setDefaultPlaybackSpeed] =
+    useState<Presence<number>>(absent());
+  const [pauseShorteningMode, setPauseShorteningMode] =
+    useState<Presence<PauseShorteningMode>>(absent());
+  const [autoQueue, setAutoQueue] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<FeedbackContent | null>(null);
+  const [defect, setDefect] = useState<{ error: unknown } | null>(null);
+  const busyRef = useRef(false);
+  const seededRef = useRef(false);
+
+  const seed = useCallback((openWith: boolean) => {
+    seededRef.current = true;
+    setActive(openWith);
+  }, []);
+
+  const close = useCallback(() => {
+    if (busyRef.current) return;
+    setActive(false);
+  }, []);
+
+  const save = useCallback(async () => {
+    if (busyRef.current) return;
+    const lease = mutation.begin();
+    if (lease === null) return;
+    busyRef.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      await savePodcastSubscriptionSettings(podcastId, {
+        defaultPlaybackSpeed,
+        pauseShorteningMode,
+        autoQueue,
+      });
+      await onSaved(lease);
+      setActive(false);
+    } catch (saveError) {
+      lease.abort();
+      if (handleUnauthenticatedApiError(saveError)) return;
+      if (!isApiError(saveError) || isSameSystemApiDefect(saveError)) {
+        setDefect({ error: saveError });
+        return;
+      }
+      setError(podcastSettingsErrorContent(saveError));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }, [
+    autoQueue,
+    defaultPlaybackSpeed,
+    mutation,
+    onSaved,
+    pauseShorteningMode,
+    podcastId,
+  ]);
+
+  if (defect) throw defect.error;
+
+  return {
+    podcastId: active ? podcastId : null,
+    defaultPlaybackSpeed,
+    pauseShorteningMode,
+    autoQueue,
+    busy,
+    error,
+    setDefaultPlaybackSpeed,
+    setPauseShorteningMode,
+    setAutoQueue,
+    // The overlay drives seeding through `seed`; `open` is unused here.
+    open: () => {},
+    close,
+    save,
+    seed,
+  };
+}
+
+function PodcastSettingsOverlay({
+  podcastId,
+  mutation,
+  onClose,
+}: {
+  podcastId: string;
+  mutation: ResourceActionMutationBoundary;
+  onClose: () => void;
+}) {
+  const feedback = useFeedback();
+  const onSaved = useCallback(
+    async (lease: ResourceActionMutationLease) => {
+      await lease.reconcile({
+        kind: "Subjects",
+        refs: [assumeCanonicalResourceRef(`podcast:${podcastId}`)],
+      });
+      await lease.commit();
+    },
+    [podcastId],
+  );
+  const state = usePodcastSettingsOverlayState(podcastId, mutation, onSaved);
+  const [loaded, setLoaded] = useState(false);
+  const seed = state.seed;
+  const setDefaultPlaybackSpeed = state.setDefaultPlaybackSpeed;
+  const setPauseShorteningMode = state.setPauseShorteningMode;
+  const setAutoQueue = state.setAutoQueue;
+
+  // Self-load the current settings, seed them, then reveal the modal.
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const src = await fetchPodcastSubscriptionSettingsSource(
+          podcastId,
+          controller.signal,
+        );
+        setDefaultPlaybackSpeed(src.default_playback_speed);
+        setPauseShorteningMode(src.pause_shortening_mode);
+        setAutoQueue(src.auto_queue);
+        seed(true);
+        setLoaded(true);
+      } catch (error) {
+        if (controller.signal.aborted || handleUnauthenticatedApiError(error)) {
+          return;
+        }
+        feedback.publish({
+          kind: "Hud",
+          content: {
+            tone: "Danger",
+            title: "Subscription settings couldn’t be loaded",
+            requestId: isApiError(error) ? error.requestId : undefined,
+          },
+        });
+        onClose();
+      }
+    })();
+    return () => controller.abort();
+  }, [
+    podcastId,
+    feedback,
+    onClose,
+    seed,
+    setDefaultPlaybackSpeed,
+    setPauseShorteningMode,
+    setAutoQueue,
+  ]);
+
+  // When the modal state closes (Close pressed / saved), tear the overlay down.
+  const wasActiveRef = useRef(false);
+  useEffect(() => {
+    const isActive = state.podcastId !== null;
+    if (wasActiveRef.current && !isActive) onClose();
+    wasActiveRef.current = isActive;
+  }, [state.podcastId, onClose]);
+
+  if (!loaded) return null;
+
+  return (
+    <PodcastSubscriptionSettingsModal
+      podcastTitle="this podcast"
+      settingsModal={state}
     />
   );
 }

@@ -12,7 +12,6 @@ function message(
     role: "assistant",
     parent_message_id: parentMessageId,
     trust_trail: null,
-    reader_selection: { kind: "Absent" },
     status: "complete",
     can_rerun: false,
     can_regenerate: false,

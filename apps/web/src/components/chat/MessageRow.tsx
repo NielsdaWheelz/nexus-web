@@ -11,8 +11,6 @@ import type {
   ForkOption,
 } from "@/lib/conversations/types";
 import type { CitationOut } from "@/lib/conversations/citationOut";
-import type { ChatConnectionRecovery } from "@/lib/conversations/chatConnectionRecovery";
-import type { GenerationSelectionSpec } from "@/lib/conversations/generationCatalog";
 import {
   settleMessageActionMutation,
   useMessageActionIntentOwner,
@@ -38,24 +36,13 @@ interface MessageRowProps {
   onRerunAssistantResponse?: (
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
-  rerunning?: boolean;
-  onRerunAssistantResponseWithSelection?: (
-    assistantMessageId: string,
-    selection: GenerationSelectionSpec,
-    catalogDefinitionRevision: string,
-  ) => Promise<MessageActionMutationOutcome>;
   /** One durable regeneration from an eligible completed assistant answer. */
   onRegenerateAssistantResponse?: (
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
-  onRegenerateAssistantResponseWithSelection?: (
-    assistantMessageId: string,
-    selection: GenerationSelectionSpec,
-    catalogDefinitionRevision: string,
-  ) => Promise<MessageActionMutationOutcome>;
   onDeleteMessage?: DeleteMessageMutation;
-  /** Client-only recovery for this assistant's interrupted live tail. */
-  connectionRecovery?: ChatConnectionRecovery;
+  /** Assistant ids in the client-only ConnectionLostStatusUnknown state (§10). */
+  connectionLostAssistantIds?: Set<string>;
   onReconnectAssistant?: (assistantMessageId: string) => void;
   onReaderSourceActivate?: (
     activation: ResourceActivation,
@@ -76,12 +63,9 @@ export const MessageRow = memo(function MessageRow({
   onSelectFork,
   onReplyToAssistant,
   onRerunAssistantResponse,
-  rerunning = false,
-  onRerunAssistantResponseWithSelection,
   onRegenerateAssistantResponse,
-  onRegenerateAssistantResponseWithSelection,
   onDeleteMessage,
-  connectionRecovery,
+  connectionLostAssistantIds,
   onReconnectAssistant,
   onReaderSourceActivate,
   onStartWalk,
@@ -176,22 +160,6 @@ export const MessageRow = memo(function MessageRow({
   );
   useMessageActionIntentOwner(actionRef, acceptActionIntent);
 
-  const rerunFromFailureCard = useCallback(() => {
-    if (
-      message.role !== "assistant" ||
-      !message.can_rerun ||
-      !onRerunAssistantResponse
-    ) {
-      return;
-    }
-    void onRerunAssistantResponse(message.id);
-  }, [
-    message.can_rerun,
-    message.id,
-    message.role,
-    onRerunAssistantResponse,
-  ]);
-
   switch (message.role) {
     case "user":
       return (
@@ -212,34 +180,8 @@ export const MessageRow = memo(function MessageRow({
           onSelectFork={onSelectFork}
           onReplyToAssistant={onReplyToAssistant}
           onCitationActivate={activateTarget}
-          connectionRecovery={connectionRecovery}
+          connectionLost={connectionLostAssistantIds?.has(message.id) === true}
           onReconnectAssistant={onReconnectAssistant}
-          onRerun={
-            message.can_rerun && onRerunAssistantResponse
-              ? rerunFromFailureCard
-              : undefined
-          }
-          rerunning={rerunning}
-          onRerunWithSelection={
-            onRerunAssistantResponseWithSelection
-              ? async (selection, revision) =>
-                  (await onRerunAssistantResponseWithSelection(
-                    message.id,
-                    selection,
-                    revision,
-                  )) === "Committed"
-              : undefined
-          }
-          onRegenerateWithSelection={
-            onRegenerateAssistantResponseWithSelection
-              ? async (selection, revision) =>
-                  (await onRegenerateAssistantResponseWithSelection(
-                    message.id,
-                    selection,
-                    revision,
-                  )) === "Committed"
-              : undefined
-          }
           timestampLabel={timestampLabel}
         />
       );

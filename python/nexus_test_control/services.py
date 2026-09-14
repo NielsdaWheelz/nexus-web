@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import asyncio
-import ctypes
 import errno
 import fcntl
 import ipaddress
 import json
-import logging
-import mmap
 import os
 import re
 import secrets
@@ -16,14 +12,12 @@ import signal
 import socket
 import ssl
 import subprocess
-import sys
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import MappingProxyType
 from typing import cast
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
@@ -39,7 +33,6 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from psycopg import sql
 
-from nexus.config import BACKGROUND_WORKER_MEMORY_LIMIT_BYTES
 from nexus.release_artifact import (
     BackendArtifactDefect,
     build_runtime_identity,
@@ -48,15 +41,7 @@ from nexus.release_artifact import (
 )
 from nexus_test_control.build import StandaloneBuild
 from nexus_test_control.model import Resource, ResourceKind
-from nexus_test_control.process import (
-    run_command,
-    trusted_runner_environment,
-    unblock_and_exec_command,
-)
-from nexus_test_control.provider_api_contract import (
-    PROVIDER_API_NAMES,
-    TEST_GENERATION_CONTINUATION_ENCRYPTION_KEY,
-)
+from nexus_test_control.process import run_command, unblock_and_exec_command
 from nexus_test_control.runtime import (
     EndpointKind,
     LedgerEntry,
@@ -67,24 +52,19 @@ from nexus_test_control.runtime import (
     canonical_repo_root,
     claim_run,
     cleanup_candidates,
-    codex_generation_peer_identity,
-    codex_generation_peer_state_dir,
-    embedding_peer_identity,
-    embedding_peer_state_dir,
     forget_cleaned,
     initialize_runtime,
     local_docker_host,
     migration_database_name,
-    missing_runtime_port_names,
     process_resource_identity,
-    provider_api_peer_identity,
-    provider_api_peer_state_dir,
+    provider_fixture_identity,
     read_ledger,
+    read_previous_runtime_for_cleanup,
     read_runtime,
-    read_upgradeable_runtime,
     record_created,
     record_planned,
     release_run,
+    repo_id_for,
     require_run_id,
     require_scenario_id,
     require_test_environment,
@@ -100,11 +80,8 @@ from nexus_test_control.runtime import (
     template_database_name,
     template_fingerprint,
     template_lifecycle_lock,
-    upgrade_runtime_to_current,
-    workspace_heavy_lock,
+    upgrade_previous_runtime,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 POSTGRES_IMAGE = (
     "pgvector/pgvector@sha256:bd12d6788a617f4147d5a2ae0b56d07921398adabfe5a033bd3f50c245df55a1"
@@ -125,8 +102,6 @@ TEST_EXTENSION_ID = "pfcfdmanlahjkanalhpnfjflgaaahgib"
 SUPABASE_EXCLUDED_SERVICES = (
     "realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector,postgres-meta,postgrest"
 )
-CADDY_VERSION = "v2.11.4"
-_CADDY_MODULE_BUILD_PIN = f"github.com/caddyserver/caddy/v2\t{CADDY_VERSION}".encode()
 
 _PORT_DEFAULTS = (
     15432,
@@ -137,120 +112,64 @@ _PORT_DEFAULTS = (
     25424,
     25425,
     18000,
-    18001,
     13000,
     19091,
     19092,
-    19093,
 )
-_UPGRADE_PORT_DEFAULTS = {
-    "agent_tools_mcp": 18001,
-    "provider_api": 19093,
-}
 _EPHEMERAL_PORT_RANGE_PATH = Path("/proc/sys/net/ipv4/ip_local_port_range")
 _CONSERVATIVE_EPHEMERAL_PORT_RANGE = (32768, 65535)
 _SUPABASE_DIAGNOSTIC_TAIL_CHARS = 8192
-_DARWIN_PROCESS_BSD_INFO = 3
-_DARWIN_LIBPROC = "/usr/lib/libproc.dylib"
-_DARWIN_LSOF = "/usr/sbin/lsof"
 _SAFE_CHILD_ENV = ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "UV_CACHE_DIR")
 _STATUS_KEYS = frozenset(
     {"API_URL", "ANON_KEY", "PUBLISHABLE_KEY", "SECRET_KEY", "SERVICE_ROLE_KEY"}
 )
-_PROCESS_IDENTITY_GRACE_SECONDS = 2
-_LINUX_PROCESS_SCOPE_PREFIX = "nexus-test-process-"
-_EMBEDDING_PEER_FILES = ("ca.pem", "server-key.pem", "requests.jsonl")
-_PROVIDER_API_PEER_FILES = ("ca.pem", "server-key.pem", "requests.jsonl")
-_CODEX_GENERATION_PEER_AUDIT = "requests.jsonl"
-_CODEX_GENERATION_PEER_SOCKET = "agent.sock"
-TEST_OPENAI_EMBEDDING_API_KEY = "nexus-test-fixture-openai-key"
-TEST_OPENAI_EMBEDDING_HOST = "api.openai.com"
-TEST_BRAVE_SEARCH_API_KEY = "nexus-test-fixture-brave-key"
-TEST_PROVIDER_API_CREDENTIALS: Mapping[str, str] = MappingProxyType(
+_CALLER_RESOURCE_ENV = frozenset(
     {
-        "OPENAI_GENERATION_API_KEY": "nexus-test-fixture-openai-generation-key",
-        "ANTHROPIC_GENERATION_API_KEY": "nexus-test-fixture-anthropic-generation-key",
-        "GEMINI_GENERATION_API_KEY": "nexus-test-fixture-gemini-generation-key",
-        "MOONSHOT_GENERATION_API_KEY": "nexus-test-fixture-moonshot-generation-key",
-        "OPENROUTER_GENERATION_API_KEY": "nexus-test-fixture-openrouter-generation-key",
-        "DEEPSEEK_GENERATION_API_KEY": "nexus-test-fixture-deepseek-generation-key",
-        "XAI_GENERATION_API_KEY": "nexus-test-fixture-xai-generation-key",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_ENDPOINT_URL",
+        "AWS_ENDPOINT_URL_S3",
+        "AWS_PROFILE",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "CSP_MEDIA_ORIGINS",
+        "DATABASE_URL",
+        "DATABASE_URL_TEST",
+        "DATABASE_URL_TEST_MIGRATIONS",
+        "NEXT_PUBLIC_SUPABASE_URL",
+        "NEXUS_TEST_PROCESS_OWNER",
+        "NEXUS_TEST_STATIC_DNS",
+        "NEXUS_TEST_TLS_CA_CERT",
+        "NODE_OPTIONS",
+        "OUTBOUND_HTTP_PROXY_URL",
+        "PODCAST_INDEX_API_KEY",
+        "PODCAST_INDEX_API_SECRET",
+        "PODCAST_INDEX_BASE_URL",
+        "PGDATABASE",
+        "PGHOST",
+        "PGPASSFILE",
+        "PGPASSWORD",
+        "PGSERVICE",
+        "PGSERVICEFILE",
+        "PGUSER",
+        "R2_ENDPOINT_URL",
+        "R2_ACCESS_KEY_ID",
+        "R2_BUCKET",
+        "R2_REGION",
+        "R2_S3_API_ORIGIN",
+        "R2_SECRET_ACCESS_KEY",
+        "SERVICE_ROLE_KEY",
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_ACCESS_TOKEN",
+        "SUPABASE_AUTH_ADMIN_KEY",
+        "SUPABASE_DATABASE_URL",
+        "SUPABASE_DB_URL",
+        "SUPABASE_ISSUER",
+        "SUPABASE_JWKS_URL",
+        "SUPABASE_SERVICE_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL",
     }
 )
-TEST_FABLE_RETENTION_ACCEPTED_AT = "2026-08-31T00:00:00Z"
-_BASE_TEST_STATIC_DNS: dict[str, object] = {"www.nasa.gov": "93.184.216.34"}
-_CONTROLLER_OWNED_PROCESS_ENV = frozenset(
-    {
-        "NEXUS_AGENT_TOOLS_MCP_LISTEN",
-        "NEXUS_AGENT_TOOLS_MCP_ORIGIN",
-        "NEXUS_TEST_TLS_CA_CERTS",
-        "WORKER_LANE",
-    }
-)
-_CALLER_RESOURCE_ENV = (
-    frozenset(
-        {
-            "AWS_ACCESS_KEY_ID",
-            "AWS_ENDPOINT_URL",
-            "AWS_ENDPOINT_URL_S3",
-            "AWS_PROFILE",
-            "AWS_SECRET_ACCESS_KEY",
-            "AWS_SESSION_TOKEN",
-            "BRAVE_SEARCH_API_KEY",
-            "BRAVE_SEARCH_BASE_URL",
-            "CSP_MEDIA_ORIGINS",
-            "DATABASE_URL",
-            "DATABASE_URL_TEST",
-            "DATABASE_URL_TEST_MIGRATIONS",
-            "NEXT_PUBLIC_SUPABASE_URL",
-            "NEXUS_TEST_PROCESS_OWNER",
-            "NEXUS_TEST_PROCESS_OWNER_FD",
-            "NEXUS_TEST_STATIC_DNS",
-            "NEXUS_TEST_TLS_CA_CERT",
-            "NEXUS_TEST_TLS_CA_CERTS",
-            "NODE_OPTIONS",
-            "OUTBOUND_HTTP_PROXY_URL",
-            "PODCAST_INDEX_API_KEY",
-            "PODCAST_INDEX_API_SECRET",
-            "PODCAST_INDEX_BASE_URL",
-            "PGDATABASE",
-            "PGHOST",
-            "PGPASSFILE",
-            "PGPASSWORD",
-            "PGSERVICE",
-            "PGSERVICEFILE",
-            "PGUSER",
-            "R2_ENDPOINT_URL",
-            "R2_ACCESS_KEY_ID",
-            "R2_BUCKET",
-            "R2_REGION",
-            "R2_S3_API_ORIGIN",
-            "R2_SECRET_ACCESS_KEY",
-            "SERVICE_ROLE_KEY",
-            "SUPABASE_ANON_KEY",
-            "SUPABASE_ACCESS_TOKEN",
-            "SUPABASE_AUTH_ADMIN_KEY",
-            "SUPABASE_DATABASE_URL",
-            "SUPABASE_DB_URL",
-            "SUPABASE_ISSUER",
-            "SUPABASE_JWKS_URL",
-            "SUPABASE_SERVICE_KEY",
-            "SUPABASE_SERVICE_ROLE_KEY",
-            "SUPABASE_URL",
-        }
-    )
-    | _CONTROLLER_OWNED_PROCESS_ENV
-)
-_CALLER_GENERATION_ENV = frozenset(
-    {
-        "GENERATION_API_BASE_URLS",
-        "GENERATION_API_PROVIDERS",
-        "GENERATION_CONTINUATION_ENCRYPTION_KEY",
-        "NEXUS_FABLE_RETENTION_ACCEPTED_AT",
-        *TEST_PROVIDER_API_CREDENTIALS,
-    }
-)
-_PROVIDER_API_RUN_ENV = _CALLER_GENERATION_ENV | {"NEXUS_TEST_TLS_CA_CERTS"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,85 +186,6 @@ class TestRun:
     migration_database_url: str | None
     bucket: str
     supabase: SupabaseCredentials
-
-
-@dataclass(frozen=True, slots=True)
-class EmbeddingPeer:
-    state: Path
-    certificate: Path
-    key: Path
-    audit: Path
-    port: int
-
-    def client_environment(self) -> dict[str, str]:
-        static_dns = {
-            **_BASE_TEST_STATIC_DNS,
-            TEST_OPENAI_EMBEDDING_HOST: {"address": "127.0.0.1", "port": self.port},
-        }
-        # The pinned Brave provider accepts only an HTTPS origin, so this TLS peer
-        # also serves Brave web search at its loopback origin.
-        return {
-            "BRAVE_SEARCH_API_KEY": TEST_BRAVE_SEARCH_API_KEY,
-            "BRAVE_SEARCH_BASE_URL": f"https://127.0.0.1:{self.port}/res/v1",
-            "NEXUS_TEST_STATIC_DNS": json.dumps(
-                static_dns,
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
-            "NEXUS_TEST_TLS_CA_CERT": str(self.certificate),
-        }
-
-    def requests(self) -> tuple[dict[str, object], ...]:
-        rows = tuple(
-            json.loads(line) for line in self.audit.read_text(encoding="utf-8").splitlines() if line
-        )
-        return tuple(
-            row["payload"]
-            for row in rows
-            if isinstance(row, dict)
-            and row.get("path") == "/v1/embeddings"
-            and isinstance(row.get("payload"), dict)
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ProviderApiPeer:
-    state: Path
-    certificate: Path
-    key: Path
-    audit: Path
-    port: int
-
-    @property
-    def origin(self) -> str:
-        return f"https://127.0.0.1:{self.port}"
-
-    def client_environment(self) -> dict[str, str]:
-        return {
-            "GENERATION_API_BASE_URLS": json.dumps(
-                {provider: self.origin for provider in PROVIDER_API_NAMES},
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
-            "GENERATION_API_PROVIDERS": ",".join(PROVIDER_API_NAMES),
-            "GENERATION_CONTINUATION_ENCRYPTION_KEY": (TEST_GENERATION_CONTINUATION_ENCRYPTION_KEY),
-            "NEXUS_FABLE_RETENTION_ACCEPTED_AT": TEST_FABLE_RETENTION_ACCEPTED_AT,
-            "NEXUS_TEST_TLS_CA_CERTS": json.dumps(
-                [str(self.certificate)],
-                separators=(",", ":"),
-            ),
-            **TEST_PROVIDER_API_CREDENTIALS,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class CodexGenerationPeer:
-    state: Path
-    socket: Path
-    audit: Path
-
-    def client_environment(self) -> dict[str, str]:
-        return {"NEXUS_CODEX_AGENT_SOCKET": str(self.socket)}
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,42 +211,51 @@ class StartedProcess:
 
 
 @dataclass(frozen=True, slots=True)
-class _ProcessIdentity:
-    uid: int
-    process_group_id: int
-    start_token: str
+class OpenAIProviderFixture:
+    """Exact run-owned state for the canonical OpenAI protocol process."""
 
+    state: Path
+    certificate: Path
+    key: Path = field(repr=False)
+    audit: Path
+    port: int
 
-class _DarwinProcessInfo(ctypes.Structure):
-    _fields_ = (
-        ("flags", ctypes.c_uint32),
-        ("status", ctypes.c_uint32),
-        ("exit_status", ctypes.c_uint32),
-        ("process_id", ctypes.c_uint32),
-        ("parent_process_id", ctypes.c_uint32),
-        ("uid", ctypes.c_uint32),
-        ("gid", ctypes.c_uint32),
-        ("real_uid", ctypes.c_uint32),
-        ("real_gid", ctypes.c_uint32),
-        ("saved_uid", ctypes.c_uint32),
-        ("saved_gid", ctypes.c_uint32),
-        ("reserved", ctypes.c_uint32),
-        ("command", ctypes.c_char * 16),
-        ("name", ctypes.c_char * 32),
-        ("file_count", ctypes.c_uint32),
-        ("process_group_id", ctypes.c_uint32),
-        ("job_control_count", ctypes.c_uint32),
-        ("controlling_device", ctypes.c_uint32),
-        ("terminal_process_group_id", ctypes.c_uint32),
-        ("nice", ctypes.c_int32),
-        ("start_seconds", ctypes.c_uint64),
-        ("start_microseconds", ctypes.c_uint64),
-    )
+    def server_environment(self) -> dict[str, str]:
+        return {
+            "NEXUS_TEST_OPENAI_CERTIFICATE": str(self.certificate),
+            "NEXUS_TEST_OPENAI_KEY": str(self.key),
+            "NEXUS_TEST_OPENAI_AUDIT": str(self.audit),
+        }
 
+    def client_environment(self) -> dict[str, str]:
+        return {
+            "NEXUS_TEST_STATIC_DNS": json.dumps(
+                {
+                    "api.openai.com": {"address": "127.0.0.1", "port": self.port},
+                    "www.nasa.gov": "93.184.216.34",
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            "NEXUS_TEST_TLS_CA_CERT": str(self.certificate),
+        }
 
-def required_platform_process_tools() -> tuple[Path, ...]:
-    """Return fixed host tools required by the platform process owner."""
-    return (Path(_DARWIN_LSOF),) if sys.platform == "darwin" else ()
+    def worker_environment(self) -> dict[str, str]:
+        """Compatibility name for production-worker protocol proofs."""
+        return self.client_environment()
+
+    def requests(self) -> tuple[dict[str, object], ...]:
+        rows = tuple(
+            json.loads(line) for line in self.audit.read_text(encoding="utf-8").splitlines() if line
+        )
+        payloads = tuple(
+            row["payload"]
+            for row in rows
+            if isinstance(row, dict)
+            and row.get("path") == "/v1/embeddings"
+            and isinstance(row.get("payload"), dict)
+        )
+        return cast(tuple[dict[str, object], ...], payloads)
 
 
 def run_environment(
@@ -428,7 +277,6 @@ def run_environment(
     )
     expected_bucket = run_bucket_name(run.run_id)
     expected_supabase_url = runtime_endpoint(root, environment, EndpointKind.SUPABASE)
-    expected_external_url = runtime_endpoint(root, environment, EndpointKind.EXTERNAL)
     _require_created_run_resource(
         ledger.entries,
         Resource(ResourceKind.RUN_DATABASE, run_database_name(run.run_id)),
@@ -448,29 +296,18 @@ def run_environment(
         )
     values = {
         "APP_PUBLIC_URL": runtime_endpoint(root, environment, EndpointKind.WEB),
-        "CSP_MEDIA_ORIGINS": expected_external_url,
+        "CSP_MEDIA_ORIGINS": runtime_endpoint(root, environment, EndpointKind.EXTERNAL),
         "DATABASE_URL": expected_database_url,
         "FASTAPI_BASE_URL": runtime_endpoint(root, environment, EndpointKind.API),
-        "GENERATION_API_PROVIDERS": "",
         "NEXT_PUBLIC_SUPABASE_ANON_KEY": run.supabase.anon_key,
         "NEXT_PUBLIC_SUPABASE_URL": expected_supabase_url,
         "NEXUS_EXTENSION_REDIRECT_ORIGINS": f"https://{TEST_EXTENSION_ID}.chromiumapp.org",
         "NEXUS_ENV": "test",
         "NEXUS_INTERNAL_SECRET": "nexus-test-internal-secret",
         "NEXUS_RUNTIME_IDENTITY_FILE": str(_runtime_identity_path(root)),
-        "NEXUS_TEST_STATIC_DNS": json.dumps(
-            _BASE_TEST_STATIC_DNS,
-            separators=(",", ":"),
-            sort_keys=True,
-        ),
         "NEXUS_TEST_RUN_ID": run.run_id,
-        "OUTBOUND_HTTP_PROXY_URL": expected_external_url,
         "PARSER_TEMP_ROOT": str(root / "test-results" / "runs" / run.run_id / "parser-tmp"),
-        "PODCASTS_ENABLED": "true",
-        "PODCAST_INDEX_API_KEY": "nexus-test-fixture-podcast-key",
-        "PODCAST_INDEX_API_SECRET": "nexus-test-fixture-podcast-secret",
-        "PODCAST_INDEX_BASE_URL": expected_external_url,
-        "OPENAI_API_KEY": TEST_OPENAI_EMBEDDING_API_KEY,
+        "OPENAI_API_KEY": "nexus-test-fixture-openai-key",
         "R2_ACCESS_KEY_ID": MINIO_ACCESS_KEY,
         "R2_BUCKET": expected_bucket,
         "R2_REGION": MINIO_REGION,
@@ -484,73 +321,7 @@ def run_environment(
     }
     if expected_migration_url is not None:
         values["NEXUS_MIGRATION_DATABASE_URL"] = expected_migration_url
-    provider_resource = Resource(
-        ResourceKind.PROVIDER_API_PEER,
-        provider_api_peer_identity(run.run_id),
-    )
-    provider_entries = [entry for entry in ledger.entries if entry.resource == provider_resource]
-    if provider_entries:
-        if len(provider_entries) != 1 or provider_entries[0].phase is not ResourcePhase.CREATED:
-            raise RuntimeContractError(
-                "provider API configuration requires its exact created peer owner"
-            )
-        paths = _exact_provider_api_peer_paths(root, run.run_id)
-        values.update(
-            ProviderApiPeer(
-                provider_api_peer_state_dir(root, run.run_id),
-                paths["ca.pem"],
-                paths["server-key.pem"],
-                paths["requests.jsonl"],
-                read_runtime(root).ports.provider_api,
-            ).client_environment()
-        )
     return values
-
-
-def reset_run_data_plane(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run: TestRun,
-) -> None:
-    """Give browser proofs a fresh exact database and object-store epoch.
-
-    Service and evaluation proofs intentionally exercise committed-state
-    recovery. Their rows and objects are evidence for those capabilities, not
-    fixtures for a later real-stack browser suite. Recreate only the current
-    run's owned data plane, under its lifecycle lock, before any browser app or
-    worker process is allowed to start.
-    """
-    require_test_environment(environment)
-    require_run_id(run.run_id)
-    root = canonical_repo_root(repo_root)
-    expected_database = run_database_name(run.run_id)
-    expected_bucket = run_bucket_name(run.run_id)
-    if (
-        run.database_url != _database_url(root, environment, expected_database)
-        or run.bucket != expected_bucket
-        or run.supabase.url != runtime_endpoint(root, environment, EndpointKind.SUPABASE)
-    ):
-        raise RuntimeContractError("browser data plane does not belong to the exact test run")
-
-    with run_lifecycle_lock(root, environment, run.run_id):
-        entries = read_ledger(root, run.run_id).entries
-        _require_created_run_resource(
-            entries,
-            Resource(ResourceKind.RUN_DATABASE, expected_database),
-        )
-        _require_created_run_resource(
-            entries,
-            Resource(ResourceKind.BUCKET, expected_bucket),
-        )
-        fingerprint = _repository_template_fingerprint(root)
-        with template_lifecycle_lock(root, environment, fingerprint):
-            _recreate_idle_run_database(
-                root,
-                environment,
-                database=expected_database,
-                template=template_database_name(fingerprint),
-            )
-        _empty_existing_run_bucket(root, environment, expected_bucket)
 
 
 def _expected_migration_database_url(
@@ -596,83 +367,22 @@ _ANDROID_TOOL_ENV = (
     "TMPDIR",
     "TZ",
 )
-_ANDROID_SDK_HOME_RELATIVE_PATHS = (
-    Path("Android/Sdk"),
-    Path("Library/Android/sdk"),
-)
-
-
-def resolve_android_sdk(environment: Mapping[str, str]) -> Path | None:
-    """Resolve an explicit or conventional Android SDK without masking bad config."""
-    configured = tuple(
-        Path(value)
-        for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT")
-        if (value := environment.get(key))
-    )
-    if configured:
-        if any(not path.is_absolute() for path in configured):
-            return None
-        try:
-            resolved = tuple(path.resolve() for path in configured)
-        except (OSError, RuntimeError):
-            return None
-        if len(set(resolved)) != 1:
-            return None
-        sdk = resolved[0]
-        return sdk if sdk.is_dir() else None
-
-    home_value = environment.get("HOME")
-    if not home_value:
-        return None
-    developer_home = Path(home_value)
-    if not developer_home.is_absolute():
-        return None
-    for relative in _ANDROID_SDK_HOME_RELATIVE_PATHS:
-        try:
-            candidate = (developer_home / relative).resolve()
-        except (OSError, RuntimeError):
-            continue
-        if candidate.is_dir():
-            return candidate
-    return None
-
-
-def resolved_android_environment(environment: Mapping[str, str]) -> dict[str, str]:
-    """Copy caller state and publish a discovered SDK through the canonical variable."""
-    child = dict(environment)
-    if not any(environment.get(key) for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT")):
-        sdk = resolve_android_sdk(environment)
-        if sdk is not None:
-            child["ANDROID_HOME"] = str(sdk)
-    return child
-
-
-def android_sdk_available(android_root: Path, environment: Mapping[str, str]) -> bool:
-    """Admit Gradle only through one coherent explicit, local, or standard SDK."""
-    if any(environment.get(key) for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT")):
-        return resolve_android_sdk(environment) is not None
-    if (android_root / "local.properties").is_file():
-        return True
-    return resolve_android_sdk(environment) is not None
 
 
 def android_tool_environment(environment: Mapping[str, str]) -> dict[str, str]:
     """The safe child environment for owned adb/Gradle subprocesses."""
-    resolved = resolved_android_environment(environment)
-    child = {key: value for key in _ANDROID_TOOL_ENV if (value := resolved.get(key))}
+    child = {key: value for key in _ANDROID_TOOL_ENV if (value := environment.get(key))}
     child["NEXUS_ENV"] = "test"
     return child
 
 
 def resolve_adb(environment: Mapping[str, str]) -> Path | None:
     """Resolve the one adb transport from the SDK or PATH, without inventing another."""
-    has_explicit_sdk = any(environment.get(key) for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT"))
-    sdk = resolve_android_sdk(environment)
-    if sdk is not None:
-        candidate = sdk / "platform-tools/adb"
-        return candidate if candidate.is_file() else None
-    if has_explicit_sdk:
-        return None
+    sdk = environment.get("ANDROID_HOME") or environment.get("ANDROID_SDK_ROOT")
+    if sdk:
+        candidate = Path(sdk) / "platform-tools/adb"
+        if candidate.is_file():
+            return candidate
     found = shutil.which("adb", path=environment.get("PATH"))
     return Path(found) if found else None
 
@@ -701,122 +411,11 @@ def authorized_device_serials(
     )
 
 
-_MAX_ADB_DEVICE_ROW_CHARS = 8_192
-_MAX_ADB_INVENTORY_BYTES = 32 * 1024
-
-
-@dataclass(frozen=True, slots=True)
-class AuthorizedAndroidDevice:
-    serial: str
-    adb_devices_row: str
-
-
-@dataclass(frozen=True, slots=True)
-class _LongDeviceRow:
-    raw: str
-    fields: tuple[str, ...]
-
-
-def _long_device_inventory(
-    adb: Path, environment: Mapping[str, str], cwd: Path
-) -> tuple[_LongDeviceRow, ...] | None:
-    """The one bounded `adb devices -l` parse, retaining each exact device row."""
-    try:
-        listed = run_command(
-            (str(adb), "devices", "-l"),
-            cwd=cwd,
-            env=android_tool_environment(environment),
-            capture_output=True,
-            check=False,
-        )
-    except OSError:
-        return None
-    if listed.returncode != 0:
-        return None
-    # `run_command` retains the final 64 KiB. Staying below half that bound
-    # proves this is a complete inventory, not a tail that lost the header or
-    # an earlier authorized candidate.
-    if len(listed.stdout.encode("utf-8")) > _MAX_ADB_INVENTORY_BYTES:
-        return None
-    lines = listed.stdout.splitlines()
-    if not lines or lines[0] != "List of devices attached":
-        return None
-    rows: list[_LongDeviceRow] = []
-    for line in lines[1:]:
-        if len(line) > _MAX_ADB_DEVICE_ROW_CHARS:
-            return None
-        fields = tuple(line.split())
-        if len(fields) < 2 or fields[1] != "device":
-            continue
-        rows.append(_LongDeviceRow(line, fields))
-    return tuple(rows)
-
-
-def _is_usb_physical_row(fields: Sequence[str]) -> bool:
-    if fields[0].startswith("emulator-"):
-        return False
-    return any(field.startswith("usb:") and len(field) > 4 for field in fields[2:])
-
-
-def authorized_usb_physical_device(
-    adb: Path, environment: Mapping[str, str], cwd: Path
-) -> tuple[AuthorizedAndroidDevice | None, str]:
-    """Attest the one USB-backed physical device used by protected device proof.
-
-    Emulators and wireless adb transports remain distinct lanes and cannot
-    satisfy or coexist with this boundary. The selected physical row must be
-    the inventory's only authorized device and carry adb's ``usb:`` topology
-    fact.
-    """
-    rows = _long_device_inventory(adb, environment, cwd)
-    if rows is None:
-        return None, "Android USB device inventory could not be read"
-    candidates = [row for row in rows if _is_usb_physical_row(row.fields)]
-    if not candidates:
-        return None, "no authorized USB-backed physical Android device is attached"
-    if len(candidates) != 1:
-        return None, "Android device proof requires exactly one USB-backed physical device"
-    if len(rows) != 1:
-        return None, "Android device proof requires exactly one authorized device row"
-    selected = candidates[0]
-    return AuthorizedAndroidDevice(selected.fields[0], selected.raw), ""
-
-
-def authorized_instrumentation_device(
-    adb: Path, environment: Mapping[str, str], cwd: Path
-) -> tuple[AuthorizedAndroidDevice | None, str]:
-    """Attest the one device the ordinary `android-device` capability may drive.
-
-    Hosted nightly infrastructure supplies a locally started emulator; the
-    protected lab supplies a USB-wired handset. Either is an owned, physically
-    reachable transport whose serial the controller can bind. A wireless adb
-    transport is neither: it names a host and port the controller does not own,
-    so it can never satisfy this capability.
-    """
-    rows = _long_device_inventory(adb, environment, cwd)
-    if rows is None:
-        return None, "Android device inventory could not be read"
-    candidates = [
-        row
-        for row in rows
-        if row.fields[0].startswith("emulator-") or _is_usb_physical_row(row.fields)
-    ]
-    if not candidates:
-        return None, "no authorized local emulator or USB-backed Android device is attached"
-    if len(candidates) != 1:
-        return None, "Android device proof requires exactly one local emulator or USB device"
-    if len(rows) != 1:
-        return None, "Android device proof requires exactly one authorized device row"
-    selected = candidates[0]
-    return AuthorizedAndroidDevice(selected.fields[0], selected.raw), ""
-
-
 def test_environment(caller_environment: Mapping[str, str]) -> dict[str, str]:
     nexus_environment = caller_environment.get("NEXUS_ENV")
     if nexus_environment not in {None, "", "test"}:
         raise RuntimeContractError("test control rejects a non-test NEXUS_ENV")
     supplied = sorted(key for key in _CALLER_RESOURCE_ENV if caller_environment.get(key))
-    supplied.extend(sorted(key for key in _CALLER_GENERATION_ENV if key in caller_environment))
     if supplied:
         raise RuntimeContractError(
             "test control does not accept caller resource configuration: " + ", ".join(supplied)
@@ -837,10 +436,10 @@ def ensure_services(repo_root: Path, environment: Mapping[str, str]) -> Supabase
     with _workspace_service_lock(root):
         if not runtime_record_path(root).exists():
             with _port_allocation_lock():
-                initialize_runtime(root, environment, _allocate_ports())
+                initialize_runtime(root, environment, _allocate_ports(root))
                 _start_services(root)
         else:
-            _upgrade_runtime_if_needed(root, environment)
+            _upgrade_previous_runtime_if_needed(root, environment)
             _start_services(root)
         _publish_runtime_identity(root)
     return read_supabase_credentials(root, environment)
@@ -1146,13 +745,13 @@ def invite_supabase_user(
     return InvitedTestUser(email)
 
 
-def grant_scenario_paid_entitlement(
+def grant_scenario_ai_entitlement(
     repo_root: Path,
     environment: Mapping[str, str],
     run: TestRun,
     user: TestUser,
 ) -> None:
-    """Bootstrap one scenario user and grant deterministic non-generation paid access."""
+    """Bootstrap one scenario user and grant deterministic chat capacity."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session
 
@@ -1182,6 +781,8 @@ def grant_scenario_paid_entitlement(
                 db,
                 user_id=user_id,
                 plan_tier="ai_pro",
+                platform_token_quota_mode="unlimited",
+                platform_token_limit_monthly=None,
                 transcription_quota_mode="unlimited",
                 transcription_minutes_limit_monthly=None,
                 expires_at=None,
@@ -1192,116 +793,141 @@ def grant_scenario_paid_entitlement(
         engine.dispose()
 
 
-# The background worker lane's readiness contract is a real cgroup v2 memory limit
-# with `memory.oom.group=0` (document-import-reliability-hard-cutover.md §7), and
-# §10 requires the proof lane to actually be cgroup-capable. A rootless systemd user
-# manager is what delegates one, so its absence is a host-provisioning fault with one
-# exact repair. CI provisions it in `.github/actions/setup-test`, which fails with
-# this same text, and `./scripts/test doctor` reports it before any proof runs.
-CGROUP_DELEGATE_DIAGNOSTIC = (
-    "The background worker proof requires a rootless systemd user manager that "
-    "delegates a cgroup v2 memory controller. Provision it with: "
-    'sudo loginctl enable-linger "$(id -un)"; '
-    "export XDG_RUNTIME_DIR=/run/user/$(id -u) "
-    "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus; "
-    "then confirm that "
-    f"`systemd-run --user --scope -p MemoryMax={BACKGROUND_WORKER_MEMORY_LIMIT_BYTES} true` "
-    "succeeds and that the scope cgroup exposes memory.max and memory.oom.group."
-)
-_CGROUP_DELEGATE_PROBE_TIMEOUT_SECONDS = 30.0
-_CGROUP_DELEGATE_PROBE_SCRIPT = f"""
-set -eu
-cgroup="/sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)"
-test "$(cat "$cgroup/memory.max")" = "{BACKGROUND_WORKER_MEMORY_LIMIT_BYTES}"
-test "$(cat "$cgroup/memory.oom.group")" = "0"
-grep -qw memory "$cgroup/cgroup.controllers"
-"""
-
-
-def user_systemd_environment() -> dict[str, str]:
-    """Address the caller's own rootless systemd user manager."""
-    user_runtime_directory = f"/run/user/{os.getuid()}"
-    return {
-        "XDG_RUNTIME_DIR": user_runtime_directory,
-        "DBUS_SESSION_BUS_ADDRESS": f"unix:path={user_runtime_directory}/bus",
-    }
-
-
-def _require_cgroup_delegate() -> str:
-    """Return the systemd-run path, or refuse with the one shared diagnostic."""
-    systemd_run = shutil.which("systemd-run")
-    if systemd_run is None or not Path(f"/run/user/{os.getuid()}/bus").is_socket():
-        raise RuntimeContractError(CGROUP_DELEGATE_DIAGNOSTIC)
-    return systemd_run
-
-
-def cgroup_delegate_failure() -> str | None:
-    """Probe the real delegate and return the shared diagnostic when it is unusable.
-
-    This runs the exact `systemd-run --user --scope` shape the background worker lane
-    launches with and reads the resulting cgroup, so a manager that exists but cannot
-    delegate the memory controller is reported before any proof depends on it.
-    """
-    try:
-        systemd_run = _require_cgroup_delegate()
-    except RuntimeContractError:
-        return CGROUP_DELEGATE_DIAGNOSTIC
-    try:
-        probe = subprocess.run(
-            (
-                systemd_run,
-                "--user",
-                "--scope",
-                "--quiet",
-                "--collect",
-                f"--unit=nexus-cgroup-delegate-{uuid4().hex[:16]}",
-                "-p",
-                f"MemoryMax={BACKGROUND_WORKER_MEMORY_LIMIT_BYTES}",
-                "-p",
-                "MemorySwapMax=0",
-                "-p",
-                "OOMPolicy=continue",
-                "/bin/sh",
-                "-c",
-                _CGROUP_DELEGATE_PROBE_SCRIPT,
-            ),
-            env={**os.environ, **user_systemd_environment()},
-            capture_output=True,
-            text=True,
-            timeout=_CGROUP_DELEGATE_PROBE_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return CGROUP_DELEGATE_DIAGNOSTIC
-    if probe.returncode != 0:
-        return CGROUP_DELEGATE_DIAGNOSTIC
-    return None
-
-
-def _write_loopback_peer_certificate(
-    certificate: Path,
-    key_path: Path,
+def start_python_process(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run: TestRun,
+    role: str,
     *,
-    common_name: str,
-    dns_names: Sequence[str] = (),
-) -> None:
+    overrides: Mapping[str, str] | None = None,
+) -> StartedProcess:
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    runtime = read_runtime(root)
+    if role == "external":
+        _require_loopback_port_available(runtime.ports.external, role)
+        command = (
+            str(root / "python/.venv/bin/python"),
+            str(root / "python/tests/testkit/external_server.py"),
+            "--port",
+            str(runtime.ports.external),
+            "--fixture-root",
+            str(root / "python/tests/fixtures/real_media"),
+        )
+    elif role == "provider-openai":
+        _require_loopback_port_available(runtime.ports.provider_openai, role)
+        values = _owned_provider_fixture_paths(root, run.run_id, overrides)
+        command = (
+            str(root / "python/.venv/bin/python"),
+            str(root / "python/tests/testkit/openai_embedding_server.py"),
+            "--port",
+            str(runtime.ports.provider_openai),
+            "--certificate",
+            str(values["NEXUS_TEST_OPENAI_CERTIFICATE"]),
+            "--key",
+            str(values["NEXUS_TEST_OPENAI_KEY"]),
+            "--audit",
+            str(values["NEXUS_TEST_OPENAI_AUDIT"]),
+        )
+    elif role == "api":
+        _require_loopback_port_available(runtime.ports.api, role)
+        command = (
+            str(root / "python/.venv/bin/python"),
+            "-m",
+            "uvicorn",
+            "apps.api.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(runtime.ports.api),
+        )
+    elif role in {"worker-interactive", "worker-background"}:
+        command = (
+            str(root / "python/.venv/bin/python"),
+            "-m",
+            "apps.worker.main",
+        )
+    else:
+        raise RuntimeContractError(f"Python process role is not owned: {role}")
+    process_environment = {
+        **run_environment(root, environment, run),
+        "NEXUS_TEST_DENY_EXTERNAL_NETWORK": "1",
+        "NEXUS_TEST_STATIC_DNS": '{"www.nasa.gov":"93.184.216.34"}',
+        "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
+        "OPENAI_API_KEY": "nexus-test-fixture-openai-key",
+        "OUTBOUND_HTTP_PROXY_URL": f"http://127.0.0.1:{runtime.ports.external}",
+        "PODCAST_INDEX_API_KEY": "nexus-test-fixture-podcast-key",
+        "PODCAST_INDEX_API_SECRET": "nexus-test-fixture-podcast-secret",
+        "PODCAST_INDEX_BASE_URL": f"http://127.0.0.1:{runtime.ports.external}",
+        "PYTHONPATH": f"{root / 'python' / 'tests' / 'testkit'}:{root / 'python'}:{root}",
+        **({"WORKER_LANE": role.removeprefix("worker-")} if role.startswith("worker-") else {}),
+        **(overrides or {}),
+    }
+    return _start_owned_process(
+        root,
+        environment,
+        run.run_id,
+        role,
+        command,
+        cwd=root,
+        process_environment=process_environment,
+    )
+
+
+def prepare_openai_provider_fixture(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    run: TestRun,
+) -> OpenAIProviderFixture:
+    """Create the exact canonical-provider state owned by one persisted run."""
+    require_test_environment(environment)
+    root = canonical_repo_root(repo_root)
+    runtime = read_runtime(root)
+    if run.run_id not in runtime.owned_run_ids:
+        raise RuntimeContractError("OpenAI provider fixture requires an owned run")
+    resource = Resource(ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(run.run_id))
+    state = root / resource.identity
+    record_planned(root, environment, run.run_id, resource)
+    try:
+        state.mkdir(parents=False, exist_ok=False)
+    except FileExistsError as error:
+        forget_cleaned(root, environment, run.run_id, resource)
+        raise RuntimeContractError("OpenAI provider fixture already exists for this run") from error
+    certificate = state / "ca.pem"
+    key_path = state / "server-key.pem"
+    audit = state / "requests.jsonl"
+    try:
+        audit.touch(mode=0o600, exist_ok=False)
+        _write_openai_test_certificate(certificate, key_path)
+        record_created(root, environment, run.run_id, resource)
+    except Exception:
+        raise
+    return OpenAIProviderFixture(
+        state=state,
+        certificate=certificate,
+        key=key_path,
+        audit=audit,
+        port=runtime.ports.provider_openai,
+    )
+
+
+def _write_openai_test_certificate(certificate: Path, key_path: Path) -> None:
+    host = "api.openai.com"
     key = rsa.generate_private_key(public_exponent=65_537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
+    now = datetime.now(UTC)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)])
     value = (
         x509.CertificateBuilder()
         .subject_name(name)
         .issuer_name(name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.now(UTC) - timedelta(minutes=1))
-        .not_valid_after(datetime.now(UTC) + timedelta(days=1))
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         .add_extension(
             x509.SubjectAlternativeName(
-                [
-                    *(x509.DNSName(value) for value in dns_names),
-                    x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
-                ]
+                [x509.DNSName(host), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
             ),
             critical=False,
         )
@@ -1322,560 +948,70 @@ def _write_loopback_peer_certificate(
     key_path.chmod(0o600)
 
 
-def _write_embedding_peer_certificate(certificate: Path, key_path: Path) -> None:
-    _write_loopback_peer_certificate(
-        certificate,
-        key_path,
-        common_name=TEST_OPENAI_EMBEDDING_HOST,
-        dns_names=(TEST_OPENAI_EMBEDDING_HOST,),
-    )
+def _clean_openai_provider_fixture(root: Path, identity: str) -> None:
+    state = root / identity
+    if not state.exists():
+        return
+    if state.is_symlink() or not state.is_dir():
+        raise RuntimeContractError("OpenAI provider fixture state is not an owned directory")
+    expected = {"ca.pem", "server-key.pem", "requests.jsonl"}
+    entries = {entry.name for entry in state.iterdir()}
+    if not entries.issubset(expected) or any(not (state / name).is_file() for name in entries):
+        raise RuntimeContractError("OpenAI provider fixture state has unexpected contents")
+    shutil.rmtree(state)
 
 
-def prepare_embedding_peer_state(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run: TestRun,
-) -> Path:
-    """Plan and create the exact recoverable state directory for one embedding peer."""
-
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    read_ledger(root, run.run_id)
-    resource = Resource(ResourceKind.EMBEDDING_PEER, embedding_peer_identity(run.run_id))
-    record_planned(root, environment, run.run_id, resource)
-    state = embedding_peer_state_dir(root, run.run_id)
-    try:
-        state.mkdir(parents=False, exist_ok=False)
-    except FileExistsError as exc:
-        raise RuntimeContractError("embedding-peer state already exists for this run") from exc
-    return state
-
-
-def materialize_embedding_peer(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run: TestRun,
-) -> EmbeddingPeer:
-    """Create the exact run-owned TLS identity and audit state for embeddings."""
-
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    runtime = read_runtime(root)
-    state = prepare_embedding_peer_state(root, environment, run)
-    certificate = state / "ca.pem"
-    key = state / "server-key.pem"
-    audit = state / "requests.jsonl"
-    audit.touch(mode=0o600, exist_ok=False)
-    _write_embedding_peer_certificate(certificate, key)
-    finish_embedding_peer_state(root, environment, run.run_id)
-    return EmbeddingPeer(state, certificate, key, audit, runtime.ports.provider_openai)
-
-
-def finish_embedding_peer_state(
+def release_openai_provider_fixture(
     repo_root: Path,
     environment: Mapping[str, str],
     run_id: str,
 ) -> None:
-    """Attest the exact peer files before publishing CREATED ownership."""
-
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    _exact_embedding_peer_paths(root, run_id)
-    record_created(
-        root,
-        environment,
-        run_id,
-        Resource(ResourceKind.EMBEDDING_PEER, embedding_peer_identity(run_id)),
-    )
-
-
-def release_embedding_peer_state(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run_id: str,
-) -> None:
-    """Delete an idle exact peer directory and release its persisted ownership."""
-
+    """Release an idle exact provider fixture between workflow capabilities."""
     require_test_environment(environment)
     root = canonical_repo_root(repo_root)
     with run_lifecycle_lock(root, environment, run_id):
         ledger = read_ledger(root, run_id)
         process = Resource(
-            ResourceKind.PROCESS,
-            process_resource_identity(run_id, "provider-openai"),
+            ResourceKind.PROCESS, process_resource_identity(run_id, "provider-openai")
         )
         if any(entry.resource == process for entry in ledger.entries):
             raise RuntimeContractError(
-                "embedding-peer state cannot release while its process exists"
+                "OpenAI provider fixture cannot release while its process exists"
             )
-        resource = Resource(ResourceKind.EMBEDDING_PEER, embedding_peer_identity(run_id))
+        resource = Resource(ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(run_id))
         matches = [entry for entry in ledger.entries if entry.resource == resource]
         if len(matches) != 1:
-            raise RuntimeContractError("embedding-peer state is not uniquely owned by this run")
-        _delete_embedding_peer_state(root, run_id)
+            raise RuntimeContractError("OpenAI provider fixture is not uniquely owned by this run")
+        _clean_openai_provider_fixture(root, resource.identity)
         forget_cleaned(root, environment, run_id, resource)
 
 
-def _exact_embedding_peer_paths(root: Path, run_id: str) -> dict[str, Path]:
-    state = embedding_peer_state_dir(root, run_id)
-    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
-        raise RuntimeContractError("embedding-peer state is not its exact owned directory")
-    entries = {entry.name: entry for entry in state.iterdir()}
-    expected_names = set(_EMBEDDING_PEER_FILES)
-    if set(entries) != expected_names:
-        raise RuntimeContractError("embedding-peer state does not contain its exact files")
-    if any(
-        entry.is_symlink() or not entry.is_file() or entry.resolve(strict=True) != entry
-        for entry in entries.values()
-    ):
-        raise RuntimeContractError("embedding-peer state contains a non-owned file")
-    return {file_name: entries[file_name] for file_name in _EMBEDDING_PEER_FILES}
-
-
-def _owned_embedding_peer_paths(
+def _owned_provider_fixture_paths(
     root: Path,
     run_id: str,
+    overrides: Mapping[str, str] | None,
 ) -> dict[str, Path]:
-    resource = Resource(ResourceKind.EMBEDDING_PEER, embedding_peer_identity(run_id))
-    matches = [entry for entry in read_ledger(root, run_id).entries if entry.resource == resource]
-    if len(matches) != 1 or matches[0].phase is not ResourcePhase.CREATED:
-        raise RuntimeContractError("embedding peer requires its exact created state owner")
-    return _exact_embedding_peer_paths(root, run_id)
-
-
-def _delete_embedding_peer_state(root: Path, run_id: str) -> None:
-    state = embedding_peer_state_dir(root, run_id)
-    if not state.exists() and not state.is_symlink():
-        return
-    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
-        raise RuntimeContractError("embedding-peer state is not its exact owned directory")
-    entries = tuple(state.iterdir())
-    expected_names = set(_EMBEDDING_PEER_FILES)
-    if {entry.name for entry in entries} - expected_names or any(
-        entry.is_symlink() or not entry.is_file() or entry.resolve(strict=True) != entry
-        for entry in entries
-    ):
-        raise RuntimeContractError("embedding-peer state contains unexpected contents")
-    for entry in entries:
-        entry.unlink()
-    state.rmdir()
-
-
-def prepare_provider_api_peer_state(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run: TestRun,
-) -> Path:
-    """Plan and create the recoverable state directory for one provider API peer."""
-
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    read_ledger(root, run.run_id)
-    resource = Resource(
-        ResourceKind.PROVIDER_API_PEER,
-        provider_api_peer_identity(run.run_id),
-    )
-    record_planned(root, environment, run.run_id, resource)
-    state = provider_api_peer_state_dir(root, run.run_id)
-    try:
-        state.mkdir(parents=False, exist_ok=False)
-    except FileExistsError as exc:
-        raise RuntimeContractError("provider API peer state already exists for this run") from exc
-    return state
-
-
-def materialize_provider_api_peer(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run: TestRun,
-) -> ProviderApiPeer:
-    """Create the exact run-owned TLS identity and audit state for provider APIs."""
-
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    runtime = read_runtime(root)
-    state = prepare_provider_api_peer_state(root, environment, run)
-    certificate = state / "ca.pem"
-    key = state / "server-key.pem"
-    audit = state / "requests.jsonl"
-    audit.touch(mode=0o600, exist_ok=False)
-    _write_loopback_peer_certificate(
-        certificate,
-        key,
-        common_name="nexus-provider-api-peer",
-    )
-    finish_provider_api_peer_state(root, environment, run.run_id)
-    return ProviderApiPeer(state, certificate, key, audit, runtime.ports.provider_api)
-
-
-def finish_provider_api_peer_state(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run_id: str,
-) -> None:
-    """Attest the exact provider API peer files before publishing CREATED ownership."""
-
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    _exact_provider_api_peer_paths(root, run_id)
-    record_created(
-        root,
-        environment,
-        run_id,
-        Resource(ResourceKind.PROVIDER_API_PEER, provider_api_peer_identity(run_id)),
-    )
-
-
-def release_provider_api_peer_state(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run_id: str,
-) -> None:
-    """Delete an idle exact provider API peer and release persisted ownership."""
-
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    with run_lifecycle_lock(root, environment, run_id):
-        ledger = read_ledger(root, run_id)
-        process = Resource(
-            ResourceKind.PROCESS,
-            process_resource_identity(run_id, "provider-api-peer"),
-        )
-        if any(entry.resource == process for entry in ledger.entries):
-            raise RuntimeContractError(
-                "provider API peer state cannot release while its process exists"
-            )
-        resource = Resource(
-            ResourceKind.PROVIDER_API_PEER,
-            provider_api_peer_identity(run_id),
-        )
-        matches = [entry for entry in ledger.entries if entry.resource == resource]
-        if len(matches) != 1:
-            raise RuntimeContractError("provider API peer state is not uniquely owned by this run")
-        _delete_provider_api_peer_state(root, run_id)
-        forget_cleaned(root, environment, run_id, resource)
-
-
-def _exact_provider_api_peer_paths(root: Path, run_id: str) -> dict[str, Path]:
-    state = provider_api_peer_state_dir(root, run_id)
-    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
-        raise RuntimeContractError("provider API peer state is not its exact owned directory")
-    entries = {entry.name: entry for entry in state.iterdir()}
-    expected_names = set(_PROVIDER_API_PEER_FILES)
-    if set(entries) != expected_names:
-        raise RuntimeContractError("provider API peer state does not contain its exact files")
-    if any(
-        entry.is_symlink() or not entry.is_file() or entry.resolve(strict=True) != entry
-        for entry in entries.values()
-    ):
-        raise RuntimeContractError("provider API peer state contains a non-owned file")
-    return {file_name: entries[file_name] for file_name in _PROVIDER_API_PEER_FILES}
-
-
-def _owned_provider_api_peer_paths(root: Path, run_id: str) -> dict[str, Path]:
-    resource = Resource(
-        ResourceKind.PROVIDER_API_PEER,
-        provider_api_peer_identity(run_id),
-    )
-    matches = [entry for entry in read_ledger(root, run_id).entries if entry.resource == resource]
-    if len(matches) != 1 or matches[0].phase is not ResourcePhase.CREATED:
-        raise RuntimeContractError("provider API peer requires its exact created state owner")
-    return _exact_provider_api_peer_paths(root, run_id)
-
-
-def _delete_provider_api_peer_state(root: Path, run_id: str) -> None:
-    state = provider_api_peer_state_dir(root, run_id)
-    if not state.exists() and not state.is_symlink():
-        return
-    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
-        raise RuntimeContractError("provider API peer state is not its exact owned directory")
-    entries = tuple(state.iterdir())
-    expected_names = set(_PROVIDER_API_PEER_FILES)
-    if {entry.name for entry in entries} - expected_names or any(
-        entry.is_symlink() or not entry.is_file() or entry.resolve(strict=True) != entry
-        for entry in entries
-    ):
-        raise RuntimeContractError("provider API peer state contains unexpected contents")
-    for entry in entries:
-        entry.unlink()
-    state.rmdir()
-
-
-def materialize_codex_generation_peer(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run: TestRun,
-) -> CodexGenerationPeer:
-    """Create one recoverable, secret-free Codex v2 test-peer state owner."""
-
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    read_ledger(root, run.run_id)
-    resource = Resource(
-        ResourceKind.CODEX_GENERATION_PEER,
-        codex_generation_peer_identity(run.run_id),
-    )
-    record_planned(root, environment, run.run_id, resource)
-    state = codex_generation_peer_state_dir(root, run.run_id)
-    try:
-        state.mkdir(parents=False, exist_ok=False)
-    except FileExistsError as exc:
-        raise RuntimeContractError(
-            "Codex generation peer state already exists for this run"
-        ) from exc
-    audit = state / _CODEX_GENERATION_PEER_AUDIT
-    audit.touch(mode=0o600, exist_ok=False)
-    socket_path = state / _CODEX_GENERATION_PEER_SOCKET
-    _exact_codex_generation_peer_paths(root, run.run_id, require_socket=False)
-    record_created(root, environment, run.run_id, resource)
-    return CodexGenerationPeer(state, socket_path, audit)
-
-
-def _exact_codex_generation_peer_paths(
-    root: Path,
-    run_id: str,
-    *,
-    require_socket: bool | None,
-) -> dict[str, Path]:
-    state = codex_generation_peer_state_dir(root, run_id)
-    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
-        raise RuntimeContractError("Codex generation peer state is not its exact owned directory")
-    entries = {entry.name: entry for entry in state.iterdir()}
-    allowed_names = {_CODEX_GENERATION_PEER_AUDIT, _CODEX_GENERATION_PEER_SOCKET}
-    if set(entries) - allowed_names:
-        raise RuntimeContractError("Codex generation peer state contains unexpected files")
-    audit = entries.get(_CODEX_GENERATION_PEER_AUDIT)
-    if (
-        audit is None
-        or audit.is_symlink()
-        or not audit.is_file()
-        or audit.resolve(strict=True) != audit
-    ):
-        raise RuntimeContractError("Codex generation peer audit is not its exact owned file")
-    socket_path = entries.get(_CODEX_GENERATION_PEER_SOCKET)
-    if socket_path is None:
-        if require_socket:
-            raise RuntimeContractError("Codex generation peer socket is absent")
-    elif (
-        socket_path.is_symlink()
-        or not socket_path.is_socket()
-        or socket_path.resolve(strict=True) != socket_path
-    ):
-        raise RuntimeContractError("Codex generation peer socket is not its exact owned socket")
-    elif require_socket is False:
-        raise RuntimeContractError("Codex generation peer socket exists before process startup")
-    return {
-        _CODEX_GENERATION_PEER_AUDIT: audit,
-        _CODEX_GENERATION_PEER_SOCKET: state / _CODEX_GENERATION_PEER_SOCKET,
+    names = {
+        "NEXUS_TEST_OPENAI_CERTIFICATE",
+        "NEXUS_TEST_OPENAI_KEY",
+        "NEXUS_TEST_OPENAI_AUDIT",
     }
-
-
-def _owned_codex_generation_peer_paths(
-    root: Path,
-    run_id: str,
-    *,
-    require_socket: bool | None,
-) -> dict[str, Path]:
-    resource = Resource(
-        ResourceKind.CODEX_GENERATION_PEER,
-        codex_generation_peer_identity(run_id),
-    )
-    matches = [entry for entry in read_ledger(root, run_id).entries if entry.resource == resource]
-    if len(matches) != 1 or matches[0].phase is not ResourcePhase.CREATED:
-        raise RuntimeContractError("Codex generation peer requires its exact created state owner")
-    return _exact_codex_generation_peer_paths(root, run_id, require_socket=require_socket)
-
-
-def _delete_codex_generation_peer_state(root: Path, run_id: str) -> None:
-    state = codex_generation_peer_state_dir(root, run_id)
-    if not state.exists() and not state.is_symlink():
-        return
-    if state.is_symlink() or not state.is_dir() or state.resolve(strict=True) != state:
-        raise RuntimeContractError("Codex generation peer state is not its exact owned directory")
-    entries = tuple(state.iterdir())
-    allowed_names = {_CODEX_GENERATION_PEER_AUDIT, _CODEX_GENERATION_PEER_SOCKET}
-    if {entry.name for entry in entries} - allowed_names:
-        raise RuntimeContractError("Codex generation peer state contains unexpected files")
-    for entry in entries:
-        if entry.is_symlink() or entry.resolve(strict=True) != entry:
-            raise RuntimeContractError("Codex generation peer state contains a substituted path")
-        if entry.name == _CODEX_GENERATION_PEER_AUDIT and not entry.is_file():
-            raise RuntimeContractError("Codex generation peer audit is not a file")
-        if entry.name == _CODEX_GENERATION_PEER_SOCKET and not entry.is_socket():
-            raise RuntimeContractError("Codex generation peer socket is not a Unix socket")
-    for entry in entries:
-        entry.unlink()
-    state.rmdir()
-
-
-def start_python_process(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run: TestRun,
-    role: str,
-    *,
-    overrides: Mapping[str, str] | None = None,
-) -> StartedProcess:
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    if role not in {
-        "external",
-        "provider-openai",
-        "provider-api-peer",
-        "codex-generation-peer",
-        "api",
-        "worker-interactive",
-        "worker-background",
-    }:
-        raise RuntimeContractError(f"Python process role is not owned: {role}")
-    runtime = read_runtime(root)
-    supplied_topology_keys = (_CONTROLLER_OWNED_PROCESS_ENV | _CALLER_GENERATION_ENV).intersection(
-        overrides or {}
-    )
-    if supplied_topology_keys:
-        raise RuntimeContractError(
-            "Python process runtime topology is controller-owned: "
-            + ", ".join(sorted(supplied_topology_keys))
-        )
-    if role == "provider-openai" and overrides:
-        raise RuntimeContractError("embedding peer process environment is controller-owned")
-    if role == "provider-api-peer" and overrides:
-        raise RuntimeContractError("provider API peer environment is controller-owned")
-    if role == "codex-generation-peer" and overrides:
-        raise RuntimeContractError("Codex generation peer environment is controller-owned")
-    owned_role_environment: dict[str, str] = {}
-    scope_properties: tuple[str, ...] = ()
-    owned_environment = (
-        {}
-        if role
-        in {
-            "external",
-            "provider-openai",
-            "provider-api-peer",
-            "codex-generation-peer",
-        }
-        else run_environment(root, environment, run)
-    )
-    if role == "external":
-        _require_loopback_port_available(runtime.ports.external, role)
-        command = (
-            str(root / "python/.venv/bin/python"),
-            str(root / "python/tests/testkit/external_server.py"),
-            "--port",
-            str(runtime.ports.external),
-            "--fixture-root",
-            str(root / "python/tests/fixtures/real_media"),
-        )
-    elif role == "provider-openai":
-        paths = _owned_embedding_peer_paths(root, run.run_id)
-        _require_loopback_port_available(runtime.ports.provider_openai, role)
-        command = (
-            str(root / "python/.venv/bin/python"),
-            str(root / "python/tests/testkit/openai_embedding_server.py"),
-            "--port",
-            str(runtime.ports.provider_openai),
-            "--certificate",
-            str(paths["ca.pem"]),
-            "--key",
-            str(paths["server-key.pem"]),
-            "--audit",
-            str(paths["requests.jsonl"]),
-        )
-    elif role == "provider-api-peer":
-        paths = _owned_provider_api_peer_paths(root, run.run_id)
-        _require_loopback_port_available(runtime.ports.provider_api, role)
-        command = (
-            str(root / "python/.venv/bin/python"),
-            str(root / "python/tests/testkit/provider_api_server.py"),
-            "--port",
-            str(runtime.ports.provider_api),
-            "--certificate",
-            str(paths["ca.pem"]),
-            "--key",
-            str(paths["server-key.pem"]),
-            "--audit",
-            str(paths["requests.jsonl"]),
-        )
-    elif role == "codex-generation-peer":
-        paths = _owned_codex_generation_peer_paths(root, run.run_id, require_socket=False)
-        command = (
-            str(root / "python/.venv/bin/python"),
-            str(root / "python/tests/testkit/codex_generation_server.py"),
-            "--socket",
-            str(paths[_CODEX_GENERATION_PEER_SOCKET]),
-            "--audit",
-            str(paths[_CODEX_GENERATION_PEER_AUDIT]),
-        )
-    elif role == "api":
-        _require_loopback_port_available(runtime.ports.api, role)
-        command = (
-            str(root / "python/.venv/bin/python"),
-            "-m",
-            "uvicorn",
-            "apps.api.main:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(runtime.ports.api),
-        )
-    elif role in {"worker-interactive", "worker-background"}:
-        command = (
-            str(root / "python/.venv/bin/python"),
-            "-m",
-            "apps.worker.main",
-        )
-        if role == "worker-interactive":
-            # Match the deployed interactive worker's memory envelope.
-            scope_properties = (
-                f"MemoryMax={256 * 1024 * 1024}",
-                "MemorySwapMax=0",
-                "OOMPolicy=continue",
-            )
-            _require_loopback_port_available(
-                runtime.ports.agent_tools_mcp,
-                "worker-interactive MCP",
-            )
-            mcp_endpoint = runtime_endpoint(root, environment, EndpointKind.AGENT_TOOLS_MCP)
-            owned_role_environment = {
-                "NEXUS_AGENT_TOOLS_MCP_LISTEN": mcp_endpoint.removeprefix("http://"),
-                "NEXUS_AGENT_TOOLS_MCP_ORIGIN": (f"{mcp_endpoint}/internal/agent-tools/mcp"),
-            }
-        else:
-            scope_properties = (
-                f"MemoryMax={BACKGROUND_WORKER_MEMORY_LIMIT_BYTES}",
-                "MemorySwapMax=0",
-                "OOMPolicy=continue",
-            )
-    else:
-        raise RuntimeContractError(f"Python process role is not owned: {role}")
-    shared_process_environment = {
-        "NEXUS_ENV": "test",
-        "NEXUS_TEST_DENY_EXTERNAL_NETWORK": "1",
-        "NEXUS_TEST_RUN_ID": run.run_id,
-        "PYTHONPATH": f"{root / 'python' / 'tests' / 'testkit'}:{root / 'python'}:{root}",
-    }
-    process_environment = (
-        shared_process_environment
-        if role == "codex-generation-peer"
-        else {
-            **owned_environment,
-            **shared_process_environment,
-            "NODE_OPTIONS": f"--import={root / 'python/tests/testkit/node-network-guard.mjs'}",
-            **(overrides or {}),
-            **({"WORKER_LANE": role.removeprefix("worker-")} if role.startswith("worker-") else {}),
-            **owned_role_environment,
-        }
-    )
-    return _start_owned_process(
-        root,
-        environment,
-        run.run_id,
-        role,
-        command,
-        cwd=root,
-        process_environment=process_environment,
-        scope_properties=scope_properties,
-    )
+    if overrides is None or not names.issubset(overrides):
+        raise RuntimeContractError("OpenAI provider process requires its owned fixture paths")
+    owned_root = (runtime_state_dir(root) / "runs" / run_id).resolve(strict=True)
+    fixture_resource = Resource(ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(run_id))
+    fixture_entries = [
+        entry for entry in read_ledger(root, run_id).entries if entry.resource == fixture_resource
+    ]
+    if len(fixture_entries) != 1 or fixture_entries[0].phase is not ResourcePhase.CREATED:
+        raise RuntimeContractError("OpenAI provider process requires its created fixture owner")
+    values: dict[str, Path] = {}
+    for name in names:
+        path = Path(overrides[name]).resolve(strict=True)
+        if owned_root not in path.parents or not path.is_file():
+            raise RuntimeContractError("OpenAI provider fixture path is outside the exact run")
+        values[name] = path
+    return values
 
 
 def start_web_process(
@@ -1895,16 +1031,12 @@ def start_web_process(
     if expected_builds not in artifact_root.parents or artifact_root not in server.parents:
         raise RuntimeContractError("web process requires a runtime-owned standalone artifact")
     runtime = read_runtime(root)
-    owned_environment = {
-        key: value
-        for key, value in run_environment(root, environment, run).items()
-        if key not in _PROVIDER_API_RUN_ENV
-    }
+    _require_loopback_port_available(runtime.ports.web, "web")
+    owned_environment = run_environment(root, environment, run)
     try:
         source_sha = load_runtime_identity(_runtime_identity_path(root)).source_sha
     except BackendArtifactDefect as exc:
         raise RuntimeContractError("web process requires the exact runtime identity") from exc
-    _require_loopback_port_available(runtime.ports.web, "web")
     return _start_owned_process(
         root,
         environment,
@@ -1924,203 +1056,6 @@ def start_web_process(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class OfflineReadingCaddyPorts:
-    """Run-scoped controller-owned loopback ports for the Caddy seam proof.
-
-    The seam proof never binds the runtime's fixed api/web ports: those are
-    owned by the real API and web processes, which other capabilities in the
-    same selection may start concurrently.
-    """
-
-    origin: int
-    site: int
-
-
-_OFFLINE_READING_CADDY_PREFERRED_PORTS = (18300, 18560)
-
-
-def _offline_reading_caddy_output_root(root: Path, run_id: str) -> Path:
-    return root / "test-results" / "runs" / run_id / "offline-reading-caddy"
-
-
-def _offline_reading_caddy_ports_path(root: Path, run_id: str) -> Path:
-    return _offline_reading_caddy_output_root(root, run_id) / "ports.json"
-
-
-def _read_offline_reading_caddy_ports(path: Path) -> OfflineReadingCaddyPorts:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise RuntimeContractError("offline-reading Caddy ports file is unreadable") from error
-    if not isinstance(payload, dict) or set(payload) != {"origin", "site"}:
-        raise RuntimeContractError("offline-reading Caddy ports file has an invalid shape")
-    origin, site = payload["origin"], payload["site"]
-    if not all(
-        isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535
-        for port in (origin, site)
-    ):
-        raise RuntimeContractError("offline-reading Caddy ports are outside TCP port bounds")
-    if origin == site:
-        raise RuntimeContractError("offline-reading Caddy ports must be distinct")
-    return OfflineReadingCaddyPorts(origin=origin, site=site)
-
-
-def _ensure_offline_reading_caddy_ports(root: Path, run_id: str) -> OfflineReadingCaddyPorts:
-    path = _offline_reading_caddy_ports_path(root, run_id)
-    with _port_allocation_lock():
-        if path.exists():
-            return _read_offline_reading_caddy_ports(path)
-        reserved = set(read_runtime(root).ports.as_dict().values())
-        ephemeral_port_range = _local_ephemeral_port_range()
-        chosen: list[int] = []
-        for preferred in _OFFLINE_READING_CADDY_PREFERRED_PORTS:
-            for port in _candidate_ports(preferred, ephemeral_port_range):
-                if port not in reserved and port not in chosen and _port_available(port):
-                    chosen.append(port)
-                    break
-            else:
-                raise RuntimeContractError(
-                    f"no controller-owned loopback port is available from {preferred}"
-                )
-        ports = OfflineReadingCaddyPorts(origin=chosen[0], site=chosen[1])
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"origin": ports.origin, "site": ports.site}), encoding="utf-8")
-        return ports
-
-
-def offline_reading_caddy_ports(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run_id: str,
-) -> OfflineReadingCaddyPorts:
-    """Read the run's allocated Caddy seam ports; the origin process allocates them."""
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    require_run_id(run_id)
-    path = _offline_reading_caddy_ports_path(root, run_id)
-    if not path.exists():
-        raise RuntimeContractError("offline-reading Caddy ports are not allocated for this run")
-    return _read_offline_reading_caddy_ports(path)
-
-
-def start_offline_reading_caddy_origin_process(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run_id: str,
-) -> StartedProcess:
-    """Start the ledger-owned FastAPI origin used only by the Caddy seam proof."""
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    require_run_id(run_id)
-    read_ledger(root, run_id)
-    ports = _ensure_offline_reading_caddy_ports(root, run_id)
-    _require_loopback_port_available(ports.origin, "offline-caddy-origin")
-    python = root / "python/.venv/bin/python"
-    if not python.is_file():
-        raise RuntimeContractError("offline-reading Caddy origin requires the locked Python env")
-    output_root = _offline_reading_caddy_output_root(root, run_id)
-    output_root.mkdir(parents=True, exist_ok=True)
-    audit_path = output_root / "origin-audit.jsonl"
-    if audit_path.exists():
-        raise RuntimeContractError("offline-reading Caddy origin audit already exists")
-    audit_path.touch(exist_ok=False)
-    command = (
-        str(python),
-        str((root / "python/tests/testkit/offline_reading_caddy_origin.py").resolve(strict=True)),
-        "--port",
-        str(ports.origin),
-        "--audit",
-        str(audit_path),
-    )
-    return _start_owned_process(
-        root,
-        environment,
-        run_id,
-        "offline-caddy-origin",
-        command,
-        cwd=root,
-        process_environment={
-            "NEXUS_ENV": "test",
-            "NEXUS_TEST_DENY_EXTERNAL_NETWORK": "1",
-            "NEXUS_TEST_RUN_ID": run_id,
-            "PYTHONPATH": (f"{root / 'python/tests/testkit'}:{root / 'python'}:{root}"),
-        },
-    )
-
-
-def start_caddy_process(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    run_id: str,
-) -> StartedProcess:
-    """Run the production Caddyfile with only test-owned endpoint substitutions."""
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    require_run_id(run_id)
-    read_ledger(root, run_id)
-    ports_path = _offline_reading_caddy_ports_path(root, run_id)
-    if not ports_path.exists():
-        raise RuntimeContractError("offline-reading Caddy requires its origin to start first")
-    ports = _read_offline_reading_caddy_ports(ports_path)
-    _require_loopback_port_available(ports.site, "offline-caddy")
-    executable_name = shutil.which("caddy", path=environment.get("PATH"))
-    if executable_name is None:
-        raise RuntimeContractError(f"Caddy {CADDY_VERSION} is required by this proof")
-    executable = Path(executable_name).resolve(strict=True)
-    if not executable.is_file():
-        raise RuntimeContractError("resolved Caddy executable is not a file")
-    with (
-        executable.open("rb") as binary,
-        mmap.mmap(binary.fileno(), 0, access=mmap.ACCESS_READ) as build,
-    ):
-        if build.find(_CADDY_MODULE_BUILD_PIN) < 0:
-            raise RuntimeContractError(f"Caddy executable is not pinned to {CADDY_VERSION}")
-
-    production = (root / "deploy/hetzner/Caddyfile").read_text(encoding="utf-8")
-    if not production.startswith("{\n") or production.count("reverse_proxy api:8000") != 2:
-        raise RuntimeContractError("production Caddyfile no longer has the exact proxy shape")
-    rendered = production.replace("{\n", "{\n\tadmin off\n", 1).replace(
-        "reverse_proxy api:8000",
-        f"reverse_proxy 127.0.0.1:{ports.origin}",
-    )
-    site_block = "{$CADDY_SITE} {\n"
-    if rendered.count(site_block) != 1:
-        raise RuntimeContractError("production Caddyfile no longer has one site block")
-    rendered = rendered.replace(site_block, site_block + "\tbind 127.0.0.1\n", 1)
-    output_root = _offline_reading_caddy_output_root(root, run_id)
-    output_root.mkdir(parents=True, exist_ok=True)
-    config_path = output_root / "Caddyfile"
-    if config_path.exists():
-        raise RuntimeContractError("offline-reading Caddy config already exists")
-    config_path.write_text(rendered, encoding="utf-8")
-    caddy_home = output_root / "home"
-    command = (
-        str(executable),
-        "run",
-        "--config",
-        str(config_path),
-        "--adapter",
-        "caddyfile",
-    )
-    return _start_owned_process(
-        root,
-        environment,
-        run_id,
-        "offline-caddy",
-        command,
-        cwd=root,
-        process_environment={
-            "CADDY_ACME_EMAIL": "nexus-test@example.invalid",
-            "CADDY_SITE": f"http://127.0.0.1:{ports.site}",
-            "NEXUS_ENV": "test",
-            "NEXUS_TEST_RUN_ID": run_id,
-            "XDG_CONFIG_HOME": str(caddy_home / ".config"),
-            "XDG_DATA_HOME": str(caddy_home / ".local/share"),
-        },
-    )
-
-
 def wait_process_ready(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -2133,173 +1068,26 @@ def wait_process_ready(
 ) -> None:
     """Wait for an owned process at one exact recorded runtime endpoint."""
     require_test_environment(environment)
-    if type(endpoint) is not EndpointKind:
-        raise RuntimeContractError("process readiness requires a typed endpoint")
     if not path.startswith("/") or "//" in path:
         raise RuntimeContractError("process readiness path must be absolute and normalized")
     root = canonical_repo_root(repo_root)
-    if endpoint is EndpointKind.AGENT_TOOLS_MCP:
-        if path != "/internal/agent-tools/mcp":
-            raise RuntimeContractError("agent-tools MCP readiness requires its literal path")
-        _require_exact_created_process(root, process, "worker-interactive")
-    elif endpoint is EndpointKind.PROVIDER_OPENAI:
-        _require_exact_created_process(root, process, "provider-openai")
-    elif endpoint is EndpointKind.PROVIDER_API:
-        _require_exact_created_process(root, process, "provider-api-peer")
     url = runtime_endpoint(root, environment, endpoint) + path
     port = urlsplit(url).port
     if port is None:
         raise RuntimeContractError("process readiness endpoint has no port")
-    if endpoint in {EndpointKind.PROVIDER_OPENAI, EndpointKind.PROVIDER_API}:
+    if endpoint is EndpointKind.PROVIDER_OPENAI:
         expected_ca = (
-            _owned_embedding_peer_paths(root, process.run_id)["ca.pem"]
-            if endpoint is EndpointKind.PROVIDER_OPENAI
-            else _owned_provider_api_peer_paths(root, process.run_id)["ca.pem"]
+            runtime_state_dir(root) / "runs" / process.run_id / "openai-provider" / "ca.pem"
         )
         if tls_ca is None or tls_ca.resolve(strict=True) != expected_ca.resolve(strict=True):
-            raise RuntimeContractError("provider readiness requires its exact owned CA")
+            raise RuntimeContractError("OpenAI provider readiness requires its exact owned CA")
         verify: ssl.SSLContext | bool = ssl.create_default_context(cafile=str(expected_ca))
     elif tls_ca is not None:
         raise RuntimeContractError("TLS CA is only valid for provider readiness")
     else:
         verify = True
-    expected_status_code = 401 if endpoint is EndpointKind.AGENT_TOOLS_MCP else 200
-    _wait_owned_process_url_ready(
-        root,
-        process,
-        url,
-        port,
-        verify,
-        timeout_seconds,
-        expected_status_code=expected_status_code,
-    )
-
-
-def wait_codex_generation_peer_ready(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    process: StartedProcess,
-    socket_path: Path,
-    *,
-    timeout_seconds: float = 30,
-) -> None:
-    """Require exact UDS health from the run-owned strict-v2 generation peer."""
-
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    _require_exact_created_process(root, process, "codex-generation-peer")
-    expected_socket = codex_generation_peer_state_dir(root, process.run_id) / (
-        _CODEX_GENERATION_PEER_SOCKET
-    )
-    if socket_path != expected_socket:
-        raise RuntimeContractError("Codex generation peer readiness requires its exact socket")
     deadline = time.monotonic() + timeout_seconds
-    identity_deadline = min(deadline, time.monotonic() + _PROCESS_IDENTITY_GRACE_SECONDS)
-    while time.monotonic() < deadline:
-        if not _owned_process_identity_matches(
-            root,
-            process.process_group_id,
-            process.process_start_token,
-            process.run_id,
-            process.owner_token,
-        ):
-            if _process_identity_pending(
-                birth_matches=_process_birth_identity_matches(
-                    process.process_group_id,
-                    process.process_start_token,
-                ),
-                now=time.monotonic(),
-                deadline=identity_deadline,
-            ):
-                time.sleep(0.01)
-                continue
-            raise RuntimeContractError(
-                "owned codex-generation-peer process exited or changed identity before readiness"
-            )
-        paths = _owned_codex_generation_peer_paths(
-            root,
-            process.run_id,
-            require_socket=None,
-        )
-        owned_socket = paths[_CODEX_GENERATION_PEER_SOCKET]
-        if owned_socket.is_socket():
-            from nexus.services.codex_generation_client import (
-                CodexGenerationClient,
-                CodexGenerationClientError,
-                CodexGenerationProtocolDefect,
-                CodexGenerationUnavailable,
-            )
-
-            try:
-                asyncio.run(CodexGenerationClient(owned_socket).health())
-            except CodexGenerationUnavailable:
-                pass
-            except (CodexGenerationClientError, CodexGenerationProtocolDefect) as error:
-                raise RuntimeContractError(
-                    "Codex generation peer returned an invalid health identity"
-                ) from error
-            else:
-                if _process_group_owns_unix_listener(
-                    process.process_group_id,
-                    owned_socket,
-                ) and _owned_process_identity_matches(
-                    root,
-                    process.process_group_id,
-                    process.process_start_token,
-                    process.run_id,
-                    process.owner_token,
-                ):
-                    return
-        time.sleep(0.05)
-    raise RuntimeContractError("owned codex-generation-peer process did not become ready")
-
-
-def wait_offline_reading_caddy_ready(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    process: StartedProcess,
-    path: str,
-    *,
-    timeout_seconds: float = 30,
-) -> None:
-    """Wait for a Caddy seam proof process at its run-allocated loopback port."""
-    require_test_environment(environment)
-    if not path.startswith("/") or "//" in path:
-        raise RuntimeContractError("process readiness path must be absolute and normalized")
-    root = canonical_repo_root(repo_root)
-    ports = offline_reading_caddy_ports(root, environment, process.run_id)
-    port = {"offline-caddy-origin": ports.origin, "offline-caddy": ports.site}.get(process.role)
-    if port is None:
-        raise RuntimeContractError("only Caddy seam proof processes have run-allocated ports")
-    _wait_owned_process_url_ready(
-        root,
-        process,
-        f"http://127.0.0.1:{port}{path}",
-        port,
-        True,
-        timeout_seconds,
-        expected_status_code=200,
-    )
-
-
-def _wait_owned_process_url_ready(
-    root: Path,
-    process: StartedProcess,
-    url: str,
-    port: int,
-    verify: ssl.SSLContext | bool,
-    timeout_seconds: float,
-    *,
-    expected_status_code: int,
-) -> None:
-    host = urlsplit(url).hostname
-    if host != "127.0.0.1":
-        raise RuntimeContractError("process readiness endpoint must use exact IPv4 loopback")
-    deadline = time.monotonic() + timeout_seconds
-    identity_deadline = min(
-        deadline,
-        time.monotonic() + _PROCESS_IDENTITY_GRACE_SECONDS,
-    )
+    identity_deadline = min(deadline, time.monotonic() + 2)
     with httpx.Client(
         trust_env=False,
         timeout=1,
@@ -2308,13 +1096,12 @@ def _wait_owned_process_url_ready(
     ) as client:
         while time.monotonic() < deadline:
             if not _owned_process_identity_matches(
-                root,
                 process.process_group_id,
                 process.process_start_token,
                 process.run_id,
                 process.owner_token,
             ):
-                if _process_identity_pending(
+                if _startup_identity_pending(
                     birth_matches=_process_birth_identity_matches(
                         process.process_group_id,
                         process.process_start_token,
@@ -2330,10 +1117,9 @@ def _wait_owned_process_url_ready(
             try:
                 response = client.get(url)
                 if (
-                    response.status_code == expected_status_code
-                    and _process_group_owns_listener(process.process_group_id, host, port)
+                    response.status_code == 200
+                    and _process_group_owns_listener(process.process_group_id, port)
                     and _owned_process_identity_matches(
-                        root,
                         process.process_group_id,
                         process.process_start_token,
                         process.run_id,
@@ -2347,29 +1133,6 @@ def _wait_owned_process_url_ready(
     raise RuntimeContractError(f"owned {process.role} process did not become ready")
 
 
-def _require_exact_created_process(root: Path, process: StartedProcess, role: str) -> None:
-    expected_resource = Resource(
-        ResourceKind.PROCESS,
-        process_resource_identity(process.run_id, role),
-    )
-    matching = [
-        entry
-        for entry in read_ledger(root, process.run_id).entries
-        if entry.resource == expected_resource
-    ]
-    if (
-        process.role != role
-        or len(matching) != 1
-        or matching[0].phase is not ResourcePhase.CREATED
-        or matching[0].external_id != process.owner_token
-        or matching[0].process_group_id != process.process_group_id
-        or matching[0].process_start_token != process.process_start_token
-    ):
-        raise RuntimeContractError(
-            f"process readiness requires the exact created {role} ledger owner"
-        )
-
-
 def _start_owned_process(
     root: Path,
     environment: Mapping[str, str],
@@ -2379,32 +1142,9 @@ def _start_owned_process(
     *,
     cwd: Path,
     process_environment: Mapping[str, str],
-    scope_properties: tuple[str, ...] = (),
 ) -> StartedProcess:
     resource = Resource(ResourceKind.PROCESS, process_resource_identity(run_id, role))
     owner_token = secrets.token_hex(16)
-    if sys.platform == "linux":
-        scope_arguments = tuple(
-            argument
-            for property_value in scope_properties
-            for argument in ("--property", property_value)
-        )
-        command = (
-            _require_cgroup_delegate(),
-            "--user",
-            "--scope",
-            "--quiet",
-            "--collect",
-            f"--unit={_linux_process_scope_unit(run_id, owner_token)}",
-            *scope_arguments,
-            *command,
-        )
-        process_environment = {
-            **process_environment,
-            **user_systemd_environment(),
-        }
-    elif scope_properties:
-        raise RuntimeContractError("owned process cgroup properties require Linux")
     record_planned(
         root,
         environment,
@@ -2421,20 +1161,7 @@ def _start_owned_process(
     blocked_signals = {signal.SIGINT, signal.SIGTERM}
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
     process: subprocess.Popen[str] | None = None
-    owner_descriptor: int | None = None
-    owner_marker: Path | None = None
     try:
-        inherited_descriptors: tuple[int, ...] = ()
-        if sys.platform == "darwin":
-            owner_marker = _process_owner_marker(root, run_id, owner_token)
-            owner_marker.parent.mkdir(parents=True, exist_ok=True)
-            owner_descriptor = os.open(
-                owner_marker,
-                os.O_CREAT | os.O_EXCL | os.O_RDONLY,
-                0o600,
-            )
-            inherited_descriptors = (owner_descriptor,)
-            child_environment["NEXUS_TEST_PROCESS_OWNER_FD"] = str(owner_descriptor)
         with log_path.open("w", encoding="utf-8") as log:
             process = subprocess.Popen(
                 unblock_and_exec_command(command),
@@ -2445,7 +1172,6 @@ def _start_owned_process(
                 stderr=subprocess.STDOUT,
                 text=True,
                 start_new_session=True,
-                pass_fds=inherited_descriptors,
             )
         start_token = _process_start_token(process.pid)
         record_created(
@@ -2462,16 +1188,8 @@ def _start_owned_process(
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-        if owner_marker is not None:
-            owner_marker.unlink(missing_ok=True)
-            try:
-                owner_marker.parent.rmdir()
-            except OSError:
-                pass
         raise
     finally:
-        if owner_descriptor is not None:
-            os.close(owner_descriptor)
         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
     return StartedProcess(
         role=role,
@@ -2508,7 +1226,6 @@ def clean_run(
                     process_start_token = candidate.process_start_token
                     if process_group_id is None:
                         recovered = _recover_planned_process_group(
-                            root,
                             candidate.external_id,
                             run_id,
                         )
@@ -2516,12 +1233,10 @@ def clean_run(
                             process_group_id, process_start_token = recovered
                     if process_group_id is not None:
                         _stop_process_group(
-                            root,
                             process_group_id,
                             process_start_token,
                             run_id,
                             candidate.external_id,
-                            resource.identity,
                         )
                 elif resource.kind is ResourceKind.TEMPLATE_BUILD:
                     if candidate.external_id is None:
@@ -2546,14 +1261,10 @@ def clean_run(
                         candidate.external_id,
                         supabase,
                     )
-                elif resource.kind is ResourceKind.EMBEDDING_PEER:
-                    _delete_embedding_peer_state(root, run_id)
-                elif resource.kind is ResourceKind.PROVIDER_API_PEER:
-                    _delete_provider_api_peer_state(root, run_id)
-                elif resource.kind is ResourceKind.CODEX_GENERATION_PEER:
-                    _delete_codex_generation_peer_state(root, run_id)
                 elif resource.kind is ResourceKind.EXTENSION_PROFILE:
                     _delete_extension_profile(root, resource.identity)
+                elif resource.kind is ResourceKind.PROVIDER_FIXTURE:
+                    _clean_openai_provider_fixture(root, resource.identity)
                 else:
                     raise RuntimeContractError(f"clean has no owner for {resource.kind.value}")
                 forget_cleaned(root, environment, run_id, resource)
@@ -2568,12 +1279,7 @@ def clean_run(
         release_run(root, environment, run_id)
 
 
-def clean_owned_runs(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    *,
-    supabase: SupabaseCredentials | None = None,
-) -> tuple[str, ...]:
+def clean_owned_runs(repo_root: Path, environment: Mapping[str, str]) -> tuple[str, ...]:
     require_test_environment(environment)
     root = canonical_repo_root(repo_root)
     if not runtime_record_path(root).exists():
@@ -2582,54 +1288,12 @@ def clean_owned_runs(
     failures: list[Exception] = []
     for run_id in run_ids:
         try:
-            clean_run(root, environment, run_id, supabase=supabase)
+            clean_run(root, environment, run_id)
         except Exception as error:
             failures.append(RuntimeContractError(f"run cleanup failed for {run_id}: {error}"))
     if failures:
         raise ExceptionGroup("owned run cleanup failed", failures)
     return run_ids
-
-
-ServiceEnsurer = Callable[[Path, Mapping[str, str]], SupabaseCredentials]
-
-
-@contextmanager
-def recovered_workspace_heavy_lock(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    *,
-    blocking: bool = True,
-    service_ensurer: ServiceEnsurer = ensure_services,
-) -> Iterator[Path]:
-    """Admit heavy work only after recovering exact resources abandoned by its predecessor.
-
-    The lineage-wide heavy lock is the runtime owner's liveness lease. Every
-    controller path that creates local runtime resources holds it until those
-    resources are cleaned. Once this acquisition succeeds, any run still in
-    the repository-owned ledger is therefore abandoned rather than concurrent.
-    Recovery remains ledger-driven and resumable: it neither scans for nor
-    terminates an unrecorded process, container, database, bucket, or user.
-    """
-    require_test_environment(environment)
-    root = canonical_repo_root(repo_root)
-    with workspace_heavy_lock(root, blocking=blocking) as lock_path:
-        recovered: tuple[str, ...] = ()
-        try:
-            if runtime_record_path(root).exists() and read_runtime(root).owned_run_ids:
-                supabase = service_ensurer(root, environment)
-                recovered = clean_owned_runs(root, environment, supabase=supabase)
-        except Exception as error:
-            raise RuntimeContractError(f"abandoned test run recovery failed: {error}") from error
-        if recovered:
-            _LOGGER.warning(
-                "recovered abandoned test runs before heavy admission: %s",
-                ",".join(recovered),
-                extra={
-                    "event": "nexus_test.abandoned_runs_recovered",
-                    "run_ids": recovered,
-                },
-            )
-        yield lock_path
 
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
@@ -2648,7 +1312,12 @@ def clean_owned_runtime(
     if not runtime_record_path(root).exists():
         return ()
     run_command = command_runner or _run
-    _upgrade_runtime_if_needed(root, environment, port_available=port_available)
+    _upgrade_previous_runtime_if_needed(
+        root,
+        environment,
+        port_available=port_available,
+        linked_runtime_ports=frozenset(),
+    )
     runtime = read_runtime(root)
     run_ids = runtime.owned_run_ids
     failures: list[str] = []
@@ -2697,12 +1366,18 @@ def clean_owned_runtime(
     return run_ids
 
 
-def _allocate_ports() -> RuntimePorts:
+def _allocate_ports(
+    repo_root: Path,
+    *,
+    port_available: Callable[[int], bool] | None = None,
+) -> RuntimePorts:
+    is_port_available = port_available or _port_available
     ports: list[int] = []
+    reserved = _linked_worktree_runtime_ports(repo_root)
     ephemeral_port_range = _local_ephemeral_port_range()
     for preferred in _PORT_DEFAULTS:
         for port in _candidate_ports(preferred, ephemeral_port_range):
-            if port not in ports and _port_available(port):
+            if port not in ports and port not in reserved and is_port_available(port):
                 ports.append(port)
                 break
         else:
@@ -2710,47 +1385,35 @@ def _allocate_ports() -> RuntimePorts:
     return RuntimePorts(*ports)
 
 
-def _upgrade_runtime_if_needed(
+def _upgrade_previous_runtime_if_needed(
     root: Path,
     environment: Mapping[str, str],
     *,
     port_available: Callable[[int], bool] | None = None,
+    linked_runtime_ports: frozenset[int] | None = None,
 ) -> None:
     is_port_available = port_available or _port_available
     try:
         read_runtime(root)
         return
-    except RuntimeContractError:
+    except RuntimeContractError as current_error:
         with _port_allocation_lock():
             try:
-                read_runtime(root)
-                return
-            except RuntimeContractError as current_error:
-                try:
-                    previous = read_upgradeable_runtime(root)
-                except RuntimeContractError:
-                    raise current_error from None
-            missing_ports = missing_runtime_port_names(previous)
-            used = {
-                port for name, port in previous.ports.as_dict().items() if name not in missing_ports
-            }
-            added_ports: dict[str, int] = {}
+                previous = read_previous_runtime_for_cleanup(root)
+            except RuntimeContractError:
+                raise current_error from None
+            used = set(previous.ports.as_dict().values()) - {previous.ports.provider_openai}
+            reserved = (
+                _linked_worktree_runtime_ports(root)
+                if linked_runtime_ports is None
+                else linked_runtime_ports
+            )
             ephemeral_port_range = _local_ephemeral_port_range()
-            for name in missing_ports:
-                for port in _candidate_ports(_UPGRADE_PORT_DEFAULTS[name], ephemeral_port_range):
-                    if (
-                        port not in used
-                        and port not in added_ports.values()
-                        and is_port_available(port)
-                    ):
-                        added_ports[name] = port
-                        break
-                else:
-                    raise RuntimeContractError(
-                        f"no local {name.replace('_', ' ')} test port is available"
-                    )
-            upgrade_runtime_to_current(root, environment, added_ports)
-            return
+            for port in _candidate_ports(19092, ephemeral_port_range):
+                if port not in used and port not in reserved and is_port_available(port):
+                    upgrade_previous_runtime(root, environment, port)
+                    return
+    raise RuntimeContractError("no local provider test port is available")
 
 
 def _local_ephemeral_port_range() -> tuple[int, int]:
@@ -2786,9 +1449,7 @@ def _port_available(port: int) -> bool:
     for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
         try:
             with socket.socket(family, socket.SOCK_STREAM) as listener:
-                # This is an exclusivity probe. SO_REUSEADDR lets Darwin bind
-                # over Docker Desktop's dual-stack wildcard listeners and can
-                # therefore misclassify a foreign published port as available.
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 listener.bind((host, port))
         except OSError as error:
             if family == socket.AF_INET6 and error.errno in {
@@ -2799,6 +1460,52 @@ def _port_available(port: int) -> bool:
                 continue
             return False
     return True
+
+
+def _linked_worktree_runtime_ports(repo_root: Path) -> frozenset[int]:
+    root = canonical_repo_root(repo_root)
+    try:
+        listed = _run(
+            ("git", "worktree", "list", "--porcelain", "-z"),
+            cwd=root,
+            capture_output=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise RuntimeContractError("cannot enumerate linked worktree port reservations") from error
+
+    reserved: set[int] = set()
+    for entry in listed.split("\0"):
+        if not entry.startswith("worktree "):
+            continue
+        try:
+            linked_root = Path(entry.removeprefix("worktree ")).resolve(strict=True)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise RuntimeContractError("cannot resolve linked worktree reservation") from error
+        if linked_root == root:
+            continue
+        record_path = runtime_record_path(linked_root)
+        try:
+            payload = json.loads(record_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            continue
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise RuntimeContractError(
+                f"linked worktree runtime is unreadable: {linked_root}"
+            ) from error
+        values = payload.get("ports") if isinstance(payload, dict) else None
+        if (
+            not isinstance(payload, dict)
+            or payload.get("repo_id") != repo_id_for(linked_root)
+            or not isinstance(values, dict)
+            or not values
+            or any(type(port) is not int or not 1 <= port <= 65535 for port in values.values())
+            or len(values) != len(set(values.values()))
+        ):
+            raise RuntimeContractError(f"linked worktree runtime is invalid: {linked_root}")
+        reserved.update(values.values())
+    return frozenset(reserved)
 
 
 @contextmanager
@@ -2993,44 +1700,6 @@ def _drop_database(repo_root: Path, environment: Mapping[str, str], database: st
         connection.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(database)))
 
 
-def _recreate_idle_run_database(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    *,
-    database: str,
-    template: str,
-) -> None:
-    """Replace one exact idle run database from its finalized template."""
-    with _postgres_admin(repo_root, environment) as connection:
-        database_shape = connection.execute(
-            "SELECT datallowconn, datistemplate FROM pg_database WHERE datname = %s",
-            (database,),
-        ).fetchone()
-        if database_shape != (True, False):
-            raise RuntimeContractError("run database is absent or has an invalid lifecycle shape")
-        template_shape = connection.execute(
-            "SELECT datallowconn, datistemplate FROM pg_database WHERE datname = %s",
-            (template,),
-        ).fetchone()
-        if template_shape != (False, True):
-            raise RuntimeContractError("run database template is absent or not finalized")
-        consumers = connection.execute(
-            "SELECT pid FROM pg_stat_activity WHERE datname = %s ORDER BY pid",
-            (database,),
-        ).fetchall()
-        if consumers:
-            raise RuntimeContractError(
-                "browser data-plane isolation found an active run database consumer"
-            )
-        connection.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(database)))
-        connection.execute(
-            sql.SQL("CREATE DATABASE {} TEMPLATE {}").format(
-                sql.Identifier(database),
-                sql.Identifier(template),
-            )
-        )
-
-
 def _terminate_database_connections(connection: psycopg.Connection, name: str) -> None:
     connection.execute(
         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
@@ -3097,39 +1766,20 @@ def _create_bucket(repo_root: Path, environment: Mapping[str, str], run_id: str)
 def _delete_bucket(repo_root: Path, environment: Mapping[str, str], bucket: str) -> None:
     client = _s3(repo_root, environment)
     try:
-        _empty_bucket(client, bucket)
+        while True:
+            response = client.list_objects_v2(Bucket=bucket)
+            contents = response.get("Contents", [])
+            if contents:
+                client.delete_objects(
+                    Bucket=bucket,
+                    Delete={"Objects": [{"Key": item["Key"]} for item in contents]},
+                )
+            if not response.get("IsTruncated"):
+                break
         client.delete_bucket(Bucket=bucket)
     except ClientError as exc:
         if exc.response.get("Error", {}).get("Code") not in {"NoSuchBucket", "404"}:
             raise
-
-
-def _empty_existing_run_bucket(
-    repo_root: Path,
-    environment: Mapping[str, str],
-    bucket: str,
-) -> None:
-    client = _s3(repo_root, environment)
-    try:
-        client.head_bucket(Bucket=bucket)
-    except ClientError as exc:
-        if exc.response.get("Error", {}).get("Code") in {"NoSuchBucket", "404"}:
-            raise RuntimeContractError("run bucket is absent before browser isolation") from exc
-        raise
-    _empty_bucket(client, bucket)
-
-
-def _empty_bucket(client: BaseClient, bucket: str) -> None:
-    while True:
-        response = client.list_objects_v2(Bucket=bucket)
-        contents = response.get("Contents", [])
-        if contents:
-            client.delete_objects(
-                Bucket=bucket,
-                Delete={"Objects": [{"Key": item["Key"]} for item in contents]},
-            )
-        if not response.get("IsTruncated"):
-            return
 
 
 def _delete_supabase_user(
@@ -3228,171 +1878,23 @@ def _delete_extension_profile(repo_root: Path, identity: str) -> None:
 
 
 def _stop_process_group(
-    repo_root: Path,
     process_group_id: int,
     process_start_token: str | None,
     run_id: str,
     owner_token: str,
-    resource_identity: str,
 ) -> None:
-    ledger_phase = _process_ledger_phase(
-        repo_root,
-        process_group_id=process_group_id,
-        process_start_token=process_start_token,
-        run_id=run_id,
-        owner_token=owner_token,
-        resource_identity=resource_identity,
-    )
-    if ledger_phase is None:
-        raise RuntimeContractError("process group no longer belongs to the exact test run")
-    identity_deadline = time.monotonic() + _PROCESS_IDENTITY_GRACE_SECONDS
-    identity_pending_reported = False
-    while True:
-        if ledger_phase is ResourcePhase.CREATED and process_start_token is not None:
-            _reap_exact_created_process_if_exited(
-                process_group_id,
-                process_start_token,
-            )
-        owned_groups = _owned_process_group_map(repo_root, run_id, owner_token)
-        try:
-            os.killpg(process_group_id, 0)
-            recorded_group_alive = True
-        except ProcessLookupError:
-            recorded_group_alive = False
-        except PermissionError as exc:
-            raise RuntimeContractError("owned process group could not be verified") from exc
-        if (
-            recorded_group_alive
-            and process_group_id not in owned_groups
-            and ledger_phase is ResourcePhase.CREATED
-            and process_start_token is not None
-            and _process_birth_identity_matches(process_group_id, process_start_token)
-            and sys.platform == "linux"
-        ):
-            try:
-                _linux_process_environment(process_group_id)
-            except PermissionError:
-                # A controller resumed through another local credential profile can
-                # retain the uid while Linux denies its access to /proc/<pid>/environ.
-                # The persisted uid, PID, process group, and birth token still identify
-                # the recorded leader exactly. New launches use a scope for descendants.
-                owned_groups[process_group_id] = process_start_token
-            except (FileNotFoundError, ProcessLookupError):
-                recorded_group_alive = False
-        if not recorded_group_alive:
-            if process_group_id in owned_groups:
-                raise RuntimeContractError(
-                    "owned process identity identifies a group the kernel cannot signal"
-                )
-            # The recorded worker group is already gone; reap any bounded child group
-            # it may have left behind (parent-death teardown races the ledger cleanup).
-            for group_id in sorted(owned_groups):
-                _terminate_process_group(group_id)
-            if sys.platform == "linux":
-                _retire_linux_process_scope(run_id, owner_token)
-            return
-        if process_group_id in owned_groups:
-            break
-        # The signal-unblocking launcher immediately execs the target. Linux can
-        # expose the immutable birth identity before the new environment becomes
-        # readable, so rescan only while that exact recorded process still exists.
-        identity_pending = (
-            ledger_phase is ResourcePhase.CREATED
-            and process_start_token is not None
-            and _process_identity_pending(
-                birth_matches=_process_birth_identity_matches(
-                    process_group_id,
-                    process_start_token,
-                ),
-                now=time.monotonic(),
-                deadline=identity_deadline,
-            )
-        )
-        if identity_pending:
-            if not identity_pending_reported:
-                _LOGGER.debug(
-                    "exact process birth is awaiting owner visibility",
-                    extra={
-                        "event": "nexus_test.process_owner_visibility_pending",
-                        "process_group_id": process_group_id,
-                        "resource_identity": resource_identity,
-                        "run_id": run_id,
-                    },
-                )
-                identity_pending_reported = True
-            time.sleep(0.01)
-            continue
-        raise RuntimeContractError("process group no longer belongs to the exact test run")
-    if process_start_token is not None:
-        try:
-            leader_identity = _read_process_identity(process_group_id)
-        except (FileNotFoundError, ProcessLookupError):
-            leader_identity = None
-        except (OSError, RuntimeContractError) as exc:
-            raise RuntimeContractError("owned process identity could not be read") from exc
-        if leader_identity is not None and (
-            leader_identity.uid != os.getuid()
-            or leader_identity.process_group_id != process_group_id
-            or leader_identity.start_token != process_start_token
-        ):
-            raise RuntimeContractError("process group no longer belongs to the exact test run")
-    # Terminate the recorded worker group and every bounded execution child it
-    # forked into its own session within the exact scope or owner marker.
-    for group_id in sorted(owned_groups):
-        _terminate_process_group(group_id)
-    if sys.platform == "linux":
-        _retire_linux_process_scope(run_id, owner_token)
-
-
-def _process_ledger_phase(
-    repo_root: Path,
-    *,
-    process_group_id: int,
-    process_start_token: str | None,
-    run_id: str,
-    owner_token: str,
-    resource_identity: str,
-) -> ResourcePhase | None:
-    expected_resource = Resource(ResourceKind.PROCESS, resource_identity)
-    matching = [
-        entry
-        for entry in read_ledger(repo_root, run_id).entries
-        if entry.resource == expected_resource
-    ]
-    if len(matching) != 1 or matching[0].external_id != owner_token:
-        return None
-    entry = matching[0]
-    if entry.phase is ResourcePhase.PLANNED:
-        return (
-            ResourcePhase.PLANNED
-            if entry.process_group_id is None and entry.process_start_token is None
-            else None
-        )
-    if (
-        entry.phase is ResourcePhase.CREATED
-        and process_start_token is not None
-        and entry.process_group_id == process_group_id
-        and entry.process_start_token == process_start_token
+    process_root = Path("/proc") / str(process_group_id)
+    if not process_root.exists():
+        return
+    if process_start_token is None:
+        raise RuntimeContractError("owned process lacks its immutable runtime identity")
+    if not _owned_process_identity_matches(
+        process_group_id,
+        process_start_token,
+        run_id,
+        owner_token,
     ):
-        return ResourcePhase.CREATED
-    return None
-
-
-def _reap_exact_created_process_if_exited(
-    process_group_id: int,
-    process_start_token: str,
-) -> None:
-    if not _process_birth_identity_matches(process_group_id, process_start_token):
-        return
-    try:
-        reaped_process_id, _status = os.waitpid(process_group_id, os.WNOHANG)
-    except ChildProcessError:
-        return
-    if reaped_process_id not in {0, process_group_id}:
-        raise AssertionError("waitpid reaped a process outside the exact ledger owner")
-
-
-def _terminate_process_group(process_group_id: int) -> None:
+        raise RuntimeContractError("process group no longer belongs to the exact test run")
     try:
         os.killpg(process_group_id, signal.SIGTERM)
     except ProcessLookupError:
@@ -3407,19 +1909,8 @@ def _terminate_process_group(process_group_id: int) -> None:
             os.killpg(process_group_id, 0)
         except ProcessLookupError:
             return
-        except PermissionError:
-            if sys.platform == "darwin":
-                return
-            raise
         time.sleep(0.05)
-    try:
-        os.killpg(process_group_id, signal.SIGKILL)
-    except ProcessLookupError:
-        return
-    except PermissionError:
-        if sys.platform == "darwin":
-            return
-        raise
+    os.killpg(process_group_id, signal.SIGKILL)
     try:
         os.waitpid(process_group_id, 0)
     except ChildProcessError:
@@ -3427,168 +1918,95 @@ def _terminate_process_group(process_group_id: int) -> None:
 
 
 def _recover_planned_process_group(
-    repo_root: Path,
     owner_token: str,
     run_id: str,
-) -> tuple[int, str | None] | None:
+) -> tuple[int, str] | None:
     if not re.fullmatch(r"[0-9a-f]{32}", owner_token):
         raise RuntimeContractError("planned process lacks its exact ownership contract")
-    owned_groups = _owned_process_group_map(repo_root, run_id, owner_token)
-    if not owned_groups:
-        return None
-    # `_stop_process_group` reaps every group in the tree, so recovery only needs
-    # one representative: prefer a group whose leader carries the token.
-    for group_id in sorted(owned_groups):
-        if owned_groups[group_id] is not None:
-            return group_id, owned_groups[group_id]
-    representative = min(owned_groups)
-    return representative, owned_groups[representative]
+    expected_owner = f"NEXUS_TEST_PROCESS_OWNER={owner_token}".encode()
+    expected_run = f"NEXUS_TEST_RUN_ID={run_id}".encode()
+    matches: list[tuple[int, str]] = []
+    for process_root in Path("/proc").iterdir():
+        if not process_root.name.isdecimal():
+            continue
+        try:
+            if process_root.stat().st_uid != os.getuid():
+                continue
+            environment = (process_root / "environ").read_bytes().split(b"\0")
+            if expected_owner not in environment or expected_run not in environment:
+                continue
+            process_id = int(process_root.name)
+            if os.getpgid(process_id) != process_id:
+                raise RuntimeContractError(
+                    "planned process token no longer identifies its exact process group"
+                )
+            start_token = _process_start_token(process_id)
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            raise RuntimeContractError("planned process identity could not be read") from exc
+        matches.append((process_id, start_token))
+    if len(matches) > 1:
+        raise RuntimeContractError("planned process token identifies multiple process groups")
+    return matches[0] if matches else None
 
 
 def _owned_process_identity_matches(
-    repo_root: Path,
     process_group_id: int,
     process_start_token: str,
     run_id: str,
     owner_token: str,
 ) -> bool:
+    process_root = Path("/proc") / str(process_group_id)
     try:
-        identity = _read_process_identity(process_group_id)
-        if identity.uid != os.getuid() or identity.process_group_id != process_group_id:
+        if (
+            process_root.stat().st_uid != os.getuid()
+            or os.getpgid(process_group_id) != process_group_id
+        ):
             return False
-        if identity.start_token != process_start_token:
-            return False
-        if sys.platform == "darwin":
-            marker = _process_owner_marker(repo_root, run_id, owner_token)
-            return process_group_id in _darwin_owner_marker_holders(marker)
-        scoped_identities = _linux_process_scope_identities(run_id, owner_token)
-        if scoped_identities is not None:
-            return any(
-                process_id == process_group_id
-                and identity.process_group_id == process_group_id
-                and identity.start_token == process_start_token
-                for process_id, identity in scoped_identities
-            )
-        process_environment = _linux_process_environment(process_group_id)
-    except (OSError, ProcessLookupError, RuntimeContractError):
+        stat = (process_root / "stat").read_text(encoding="utf-8")
+        actual_start_token = stat[stat.rindex(")") + 2 :].split()[19]
+        process_environment = (process_root / "environ").read_bytes().split(b"\0")
+    except (OSError, ProcessLookupError, ValueError, IndexError):
         return False
     return (
-        f"NEXUS_TEST_RUN_ID={run_id}".encode() in process_environment
+        actual_start_token == process_start_token
+        and f"NEXUS_TEST_RUN_ID={run_id}".encode() in process_environment
         and f"NEXUS_TEST_PROCESS_OWNER={owner_token}".encode() in process_environment
     )
 
 
 def _process_birth_identity_matches(process_group_id: int, process_start_token: str) -> bool:
+    process_root = Path("/proc") / str(process_group_id)
     try:
-        identity = _read_process_identity(process_group_id)
-    except (OSError, ProcessLookupError, RuntimeContractError):
+        if (
+            process_root.stat().st_uid != os.getuid()
+            or os.getpgid(process_group_id) != process_group_id
+        ):
+            return False
+        stat = (process_root / "stat").read_text(encoding="utf-8")
+        actual_start_token = stat[stat.rindex(")") + 2 :].split()[19]
+    except (OSError, ProcessLookupError, ValueError, IndexError):
         return False
-    return (
-        identity.uid == os.getuid()
-        and identity.process_group_id == process_group_id
-        and identity.start_token == process_start_token
-    )
+    return actual_start_token == process_start_token
 
 
-def _process_identity_pending(*, birth_matches: bool, now: float, deadline: float) -> bool:
+def _startup_identity_pending(*, birth_matches: bool, now: float, deadline: float) -> bool:
     return birth_matches and now < deadline
 
 
-def _process_group_owns_listener(process_group_id: int, host: str, port: int) -> bool:
-    if host != "127.0.0.1":
-        return False
-    if sys.platform == "darwin":
-        try:
-            process_ids = _darwin_lsof_listener_process_ids(host, port)
-        except RuntimeContractError:
-            return False
-        for process_id in process_ids:
-            try:
-                identity = _read_process_identity(process_id)
-            except (OSError, ProcessLookupError, RuntimeContractError):
-                continue
-            if identity.uid == os.getuid() and identity.process_group_id == process_group_id:
-                return True
-        return False
-    if sys.platform != "linux":
-        return False
+def _process_group_owns_listener(process_group_id: int, port: int) -> bool:
     listener_inodes: set[str] = set()
     try:
         rows = Path("/proc/net/tcp").read_text(encoding="ascii").splitlines()[1:]
     except OSError:
         return False
-    expected_address = f"0100007F:{port:04X}"
     for row in rows:
         columns = row.split()
-        if len(columns) > 9 and columns[1].upper() == expected_address and columns[3] == "0A":
-            listener_inodes.add(columns[9])
-    if not listener_inodes:
-        return False
-    for process_root in Path("/proc").iterdir():
-        if not process_root.name.isdecimal():
-            continue
-        process_id = int(process_root.name)
-        try:
-            if (
-                process_root.stat().st_uid != os.getuid()
-                or os.getpgid(process_id) != process_group_id
-            ):
-                continue
-            for descriptor in (process_root / "fd").iterdir():
-                target = descriptor.readlink().as_posix()
-                if target.startswith("socket:[") and target[8:-1] in listener_inodes:
-                    return True
-        except (OSError, ProcessLookupError):
-            continue
-    return False
-
-
-def _process_group_owns_unix_listener(process_group_id: int, socket_path: Path) -> bool:
-    try:
-        if socket_path.is_symlink() or not socket_path.is_socket():
-            return False
-        exact_socket = socket_path.resolve(strict=True)
-    except OSError:
-        return False
-    if exact_socket != socket_path:
-        return False
-    if sys.platform == "darwin":
-        try:
-            result = subprocess.run(
-                (
-                    _DARWIN_LSOF,
-                    "-nP",
-                    "-Fn",
-                    "-a",
-                    "-U",
-                    "-p",
-                    str(process_group_id),
-                ),
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=1,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return False
-        return result.returncode == 0 and f"n{exact_socket}" in result.stdout.splitlines()
-    if sys.platform != "linux":
-        return False
-    listener_inodes: set[str] = set()
-    try:
-        rows = Path("/proc/net/unix").read_text(encoding="ascii").splitlines()[1:]
-    except OSError:
-        return False
-    for row in rows:
-        columns = row.split(maxsplit=7)
-        if (
-            len(columns) == 8
-            and columns[3] == "00010000"
-            and columns[4] == "0001"
-            and columns[5] == "01"
-            and columns[7] == str(exact_socket)
-        ):
-            listener_inodes.add(columns[6])
+        if len(columns) > 9:
+            _, raw_port = columns[1].rsplit(":", 1)
+            if columns[3] == "0A" and int(raw_port, 16) == port:
+                listener_inodes.add(columns[9])
     if not listener_inodes:
         return False
     for process_root in Path("/proc").iterdir():
@@ -3620,369 +2038,21 @@ def _require_loopback_port_available(port: int, role: str) -> None:
 
 
 def _process_start_token(process_id: int) -> str:
-    if sys.platform not in {"darwin", "linux"}:
-        raise RuntimeContractError("owned process identity requires Linux or Darwin")
     deadline = time.monotonic() + 2
+    path = Path("/proc") / str(process_id) / "stat"
     while time.monotonic() < deadline:
         try:
-            return _read_process_identity(process_id).start_token
-        except (OSError, ProcessLookupError, RuntimeContractError):
+            stat = path.read_text(encoding="utf-8")
+            return stat[stat.rindex(")") + 2 :].split()[19]
+        except (OSError, UnicodeDecodeError, ValueError, IndexError):
             time.sleep(0.01)
     raise RuntimeContractError("started process birth identity could not be read")
-
-
-def _read_process_identity(process_id: int) -> _ProcessIdentity:
-    if sys.platform == "darwin":
-        library = ctypes.CDLL(_DARWIN_LIBPROC, use_errno=True)
-        proc_pidinfo = library.proc_pidinfo
-        proc_pidinfo.argtypes = (
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_uint64,
-            ctypes.c_void_p,
-            ctypes.c_int,
-        )
-        proc_pidinfo.restype = ctypes.c_int
-        process_info = _DarwinProcessInfo()
-        ctypes.set_errno(0)
-        size = proc_pidinfo(
-            process_id,
-            _DARWIN_PROCESS_BSD_INFO,
-            0,
-            ctypes.byref(process_info),
-            ctypes.sizeof(process_info),
-        )
-        if size == 0:
-            error_number = ctypes.get_errno()
-            if error_number in {0, errno.ENOENT, errno.ESRCH}:
-                raise ProcessLookupError(process_id)
-            raise OSError(error_number, os.strerror(error_number))
-        if size != ctypes.sizeof(process_info) or process_info.process_id != process_id:
-            raise RuntimeContractError("Darwin process identity was incomplete")
-        start_token = str(process_info.start_seconds * 1_000_000 + process_info.start_microseconds)
-        if start_token == "0":
-            raise RuntimeContractError("Darwin process birth identity was unavailable")
-        return _ProcessIdentity(
-            uid=process_info.uid,
-            process_group_id=process_info.process_group_id,
-            start_token=start_token,
-        )
-    if sys.platform == "linux":
-        process_root = Path("/proc") / str(process_id)
-        process_uid = process_root.stat().st_uid
-        process_group_id = os.getpgid(process_id)
-        try:
-            stat = (process_root / "stat").read_text(encoding="utf-8")
-            start_token = stat[stat.rindex(")") + 2 :].split()[19]
-        except (UnicodeDecodeError, ValueError, IndexError) as exc:
-            raise RuntimeContractError("Linux process identity was malformed") from exc
-        if not start_token.isdecimal():
-            raise RuntimeContractError("Linux process birth identity was malformed")
-        return _ProcessIdentity(process_uid, process_group_id, start_token)
-    raise RuntimeContractError("owned process identity requires Linux or Darwin")
-
-
-def _linux_process_environment(process_id: int) -> tuple[bytes, ...]:
-    if sys.platform != "linux":
-        raise RuntimeContractError("Linux process environment was requested on another platform")
-    return tuple((Path("/proc") / str(process_id) / "environ").read_bytes().split(b"\0"))
-
-
-def _linux_owner_token_identities(
-    run_id: str,
-    owner_token: str,
-) -> list[tuple[int, _ProcessIdentity]]:
-    """Every live process whose environment carries this run's exact owner token."""
-    require_run_id(run_id)
-    if not re.fullmatch(r"[0-9a-f]{32}", owner_token):
-        raise RuntimeContractError("Linux process owner requires an exact owner token")
-    expected_owner = f"NEXUS_TEST_PROCESS_OWNER={owner_token}".encode()
-    expected_run = f"NEXUS_TEST_RUN_ID={run_id}".encode()
-    holder_identities: list[tuple[int, _ProcessIdentity]] = []
-    try:
-        process_roots = tuple(Path("/proc").iterdir())
-    except OSError as exc:
-        raise RuntimeContractError("Linux process table could not be read") from exc
-    for process_root in process_roots:
-        if not process_root.name.isdecimal():
-            continue
-        process_id = int(process_root.name)
-        try:
-            if process_root.stat().st_uid != os.getuid():
-                continue
-            environment = _linux_process_environment(process_id)
-            if expected_owner not in environment or expected_run not in environment:
-                continue
-            identity = _read_process_identity(process_id)
-        except (FileNotFoundError, PermissionError, ProcessLookupError):
-            continue
-        except (OSError, RuntimeContractError) as exc:
-            raise RuntimeContractError("owned Linux process identity could not be read") from exc
-        if identity.uid != os.getuid():
-            raise RuntimeContractError("owned Linux process identity changed during cleanup")
-        holder_identities.append((process_id, identity))
-    return holder_identities
-
-
-def _linux_process_scope_unit(run_id: str, owner_token: str) -> str:
-    require_run_id(run_id)
-    if not re.fullmatch(r"[0-9a-f]{32}", owner_token):
-        raise RuntimeContractError("Linux process scope requires an exact owner token")
-    return f"{_LINUX_PROCESS_SCOPE_PREFIX}{run_id}-{owner_token}.scope"
-
-
-def _run_user_systemctl(*arguments: str) -> subprocess.CompletedProcess[str]:
-    systemctl = shutil.which("systemctl")
-    if systemctl is None:
-        raise RuntimeContractError("owned Linux process scope requires systemctl")
-    try:
-        return subprocess.run(
-            (systemctl, "--user", *arguments, "--no-pager"),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=2,
-            env=_child_environment(user_systemd_environment()),
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeContractError("owned Linux process scope command failed") from exc
-
-
-def _linux_process_scope_identities(
-    run_id: str,
-    owner_token: str,
-) -> list[tuple[int, _ProcessIdentity]] | None:
-    """Return every process in one exact owned Linux scope, or None for a legacy launch."""
-    if sys.platform != "linux":
-        raise RuntimeContractError("Linux process scope was requested on another platform")
-    unit = _linux_process_scope_unit(run_id, owner_token)
-    inspected = _run_user_systemctl(
-        "show",
-        unit,
-        "--property=LoadState",
-        "--property=ControlGroup",
-    )
-    if inspected.returncode != 0:
-        raise RuntimeContractError("owned Linux process scope inspection failed")
-    properties: dict[str, str] = {}
-    for row in inspected.stdout.splitlines():
-        key, separator, value = row.partition("=")
-        if separator != "=" or key in properties or key not in {"LoadState", "ControlGroup"}:
-            raise RuntimeContractError("owned Linux process scope output was malformed")
-        properties[key] = value
-    if set(properties) != {"LoadState", "ControlGroup"}:
-        raise RuntimeContractError("owned Linux process scope output was incomplete")
-    if properties["LoadState"] == "not-found" and not properties["ControlGroup"]:
-        return None
-    if properties["LoadState"] != "loaded":
-        raise RuntimeContractError("owned Linux process scope is not loaded")
-    control_group = properties["ControlGroup"]
-    if not control_group:
-        return []
-    cgroup_root = Path("/sys/fs/cgroup").resolve(strict=True)
-    user_service = (
-        cgroup_root / "user.slice" / f"user-{os.getuid()}.slice" / f"user@{os.getuid()}.service"
-    ).resolve(strict=True)
-    try:
-        scope = (cgroup_root / control_group.removeprefix("/")).resolve(strict=True)
-    except FileNotFoundError:
-        return []
-    if user_service not in scope.parents or scope.name != unit:
-        raise RuntimeContractError("owned Linux process scope escaped the user service")
-    process_ids: set[int] = set()
-    try:
-        process_files = tuple(scope.rglob("cgroup.procs"))
-        for process_file in process_files:
-            for row in process_file.read_text(encoding="ascii").splitlines():
-                if not row.isdecimal() or int(row) <= 1:
-                    raise RuntimeContractError("owned Linux process scope listed an unsafe process")
-                process_ids.add(int(row))
-    except FileNotFoundError:
-        return []
-    except OSError as exc:
-        raise RuntimeContractError("owned Linux process scope members could not be read") from exc
-    identities: list[tuple[int, _ProcessIdentity]] = []
-    for process_id in sorted(process_ids):
-        try:
-            identity = _read_process_identity(process_id)
-        except (FileNotFoundError, ProcessLookupError):
-            continue
-        except (OSError, RuntimeContractError) as exc:
-            raise RuntimeContractError(
-                "owned Linux process scope identity could not be read"
-            ) from exc
-        if identity.uid != os.getuid():
-            raise RuntimeContractError("owned Linux process scope contains a foreign process")
-        identities.append((process_id, identity))
-    return identities
-
-
-def _retire_linux_process_scope(run_id: str, owner_token: str) -> None:
-    if _linux_process_scope_identities(run_id, owner_token) is None:
-        return
-    unit = _linux_process_scope_unit(run_id, owner_token)
-    stopped = _run_user_systemctl("stop", unit)
-    if _linux_process_scope_identities(run_id, owner_token) is None:
-        return
-    if stopped.returncode != 0:
-        raise RuntimeContractError("owned Linux process scope could not be stopped")
-    raise RuntimeContractError("owned Linux process scope was not collected")
-
-
-def _owned_process_group_map(
-    repo_root: Path,
-    run_id: str,
-    owner_token: str,
-) -> dict[int, str | None]:
-    """The process groups that make up one owned process's tree.
-
-    An owned worker forks bounded execution children into their own sessions --
-    the containment design under proof here -- so one Linux cgroup or inherited
-    Darwin owner marker legitimately spans the worker's group and one group per
-    live child. Legacy Linux launches retain their environment-token recovery
-    path. The value is the group leader's start token when the leader is still
-    present, else ``None``.
-    """
-    if sys.platform == "darwin":
-        holders = _darwin_owner_marker_identities(repo_root, run_id, owner_token)
-    elif sys.platform == "linux":
-        scoped_holders = _linux_process_scope_identities(run_id, owner_token)
-        holders = (
-            _linux_owner_token_identities(run_id, owner_token)
-            if scoped_holders is None
-            else scoped_holders
-        )
-    else:
-        raise RuntimeContractError("owned process cleanup requires Linux or Darwin")
-    groups: dict[int, str | None] = {}
-    for process_id, identity in holders:
-        process_group_id = identity.process_group_id
-        if process_group_id <= 1:
-            raise RuntimeContractError("owned process token identifies an unsafe group")
-        if process_id == process_group_id:
-            groups[process_group_id] = identity.start_token
-        else:
-            groups.setdefault(process_group_id, None)
-    return groups
-
-
-def _process_owner_marker(repo_root: Path, run_id: str, owner_token: str) -> Path:
-    require_run_id(run_id)
-    if not re.fullmatch(r"[0-9a-f]{32}", owner_token):
-        raise RuntimeContractError("process owner marker requires an exact owner token")
-    return runtime_state_dir(repo_root) / "runs" / run_id / "process-owners" / owner_token
-
-
-def _darwin_owner_marker_identities(
-    repo_root: Path,
-    run_id: str,
-    owner_token: str,
-) -> list[tuple[int, _ProcessIdentity]]:
-    """Every live process holding this run's inherited owner-marker descriptor."""
-    marker = _process_owner_marker(repo_root, run_id, owner_token)
-    if not marker.is_file():
-        return []
-    holder_ids = _darwin_owner_marker_holders(marker)
-    if not holder_ids:
-        return []
-    holder_identities: list[tuple[int, _ProcessIdentity]] = []
-    for process_id in holder_ids:
-        try:
-            identity = _read_process_identity(process_id)
-        except ProcessLookupError:
-            continue
-        except (OSError, RuntimeContractError) as exc:
-            raise RuntimeContractError("owned Darwin process identity could not be read") from exc
-        if identity.uid != os.getuid():
-            raise RuntimeContractError("owned Darwin process marker has a foreign holder")
-        holder_identities.append((process_id, identity))
-    if not holder_identities and _darwin_owner_marker_holders(marker):
-        raise RuntimeContractError("owned Darwin process marker holders changed during cleanup")
-    return holder_identities
-
-
-def _darwin_owner_marker_holders(marker: Path) -> tuple[int, ...]:
-    try:
-        resolved_marker = marker.resolve(strict=True).as_posix()
-    except OSError as exc:
-        raise RuntimeContractError("Darwin process owner marker could not be inspected") from exc
-    return _darwin_lsof_process_ids(("--", resolved_marker))
-
-
-def _darwin_lsof_process_ids(selection: tuple[str, ...]) -> tuple[int, ...]:
-    try:
-        result = subprocess.run(
-            (_DARWIN_LSOF, "-nP", "-t", *selection),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=1,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeContractError("Darwin process ownership could not be inspected") from exc
-    if result.returncode == 1 and not result.stdout.strip():
-        return ()
-    if result.returncode != 0:
-        raise RuntimeContractError("Darwin process ownership inspection failed")
-    rows = result.stdout.splitlines()
-    if not rows or any(not row.isdecimal() for row in rows):
-        raise RuntimeContractError("Darwin process ownership output was malformed")
-    return tuple(dict.fromkeys(int(row) for row in rows))
-
-
-def _darwin_lsof_listener_process_ids(host: str, port: int) -> tuple[int, ...]:
-    try:
-        result = subprocess.run(
-            (
-                _DARWIN_LSOF,
-                "-nP",
-                "-Fpfn",
-                "-a",
-                f"-iTCP:{port}",
-                "-sTCP:LISTEN",
-            ),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=1,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeContractError("Darwin listener ownership could not be inspected") from exc
-    if result.returncode == 1 and not result.stdout.strip():
-        return ()
-    if result.returncode != 0:
-        raise RuntimeContractError("Darwin listener ownership inspection failed")
-    return _parse_darwin_lsof_listener_process_ids(result.stdout, host=host, port=port)
-
-
-def _parse_darwin_lsof_listener_process_ids(
-    output: str,
-    *,
-    host: str,
-    port: int,
-) -> tuple[int, ...]:
-    process_id: int | None = None
-    file_process_id: int | None = None
-    matching_process_ids: list[int] = []
-    expected_name = f"{host}:{port}"
-    for row in output.splitlines():
-        if row.startswith("p") and row[1:].isdecimal():
-            process_id = int(row[1:])
-            file_process_id = None
-        elif row.startswith("f") and row[1:] and process_id is not None:
-            file_process_id = process_id
-        elif row.startswith("n") and file_process_id is not None:
-            if row[1:] == expected_name:
-                matching_process_ids.append(file_process_id)
-        else:
-            raise RuntimeContractError("Darwin listener ownership output was malformed")
-    return tuple(dict.fromkeys(matching_process_ids))
 
 
 def _child_environment(environment: Mapping[str, str]) -> dict[str, str]:
     child = {key: os.environ[key] for key in _SAFE_CHILD_ENV if key in os.environ}
     child.update(environment)
-    return trusted_runner_environment(child)
+    return child
 
 
 def _run(

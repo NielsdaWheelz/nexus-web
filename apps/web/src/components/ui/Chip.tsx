@@ -8,8 +8,6 @@ interface ChipProps extends HTMLAttributes<HTMLElement> {
   size?: ChipSize;
   selected?: boolean;
   removable?: boolean;
-  /** What the remove control is called, so it reads outside its chip. */
-  removeLabel?: string;
   onRemove?: () => void;
   leadingIcon?: ReactNode;
   truncate?: boolean;
@@ -30,7 +28,6 @@ const Chip = forwardRef<HTMLButtonElement | HTMLDivElement, ChipProps>(function 
     size = "sm",
     selected = false,
     removable = false,
-    removeLabel = "Remove",
     onRemove,
     leadingIcon,
     truncate = false,
@@ -93,7 +90,7 @@ const Chip = forwardRef<HTMLButtonElement | HTMLDivElement, ChipProps>(function 
           type="button"
           className={styles.removeButton}
           onClick={onRemove}
-          aria-label={removeLabel}
+          aria-label="Remove"
         >
           <X size={12} aria-hidden="true" />
         </button>

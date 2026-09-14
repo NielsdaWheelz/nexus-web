@@ -22,7 +22,6 @@
 !node/ingest/package.json
 !node/ingest/bun.lock*
 !node/ingest/ingest.mjs
-!node/ingest/accepted_url_egress.mjs
 
 !python/
 !python/README.md

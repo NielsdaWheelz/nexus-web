@@ -22,26 +22,6 @@ function isRealDate(year: string, month = "01", day = "01"): boolean {
   );
 }
 
-function isRealPartialDate(raw: string): boolean {
-  const year = YEAR.exec(raw);
-  if (year !== null) return isRealDate(year[1]);
-  const month = YEAR_MONTH.exec(raw);
-  if (month !== null) return isRealDate(month[1], month[2]);
-  const date = DATE.exec(raw);
-  return date !== null && isRealDate(date[1], date[2], date[3]);
-}
-
-/** Bibliographic dates carry calendar precision, never a release instant. */
-export function decodePublicationDateOnly(
-  raw: unknown,
-  name: string,
-): PublicationDate {
-  if (typeof raw === "string" && isRealPartialDate(raw)) {
-    return raw as PublicationDate;
-  }
-  throw new TypeError(`${name} must be a real YYYY, YYYY-MM, or YYYY-MM-DD`);
-}
-
 /**
  * Accept the wire grammars Nexus actually owns: partial ISO dates
  * (YYYY / YYYY-MM / YYYY-MM-DD) and timezone-qualified ISO instants.
@@ -53,7 +33,18 @@ export function decodePublicationDate(
   if (typeof raw !== "string") {
     throw new TypeError(`${name} must be a publication date string`);
   }
-  if (isRealPartialDate(raw)) return raw as PublicationDate;
+  const year = YEAR.exec(raw);
+  if (year !== null && isRealDate(year[1])) return raw as PublicationDate;
+
+  const month = YEAR_MONTH.exec(raw);
+  if (month !== null && isRealDate(month[1], month[2])) {
+    return raw as PublicationDate;
+  }
+
+  const date = DATE.exec(raw);
+  if (date !== null && isRealDate(date[1], date[2], date[3])) {
+    return raw as PublicationDate;
+  }
 
   const instant = INSTANT.exec(raw);
   if (

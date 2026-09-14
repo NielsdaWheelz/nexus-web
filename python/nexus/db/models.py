@@ -32,8 +32,6 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import UserDefinedType
 
-from nexus.schemas.publication_dates import PublicationDate
-
 
 class Base(DeclarativeBase):
     """Base class for all ORM models."""
@@ -1142,104 +1140,6 @@ class Membership(Base):
     user: Mapped["User"] = relationship("User", back_populates="memberships")
 
 
-class MediaUploadSession(Base):
-    """Viewer-owned durable intent for one direct PDF/EPUB upload."""
-
-    __tablename__ = "media_upload_sessions"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    created_by_user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", name="fk_media_upload_sessions_created_by_user"),
-        nullable=False,
-    )
-    candidate_media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    kind: Mapped[str] = mapped_column(Text, nullable=False)
-    filename: Mapped[str] = mapped_column(Text, nullable=False)
-    content_type: Mapped[str] = mapped_column(Text, nullable=False)
-    expected_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
-    request_id: Mapped[str] = mapped_column(Text, nullable=False)
-    upload_generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    upload_url_expires_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False
-    )
-    verification_token: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    verification_generation: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    verification_expires_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    transport_failure_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
-    transport_http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    transport_failed_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    verification_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    verification_failed_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    published_media_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="fk_media_upload_sessions_published_media"),
-        nullable=True,
-    )
-    published_source_attempt_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey(
-            "media_source_attempts.id",
-            name="fk_media_upload_sessions_published_source_attempt",
-        ),
-        nullable=True,
-    )
-    published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "created_by_user_id",
-            "idempotency_key",
-            name="uq_media_upload_sessions_viewer_idempotency",
-        ),
-        UniqueConstraint("candidate_media_id", name="uq_media_upload_sessions_candidate_media"),
-        UniqueConstraint("published_media_id", name="uq_media_upload_sessions_published_media"),
-        UniqueConstraint(
-            "published_source_attempt_id",
-            name="uq_media_upload_sessions_published_source_attempt",
-        ),
-    )
-
-
-class MediaUploadSessionDestination(Base):
-    """One normalized library destination carried by upload intent."""
-
-    __tablename__ = "media_upload_session_destinations"
-
-    upload_session_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey(
-            "media_upload_sessions.id",
-            name="fk_media_upload_session_destinations_session",
-        ),
-        primary_key=True,
-    )
-    library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey(
-            "libraries.id",
-            name="fk_media_upload_session_destinations_library",
-        ),
-        primary_key=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-
-
 class Media(Base):
     """Media model - a readable item (article, book, podcast, video, etc.)."""
 
@@ -1304,10 +1204,8 @@ class Media(Base):
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Document metadata enrichment fields
-    # Bibliography dates preserve partial precision ("2023", "2023-01").
-    original_published_date: Mapped[PublicationDate | None] = mapped_column(Text, nullable=True)
-    edition_published_date: Mapped[PublicationDate | None] = mapped_column(Text, nullable=True)
-    edition_isbn: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # published_date is TEXT (not DATE) because source data is often partial ("2023", "2023-01")
+    published_date: Mapped[str | None] = mapped_column(Text, nullable=True)
     publisher: Mapped[str | None] = mapped_column(Text, nullable=True)
     language: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -1378,6 +1276,15 @@ class Media(Base):
                 "AND processing_started_at IS NOT NULL"
             ),
         ),
+        Index(
+            "idx_media_stale_pending_upload_cleanup",
+            "created_at",
+            "processing_started_at",
+            "id",
+            postgresql_where=text(
+                "processing_status = 'pending' AND kind IN ('pdf', 'epub') AND file_sha256 IS NULL"
+            ),
+        ),
     )
 
     # Relationships
@@ -1393,6 +1300,9 @@ class Media(Base):
     )
     source_attempts: Mapped[list["MediaSourceAttempt"]] = relationship(
         "MediaSourceAttempt", back_populates="media"
+    )
+    pdf_page_text_spans: Mapped[list["PdfPageTextSpan"]] = relationship(
+        "PdfPageTextSpan", back_populates="media", cascade="all, delete-orphan"
     )
     podcast_episode: Mapped["PodcastEpisode | None"] = relationship(
         "PodcastEpisode", back_populates="media", cascade="all, delete-orphan", uselist=False
@@ -1485,6 +1395,9 @@ class MediaSourceAttempt(Base):
     retry_after_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    signed_upload_expires_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -1617,80 +1530,6 @@ class MediaTeardownIntent(Base):
     )
 
     __table_args__ = (UniqueConstraint("media_id", name="uq_media_teardown_intents_media"),)
-
-
-class MediaUploadEvent(Base):
-    """Append-only upload history for one media upload session
-    (`imports-workspace-hard-cutover.md`).
-
-    ``event_type`` plus the owning table select the closed ``payload`` variant;
-    the application owns that validation, so the schema carries only storage
-    shape. ``id`` is application-generated (``nexus.ids.new_uuid7()``) because
-    the recording helper appends inside the transaction that commits the fact it
-    documents. ``stage`` and ``failure_code`` are the indexed query columns and
-    are absent for events that name neither.
-    """
-
-    __tablename__ = "media_upload_events"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    session_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media_upload_sessions.id", name="fk_media_upload_events_session"),
-        nullable=False,
-    )
-    occurred_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    event_type: Mapped[str] = mapped_column(Text, nullable=False)
-    stage: Mapped[str | None] = mapped_column(Text, nullable=True)
-    failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-
-    __table_args__ = (
-        Index(
-            "ix_media_upload_events_session_occurred_id",
-            "session_id",
-            "occurred_at",
-            "id",
-        ),
-    )
-
-
-class MediaProcessingEvent(Base):
-    """Append-only source-ingest and content-index history for one media
-    (`imports-workspace-hard-cutover.md`). Same envelope as
-    :class:`MediaUploadEvent`; the payload names a source attempt or an index
-    revision."""
-
-    __tablename__ = "media_processing_events"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="fk_media_processing_events_media"),
-        nullable=False,
-    )
-    occurred_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    event_type: Mapped[str] = mapped_column(Text, nullable=False)
-    stage: Mapped[str | None] = mapped_column(Text, nullable=True)
-    failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-
-    __table_args__ = (
-        Index(
-            "ix_media_processing_events_media_occurred_id",
-            "media_id",
-            "occurred_at",
-            "id",
-        ),
-    )
 
 
 class ProjectGutenbergCatalogEntry(Base):
@@ -2004,30 +1843,9 @@ class MediaFile(Base):
     storage_path: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str] = mapped_column(Text, nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    source_sha256: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Relationship
     media: Mapped["Media"] = relationship("Media", back_populates="media_file")
-
-
-class ReaderPublication(Base):
-    """Current document publication generation for offline fencing."""
-
-    __tablename__ = "reader_publications"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id"),
-        nullable=False,
-        unique=True,
-    )
-    generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    changed_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
 
 
 class Fragment(Base):
@@ -2312,7 +2130,7 @@ class SynthesisArtifact(Base):
 class ArtifactBuild(Base):
     """One dossier generation attempt against a head (D-3).
 
-    The single durable-op / replay identity and generation-ledger
+    The single durable-op / replay identity and the LLM/provider ledger
     attribution owner. Active state DERIVES from the absence of a terminal
     child (revision | failure | cancellation) — there is deliberately NO status
     column. Idempotency uniqueness lives here as ``(artifact_id,
@@ -2471,8 +2289,7 @@ class ArtifactBuildEvent(Base):
     """One sequenced, replayable build-event (the dossier run stream, D-3).
 
     Build-keyed; the strict, ``extra='forbid'`` payload union lives in the
-    schema layer. ``event_type`` is the five-value current-write union plus the
-    migration-only ``HistoricalFailed`` replay tag; the
+    schema layer. ``event_type`` is the closed 5-value build union; the
     ``(build_id, seq)`` unique + head-lock seq allocation prevent writer
     collisions and crash-replay duplicates.
     """
@@ -2501,9 +2318,7 @@ class ArtifactBuildEvent(Base):
     __table_args__ = (
         CheckConstraint("seq >= 1", name="ck_artifact_build_events_seq_positive"),
         CheckConstraint(
-            "event_type IN ("
-            "'Started', 'Progress', 'Succeeded', 'Failed', 'HistoricalFailed', 'Cancelled'"
-            ")",
+            "event_type IN ('Started', 'Progress', 'Succeeded', 'Failed', 'Cancelled')",
             name="ck_artifact_build_events_type",
         ),
         CheckConstraint(
@@ -4198,7 +4013,7 @@ class PodcastTranscriptRequestAudit(Base):
             name="ck_podcast_transcript_request_audits_reason",
         ),
         CheckConstraint(
-            "outcome IN ('forecast', 'queued', 'idempotent', 'rejected_quota')",
+            "outcome IN ('forecast', 'queued', 'idempotent', 'rejected_quota', 'enqueue_failed')",
             name="ck_podcast_transcript_request_audits_outcome",
         ),
         CheckConstraint(
@@ -4444,7 +4259,7 @@ class PdfPageTextSpan(Base):
 
     media_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="pdf_page_text_spans_media_id_fkey"),
+        ForeignKey("media.id", ondelete="CASCADE"),
         primary_key=True,
     )
     page_number: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -4471,6 +4286,8 @@ class PdfPageTextSpan(Base):
             name="ck_ppts_page_rotation",
         ),
     )
+
+    media: Mapped["Media"] = relationship("Media", back_populates="pdf_page_text_spans")
 
 
 # =============================================================================
@@ -4699,7 +4516,7 @@ class ConversationShare(Base):
 
 
 class LLMCall(Base):
-    """One route-neutral product generation (sole writer: ``llm_ledger``)."""
+    """One provider LLM call in the polymorphic ledger (sole writer: llm_ledger)."""
 
     __tablename__ = "llm_calls"
 
@@ -4710,14 +4527,37 @@ class LLMCall(Base):
     )
     owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
     owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    generation_seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    generation_spec: Mapped[dict[str, object]] = mapped_column(
-        JSONB(none_as_null=True), nullable=False
-    )
-    generation_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    call_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    upstream_provider: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_name: Mapped[str] = mapped_column(Text, nullable=False)
+    llm_operation: Mapped[str] = mapped_column(Text, nullable=False)
+    streaming: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    requested_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    native_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    registry_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_write_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_read_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
-    failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    terminal: Mapped[dict[str, object] | None] = mapped_column(
+    error_origin: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    total_cost_usd_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cost_status: Mapped[str] = mapped_column(Text, nullable=False)
+    cost_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cost_as_of: Mapped[date | None] = mapped_column(Date, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    terminal_attempt_status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'success'")
+    )
+    provider_attempts: Mapped[list[dict[str, object]] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -4725,160 +4565,33 @@ class LLMCall(Base):
         server_default=text("now()"),
         nullable=False,
     )
-    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     __table_args__ = (
-        UniqueConstraint(
-            "owner_kind",
-            "owner_id",
-            "generation_seq",
-            name="uq_llm_calls_owner_generation_seq",
+        CheckConstraint(
+            "owner_kind IN ('chat_run', 'oracle_reading', 'artifact_build', "
+            "'artifact_learn_request', 'media_summary', 'media_enrichment', "
+            "'synapse_scan', 'dawn_write')",
+            name="ck_llm_calls_owner_kind",
         ),
-    )
-
-
-class LLMModelTurn(Base):
-    """One independently accepted or billable model call within a generation."""
-
-    __tablename__ = "llm_model_turns"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    generation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("llm_calls.id"),
-        nullable=False,
-    )
-    turn_seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    request_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
-    route_request_identity: Mapped[dict[str, object]] = mapped_column(
-        JSONB(none_as_null=True), nullable=False
-    )
-    terminal: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    usage: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
-    billability: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-    dispatch_started_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    accepted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-    __table_args__ = (
-        UniqueConstraint(
-            "generation_id",
-            "turn_seq",
-            name="uq_llm_model_turns_generation_turn_seq",
+        CheckConstraint("call_seq >= 1", name="ck_llm_calls_call_seq_positive"),
+        CheckConstraint(
+            "attempt_count >= 1 AND retry_count >= 0 AND retry_count <= attempt_count - 1",
+            name="ck_llm_calls_attempt_counts",
         ),
-    )
-
-
-class LLMModelTurnContinuation(Base):
-    """One sealed provider continuation authorizing an exact successor turn."""
-
-    __tablename__ = "llm_model_turn_continuations"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    generation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("llm_calls.id"),
-        nullable=False,
-    )
-    source_model_turn_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("llm_model_turns.id"),
-        nullable=False,
-    )
-    successor_turn_seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    target_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
-    codec_id: Mapped[str] = mapped_column(Text, nullable=False)
-    policy_revision: Mapped[str] = mapped_column(Text, nullable=False)
-    envelope_version: Mapped[str] = mapped_column(Text, nullable=False)
-    nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "source_model_turn_id",
-            name="uq_llm_model_turn_continuations_source_turn",
+        CheckConstraint(
+            "terminal_attempt_status IN ('success', 'retryable_error', 'terminal_error', 'abandoned')",
+            name="ck_llm_calls_terminal_attempt_status",
         ),
-        UniqueConstraint(
-            "generation_id",
-            "successor_turn_seq",
-            name="uq_llm_model_turn_continuations_successor_turn",
+        CheckConstraint(
+            "provider_attempts IS NULL OR jsonb_typeof(provider_attempts) = 'array'",
+            name="ck_llm_calls_provider_attempts_array",
         ),
-    )
-
-
-class LLMToolPosition(Base):
-    """One globally ordered canonical tool position within a generation."""
-
-    __tablename__ = "llm_tool_positions"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    generation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("llm_calls.id"),
-        nullable=False,
-    )
-    position: Mapped[int] = mapped_column(Integer, nullable=False)
-    transport_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    model_turn_seq: Mapped[int] = mapped_column(Integer, nullable=False)
-    transport_call_id: Mapped[str] = mapped_column(Text, nullable=False)
-    canonical_tool_id: Mapped[str] = mapped_column(Text, nullable=False)
-    canonical_input_digest: Mapped[str] = mapped_column(Text, nullable=False)
-    tool_contract_revision: Mapped[str] = mapped_column(Text, nullable=False)
-    plan_revision: Mapped[str] = mapped_column(Text, nullable=False)
-    binding_revision: Mapped[str] = mapped_column(Text, nullable=False)
-    scope_digest: Mapped[str] = mapped_column(Text, nullable=False)
-    budget_digest: Mapped[str] = mapped_column(Text, nullable=False)
-    reservation: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    dispatch_claim: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    abandoned_attempts: Mapped[int] = mapped_column(Integer, nullable=False)
-    result_evidence: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    effect_identity: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    settlement: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True), nullable=True
-    )
-    replay_status: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-    __table_args__ = (
-        UniqueConstraint(
-            "generation_id",
-            "position",
-            name="uq_llm_tool_positions_generation_position",
+        CheckConstraint(
+            "total_cost_usd_micros IS NULL OR total_cost_usd_micros >= 0",
+            name="ck_llm_calls_total_cost_non_negative",
         ),
-        UniqueConstraint(
-            "generation_id",
-            "transport_kind",
-            "model_turn_seq",
-            "transport_call_id",
-            name="uq_llm_tool_positions_transport_call",
-        ),
+        UniqueConstraint("owner_kind", "owner_id", "call_seq", name="uq_llm_calls_owner_call_seq"),
+        Index("ix_llm_calls_owner", "owner_kind", "owner_id"),
     )
 
 
@@ -5120,22 +4833,9 @@ class MessageToolCall(Base):
         ForeignKey("messages.id"),
         nullable=False,
     )
-    canonical_tool_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    record_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    provider_wire_name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    canonical_input_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
-    tool_contract_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
-    binding_policy_revision: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Current canonical executions point at the route-neutral generation
-    # position that owns ordering, replay, and any stable write-effect identity.
-    # Rejected provider calls have no canonical position and remain NULL.
-    tool_position_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("llm_tool_positions.id"),
-        nullable=True,
-    )
+    tool_name: Mapped[str] = mapped_column(Text, nullable=False)
     tool_call_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    search_query_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    query_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     scope: Mapped[str] = mapped_column(Text, nullable=False, server_default="all")
     requested_types: Mapped[list[str]] = mapped_column(
         JSONB,
@@ -5177,21 +4877,16 @@ class MessageToolCall(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "canonical_tool_id IS NULL OR char_length(canonical_tool_id) BETWEEN 1 AND 128",
-            name="ck_message_tool_calls_canonical_tool_id_length",
-        ),
-        CheckConstraint(
-            "provider_wire_name IS NULL OR char_length(provider_wire_name) BETWEEN 1 AND 128",
-            name="ck_message_tool_calls_provider_wire_name_length",
+            "char_length(tool_name) BETWEEN 1 AND 128",
+            name="ck_message_tool_calls_tool_name_length",
         ),
         CheckConstraint(
             "tool_call_index >= 0",
             name="ck_message_tool_calls_index_non_negative",
         ),
         CheckConstraint(
-            "search_query_fingerprint IS NULL "
-            "OR char_length(search_query_fingerprint) BETWEEN 1 AND 128",
-            name="ck_message_tool_calls_search_query_fingerprint_length",
+            "query_hash IS NULL OR char_length(query_hash) BETWEEN 1 AND 128",
+            name="ck_message_tool_calls_query_hash_length",
         ),
         CheckConstraint(
             "char_length(scope) BETWEEN 1 AND 256",
@@ -5226,10 +4921,6 @@ class MessageToolCall(Base):
             "tool_call_index",
             name="uix_message_tool_calls_assistant_index",
         ),
-        UniqueConstraint(
-            "tool_position_id",
-            name="uq_message_tool_calls_tool_position",
-        ),
         Index(
             "idx_message_tool_calls_conversation_created",
             "conversation_id",
@@ -5246,8 +4937,8 @@ class MessageToolCall(Base):
             "tool_call_index",
         ),
         Index(
-            "idx_message_tool_calls_canonical_tool_status",
-            "canonical_tool_id",
+            "idx_message_tool_calls_tool_status",
+            "tool_name",
             "status",
         ),
     )
@@ -5263,46 +4954,6 @@ class MessageToolCall(Base):
         back_populates="tool_call",
         cascade="all, delete-orphan",
         order_by="MessageRetrieval.ordinal",
-    )
-
-
-class AssistantWriteAuthorship(Base):
-    """Durable machine authorship for one concrete additive-write target.
-
-    The generation position is the provenance owner and deliberately outlives
-    the optional Chat projection.  ``target_kind`` + ``target_id`` is a
-    validated polymorphic pointer rather than a foreign key: Undo or a later
-    user deletion may remove the target while its authorship fact remains.
-    """
-
-    __tablename__ = "assistant_write_authorships"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    tool_position_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("llm_tool_positions.id"),
-        nullable=False,
-    )
-    target_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    target_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "target_kind",
-            "target_id",
-            name="uq_assistant_write_authorships_target",
-        ),
-        Index(
-            "ix_assistant_write_authorships_tool_position",
-            "tool_position_id",
-            "created_at",
-            "id",
-        ),
     )
 
 
@@ -5492,11 +5143,18 @@ class ChatRun(Base):
         ForeignKey("messages.id"),
         nullable=False,
     )
-    generation_spec: Mapped[dict[str, object]] = mapped_column(
-        JSONB(none_as_null=True),
-        nullable=False,
-    )
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_hash: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    # Product selection snapshots (non-FK: profile_id/reasoning_option_id name a
+    # frozen registry row in services/llm_profiles.py, not a mutable table).
+    profile_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reasoning_option_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Resolved operator/trust-trail facts, filled from runtime target and
+    # terminal metadata.
+    provider: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reasoning_effort: Mapped[str | None] = mapped_column(Text, nullable=True)
     cancel_requested_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=True,
@@ -5504,6 +5162,7 @@ class ChatRun(Base):
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_origin: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     support_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     publication_warning_code: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -5523,7 +5182,15 @@ class ChatRun(Base):
             "status IN ('queued', 'running', 'complete', 'error', 'cancelled')",
             name="ck_chat_runs_status",
         ),
-        UniqueConstraint("assistant_message_id", name="uq_chat_runs_assistant_message"),
+        CheckConstraint(
+            "length(idempotency_key) >= 1 AND length(idempotency_key) <= 128",
+            name="ck_chat_runs_idempotency_key_length",
+        ),
+        UniqueConstraint(
+            "owner_user_id",
+            "idempotency_key",
+            name="uix_chat_runs_owner_idempotency_key",
+        ),
         Index("idx_chat_runs_owner_created", "owner_user_id", "created_at", "id"),
     )
 
@@ -5618,7 +5285,7 @@ class ChatRunTurnContext(Base):
 
 
 class ChatPromptAssembly(Base):
-    """Prompt assembly ledger persisted before generation execution."""
+    """Prompt assembly ledger persisted before provider execution."""
 
     __tablename__ = "chat_prompt_assemblies"
 
@@ -5647,11 +5314,6 @@ class ChatPromptAssembly(Base):
         nullable=False,
         server_default=text("'{}'::jsonb"),
     )
-    generation_intent: Mapped[dict[str, object]] = mapped_column(
-        JSONB(none_as_null=True),
-        nullable=False,
-    )
-    generation_intent_digest: Mapped[str] = mapped_column(Text, nullable=False)
     max_context_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     reserved_output_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     input_budget_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -5856,6 +5518,12 @@ class BillingEntitlementOverride(Base):
         nullable=False,
     )
     plan_tier: Mapped[str] = mapped_column(Text, nullable=False)
+    platform_token_quota_mode: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default="plan",
+    )
+    platform_token_limit_monthly: Mapped[int | None] = mapped_column(Integer, nullable=True)
     transcription_quota_mode: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -5895,6 +5563,24 @@ class BillingEntitlementOverride(Base):
         CheckConstraint(
             "plan_tier IN ('plus', 'ai_plus', 'ai_pro')",
             name="ck_billing_entitlement_overrides_plan_tier",
+        ),
+        CheckConstraint(
+            "platform_token_quota_mode IN ('plan', 'custom', 'unlimited')",
+            name="ck_billing_entitlement_overrides_platform_token_quota_mode",
+        ),
+        CheckConstraint(
+            """
+            (
+                platform_token_quota_mode = 'custom'
+                AND platform_token_limit_monthly IS NOT NULL
+                AND platform_token_limit_monthly >= 0
+            )
+            OR (
+                platform_token_quota_mode <> 'custom'
+                AND platform_token_limit_monthly IS NULL
+            )
+            """,
+            name="ck_billing_entitlement_overrides_platform_token_limit",
         ),
         CheckConstraint(
             "transcription_quota_mode IN ('plan', 'custom', 'unlimited')",
@@ -6243,7 +5929,6 @@ class EpubTocNode(Base):
     label: Mapped[str] = mapped_column(Text, nullable=False)
     href: Mapped[str | None] = mapped_column(Text, nullable=True)
     fragment_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    target_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
     depth: Mapped[int] = mapped_column(Integer, nullable=False)
     order_key: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -6310,14 +5995,12 @@ class EpubNavLocation(Base):
     location_id: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     source_node_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    parent_section_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     label: Mapped[str] = mapped_column(Text, nullable=False)
     fragment_idx: Mapped[int] = mapped_column(Integer, nullable=False)
     href_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     href_fragment: Mapped[str | None] = mapped_column(Text, nullable=True)
     start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    end_fragment_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     source: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -6342,22 +6025,9 @@ class EpubNavLocation(Base):
             "ordinal >= 0",
             name="ck_epub_nav_locations_ordinal_nonneg",
         ),
-        ForeignKeyConstraint(
-            ["media_id", "fragment_idx"],
-            ["fragments.media_id", "fragments.idx"],
-            name="fk_epub_nav_locations_start_fragment",
-        ),
-        ForeignKeyConstraint(
-            ["media_id", "end_fragment_idx"],
-            ["fragments.media_id", "fragments.idx"],
-            name="fk_epub_nav_locations_end_fragment",
-        ),
-        ForeignKeyConstraint(
-            ["media_id", "parent_section_id"],
-            ["epub_nav_locations.media_id", "epub_nav_locations.location_id"],
-            name="fk_epub_nav_locations_parent",
-            deferrable=True,
-            initially="DEFERRED",
+        CheckConstraint(
+            "source IN ('toc', 'spine')",
+            name="ck_epub_nav_locations_source_valid",
         ),
         UniqueConstraint("media_id", "ordinal", name="uix_epub_nav_locations_media_ordinal"),
         UniqueConstraint("media_id", "source_node_id", name="uix_epub_nav_locations_media_source"),
@@ -7180,8 +6850,7 @@ class OracleReadingEvent(Base):
         CheckConstraint("seq >= 1", name="ck_oracle_reading_events_seq_positive"),
         CheckConstraint(
             "event_type IN ("
-            "'meta', 'bind', 'argument', 'plate', 'passage', 'delta', 'omens', 'done', "
-            "'historical_done'"
+            "'meta', 'bind', 'argument', 'plate', 'passage', 'delta', 'omens', 'done'"
             ")",
             name="ck_oracle_reading_events_type",
         ),

@@ -1,7 +1,7 @@
-"""Route-neutral read-resource tool execution for model generations.
+"""Provider-neutral read-resource tool execution for chat.
 
-The shared tool pipeline uses this to let a model fetch the exact text of a
-resource admitted by its frozen generation scope. Data access is shared with prompt assembly through
+The chat pipeline uses this tool to let the model fetch the exact text of a
+resource. Data access is shared with prompt assembly through
 :mod:`nexus.services.resource_graph.resolve` (per-scheme bodies) and
 :mod:`nexus.services.media_read_map` (media documents); this module only
 presents the result, labelling every read with an explicit ``kind``:
@@ -10,30 +10,34 @@ presents the result, labelling every read with an explicit ``kind``:
 - ``section``     — a fragment (article/epub section, transcript segment).
 - ``page_range``  — a PDF page slice (``page_range:<media>:<a>-<b>``, read-only).
 - ``full``        — a short media document, whole.
-- ``too_large``   — an over-budget media document; redirect to the document-map binding.
+- ``too_large``   — an over-budget media document; redirect to ``inspect_resource``.
 
 Non-citable bodies (``artifact`` synthesis, ``oracle_reading``) carry
 their prose but no citation target: their inline chips are owned by their own pane.
 
 A media-derived pointer (``fragment``/``page_range``/``evidence_span``/
 ``content_chunk``) is readable when its parent ``media:`` is referenced, even if
-the sub-URI itself is not. Authorization is unchanged: the loaders/core still
+the sub-URI itself is not — this is what lets the model open sections a
+``document_map`` handed it. Authorization is unchanged: the loaders/core still
 gate every read.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
+from xml.sax.saxutils import escape as xml_escape
 
 from sqlalchemy.orm import Session
 
+from nexus.services.chat_quote import render_quote_block
 from nexus.services.media_read_map import (
     READ_DOCUMENT_MAX_CHARS,
     load_media_document,
     read_page_range,
 )
+from nexus.services.resource_graph.context import admits_resource_for_conversation_read
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
@@ -43,19 +47,46 @@ from nexus.services.resource_graph.resolve import (
     LoadedQuote,
     LoadedResource,
     load_resource_batch,
+    parent_media_id_for_read_pointer,
 )
 from nexus.services.resource_items.capabilities import (
     resource_citation_result_type,
     resource_read_policy,
 )
 
+READ_RESOURCE_TOOL_NAME = "read_resource"
+
+READ_RESOURCE_TOOL_DEFINITION: dict[str, Any] = {
+    "name": READ_RESOURCE_TOOL_NAME,
+    "description": (
+        "Fetch the exact text of a resource from <subject> or <resources> in your "
+        "system context, or a read_uri that inspect_resource returned. Scope resources are not "
+        "readable; use app_search with scopes=[...] for those. Every result is "
+        "labelled with a kind attribute."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "uri": {"type": "string", "description": "Resource URI or read_uri to read."},
+        },
+        "required": ["uri"],
+        "additionalProperties": False,
+    },
+}
+
+
+def _xml_attr(value: object) -> str:
+    return xml_escape(str(value), {'"': "&quot;"})
+
 
 @dataclass(slots=True)
 class ReadResourceResult:
     """Executed read-resource tool call.
 
-    ``body`` carries exact text on success or the domain refusal on failure.
-    The canonical tool-runtime binding owns the model-facing JSON projection.
+    ``body`` carries the exact text on success or a model-readable error
+    description on failure. ``quote`` is set for highlights (rendered as an
+    enriched ``<quote>``); ``kind`` labels the result for the model.
+    ``tool_output`` renders every case into the XML returned to the LLM.
     """
 
     uri: str
@@ -78,36 +109,68 @@ class ReadResourceResult:
     def is_error(self) -> bool:
         return self.status == "error"
 
+    def tool_output(self, n: int | None = None) -> str:
+        if self.status == "error":
+            return (
+                f'<resource_error uri="{_xml_attr(self.uri)}" '
+                f'code="{_xml_attr(self.error_code or "")}">'
+                f"{xml_escape(self.body)}"
+                f"</resource_error>"
+            )
+        n_attr = f' n="{n}"' if n is not None else ""
+        kind_attr = f' kind="{_xml_attr(self.kind)}"' if self.kind else ""
+        metadata_attrs = []
+        if self.subject_ref is not None:
+            metadata_attrs.append(f'subject_ref="{_xml_attr(self.subject_ref)}"')
+        if self.artifact_ref is not None:
+            metadata_attrs.append(f'artifact_ref="{_xml_attr(self.artifact_ref)}"')
+        if self.revision_ref is not None:
+            metadata_attrs.append(f'revision_ref="{_xml_attr(self.revision_ref)}"')
+        if self.revision_is_current is not None:
+            metadata_attrs.append(f'revision_is_current="{str(self.revision_is_current).lower()}"')
+        metadata_attr = f" {' '.join(metadata_attrs)}" if metadata_attrs else ""
+        if self.quote is not None:
+            inner = render_quote_block(
+                "quote",
+                exact=self.quote.exact,
+                prefix=self.quote.prefix,
+                suffix=self.quote.suffix,
+                source_label=self.quote.source_label,
+                note=self.quote.note,
+            )
+            return (
+                f'<resource uri="{_xml_attr(self.uri)}"{n_attr}{kind_attr}{metadata_attr}>'
+                f"\n{inner}\n</resource>"
+            )
+        return (
+            f'<resource uri="{_xml_attr(self.uri)}"{n_attr}{kind_attr}{metadata_attr}>'
+            f"<body>{xml_escape(self.body)}</body>"
+            f"</resource>"
+        )
+
 
 def execute_read_resource(
     db: Session,
     *,
     viewer_id: UUID,
-    admitted_resource_uris: frozenset[str],
+    conversation_id: UUID,
     uri: str,
 ) -> ReadResourceResult:
-    """Read exact text under one operation-frozen resource admission set."""
+    """Read the exact text of a referenced resource for a chat turn."""
 
-    from nexus.services.tool_runtime.resource_scope import resource_uri_is_admitted
-
-    if not resource_uri_is_admitted(
-        db,
-        uri=uri,
-        admitted_resource_uris=admitted_resource_uris,
-        allow_derived_read=True,
-    ):
+    if not _readable_in_conversation(db, conversation_id, uri):
         return ReadResourceResult(
             uri=uri,
             status="error",
             body=(
-                f"Resource {uri} is not in this operation's admitted scope. "
-                "Search for an admitted source first."
+                f"Resource {uri} is not in this conversation's context refs. "
+                "Use app_search to find new sources first."
             ),
             error_code="not_in_context_refs",
         )
 
     if uri.startswith("page_range:"):
-        return _enforce_read_bound(_read_page_range(db, viewer_id, uri))
+        return _read_page_range(db, viewer_id, uri)
 
     parsed = parse_resource_ref(uri)
     if isinstance(parsed, ResourceRefParseFailure):
@@ -133,7 +196,7 @@ def execute_read_resource(
             status="error",
             body=(
                 f"Resource {uri} is a search scope, not a readable resource. "
-                f'Call nexus__search(query=..., scopes=["{uri}"]) instead.'
+                f'Call app_search(query=..., scopes=["{uri}"]) instead.'
             ),
             error_code="scope_not_readable",
         )
@@ -142,29 +205,15 @@ def execute_read_resource(
         return ReadResourceResult(
             uri=uri,
             status="error",
-            body=f"Resource {uri} has no readable body for nexus__resource__read.",
+            body=f"Resource {uri} has no readable body for read_resource.",
             error_code="not_readable",
         )
 
     if read_policy == "media":
-        return _enforce_read_bound(_read_media(db, viewer_id, parsed.id, uri))
+        return _read_media(db, viewer_id, parsed.id, uri)
 
     loaded = load_resource_batch(db, [parsed], viewer_id=viewer_id)[uri]
-    return _enforce_read_bound(_present_read(loaded))
-
-
-def _enforce_read_bound(result: ReadResourceResult) -> ReadResourceResult:
-    if result.is_error or result.kind == "too_large" or len(result.body) <= READ_DOCUMENT_MAX_CHARS:
-        return result
-    return ReadResourceResult(
-        uri=result.uri,
-        status="complete",
-        body=(
-            f"This resource is {len(result.body):,} characters — too large to read in one call. "
-            "Inspect or search the admitted parent and read a narrower section."
-        ),
-        kind="too_large",
-    )
+    return _present_read(loaded)
 
 
 def _missing(uri: str) -> ReadResourceResult:
@@ -180,6 +229,16 @@ def _read_media(db: Session, viewer_id: UUID, media_id: UUID, uri: str) -> ReadR
     document = load_media_document(db, viewer_id, media_id)
     if document is None:
         return _missing(uri)
+    if document.char_count > READ_DOCUMENT_MAX_CHARS:
+        return ReadResourceResult(
+            uri=uri,
+            status="complete",
+            body=(
+                f"This document is {document.char_count:,} characters — too large to read whole. "
+                f'Call inspect_resource("{uri}") for its section map, then read the sections you need.'
+            ),
+            kind="too_large",
+        )
     return ReadResourceResult(
         uri=uri,
         status="complete",
@@ -335,6 +394,31 @@ def _loaded_ref(loaded: LoadedResource) -> ResourceRef:
         # justify-defect: loaded resources come from typed ResourceRef loader inputs.
         raise AssertionError(f"Loaded resource has invalid URI {loaded.uri!r}")
     return parsed
+
+
+def _readable_in_conversation(db: Session, conversation_id: UUID, uri: str) -> bool:
+    """A URI is readable when it is context, or its parent media is (gate O2)."""
+    parsed = parse_resource_ref(uri)
+    if not isinstance(parsed, ResourceRefParseFailure) and admits_resource_for_conversation_read(
+        db, conversation_id=conversation_id, target=parsed
+    ):
+        return True
+    parent = _parent_media_ref(db, uri)
+    return parent is not None and admits_resource_for_conversation_read(
+        db, conversation_id=conversation_id, target=parent
+    )
+
+
+def _parent_media_ref(db: Session, uri: str) -> ResourceRef | None:
+    """The ``media:`` ref a media-derived read pointer belongs to, else None."""
+    if uri.startswith("page_range:"):
+        parsed = _parse_page_range(uri)
+        return ResourceRef(scheme="media", id=parsed[0]) if parsed is not None else None
+    ref = parse_resource_ref(uri)
+    if isinstance(ref, ResourceRefParseFailure):
+        return None
+    media_id = parent_media_id_for_read_pointer(db, scheme=ref.scheme, resource_id=ref.id)
+    return ResourceRef(scheme="media", id=media_id) if media_id is not None else None
 
 
 def _parse_page_range(uri: str) -> tuple[UUID, int, int] | None:

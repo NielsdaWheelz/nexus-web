@@ -14,7 +14,7 @@ from nexus.services.pdf_ingest import PdfExtractionResult
 
 
 def persist_pdf_metadata(db: Session, media: Media, result: PdfExtractionResult) -> None:
-    """Persist PDF document metadata (title/description) — never credits.
+    """Persist PDF document metadata (title/description/date) — never credits.
 
     Author credits are no longer written here: the source lifecycle emits a
     typed observation (:func:`build_pdf_author_observation`) that the ingest
@@ -25,6 +25,9 @@ def persist_pdf_metadata(db: Session, media: Media, result: PdfExtractionResult)
 
     if result.pdf_subject and not media.description:
         media.description = result.pdf_subject[:2000]
+
+    if result.pdf_creation_date and not media.published_date:
+        media.published_date = result.pdf_creation_date
 
 
 def build_pdf_author_observation(

@@ -35,14 +35,6 @@ expected Oracle manifest digest, task contract, and captured VPS config.
 
 - `deploy/hetzner/deploy.sh <source-sha>` is the only application release
   entrypoint. Rerun it unchanged to resume.
-- `deploy/hetzner/prove-codex-capacity.sh <source-sha>` is the only Codex-host
-  release qualification entrypoint. It installs the exact immutable bundle and
-  records measured evidence, but never applies an application release.
-- A planned retained-swap maintenance restart is the sole exception to those
-  two entrypoints. It is authorized only after qualification has corrected the
-  exact incumbent cgroup limits, blocked before candidate startup, and reported
-  a full container ID as retaining forbidden swap. It never recreates a
-  container or changes release state.
 - Release only a clean checkout where `HEAD == origin/main == source-sha` and
   exact `main` CI succeeded.
 - CI builds each backend target once. Production pulls manifest-selected GHCR
@@ -152,25 +144,6 @@ cannot read a newly created package, never release that SHA; make both
 successful SHA. Once installed, the root-owned immutable bundle is the resume
 and verification authority after the 90-day Actions retention window.
 
-### Shared self-hosted release runner
-
-When the `main` gate temporarily runs on the shared 8 GiB devbox, reserve the
-host for that gate before creating the release SHA. Prove that no other Actions
-job or local `./scripts/test` process is active. For every idle checkout that
-has its own `.nexus-test/runtime.json`, run that checkout's
-`./scripts/test clean`; this is the only supported way to remove its recorded
-test stack, volumes, and runtime state. Never stop or delete test containers by
-name discovery from another checkout, because only the owning runtime record
-and recovery ledger are cleanup authority. Preserve shared dependency, image,
-and build caches.
-
-The controller's per-heavy-operation 2,048 MiB `MemAvailable` admission remains
-the authoritative safety gate. Do not lower it or treat `not_run` as success.
-If source CI attempt 1 is denied for host capacity, clean the verified idle test
-runtimes, confirm the devbox is otherwise idle, and use a fresh commit SHA; a
-successful CI rerun is diagnostic evidence but is intentionally not publishable
-under the first-attempt artifact lineage above.
-
 ## Explicit config publication
 
 Tracked contracts live in `deploy/env/*.example`; real files beside them remain
@@ -211,40 +184,7 @@ published source SHA.
 ## Release
 
 After exact `main` CI, backend publication, and the staged Vercel build are
-green, qualify a candidate that carries the Codex agent host. The passing
-candidate-bound evidence must have been measured on the production host within
-the preceding 72 hours:
-
-```bash
-SOURCE_SHA="$(git rev-parse HEAD)"
-./deploy/hetzner/prove-codex-capacity.sh "$SOURCE_SHA"
-```
-
-This bounded preflight runs the subscription-authenticated cold/warm canary in
-the candidate worker image and measures its real production cgroup, host
-headroom, pressure, swap, OOM counters, and the unchanged long-lived services.
-It does not call `apply`, stop writers, migrate data, or promote Vercel. An
-absent, stale, retriable, or subscription-blocked result is not release
-evidence; diagnose it and rerun the unchanged qualification command. A measured
-contract breach permanently disqualifies the candidate SHA.
-
-On a host first crossing into the enforced no-service-swap contract,
-qualification may instead correct every exact incumbent's kernel limits and
-then block because pages swapped under the old policy remain charged. This is
-infrastructure settlement, not candidate evidence. Announce a no-use window,
-prove no application or Oracle attempt and no active generation job, then
-restart only each full container ID reported by the controller with
-`docker restart --timeout 30 <full-container-id>`. Use the order Postgres, API,
-interactive worker, background worker, Caddy; wait for the restarted service's
-ordinary health proof before continuing. Re-inspect the same ID and require
-`memory.swap.max == 0` and `memory.swap.current == 0`. Abort on an identity,
-health, or cgroup discrepancy, and rerun the unchanged qualification only after
-all five incumbents are healthy. Never restart by service name, recreate a
-container, clear caches, or automate this one-time database-and-writer outage
-inside qualification.
-
-After qualification passes, announce the no-use window and close clients. Then
-run:
+green, announce the no-use window and close clients. Then run:
 
 ```bash
 SOURCE_SHA="$(git rev-parse HEAD)"
@@ -258,38 +198,9 @@ landing its successor. The only code-level exception is provider-free settlement
 of an already durable `RollbackRequired` or `ForwardFixPending` attempt from its
 installed bundle; this is recovery authority, not permission to unfreeze main.
 
-For the chat-admission hard cutover, keep the no-use window closed until the
-operator has inventoried every outstanding browser `nx_chat_draft.v3:` command.
-The final decoder requires a durable command origin, so every pre-cutover record
-whose operation is not `Absent` is incompatible and must be settled under the
-old release before deployment; only an `Absent` record may cross the cut.
-Resolve any historical deleted-run command that lacks authoritative replay
-evidence. Preserve open tabs and their `sessionStorage`; reload them only after
-the release is healthy. Stop and prove the API and both worker lanes stopped,
-retain unresolved provider/journal evidence, and let migration `0226` block on
-any pre-receipt `chat_runs` row or live queue claim before it drops the obsolete
-counter. Migration `0224` reset chat history; while writers remain stopped at
-`0225`, delete, archive outside the live schema, or otherwise explicitly dispose
-every chat run admitted under the old fingerprint. Migration `0226` never
-backfills those unverifiable identities. Absence of a historical run never
-authorizes a resend. There is no
-counter reset, storage clear, compatibility decoder, or legacy runtime lookup.
-
-Migration `0224` refuses every pending, running, or retryable generation job and
-every unclassified dead generation job. A dead `synapse_scan` is reset only
-after the separate nonterminal-`llm_calls` and `Uncertain`-journal preflights
-prove that no ambiguous provider effect remains. A dead `enrich_metadata` job
-is reset only when its finished, unclaimed attempt returned one frozen known
-failure reason in one of the two exact historical terminal result shapes whose
-error matches the queue error. The extended shape also requires exact nonempty
-provider/model attempts and a matching terminal attempt; current Media metadata
-and failure facts remain. Never update or delete production queue rows manually
-to force migration admission.
-
 The command performs the complete protocol:
 
-1. validates Git, CI, bundle, manifest, staged Vercel identity, and the exact
-   fresh capacity qualification when the candidate carries the Codex host;
+1. validates Git, CI, bundle, manifest, and staged Vercel identity;
 2. installs the immutable bundle and inspects durable host state;
 3. before the first hard-cut attempt, proves exact predecessor identity, host
    capacity, foreign-container absence, and current memory/PID use; when an
@@ -479,29 +390,6 @@ with corrected manifest/runtime, then reconcile that new current SHA. An
 unsupported-removal preflight likewise requires an additive replacement
 manifest on a new SHA, or a separate reviewed retirement operation; never edit
 the attempt or manifest in place.
-
-## Reader publication preflight
-
-Offline reading identifies a reader document by its publication generation.
-Revision `0216` creates one generation-`1` row per eligible `ready_for_reading`
-document at the instant it runs; a document that becomes ready afterwards is
-published by whichever application artifact is deployed, and an artifact that
-predates the publication owner cannot create that row. Such a document has no
-generation at all, so both offline routes fail closed forever.
-
-Before exposing the first reading-capable APK — and, because it is idempotent,
-before every later Android release — close that window explicitly:
-
-```bash
-python -m nexus.ops.reader_publication_preflight census   # read-only report
-python -m nexus.ops.reader_publication_preflight rebuild  # publish the remainder
-```
-
-`rebuild` publishes only documents that still have no publication row, at
-generation `1`, through the publication owner; it never reads an existing row as
-stale and never bumps one. It re-reads its census within a bounded number of
-passes and fails unless every eligible ready document carries a publication row.
-This is an application-data operation, not a release-controller flag.
 
 ## Infrastructure operations
 

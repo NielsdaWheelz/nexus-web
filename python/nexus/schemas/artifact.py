@@ -22,22 +22,18 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from nexus.schemas.citation import CitationOut
-from nexus.schemas.llm import CapacityPaused, SelectionPresentation
 from nexus.schemas.presence import Presence
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.artifacts.dossier_types import (
     ArtifactBuildEventType,
     CancelledEventPayload,
     FailedEventPayload,
-    HistoricalFailedEventPayload,
     ProgressEventPayload,
-    ReadFailedEventPayload,
     StartedEventPayload,
     SucceededEventPayload,
 )
 from nexus.services.artifacts.manifests import InputManifestOut, MediaDisposition
 from nexus.services.durable_step_journal import DurableExecutionPhase
-from nexus.services.generation_selection import GenerationSelectionSpec
 
 
 class ArtifactSchemaModel(BaseModel):
@@ -100,42 +96,6 @@ class DossierBuildExecution(ArtifactSchemaModel):
     phase: DurableExecutionPhase
 
 
-class DossierBuildNoModelToolsOut(ArtifactSchemaModel):
-    """The admitted generation publishes no model-callable tool."""
-
-    kind: Literal["NoModelTools"] = "NoModelTools"
-
-
-class DossierBuildExactModelToolsOut(ArtifactSchemaModel):
-    """The admitted generation runs exactly one frozen read plan (section 3.4)."""
-
-    kind: Literal["ExactModelTools"] = "ExactModelTools"
-    plan_id: str = Field(min_length=1)
-    plan_revision: str = Field(min_length=1)
-    effect_mode: Literal["ReadOnly", "AdditiveWrites"]
-
-
-DossierBuildToolPlanOut = Annotated[
-    DossierBuildNoModelToolsOut | DossierBuildExactModelToolsOut,
-    Field(discriminator="kind"),
-]
-
-
-class DossierBuildAdmittedGenerationOut(ArtifactSchemaModel):
-    """Read-only facts of the build's latest admitted generation (spec 3.4, AC 15).
-
-    The exact frozen selection and its dispatch-time disclosure come from the
-    generation ledger, never from mutable policy; the tool plan is the frozen
-    model-tool authority and ``tool_positions`` counts journaled tool positions.
-    No control, credential, price, or current catalog state crosses here:
-    background eligibility stays server-internal (section 5.2)."""
-
-    selection: GenerationSelectionSpec
-    display_at_dispatch: SelectionPresentation
-    tool_plan: DossierBuildToolPlanOut
-    tool_positions: int = Field(ge=0)
-
-
 class DossierBuildSummary(ArtifactSchemaModel):
     """One build attempt's identity and current execution/terminal summary.
 
@@ -145,20 +105,15 @@ class DossierBuildSummary(ArtifactSchemaModel):
     `dossier_types` build-event payloads, so the head snapshot and the live SSE
     stream agree on one shape for the same fact (A15: `Failed|Cancelled`).
     ``requester_user_id`` is the nullable attribution FK (User teardown nulls
-    it — UI "Deleted user", A5). ``admitted_generation`` is the latest ledger
-    generation admitted for the build; ``capacity_pause`` is the durable
-    pre-admission ``CapacityPaused`` parked on an active build's job (spec
-    3.4). Both are read-only and Absent whenever the fact does not exist."""
+    it — UI "Deleted user", A5)."""
 
     handle: str
     requester_user_id: Presence[UUID]
     instruction: Presence[_InstructionText]
     created_at: datetime
     execution: Presence[DossierBuildExecution]
-    failure: Presence[ReadFailedEventPayload]
+    failure: Presence[FailedEventPayload]
     cancellation: Presence[CancelledEventPayload]
-    admitted_generation: Presence[DossierBuildAdmittedGenerationOut]
-    capacity_pause: Presence[CapacityPaused]
 
 
 class MediaDossierCoverageOut(ArtifactSchemaModel):
@@ -365,7 +320,6 @@ _BUILD_EVENT_PAYLOAD_TYPES: dict[ArtifactBuildEventType, type[BaseModel]] = {
     ArtifactBuildEventType.Progress: ProgressEventPayload,
     ArtifactBuildEventType.Succeeded: SucceededEventPayload,
     ArtifactBuildEventType.Failed: FailedEventPayload,
-    ArtifactBuildEventType.HistoricalFailed: HistoricalFailedEventPayload,
     ArtifactBuildEventType.Cancelled: CancelledEventPayload,
 }
 
@@ -376,7 +330,6 @@ BuildEventPayload = (
     | ProgressEventPayload
     | SucceededEventPayload
     | FailedEventPayload
-    | HistoricalFailedEventPayload
     | CancelledEventPayload
 )
 

@@ -836,7 +836,7 @@ access-increasing transition:
 `library_entries` owns one actor-aware access-increase guard. The guarded user
 commands are `ensure_media_in_library`,
 `ensure_media_in_libraries_for_viewer`,
-`assign_libraries_for_media_in_current_transaction` for every viewer-selected
+`assign_libraries_for_media[_in_current_transaction]` for every viewer-selected
 ingest destination, `add_podcast_to_library`, and agent-tool commands that
 delegate to them. User-origin writes never call actorless `ensure_entry`
 directly.

@@ -528,10 +528,6 @@ activating the new clients, then deploy web immediately. There is no dual
 payload decoder. Old Android builds are unsupported after cutover and must be
 updated; this prototype accepts that hard boundary.
 
-The executable compatibility identity, Update Required state, and signed
-release ordering are superseded by
-`android-player-protocol-release-hard-cutover.md`.
-
 ## Acceptance criteria
 
 - **AC1 — Durable web.** A closed span commits to IndexedDB before upload.

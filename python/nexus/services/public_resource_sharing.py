@@ -55,8 +55,8 @@ from nexus.services.capabilities import is_text_document_ready
 from nexus.services.contributor_credits import load_current_source_author_bylines
 from nexus.services.epub_assets import list_public_epub_asset_sources
 from nexus.services.epub_read import (
-    get_epub_fragment_source,
-    list_epub_fragment_sources,
+    get_epub_section_source,
+    list_epub_section_sources,
 )
 from nexus.services.media_file_access import (
     MediaFileSource,
@@ -353,7 +353,7 @@ def get_public_navigation(
     raw_cursor, raw_limit = _parse_page_query(query_items)
     after_ordinal = _parse_cursor(raw_cursor, projection=projection)
     limit = _parse_limit(raw_limit)
-    rows = list_epub_fragment_sources(
+    rows = list_epub_section_sources(
         db,
         media_id=projection.media.media_id,
         after_ordinal=after_ordinal,
@@ -398,7 +398,7 @@ def get_public_section(
     )
     if ordinal is None:
         _masked_not_found()
-    source = get_epub_fragment_source(
+    source = get_epub_section_source(
         db,
         media_id=projection.media.media_id,
         ordinal=ordinal,
@@ -726,7 +726,7 @@ def _projection_shape_supported(
     elif media.kind == "epub":
         if _load_epub_source_owner(db, media_id=media.media_id) is None:
             return False
-        sections = list_epub_fragment_sources(
+        sections = list_epub_section_sources(
             db,
             media_id=media.media_id,
             after_ordinal=None,
@@ -928,11 +928,11 @@ def _highlight_shape_supported(
             section_ordinal = db.execute(
                 text(
                     """
-                    SELECT idx FROM fragments
-                    WHERE media_id = :media_id AND id = :fragment_id
+                    SELECT ordinal FROM epub_nav_locations
+                    WHERE media_id = :media_id AND location_id = :section_id
                     """
                 ),
-                {"media_id": media.media_id, "fragment_id": target.fragment_id},
+                {"media_id": media.media_id, "section_id": target.section_id},
             ).scalar()
             if section_ordinal is None:
                 return False
@@ -953,30 +953,24 @@ def _highlight_shape_supported(
             ).scalar()
             if ordinal is None:
                 return False
-            anchor = PublicTranscriptTextAnchorOut.model_validate(
-                {
-                    "segment_ordinal": int(ordinal),
-                    "start_offset": target.start_offset,
-                    "end_offset": target.end_offset,
-                    "time_range": target.time_range.model_dump(mode="python"),
-                }
+            anchor = PublicTranscriptTextAnchorOut(
+                segment_ordinal=int(ordinal),
+                start_offset=target.start_offset,
+                end_offset=target.end_offset,
+                time_range=target.time_range.model_dump(mode="python"),
             )
         elif isinstance(target, PdfPageGeometryTargetOut):
-            anchor = PublicPdfGeometryAnchorOut.model_validate(
-                {
-                    "page_number": target.page_number,
-                    "quads": [quad.model_dump(mode="python") for quad in target.quads],
-                }
+            anchor = PublicPdfGeometryAnchorOut(
+                page_number=target.page_number,
+                quads=[quad.model_dump(mode="python") for quad in target.quads],
             )
         else:
             return False
         exact = str(metadata["exact"])
-        PublicHighlightOut.model_validate(
-            {
-                "quote": presence_from_nullable(exact if exact else None),
-                "color": str(metadata["color"]).capitalize(),
-                "anchor": anchor,
-            }
+        PublicHighlightOut(
+            quote=presence_from_nullable(exact if exact else None),
+            color=str(metadata["color"]).capitalize(),
+            anchor=anchor,
         )
     except (TypeError, ValueError, ValidationError):
         return False
@@ -1041,13 +1035,13 @@ def _project_highlight(
             section_ordinal = db.execute(
                 text(
                     """
-                    SELECT idx
-                    FROM fragments
+                    SELECT ordinal
+                    FROM epub_nav_locations
                     WHERE media_id = :media_id
-                      AND id = :fragment_id
+                      AND location_id = :section_id
                     """
                 ),
-                {"media_id": media.media_id, "fragment_id": target.fragment_id},
+                {"media_id": media.media_id, "section_id": target.section_id},
             ).scalar()
             if section_ordinal is None:
                 _masked_not_found()
@@ -1072,30 +1066,24 @@ def _project_highlight(
             ).scalar()
             if ordinal is None:
                 _masked_not_found()
-            anchor = PublicTranscriptTextAnchorOut.model_validate(
-                {
-                    "segment_ordinal": int(ordinal),
-                    "start_offset": target.start_offset,
-                    "end_offset": target.end_offset,
-                    "time_range": target.time_range.model_dump(mode="python"),
-                }
+            anchor = PublicTranscriptTextAnchorOut(
+                segment_ordinal=int(ordinal),
+                start_offset=target.start_offset,
+                end_offset=target.end_offset,
+                time_range=target.time_range.model_dump(mode="python"),
             )
         elif isinstance(target, PdfPageGeometryTargetOut):
-            anchor = PublicPdfGeometryAnchorOut.model_validate(
-                {
-                    "page_number": target.page_number,
-                    "quads": [quad.model_dump(mode="python") for quad in target.quads],
-                }
+            anchor = PublicPdfGeometryAnchorOut(
+                page_number=target.page_number,
+                quads=[quad.model_dump(mode="python") for quad in target.quads],
             )
         else:
             _masked_not_found()
         exact = str(metadata["exact"])
-        return PublicHighlightOut.model_validate(
-            {
-                "quote": presence_from_nullable(exact if exact else None),
-                "color": str(metadata["color"]).capitalize(),
-                "anchor": anchor,
-            }
+        return PublicHighlightOut(
+            quote=presence_from_nullable(exact if exact else None),
+            color=str(metadata["color"]).capitalize(),
+            anchor=anchor,
         )
     except (TypeError, ValueError, ValidationError):
         _masked_not_found()
@@ -1133,7 +1121,7 @@ def _source_revision_bytes(db: Session, *, media: _MediaFacts) -> bytes:
             owner.source_type,
         ):
             _digest_part(digest, value.encode("utf-8"))
-        sections = list_epub_fragment_sources(
+        sections = list_epub_section_sources(
             db,
             media_id=media.media_id,
             after_ordinal=None,
@@ -1254,8 +1242,8 @@ def _load_bylines_if_supported(
     return bylines
 
 
-def _public_media_kind(kind: str) -> Literal["Article", "Epub", "Pdf", "Video", "PodcastEpisode"]:
-    mapping: dict[str, Literal["Article", "Epub", "Pdf", "Video", "PodcastEpisode"]] = {
+def _public_media_kind(kind: str):
+    mapping = {
         "web_article": "Article",
         "epub": "Epub",
         "pdf": "Pdf",

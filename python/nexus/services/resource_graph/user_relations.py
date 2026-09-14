@@ -2,12 +2,10 @@
 
 Sole owner of the user operation. It composes transaction-scoped Highlight,
 passage-anchor, note, and low-level edge helpers into one retryable serializable
-transaction for authoring; destructive Dossier cleanup uses one retryable
-READ COMMITTED lock-set transaction. It records exact mutation responses through
-the shared replay ledger and never constructs ``ResourceEdge`` or writes
-``resource_edges`` directly (that stays in ``edges``/``adjacency``/``cleanup``).
-Reads over ``resource_edges`` are fine — this module IS the graph-owned Link
-service.
+transaction and records the exact response through the shared replay ledger; it
+never constructs ``ResourceEdge`` or writes ``resource_edges`` directly (that
+stays in ``edges``/``adjacency``/``cleanup``). Reads over ``resource_edges`` are
+fine — this module IS the graph-owned Link service.
 
 Canonical unordered-pair order is ``tuple(scheme, lowercase-uuid-string)``,
 matching migration 0184 and ``uq_resource_edges_user_context_link_pair``; the
@@ -25,7 +23,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ResourceEdge
-from nexus.db.retries import retry_read_committed, retry_serializable
+from nexus.db.retries import retry_serializable
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
@@ -300,16 +298,11 @@ def delete_link_note(db: Session, *, viewer_id: UUID, link_id: UUID) -> None:
     own graph edges (both ``link_note`` halves and any body mentions), passage
     anchors, and content index through the note owner's cleanup (§ Graph Shapes).
     """
-
-    def attempt() -> None:
-        link = _load_neutral_link(db, viewer_id=viewer_id, link_id=link_id)
-        note_id = _link_note_block_id(db, viewer_id=viewer_id, a=link.source, b=link.target)
-        if note_id is None:
-            return
-        if notes.remove_note_block_in_current_transaction(db, viewer_id, note_id):
-            db.commit()
-
-    retry_read_committed(db, "delete_link_note", attempt)
+    link = _load_neutral_link(db, viewer_id=viewer_id, link_id=link_id)
+    note_id = _link_note_block_id(db, viewer_id=viewer_id, a=link.source, b=link.target)
+    if note_id is None:
+        return
+    notes.remove_note_block(db, viewer_id, note_id)
 
 
 # =============================================================================

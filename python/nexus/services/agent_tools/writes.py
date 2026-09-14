@@ -1,41 +1,41 @@
-"""The Amanuensis: Nexus's five additive write operations plus Undo.
+"""The Amanuensis: the house agent's five additive write tools + undo.
 
-This module is the domain adapter behind the canonical ``nexus.*`` bindings.
-Declarations, execution policy, durable replay, and Chat audit persistence live
-in ``services.tool_runtime``; this owner performs only the existing authorized
-domain mutations and Undo.
+The sole writer of ``origin='assistant'`` resource edges and the single owner of
+every assistant-authored mutation (library entries, note blocks, highlights,
+queue items). Tool *definitions* (the ToolSpec dicts) co-locate with their
+executors here, mirroring ``app_search`` (amanuensis D-7).
 
 Discipline (amanuensis §§2-4):
 - Additive only. There are **no** delete/destroy/overwrite tools (N-1) — the
   agent cannot remove or rewrite anything the user made.
-- Every write is origin-marked, surfaced in the trust trail, and one-tap
-  reversible (``undo_tool_call``); the composed execution owner enforces the
-  per-run cap before entering this domain adapter.
+- Every write is capped per run (``ASSISTANT_MAX_WRITES_PER_RUN``), origin-marked,
+  surfaced in the trust trail, and one-tap reversible (``undo_tool_call``).
 - Every mutation runs through the concern's existing sole-writer service; this
   module never raw-inserts.
 - Ambiguity is a refusal, never a guess (``text_quote`` → tool error, D-4).
 
-There are no standalone model-write HTTP endpoints. Undo has one route
-(``conversations`` §6).
+The only caller is the chat tool loop (``chat_runs``); there are no standalone
+HTTP write endpoints (N-7, R-1). Undo has one route (``conversations`` §6).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import Any
+import json
+from dataclasses import dataclass, field
+from typing import Any, Literal
 from uuid import UUID, uuid5
 
-from llm_tools import ToolEffect
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Conversation, MessageToolCall
+from nexus.config import get_settings
+from nexus.db.models import ChatRun
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.notes import DailyCaptureRequest
 from nexus.services import highlights, library_entries, notes, text_quote, users
 from nexus.services.chat_run_tools import (
-    decode_persisted_tool_record,
+    assistant_write_tool_call_count,
+    persist_write_tool_call,
 )
 from nexus.services.consumption import service as consumption_service
 from nexus.services.resource_graph.edges import create_edge, delete_edge
@@ -45,22 +45,329 @@ from nexus.services.resource_graph.refs import (
     parse_resource_ref,
 )
 from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_refs
-from nexus.services.resource_graph.schemas import EDGE_KINDS, CitationSnapshot, EdgeCreate
+from nexus.services.resource_graph.schemas import CitationSnapshot, EdgeCreate
+
+# The hard per-run write cap (amanuensis D-6). Counts committed write tool calls
+# for the assistant message whose ``reverted_at IS NULL`` — undo reclaims budget
+# (AC-9). On the ninth the tool refuses.
+ASSISTANT_MAX_WRITES_PER_RUN = 8
+
+ADD_TO_LIBRARY_TOOL_NAME = "add_to_library"
+JOT_NOTE_TOOL_NAME = "jot_note"
+CREATE_HIGHLIGHT_TOOL_NAME = "create_highlight"
+MINT_EDGE_TOOL_NAME = "mint_edge"
+QUEUE_ADD_TOOL_NAME = "queue_add"
+
+WRITE_TOOL_NAMES: tuple[str, ...] = (
+    ADD_TO_LIBRARY_TOOL_NAME,
+    JOT_NOTE_TOOL_NAME,
+    CREATE_HIGHLIGHT_TOOL_NAME,
+    MINT_EDGE_TOOL_NAME,
+    QUEUE_ADD_TOOL_NAME,
+)
+
+_EDGE_KINDS = ("context", "supports", "contradicts")
+
+# Parameter schemas follow the canonical JSON-Schema subset (llm-provider-runtime
+# hard cutover §5): every property is listed in ``required`` with
+# ``additionalProperties: false``, and semantically optional values are
+# required-nullable ``anyOf [X, {"type": "null"}]``. Executors treat an explicit
+# null exactly like an omitted key (all argument reads go through ``args.get``),
+# and defaults (highlight color yellow, edge kind context) live in the execute
+# path, never in the schema.
+ASSISTANT_WRITE_TOOL_DEFINITIONS: tuple[dict[str, Any], ...] = (
+    {
+        "name": ADD_TO_LIBRARY_TOOL_NAME,
+        "description": (
+            "File a resource into one of the user's libraries when they ask you to "
+            "(e.g. 'file this under Criticism'). resource_uri is a media: or podcast: "
+            "URI; identify the library by library_id or its exact library_name. Only "
+            "libraries the user administers are writable, and system libraries are "
+            "never writable. A podcast cannot be filed into the Default library. "
+            "Filing a podcast requires an active subscription to it."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "resource_uri": {
+                    "type": "string",
+                    "description": "media:<uuid> or podcast:<uuid> to file.",
+                },
+                "library_id": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": "Target library UUID; null when filing by library_name.",
+                },
+                "library_name": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": (
+                        "Target library name (exact, case-insensitive); "
+                        "null when filing by library_id."
+                    ),
+                },
+            },
+            "required": ["resource_uri", "library_id", "library_name"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": JOT_NOTE_TOOL_NAME,
+        "description": (
+            "Append a note the user dictates to their daily note, or to a specific "
+            "page when page_uri is given. markdown is the note text; the words are the "
+            "user's own."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "markdown": {"type": "string", "description": "The note text (markdown)."},
+                "page_uri": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": "page:<uuid> to append to; null for today's daily note.",
+                },
+            },
+            "required": ["markdown", "page_uri"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": CREATE_HIGHLIGHT_TOOL_NAME,
+        "description": (
+            "Dog-ear an exact passage of a document the user is discussing. media_uri "
+            "is the document; exact is the passage verbatim. If exact occurs more than "
+            "once, add prefix/suffix (the text immediately before/after) to make it "
+            "unique — an ambiguous quote is refused, so quote more surrounding text "
+            "rather than guessing. An optional note attaches a highlight note."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "media_uri": {"type": "string", "description": "media:<uuid> to highlight in."},
+                "exact": {"type": "string", "description": "The passage, verbatim."},
+                "prefix": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": (
+                        "Text immediately before the passage (to disambiguate); "
+                        "null when exact is already unique."
+                    ),
+                },
+                "suffix": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": (
+                        "Text immediately after the passage (to disambiguate); "
+                        "null when exact is already unique."
+                    ),
+                },
+                "color": {
+                    "anyOf": [
+                        {
+                            "type": "string",
+                            "enum": ["yellow", "green", "blue", "pink", "purple"],
+                        },
+                        {"type": "null"},
+                    ],
+                    "description": "Highlight color; null for the default (yellow).",
+                },
+                "note": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "description": "Optional highlight note (markdown); null for none.",
+                },
+            },
+            "required": ["media_uri", "exact", "prefix", "suffix", "color", "note"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": MINT_EDGE_TOOL_NAME,
+        "description": (
+            "Connect two of the user's resources when they ask you to relate them "
+            "(e.g. 'connect these two'). source_uri and target_uri are among "
+            "media:/page:/note_block:/highlight: URIs. kind is context (default), "
+            "supports, or contradicts. rationale is your one-line reason for the link."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "source_uri": {"type": "string", "description": "One endpoint URI."},
+                "target_uri": {"type": "string", "description": "The other endpoint URI."},
+                "kind": {
+                    "anyOf": [
+                        {"type": "string", "enum": list(_EDGE_KINDS)},
+                        {"type": "null"},
+                    ],
+                    "description": "Relationship kind; null for the default (context).",
+                },
+                "rationale": {
+                    "type": "string",
+                    "description": "One-line reason for the connection.",
+                },
+            },
+            "required": ["source_uri", "target_uri", "kind", "rationale"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": QUEUE_ADD_TOOL_NAME,
+        "description": (
+            "Add a media item to the user's consumption queue to read or listen to "
+            "next (e.g. 'queue this to read next'). media_uri is a media: URI."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "media_uri": {"type": "string", "description": "media:<uuid> to queue."},
+            },
+            "required": ["media_uri"],
+            "additionalProperties": False,
+        },
+    },
+)
+
+
+def assistant_write_tool_definitions() -> tuple[dict[str, Any], ...]:
+    """The five ToolSpec dicts, gated by the flag (amanuensis AC-6)."""
+    if not get_settings().assistant_write_tools_enabled:
+        return ()
+    return ASSISTANT_WRITE_TOOL_DEFINITIONS
 
 
 @dataclass(frozen=True, slots=True)
-class WriteEffect:
+class _HandlerResult:
     created_refs: list[dict[str, Any]]
     output: dict[str, Any]
 
 
-class WriteToolRefusal(Exception):
-    """A reviewed domain refusal translated by the canonical binding."""
+@dataclass(frozen=True, slots=True)
+class WriteToolOutcome:
+    tool_call_id: UUID
+    created_refs: list[dict[str, Any]]
+    tool_output_json: str
+    status: Literal["complete", "error"]
+    error_code: str | None = field(default=None)
+
+    @property
+    def is_error(self) -> bool:
+        return self.status == "error"
+
+
+class _ToolRefusal(Exception):
+    """A tool-level refusal (bad args, ambiguity, cap) rendered to the model."""
 
     def __init__(self, error_code: str, message: str):
         self.error_code = error_code
         self.message = message
         super().__init__(message)
+
+
+def execute_write_tool(
+    db: Session,
+    *,
+    run: ChatRun,
+    effect_id: UUID,
+    tool_call_index: int,
+    tool_name: str,
+    args: dict[str, Any],
+) -> WriteToolOutcome:
+    """Enforce the cap, dispatch one stable effect, and stage its tool row.
+
+    Returns everything the chat loop needs to emit the trust event and append a
+    ``ToolResult``. The caller owns the journal/event/tool-row commit. Never
+    raises for a domain/refusal error — those become an error tool result (the
+    model reads it and clarifies); only genuine defects propagate. Every write,
+    replay fact, tool row, result event, and journal completion remains in the
+    caller's one transaction.
+    """
+    viewer_id = run.owner_user_id
+    try:
+        prior = assistant_write_tool_call_count(
+            db, assistant_message_id=run.assistant_message_id, tool_names=WRITE_TOOL_NAMES
+        )
+        if prior >= ASSISTANT_MAX_WRITES_PER_RUN:
+            raise _ToolRefusal(
+                "write_cap_reached",
+                f"Write limit of {ASSISTANT_MAX_WRITES_PER_RUN} per turn reached; "
+                "no further writes this turn.",
+            )
+        result = _dispatch(
+            db,
+            viewer_id=viewer_id,
+            effect_id=effect_id,
+            tool_name=tool_name,
+            args=args,
+        )
+    except _ToolRefusal as refusal:
+        output = {"error": refusal.message, "error_code": refusal.error_code}
+        tool_call_id = persist_write_tool_call(
+            db,
+            run=run,
+            tool_call_index=tool_call_index,
+            tool_name=tool_name,
+            created_refs=[],
+            status="error",
+            error_code=refusal.error_code,
+        )
+        return WriteToolOutcome(
+            tool_call_id=tool_call_id,
+            created_refs=[],
+            tool_output_json=json.dumps(output, default=str),
+            status="error",
+            error_code=refusal.error_code,
+        )
+    except ApiError as exc:
+        output = {"error": exc.message, "error_code": exc.code.value}
+        tool_call_id = persist_write_tool_call(
+            db,
+            run=run,
+            tool_call_index=tool_call_index,
+            tool_name=tool_name,
+            created_refs=[],
+            status="error",
+            error_code=exc.code.value,
+        )
+        return WriteToolOutcome(
+            tool_call_id=tool_call_id,
+            created_refs=[],
+            tool_output_json=json.dumps(output, default=str),
+            status="error",
+            error_code=exc.code.value,
+        )
+
+    tool_call_id = persist_write_tool_call(
+        db,
+        run=run,
+        tool_call_index=tool_call_index,
+        tool_name=tool_name,
+        created_refs=result.created_refs,
+        status="complete",
+        error_code=None,
+    )
+    return WriteToolOutcome(
+        tool_call_id=tool_call_id,
+        created_refs=result.created_refs,
+        tool_output_json=json.dumps(result.output, default=str),
+        status="complete",
+        error_code=None,
+    )
+
+
+def _dispatch(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    effect_id: UUID,
+    tool_name: str,
+    args: dict[str, Any],
+) -> _HandlerResult:
+    if tool_name == ADD_TO_LIBRARY_TOOL_NAME:
+        return _add_to_library(db, viewer_id, args)
+    if tool_name == JOT_NOTE_TOOL_NAME:
+        return _jot_note(db, viewer_id, effect_id, args)
+    if tool_name == CREATE_HIGHLIGHT_TOOL_NAME:
+        return _create_highlight(db, viewer_id, effect_id, args)
+    if tool_name == MINT_EDGE_TOOL_NAME:
+        return _mint_edge(db, viewer_id, args)
+    if tool_name == QUEUE_ADD_TOOL_NAME:
+        return _queue_add(db, viewer_id, args)
+    raise _ToolRefusal("unknown_write_tool", f"Unknown write tool {tool_name!r}")
 
 
 def _effect_uuid(effect_id: UUID, component: str) -> UUID:
@@ -76,9 +383,7 @@ def _effect_uuid(effect_id: UUID, component: str) -> UUID:
 def _require_str(args: dict[str, Any], key: str) -> str:
     value = args.get(key)
     if not isinstance(value, str) or not value.strip():
-        raise WriteToolRefusal(
-            "invalid_arguments", f"{key} is required and must be a non-empty string"
-        )
+        raise _ToolRefusal("invalid_arguments", f"{key} is required and must be a non-empty string")
     return value.strip()
 
 
@@ -87,16 +392,16 @@ def _optional_str(args: dict[str, Any], key: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise WriteToolRefusal("invalid_arguments", f"{key} must be a string")
+        raise _ToolRefusal("invalid_arguments", f"{key} must be a string")
     return value
 
 
 def _parse_ref(raw: str, *, allowed: tuple[str, ...]) -> ResourceRef:
     parsed = parse_resource_ref(raw)
     if isinstance(parsed, ResourceRefParseFailure):
-        raise WriteToolRefusal("invalid_arguments", f"{raw!r} is not a valid resource URI")
+        raise _ToolRefusal("invalid_arguments", f"{raw!r} is not a valid resource URI")
     if parsed.scheme not in allowed:
-        raise WriteToolRefusal(
+        raise _ToolRefusal(
             "invalid_arguments",
             f"{raw!r} must be one of {', '.join(allowed)}",
         )
@@ -108,7 +413,7 @@ def _parse_ref(raw: str, *, allowed: tuple[str, ...]) -> ResourceRef:
 # ---------------------------------------------------------------------------
 
 
-def add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> WriteEffect:
+def _add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerResult:
     """File a resource into a library through the one actor-authorized filing
     command REST also uses (spec S4.3), so the agent path has full parity: system-
     library rejection, podcast-into-Default rejection, active-subscription
@@ -149,43 +454,26 @@ def add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> WriteE
         # Already filed here (by the user earlier, or a prior run). Record NO ref
         # so a later Undo can never delete a filing the assistant did not create
         # (R-5); the tool still reports success to the model.
-        return WriteEffect(
+        return _HandlerResult(
             created_refs=[],
             output={
+                "filed_to": library_name,
+                "library_id": str(library_id),
                 "already_present": True,
-                "library_name": library_name,
-                "library_uri": f"library:{library_id}",
-                "resource_uri": ref.uri,
+                "outcome": outcome.kind,
             },
         )
 
-    entry_id = library_entries.entry_id_for_target_in_current_transaction(
-        db,
-        library_id=library_id,
-        target=(
-            library_entries.media_target(ref.id)
-            if ref.scheme == "media"
-            else library_entries.podcast_target(ref.id)
-        ),
-    )
-    if entry_id is None:
-        raise AssertionError("added library filing has no durable entry identity")
     created = {
         "kind": "entry",
-        "id": str(entry_id),
         "library_id": str(library_id),
         "target_scheme": ref.scheme,
         "target_id": str(ref.id),
         "label": library_name,
     }
-    return WriteEffect(
+    return _HandlerResult(
         created_refs=[created],
-        output={
-            "already_present": False,
-            "library_name": library_name,
-            "library_uri": f"library:{library_id}",
-            "resource_uri": ref.uri,
-        },
+        output={"filed_to": library_name, "library_id": str(library_id)},
     )
 
 
@@ -195,12 +483,10 @@ def _resolve_library_id(db: Session, viewer_id: UUID, args: dict[str, Any]) -> U
         try:
             return UUID(raw_id)
         except ValueError as exc:
-            raise WriteToolRefusal("invalid_arguments", "library_id must be a UUID") from exc
+            raise _ToolRefusal("invalid_arguments", "library_id must be a UUID") from exc
     name = _optional_str(args, "library_name")
     if not name:
-        raise WriteToolRefusal(
-            "invalid_arguments", "Provide library_id or library_name to file into"
-        )
+        raise _ToolRefusal("invalid_arguments", "Provide library_id or library_name to file into")
     rows = db.execute(
         text(
             """
@@ -213,23 +499,23 @@ def _resolve_library_id(db: Session, viewer_id: UUID, args: dict[str, Any]) -> U
         {"viewer_id": viewer_id, "name": name.strip()},
     ).fetchall()
     if not rows:
-        raise WriteToolRefusal("library_not_found", f"No library named {name!r}")
+        raise _ToolRefusal("library_not_found", f"No library named {name!r}")
     if len(rows) > 1:
-        raise WriteToolRefusal(
+        raise _ToolRefusal(
             "library_ambiguous", f"More than one library named {name!r}; use library_id"
         )
     return rows[0][0]
 
 
-def create_note(
+def _jot_note(
     db: Session,
     viewer_id: UUID,
     effect_id: UUID,
     args: dict[str, Any],
-) -> WriteEffect:
+) -> _HandlerResult:
     markdown = _require_str(args, "markdown")
     body_pm_json = notes.pm_doc_from_markdown_projection(markdown)
-    note_id = _effect_uuid(effect_id, "nexus.note.create:note_block")
+    note_id = _effect_uuid(effect_id, "jot_note:note_block")
     page_uri = _optional_str(args, "page_uri")
     if page_uri:
         page_ref = _parse_ref(page_uri, allowed=("page",))
@@ -251,26 +537,26 @@ def create_note(
             request=DailyCaptureRequest(
                 note_id=note_id,
                 client_mutation_id=(
-                    f"assistant:{_effect_uuid(effect_id, 'nexus.note.create:daily_capture')}"
+                    f"assistant:{_effect_uuid(effect_id, 'jot_note:daily_capture')}"
                 ),
                 body_pm_json=body_pm_json,
             ),
-            page_id_candidate=_effect_uuid(effect_id, "nexus.note.create:daily_page"),
+            page_id_candidate=_effect_uuid(effect_id, "jot_note:daily_page"),
         )
         page_label = "today's note"
     created = {"kind": "note_block", "id": str(note_id), "label": page_label}
-    return WriteEffect(
+    return _HandlerResult(
         created_refs=[created],
-        output={"note_uri": f"note_block:{note_id}", "page_uri": page_uri},
+        output={"noted_in": page_label, "note_block_id": str(note_id)},
     )
 
 
-def create_highlight(
+def _create_highlight(
     db: Session,
     viewer_id: UUID,
     effect_id: UUID,
     args: dict[str, Any],
-) -> WriteEffect:
+) -> _HandlerResult:
     media_ref = _parse_ref(_require_str(args, "media_uri"), allowed=("media",))
     assert_ref_visible(db, viewer_id=viewer_id, ref=media_ref)
     exact = _require_str(args, "exact")
@@ -282,12 +568,8 @@ def create_highlight(
         db, media_id=media_ref.id, exact=exact, prefix=prefix, suffix=suffix
     )
     if resolution.status is not text_quote.QuoteStatus.unique:
-        raise WriteToolRefusal(
-            {
-                text_quote.QuoteStatus.ambiguous: "quote_ambiguous",
-                text_quote.QuoteStatus.no_match: "quote_not_found",
-                text_quote.QuoteStatus.empty_exact: "invalid_arguments",
-            }[resolution.status],
+        raise _ToolRefusal(
+            "quote_not_unique",
             {
                 text_quote.QuoteStatus.ambiguous: (
                     "That passage appears more than once; add prefix/suffix (the text "
@@ -306,7 +588,7 @@ def create_highlight(
     highlight = highlights.create_fragment_highlight_in_txn(
         db,
         viewer_id=viewer_id,
-        highlight_id=_effect_uuid(effect_id, "nexus.highlight.create:highlight"),
+        highlight_id=_effect_uuid(effect_id, "create_highlight:highlight"),
         fragment_id=resolution.fragment_id,
         start_offset=resolution.start_offset,
         end_offset=resolution.end_offset,
@@ -321,35 +603,27 @@ def create_highlight(
             db,
             viewer_id,
             highlight_id=highlight.id,
-            block_id=_effect_uuid(effect_id, "nexus.highlight.create:note_block"),
+            block_id=_effect_uuid(effect_id, "create_highlight:note_block"),
             body_pm_json=notes.pm_doc_from_markdown_projection(note),
             client_mutation_id=(
-                f"assistant:{_effect_uuid(effect_id, 'nexus.highlight.create:note_mutation')}"
+                f"assistant:{_effect_uuid(effect_id, 'create_highlight:note_mutation')}"
             ),
         )
         created_refs.append({"kind": "note_block", "id": str(block.id), "label": "highlight note"})
-    note_uri = next(
-        (f"note_block:{ref['id']}" for ref in created_refs if ref["kind"] == "note_block"),
-        None,
-    )
-    return WriteEffect(
+    return _HandlerResult(
         created_refs=created_refs,
-        output={
-            "exact": exact,
-            "highlight_uri": f"highlight:{highlight.id}",
-            "note_uri": note_uri,
-        },
+        output={"highlighted": exact, "highlight_id": str(highlight.id)},
     )
 
 
-def create_assistant_edge(db: Session, viewer_id: UUID, args: dict[str, Any]) -> WriteEffect:
+def _mint_edge(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerResult:
     endpoints = ("media", "page", "note_block", "highlight")
     source = _parse_ref(_require_str(args, "source_uri"), allowed=endpoints)
     target = _parse_ref(_require_str(args, "target_uri"), allowed=endpoints)
     rationale = _require_str(args, "rationale")
     kind = _optional_str(args, "kind") or "context"
-    if kind not in EDGE_KINDS:
-        raise WriteToolRefusal("invalid_arguments", f"kind must be one of {', '.join(EDGE_KINDS)}")
+    if kind not in _EDGE_KINDS:
+        raise _ToolRefusal("invalid_arguments", f"kind must be one of {', '.join(_EDGE_KINDS)}")
 
     edge = create_edge(
         db,
@@ -375,25 +649,19 @@ def create_assistant_edge(db: Session, viewer_id: UUID, args: dict[str, Any]) ->
         "rationale": rationale,
         "label": rationale,
     }
-    return WriteEffect(
+    return _HandlerResult(
         created_refs=[created],
-        output={
-            "edge_id": str(edge.id),
-            "kind": kind,
-            "rationale": rationale,
-            "source_uri": source.uri,
-            "target_uri": target.uri,
-        },
+        output={"connected": [source.uri, target.uri], "edge_id": str(edge.id)},
     )
 
 
-def add_to_queue(db: Session, viewer_id: UUID, args: dict[str, Any]) -> WriteEffect:
+def _queue_add(db: Session, viewer_id: UUID, args: dict[str, Any]) -> _HandlerResult:
     media_ref = _parse_ref(_require_str(args, "media_uri"), allowed=("media",))
     assert_ref_visible(db, viewer_id=viewer_id, ref=media_ref)
     # Trusted ensure: append the row at Last if absent, never move an existing row
-    # (idempotent re-add). Only its lock-owned inserted receipt grants Undo
-    # ownership; an unlocked pre-read can race a concurrent manual insertion.
-    inserted = consumption_service.ensure_missing_items_for_assistant_in_current_transaction(
+    # (idempotent re-add). The item echoed for undo is the resulting Lectern row,
+    # whether newly ensured or already present.
+    consumption_service.ensure_missing_items_for_assistant_in_current_transaction(
         db,
         viewer_id=viewer_id,
         media_ids=[media_ref.id],
@@ -404,20 +672,10 @@ def add_to_queue(db: Session, viewer_id: UUID, args: dict[str, Any]) -> WriteEff
     if resolved is None:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     item_id, title = resolved
-    if len(inserted) > 1:
-        raise AssertionError("single-item queue ensure inserted more than one row")
-    if inserted and inserted[0] != (media_ref.id, item_id):
-        raise AssertionError("queue ensure returned a different inserted item")
-    was_inserted = bool(inserted)
-    created_refs = [{"kind": "queue", "id": str(item_id), "label": title}] if was_inserted else []
-    return WriteEffect(
-        created_refs=created_refs,
-        output={
-            "already_present": not was_inserted,
-            "media_uri": media_ref.uri,
-            "queue_entry_id": str(item_id),
-            "title": title,
-        },
+    created = {"kind": "queue", "id": str(item_id), "label": title}
+    return _HandlerResult(
+        created_refs=[created],
+        output={"queued": title, "queue_item_id": str(item_id)},
     )
 
 
@@ -437,41 +695,44 @@ def undo_tool_call(
     already-absent target (the user may have deleted it manually, R-5). Returns
     the ``assistant_message_id`` so the route can rebuild the trail.
     """
-    row = db.scalar(
-        select(MessageToolCall)
-        .join(Conversation, Conversation.id == MessageToolCall.conversation_id)
-        .where(
-            MessageToolCall.id == tool_call_id,
-            MessageToolCall.conversation_id == conversation_id,
-            Conversation.owner_user_id == viewer_id,
+    row = (
+        db.execute(
+            text(
+                """
+            SELECT mtc.id, mtc.tool_name, mtc.result_refs, mtc.reverted_at,
+                   mtc.assistant_message_id
+            FROM message_tool_calls mtc
+            JOIN conversations c ON c.id = mtc.conversation_id
+            WHERE mtc.id = :tool_call_id
+              AND mtc.conversation_id = :conversation_id
+              AND c.owner_user_id = :viewer_id
+            """
+            ),
+            {
+                "tool_call_id": tool_call_id,
+                "conversation_id": conversation_id,
+                "viewer_id": viewer_id,
+            },
         )
+        .mappings()
+        .fetchone()
     )
-    if row is None:
-        raise ApiError(ApiErrorCode.E_NOT_FOUND, "Write tool call not found")
-    record = decode_persisted_tool_record(row)
-    from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
-
-    declaration = next(
-        (
-            entry
-            for entry in CHAT_TOOL_DECLARATIONS
-            if str(entry.spec.id) == record.canonical_tool_id
-        ),
-        None,
-    )
-    if declaration is None or declaration.spec.effect is not ToolEffect.Write:
+    if row is None or row["tool_name"] not in WRITE_TOOL_NAMES:
         raise ApiError(ApiErrorCode.E_NOT_FOUND, "Write tool call not found")
 
-    assistant_message_id = row.assistant_message_id
-    if row.reverted_at is not None:
+    assistant_message_id: UUID = row["assistant_message_id"]
+    if row["reverted_at"] is not None:
         return assistant_message_id
 
-    for ref in row.result_refs or []:
+    for ref in row["result_refs"] or []:
         _revert_ref(db, viewer_id=viewer_id, ref=ref)
 
-    reverted_at = datetime.now(UTC)
-    row.reverted_at = reverted_at
-    row.updated_at = reverted_at
+    db.execute(
+        text(
+            "UPDATE message_tool_calls SET reverted_at = now(), updated_at = now() WHERE id = :id"
+        ),
+        {"id": tool_call_id},
+    )
     db.commit()
     return assistant_message_id
 

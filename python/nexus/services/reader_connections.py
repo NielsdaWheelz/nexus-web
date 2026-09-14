@@ -253,7 +253,15 @@ def _anchor_for_ref(
                 """
                 SELECT f.idx,
                        f.canonical_text,
-                       m.kind
+                       m.kind,
+                       (
+                           SELECT n.location_id
+                           FROM epub_nav_locations n
+                           WHERE n.media_id = f.media_id
+                             AND n.fragment_idx = f.idx
+                           ORDER BY n.ordinal ASC
+                           LIMIT 1
+                       ) AS epub_section_id
                 FROM fragments f
                 JOIN media m ON m.id = f.media_id
                 WHERE f.id = :id AND f.media_id = :media_id
@@ -264,15 +272,18 @@ def _anchor_for_ref(
         if row is None:
             return None
         is_epub = str(row[2]) == "epub"
+        locator: dict[str, object] = {
+            "type": "epub_fragment_offsets" if is_epub else "web_text_offsets",
+            "media_id": str(media_id),
+            "fragment_id": str(ref.id),
+            "start_offset": 0,
+            "end_offset": min(1, len(str(row[1] or ""))),
+            "media_kind": str(row[2]),
+        }
+        if is_epub and row[3] is not None:
+            locator["section_id"] = str(row[3])
         return ReaderConnectionAnchor(
-            locator={
-                "type": "epub_fragment_offsets" if is_epub else "web_text_offsets",
-                "media_id": str(media_id),
-                "fragment_id": str(ref.id),
-                "start_offset": 0,
-                "end_offset": min(1, len(str(row[1] or ""))),
-                "media_kind": str(row[2]),
-            },
+            locator=locator,
             order_key=f"fragment:{int(row[0]):010d}",
         )
     if ref.scheme == "highlight":
@@ -384,6 +395,14 @@ def _highlight_anchor(
                    f.idx,
                    hpa.page_number,
                    m.kind,
+                   (
+                       SELECT n.location_id
+                       FROM epub_nav_locations n
+                       WHERE n.media_id = h.anchor_media_id
+                         AND n.fragment_idx = f.idx
+                       ORDER BY n.ordinal ASC
+                       LIMIT 1
+                   ) AS epub_section_id,
                    h.exact,
                    h.prefix,
                    h.suffix
@@ -400,9 +419,9 @@ def _highlight_anchor(
     ).first()
     if row is None:
         return None
-    exact = str(row[7] or "")
-    prefix = str(row[8] or "")
-    suffix = str(row[9] or "")
+    exact = str(row[8] or "")
+    prefix = str(row[9] or "")
+    suffix = str(row[10] or "")
     if row[0] == "pdf_page_geometry" and row[5] is not None:
         quads = [
             {
@@ -455,6 +474,8 @@ def _highlight_anchor(
             "start_offset": int(row[2]),
             "end_offset": int(row[3]),
         }
+        if is_epub and row[7] is not None:
+            locator["section_id"] = str(row[7])
         locator = highlight_locator(
             locator,
             media_kind=str(row[6]),

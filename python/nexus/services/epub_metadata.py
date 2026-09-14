@@ -5,7 +5,6 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from nexus.db.models import Media
-from nexus.schemas.presence import Present
 from nexus.services.contributor_taxonomy import (
     ContributorObservationBatch,
     RawCreditEntry,
@@ -33,10 +32,8 @@ def persist_epub_metadata(db: Session, media: Media, result: EpubExtractionResul
     if result.description and not media.description:
         media.description = result.description[:2000]
 
-    if isinstance(result.edition_published_date, Present):
-        media.edition_published_date = result.edition_published_date.value
-    if isinstance(result.edition_isbn, Present):
-        media.edition_isbn = result.edition_isbn.value
+    if result.published_date and not media.published_date:
+        media.published_date = result.published_date[:64]
 
 
 def build_epub_author_observation(

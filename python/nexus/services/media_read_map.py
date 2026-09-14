@@ -291,17 +291,19 @@ def _heading_sections(
         # remaining ApiError means navigation is not ready yet → the map is not
         # available. Do not silently return a successful empty map.
         return None
-    fragment_ids = [s.target.fragment_id for s in nav.sections]
+    fragment_ids = [s.fragment_id for s in nav.sections if s.fragment_id is not None]
     previews = _fragment_previews(db, fragment_ids)
     sections: list[MediaReadMapSection] = []
     for nav_section in nav.sections:
+        if nav_section.fragment_id is None:
+            continue
         sections.append(
             MediaReadMapSection(
                 label=nav_section.label or "(section)",
                 section_kind="heading",
-                read_uri=f"fragment:{nav_section.target.fragment_id}",
-                preview=previews.get(nav_section.target.fragment_id, ""),
-                fragment_id=nav_section.target.fragment_id,
+                read_uri=f"fragment:{nav_section.fragment_id}",
+                preview=previews.get(nav_section.fragment_id, ""),
+                fragment_id=nav_section.fragment_id,
             )
         )
     return sections

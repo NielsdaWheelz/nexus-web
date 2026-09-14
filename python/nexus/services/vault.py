@@ -31,7 +31,6 @@ from nexus.db.models import (
     NoteBlock,
     Page,
 )
-from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.services import notes as notes_service
 from nexus.services.highlights import (
@@ -41,7 +40,7 @@ from nexus.services.highlights import (
     validate_offsets_or_400,
 )
 from nexus.services.note_indexing import enqueue_note_reindex
-from nexus.services.notes import delete_page_in_current_transaction, pm_doc_from_markdown_projection
+from nexus.services.notes import delete_page, pm_doc_from_markdown_projection
 from nexus.services.resource_graph import adjacency as graph_adjacency
 from nexus.services.resource_graph import highlight_notes as graph_highlight_notes
 from nexus.services.resource_graph.refs import ResourceRef
@@ -319,17 +318,6 @@ def _sync_highlight_content(
     viewer_id: UUID,
     file: NewHighlightFile | ExistingHighlightFile,
 ) -> tuple[bool, str | None]:
-    def attempt() -> tuple[bool, str | None]:
-        return _sync_highlight_content_attempt(db, viewer_id, file)
-
-    return retry_read_committed(db, "sync_vault_highlight", attempt)
-
-
-def _sync_highlight_content_attempt(
-    db: Session,
-    viewer_id: UUID,
-    file: NewHighlightFile | ExistingHighlightFile,
-) -> tuple[bool, str | None]:
     if isinstance(file, NewHighlightFile):
         try:
             _create_highlight_from_file(db, viewer_id, file)
@@ -579,17 +567,6 @@ def _sync_page_content(
     viewer_id: UUID,
     file: NewPageFile | ExistingPageFile,
 ) -> tuple[bool, str | None]:
-    def attempt() -> tuple[bool, str | None]:
-        return _sync_page_content_attempt(db, viewer_id, file)
-
-    return retry_read_committed(db, "sync_vault_page", attempt)
-
-
-def _sync_page_content_attempt(
-    db: Session,
-    viewer_id: UUID,
-    file: NewPageFile | ExistingPageFile,
-) -> tuple[bool, str | None]:
     if isinstance(file, NewPageFile):
         page = Page(user_id=viewer_id, title=file.title[:200])
         db.add(page)
@@ -613,8 +590,7 @@ def _sync_page_content_attempt(
     if file.server_updated_at != page.updated_at.isoformat():
         return False, "Server page changed since this file was exported"
     if file.deleted:
-        delete_page_in_current_transaction(db, viewer_id, page.id)
-        db.commit()
+        delete_page(db, viewer_id, page.id)
         return True, None
 
     body_changed, conflict_reason, changed_block_ids = _apply_page_body_from_vault(
@@ -1121,11 +1097,15 @@ def _sync_highlight_note_body_from_vault(
     existing = blocks[0] if blocks else None
     if not body:
         if existing is not None:
-            notes_service.delete_highlight_note_in_current_transaction(
+            notes_service.delete_highlight_note(
                 db,
                 viewer_id,
                 highlight_id=highlight_id,
                 note_block_id=existing.id,
+                client_mutation_id=_vault_mutation_id(
+                    "highlight-note-delete",
+                    {"highlight_id": highlight_id, "note_block_id": existing.id},
+                ),
             )
         return
     _save_highlight_note_body_from_vault(

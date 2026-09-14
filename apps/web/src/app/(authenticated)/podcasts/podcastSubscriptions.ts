@@ -23,9 +23,7 @@ import {
 import type { LibraryPlacementOption } from "@/lib/libraries/libraryPlacement";
 import { pluralize } from "@/lib/text/pluralize";
 import {
-  decodePodcastBackfillState,
   decodePodcastSyncStatus,
-  type PodcastBackfillState,
   type PodcastSyncStatus,
 } from "@/lib/podcasts/types";
 import {
@@ -36,6 +34,9 @@ import {
   expectNonnegativeInteger,
   expectString,
 } from "@/lib/validation";
+
+export type PodcastBackfillState =
+  "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed";
 
 export type PodcastBackfillRecord = {
   id: string;
@@ -89,6 +90,23 @@ export type PodcastDetailResponse = {
   podcast: PodcastSummary;
   subscription: PodcastSubscriptionDetail | null;
 };
+
+function decodePodcastBackfillState(
+  raw: unknown,
+  context: string,
+): PodcastBackfillState {
+  const state = expectString(raw, context);
+  if (
+    state !== "Pending" &&
+    state !== "Running" &&
+    state !== "Complete" &&
+    state !== "SourceLimited" &&
+    state !== "Failed"
+  ) {
+    throw new TypeError(`${context} is invalid`);
+  }
+  return state;
+}
 
 function decodePodcastBackfillRecord(
   raw: unknown,

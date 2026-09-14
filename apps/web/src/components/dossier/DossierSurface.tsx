@@ -25,13 +25,6 @@ import {
   useDossierSelector,
   type DossierControllerStore,
 } from "@/lib/dossiers/dossierControllerStore";
-import type {
-  DossierAdmittedGeneration,
-  DossierBuildToolPlan,
-  DossierCapacityPause,
-} from "@/lib/dossiers/dossierControllerTypes";
-import { formatDisplayDate } from "@/lib/display/format";
-import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import MediaAbstract from "@/components/dossier/MediaAbstract";
 import {
   deriveDossierViewModel,
@@ -132,7 +125,6 @@ export default function DossierSurface({
       ) : null}
 
       <ActivityBanner activity={vm.activity} />
-      <GenerationDetail detail={vm.generationDetail} />
 
       {vm.alert ? (
         <div className={`${styles.banner} ${styles.bannerAlert}`} role="alert">
@@ -286,8 +278,6 @@ function ActivityBanner({ activity }: { activity: DossierActivityView }) {
           <span>Generation stopped; it needs attention.</span>
         </div>
       );
-    case "CapacityPaused":
-      return <CapacityPausedBanner pause={activity.pause} />;
     case "Cancelled":
       return (
         <div className={styles.banner}>
@@ -299,76 +289,6 @@ function ActivityBanner({ activity }: { activity: DossierActivityView }) {
       throw new Error(`Unhandled activity: ${JSON.stringify(exhaustive)}`);
     }
   }
-}
-
-/** Spec 3.4: a quota-parked admission waits durably (no spend, no model switch);
- * the Cancel control in the controls row stays available. */
-function CapacityPausedBanner({ pause }: { pause: DossierCapacityPause }) {
-  const environment = useRenderEnvironment();
-  const formatInstant = (instant: string): string => {
-    const formatted = formatDisplayDate(instant, environment, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-    if (formatted === null) {
-      throw new Error(`Capacity pause instant is not a valid instant: ${instant}`);
-    }
-    return formatted;
-  };
-  return (
-    <div className={styles.banner}>
-      <span>Waiting for Codex capacity</span>
-      <span>
-        {pause.resetAt.kind === "Present"
-          ? `Codex reports capacity returning at ${formatInstant(pause.resetAt.value)}.`
-          : `Nexus checks again at ${formatInstant(pause.nextCheckAt)}.`}
-      </span>
-    </div>
-  );
-}
-
-function toolPlanFact(plan: DossierBuildToolPlan, toolPositions: number): string {
-  switch (plan.kind) {
-    case "NoModelTools":
-      return "No model tools";
-    case "ExactModelTools": {
-      const mode = plan.effectMode === "ReadOnly" ? "read-only" : "additive writes";
-      const calls = `${toolPositions} tool ${toolPositions === 1 ? "call" : "calls"}`;
-      return `${plan.planId} (${mode}) · ${calls}`;
-    }
-    default: {
-      const exhaustive: never = plan;
-      throw new Error(`Unhandled tool plan: ${JSON.stringify(exhaustive)}`);
-    }
-  }
-}
-
-/** AC 15: the admitted selection, disclosure, tool plan, and tool activity of
- * the build the activity concerns — semantic text only, never a control. */
-function GenerationDetail({
-  detail,
-}: {
-  detail: DossierAdmittedGeneration | null;
-}) {
-  if (detail === null) return null;
-  const { displayAtDispatch, toolPlan, toolPositions } = detail;
-  const facts = [
-    displayAtDispatch.route_label,
-    displayAtDispatch.model_label,
-    `${displayAtDispatch.reasoning_label} reasoning`,
-    displayAtDispatch.billing.label,
-    toolPlanFact(toolPlan, toolPositions),
-  ];
-  return (
-    <div
-      className={styles.revisionMeta}
-      role="note"
-      aria-label="Generation detail"
-    >
-      <span className={styles.abstractLabel}>Generation</span>
-      <span>{facts.join(" · ")}</span>
-    </div>
-  );
 }
 
 function DossierBody({

@@ -4,41 +4,33 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun
+from nexus.db.models import ChatRun, Message
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.schemas.chat_reader_selection import ReaderSelectionKey
-from nexus.schemas.conversation import AcceptedChatAdmission, ChatAdmissionReceipt, ChatDestination
-from nexus.services.generation_selection import CodexPersonalSelection, ProviderApiSelection
-from nexus.services.resource_mutation_replay import lookup_replay, record_replay
-
-CHAT_ADMISSION_SCOPE = "chat:admission"
-
-type ChatGenerationSelection = CodexPersonalSelection | ProviderApiSelection
-type ChatToolAuthority = Literal["ReadOnly", "AdditiveWrites"]
+from nexus.schemas.conversation import ChatDestination
+from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
 
 
-def chat_run_request_bytes(
+def compute_payload_hash(
     *,
     destination: ChatDestination,
     content: str,
-    catalog_definition_revision: str,
-    selection: ChatGenerationSelection,
-    tool_authority: ChatToolAuthority,
+    profile_id: str,
+    reasoning_option_id: str,
     reader_selection_key: ReaderSelectionKey | None,
-) -> bytes:
-    """Canonical send-idempotency bytes over answer-determining identity only.
+) -> str:
+    """Canonical send-idempotency digest over answer-determining identity only.
 
-    Uses the canonical destination/insertion, content, complete exact generation
-    selection and authority, and the durable ``ReaderSelectionKey``. It never hashes the live
+    Uses the canonical destination/insertion, content, complete profile
+    selection, and the durable ``ReaderSelectionKey``. It never hashes the live
     ``ReaderSelectionRevision`` or any live-resolved quote field — the server
     re-resolves and snapshots under the Highlight row lock at send, so hashing
     those would create false replay mismatches (breaking replay-after-source-
@@ -48,9 +40,8 @@ def chat_run_request_bytes(
     payload = {
         "destination": destination.model_dump(mode="json"),
         "content": content,
-        "catalog_definition_revision": catalog_definition_revision,
-        "selection": selection.model_dump(mode="json"),
-        "tool_authority": tool_authority,
+        "profile_id": profile_id,
+        "reasoning_option_id": reasoning_option_id,
         "reader_selection_key": (
             {
                 "media_id": str(reader_selection_key.media_id),
@@ -61,31 +52,75 @@ def chat_run_request_bytes(
         ),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return encoded.encode("utf-8")
+    return hashlib.sha256(encoded.encode()).hexdigest()
 
 
-def candidate_request_bytes(
+def compute_rerun_payload_hash(
     *,
-    operation: Literal["rerun", "regenerate"],
     source_assistant_message_id: UUID,
-    catalog_definition_revision: str,
-    selection: ChatGenerationSelection,
-    tool_authority: Literal["ReadOnly"],
-) -> bytes:
-    """Immutable incoming candidate identity, independent of deletable rows.
-
-    The source assistant ID names the frozen source turn. Source prompt/branch
-    facts are validated only on first admission, not reconstructed for replay.
-    """
+    source_run: ChatRun,
+    source_user_message: Message,
+) -> str:
     payload = {
-        "operation": operation,
+        "operation": "chat_response_rerun",
         "source_assistant_message_id": str(source_assistant_message_id),
-        "catalog_definition_revision": catalog_definition_revision,
-        "selection": selection.model_dump(mode="json"),
-        "tool_authority": tool_authority,
+        "source_run_id": str(source_run.id),
+        "source_conversation_id": str(source_run.conversation_id),
+        "source_user_message_id": str(source_user_message.id),
+        "source_user_parent_message_id": (
+            str(source_user_message.parent_message_id)
+            if source_user_message.parent_message_id is not None
+            else None
+        ),
+        "source_user_branch_root_message_id": (
+            str(source_user_message.branch_root_message_id)
+            if source_user_message.branch_root_message_id is not None
+            else None
+        ),
+        "source_user_branch_anchor_kind": source_user_message.branch_anchor_kind,
+        "source_user_branch_anchor": source_user_message.branch_anchor or {},
+        "source_prompt_content": source_user_message.content,
+        "source_profile_id": source_run.profile_id,
+        "source_reasoning_option_id": source_run.reasoning_option_id,
     }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return encoded.encode("utf-8")
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def compute_regeneration_payload_hash(
+    *,
+    source_assistant_message_id: UUID,
+    source_run: ChatRun,
+    source_user_message: Message,
+) -> str:
+    """The regeneration counterpart of ``compute_rerun_payload_hash``: identical
+    immutable source facts, distinguished only by the ``operation`` tag so a
+    single owner + idempotency key never denotes both a rerun and a regeneration
+    (spec §8: "same key with another source/operation returns replay mismatch")."""
+    payload = {
+        "operation": "chat_response_regeneration",
+        "source_assistant_message_id": str(source_assistant_message_id),
+        "source_run_id": str(source_run.id),
+        "source_conversation_id": str(source_run.conversation_id),
+        "source_user_message_id": str(source_user_message.id),
+        "source_user_parent_message_id": (
+            str(source_user_message.parent_message_id)
+            if source_user_message.parent_message_id is not None
+            else None
+        ),
+        "source_user_branch_root_message_id": (
+            str(source_user_message.branch_root_message_id)
+            if source_user_message.branch_root_message_id is not None
+            else None
+        ),
+        "source_user_branch_anchor_kind": source_user_message.branch_anchor_kind,
+        "source_user_branch_anchor": source_user_message.branch_anchor or {},
+        "source_prompt_content": source_user_message.content,
+        "source_profile_id": source_run.profile_id,
+        "source_reasoning_option_id": source_run.reasoning_option_id,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode()).hexdigest()
 
 
 def normalize_idempotency_key(idempotency_key: str | None) -> str:
@@ -97,64 +132,36 @@ def normalize_idempotency_key(idempotency_key: str | None) -> str:
     return normalized_key
 
 
-def lookup_chat_admission(
-    db: Session, *, viewer_id: UUID, idempotency_key: str, request_bytes: bytes
-) -> ChatAdmissionReceipt | None:
-    stored = lookup_replay(
-        db,
-        viewer_id=viewer_id,
-        scope=CHAT_ADMISSION_SCOPE,
-        client_mutation_id=hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest(),
-        request_bytes=request_bytes,
-    )
-    if stored is None:
-        return None
-    receipt = ChatAdmissionReceipt.model_validate(stored)
-    # justify-defect: the indexed operation identity and its immutable receipt
-    # are written atomically; inconsistent persisted identity cannot be replayed.
-    if receipt.idempotency_key != idempotency_key:
-        raise AssertionError("chat admission receipt identity differs from its ledger key")
-    return receipt
-
-
-def accepted_chat_admission(run: ChatRun, idempotency_key: str) -> ChatAdmissionReceipt:
-    return ChatAdmissionReceipt(
-        idempotency_key=idempotency_key,
-        outcome=AcceptedChatAdmission(
-            conversation_id=run.conversation_id,
-            run_id=run.id,
-            assistant_message_id=run.assistant_message_id,
-        ),
+def get_run_by_idempotency_key(
+    db: Session, viewer_id: UUID, idempotency_key: str
+) -> ChatRun | None:
+    return (
+        db.execute(
+            select(ChatRun).where(
+                ChatRun.owner_user_id == viewer_id,
+                ChatRun.idempotency_key == idempotency_key,
+            )
+        )
+        .scalars()
+        .first()
     )
 
 
-def record_chat_admission(
-    db: Session, *, viewer_id: UUID, request_bytes: bytes, receipt: ChatAdmissionReceipt
+def raise_if_payload_mismatch(
+    run: ChatRun,
+    payload_hash: str,
+    viewer_id: UUID,
+    idempotency_key: str,
 ) -> None:
-    record_replay(
-        db,
-        viewer_id=viewer_id,
-        scope=CHAT_ADMISSION_SCOPE,
-        client_mutation_id=hashlib.sha256(receipt.idempotency_key.encode("utf-8")).hexdigest(),
-        request_bytes=request_bytes,
-        response_json=receipt.model_dump(mode="json"),
-        changed_lanes={},
+    if run.payload_hash == payload_hash:
+        return
+    logger.warning(
+        "chat_run.idempotency_mismatch",
+        **safe_kv(idempotency_key=idempotency_key, viewer_id=str(viewer_id)),
     )
-
-
-def log_chat_admission(receipt: ChatAdmissionReceipt, *, viewer_id: UUID, replayed: bool) -> None:
-    """Correlate a committed decision without exposing opaque caller input."""
-    outcome = receipt.outcome
-    logger.info(
-        "chat.admission.decided",
-        viewer_id=str(viewer_id),
-        command_key_sha256=hashlib.sha256(receipt.idempotency_key.encode("utf-8")).hexdigest(),
-        decision=outcome.kind,
-        replayed=replayed,
-        run_id=str(outcome.run_id) if isinstance(outcome, AcceptedChatAdmission) else None,
-        rejection_code=outcome.reason.code
-        if not isinstance(outcome, AcceptedChatAdmission)
-        else None,
+    raise ApiError(
+        ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH,
+        "Idempotency key reused with different payload",
     )
 
 

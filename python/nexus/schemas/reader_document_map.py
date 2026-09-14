@@ -255,7 +255,6 @@ class ReaderDocumentMapMarkerOut(BaseModel):
     kind: ReaderDocumentMapMarkerKind
     item_id: str
     position: float = Field(ge=0.0, le=1.0)
-    end_position: Presence[Annotated[float, Field(ge=0.0, le=1.0)]]
     tone: ReaderDocumentMapMarkerTone
     label: str
     preview: Presence[str]
@@ -280,7 +279,6 @@ class ReaderDocumentMapDiagnosticsOut(BaseModel):
 
 class ReaderDocumentMapOut(BaseModel):
     media_id: UUID
-    generation: Presence[Annotated[int, Field(ge=1, strict=True)]]
     media_kind: str
     title: str
     status: ReaderDocumentMapStatus

@@ -12,6 +12,7 @@ import AddPanelBoundary from "./AddPanelBoundary";
 import ChooseBrowsePage from "./ChooseBrowsePage";
 import ChooseCreatePage from "./ChooseCreatePage";
 import ManageTabsPage from "./ManageTabsPage";
+import MediaActivityPage from "./MediaActivityPage";
 import DesktopNexus from "./desktop/DesktopNexus";
 import { useNexusController, type NexusController } from "./useNexusController";
 import styles from "./Nexus.module.css";
@@ -29,6 +30,20 @@ function desktopWorkflow(input: {
     case "Root":
     case "EntryActions":
       return undefined;
+    case "Activity":
+      content = (
+        <MediaActivityPage
+          onBack={controller.back}
+          onOpenMedia={(mediaId) =>
+            controller.openTarget({
+              kind: "InternalHref",
+              href: `/media/${mediaId}`,
+              labelHint: "Media",
+            })
+          }
+        />
+      );
+      break;
     case "CommandFailed":
       content = (
         <section className={styles.workflowPage}>
@@ -200,7 +215,6 @@ function desktopWorkflow(input: {
           onRetryRetained={controller.retryRetainedActivation}
           onCancelRetained={controller.cancelRetainedActivation}
           feedback={controller.managedTabsFeedback}
-          teachAdjacentSwipe={false}
         />
       );
       break;
@@ -287,7 +301,6 @@ export default function Nexus() {
           paneCount={controller.paneCount}
           switchboardOpen={controller.open}
           onOpen={openMobileNexus}
-          onActivateAdjacentPane={controller.activateAdjacentPane}
           onButtonNodeChange={setCurrentMobileNexusButton}
         />
       ) : null}

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { expect, type Page } from "playwright/test";
+import type { Page } from "playwright/test";
 import { isolatedRequest, pageRequest, requireExactOrigin } from "./request";
 import { webOrigin } from "./fixtures";
 
@@ -13,9 +13,8 @@ export const ARTICLE_QUOTE =
 
 const TEST_EXTENSION_REDIRECT_ORIGIN =
   "https://pfcfdmanlahjkanalhpnfjflgaaahgib.chromiumapp.org";
-const ARTICLE_READINESS_TIMEOUT_MS = 90_000;
 
-async function captureCanonicalArticle(
+export async function captureCanonicalArticle(
   page: Page,
   scenario: string,
 ): Promise<string> {
@@ -61,52 +60,21 @@ async function captureCanonicalArticle(
         `Article fixture capture failed: status=${response.status()} body=${text.slice(0, 500)}`,
       );
     }
-    const mediaId = (JSON.parse(text) as { data?: { media_id?: unknown } }).data
-      ?.media_id;
-    if (typeof mediaId !== "string") {
+    const data = (
+      JSON.parse(text) as {
+        data?: { ingest_enqueued?: unknown; media_id?: unknown };
+      }
+    ).data;
+    if (!data || typeof data.media_id !== "string") {
       throw new Error("Article fixture capture omitted its media identity.");
     }
-    return mediaId;
+    if (data.ingest_enqueued !== true) {
+      throw new Error(
+        `Article fixture capture did not enqueue durable ingest: body=${text.slice(0, 500)}`,
+      );
+    }
+    return data.media_id;
   } finally {
     await extension.dispose();
   }
-}
-
-/**
- * Capture the canonical article and wait for its complete reader/search
- * projection. Bounded-child ingest plus the fresh-database maintenance queue
- * can legitimately exceed the old in-process worker's 25-second bound.
- */
-export async function captureReadableArticle(
-  page: Page,
-  scenario: string,
-): Promise<string> {
-  const mediaId = await captureCanonicalArticle(page, scenario);
-  const app = pageRequest(page, webOrigin);
-  await expect
-    .poll(
-      async () => {
-        const response = await app.get(`/api/media/${mediaId}`);
-        if (!response.ok()) return `http-${response.status()}`;
-        const media = (await response.json()) as {
-          data: {
-            processing_status: string;
-            retrieval_status: string | null;
-            last_error_code: string | null;
-          };
-        };
-        // The error code rides the polled string so a readiness failure names
-        // its ingest-stage cause in the assertion output instead of dying as
-        // an anonymous "failed".
-        return `${media.data.processing_status}:${media.data.retrieval_status}:${
-          media.data.last_error_code ?? ""
-        }`;
-      },
-      {
-        message: `Expected captured article ${mediaId} to become readable and searchable.`,
-        timeout: ARTICLE_READINESS_TIMEOUT_MS,
-      },
-    )
-    .toBe("ready_for_reading:ready:");
-  return mediaId;
 }

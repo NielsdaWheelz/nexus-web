@@ -34,14 +34,12 @@ from nexus.oracle.manifest import (
 from nexus.release_artifact import RuntimeIdentity
 from nexus.runtime_health import get_runtime_identity
 from nexus.services import oracle_corpus, oracle_plates
-from nexus.services.capabilities import OperatorRecovery
 from nexus.services.content_indexing import (
     ensure_media_content_reindex_job,
-    repair_dead_media_reindex,
     request_media_content_reindex,
 )
 from nexus.services.image_validation import fetch_validated_image
-from nexus.services.media_source_ingest import repair_dead_source_execution
+from nexus.services.ingest_recovery import repair_media_work
 from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
@@ -185,7 +183,7 @@ def _pending_source_job_ids(
     *, session_factory: sessionmaker[Session], media_ids: tuple[UUID, ...]
 ) -> tuple[UUID, ...]:
     pending: list[UUID] = []
-    suspended: list[tuple[UUID, UUID, UUID]] = []
+    suspended: list[tuple[UUID, UUID]] = []
     with session_factory() as db:
         for media_id in sorted(media_ids):
             media = db.get(Media, media_id)
@@ -214,17 +212,11 @@ def _pending_source_job_ids(
             if job is None:
                 raise RuntimeError(f"Oracle media {media_id} source job disappeared")
             if job.status == "dead":
-                suspended.append((media_id, attempt.id, attempt.job_id))
+                suspended.append((media_id, attempt.job_id))
             pending.append(attempt.job_id)
-    for media_id, expected_attempt_id, expected_job_id in suspended:
+    for media_id, expected_job_id in suspended:
         with session_factory() as db:
-            replayed_job_id = repair_dead_source_execution(
-                db,
-                actor=OperatorRecovery(),
-                media_id=media_id,
-                expected_attempt_id=expected_attempt_id,
-                expected_job_id=expected_job_id,
-            ).job_id
+            replayed_job_id = repair_media_work(db, media_id=media_id, scope="Source")
         if replayed_job_id != expected_job_id:
             raise RuntimeError(f"Oracle media {media_id} replayed a foreign source job")
     return tuple(dict.fromkeys(pending))
@@ -236,7 +228,7 @@ def _ensure_index_job_ids(
     provider = current_transcript_embedding_provider()
     model = current_transcript_embedding_model()
     job_ids: list[UUID] = []
-    suspended: list[tuple[UUID, int, UUID]] = []
+    suspended: list[tuple[UUID, UUID]] = []
     with session_factory() as db:
         for media_id in sorted(media_ids):
             media = db.get(Media, media_id)
@@ -270,18 +262,12 @@ def _ensure_index_job_ids(
                     request_id=f"oracle-reconcile:{media_id}",
                 )
             if intent.suspended:
-                suspended.append((media_id, intent.revision, intent.background_job_id))
+                suspended.append((media_id, intent.background_job_id))
             job_ids.append(intent.background_job_id)
         db.commit()
-    for media_id, expected_revision, expected_job_id in suspended:
+    for media_id, expected_job_id in suspended:
         with session_factory() as db:
-            replayed_job_id = repair_dead_media_reindex(
-                db,
-                actor=OperatorRecovery(),
-                media_id=media_id,
-                expected_revision=expected_revision,
-                expected_job_id=expected_job_id,
-            ).job_id
+            replayed_job_id = repair_media_work(db, media_id=media_id, scope="Search")
         if replayed_job_id != expected_job_id:
             raise RuntimeError(f"Oracle media {media_id} replayed a foreign content-index job")
     return tuple(dict.fromkeys(job_ids))
