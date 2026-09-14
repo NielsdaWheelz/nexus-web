@@ -157,6 +157,13 @@ The quick-note composer is a frontend presentation owner. It may create a
 highlight and then attach a note in one gesture, but persistence still flows
 through the canonical highlight and note paths.
 
+the selection Note action focuses the quick-note textbox. enter flushes the
+existing save queue and closes only after the latest body is saved; shift+enter
+inserts a newline. composition and reference selection retain their enter
+handling. editing during submission cancels dismissal, and save failure keeps
+the draft open. inline highlight notes retain multiline enter. desktop and
+mobile composers own back dismissal throughout the selection-to-editor handoff.
+
 ## Learn
 
 **Learn** is Highlight-first. A reader selection is created or reused through
