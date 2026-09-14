@@ -34,3 +34,8 @@ area · opened YYYY-MM-DD by <who> · P2
 test control · opened 2026-09-13 by codex · P1
 candidate-image proofs can retain gigabytes of shared buildkit cache and exhaust
 the devbox; see `docs/tickets/devbox-buildkit-cache-retention.md`.
+
+### [OPEN] OI-002 — privileged host proofs lack an execution preflight
+test control · opened 2026-09-14 by codex · P2
+host-release proof discovers unavailable privilege only after starting the
+kernel portfolio; see `docs/tickets/host-proof-privilege-preflight.md`.
