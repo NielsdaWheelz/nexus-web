@@ -589,9 +589,16 @@ test("canonical resources yield identical dropdown semantics across surfaces and
     mobileMediaPane,
     "the requested mobile media pane did not become active.",
   ).toBeVisible({ timeout: 20_000 });
+  const mobilePaneBar = page.getByRole("banner").filter({
+    has: page.getByRole("heading", { name: ARTICLE_TITLE, exact: true }),
+  });
+  await expect(
+    mobilePaneBar,
+    "mobile chrome did not project the requested reader heading.",
+  ).toBeVisible();
   const mobilePaneItems = await readContextualResourceMenu(
     page,
-    mobileMediaPane.getByRole("button", { name: "More", exact: true }),
+    mobilePaneBar.getByRole("button", { name: "More", exact: true }),
     "mobile pane bar",
     MEDIA_PANE_LOCAL_PREFIX,
     oracle,
