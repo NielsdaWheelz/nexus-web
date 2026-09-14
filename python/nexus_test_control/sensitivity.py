@@ -481,6 +481,9 @@ def declared_fault_for_proof(repo_root: Path, proof: str) -> str | None:
 
 def canonical_proof(repo_root: Path, proof: str) -> str:
     path = _proof_path(proof)
+    _runner, separator, node = proof.partition(":")
+    if separator and "::" in node:
+        return proof
     manifest_path = repo_root / "testdata/proofs.json"
     if not manifest_path.is_file():
         return proof

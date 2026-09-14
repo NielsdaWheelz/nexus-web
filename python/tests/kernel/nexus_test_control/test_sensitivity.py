@@ -151,6 +151,8 @@ def test_priority_manifest_canonicalizes_a_file_level_proof(tmp_path: Path) -> N
     target.write_text(json.dumps(manifest))
 
     assert canonical_proof(tmp_path, f"pytest:{path}") == exact
+    other = f"pytest:{path}::test_other_owner"
+    assert canonical_proof(tmp_path, other) == other
 
 
 def test_base_sensitivity_runs_the_overlaid_proof_red_then_current_green(
