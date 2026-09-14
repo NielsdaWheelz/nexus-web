@@ -1,6 +1,11 @@
 # bounded workspace implementation
 
-status: implementation in progress under the user's subsequent authorization; no production release authorized.
+> 2026-09-14 pause: historical document; implementation is stopped.
+> the [evidence audit](bounded-workspace-evidence-audit.md) distinguishes findings,
+> decisions and unverified claims. the [replacement plan](production-crash-replacement-plan.md)
+> supersedes this execution scope and awaits user review.
+
+status: execution superseded by the user's pause/replan instruction; preserved for reference, not further implementation.
 origin: 2026-09-13 council; [diagnosis](second-tab-crash-council-review.md), [rationale](workspace-architecture-from-first-principles.md).
 
 verification scope, 2026-09-14: the user waived physical-handset checks because

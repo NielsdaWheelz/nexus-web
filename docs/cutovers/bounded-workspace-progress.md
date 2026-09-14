@@ -1,5 +1,10 @@
 # bounded workspace implementation progress
 
+> 2026-09-14 pause: historical document; implementation is stopped.
+> the [evidence audit](bounded-workspace-evidence-audit.md) distinguishes findings,
+> decisions and unverified claims. the [replacement plan](production-crash-replacement-plan.md)
+> supersedes this execution scope and awaits user review.
+
 status: in progress; no production release.
 origin: 2026-09-13; branch `codex/bounded-workspace`; source base `7fa89b88c8342bca9edfb46a6d20053c49555fb2`.
 worktree: `/home/niels/src/personal/nexus-web-bounded-workspace`.

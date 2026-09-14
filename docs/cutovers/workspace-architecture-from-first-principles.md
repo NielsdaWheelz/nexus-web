@@ -1,5 +1,10 @@
 # a simpler architecture for nexus
 
+> 2026-09-14 pause: historical document; implementation is stopped.
+> the [evidence audit](bounded-workspace-evidence-audit.md) distinguishes findings,
+> decisions and unverified claims. the [replacement plan](production-crash-replacement-plan.md)
+> supersedes this execution scope and awaits user review.
+
 implementation contracts and gates: [bounded workspace implementation](bounded-workspace-implementation.md).
 
 the recommended design is a persistent document workspace with lightweight pane views, published reading artifacts, locally durable pending work, one application api, and isolated background execution. organize modules around what changes together and what must survive together.

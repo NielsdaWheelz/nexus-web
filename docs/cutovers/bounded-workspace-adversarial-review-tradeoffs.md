@@ -1,5 +1,10 @@
 # bounded workspace adversarial review: stated trade-offs
 
+> 2026-09-14 pause: historical document; implementation is stopped.
+> the [evidence audit](bounded-workspace-evidence-audit.md) distinguishes findings,
+> decisions and unverified claims. the [replacement plan](production-crash-replacement-plan.md)
+> supersedes this execution scope and awaits user review.
+
 every trade-off a fix package took, verbatim, grouped by package. none were absorbed silently; each names the cheaper choice it rejected. see bounded-workspace-adversarial-review.md for the ledger.
 
 ## P_x_ingest

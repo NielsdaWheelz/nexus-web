@@ -1,5 +1,10 @@
 # second-tab crash: council review and proposed repair
 
+> 2026-09-14 pause: historical document; implementation is stopped.
+> the [evidence audit](bounded-workspace-evidence-audit.md) distinguishes findings,
+> decisions and unverified claims. the [replacement plan](production-crash-replacement-plan.md)
+> supersedes this execution scope and awaits user review.
+
 date: 2026-09-13
 status: api memory-kill and gateway-classification chain confirmed; no implementation or deployment
 production: `7e8fd48244b3b436965037738e05785bb4931be1`

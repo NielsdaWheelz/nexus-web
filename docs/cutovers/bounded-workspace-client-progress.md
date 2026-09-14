@@ -1,5 +1,10 @@
 # bounded workspace client progress
 
+> 2026-09-14 pause: historical document; implementation is stopped.
+> the [evidence audit](bounded-workspace-evidence-audit.md) distinguishes findings,
+> decisions and unverified claims. the [replacement plan](production-crash-replacement-plan.md)
+> supersedes this execution scope and awaits user review.
+
 status: implementation in progress; no commit or deployment.
 origin: 2026-09-13; spec steps b/c and initial e.
 

@@ -1,5 +1,10 @@
 # Priority-risk ownership and routing review — X11a_proof_registry
 
+> 2026-09-14 pause: historical document; implementation is stopped.
+> the [evidence audit](bounded-workspace-evidence-audit.md) distinguishes findings,
+> decisions and unverified claims. the [replacement plan](production-crash-replacement-plan.md)
+> supersedes this execution scope and awaits user review.
+
 Reviewed against base `7fa89b88c8` and the working tree of
 `/home/niels/src/personal/nexus-web-bounded-workspace` on 2026-09-14.
 Findings applied: G1-2, SPEC_coverage_global-2, T_python_tests-2, T_python_tests-3
