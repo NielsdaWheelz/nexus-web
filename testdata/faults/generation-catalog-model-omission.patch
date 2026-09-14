@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/generation_catalog.py b/python/nexus/services/generation_catalog.py
+--- a/python/nexus/services/generation_catalog.py
++++ b/python/nexus/services/generation_catalog.py
+@@ -1118,7 +1118,7 @@
+                 billing=disclosure.billing,
+                 privacy=disclosure.privacy,
+                 processor_chain=disclosure.processor_chain,
+-                models=tuple(model_rows),
++                models=tuple(row for row in model_rows if row.key != "openai:gpt-5.6-luna"),
+             )
+         )
+         semantic_routes.append(

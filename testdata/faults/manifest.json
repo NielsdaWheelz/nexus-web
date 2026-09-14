@@ -1135,6 +1135,15 @@
       "changed_owner_sha256": "76bd914ede2b93193676e4992c0822c64abdc7eb626ff739a2b6655d44c6efc5"
     },
     {
+      "id": "generation-catalog-model-omission",
+      "patch": "testdata/faults/generation-catalog-model-omission.patch",
+      "sha256": "f43e54b3dba6ecea003c91e97f5c9b5357eb4db2bcd21ae7363e0b17fc3748e4",
+      "proofs": [
+        "pytest:python/tests/service/test_generation_catalog.py::test_complete_catalog_and_selection_contract"
+      ],
+      "expected_failure": "'anthropic:claude-sonnet-5' != 'openai:gpt-5.6-luna'"
+    },
+    {
       "id": "generation-provider-publication-omission",
       "patch": "testdata/faults/generation-provider-publication-omission.patch",
       "sha256": "1641fafff99afe9a4fe5d0478d756f6789593ead5fd79685863ce884c75add8f",
