@@ -9,8 +9,7 @@
     "lint:css-tokens": "node scripts/check-css-tokens.mjs",
     "lint": "eslint src/ vitest.config.ts --max-warnings 0",
     "typecheck": "rm -rf .next/types && next typegen && tsc --noEmit",
-    "test:unit": "vitest run --bail=1",
-    "check:bundle": "node scripts/check-bundle.mjs"
+    "test:unit": "vitest run --bail=1"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -1700,16 +1700,15 @@ they open over Resume and never become panes.
   the previously active pane.
 - **Measurement loop.** `nexus:web-vitals` → `WebVitalsReporter` subscriber →
   `sendBeacon` → BFF `/api/telemetry/web-vitals` → FastAPI `/telemetry/web-vitals` →
-  structlog `rum.web_vital` (request-id-correlated). A CI **First Load JS budget**
-  (typed `bundle` capability, ≤ 115 kB gz vs ~104 kB measured) runs in the
-  strict-CSP standalone build. Kept
+  structlog `rum.web_vital` (request-id-correlated). The measured **First Load JS
+  budget** remains ≤ 115 kB gz against the ~104 kB baseline; measure it manually
+  from a production build when performance-sensitive code changes. Kept
   constraints: nonce-CSP + **streaming only** — no PPR, no `next/dynamic`, no
   server-emitted `modulepreload` (chunk URLs are unknown server-side); `React.lazy` +
   runtime `preloadPane` (warming all restored visible panes) stays the splitting
-  mechanism. Interaction-budget browser tests also consume the standard
-  `nexus_auth`, `nexus_openables`, `nexus_api`, and `nexus_bff` Server-Timing
-  phases, separating auth, service, remaining API, BFF, response-transfer, and
-  client-commit time before an owner is optimized.
+  mechanism. The standard `nexus_auth`, `nexus_openables`, `nexus_api`, and
+  `nexus_bff` Server-Timing phases separate auth, service, remaining API, BFF,
+  response-transfer, and client-commit time during manual diagnosis.
 - **BFF / proxy / auth / SSE** (`lib/api/*`, `lib/auth/*`, `lib/supabase/*`): covered
   in §5. The browser holds **no** Supabase client and no tokens; `lib/auth/dal.ts`
   `verifySession()` is the one verified-session boundary for protected pages/
