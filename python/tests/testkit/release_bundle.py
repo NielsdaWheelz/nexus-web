@@ -12,8 +12,6 @@ from pathlib import Path
 from typing import Any
 
 PUBLISHER_RUN_ID = 7001
-SOURCE_CI_RUN_ID = 6001
-SOURCE_CI_WORKFLOW_ID = 5001
 ARTIFACT_ID = 8001
 
 
@@ -42,13 +40,8 @@ def _candidate(state: dict[str, Any]) -> dict[str, object]:
             "api": "ghcr.io/nielsdawheelz/nexus-api@sha256:" + "a" * 64,
             "worker": "ghcr.io/nielsdawheelz/nexus-worker@sha256:" + "b" * 64,
         },
-        "publisher_run_attempt": 1,
-        "publisher_run_id": state["manifest_publisher_run_id"],
         "repository": "NielsdaWheelz/nexus-web",
-        "schema_version": 1,
-        "source_ci_run_attempt": 1,
-        "source_ci_run_id": SOURCE_CI_RUN_ID,
-        "source_ci_workflow_id": SOURCE_CI_WORKFLOW_ID,
+        "schema_version": 2,
         "source_sha": state["source_sha"],
     }
     return candidate
@@ -63,13 +56,17 @@ def _fake_git(state: dict[str, Any], arguments: list[str]) -> None:
     raise AssertionError(f"unsupported fake git call: {arguments!r}")
 
 
-def _artifact(state: dict[str, Any], *, expired: bool = False) -> dict[str, object]:
+def _artifact(state: dict[str, Any], *, artifact_id: int = ARTIFACT_ID) -> dict[str, object]:
     return {
         "digest": "sha256:" + "d" * 64,
-        "expired": expired,
-        "id": ARTIFACT_ID + int(expired),
+        "expired": False,
+        "id": artifact_id,
         "name": f"nexus-backend-release-{state['source_sha']}",
-        "workflow_run": {"id": PUBLISHER_RUN_ID},
+        "workflow_run": {
+            "head_branch": state["artifact_head_branch"],
+            "head_sha": state["artifact_head_sha"],
+            "id": PUBLISHER_RUN_ID,
+        },
     }
 
 
@@ -96,51 +93,9 @@ def _fake_gh(state: dict[str, Any], arguments: list[str]) -> None:
     if arguments[:3] == ["api", "--paginate", "--slurp"]:
         artifacts = [_artifact(state)]
         if state["duplicate_artifact"]:
-            artifacts.append(_artifact(state, expired=True))
+            artifacts.append(_artifact(state, artifact_id=ARTIFACT_ID + 1))
         print(
             _canonical_json([{"artifacts": artifacts, "total_count": len(artifacts)}]),
-            end="",
-        )
-        return
-    if arguments[:2] == [
-        "api",
-        (f"repos/NielsdaWheelz/nexus-web/actions/runs/{PUBLISHER_RUN_ID}/attempts/1"),
-    ]:
-        print(
-            _canonical_json(
-                {
-                    "conclusion": "success",
-                    "event": "workflow_run",
-                    "head_branch": "main",
-                    "head_sha": "f" * 40,
-                    "id": PUBLISHER_RUN_ID,
-                    "path": state["publisher_path"],
-                    "repository": {"full_name": "NielsdaWheelz/nexus-web"},
-                    "run_attempt": state["publisher_run_attempt"],
-                }
-            ),
-            end="",
-        )
-        return
-    if arguments[:2] == [
-        "api",
-        f"repos/NielsdaWheelz/nexus-web/actions/runs/{SOURCE_CI_RUN_ID}/attempts/1",
-    ]:
-        print(
-            _canonical_json(
-                {
-                    "conclusion": "success",
-                    "event": "push",
-                    "head_branch": "main",
-                    "head_sha": state["source_sha"],
-                    "id": SOURCE_CI_RUN_ID,
-                    "name": "CI",
-                    "path": state["source_ci_path"],
-                    "repository": {"full_name": "NielsdaWheelz/nexus-web"},
-                    "run_attempt": state["source_ci_run_attempt"],
-                    "workflow_id": state["source_ci_workflow_id"],
-                }
-            ),
             end="",
         )
         return
@@ -185,14 +140,10 @@ class ReleaseBundleHarness:
         _save_state(
             state_path,
             {
+                "artifact_head_branch": "main",
+                "artifact_head_sha": source_sha,
                 "duplicate_artifact": False,
                 "events": [],
-                "manifest_publisher_run_id": PUBLISHER_RUN_ID,
-                "publisher_path": ".github/workflows/backend-images.yml",
-                "publisher_run_attempt": 1,
-                "source_ci_path": ".github/workflows/ci.yml",
-                "source_ci_run_attempt": 1,
-                "source_ci_workflow_id": SOURCE_CI_WORKFLOW_ID,
                 "source_sha": source_sha,
             },
         )

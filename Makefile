@@ -55,7 +55,7 @@ help:
 	@echo "  make generate-resource-capabilities - Regenerate the browser resource-capability projection from the backend table"
 	@echo ""
 	@echo "Testing:"
-	@echo "  ./scripts/test --help   - List the sole test and verification API"
+	@echo "  ./scripts/test          - Run the complete deterministic check"
 	@echo "  make smoke              - Post-deploy auth smoke check against production URLs"
 	@echo "  make smoke-auth         - Full hosted Auth configuration and production smoke gate"
 	@echo ""

@@ -36,8 +36,8 @@ expected Oracle manifest digest, task contract, and captured VPS config.
 - `deploy/hetzner/deploy.sh <source-sha>` is the only application release
   entrypoint. Rerun it unchanged to resume.
 - Release only a clean checkout where `HEAD == origin/main == source-sha` and
-  exact `main` CI succeeded.
-- CI builds each backend target once. Production pulls manifest-selected GHCR
+  the exact SHA's immutable backend bundle exists.
+- The post-merge publisher builds each backend target once. Production pulls manifest-selected GHCR
   digests and never builds an application image.
 - Vercel produces a `READY` production-target candidate with no production or
   custom-domain alias. Vercel-generated `.vercel.app` aliases are expected;
@@ -122,27 +122,24 @@ controller rejects an already promoted new candidate.
 
 ## Immutable artifact lineage
 
-Successful exact-`main` `CI` triggers `.github/workflows/backend-images.yml`.
-It builds `docker/Dockerfile.backend` targets `api` and `worker`, verifies their
-baked identity is equal, pushes public GHCR digests, and uploads
+Each push to `main` triggers `.github/workflows/backend-images.yml`. It builds
+`docker/Dockerfile.backend` targets `api` and `worker`, verifies their baked
+identity is equal, pushes public GHCR digests, and uploads
 `nexus-backend-release-<source-sha>`.
 
 The strict bundle contains the candidate manifest, production Compose file,
 Caddy comparison input, host controller, and its manifest decoder. The manifest
-binds source CI run/workflow IDs and attempt `1`, publisher run ID and attempt
-`1`, repository, source SHA, both image digests, one expected database revision,
-and one expected Oracle manifest digest. The shared resolver requires one and
-only one exact-name repository artifact, proves its immutable first-attempt
-publisher owner, then independently proves the exact first-attempt source CI.
-The publisher workflow's outer `head_sha` is not source identity. Publisher
-reruns only prove the original artifact still exists; they never rebuild or
-upload. If the first source CI, publisher, or artifact fails, is duplicated, or
-is deleted before host installation, use a new SHA. GHCR creates new packages as
-private: if the first publisher run fails only because anonymous digest proof
-cannot read a newly created package, never release that SHA; make both
-`nexus-api` and `nexus-worker` packages public in the provider, then use a fresh
-successful SHA. Once installed, the root-owned immutable bundle is the resume
-and verification authority after the 90-day Actions retention window.
+binds repository, source SHA, both image digests, one expected database
+revision, and one expected Oracle manifest digest. The resolver requires one
+unexpired exact-name repository artifact whose owning workflow run records the
+same `main` source SHA. It does not treat a CI run or publisher receipt as a
+release gate. If publication fails, the artifact is duplicated, or it is
+deleted before host installation, publish a fresh `main` SHA. GHCR creates new
+packages as private: make both `nexus-api` and `nexus-worker` packages public
+before relying on anonymous digest access. Once installed, the root-owned
+immutable bundle is the resume and verification authority after the 90-day
+Actions retention window. Schema-1 manifests already installed on hosts remain
+readable; new publication writes schema 2 without workflow receipts.
 
 ## Explicit config publication
 
@@ -183,8 +180,8 @@ published source SHA.
 
 ## Release
 
-After exact `main` CI, backend publication, and the staged Vercel build are
-green, announce the no-use window and close clients. Then run:
+After backend publication and the staged Vercel build for the exact `main` SHA
+are ready, announce the no-use window and close clients. Then run:
 
 ```bash
 SOURCE_SHA="$(git rev-parse HEAD)"
@@ -200,7 +197,7 @@ installed bundle; this is recovery authority, not permission to unfreeze main.
 
 The command performs the complete protocol:
 
-1. validates Git, CI, bundle, manifest, and staged Vercel identity;
+1. validates Git, bundle, manifest, and staged Vercel identity;
 2. installs the immutable bundle and inspects durable host state;
 3. before the first hard-cut attempt, proves exact predecessor identity, host
    capacity, foreign-container absence, and current memory/PID use; when an
@@ -310,9 +307,9 @@ matrix:
 | `AwaitingFrontendPromotion` | Rerun the same SHA; it reuses only the bound Vercel ID. |
 | Vercel candidate promoted but no record/current | Rerun the same SHA; public proof finalizes the durable prefix. |
 | Current SHA already equals requested SHA | Rerun the same SHA; it re-proves the recorded vector and exits. |
-| `RolledBack` or succeeded-but-superseded SHA | Create a new successful `main` SHA. |
-| `ForwardFixRequired` or failure after a commitment boundary | Fix forward in a new successful `main` SHA and release it. |
-| Any failure of a successor whose `forward_fix_of` is set, including before a commitment boundary | Settle it to `ForwardFixRequired`; release another fresh successful `main` SHA. Never restart the failed predecessor. |
+| `RolledBack` or succeeded-but-superseded SHA | Create and publish a new `main` SHA. |
+| `ForwardFixRequired` or failure after a commitment boundary | Fix forward in a new published `main` SHA and release it. |
+| Any failure of a successor whose `forward_fix_of` is set, including before a commitment boundary | Settle it to `ForwardFixRequired`; release another fresh published `main` SHA. Never restart the failed predecessor. |
 | Bound Vercel deployment is authoritatively deleted or terminally failed | Rerun the same SHA; direct ID inspection settles rollback or forward-fix without candidate reselection. |
 
 That settlement first proves the committed project/team identity, then decodes
@@ -367,7 +364,7 @@ target, then restores the exact runtime. Do not run an application release or
 publish config around it; the shared lock and attempt state reject both.
 
 If the current target A has a nonterminal attempt and A's Oracle controller or
-domain code is defective, land exact clean-main/CI repair SHA B with the same
+domain code is defective, land an exact clean-`main` repair SHA B with the same
 expected database revision and Oracle digest, then run:
 
 ```bash
@@ -407,7 +404,7 @@ release controller.
 
 | Concern | Owner |
 |---|---|
-| CI proof | `.github/workflows/ci.yml` |
+| Pull-request check | `.github/workflows/ci.yml` |
 | Backend publication | `.github/workflows/backend-images.yml` |
 | Backend artifact | `docker/Dockerfile.backend` |
 | Immutable bundle resolution | `deploy/hetzner/fetch-release-bundle.sh` |

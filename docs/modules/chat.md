@@ -571,17 +571,12 @@ the live Highlight.
 
 ## Contract Tests
 
-Keep these tests aligned with this module contract:
+Keep the fast unit coverage aligned with this module contract:
 
-- `python/tests/service/test_citation_provenance.py`
-- `python/tests/service/test_web_search_identity.py`
-- `python/tests/service/test_durable_chat_reconciliation.py`
-- `python/tests/service/test_durable_job_replay.py`
-- `python/tests/service/test_auth_privacy.py`
-- `python/tests/service/test_chat_execution_privacy.py`
-- `python/tests/service/test_llm_tool_safety.py`
-- `python/tests/evals/test_tool_safety_eval.py`
-- `apps/web/src/components/chat/ChatComposer.browser.test.tsx`
-- `apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts`
-- `testdata/proofs.json` owns the source-to-proof mapping for broader chat
-  changes.
+- `python/tests/kernel/test_resource_action_subject_boundaries.py`
+- `python/tests/kernel/test_resource_action_snapshots_schema.py`
+- `apps/web/src/lib/chat/messageActionIntent.unit.test.ts`
+- `apps/web/src/lib/conversations/chatRunBody.unit.test.ts`
+
+Manually validate durable execution, citations, authorization, provider tools,
+and browser composition when those boundaries change.

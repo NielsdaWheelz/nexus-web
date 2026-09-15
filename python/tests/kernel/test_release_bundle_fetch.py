@@ -20,7 +20,7 @@ def release_bundle_harness(tmp_path: Path) -> ReleaseBundleHarness:
     )
 
 
-def test_release_bundle_fetch_binds_unique_artifact_owner_and_source_ci(
+def test_release_bundle_fetch_binds_unique_artifact_to_main_source(
     release_bundle_harness: ReleaseBundleHarness,
     tmp_path: Path,
 ) -> None:
@@ -30,11 +30,7 @@ def test_release_bundle_fetch_binds_unique_artifact_owner_and_source_ci(
     completed = harness.run(output)
 
     assert completed.returncode == 0, completed.stderr
-    assert json.loads(completed.stdout) == {
-        "publisher_run_id": PUBLISHER_RUN_ID,
-        "source_ci_run_id": 6001,
-        "source_sha": SOURCE_SHA,
-    }
+    assert json.loads(completed.stdout) == {"source_sha": SOURCE_SHA}
     assert sorted(
         path.relative_to(output).as_posix() for path in output.rglob("*") if path.is_file()
     ) == [
@@ -47,12 +43,12 @@ def test_release_bundle_fetch_binds_unique_artifact_owner_and_source_ci(
     ]
     events = harness.state()["events"]
     assert any("actions/artifacts?name=" in " ".join(event["arguments"]) for event in events)
-    assert any("actions/runs/7001/attempts/1" in " ".join(event["arguments"]) for event in events)
-    assert any("actions/runs/6001/attempts/1" in " ".join(event["arguments"]) for event in events)
-    assert not any(
-        "actions/workflows/backend-images.yml/runs" in " ".join(event["arguments"])
+    assert any(
+        event["arguments"][:2] == ["run", "download"]
+        and event["arguments"][2] == str(PUBLISHER_RUN_ID)
         for event in events
     )
+    assert not any("actions/runs/" in " ".join(event["arguments"]) for event in events)
 
 
 def test_release_bundle_fetch_rejects_any_duplicate_artifact_before_download(
@@ -65,7 +61,7 @@ def test_release_bundle_fetch_rejects_any_duplicate_artifact_before_download(
     completed = harness.run(tmp_path / "bundle")
 
     assert completed.returncode != 0
-    assert "one unexpired immutable backend artifact" in completed.stderr
+    assert "one exact unexpired backend artifact" in completed.stderr
     assert not any(
         event["arguments"][:2] == ["run", "download"] for event in harness.state()["events"]
     )
@@ -74,15 +70,11 @@ def test_release_bundle_fetch_rejects_any_duplicate_artifact_before_download(
 @pytest.mark.parametrize(
     ("change", "message"),
     (
-        ({"source_ci_path": ".github/workflows/ci.yml@main"}, "source CI"),
-        ({"source_ci_run_attempt": 2}, "source CI"),
-        ({"source_ci_workflow_id": 5002}, "source CI"),
-        ({"publisher_path": ".github/workflows/other.yml"}, "publisher"),
-        ({"publisher_run_attempt": 2}, "publisher"),
-        ({"manifest_publisher_run_id": 7002}, "artifact owner"),
+        ({"artifact_head_branch": "feature"}, "exact unexpired backend artifact"),
+        ({"artifact_head_sha": "2" * 40}, "exact unexpired backend artifact"),
     ),
 )
-def test_release_bundle_fetch_rejects_lineage_drift(
+def test_release_bundle_fetch_rejects_artifact_source_drift(
     release_bundle_harness: ReleaseBundleHarness,
     tmp_path: Path,
     change: dict[str, object],

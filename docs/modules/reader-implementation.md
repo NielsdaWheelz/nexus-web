@@ -879,9 +879,9 @@ this keeps resume robust when typography changes.
 - extension URL capture reuses existing URL classification, including supported video ingestion
 - extension auth is scoped, revocable, and only covers capture
 
-## regression coverage
+## manual regression coverage
 
-required e2e coverage includes:
+when reader behavior changes, manually verify:
 
 - reader settings persistence
 - web canonical locator resume after reflow from profile typography changes
@@ -898,13 +898,8 @@ required e2e coverage includes:
   from a typed launch intent and captures an immutable per-message snapshot that
   survives reload, branch, and rerun; a geometry-only Highlight is non-sendable
 
-Supporting proof uses controller-owned per-run state, the canonical corpus, and
-the reader-progress/citation journeys.
-
 ## validation commands
 
 ```bash
-./scripts/test changed apps/web/src/lib/reader
-./scripts/test changed apps/web/e2e/journeys/reader-progress-resume.journey.spec.ts
-./scripts/test changed apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts
+./scripts/test
 ```

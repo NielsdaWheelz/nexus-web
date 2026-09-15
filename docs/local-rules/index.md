@@ -12,7 +12,7 @@ shared, language-agnostic standards mirrored from the
 - [tech-stack.md](tech-stack.md): runtime and tooling stack.
 - [codebase.md](codebase.md): repo structure, module ownership, import specifics, and the `.env.example` contract.
 - [entrypoints.md](entrypoints.md): where this repo's entrypoints concretely live.
-- [testing-standards.md](testing-standards.md): authoritative Nexus testing philosophy, capability contract, proof ownership, and enforcement.
+- [testing-standards.md](testing-standards.md): authoritative Nexus check and pull-request contract.
 
 ## Boundary
 

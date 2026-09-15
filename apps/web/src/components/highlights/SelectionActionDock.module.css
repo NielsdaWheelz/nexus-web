@@ -18,7 +18,7 @@
  * rather than Button's 28px default. Every control is a button, and naming the
  * element outranks Button's own `.iconOnly.sm` width rather than relying on
  * stylesheet order. Both sizes are pinned by real Chromium geometry in
- * SelectionActionDock.browser.test.tsx.
+ * the selection action unit contract.
  */
 .dock button.action {
   flex: 0 0 auto;

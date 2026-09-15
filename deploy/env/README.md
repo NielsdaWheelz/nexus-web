@@ -75,7 +75,7 @@ resume command is `deploy/hetzner/deploy.sh <source-sha>`.
   `SERVER_ACTION_ALLOWED_ORIGINS` empty.
 - `SUPABASE_MANAGEMENT_ACCESS_TOKEN` is operator-only. It is never application
   config.
-- `SUPABASE_AUTH_ADMIN_KEY` is local test-control bootstrap state. It is never
+- `SUPABASE_AUTH_ADMIN_KEY` is local development bootstrap state. It is never
   production config.
 - `X_API_BEARER_TOKEN`, platform LLM keys, stream signing material, R2
   credentials, database credentials, and billing credentials are VPS-only.

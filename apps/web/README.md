@@ -85,15 +85,12 @@ Repository-wide rule owners:
 From the repository root:
 
 ```bash
-./scripts/test changed apps/web/src/path/to/owner.tsx
-./scripts/test confidence
-./scripts/test pr
+./scripts/test
 ```
 
-Direct Vitest or Playwright commands are exact debugging tools only. The typed
-controller owns the verdict, local stack, strict-CSP standalone build,
-scenario-local Supabase users, one Playwright worker, zero retries, loopback
-network allowlist, and evidence. Never pass the Supabase admin key to Next.js.
+The fixed repository check runs ESLint, CSS-token lint, TypeScript, and fast
+Node-environment Vitest unit tests. Browser and end-to-end automation are not
+part of the automated portfolio. Never pass the Supabase admin key to Next.js.
 
 ## Highlight Libraries
 
