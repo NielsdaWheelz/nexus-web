@@ -10,13 +10,19 @@ from sqlalchemy.engine import Connection, RowMapping
 
 from nexus.ids import new_uuid7
 from nexus.schemas.presence import Present
-from nexus.services.canonicalize import canonicalize_structure
+from nexus.services.canonicalize import (
+    canonicalize_structure,
+    repair_historical_html_structure,
+)
 from nexus.services.epub_structure import (
     EpubStructureFragment,
     EpubStructureTocNode,
     build_epub_structure,
 )
-from nexus.services.web_article_structure import build_web_article_index_blocks
+from nexus.services.web_article_structure import (
+    add_heading_anchors,
+    build_web_article_index_blocks,
+)
 
 revision = "0228"
 down_revision = "0227"
@@ -26,6 +32,22 @@ depends_on = None
 # Frozen reader1 persistence contract; Python and JavaScript both index Unicode code points.
 _READER_QUOTE_EXACT_CODE_POINTS = 48
 _READER_QUOTE_CONTEXT_CODE_POINTS = 24
+
+
+def _repair_historical_fragment(connection: Connection, fragment: RowMapping) -> str:
+    try:
+        repaired = repair_historical_html_structure(
+            fragment["html_sanitized"], fragment["canonical_text"]
+        )
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Reader structure repair changed canonical text: {fragment['id']}"
+        ) from exc
+    connection.execute(
+        sa.text("UPDATE fragments SET html_sanitized = :html WHERE id = :id"),
+        {"id": fragment["id"], "html": repaired},
+    )
+    return repaired
 
 
 def _repair_web_cursors(
@@ -489,8 +511,8 @@ def upgrade() -> None:
                 )
             canonical = canonicalize_structure(row["html_sanitized"])
             if canonical.text != row["canonical_text"]:
-                raise RuntimeError(
-                    f"Reader structure repair changed canonical text: {row['id']}"
+                canonical = canonicalize_structure(
+                    _repair_historical_fragment(connection, row)
                 )
             fragments.append(
                 EpubStructureFragment(
@@ -696,8 +718,15 @@ def upgrade() -> None:
         _repair_web_cursors(connection, media["id"], fragments)
         specs = {}
         for fragment in fragments:
+            html = fragment["html_sanitized"]
+            if canonicalize_structure(html).text != fragment["canonical_text"]:
+                html = _repair_historical_fragment(connection, fragment)
+                if add_heading_anchors(html, fragment_idx=fragment["idx"]) != html:
+                    raise RuntimeError(
+                        f"Reader structure repair changed web heading identity: {fragment['id']}"
+                    )
             for spec in build_web_article_index_blocks(
-                html_sanitized=fragment["html_sanitized"],
+                html_sanitized=html,
                 canonical_text=fragment["canonical_text"],
                 fragment_idx=fragment["idx"],
             ):
