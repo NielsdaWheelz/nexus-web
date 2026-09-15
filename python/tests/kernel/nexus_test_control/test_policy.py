@@ -236,12 +236,20 @@ def _minimal_repository(root: Path) -> None:
         'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"\n'
         'GIT_COMMITTER_DATE="$merge_timestamp"\n'
         "git rev-list --parents -n 1 HEAD\n"
+        "Retire prior checkout test runtime\n"
+        'test -x "$checkout/scripts/test"\n'
+        '            cd "$checkout"\n'
+        "            ./scripts/test clean\n"
         'scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"\n'
         "scripts/ci-proof-artifact.sh run pr\n"
         "pull_request:*|workflow_dispatch:changed)\n"
         "workflow_dispatch:pr)\n"
         "unsupported CI proof selection\n"
         "if: github.event_name == 'push'\n"
+        "Retire prior checkout test runtime\n"
+        'test -x "$checkout/scripts/test"\n'
+        '            cd "$checkout"\n'
+        "            ./scripts/test clean\n"
         "run: scripts/ci-proof-artifact.sh run full\n"
         "if: ${{ always() && steps.proof.outputs.path != '' }}\n"
         "path: ${{ steps.proof.outputs.path }}/\n"
@@ -487,6 +495,46 @@ def test_repository_guard_rejects_route_drift(tmp_path: Path) -> None:
     assert "repository-route-contract" in _rules(repository_violations(tmp_path))
 
 
+def test_repository_guard_rejects_direct_precheckout_runtime_cleanup(tmp_path: Path) -> None:
+    _minimal_repository(tmp_path)
+    workflow = tmp_path / ".github/workflows/ci.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            '            cd "$checkout"',
+            '            cd "$checkout/python"',
+        ),
+        encoding="utf-8",
+    )
+
+    assert any(
+        violation.rule == "repository-route-contract"
+        and violation.path == ".github/workflows/ci.yml"
+        and 'cd "$checkout"' in violation.message
+        for violation in repository_violations(tmp_path)
+    )
+
+
+@pytest.mark.parametrize("count", (1, 3))
+def test_repository_guard_requires_both_owned_precheckout_cleanup_routes(
+    tmp_path: Path, count: int
+) -> None:
+    _minimal_repository(tmp_path)
+    workflow = tmp_path / ".github/workflows/ci.yml"
+    source = workflow.read_text(encoding="utf-8")
+    cleanup = "            ./scripts/test clean\n"
+    workflow.write_text(
+        source.replace(cleanup, "", 1) if count == 1 else source + cleanup,
+        encoding="utf-8",
+    )
+
+    assert any(
+        violation.rule == "repository-test-route-owner"
+        and violation.path == ".github/workflows/ci.yml"
+        and violation.message == f"owned clean route count must be 2, got {count}"
+        for violation in repository_violations(tmp_path)
+    )
+
+
 def test_repository_guard_does_not_match_retired_route_inside_active_identifier(
     tmp_path: Path,
 ) -> None:
@@ -598,12 +646,13 @@ def test_repository_guard_rejects_nightly_without_its_hosted_emulator_route(
     )
 
 
-def test_repository_guard_rejects_rogue_workflow_test_route(tmp_path: Path) -> None:
+@pytest.mark.parametrize("route", ("uv run pytest python/tests/kernel", "./scripts/test clean"))
+def test_repository_guard_rejects_rogue_workflow_test_route(tmp_path: Path, route: str) -> None:
     _minimal_repository(tmp_path)
     _write(
         tmp_path,
         ".github/workflows/rogue.yml",
-        "steps:\n  - run: uv run pytest python/tests/kernel\n",
+        f"steps:\n  - run: {route}\n",
     )
 
     assert "repository-test-route-owner" in _rules(repository_violations(tmp_path))

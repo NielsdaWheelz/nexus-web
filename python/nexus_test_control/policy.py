@@ -228,6 +228,10 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             'merge_timestamp="$(git show --no-patch --format=%cI "$EXPECTED_HEAD_SHA")"',
             'GIT_COMMITTER_DATE="$merge_timestamp"',
             "git rev-list --parents -n 1 HEAD",
+            "Retire prior checkout test runtime",
+            'test -x "$checkout/scripts/test"',
+            '            cd "$checkout"',
+            "            ./scripts/test clean",
             'scripts/ci-proof-artifact.sh run changed --base "$NEXUS_TEST_BASE_SHA"',
             "scripts/ci-proof-artifact.sh run pr",
             "pull_request:*|workflow_dispatch:changed)",
@@ -243,6 +247,10 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         (
             "github.event_name != 'workflow_dispatch'",
+            "from nexus_test_control.services import clean_owned_runtime, test_environment",
+            "clean_owned_runtime(pathlib.Path(sys.argv[1]), test_environment(os.environ))",
+            '"$python" -c "$cleanup_program" "$checkout"',
+            '"$python" -m nexus_test_control clean',
             'run: ./scripts/test changed --base "$NEXUS_TEST_BASE_SHA"',
             "run: ./scripts/test full",
             "path: test-results/",
@@ -330,13 +338,14 @@ _ROUTE_CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
 }
 
-_CONTROLLER_COMMAND_OWNERS: dict[str, str] = {
-    "confidence": "scripts/agency_verify.sh",
-    "changed": ".github/workflows/ci.yml",
-    "pr": ".github/workflows/ci.yml",
-    "full": ".github/workflows/ci.yml",
-    "nightly": ".github/workflows/nightly.yml",
-    "release": ".github/workflows/release.yml",
+_CONTROLLER_COMMAND_ROUTES: dict[str, tuple[str, int]] = {
+    "confidence": ("scripts/agency_verify.sh", 1),
+    "changed": (".github/workflows/ci.yml", 1),
+    "pr": (".github/workflows/ci.yml", 1),
+    "full": (".github/workflows/ci.yml", 1),
+    "clean": (".github/workflows/ci.yml", 2),
+    "nightly": (".github/workflows/nightly.yml", 1),
+    "release": (".github/workflows/release.yml", 1),
 }
 _INTERNAL_PACKAGE_RUNNERS: dict[tuple[str, str], str] = {
     ("apps/web/package.json", "test:eslint-policy"): "bun scripts/test-eslint-policy.mjs",
@@ -769,7 +778,8 @@ def _executable_route_violations(repo_root: Path) -> tuple[PolicyViolation, ...]
                 controller_counts[(relative, command)] = (
                     controller_counts.get((relative, command), 0) + 1
                 )
-                expected = _CONTROLLER_COMMAND_OWNERS.get(command)
+                route = _CONTROLLER_COMMAND_ROUTES.get(command)
+                expected = route[0] if route is not None else None
                 if expected != relative:
                     violations.append(
                         PolicyViolation(
@@ -807,11 +817,13 @@ def _executable_route_violations(repo_root: Path) -> tuple[PolicyViolation, ...]
                     )
                 )
 
-    required_routes = {(owner, command): 1 for command, owner in _CONTROLLER_COMMAND_OWNERS.items()}
+    required_routes = {
+        (owner, command): count for command, (owner, count) in _CONTROLLER_COMMAND_ROUTES.items()
+    }
     required_routes[("scripts/test", "control-plane")] = 1
     for owner_command, expected_count in required_routes.items():
         owner, command = owner_command
-        counts = controller_counts if command in _CONTROLLER_COMMAND_OWNERS else direct_counts
+        counts = controller_counts if command in _CONTROLLER_COMMAND_ROUTES else direct_counts
         actual = counts.get(owner_command, 0)
         if actual != expected_count:
             violations.append(
