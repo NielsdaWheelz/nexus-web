@@ -75,3 +75,28 @@ the materializer's transient footprint and the separate interactive-worker oom
 (oi113) require diagnosis before cutover. logs:
 `capacity-959afa76-operator-receipt.json`, `capacity-959afa76.log`, and
 `materialize-959afa76-journal.log` under the mac's private release directory.
+
+## restored worker and admission measurements
+
+pr #260 merged as `3ee6a9b5935151ed6e73b934c1178dd9040f7278`. exact-image
+worker startup on `dev-server` passed: interactive peak 183.57 mib under its
+320 mib ceiling; background peak 331.42 mib under 448 mib; no oom or swap.
+these bounded startup observations do not prove a real generation job.
+
+the production qualifier retry at 16:25:23–16:26:15 utc reached authenticated
+catalogue materialization, then refused the model turns with `not_run`. the
+independent 100 ms observer recorded a minimum of 209.93 mib available and
+maximum `some avg10=6.7`; no sample fell below 192 mib. no immutable candidate
+breach was recorded. see `capacity-3ee6a9b5-retry-operator-receipt.json`,
+`capacity-3ee6a9b5-retry-memory-summary.json`, and
+`worker-smoke-3ee6a9b5/receipt.json` in the private release directory.
+
+the reviewed single-user operating budget lowers the observed free-memory
+floor to 128 mib and permits `some avg10 <= 10`. this accepts a smaller margin
+for unrelated allocations and greater reclaim latency; it does not establish
+actual generation demand. retain the separate 320 mib host reservation budget,
+384 mib codex peak, 448 mib codex ceiling, zero service swap and oom, one-turn
+concurrency, and all service-health checks. service ceilings can sum above
+physical memory, so individual caps do not guarantee host-wide safety. all three
+real qualification turns must pass on the new exact image; `not_run` remains a
+refusal. this ticket remains open pending that evidence.

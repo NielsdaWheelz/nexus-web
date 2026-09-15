@@ -329,6 +329,11 @@ Activity is a Nexus switchboard workflow, not a pane or new router destination.
 
 ## Production resource contract
 
+the numeric envelope and release checks below record the original cutover.
+current resource limits and admission policy are owned by
+[production deployment](../../deployment.md); validation is owned by the
+[testing standards](../local-rules/testing-standards.md).
+
 Use non-Swarm Compose `mem_limit`, equal `memswap_limit`, `mem_reservation`,
 and `pids_limit`:
 

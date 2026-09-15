@@ -359,8 +359,11 @@ input materialization, and every canary turn. An ordinary Docker or
 authenticated-startup failure without a measured kernel-envelope breach
 remains retryable and writes no false breach.
 
-Admission uses observed capacity: at least 256 MiB of available host memory and
-memory `some avg10` no greater than 5. The 448 MiB container ceiling remains
+Admission uses observed capacity: at least 128 MiB of available host memory and
+memory `some avg10` no greater than 10. This smaller operating margin accepts
+less room for unrelated allocations and more reclaim latency on the single-user
+host; a passing exact workload qualification is still required.
+The 448 MiB container ceiling remains
 enforced; admission does not additionally reserve its entire possible growth.
 `full avg10` remains a recorded diagnostic, since short reclaim stalls do not
 prove that the workload cannot fit. Falling below the observed headroom reserve

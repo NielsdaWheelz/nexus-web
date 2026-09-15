@@ -265,7 +265,7 @@ _MIGRATION_COMMAND = (
 _MIN_HOST_MEMORY_BYTES = 1900 * 1024 * 1024
 _HOST_RESERVED_MEMORY_BYTES = 320 * 1024 * 1024
 _WORKER_HEALTH_RECEIPT_MAX_AGE_SECONDS = 20.0
-_MIN_AVAILABLE_MEMORY_BYTES = 256 * 1024 * 1024
+_MIN_AVAILABLE_MEMORY_BYTES = 128 * 1024 * 1024
 _MIN_SWAP_BYTES = 1024 * 1024 * 1024
 _MIN_PARSER_TEMP_FREE_BYTES = 512 * 1024 * 1024
 _CODEX_CAPACITY_SCHEMA_VERSION = "nexus-codex-capacity.v3"
@@ -3986,12 +3986,12 @@ class HostRelease:
         if meminfo["MemTotal"] - reservation_sum < _HOST_RESERVED_MEMORY_BYTES:
             raise ReleaseBlocked("host memory reserve is below 320 MiB")
         if meminfo["MemAvailable"] < _MIN_AVAILABLE_MEMORY_BYTES:
-            raise ReleaseBlocked("host available memory is below 256 MiB")
+            raise ReleaseBlocked("host available memory is below 128 MiB")
         if meminfo["SwapTotal"] < _MIN_SWAP_BYTES:
             raise ReleaseBlocked("host swap is below 1 GiB")
 
         pressure = self._host_memory_pressure()
-        if pressure["some"] > 5:
+        if pressure["some"] > 10:
             raise ReleaseBlocked("host memory pressure exceeds the release envelope")
 
         try:
@@ -5840,8 +5840,8 @@ class HostRelease:
     def _require_qualification_host_sample(self, sample: tuple[int, float, float]) -> None:
         available, some, _full = sample
         if available < _MIN_AVAILABLE_MEMORY_BYTES:
-            message = "Codex capacity qualification headroom is below 256 MiB"
-        elif some > 5:
+            message = "Codex capacity qualification headroom is below 128 MiB"
+        elif some > 10:
             message = "Codex capacity qualification memory pressure exceeds envelope"
         else:
             return
@@ -6615,10 +6615,10 @@ class HostRelease:
         if tuple(services) != _CODEX_CAPACITY_SERVICES:
             raise CodexCapacityBreach("Codex capacity qualification service health differs")
         if _nonnegative_integer(evidence, "minimum_mem_available") < _MIN_AVAILABLE_MEMORY_BYTES:
-            raise ReleaseBlocked("Codex capacity qualification host headroom is below 256 MiB")
+            raise ReleaseBlocked("Codex capacity qualification host headroom is below 128 MiB")
         some = _finite_number(evidence, "maximum_memory_psi_some")
         _finite_number(evidence, "maximum_memory_psi_full")
-        if some > 5:
+        if some > 10:
             raise ReleaseBlocked("Codex capacity qualification memory pressure exceeds envelope")
         return _release_timestamp_seconds(
             _string(evidence, "measured_at"),

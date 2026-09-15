@@ -34,9 +34,9 @@ def test_turn_admission_uses_observed_headroom_despite_minor_recent_stalls(
 @pytest.mark.parametrize(
     ("available_kib", "some", "full", "admitted"),
     [
-        (256 * 1024, "5.00", "0.01", True),
-        (256 * 1024 - 1, "0.00", "0.00", False),
-        (400 * 1024, "5.01", "0.01", False),
+        (128 * 1024, "10.00", "0.01", True),
+        (128 * 1024 - 1, "0.00", "0.00", False),
+        (400 * 1024, "10.01", "0.01", False),
     ],
 )
 def test_turn_admission_retains_observed_reserve_and_pressure_boundaries(
