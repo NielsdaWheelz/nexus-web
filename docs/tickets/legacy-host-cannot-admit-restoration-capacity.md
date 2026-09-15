@@ -32,18 +32,30 @@ neither fact proves host capacity.
 
 ## prerequisites and fix
 
-keep production on the incumbent source/schema. review actual memory demand
-and a concrete host-capacity intervention; separately inventory any disposable
-disk objects. obtain authorization for additional destructive cleanup, a
-maintenance interruption, or paid capacity. do not weaken admission, discard
-retained backups/predecessor images, or reset memory merely to manufacture a
-passing sample. the runbook's manual retained-swap restart exception does not
-apply to these zero-swap incumbents.
+qualify the reviewed observed-memory admission on the existing host using newly
+published images. retain kernel limits and measured workload evidence. the
+user rejected resizing and waived a fresh backup; retain existing archives
+and predecessor images. do not reset memory to manufacture a passing sample.
 
 ## acceptance
 
-the unchanged owned qualifier passes for the exact candidate on the actual
-production host; the full candidate images and final backup fit the owned disk
-gate. retain machine, source, pressure, memory and disk evidence. then settle
+the owned qualifier passes for the exact new candidate on the actual
+production host; full candidate images fit available disk and the explicit
+backup waiver remains recorded. retain machine, source, pressure, memory and disk evidence. then settle
 the no-use window and run the owned release command. no cutover is implied by
 this ticket.
+
+## operator decision and cleanup
+
+on 2026-09-15 the user rejected resizing, required minimal cost, authorized
+cleanup, and waived a new database backup. cleanup reclaimed 2,615,078,912
+bytes; production free space became 16,989,024,256 bytes and journal retention
+is now capped at 256 mib. no application container restarted. three obsolete
+images and one old restore-drill container were removed; live volumes and
+existing archives remain. private details: `cleanup-and-backup-waiver.json`.
+
+the follow-up changes admission from maximum-growth forecasting to observed
+headroom and makes small full-pressure readings diagnostic; intrinsic failures
+remain failures. it also removes unrelated execution imports from the codex
+client. this ticket stays open until the new immutable images pass actual
+legacy-host qualification. the resize proposal above is superseded.

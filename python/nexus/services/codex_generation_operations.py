@@ -42,12 +42,6 @@ AUTH_PROFILE = "codex-personal"
 MODEL_TOOL_MCP_SERVER_NAME = "nexus"
 
 
-def model_tool_allowed_tools(snapshot: FrozenToolPlanSnapshot) -> tuple[str, ...]:
-    """Return canonical Nexus tool ids; wire aliases stay inside llm-calling."""
-
-    return tuple(grant.id for grant in snapshot.grants)
-
-
 @dataclass(frozen=True, slots=True)
 class CodexModelToolPlanRegistry:
     """Resolve a frozen plan only when the process-owned projection is identical."""
@@ -207,6 +201,5 @@ __all__ = [
     "CodexModelToolPlanRegistry",
     "ResolvedCodexGeneration",
     "compose_codex_model_tool_plan_registry",
-    "model_tool_allowed_tools",
     "resolve_codex_generation",
 ]

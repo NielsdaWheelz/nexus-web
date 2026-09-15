@@ -35,7 +35,8 @@ The command runs, in order:
 
 The migration check proves graph shape only. Production migration safety remains
 owned by the deployment controller: ancestry preflight, stopped writers, a
-verified backup when migration is pending, and exact-head verification.
+verified backup or explicit durable operator waiver when migration is pending,
+and exact-head verification.
 
 ## Pull requests
 

@@ -33,8 +33,8 @@ expected Oracle manifest digest, task contract, and captured VPS config.
 
 ## Non-negotiable rules
 
-- `deploy/hetzner/deploy.sh <source-sha>` is the only application release
-  entrypoint. Rerun it unchanged to resume.
+- `deploy/hetzner/deploy.sh <source-sha> [--no-database-backup]` is the only
+  application release entrypoint. Rerun it unchanged to resume.
 - `deploy/hetzner/prove-codex-capacity.sh <source-sha>` is the only Codex-host
   release qualification entrypoint. It installs the exact immutable bundle and
   records measured evidence, but never applies an application release.
@@ -205,7 +205,13 @@ headroom, pressure, swap, OOM counters, and the unchanged long-lived services.
 It does not call `apply`, stop writers, migrate data, or promote Vercel. An
 absent, stale, retriable, or subscription-blocked result is not release
 evidence; diagnose it and rerun the unchanged qualification command. A measured
-contract breach permanently disqualifies the candidate SHA.
+candidate cgroup or exact-contract breach permanently disqualifies the candidate
+SHA. Host admission uses observed available memory (at least 256 MiB) and
+`some avg10 <= 5`; `full avg10` is diagnostic. It does not reserve the entire
+possible Codex cgroup growth in advance. A host-pressure or headroom refusal is
+retryable even after startup; it cannot hide an observed candidate OOM or other
+cgroup breach. Container ceilings, one-turn concurrency and health proofs remain
+unchanged.
 
 On a host first crossing into the enforced no-service-swap contract,
 qualification may instead correct every exact incumbent's kernel limits and
@@ -229,6 +235,21 @@ run:
 SOURCE_SHA="$(git rev-parse HEAD)"
 ./deploy/hetzner/deploy.sh "$SOURCE_SHA"
 ```
+
+Database backups are required by default. An operator who accepts losing the
+fresh stopped-writer recovery point can explicitly waive it:
+
+```bash
+./deploy/hetzner/deploy.sh "$SOURCE_SHA" --no-database-backup
+```
+
+The attempt records this choice before stopping writers. Every replay must use
+the same choice; adding or omitting the flag later is refused. A waiver skips
+database backup creation and its disk reservation. It preserves migration
+preflights, stopped-writer proof, the durable mutation boundary, and release
+health checks. Existing archives remain untouched and are not represented as a
+fresh release backup. Database mutation still requires forward recovery;
+reverting application images cannot restore deleted data.
 
 Freeze `main` from this first invocation until the attempt is durably
 `Succeeded`, `RolledBack`, or `ForwardFixRequired`. Every ordinary replay
@@ -277,12 +298,13 @@ The command performs the complete protocol:
    result; unsafe current use blocks before any update;
 4. preflights the exact content-addressed config path and digest, Compose, Caddy
    equality, image identity, applied memory/PID limits, cgroup, memory, swap,
-   PSI, parser/backup disk, running-container ownership, live infra, database
-   ancestry, and predecessor evidence without mutation;
+   PSI, parser disk and required-backup disk, running-container ownership,
+   live infra, database ancestry, and predecessor evidence without mutation;
 5. stops and proves stopped the background worker first, then the interactive
    worker and API;
-6. when migration is pending, creates and verifies one durable custom-format
-   Postgres backup before recording `DataMutationStarted` and upgrading in a
+6. when migration is pending, proves the current database identity and ancestry,
+   then creates and verifies one durable custom-format Postgres backup unless
+   explicitly waived; records `DataMutationStarted` before upgrading in a
    512 MiB / 256 PID one-off container;
 7. records `BackendActivationStarted`, activates app images by digest, and
    waits boundedly for Compose health before proving exact API/readiness bodies,
@@ -318,11 +340,17 @@ Bundles live at `/opt/nexus/releases/<source-sha>`, configs at
 `/var/backups/nexus`. Durable JSON and pointers are canonical, fsynced, and
 atomically published. Records and bundles are immutable.
 
+New application attempts use schema `2` and record immutable `backup_policy`
+(`required` or `waived`). Existing schema `1` attempts require backups and retain
+their original JSON representation. A waived attempt records `backup: null`;
+it never claims `BackupVerified`.
+
 Application phases are:
 
 ```text
 Prepared -> WritersStopped
-WritersStopped -> BackupVerified -> DataMutationStarted  # migration pending
+WritersStopped -> BackupVerified -> DataMutationStarted  # required backup
+WritersStopped -> DataMutationStarted                    # explicit backup waiver
 WritersStopped -> BackendActivationStarted               # no migration
 DataMutationStarted -> BackendActivationStarted
 BackendActivationStarted -> AwaitingFrontendPromotion

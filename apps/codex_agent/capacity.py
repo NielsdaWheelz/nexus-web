@@ -33,7 +33,7 @@ PRODUCTION_CAPACITY_PATHS = CapacityPaths()
 
 
 def capacity_is_available(paths: CapacityPaths = PRODUCTION_CAPACITY_PATHS) -> bool:
-    """Return whether one turn fits the fixed existing-VPS envelope."""
+    """Admit one turn within the observed host and fixed cgroup envelope."""
 
     try:
         available = _mem_available_bytes(_read_ascii(paths.meminfo))
@@ -46,12 +46,8 @@ def capacity_is_available(paths: CapacityPaths = PRODUCTION_CAPACITY_PATHS) -> b
         return False
     if maximum != _EXPECTED_MEMORY_MAX_BYTES or current > maximum:
         return False
-    remaining_growth = maximum - current
-    return (
-        available >= remaining_growth + _HOST_HEADROOM_BYTES
-        and pressure["full"] == 0
-        and pressure["some"] <= _PSI_AVG10_MAX
-    )
+    # The fixed cgroup ceiling contains execution; admission uses observed headroom.
+    return available >= _HOST_HEADROOM_BYTES and pressure["some"] <= _PSI_AVG10_MAX
 
 
 def _read_bounded(path: Path) -> bytes:

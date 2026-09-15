@@ -9,7 +9,7 @@ import stat
 import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from apps.codex_agent.auth_environment import (
@@ -19,7 +19,6 @@ from apps.codex_agent.auth_environment import (
 from apps.codex_agent.path_environment import required_absolute_path
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from nexus.config import Settings, get_settings
 from nexus.schemas.presence import Absent
 from nexus.services.codex_generation_client import (
     CodexGenerationCapacityUnavailable,
@@ -38,18 +37,17 @@ from nexus.services.codex_generation_contract import (
     GenerationToolUse,
     generation_command_from_draft,
 )
-from nexus.services.generation_catalog import build_generation_catalog_service
 from nexus.services.generation_intent import GenerationIntent, TextOutput
-from nexus.services.generation_policy import GENERATION_POLICY
 from nexus.services.generation_selection import CodexPersonalSelection
-from nexus.services.generation_service import GenerationService
 from nexus.services.generation_spec import (
     GenerationSpecWire,
     ImmutablePromptPayloadRef,
     TextOutputSnapshot,
     generation_fact_digest,
 )
-from nexus.services.tool_runtime.composition import compose_product_tool_runtime
+
+if TYPE_CHECKING:
+    from nexus.config import Settings
 
 _SCHEMA_VERSION = "nexus-codex-capacity-canary.v4"
 _SOCKET_ENV = "NEXUS_CODEX_AGENT_SOCKET"
@@ -242,6 +240,11 @@ def load_canary_input(path: Path) -> CapacityCanaryInput:
 async def materialize_capacity_input(settings: Settings) -> CapacityCanaryInput:
     """Freeze the production Dawn selection for controller-owned qualification input."""
 
+    from nexus.services.generation_catalog import build_generation_catalog_service
+    from nexus.services.generation_policy import GENERATION_POLICY
+    from nexus.services.generation_service import GenerationService
+    from nexus.services.tool_runtime.composition import compose_product_tool_runtime
+
     intent = GenerationIntent(
         instructions=CANARY_INSTRUCTIONS,
         input=CANARY_INPUT,
@@ -288,6 +291,8 @@ def _canonical_input_bytes(value: CapacityCanaryInput) -> bytes:
 def run(argv: tuple[str, ...] | None = None) -> int:
     arguments = tuple(sys.argv[1:]) if argv is None else argv
     if arguments == ("materialize-input",):
+        from nexus.config import get_settings
+
         value = asyncio.run(materialize_capacity_input(get_settings()))
         sys.stdout.buffer.write(_canonical_input_bytes(value))
         return 0
