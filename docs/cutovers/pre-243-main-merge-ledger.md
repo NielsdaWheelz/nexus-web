@@ -218,3 +218,12 @@ unused journey-only oracle declarations are removed while active pure vectors
 remain. four authentication unit suites freeze the expiry clock in existing
 hooks; no timer or service framework is introduced. stateless server-render
 units remain deterministic node tests and start no browser.
+
+## release preparation packaging correction
+
+source review before merge found two inherited packaging omissions: the deny-all
+docker context omitted the restored codex application, and the worker omitted
+the article-extraction module imported by ingest.mjs. include both exact sources
+in the context and copy the article module into the worker. this changes image
+packaging only; product and migration source stay unchanged. authoritative image
+build and qualification bind the eventual main merge sha.

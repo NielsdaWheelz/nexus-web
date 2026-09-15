@@ -104,6 +104,7 @@ COPY --from=worker-python-builder /app/.venv /app/.venv
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-builder /app/node/ingest/node_modules ./node/ingest/node_modules
 COPY node/ingest/ingest.mjs ./node/ingest/ingest.mjs
+COPY node/ingest/article_extraction.mjs ./node/ingest/article_extraction.mjs
 COPY node/ingest/accepted_url_egress.mjs ./node/ingest/accepted_url_egress.mjs
 COPY apps/worker ./apps/worker
 COPY apps/codex_agent ./apps/codex_agent

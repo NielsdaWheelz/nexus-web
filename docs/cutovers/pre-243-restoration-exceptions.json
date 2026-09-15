@@ -625,6 +625,7 @@
       "testdata/search/chat_search_before.sql": "extend #254 cleanup to restored-only equivalent apparatus; retain deterministic units/product contracts"
     },
     "deployment_reconciliation": {
+      ".dockerignore": "include restored codex application and article-extraction module required by worker image",
       ".github/workflows/backend-images.yml": "preserve restored source/migration/health/recovery boundaries with #254 publisher schema2 and strict legacy manifest ingress",
       "deploy/env/README.md": "preserve restored source/migration/health/recovery boundaries with #254 publisher schema2 and strict legacy manifest ingress",
       "deploy/hetzner/backend-publisher-workspace.sh": "preserve restored source/migration/health/recovery boundaries with #254 publisher schema2 and strict legacy manifest ingress",
@@ -632,7 +633,7 @@
       "deploy/hetzner/prove-codex-capacity.sh": "remove obsolete protected-nightly comment; retain production capacity qualification",
       "deploy/hetzner/release.py": "retain settings-before-quiescence; verify exact recorded db0215 six-file predecessor and source-only web contract; keep new nine-file candidate/migration/health/recovery checks strict",
       "deployment.md": "preserve restored source/migration/health/recovery boundaries with #254 publisher schema2 and strict legacy manifest ingress",
-      "docker/Dockerfile.backend": "preserve restored source/migration/health/recovery boundaries with #254 publisher schema2 and strict legacy manifest ingress",
+      "docker/Dockerfile.backend": "retain nonroot source readability and include restored article-extraction runtime import in worker image",
       "python/nexus/release_artifact.py": "preserve restored source/migration/health/recovery boundaries with #254 publisher schema2 and strict legacy manifest ingress"
     },
     "generated_offline_assets": {
