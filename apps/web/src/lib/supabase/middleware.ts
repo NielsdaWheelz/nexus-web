@@ -106,15 +106,15 @@ export function updateSession(
     return passThrough();
   }
 
-  if (request.method !== "GET") {
-    return privatePassThrough();
-  }
-
-  // Protected page request.
+  // Protected pages also rerender after cookie-writing server actions.
   requestHeaders.set(
     REQUEST_PATH_HEADER,
     `${request.nextUrl.pathname}${request.nextUrl.search}`,
   );
+
+  if (request.method !== "GET") {
+    return privatePassThrough();
+  }
 
   const session = readSupabaseSessionCookie(request.cookies.getAll());
   switch (session.state) {
