@@ -303,3 +303,6 @@ unexpected timeouts. See
 - [open] oi-125 · epub assets · 2026-09-15 source review · p2 · complete asset bodies, broad media reads and per-request storage clients lack an aggregate allocation budget: [ticket](tickets/epub-asset-response-allocation-and-client-lifetime.md).
 - [open] oi-126 · backend publication · 2026-09-15 restoration release · p2 · disk exhaustion aborts the runner before bundle upload and cleanup: [ticket](tickets/backend-publication-can-exhaust-devbox-disk.md).
 - [open] oi-127 · devbox operations · 2026-09-15 memory diagnosis · p2 · runner stopped and user/docker services restarted during diagnosis; cause remains unresolved: [ticket](tickets/devbox-services-interrupted-memory-diagnosis.md).
+- [open] oi-128 · generation · 2026-09-15 ecbe manual check · p2 · chat and metadata fail after codex dispatch with invalid_request; user defers chat repair: [ticket](tickets/restored-chat-codex-dispatch-fails.md).
+- [open] oi-129 · appearance · 2026-09-15 ecbe manual check · p2 · solar/dark switches save but crash the workspace without server oom: [ticket](tickets/workspace-theme-switch-crashes-after-save.md).
+- [open] oi-130 · synapse jobs · 2026-09-15 ecbe production observation · p2 · cancellation after lost admission claim requires an absent Prepared checkpoint: [ticket](tickets/synapse-cancellation-missing-prepared-checkpoint.md).

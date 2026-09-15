@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEVICE_COOKIE_NAME } from "@/lib/auth/deviceCookie";
+import { REQUEST_PATH_HEADER } from "@/lib/auth/requestPath";
 import { updateSession } from "./middleware";
 
 const origin = "https://nexus.example.test";
@@ -72,6 +73,26 @@ describe("authentication middleware page boundary", () => {
     expect(response.headers.get("vary")).toBe("Cookie");
     expect(response.headers.get("set-cookie")).toBeNull();
   });
+
+  it.each(["/", "/settings/appearance?from=reader"])(
+    "forwards the workspace path when a server action rerenders %s",
+    (pathname) => {
+      const response = updateSession(
+        new NextRequest(`${origin}${pathname}`, {
+          method: "POST",
+          headers: { "next-action": "appearance-action" },
+        }),
+        "nonce",
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("location")).toBeNull();
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(
+        response.headers.get(`x-middleware-request-${REQUEST_PATH_HEADER}`),
+      ).toBe(pathname);
+    },
+  );
 
   it("passes a refreshable GET to its page gate without refreshing or redirecting", () => {
     const response = updateSession(
