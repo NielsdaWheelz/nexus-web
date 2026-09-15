@@ -103,3 +103,21 @@ private operational receipts remain under `/tmp/nexus-release-255/` on the mac:
 `public-6baccaee-verification.json`, `production-6baccaee-runtime.json`, and
 `deploy-6baccaee-memory-summary.json`. raw configuration and runtime directories
 are not published. both dirty primary worktrees are preserved.
+
+## memory successor preflight refusal
+
+pr #264 merged as `7b28c879dc958c1d8ccf100cb880f49e63b07e2b` and passed
+its sole devbox check (539 python,1059 vitest,one ingest,static head0229).
+its exact api image completed ten repeated in-process request rounds with
+285.199 mib peak and no max/oom events. this diagnostic injects a viewer,
+skips production catalog startup and excludes tcp/bff/browser behavior and
+the current article's db reads; it is not manual production acceptance.
+
+owned deployment exited1 at19:59:58 utc before preparation or mutation.
+preflight expected a missing compose one-off label on the already-running
+codex services; actual normal services carry the string `False`. durable
+candidate phase remains absent, current remains6baccaee, database remains0229,
+and the frontend alias did not move. the follow-up changes that exact label
+comparison, retaining unknown-service/project refusal. never bypass preflight
+by stopping healthy services or changing an installed bundle. a new reviewed
+main sha and immutable publication will carry both fixes.

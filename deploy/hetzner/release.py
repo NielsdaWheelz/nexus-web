@@ -4052,7 +4052,7 @@ class HostRelease:
                 or (
                     project == "nexus"
                     and service in {_CODEX_AGENT_HOST, _CODEX_EGRESS_POLICY}
-                    and oneoff is None
+                    and oneoff == "False"
                 )
             )
             if not known:
