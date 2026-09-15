@@ -31,6 +31,7 @@ _MAX_CONNECTIONS: Final = 16
 _DNS_TTL_SECONDS: Final = 30
 _DNS_HEADER = struct.Struct("!HHHHHH")
 _DNS_A_ANSWER = struct.Struct("!HHHLH")
+_DNS_OPT = struct.Struct("!BHHIH")
 _DNS_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _PRIVATE_PROXY_NETWORKS: Final[tuple[ipaddress.IPv4Network, ...]] = (
     ipaddress.IPv4Network("10.0.0.0/8"),
@@ -121,27 +122,68 @@ def dns_response(query: bytes, policy: EgressPolicy) -> bytes:
         raise PolicyError("DNS query size is outside policy")
     request_id, flags, questions, answers, authorities, additional = _DNS_HEADER.unpack_from(query)
     response_flags = 0x8000 | (flags & 0x0100) | 0x0080
-    if (
-        flags & 0x8000
-        or flags & 0x7800
-        or questions != 1
-        or answers != 0
-        or authorities != 0
-        or additional != 0
-    ):
+    if flags & 0x8000 or flags & 0x7800 or questions != 1 or answers != 0 or authorities != 0:
         return _DNS_HEADER.pack(request_id, response_flags | 1, 0, 0, 0, 0)
+    question = b""
+    response_opt = b""
+    version = 0
     try:
         host, offset = _dns_name(query, _DNS_HEADER.size)
-        if offset + 4 != len(query):
+        if offset + 4 > len(query):
             raise PolicyError("truncated DNS question")
         query_type, query_class = struct.unpack_from("!HH", query, offset)
         question = query[_DNS_HEADER.size : offset + 4]
+        offset += 4
+        if additional:
+            # RFC 6891 section 7 distinguishes malformed OPT from no EDNS support.
+            if query[offset : offset + 3] == b"\x00\x00\x29":
+                response_opt = _DNS_OPT.pack(0, 41, _MAX_DNS_QUERY_BYTES, 0, 0)
+            if offset + _DNS_OPT.size > len(query):
+                raise PolicyError("truncated DNS OPT record")
+            name, record_type, _payload_size, ttl, data_length = _DNS_OPT.unpack_from(query, offset)
+            offset += _DNS_OPT.size
+            if name != 0 or record_type != 41:
+                raise PolicyError("DNS additional record must be one bounded root OPT")
+            response_opt = _DNS_OPT.pack(0, 41, _MAX_DNS_QUERY_BYTES, ttl & 0x8000, 0)
+            if additional != 1 or offset + data_length != len(query):
+                raise PolicyError("DNS query must contain exactly one complete OPT")
+            while offset < len(query):
+                if offset + 4 > len(query):
+                    raise PolicyError("truncated DNS OPT option")
+                _option_code, option_length = struct.unpack_from("!HH", query, offset)
+                offset += 4 + option_length
+                if offset > len(query):
+                    raise PolicyError("truncated DNS OPT option data")
+            # RFC 6891: ignore unknown options/flags and answer every valid OPT.
+            # Replies fit below 512 bytes; advertise our own receive bound.
+            version = (ttl >> 16) & 0xFF
+            response_ttl = (ttl & 0x8000) | (0x01000000 if version else 0)
+            response_opt = _DNS_OPT.pack(0, 41, _MAX_DNS_QUERY_BYTES, response_ttl, 0)
+        if offset != len(query):
+            raise PolicyError("unexpected trailing DNS records")
     except PolicyError:
+        if response_opt:
+            return (
+                _DNS_HEADER.pack(request_id, response_flags | 1, 1, 0, 0, 1)
+                + question
+                + response_opt
+            )
         return _DNS_HEADER.pack(request_id, response_flags | 1, 0, 0, 0, 0)
+    if version:
+        # BADVERS is extended RCODE 16; the response advertises EDNS version 0.
+        return _DNS_HEADER.pack(request_id, response_flags, 1, 0, 0, 1) + question + response_opt
     if query_class != 1 or not policy.admits(host):
-        return _DNS_HEADER.pack(request_id, response_flags | 5, 1, 0, 0, 0) + question
+        return (
+            _DNS_HEADER.pack(request_id, response_flags | 5, 1, 0, 0, additional)
+            + question
+            + response_opt
+        )
     if query_type != 1:
-        return _DNS_HEADER.pack(request_id, response_flags, 1, 0, 0, 0) + question
+        return (
+            _DNS_HEADER.pack(request_id, response_flags, 1, 0, 0, additional)
+            + question
+            + response_opt
+        )
     answer = (
         _DNS_A_ANSWER.pack(
             0xC00C,
@@ -152,7 +194,12 @@ def dns_response(query: bytes, policy: EgressPolicy) -> bytes:
         )
         + policy.proxy_ip.packed
     )
-    return _DNS_HEADER.pack(request_id, response_flags, 1, 1, 0, 0) + question + answer
+    return (
+        _DNS_HEADER.pack(request_id, response_flags, 1, 1, 0, additional)
+        + question
+        + answer
+        + response_opt
+    )
 
 
 class _DnsDatagram(asyncio.DatagramProtocol):

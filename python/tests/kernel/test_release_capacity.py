@@ -8,6 +8,7 @@ from deploy.hetzner.release import (
     HostRelease,
     ReleaseBlocked,
     ReleasePaths,
+    _codex_capacity_evidence_expired,
 )
 
 
@@ -23,6 +24,14 @@ def test_host_pressure_is_retryable(tmp_path: Path, sample: tuple[int, float, fl
     host = HostRelease(ReleasePaths.under(tmp_path))
     with pytest.raises(ReleaseBlocked):
         host._require_qualification_host_sample(sample)
+
+
+@pytest.mark.parametrize(
+    "age, expired",
+    [(-1.01, True), (-1.0, False), (0.0, False), (72 * 3600, False), (72 * 3600 + 1, True)],
+)
+def test_capacity_replay_uses_the_same_freshness_boundary(age: float, expired: bool) -> None:
+    assert _codex_capacity_evidence_expired(1_000_000 - age, now=1_000_000) is expired
 
 
 @pytest.mark.parametrize("oom_delta, message", [(1, "OOM kill"), (0, "turns are malformed")])

@@ -318,12 +318,23 @@ run the controller resume command, and prove exact isolation again.
 
 ## Existing-VPS capacity qualification
 
-Before the first hard-cut promotion, and whenever the prior passing evidence is
-older than 72 hours, run from a clean checkout at the exact candidate SHA:
+Before the first hard-cut attempt, run from a clean checkout at the exact
+candidate SHA; repeat if that pre-activation evidence is older than 72 hours:
 
 ```sh
 ./deploy/hetzner/prove-codex-capacity.sh "$(git rev-parse HEAD)"
 ```
+
+After `ForwardFixRequired`, use the ordinary `deploy.sh` recovery command with a
+fresh published SHA. The old predecessor must remain stopped against the
+migrated database. The release owner activates and proves the bound successor,
+then runs this same qualification before promotion. An active first-cut attempt
+also refreshes expired evidence through release replay. All five long-lived
+services must be healthy; the same image, three turns, cgroup limits, host
+thresholds, evidence freshness, and permanent-failure rules apply. Transient
+refusal stops candidate writers and Codex services and leaves the phase
+replayable. The candidate API is reachable while it is measured, so keep clients
+closed until release success. See `deployment.md` for that no-use requirement.
 
 The controller must first materialize one canonical
 `nexus-codex-capacity-canary-input.v1` envelope at an explicit resolved absolute
@@ -355,7 +366,9 @@ capacity refusal is `not_run`; authentication/quota refusal is
 candidate cgroup or exact-contract breach writes immutable failed evidence. Sampling
 starts before the host's `up --wait`, so retained cgroup peak/OOM counters and
 one-second host-pressure samples cover authenticated bootstrap, readiness,
-input materialization, and every canary turn. An ordinary Docker or
+input materialization, and every canary turn. During active-release recovery,
+sampling starts after backend proof; retained peak/OOM counters cover its
+already-started host, but earlier host pressure is not sampled. An ordinary Docker or
 authenticated-startup failure without a measured kernel-envelope breach
 remains retryable and writes no false breach.
 

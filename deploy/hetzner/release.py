@@ -2870,7 +2870,7 @@ def _unquote_env(value: str) -> str:
     return value
 
 
-def _codex_capacity_evidence_expired(measured_at: float) -> bool:
+def _codex_capacity_evidence_expired(measured_at: float, *, now: float) -> bool:
     """Decide whether a capacity measurement still describes the promoting host.
 
     One predicate serves both the promotion read and the re-qualification write:
@@ -2878,7 +2878,7 @@ def _codex_capacity_evidence_expired(measured_at: float) -> bool:
     replace, and neither side may drift from the other.
     """
 
-    age_seconds = time.time() - measured_at
+    age_seconds = now - measured_at
     return age_seconds < -1.0 or age_seconds > _CODEX_CAPACITY_EVIDENCE_MAX_AGE_SECONDS
 
 
@@ -5236,21 +5236,36 @@ class HostRelease:
     ) -> None:
         """Prove the positive DNS/SNI/TLS/Caddy/MCP path after its worker is live."""
 
-        self._compose(
-            bundle=bundle,
-            candidate=candidate,
-            config_path=config_path,
-            arguments=(
-                "exec",
-                "-T",
-                _CODEX_AGENT_HOST,
-                "python",
-                "-m",
-                "apps.codex_agent.network_health",
-                "--mcp-origin",
-                self._codex_mcp_origin(config_path),
-            ),
-        )
+        try:
+            self._compose(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=config_path,
+                arguments=(
+                    "exec",
+                    "-T",
+                    _CODEX_AGENT_HOST,
+                    "python",
+                    "-m",
+                    "apps.codex_agent.network_health",
+                    "--mcp-origin",
+                    self._codex_mcp_origin(config_path),
+                ),
+            )
+        except ExternalCommandFailed as exc:
+            cause = exc.__cause__
+            if isinstance(cause, subprocess.CalledProcessError) and isinstance(cause.stderr, bytes):
+                for line in cause.stderr.decode("utf-8", errors="replace").splitlines():
+                    if re.fullmatch(
+                        r"Codex network proof (?:dns|connect-tls|request|response-headers|"
+                        r"response-contract|response-body|mcp-origin): "
+                        r"(?:gaierror|TimeoutError|ConnectionRefusedError|ConnectionResetError|"
+                        r"OSError|SSLError|SSLCertVerificationError|RemoteDisconnected|"
+                        r"BadStatusLine|IncompleteRead|HTTPException|RuntimeError|ValueError)",
+                        line,
+                    ):
+                        raise ExternalCommandFailed(line, operation=exc.operation) from exc
+            raise
 
     def _service_ipv4_address(
         self,
@@ -5984,10 +5999,8 @@ class HostRelease:
         config_path: Path,
     ) -> tuple[str, ...]:
         def refuse_readiness(service: str) -> None:
-            # Qualification starts only the isolated Codex host.  Every
-            # long-lived application service observed here is the current
-            # predecessor, so its readiness can block measurement but cannot
-            # permanently disqualify the candidate SHA.
+            # Service readiness blocks measurement; it is not a measured
+            # canary or cgroup breach of the candidate.
             raise ReleaseBlocked(f"Codex capacity {service} is not healthy")
 
         for service in _CODEX_CAPACITY_SERVICES:
@@ -6524,7 +6537,7 @@ class HostRelease:
         # not a breach: like absent evidence it blocks this promotion and is
         # cured by re-qualifying the unchanged SHA, so it must never terminalize
         # the candidate.
-        if _codex_capacity_evidence_expired(measured_at):
+        if _codex_capacity_evidence_expired(measured_at, now=time.time()):
             raise ReleaseBlocked("Codex capacity qualification is stale")
 
     def _load_codex_capacity_evidence(self, path: Path) -> object:
@@ -6705,7 +6718,7 @@ class HostRelease:
         )
         if status == "failed":
             raise ReleaseBlocked("Codex capacity qualification failed evidence is immutable")
-        if not _codex_capacity_evidence_expired(measured_at):
+        if not _codex_capacity_evidence_expired(measured_at, now=time.time()):
             raise ReleaseBlocked("Codex capacity qualification evidence already exists")
 
     def _write_codex_capacity_evidence(
@@ -6751,7 +6764,7 @@ class HostRelease:
         )
         if status == "failed":
             raise ReleaseBlocked("Codex capacity qualification failed evidence is immutable")
-        if not _codex_capacity_evidence_expired(measured_at):
+        if not _codex_capacity_evidence_expired(measured_at, now=time.time()):
             raise ReleaseBlocked("Codex capacity qualification evidence already exists")
 
     def _write_codex_capacity_failure(self, *, source_sha: str, worker_image_id: str) -> None:
@@ -6882,17 +6895,25 @@ class HostRelease:
                 failures.append(exc)
         return tuple(failures)
 
-    def _requires_first_codex_capacity_qualification(self, candidate: CandidateManifest) -> bool:
-        current = self.store.require_current_record()
-        if re.fullmatch(r"[0-9]+", current.database_revision) is None:
-            raise ReleaseDefect("current database revision is not numeric")
+    def _requires_first_codex_capacity_qualification(
+        self, candidate: CandidateManifest, *, existing: ReleaseAttempt | None = None
+    ) -> bool:
+        predecessor = (
+            self.store.require_current_record()
+            if existing is None or existing.predecessor_sha is None
+            else self.store.load_record(existing.predecessor_sha)
+        )
+        if predecessor is None:
+            raise ReleaseDefect("capacity qualification predecessor record is absent")
+        if re.fullmatch(r"[0-9]+", predecessor.database_revision) is None:
+            raise ReleaseDefect("predecessor database revision is not numeric")
         candidate_revision = candidate.expected_database_revision
         if re.fullmatch(r"[0-9]+", candidate_revision) is None:
             raise ReleaseDefect("candidate database revision is not numeric")
         return (
             _requires_codex_agent_host(candidate)
             and int(candidate_revision) >= _CODEX_PERSONAL_GENERATION_REVISION
-            and int(current.database_revision) < _CODEX_PERSONAL_GENERATION_REVISION
+            and int(predecessor.database_revision) < _CODEX_PERSONAL_GENERATION_REVISION
         )
 
     def _require_first_codex_capacity_qualification(
@@ -6900,10 +6921,11 @@ class HostRelease:
         source_sha: str,
         *,
         existing: ReleaseAttempt | None,
+        qualify_active: bool = False,
     ) -> None:
         bundle = self.bundle(source_sha)
         candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
-        if self._requires_first_codex_capacity_qualification(candidate):
+        if self._requires_first_codex_capacity_qualification(candidate, existing=existing):
             # A durable attempt already pins the candidate image identity. On
             # replay, re-read the immutable evidence against that durable fact
             # without another Docker observation or a new kill point.
@@ -6912,12 +6934,23 @@ class HostRelease:
                 if existing is not None
                 else self._image_identity(candidate.images.worker, candidate)
             )
-            self._read_codex_capacity_qualification(
-                candidate=candidate,
-                worker_image_id=worker_image_id,
-            )
+            try:
+                self._read_codex_capacity_qualification(
+                    candidate=candidate,
+                    worker_image_id=worker_image_id,
+                )
+            except ReleaseBlocked:
+                if not qualify_active or existing is None:
+                    raise
+                self.qualify_codex_capacity(source_sha, activated_attempt=existing)
+                self._read_codex_capacity_qualification(
+                    candidate=candidate,
+                    worker_image_id=worker_image_id,
+                )
 
-    def qualify_codex_capacity(self, source_sha: str) -> None:
+    def qualify_codex_capacity(
+        self, source_sha: str, *, activated_attempt: ReleaseAttempt | None = None
+    ) -> None:
         """Run the one pre-promotion, candidate-bound existing-VPS qualification.
 
         Classification is the run's product. A breach proven by the canary
@@ -6935,10 +6968,46 @@ class HostRelease:
         self.store.assert_candidate_admissible(source_sha)
         bundle = self.bundle(source_sha)
         candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
-        if not self._requires_first_codex_capacity_qualification(candidate):
+        if not self._requires_first_codex_capacity_qualification(
+            candidate, existing=activated_attempt
+        ):
             raise ReleaseBlocked("Codex capacity qualification is only for first 0224 promotion")
         self._require_codex_isolated_gateway_support()
-        worker_image_id = self._image_identity(candidate.images.worker, candidate)
+        if activated_attempt is None:
+            if self.store.forward_fix_sha() is not None:
+                raise ReleaseBlocked("forward-fix capacity qualification is owned by release apply")
+            worker_image_id = self._image_identity(candidate.images.worker, candidate)
+        else:
+            if (
+                activated_attempt.source_sha != source_sha
+                or self.store.load_attempt(source_sha) != activated_attempt
+                or activated_attempt.phase
+                not in {
+                    ReleasePhase.BackendActivationStarted,
+                    ReleasePhase.AwaitingFrontendPromotion,
+                    ReleasePhase.FrontendPromoted,
+                }
+                or activated_attempt.forward_fix_of != self.store.forward_fix_sha()
+            ):
+                raise ReleaseDefect("active capacity qualification has no bound release attempt")
+            current = self.store.require_current_record()
+            if current.source_sha != activated_attempt.predecessor_sha and (
+                activated_attempt.phase is not ReleasePhase.FrontendPromoted
+                or current.source_sha != source_sha
+                or current
+                != ReleaseRecord.from_attempt(
+                    attempt=activated_attempt,
+                    candidate=candidate,
+                    api_image_id=activated_attempt.candidate_api_image_id,
+                    worker_image_id=activated_attempt.candidate_worker_image_id,
+                    verified_at=current.verified_at,
+                )
+            ):
+                raise ReleaseDefect("active capacity qualification current record differs")
+            self._validate_release_inputs(
+                bundle=bundle, candidate=candidate, attempt=activated_attempt
+            )
+            worker_image_id = activated_attempt.candidate_worker_image_id
         self._admit_codex_capacity_qualification(
             source_sha=source_sha,
             worker_image_id=worker_image_id,
@@ -6947,11 +7016,18 @@ class HostRelease:
         # inside the kernel-enforced envelope. Docker metadata alone is not an
         # enforcement fact, and retained pre-contract swap invalidates the
         # baseline even after memory.swap.max is corrected.
-        self._converge_resource_limits(source_sha)
-        initial_host_sample = self._qualification_host_sample()
-        self._require_qualification_host_sample(initial_host_sample)
-        config = self._config_snapshot()
-        host_samples = [initial_host_sample]
+        if activated_attempt is None:
+            self._converge_resource_limits(source_sha)
+        config_path = (
+            self._config_snapshot().path
+            if activated_attempt is None
+            else Path(activated_attempt.config_path)
+        )
+        host_samples: list[tuple[int, float, float]] = []
+        if activated_attempt is None:
+            initial_host_sample = self._qualification_host_sample()
+            self._require_qualification_host_sample(initial_host_sample)
+            host_samples.append(initial_host_sample)
         cgroup_samples: list[tuple[int, int, int, int]] = []
         sampled_host_ids: list[str] = []
         sampled_host_cgroups: list[Path] = []
@@ -6977,7 +7053,7 @@ class HostRelease:
                         self._compose(
                             bundle=bundle,
                             candidate=candidate,
-                            config_path=config.path,
+                            config_path=config_path,
                             arguments=("ps", "--all", "--quiet", _CODEX_AGENT_HOST),
                         )
                         .stdout.decode("ascii")
@@ -7070,51 +7146,53 @@ class HostRelease:
             # Docker creates the container and before any controller-owned exec.
             self._require_codex_state_storage()
             self._validate_codex_state_boot_guard()
-            self._preflight_codex_agent_host_security(bundle)
-            self._prepare_codex_agent_host_security(bundle)
-            self._start_codex_runtime_service(
-                bundle=bundle,
-                candidate=candidate,
-                config_path=config.path,
-                service=_CODEX_EGRESS_POLICY,
-            )
-            # Start observing before Docker starts the measured host. The
-            # cgroup's retained memory.peak then covers bootstrap even when
-            # the first successful read occurs after that allocation ended.
+            if activated_attempt is None:
+                self._preflight_codex_agent_host_security(bundle)
+                self._prepare_codex_agent_host_security(bundle)
+                self._start_codex_runtime_service(
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=config_path,
+                    service=_CODEX_EGRESS_POLICY,
+                )
+            # A reused active host retains its bootstrap peak/OOM counters.
+            # Sample those before applying the volatile host-pressure gate.
+            # Standalone qualification observes before Docker starts the host.
             sampler.start()
             sampler_started = True
             # Host `up --wait` can fail after creating the container, so cleanup
             # and OOM classification must not depend on a completed response.
-            host_may_be_started = True
-            try:
-                self._start_codex_runtime_service(
-                    bundle=bundle,
-                    candidate=candidate,
-                    config_path=config.path,
-                    service=_CODEX_AGENT_HOST,
-                )
-            except BaseException as exc:
-                classified = self._classify_codex_capacity_startup_failure(
-                    bundle=bundle,
-                    candidate=candidate,
-                    config_path=config.path,
-                    expected_worker_image_id=worker_image_id,
-                    cause=exc,
-                )
-                if classified is exc:
-                    raise
-                raise classified from exc
+            if activated_attempt is None:
+                host_may_be_started = True
+                try:
+                    self._start_codex_runtime_service(
+                        bundle=bundle,
+                        candidate=candidate,
+                        config_path=config_path,
+                        service=_CODEX_AGENT_HOST,
+                    )
+                except BaseException as exc:
+                    classified = self._classify_codex_capacity_startup_failure(
+                        bundle=bundle,
+                        candidate=candidate,
+                        config_path=config_path,
+                        expected_worker_image_id=worker_image_id,
+                        cause=exc,
+                    )
+                    if classified is exc:
+                        raise
+                    raise classified from exc
             self._prove_codex_agent_host(
                 bundle=bundle,
                 candidate=candidate,
-                config_path=config.path,
+                config_path=config_path,
                 expected_worker_image_id=worker_image_id,
             )
             host_container_id = (
                 self._compose(
                     bundle=bundle,
                     candidate=candidate,
-                    config_path=config.path,
+                    config_path=config_path,
                     arguments=("ps", "--quiet", _CODEX_AGENT_HOST),
                 )
                 .stdout.decode("ascii")
@@ -7125,7 +7203,7 @@ class HostRelease:
                 self._compose(
                     bundle=bundle,
                     candidate=candidate,
-                    config_path=config.path,
+                    config_path=config_path,
                     arguments=("ps", "--quiet", _CODEX_EGRESS_POLICY),
                 )
                 .stdout.decode("ascii")
@@ -7176,7 +7254,7 @@ class HostRelease:
             cleanup_failures = self._cleanup_codex_capacity_runtime(
                 bundle=bundle,
                 candidate=candidate,
-                config_path=config.path,
+                config_path=config_path,
                 canary_name=None,
                 stop_host=host_may_be_started,
             )
@@ -7197,7 +7275,7 @@ class HostRelease:
             input_bytes = self._materialize_codex_capacity_input(
                 bundle=bundle,
                 candidate=candidate,
-                config_path=config.path,
+                config_path=config_path,
             )
             input_directory = tempfile.TemporaryDirectory(prefix="nexus-codex-capacity-input-")
             input_path = Path(input_directory.name) / "generation.json"
@@ -7332,7 +7410,7 @@ class HostRelease:
             services = self._require_codex_capacity_service_health(
                 bundle=bundle,
                 candidate=candidate,
-                config_path=config.path,
+                config_path=config_path,
             )
             stop_sampler()
             if sample_breach:
@@ -7415,9 +7493,9 @@ class HostRelease:
         cleanup_failures = self._cleanup_codex_capacity_runtime(
             bundle=bundle,
             candidate=candidate,
-            config_path=config.path,
+            config_path=config_path,
             canary_name=name if canary_may_exist else None,
-            stop_host=True,
+            stop_host=activated_attempt is None,
         )
         if cleanup_failures:
             # Cleanup observes nothing about capacity, so a failure here fails
@@ -7520,10 +7598,19 @@ class HostRelease:
         # its immutable qualification before the ordinary release path mutates
         # a live container. Qualification owns its prerequisite resource
         # convergence so the measured baseline already satisfies the contract.
-        self._require_first_codex_capacity_qualification(
-            source_sha,
-            existing=existing,
-        )
+        if self.store.forward_fix_sha() is None and (
+            existing is None
+            or existing.phase
+            not in {
+                ReleasePhase.BackendActivationStarted,
+                ReleasePhase.AwaitingFrontendPromotion,
+                ReleasePhase.FrontendPromoted,
+            }
+        ):
+            self._require_first_codex_capacity_qualification(
+                source_sha,
+                existing=existing,
+            )
         candidate = load_candidate_manifest(self.bundle(source_sha) / "candidate-manifest.json")
         if _requires_codex_agent_host(candidate):
             self._require_codex_isolated_gateway_support()
@@ -7738,7 +7825,34 @@ class HostRelease:
             )
             self.store.replace_attempt(attempt)
 
-        if attempt.phase is ReleasePhase.BackendActivationStarted:
+        if attempt.phase in {
+            ReleasePhase.BackendActivationStarted,
+            ReleasePhase.FrontendPromoted,
+        } or (
+            attempt.phase is ReleasePhase.AwaitingFrontendPromotion
+            and self._requires_first_codex_capacity_qualification(candidate, existing=attempt)
+        ):
+            self._activate_backend(bundle=bundle, candidate=candidate, attempt=attempt)
+            if attempt.phase is ReleasePhase.BackendActivationStarted:
+                attempt = attempt.advance(
+                    ReleasePhase.AwaitingFrontendPromotion,
+                    now=_now(),
+                )
+                self.store.replace_attempt(attempt)
+
+        if attempt.phase not in {
+            ReleasePhase.AwaitingFrontendPromotion,
+            ReleasePhase.FrontendPromoted,
+        }:
+            raise ReleaseBlocked(f"host apply cannot continue phase {attempt.phase.value}")
+        return attempt
+
+    def _activate_backend(
+        self, *, bundle: Path, candidate: CandidateManifest, attempt: ReleaseAttempt
+    ) -> None:
+        """Restore and prove the bound candidate, retaining the no-use window."""
+
+        try:
             # Recheck immediately before host activation: qualification and
             # preflight evidence cannot authorize a later mount substitution.
             self._require_codex_state_storage()
@@ -7791,15 +7905,35 @@ class HostRelease:
                 require_codex_agent_host=False,
             )
             self._prove_public_mcp_mount(Path(attempt.config_path))
-            attempt = attempt.advance(
-                ReleasePhase.AwaitingFrontendPromotion,
-                now=_now(),
+            self._require_first_codex_capacity_qualification(
+                attempt.source_sha, existing=attempt, qualify_active=True
             )
-            self.store.replace_attempt(attempt)
-
-        if attempt.phase is not ReleasePhase.AwaitingFrontendPromotion:
-            raise ReleaseBlocked(f"host apply cannot continue phase {attempt.phase.value}")
-        return attempt
+        except (ReleaseBlocked, ExternalCommandFailed, ReleaseDefect, OSError) as exc:
+            # A retriable measurement must leave the committed release resumable
+            # with writers stopped. Permanent failures use ordinary settlement.
+            failures = list(
+                self._cleanup_codex_capacity_runtime(
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=Path(attempt.config_path),
+                    canary_name=None,
+                    stop_host=True,
+                )
+            )
+            try:
+                self._stop_current_writers(
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=Path(attempt.config_path),
+                )
+            except BaseException as cleanup_error:
+                failures.append(cleanup_error)
+            if failures:
+                failure = ExternalCommandFailed("candidate stop after blocked activation failed")
+                for cleanup_error in failures:
+                    failure.add_note(str(cleanup_error))
+                raise failure from exc
+            raise
 
     def _terminalize_attempt(self, source_sha: str, *, failure_code: str) -> None:
         attempt = self.store.load_attempt(source_sha)
@@ -8124,6 +8258,16 @@ class HostRelease:
             candidate=candidate,
             attempt=attempt,
         )
+        if attempt.phase in {
+            ReleasePhase.AwaitingFrontendPromotion,
+            ReleasePhase.FrontendPromoted,
+        }:
+            try:
+                self._require_first_codex_capacity_qualification(source_sha, existing=attempt)
+            except ReleaseBlocked:
+                # The alias may already have moved. Resume the same bound
+                # candidate and refresh its expired measurement before publishing.
+                self._activate_backend(bundle=bundle, candidate=candidate, attempt=attempt)
         if self.store.current_sha() == source_sha:
             _, _, task_digest = self._prove_backend(
                 bundle=bundle,

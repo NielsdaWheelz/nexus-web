@@ -293,3 +293,10 @@ unexpected timeouts. See
 - [open] oi-115 · api availability · 2026-09-15 memory review · p2 · api startup requires codex catalogue availability despite its independent-readiness contract: [ticket](tickets/api-startup-requires-codex-catalog-availability.md).
 
 - [open] oi-116 · api memory · 2026-09-15 host observation · p2 · the incumbent api hit its 320 mib cgroup limit and recovered; qualify the restored request footprint: [ticket](tickets/incumbent-api-reaches-container-memory-cap.md).
+
+- [open] oi-117 · deployment inputs · 2026-09-15 pr #261 release · p2 · raw env extraction passes quoted urls to auth smoke after verification accepts them: [ticket](tickets/deploy-auth-smoke-misparses-quoted-env-urls.md).
+
+- [open] oi-118 · release operations · 2026-09-15 restoration cutover · p2 · generic command errors and removed one-off logs obscure failure causes: [ticket](tickets/release-command-failures-lose-diagnostics.md).
+
+- [open] oi-119 · release recovery · 2026-09-15 source review · p2 · a permanently failed current publication prefix blocks successor resource convergence: [ticket](tickets/failed-published-release-cannot-converge-successor.md).
+- [open] oi-120 · release qualification · 2026-09-15 source review · p2 · capacity expiry blocks ordinary first-cut replay while writers are stopped before activation: [ticket](tickets/capacity-expiry-blocks-stopped-first-cut-replay.md).

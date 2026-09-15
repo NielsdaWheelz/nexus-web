@@ -647,15 +647,15 @@ if ! timeout --foreground 4m "$ROOT_DIR/deploy/smoke/auth-smoke.sh" \
   die "staged frontend auth smoke failed before host activation"
 fi
 
-if [ "$status" = "new" ] || [ "$phase" != "FrontendPromoted" ]; then
-  timeout --foreground 66m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
-    timeout --foreground 65m sudo env PYTHONDONTWRITEBYTECODE=1 \
-    "PYTHONPATH=${REMOTE_BUNDLE}/python" \
-    python3 -B "$REMOTE_CONTROLLER" apply \
-      --source-sha "$SOURCE_SHA" \
-      --deployment-id "$bound_deployment_id" \
-      "${APPLY_ARGUMENTS[@]}"
-fi
+# A promoted attempt can have stopped writers after a transient capacity
+# refusal. Restore its exact backend before public auth smoke on every replay.
+timeout --foreground 66m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+  timeout --foreground 65m sudo env PYTHONDONTWRITEBYTECODE=1 \
+  "PYTHONPATH=${REMOTE_BUNDLE}/python" \
+  python3 -B "$REMOTE_CONTROLLER" apply \
+    --source-sha "$SOURCE_SHA" \
+    --deployment-id "$bound_deployment_id" \
+    "${APPLY_ARGUMENTS[@]}"
 
 authoritative_alias_status="$(vercel_get \
   "https://api.vercel.com/v2/aliases/${PRODUCTION_HOST}?teamId=${VERCEL_TEAM_ID}" \
