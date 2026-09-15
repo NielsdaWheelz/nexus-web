@@ -1,17 +1,17 @@
 """Replace EPUB file sections with source structure and fragment-addressed cursors."""
 
 import json
+from dataclasses import replace
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 from uuid import UUID
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.engine import Connection, RowMapping
-
 from nexus.ids import new_uuid7
 from nexus.schemas.presence import Present
 from nexus.services.canonicalize import (
     canonicalize_structure,
+    repair_epub_body_anchor,
     repair_historical_html_structure,
 )
 from nexus.services.epub_structure import (
@@ -23,6 +23,7 @@ from nexus.services.web_article_structure import (
     add_heading_anchors,
     build_web_article_index_blocks,
 )
+from sqlalchemy.engine import Connection, RowMapping
 
 revision = "0228"
 down_revision = "0227"
@@ -525,7 +526,7 @@ def upgrade() -> None:
         old_sections = list(
             connection.execute(
                 sa.text(
-                    "SELECT location_id, source_node_id, fragment_idx, href_path, href_fragment, source "
+                    "SELECT location_id, source_node_id, fragment_idx, href_path, href_fragment, source, start_offset "
                     "FROM epub_nav_locations WHERE media_id = :media"
                 ),
                 {"media": media_id},
@@ -559,6 +560,51 @@ def upgrade() -> None:
                     f"Reader structure repair cannot identify authored section: {media_id}/{row['location_id']}"
                 )
             surviving_ids[candidates[0]] = row["location_id"]
+        for node in toc:
+            if node.node_id not in surviving_ids or node.fragment_idx is None:
+                continue
+            anchor = (
+                unquote(node.href.split("#", 1)[1])
+                if node.href and "#" in node.href
+                else ""
+            )
+            if not anchor or anchor in source_by_index[node.fragment_idx].anchors:
+                continue
+            old = by_section[surviving_ids[node.node_id]]
+            fragment = by_index[node.fragment_idx]
+            if (
+                old["start_offset"] != 0
+                or old["fragment_idx"] != node.fragment_idx
+                or old["href_path"] != fragment["package_href"]
+                or old["href_fragment"] != anchor
+            ):
+                raise RuntimeError(
+                    f"Reader structure repair cannot preserve authored target: {media_id}/{node.node_id}"
+                )
+            html = connection.scalar(
+                sa.text("SELECT html_sanitized FROM fragments WHERE id = :id"),
+                {"id": fragment["id"]},
+            )
+            try:
+                repaired = repair_epub_body_anchor(
+                    html, fragment["canonical_text"], anchor
+                )
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"Reader structure repair cannot preserve authored anchor: {media_id}/{node.node_id}"
+                ) from exc
+            connection.execute(
+                sa.text("UPDATE fragments SET html_sanitized = :html WHERE id = :id"),
+                {"id": fragment["id"], "html": repaired},
+            )
+            canonical = canonicalize_structure(repaired)
+            source_by_index[node.fragment_idx] = canonical
+            fragments = [
+                replace(item, canonical=canonical)
+                if item.fragment_idx == node.fragment_idx
+                else item
+                for item in fragments
+            ]
         sections = build_epub_structure(
             media_id=media_id,
             fragments=fragments,

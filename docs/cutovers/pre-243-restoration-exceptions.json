@@ -16,8 +16,9 @@
       "python/nexus/auth/verifier.py": "#254 removes obsolete test-verifier comment; no behavior change",
       "python/nexus/schemas/import_history.py": "production snapshot rehearsal: preserve the exact historical E_LLM_BAD_REQUEST import outcome in the closed history catalog and reader copy",
       "python/nexus/services/media_source_ingest.py": "a6940081: browser capture failure diagnostics",
-      "python/nexus/services/canonicalize.py": "reviewed release repair: decode historical html5 text-node boundaries once in 0228; preserve current runtime canonicalization",
-      "migrations/alembic/versions/0228_reader_semantic_structure.py": "reviewed release repair: preserve canonical text and exact reader structure while repairing proven historical sanitized-html projections"
+      "python/nexus/services/canonicalize.py": "reviewed release repairs: preserve historical html text boundaries and first published epub body anchors; retain strict runtime anchor uniqueness",
+      "migrations/alembic/versions/0228_reader_semantic_structure.py": "reviewed release repairs: preserve canonical text and authored targets while repairing proven historical sanitized-html projections",
+      "python/nexus/services/epub_ingest.py": "preserve the source body as the first id target when materializing its reader marker; remove descendant copies of that body id"
     },
     "ci_and_test_cleanup": {
       ".bun-version": "extend #254 cleanup to restored-only equivalent apparatus; retain deterministic units/product contracts",
@@ -689,13 +690,15 @@
       "docs/tickets/zero-context-fault-patches-can-reverse-onto-another-occurrence.md": "record final restoration or retire obsolete testing instructions/tickets",
       "docs/tickets/local-production-auth-input-retains-obsolete-preview-origin.md": "record unresolved release-preparation finding from the fresh production-snapshot rehearsal",
       "docs/tickets/local-minio-image-pull-fails-on-devbox.md": "record unresolved release-preparation finding from the fresh production-snapshot rehearsal",
-      "docs/tickets/worker-api-errors-lose-their-declared-code.md": "record queue diagnostic code loss observed while diagnosing the undrained historical import"
+      "docs/tickets/worker-api-errors-lose-their-declared-code.md": "record queue diagnostic code loss observed while diagnosing the undrained historical import",
+      "docs/tickets/production-synapse-scan-statement-timeout-backlog.md": "record the old-production recurrence after source repair; restored query mitigation still requires production observation"
     },
     "restoration_regression_tests": {
       "python/tests/kernel/test_import_history_schema.py": "preserve the reviewed historical import failure through storage, browser decoding and reader copy",
       "apps/web/src/lib/imports/importsClient.unit.test.ts": "preserve the reviewed historical import failure through storage, browser decoding and reader copy",
       "apps/web/src/lib/status/imports.unit.test.ts": "preserve the reviewed historical import failure through storage, browser decoding and reader copy",
-      "python/tests/kernel/test_reader_document_positions.py": "literal historical whitespace/unicode addresses and ordinary reader consumers protect the 0228 representation repair"
+      "python/tests/kernel/test_reader_document_positions.py": "literal historical whitespace/unicode addresses and ordinary reader consumers protect the 0228 representation repair",
+      "python/tests/kernel/test_epub_body_anchors.py": "preserve the first body target and all text coordinates; reject other historical duplicate shapes and retain unrelated ambiguity"
     }
   }
 }
