@@ -5092,3 +5092,31 @@ def test_insufficient_storage_fails_closed_under_the_heavy_lock(tmp_path: Path) 
     assert observed == [(tmp_path, False)]
     assert not lock_held[0]
     assert not (tmp_path / "commands.jsonl").exists()
+
+
+@pytest.mark.parametrize("proof_fails", (False, True))
+def test_runtime_teardown_finishes_before_the_heavy_lease_is_released(
+    tmp_path: Path,
+    proof_fails: bool,
+) -> None:
+    cleaned: list[Path] = []
+
+    class Ports(runner._RunnerPorts):
+        def clean_owned_runtime(self, repo_root: Path) -> None:
+            with pytest.raises(BlockingIOError):
+                with runner.workspace_heavy_lock(repo_root, blocking=False):
+                    raise AssertionError("another proof entered before runtime retirement")
+            cleaned.append(repo_root)
+
+    try:
+        with Ports().heavy_lock(tmp_path):
+            assert cleaned == []
+            if proof_fails:
+                raise RuntimeError("proof failed")
+    except RuntimeError as error:
+        assert proof_fails
+        assert str(error) == "proof failed"
+
+    assert cleaned == [tmp_path]
+    with runner.workspace_heavy_lock(tmp_path, blocking=False):
+        pass

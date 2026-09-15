@@ -111,6 +111,7 @@ from nexus_test_control.services import (
     authorized_instrumentation_device,
     authorized_usb_physical_device,
     cgroup_delegate_failure,
+    clean_owned_runtime,
     clean_run,
     create_supabase_user,
     grant_scenario_paid_entitlement,
@@ -707,7 +708,13 @@ class _RunnerPorts:
     @contextmanager
     def heavy_lock(self, repo_root: Path) -> Iterator[Path]:
         with recovered_workspace_heavy_lock(repo_root, {"NEXUS_ENV": "test"}) as path:
-            yield path
+            try:
+                yield path
+            finally:
+                self.clean_owned_runtime(repo_root)
+
+    def clean_owned_runtime(self, repo_root: Path) -> None:
+        clean_owned_runtime(repo_root, {"NEXUS_ENV": "test"})
 
     def prepare_run(
         self,

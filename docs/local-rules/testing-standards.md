@@ -616,8 +616,13 @@ still apply. A direct invocation is not a workflow verdict.
 
 ### Local runtime and ownership
 
-The controller owns one persistent, health-checked, workspace-local
-PostgreSQL/MinIO/Supabase-test stack recorded in `.nexus-test/runtime.json`.
+The controller owns one health-checked, workspace-local
+PostgreSQL/MinIO/Supabase-test stack recorded in `.nexus-test/runtime.json`
+for each workload invocation. Its existing lineage lease remains held through
+exact run cleanup and teardown of that recorded stack, volumes, and runtime
+state on success, failure, and handled interruption. Failed teardown retains
+its recovery record and fails the invocation. Immutable test evidence survives;
+`./scripts/test clean` owns recovery after an unhandled process death.
 Memory-heavy proof is serialized by one host lock for every independent clone
 and linked worktree with the same complete Git lineage roots. Shallow history
 fails closed because it cannot establish that stable identity; a synthetic
