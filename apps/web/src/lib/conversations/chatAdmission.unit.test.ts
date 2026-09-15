@@ -1,33 +1,21 @@
-/// <reference types="vite/client" />
-
 import { describe, expect, it } from "vitest";
 import corpus from "../../../../../testdata/contracts/chat-admission-receipts.json";
-
-const admissionModules = import.meta.glob<typeof import("./chatAdmission")>(
-  "./chatAdmission.ts",
-);
-const draftModules = import.meta.glob<typeof import("./chatDraftStore")>(
-  "./chatDraftStore.ts",
-);
+import {
+  decodeChatAdmissionReceipt,
+  decodeChatAdmissionResponse,
+  decodeChatRunCreateRequest,
+} from "./chatAdmission";
+import { decodeChatDraftRecord } from "./chatDraftStore";
 
 // Oracle: independently reviewed Python/TypeScript admission wire corpus.
 describe("chat admission conformance", () => {
-  it.each(corpus.valid)("accepts $name", async ({ value }) => {
-    const loadAdmission = admissionModules["./chatAdmission.ts"];
-    expect(loadAdmission).toBeTypeOf("function");
-    const { decodeChatAdmissionReceipt } = await loadAdmission();
+  it.each(corpus.valid)("accepts $name", ({ value }) => {
     expect(decodeChatAdmissionReceipt(value)).toEqual(value);
   });
-  it.each(corpus.invalid)("rejects $name", async ({ value }) => {
-    const loadAdmission = admissionModules["./chatAdmission.ts"];
-    expect(loadAdmission).toBeTypeOf("function");
-    const { decodeChatAdmissionReceipt } = await loadAdmission();
+  it.each(corpus.invalid)("rejects $name", ({ value }) => {
     expect(() => decodeChatAdmissionReceipt(value)).toThrow();
   });
-  it("rejects a valid receipt for another command", async () => {
-    const loadAdmission = admissionModules["./chatAdmission.ts"];
-    expect(loadAdmission).toBeTypeOf("function");
-    const { decodeChatAdmissionResponse } = await loadAdmission();
+  it("rejects a valid receipt for another command", () => {
     expect(() =>
       decodeChatAdmissionResponse(
         { data: corpus.valid[0].value },
@@ -54,10 +42,7 @@ describe("chat admission conformance", () => {
     },
   ])(
     "preserves the exact generation choice and authority: $selection.route",
-    async (generation) => {
-      const loadAdmission = admissionModules["./chatAdmission.ts"];
-      expect(loadAdmission).toBeTypeOf("function");
-      const { decodeChatRunCreateRequest } = await loadAdmission();
+    (generation) => {
       const request = {
         destination: { kind: "New" },
         content: "question",
@@ -87,10 +72,7 @@ describe("chat admission conformance", () => {
     },
     { tool_authority: "WriteEverything" },
     { profile_id: "balanced" },
-  ])("rejects malformed or retired generation input: %j", async (invalid) => {
-    const loadAdmission = admissionModules["./chatAdmission.ts"];
-    expect(loadAdmission).toBeTypeOf("function");
-    const { decodeChatRunCreateRequest } = await loadAdmission();
+  ])("rejects malformed or retired generation input: %j", (invalid) => {
     expect(() =>
       decodeChatRunCreateRequest({
         destination: { kind: "New" },
@@ -107,13 +89,8 @@ describe("chat admission conformance", () => {
       }),
     ).toThrow();
   });
-  it("preserves a current submitting command and rejects malformed or ownerless stored request material", async () => {
-    const loadAdmission = admissionModules["./chatAdmission.ts"];
-    expect(loadAdmission).toBeTypeOf("function");
-    const loadDraft = draftModules["./chatDraftStore.ts"];
-    expect(loadDraft).toBeTypeOf("function");
-    const { decodeChatRunCreateRequest } = await loadAdmission();
-    const { decodeChatDraftRecord } = await loadDraft();
+  it("preserves a current submitting command and rejects malformed or ownerless stored request material", () => {
+
     const command = {
       idempotencyKey: "retained-command",
       origin: { identity: "origin-visit", accountId: "account-a" },
@@ -170,10 +147,7 @@ describe("chat admission conformance", () => {
   });
   it.each(["command", "conversation"])(
     "rejects stored acknowledgment belonging to another %s",
-    async (mismatch) => {
-      const loadDraft = draftModules["./chatDraftStore.ts"];
-      expect(loadDraft).toBeTypeOf("function");
-      const { decodeChatDraftRecord } = await loadDraft();
+    (mismatch) => {
       const receipt = corpus.valid[0].value;
       const command = {
         idempotencyKey:

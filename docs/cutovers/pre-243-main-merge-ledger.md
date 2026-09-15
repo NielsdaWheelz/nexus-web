@@ -113,7 +113,7 @@ the exact per-path allowlist records every exception. removal extends beyond
 - isolated test compose and obsolete planner/receipt/sensitivity data;
 - dormant tooling tickets whose owning machinery no longer exists.
 
-retain 37 deterministic python unit files and 125 node unit files. mixed files
+retain 38 deterministic python unit files and 125 node unit files. mixed files
 keep their pure schema/config/codec units and drop process certification or
 test-harness dependencies. #254’s db0215 GenerationRequest unit is obsolete in
 the restored shared-agent architecture and is removed rather than reviving that
@@ -182,3 +182,39 @@ retains #254's direct check and five-minute job; it restores no test controller.
 the action updates the persistent runner-home `.bun/bin/bun` installation and
 adds it to that job's path; it is not an ephemeral binary. authoritative manual
 validation uses the already isolated, pinned restoration tool environment.
+
+## final source-audit corrections
+
+remove the restored-only `scripts/ci-proof-artifact.sh`: its run claims and
+summary enforcement are unused by #254 and must not survive as dormant receipt
+machinery. the client-defect route unit replaces its loopback http server with
+a narrow fake fetch boundary, preserving actual route/proxy assertions without
+a listener or service fixture.
+
+remove the orphaned resource-action AST policy script, ingest network/process
+suite, and unused pdf/epub/consumption fixture corpora. retain the existing pure
+ingest article-extraction unit in the fixed direct check, adding only its locked
+product dependency installation and one explicit node command. this adds no mode
+or second gate. normal imports replace remaining sensitivity-era unit owner
+lookup. production manual smoke operations remain source-identical and are not
+executed by this pr.
+
+## recorded predecessor compatibility
+
+current main's installed db0215 bundle has six files and its web version route
+returns only source_sha. the restored controller previously demanded nine files
+and a player protocol from every release, preventing preflight of the actual
+incumbent. the owning bundle boundary now accepts exactly six files only for
+the recorded current db0215 publication, matching manifest hash, source, both
+image digests and oracle identity. only that validated legacy shape receives the
+source-only web contract. new candidates still require all nine files.
+
+this narrow compatibility does not accept arbitrary historical bundles. source,
+schema, worker/api health, images, config, infrastructure, capacity, backups and
+forward-only recovery remain checked. nine pure unit cases exercise admission
+and identity rejection without restoring a host/release simulation harness.
+
+unused journey-only oracle declarations are removed while active pure vectors
+remain. four authentication unit suites freeze the expiry clock in existing
+hooks; no timer or service framework is introduced. stateless server-render
+units remain deterministic node tests and start no browser.

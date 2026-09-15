@@ -2,7 +2,7 @@ import {
   AuthInvalidJwtError,
   AuthRetryableFetchError,
 } from "@supabase/supabase-js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   cookieGetAll: vi.fn(),
@@ -50,8 +50,13 @@ function sessionCookie(input: { active: boolean; refreshToken?: string }) {
 }
 
 describe("session verification", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
     mocks.cookieGetAll.mockReset();
     mocks.cookieSet.mockReset();
     mocks.getClaims.mockReset();

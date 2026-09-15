@@ -1,9 +1,5 @@
-/// <reference types="vite/client" />
-
-import { createServer, type IncomingMessage, type Server } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
-
-const routeModules = import.meta.glob<typeof import("./route")>("./route.ts");
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { POST } from "./route";
 
 const originalEnvironment = { ...process.env };
 const release = "a".repeat(40);
@@ -30,65 +26,20 @@ function authenticatedCookie(): string {
   return `sb-fixture-auth-token=base64-${value}`;
 }
 
-async function requestBody(request: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) chunks.push(Buffer.from(chunk));
-  return Buffer.concat(chunks).toString("utf8");
-}
-
-async function close(server: Server): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-    server.closeAllConnections();
-  });
-}
-
 afterEach(() => {
   process.env = { ...originalEnvironment };
+  vi.unstubAllGlobals();
 });
 
 describe("POST /api/telemetry/client-defects", () => {
   it("authenticates and forwards only the release-bound report to its exact backend route", async () => {
-    const loadRoute = routeModules["./route.ts"];
-    expect(loadRoute, "client defect route owner is missing").toBeTypeOf(
-      "function",
-    );
-    const { POST } = await loadRoute();
-    let receive!: (value: {
-      url: string;
-      authorization: string | undefined;
-      cookie: string | undefined;
-      body: unknown;
-    }) => void;
-    const received = new Promise<{
-      url: string;
-      authorization: string | undefined;
-      cookie: string | undefined;
-      body: unknown;
-    }>((resolve) => {
-      receive = resolve;
-    });
-    const server = createServer(async (request, response) => {
-      receive({
-        url: request.url ?? "",
-        authorization: request.headers.authorization,
-        cookie: request.headers.cookie,
-        body: JSON.parse(await requestBody(request)),
-      });
-      response.writeHead(204).end();
-    });
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", resolve);
-    });
-    const address = server.address();
-    if (address === null || typeof address === "string") {
-      throw new Error("client defect proof did not acquire a loopback port");
-    }
-
+    const externalFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", externalFetch);
     process.env.NEXUS_ENV = "test";
     process.env.APP_PUBLIC_URL = "http://localhost:3000";
-    process.env.FASTAPI_BASE_URL = `http://127.0.0.1:${address.port}`;
+    process.env.FASTAPI_BASE_URL = "https://backend.example.invalid";
     process.env.NEXUS_INTERNAL_SECRET = "test-internal-secret";
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://fixture.supabase.co";
     process.env.VERCEL_GIT_COMMIT_SHA = release;
@@ -103,20 +54,23 @@ describe("POST /api/telemetry/client-defects", () => {
         body: JSON.stringify(body),
       });
 
-    try {
-      const spoofed = await POST(request({ ...report, release: "spoofed" }));
-      expect(spoofed.status).toBe(400);
+    const spoofed = await POST(request({ ...report, release: "spoofed" }));
+    expect(spoofed.status).toBe(400);
+    expect(externalFetch).not.toHaveBeenCalled();
 
-      const response = await POST(request(report));
-      expect(response.status).toBe(204);
-      await expect(received).resolves.toEqual({
-        url: "/telemetry/client-defects",
-        authorization: "Bearer authenticated-access-token",
-        cookie: undefined,
-        body: { ...report, release },
-      });
-    } finally {
-      await close(server);
-    }
+    const response = await POST(request(report));
+    expect(response.status).toBe(204);
+    expect(externalFetch).toHaveBeenCalledTimes(1);
+    const [input, init] = externalFetch.mock.calls[0]!;
+    const forwarded = new Request(input, init);
+    expect(forwarded.url).toBe(
+      "https://backend.example.invalid/telemetry/client-defects",
+    );
+    expect(forwarded.method).toBe("POST");
+    expect(forwarded.headers.get("authorization")).toBe(
+      "Bearer authenticated-access-token",
+    );
+    expect(forwarded.headers.get("cookie")).toBeNull();
+    expect(await forwarded.json()).toEqual({ ...report, release });
   });
 });

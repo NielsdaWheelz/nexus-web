@@ -30,7 +30,7 @@ The command runs, in order:
 4. CSS-token lint, ESLint, and TypeScript checking for the web app;
 5. fast deterministic Python kernel tests that require no privileged host
    mutation;
-6. fast deterministic Node-environment Vitest unit tests; and
+6. fast deterministic Node-environment Vitest and ingest parser unit tests; and
 7. a structural Alembic check that requires exactly one canonical head.
 
 The migration check proves graph shape only. Production migration safety remains
@@ -40,7 +40,7 @@ verified backup when migration is pending, and exact-head verification.
 ## Pull requests
 
 `.github/workflows/ci.yml` is the sole pull-request workflow. It installs locked
-Python and web dependencies, then runs `./scripts/test` on the self-hosted Linux
+Python, web, and ingest dependencies, then runs `./scripts/test` on the self-hosted Linux
 x64 devbox. The job has a hard five-minute timeout and cancels an obsolete run
 when the same pull request receives a newer commit.
 
