@@ -1,9 +1,81 @@
 # restoration production release — 2026-09-15
 
-status: ecbe deployed; no new server oom; theme fix prepared; chat deferred
+status: 69583dc3 deployed; theme switching and persistence passed; chat deferred
 origin: restoration pr #255, forward recovery pr #262
 
-## current release: ecbe838e
+## current release: 69583dc3
+
+pr #268 merged as `69583dc3075730dc98e2ba33ffb2553335d0b813` and the owned
+release succeeded at22:15:13 utc. deploy ran22:12:35–22:15:14 with
+`--no-database-backup`. actual database and record remain0229; migration
+sources, backend implementation, build inputs, memory caps and host are
+unchanged from ecbe. no migration rerun, fresh backup, resize or reboot.
+postgres/caddy retain their original containers and config remains
+`23aa3deeee2016ba7c62c557b273988b1af27609452bf5f601695682d32f3b68`.
+
+- api: `sha256:9591a1fea66f8eedbbda7eda09d968f9ec3f42f9f82b758fa6474a328937bb25`.
+- worker/codex/policy: `sha256:1236de9bad356ce1f36ebab2d45c3312e5b133e5dd62ab80535cc27eacb9c060`.
+- manifest: `6e3ae359e03ae50313c3161d41c6e9ecbf21e3af696e24165e73ac559c1f2c3e`.
+- frontend: `dpl_AHBZknmjXmCxHFufn7Vp6vN34ivr`, ready exact source; owned
+  promotion, autoAssignCustomDomains=false.
+
+all five replacement services were healthy at exact source/image identities
+with zero restarts. owned backend/mcp and pre/post-alias auth smokes passed.
+public verification at22:15:56 utc found exact web/api versions, livez/readyz200
+with no-store, and a bodyless401 at the exact mcp mount without redirect/cookie.
+this does not prove an actual model tool call. no new allocation diagnostic or
+three-turn qualification is claimed for this ordinary db0229 successor; prior
+ecbe evidence retains its original source identity and limits.
+
+[behavioral red](https://github.com/NielsdaWheelz/nexus-web/actions/runs/35028818648)
+on clean checked mergecc0d837f failed the root POST regression with
+`expected null to be '/'`. [the complete fixed-head check](https://github.com/NielsdaWheelz/nexus-web/actions/runs/35029079140)
+passed552 python,1061 vitest/125 files,one ingest,all static checks and graph0229.
+reviewed head7c6c2d0dc9bd0b2c6ac11e59b5add574436ebabc, checked
+bc4817f1480cd921e625910495a34700c4c09d9a and merged695 share tree
+7c901c342b9028be086c95f7edc5e81024f2deab. the runner checkout was clean on
+`nexus-dev-server-2`. bounded independent review found no source blocker.
+[immutable publication](https://github.com/NielsdaWheelz/nexus-web/actions/runs/35029385178)
+succeeded; all eight bundle payload files matched frozen source.
+
+the fix stamps the protected path before non-GET pass-through, so the theme
+server action can rerender workspace bootstrap after saving its cookie.
+existing mutation auth and GET redirects are preserved. the user confirmed repeated solar/dark
+switches with a reader open stayed usable and the selection survived reload.
+oi-129 is resolved; its ticket and registry entry are deleted. chat repair remains explicitly deferred
+by the user (oi-128); affected metadata generation also failed. synapse
+cancellation has a separate recorded assertion (oi-130). do not blindly resend
+old drafts or reset unresolved dispatch state. detailed android navigation,
+reopen, playback/offline and imports/history were not individually verified.
+
+695 observations from22:12:36 through22:19:23 retained api250.613/320 mib,
+interactive186.051/320, background205.348/448 and codex268.633/448. all five
+new services had one observed lifetime and zero limit/oom/swap/restart events.
+host minimum366.809 mib, pressure some0.88/full0.59. caddy added189 limit-reclaim
+events without oom/restart; postgres counters were unchanged in this interval.
+these include startup, release probes and the manual reader/theme check, not
+successful tool-chat or representative background-job qualification.
+
+final ecbe observations through22:11:47 retained api283.461/320 mib, interactive
+281.668/320, background447.902/448 and codex339.129/448. all five had zero
+limit/oom/swap/restart events and one cgroup lifetime. host minimum233.055 mib,
+pressure some4.09/full2.13 across two intervals with a21:59:55–22:00:17 host
+sampling gap. this preserves the paired-reader pass and distinguishes the
+later appearance error from a server oom. oi-131 records the background
+worker's100 kib remaining peak margin; successful representative background
+execution is not established. oi-113 remains open for interactive completion.
+
+private receipts under `/tmp/nexus-release-255/`: `pr268-theme-ci-receipt.json`,
+`publisher-69583dc3-receipt.json`, `bundle-69583dc3-source-comparison.json`,
+`backend-source-reuse-69583dc3.json`, `deploy-69583dc3-operator-receipt.json`,
+`deploy-69583dc3-attempt-succeeded.json`, `deploy-69583dc3-record.json`,
+`runtime-after-69583dc3.json`, `provider-69583dc3-promoted.json`,
+`public-69583dc3-verification.json`, `production-69583dc3-memory.jsonl`,
+`production-69583dc3-memory-manual-summary.json`,
+and `production-ecbe838e-memory-final.json`. no raw credentials/log directories
+are published. both primary dirty worktrees and retained archives are preserved.
+
+## historical ecbe release
 
 pr #267 merged as `ecbe838ede7a3e85ee83d7c76c34c0383f94c43b` after the
 [sole devbox check](https://github.com/NielsdaWheelz/nexus-web/actions/runs/35023610840)
@@ -71,8 +143,8 @@ workspace bootstrap requires that header. stamp protected pathname+search
 before the non-GET return, retaining existing mutation auth behavior. two
 cheap deterministic server-action regressions cover root and pathname+query.
 independent source review confirmed the pinned framework path; the actual
-production client exception remains unobserved. repeat theme switching after
-the successor is deployed; a source fix is not a manual pass.
+production client exception remains unobserved. manual theme switching was still pending at this checkpoint; the current
+695 release records the later user-confirmed pass.
 
 chat failed and the user explicitly accepts follow-up after deployment. logs
 show codex invalid_request then GenerationUncertain after durable dispatch;
@@ -262,7 +334,7 @@ above remains historical evidence of its narrower workload.
 
 - android reader/navigation/reopen and applicable playback/offline: pending.
 - simultaneous “shadow & claw” and “the pain of clenching”: passed on ecbe; oi-116 resolved.
-- solar rendering: user-reported pass; switching themes failed, successor fix pending.
+- solar rendering, repeated solar/dark switching with a reader open, and reload persistence: user-reported pass on695.
 - chat: failed and explicitly deferred (oi-128); recovery unproved.
 - imports/history and detailed android journeys: not individually reported.
 - representative interactive execution remains unproved; oi-113 stays open.
