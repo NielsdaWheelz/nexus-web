@@ -63,3 +63,10 @@ oom, swap or restart events during deployment. the owned codex qualifier
 completed three real turns on the separate credential host. that does not prove
 representative interactive-worker execution; keep this ticket open for the
 ordinary tool-using chat check. see the [release evidence](../cutovers/restoration-release-2026-09-15.md).
+
+## memory successor
+
+exact successor5acb211a settled succeeded at20:27:05 utc. the new interactive
+worker retained185.410/320 mib through20:28:29 with zero limit/oom/swap/restart
+events. this covers startup and release probes; representative new tool-using
+chat and recovery remain pending. keep this ticket open.

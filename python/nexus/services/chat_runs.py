@@ -96,7 +96,6 @@ from nexus.schemas.llm import (
     Selectable,
 )
 from nexus.services import generation_policy
-from nexus.services.agent_tools_mcp import compose_codex_generation_tool_binding
 from nexus.services.chat_reader_selection import (
     build_reader_selection_snapshot,
     compute_reader_selection_revision,
@@ -1289,6 +1288,8 @@ async def _dispatch_generation_step(
     admission_binder = None
     before_terminal = None
     if isinstance(spec.selection, CodexPersonalSelection):
+        from nexus.services.agent_tools_mcp import compose_codex_generation_tool_binding
+
         codex_binding = compose_codex_generation_tool_binding(
             session_factory=session_factory,
             user_id=run.owner_user_id,
