@@ -197,6 +197,24 @@ def test_every_history_variant_round_trips_through_its_stored_payload() -> None:
         )
 
 
+def test_historical_provider_rejection_survives_the_failed_baseline() -> None:
+    facts = SourceHistoryBaseline(
+        source_attempt_id=_ATTEMPT_ID,
+        attempt_no=1,
+        outcome=FailedSourceBaselineOutcome(
+            failure_code=assume_safe_failure_code("E_LLM_BAD_REQUEST")
+        ),
+    )
+
+    payload = history_payload(facts)
+
+    assert payload["outcome"] == {"kind": "Failed", "failure_code": "E_LLM_BAD_REQUEST"}
+    assert (
+        history_facts(table=PROCESSING_EVENTS_TABLE, event_type="HistoryBaseline", payload=payload)
+        == facts
+    )
+
+
 def test_a_stored_payload_with_an_unknown_field_is_rejected() -> None:
     payload = {**history_payload(_SOURCE_SAMPLES[0]), "note": "hand edited"}
 

@@ -396,6 +396,13 @@ describe("Imports copy owner", () => {
     ).toBe(
       `Detailed execution history was not recorded. This attempt failed: ${IMPORT_FAILURE_COPY.E_SOURCE_TOO_LARGE.reason}.`,
     );
+    expect(
+      historyEventLine(
+        baseline({ kind: "Failed", failureCode: "E_LLM_BAD_REQUEST" }),
+      ),
+    ).toBe(
+      "Detailed execution history was not recorded. This attempt failed: Model provider rejected the import request.",
+    );
     expect(historyEventLine(baseline({ kind: "Succeeded" }))).toBe(
       "Detailed execution history was not recorded. This attempt succeeded.",
     );
