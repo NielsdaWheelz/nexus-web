@@ -32,10 +32,14 @@ from nexus.schemas.media import (
     MediaRepairRequest,
     RetryRequest,
     RetryUploadSessionRequest,
+    SearchRepairAdmission,
+    SearchRepairRequest,
     SourceCountedProgress,
     SourceRepairRequest,
 )
 from nexus.schemas.presence import absent, present
+from nexus.schemas.resource_action_snapshots import RepairSearchOfferOut
+from nexus.services.content_indexing import SearchRecoveryFacts, search_recovery
 
 SESSION_HANDLE = "nup1.ERERERERQRGBEREREREREQ.AAECAwQFBgcICQoLDA0ODw"
 MEDIA_ID = UUID("2a2a2a2a-2a2a-4a2a-8a2a-2a2a2a2a2a2a")
@@ -225,6 +229,50 @@ def test_capabilities_never_offer_and_refuse_recovery_at_once() -> None:
             recovery=present(offer),
             unavailable_reason=present("NotOwner"),
         )
+
+
+@pytest.mark.parametrize("revision", [0, 7])
+def test_search_repair_preserves_the_dead_jobs_revision_through_every_wire_shape(
+    revision: int,
+) -> None:
+    offer = search_recovery(SearchRecoveryFacts(revision, JOB_ID, is_creator=True, is_admin=False))
+    assert isinstance(offer, RepairSearchOffer)
+    assert offer.model_dump(mode="json")["expected_revision"] == revision
+    snapshot_offer = RepairSearchOfferOut.model_validate(offer.model_dump())
+    assert snapshot_offer.model_dump(mode="json", by_alias=True)["expectedRevision"] == revision
+
+    request = TypeAdapter(MediaRepairRequest).validate_python(
+        {
+            "kind": "Search",
+            "client_mutation_id": CLIENT_MUTATION_ID,
+            "expected_revision": revision,
+            "expected_job_id": str(JOB_ID),
+        }
+    )
+    assert isinstance(request, SearchRepairRequest)
+    admission = SearchRepairAdmission(
+        media_id=MEDIA_ID, revision=request.expected_revision, job_id=request.expected_job_id
+    )
+    assert admission.model_dump(mode="json") == {
+        "kind": "SearchRepair",
+        "media_id": str(MEDIA_ID),
+        "revision": revision,
+        "job_id": str(JOB_ID),
+    }
+
+
+def test_search_repair_rejects_negative_revisions_at_its_boundaries() -> None:
+    with pytest.raises(ValidationError):
+        RepairSearchOffer(expected_revision=-1, expected_job_id=JOB_ID)
+    with pytest.raises(ValidationError):
+        SearchRepairRequest(
+            kind="Search",
+            client_mutation_id=CLIENT_MUTATION_ID,
+            expected_revision=-1,
+            expected_job_id=JOB_ID,
+        )
+    with pytest.raises(ValidationError):
+        SearchRepairAdmission(media_id=MEDIA_ID, revision=-1, job_id=JOB_ID)
 
 
 def test_repair_request_keeps_one_canonical_replay_key_per_intent() -> None:

@@ -325,7 +325,7 @@ function recoveredItem(): Record<string, unknown> {
         kind: "Present",
         value: {
           kind: "RepairSearch",
-          expected_revision: 4,
+          expected_revision: 0,
           expected_job_id: JOB_ID,
           input: "PublishedContent",
         },
@@ -427,7 +427,7 @@ describe("Imports transport decoders", () => {
     expect(recovered.capabilities.recovery).toEqual(
       present({
         kind: "RepairSearch",
-        expectedRevision: 4,
+        expectedRevision: 0,
         expectedJobId: JOB_ID,
         input: "PublishedContent",
       }),
@@ -727,23 +727,23 @@ describe("Imports transport decoders", () => {
     ).toThrow();
   });
 
-  it("decodes the admission a search repair returns", () => {
+  it.each([0, 4])("decodes a search repair admission at revision %s", (revision) => {
     const data = {
       kind: "SearchRepair",
       media_id: MEDIA_ID,
-      revision: 4,
+      revision,
       job_id: JOB_ID,
     };
 
     expect(decodeSearchAdmission({ data })).toEqual({
       mediaId: MEDIA_ID,
-      revision: 4,
+      revision,
       jobId: JOB_ID,
     });
     expect(() =>
       decodeSearchAdmission({ data: { ...data, kind: "SourceRepair" } }),
     ).toThrow();
-    expect(() => decodeSearchAdmission({ data: { ...data, revision: 0 } })).toThrow();
+    expect(() => decodeSearchAdmission({ data: { ...data, revision: -1 } })).toThrow();
     expect(() =>
       decodeSearchAdmission({ data: { ...data, requeued: true } }),
     ).toThrow();

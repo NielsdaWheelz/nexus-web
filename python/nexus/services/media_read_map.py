@@ -175,7 +175,11 @@ def load_media_document_summary(
             word_count=metrics.word_count,
         )
     if kind in ("web_article", "epub"):
-        sections = _heading_sections(db, viewer_id, media_id)
+        try:
+            section_count = len(get_media_navigation_for_viewer(db, viewer_id, media_id).sections)
+        except ApiError:
+            # justify-ignore-error: retain the read-map contract's absent section count.
+            section_count = None
         metrics = load_media_summary_metrics(db, media_id)
         if isinstance(metrics.source_section_count, Present):
             # justify-service-invariant-check: generic Presence cannot encode its
@@ -183,7 +187,7 @@ def load_media_document_summary(
             # justify-defect: navigation, not source metrics, owns document sections.
             raise AssertionError(f"Unexpected source section count for media {media_id}")
         return MediaDocumentSummary(
-            section_count=len(sections) if sections is not None else None,
+            section_count=section_count,
             word_count=metrics.word_count,
         )
     if kind in ("podcast_episode", "video"):

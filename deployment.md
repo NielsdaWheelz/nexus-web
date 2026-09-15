@@ -104,7 +104,17 @@ An upstream ignoring `Accept-Encoding: identity` is rejected. Smaller caches
 mean more refetching, and image bursts may load more slowly. These bound cache
 retention and fetch work; completed responses and socket buffers still consume
 memory until delivery. Representative simultaneous reader use remains necessary
-for API capacity qualification.
+for API capacity qualification. Viewer lookup runs on the event loop; it does
+not dispatch an otherwise empty worker thread for every image. Image clients
+share the verified TLS trust store, while cookies and connection pools remain
+per fetch. Image metadata and integrity use one explicitly closed decoder.
+
+The API artifact fixes glibc allocation arenas at two and the mmap/trim
+thresholds at 128 KiB. Large freed buffers can return to the operating system
+instead of raising the allocator's adaptive retention threshold. This trades
+allocator contention and more mapping/system calls for less retained memory;
+it does not bound live allocations or increase the 320 MiB container cap.
+See the [glibc allocation contract](https://sourceware.org/glibc/manual/latest/html_node/Malloc-Tunable-Parameters.html).
 
 The host contract is cgroup v2 with the memory controller, at least 1 GiB
 swap, at least 512 MiB free under `/var/lib/nexus/parser-tmp`, and no running

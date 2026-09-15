@@ -3,6 +3,7 @@
 import io
 import socket
 import warnings
+from contextlib import closing
 from dataclasses import dataclass
 from ipaddress import IPv4Address, IPv6Address, ip_address
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -302,13 +303,12 @@ def validate_and_decode_image(
     warnings.filterwarnings("error", category=Image.DecompressionBombWarning)
 
     try:
-        img = Image.open(io.BytesIO(data))
-        # Verify integrity without fully decoding
-        img.verify()
-
-        # Re-open to check dimensions (verify() leaves image unusable)
-        img = Image.open(io.BytesIO(data))
-        width, height = img.size
+        # Capture metadata before verify invalidates the decoder. Reopening can
+        # briefly retain two native decoders for the same image.
+        with io.BytesIO(data) as body, closing(Image.open(body)) as img:
+            width, height = img.size
+            img_format = (img.format or "").lower()
+            img.verify()
 
         if width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
             raise ApiError(
@@ -316,16 +316,13 @@ def validate_and_decode_image(
                 f"Image dimensions exceed limit: {width}x{height}",
             )
 
-        # Get format for content type derivation
-        img_format = (img.format or "").lower()
-
     except Image.DecompressionBombWarning as e:
         raise ApiError(ApiErrorCode.E_IMAGE_TOO_LARGE, "Image exceeds dimension limits") from e
     except Image.DecompressionBombError as e:
         raise ApiError(ApiErrorCode.E_IMAGE_TOO_LARGE, "Image exceeds dimension limits") from e
     except ApiError:
         raise
-    except OSError as e:
+    except (OSError, SyntaxError) as e:
         logger.warning("Image decode failed: %s", e)
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Content is not a valid image") from e
 
@@ -354,9 +351,14 @@ def validate_and_decode_image(
 # =============================================================================
 
 
+_IMAGE_SSL_CONTEXT = httpx.create_ssl_context(trust_env=False)
+
+
 def create_http_client() -> httpx.Client:
     """Create an httpx client with security settings."""
     return httpx.Client(
+        # Reuse the trust store; per-image clients still isolate cookies and sockets.
+        verify=_IMAGE_SSL_CONTEXT,
         timeout=HTTP_TIMEOUT,
         follow_redirects=False,  # We handle redirects manually
         trust_env=False,  # CRITICAL: ignore env proxies

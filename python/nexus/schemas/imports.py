@@ -190,7 +190,7 @@ class RepairSourceOffer(BaseModel):
 
 class RepairSearchOffer(BaseModel):
     kind: Literal["RepairSearch"] = "RepairSearch"
-    expected_revision: int = Field(ge=1)
+    expected_revision: int = Field(ge=0)
     expected_job_id: UUID
     input: Literal["PublishedContent"] = "PublishedContent"
 

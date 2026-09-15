@@ -437,10 +437,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         )
 
 
-def get_viewer(request: Request) -> Viewer:
+async def get_viewer(request: Request) -> Viewer:
     """FastAPI dependency to get the authenticated viewer.
 
-    This dependency should be used in route handlers that require authentication.
+    Reading request state requires no worker-thread allocation. Authentication
+    and bootstrap have already completed in middleware.
 
     Args:
         request: The FastAPI request object.

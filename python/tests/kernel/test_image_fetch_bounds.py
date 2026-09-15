@@ -179,3 +179,33 @@ def test_image_at_byte_limit_is_accepted_without_rewriting() -> None:
     assert content_type is None
     assert body.bytes_read == image_validation.MAX_IMAGE_BYTES
     assert body.closed
+
+
+def test_corrupt_png_checksum_is_an_invalid_image() -> None:
+    buffer = io.BytesIO()
+    Image.new("RGB", (2, 3), color="red").save(buffer, format="PNG")
+    data = bytearray(buffer.getvalue())
+    idat = data.index(b"IDAT")
+    chunk_length = int.from_bytes(data[idat - 4 : idat], "big")
+    data[idat + 4 + chunk_length] ^= 1
+
+    with pytest.raises(ApiError) as failure:
+        image_validation.validate_and_decode_image(bytes(data), "image/png")
+
+    assert failure.value.code == ApiErrorCode.E_INVALID_REQUEST
+
+
+@pytest.mark.parametrize("width", [4096, 4097])
+def test_verified_image_preserves_the_dimension_boundary(width: int) -> None:
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, 1), color="red").save(buffer, format="PNG")
+    if width == 4096:
+        assert image_validation.validate_and_decode_image(buffer.getvalue(), None) == (
+            "image/png",
+            width,
+            1,
+        )
+    else:
+        with pytest.raises(ApiError) as failure:
+            image_validation.validate_and_decode_image(buffer.getvalue(), None)
+        assert failure.value.code == ApiErrorCode.E_IMAGE_TOO_LARGE
