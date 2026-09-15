@@ -337,12 +337,14 @@ def repair_historical_html_structure(html_sanitized: str, canonical_text: str) -
     readers without changing persisted text or any structural coordinate.
     This is a one-time persisted-HTML repair, never an ingestion fallback.
     """
+    from typing import cast
     from xml.dom import Node
-    from xml.dom.minidom import Element, Text
+    from xml.dom.minidom import Document, Element, Text
 
     import html5lib
+    from lxml.html import HtmlElement, fragment_fromstring
 
-    from nexus.services.html_tree import inner_html, parse_html_document
+    from nexus.services.html_tree import inner_html
 
     def collect(element: Element, target: _CanonicalTextTarget) -> None:
         target.start(element.tagName, dict(element.attributes.items()))
@@ -353,16 +355,16 @@ def repair_historical_html_structure(html_sanitized: str, canonical_text: str) -
                 collect(child, target)
         target.end(element.tagName)
 
-    def preserve_boundaries(element: Element) -> None:
+    def preserve_boundaries(element: Element, owner: Document) -> None:
         previous_text = False
         for child in tuple(element.childNodes):
             is_text = isinstance(child, Text) and child.nodeType == Node.TEXT_NODE
             if previous_text and is_text:
-                span = element.ownerDocument.createElement("span")
+                span = owner.createElement("span")
                 element.replaceChild(span, child)
                 span.appendChild(child)
             elif isinstance(child, Element):
-                preserve_boundaries(child)
+                preserve_boundaries(child, owner)
             previous_text = is_text
 
     document = html5lib.parseFragment(
@@ -370,9 +372,12 @@ def repair_historical_html_structure(html_sanitized: str, canonical_text: str) -
     )
     target = _CanonicalTextTarget(set(), capture_structure=True)
     try:
+        owner = document.ownerDocument
+        if not isinstance(owner, Document):
+            raise ValueError("Historical reader HTML has no document owner")
         root = next(child for child in document.childNodes if isinstance(child, Element))
         collect(root, target)
-        preserve_boundaries(root)
+        preserve_boundaries(root, owner)
         while root.firstChild is not None:
             document.insertBefore(root.firstChild, root)
         document.removeChild(root)
@@ -382,14 +387,16 @@ def repair_historical_html_structure(html_sanitized: str, canonical_text: str) -
     finally:
         document.unlink()
     raw_text, elements, anchors = target.builder.build(), target.elements, target.anchors
-    del document, root, target
+    del document, owner, root, target
     historical = _canonical_structure(raw_text, elements, anchors)
     del raw_text, elements, anchors
     if historical.text != canonical_text:
         raise ValueError("Historical reader HTML disagrees with persisted canonical text")
 
-    repaired = inner_html(parse_html_document(rendered).body)
-    if inner_html(parse_html_document(repaired).body) != repaired:
+    # justify-type-assertion: create_parent=True always returns an HtmlElement fragment root.
+    repaired = inner_html(cast(HtmlElement, fragment_fromstring(rendered, create_parent=True)))
+    # justify-type-assertion: the same fragment-root contract applies to the fixed-point parse.
+    if inner_html(cast(HtmlElement, fragment_fromstring(repaired, create_parent=True))) != repaired:
         raise ValueError("Historical reader HTML repair is not a serialization fixed point")
     if canonicalize_structure(repaired) != historical:
         raise ValueError("Historical reader HTML repair changed canonical structure")

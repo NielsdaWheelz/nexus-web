@@ -152,7 +152,7 @@ fragments with the patched canonicalizer in the c71953c3 api image. all ordinary
 web heading/index and epub link-rewrite checks passed. it adds 1,339 neutral
 spans and 16,273 html bytes in aggregate (978,195 to 994,468). the patched
 module sha256 is
-`7026ae8980e19e0c25c8150f64c29edd664c9c76ed5e5cd4a851475375cf4ccc`.
+`56d39a2d7f32fbcdb4bd0ab2512fe7f9167b7bfc301f8cb1168eebff79f509ae`.
 this read-only diagnostic did not modify the cloned database and does not
 qualify a candidate image or replace the exact migration rehearsal. historical
 DOM work is limited to mismatched fragments; the ordinary web loop adds one
