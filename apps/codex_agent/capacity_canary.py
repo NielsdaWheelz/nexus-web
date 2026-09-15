@@ -242,8 +242,6 @@ async def materialize_capacity_input(settings: Settings) -> CapacityCanaryInput:
 
     from nexus.services.generation_catalog import build_generation_catalog_service
     from nexus.services.generation_policy import GENERATION_POLICY
-    from nexus.services.generation_service import GenerationService
-    from nexus.services.tool_runtime.composition import compose_product_tool_runtime
 
     intent = GenerationIntent(
         instructions=CANARY_INSTRUCTIONS,
@@ -252,6 +250,10 @@ async def materialize_capacity_input(settings: Settings) -> CapacityCanaryInput:
     )
     catalog = build_generation_catalog_service(settings)
     await catalog.startup()
+
+    from nexus.services.generation_service import GenerationService
+    from nexus.services.tool_runtime.composition import compose_product_tool_runtime
+
     service = GenerationService(
         catalog=catalog,
         policy=GENERATION_POLICY,

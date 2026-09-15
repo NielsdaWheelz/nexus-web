@@ -90,6 +90,12 @@ Production coordinates are committed, not ambient: SSH
 `niels-erik-nandals-projects` / `team_fKVvTyTsMBQ7qFjccFO17BJL`. Changing any
 coordinate is a reviewed infrastructure change, not a release flag.
 
+The interactive worker has a 320 MiB memory ceiling and 128 MiB reservation,
+with no swap. Restored generation composition measured about 246 MiB before job
+allocations; its former 256 MiB ceiling was insufficient. The extra 64 MiB is
+possible worker demand within the existing server, not a server resize. Exact
+image and combined host qualification still apply.
+
 The host contract is cgroup v2 with the memory controller, at least 1 GiB
 swap, at least 512 MiB free under `/var/lib/nexus/parser-tmp`, and no running
 container outside the exact `nexus` Compose project. Existing hosts must be

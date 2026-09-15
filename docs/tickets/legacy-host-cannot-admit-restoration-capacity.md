@@ -59,3 +59,19 @@ headroom and makes small full-pressure readings diagnostic; intrinsic failures
 remain failures. it also removes unrelated execution imports from the codex
 client. this ticket stays open until the new immutable images pass actual
 legacy-host qualification. the resize proposal above is superseded.
+
+## observed-memory qualification attempt
+
+pr #259 merged as `959afa760037fd9f12ad61265f502348533d5ee1`. its direct devbox
+check passed. the production qualifier ran at 15:40:14–15:41:22 utc: the exact
+codex host and egress policy became healthy, then input materialization failed.
+the retained journald traceback identifies `CodexGenerationCapacityUnavailable`
+from the authenticated model-catalog call, wrapped as
+`GenerationCatalogRefreshError`. no model turns ran; no immutable failed
+capacity record or application attempt was created. cleanup stopped the two
+candidate services. all five incumbents stayed healthy with unchanged ids.
+
+the materializer's transient footprint and the separate interactive-worker oom
+(oi113) require diagnosis before cutover. logs:
+`capacity-959afa76-operator-receipt.json`, `capacity-959afa76.log`, and
+`materialize-959afa76-journal.log` under the mac's private release directory.

@@ -95,8 +95,8 @@ services:
     image: ${WORKER_IMAGE:?set an immutable candidate digest}
     restart: unless-stopped
     mem_reservation: 128m
-    mem_limit: 256m
-    memswap_limit: 256m
+    mem_limit: 320m
+    memswap_limit: 320m
     pids_limit: 256
     env_file:
       - ${NEXUS_CONFIG_FILE:?set a captured content-addressed config}

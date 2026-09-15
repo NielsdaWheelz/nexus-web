@@ -63,7 +63,6 @@ from nexus.services.generation_spec import (
     ProviderDispatchTargetSnapshot,
     StrictJsonOutputSnapshot,
 )
-from nexus.services.provider_generation_backend import ProviderTurnRequest
 from nexus.services.provider_generation_contract import (
     ProviderGenerationEvent,
     ProviderModelTools,
@@ -76,6 +75,8 @@ from nexus.services.provider_generation_contract import (
 
 if TYPE_CHECKING:
     from provider_runtime.tool_adapter import ToolCallResolution
+
+    from nexus.services.provider_generation_backend import ProviderTurnRequest
 
 type CodexAdmissionBinder = Callable[[GenerationAdmission], Awaitable[GenerationCommand]]
 type BackendRoute = Literal["CodexPersonal", "ProviderApi"]

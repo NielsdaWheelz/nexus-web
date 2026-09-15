@@ -14,7 +14,6 @@ from uuid import UUID
 import httpx
 from provider_runtime import (
     AssistantMessage,
-    ProviderRuntime,
     ProviderTarget,
     SystemMessage,
     ToolResultMessage,
@@ -375,13 +374,20 @@ def build_provider_generation_backend(
 ) -> ProviderGenerationBackend:
     """Wire credentials and explicit endpoints once at the process boundary."""
 
+    from provider_runtime import Credentials, ProviderRuntime
+
     endpoint_overrides = wiring.endpoint_overrides
     if endpoint_overrides is not None and set(endpoint_overrides) != set(
         settings.generation_api_provider_list
     ):
         raise ValueError("provider endpoint overrides must name exactly configured providers")
     runtime = ProviderRuntime(
-        provider_generation_credentials(settings),
+        Credentials(
+            **{
+                provider: credential.get_secret_value()
+                for provider, credential in provider_generation_credentials(settings).items()
+            }
+        ),
         http_client=client,
         endpoint_overrides=endpoint_overrides,
     )
