@@ -8,7 +8,6 @@ from uuid import UUID
 
 import pytest
 
-
 from nexus.services.generation_backend import BackendChildDispatch
 
 
