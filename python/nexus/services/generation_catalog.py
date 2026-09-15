@@ -9,9 +9,8 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Literal, Protocol, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
-from provider_runtime import Credentials
 from provider_runtime.agent_runtime import AgentModelCatalog
 from provider_runtime.registry import api_model_catalog
 from provider_runtime.types import (
@@ -71,6 +70,9 @@ from nexus.services.generation_selection import (
     selection_fingerprint,
 )
 from nexus.services.llm_credentials import provider_generation_credentials
+
+if TYPE_CHECKING:
+    from pydantic import SecretStr
 
 _PROVIDER_ORDER: tuple[GenerationApiProvider, ...] = (
     "openai",
@@ -792,12 +794,13 @@ class GenerationCatalogService:
 async def production_catalog_readiness(
     *,
     codex_client: _CodexHealthClient,
-    credentials: Credentials,
+    credentials: Mapping[GenerationApiProvider, SecretStr],
     configured_api_providers: Sequence[GenerationApiProvider],
     observed_at: datetime | None = None,
 ) -> CatalogReadinessSnapshot:
     """Observe only owned host health and configured credential presence.
 
+    Credentials are the validated configured-key projection from llm_credentials.
     API-provider network probes are intentionally outside this 80/20 boundary:
     they add cost, rate-limit pressure, and provider-specific side effects without
     proving that the next exact generation will succeed.
@@ -826,21 +829,11 @@ async def production_catalog_readiness(
     else:
         codex_readiness = Ready(last_checked=checked_at)
 
-    credential_by_provider: dict[GenerationApiProvider, str | None] = {
-        "openai": credentials.openai,
-        "anthropic": credentials.anthropic,
-        "gemini": credentials.gemini,
-        "moonshot": credentials.moonshot,
-        "openrouter": credentials.openrouter,
-        "deepseek": credentials.deepseek,
-        "xai": credentials.xai,
-    }
     routes: dict[RouteKey, Readiness] = {"CodexPersonal": codex_readiness}
     for provider in _configured_providers(configured_api_providers):
-        credential = credential_by_provider[provider]
         routes[f"ProviderApi:{provider}"] = (
             Ready(last_checked=checked_at)
-            if credential is not None and credential.strip()
+            if provider in credentials
             else OperatorActionRequired(
                 code="credential_unavailable",
                 explanation=f"The configured {_provider_label(provider)} credential is absent.",

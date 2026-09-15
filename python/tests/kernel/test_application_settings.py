@@ -3,8 +3,11 @@ from __future__ import annotations
 import base64
 
 import pytest
+from provider_runtime.errors import CredentialMissing
+from pydantic import SecretStr
 
 from nexus.config import Environment, Settings
+from nexus.services.llm_credentials import embedding_credential, provider_generation_credentials
 
 
 def _settings(**overrides: object) -> Settings:
@@ -42,6 +45,9 @@ def test_generation_provider_configuration_is_closed_and_secret_bound() -> None:
         "deepseek",
         "xai",
     )
+    assert dict(provider_generation_credentials(settings)) == {
+        provider: SecretStr(provider) for provider in settings.generation_api_provider_list
+    }
 
     with pytest.raises(ValueError, match="duplicate"):
         _settings(GENERATION_API_PROVIDERS="openai,openai")
@@ -88,6 +94,40 @@ def test_generation_provider_configuration_fails_closed_on_missing_authority() -
         validate=True,
     )
     assert len(local_key) == 32
+
+
+def test_generation_credentials_exclude_unconfigured_and_embedding_keys() -> None:
+    settings = _settings().model_copy(
+        update={
+            "generation_api_providers_raw": "openai",
+            "openai_generation_api_key": SecretStr("generation-secret"),
+            "anthropic_generation_api_key": SecretStr("unconfigured-secret"),
+            "openai_api_key": "embedding-secret",
+        }
+    )
+
+    credentials = provider_generation_credentials(settings)
+
+    assert tuple(credentials) == ("openai",)
+    assert credentials["openai"].get_secret_value() == "generation-secret"
+    assert "generation-secret" not in repr(credentials)
+    assert embedding_credential(settings).key == "embedding-secret"
+
+
+@pytest.mark.parametrize("credential", [None, SecretStr(""), SecretStr(" \t\n")])
+def test_generation_credentials_reject_missing_or_blank_enabled_keys(
+    credential: SecretStr | None,
+) -> None:
+    settings = _settings().model_copy(
+        update={
+            "generation_api_providers_raw": "openai",
+            "openai_generation_api_key": credential,
+            "openai_api_key": "embedding-secret",
+        }
+    )
+
+    with pytest.raises(CredentialMissing, match="no openai generation credential configured"):
+        provider_generation_credentials(settings)
 
 
 def test_podcasts_default_to_disabled_without_provider_credentials() -> None:

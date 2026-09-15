@@ -4,39 +4,42 @@ from __future__ import annotations
 
 import base64
 import binascii
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import TYPE_CHECKING
 
-from provider_runtime import Credentials, ProviderCredential
 from provider_runtime.errors import CredentialMissing
 from pydantic import SecretStr
 
 from nexus.config import GenerationApiProvider, Settings
 from nexus.services.generation_continuations import GenerationContinuationCipher
 
+if TYPE_CHECKING:
+    from provider_runtime import ProviderCredential
 
-def provider_generation_credentials(settings: Settings) -> Credentials:
-    """Project only configured generation secrets into ProviderRuntime."""
 
-    configured = set(settings.generation_api_provider_list)
+def provider_generation_credentials(
+    settings: Settings,
+) -> Mapping[GenerationApiProvider, SecretStr]:
+    """Validate configured generation keys without importing provider engines."""
 
-    def credential(provider: GenerationApiProvider, value: SecretStr | None) -> str | None:
-        if provider not in configured:
-            return None
-        if value is None:
+    configured = settings.generation_api_provider_list
+    candidates: dict[GenerationApiProvider, SecretStr | None] = {
+        "openai": settings.openai_generation_api_key,
+        "anthropic": settings.anthropic_generation_api_key,
+        "gemini": settings.gemini_generation_api_key,
+        "moonshot": settings.moonshot_generation_api_key,
+        "openrouter": settings.openrouter_generation_api_key,
+        "deepseek": settings.deepseek_generation_api_key,
+        "xai": settings.xai_generation_api_key,
+    }
+    credentials: dict[GenerationApiProvider, SecretStr] = {}
+    for provider in configured:
+        value = candidates[provider]
+        if value is None or not value.get_secret_value().strip():
             raise CredentialMissing(message=f"no {provider} generation credential configured")
-        secret = value.get_secret_value()
-        if not secret.strip():
-            raise CredentialMissing(message=f"no {provider} generation credential configured")
-        return secret
-
-    return Credentials(
-        openai=credential("openai", settings.openai_generation_api_key),
-        anthropic=credential("anthropic", settings.anthropic_generation_api_key),
-        gemini=credential("gemini", settings.gemini_generation_api_key),
-        moonshot=credential("moonshot", settings.moonshot_generation_api_key),
-        openrouter=credential("openrouter", settings.openrouter_generation_api_key),
-        deepseek=credential("deepseek", settings.deepseek_generation_api_key),
-        xai=credential("xai", settings.xai_generation_api_key),
-    )
+        credentials[provider] = value
+    return MappingProxyType(credentials)
 
 
 def generation_continuation_cipher(settings: Settings) -> GenerationContinuationCipher:
@@ -56,6 +59,8 @@ def generation_continuation_cipher(settings: Settings) -> GenerationContinuation
 
 
 def embedding_credential(settings: Settings) -> ProviderCredential:
+    from provider_runtime import ProviderCredential
+
     if settings.openai_api_key is None:
         raise CredentialMissing(message="no openai credential configured")
     return ProviderCredential(provider="openai", key=settings.openai_api_key)
