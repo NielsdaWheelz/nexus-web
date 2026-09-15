@@ -293,6 +293,7 @@ def test_doctor_is_not_run_when_its_locked_tool_owners_are_absent(tmp_path: Path
         StringIO(),
         {},
         run_id="0123456789abcdef",
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     assert evidence.capabilities[0].id is Capability.DOCTOR
@@ -1240,6 +1241,7 @@ def test_exact_provider_protocol_proof_runs_only_its_local_contract_node(
         f"pytest:{proof_path}::test_protocol",
         environment,
         _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     assert result.evidence.status is RunStatus.FAIL
@@ -1286,6 +1288,7 @@ def test_exact_release_artifact_proof_materializes_an_owned_worker_image(
         environment,
         _ports=_LocalDockerPorts(),
         _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     assert result.evidence.id is Capability.RELEASE_ARTIFACT
@@ -1458,6 +1461,7 @@ def test_release_artifact_image_build_failure_is_setup_and_skips_pytest(
         environment,
         _ports=_LocalDockerPorts(),
         _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     assert result.evidence.status is RunStatus.FAIL
@@ -3059,6 +3063,7 @@ def test_workflow_interruption_closes_the_owned_run(tmp_path: Path) -> None:
             run_id="0123456789abcdef",
             _ports=Ports(),
             _available_memory=lambda: 8192,
+            _available_storage=lambda _root, _docker: 16384,
         )
     except CommandInterrupted as error:
         assert "SIGTERM" in str(error)
@@ -3149,6 +3154,7 @@ def _assert_container_measurement_stops_before_owned_runtime_cleanup(
             _ports=Ports(),
             _available_memory=lambda: 8192,
             _memory_sampler=sampler,
+            _available_storage=lambda _root, _docker: 16384,
         )
         status = result.evidence.status
         peak_owned_mib = sampler.snapshot()
@@ -3161,6 +3167,7 @@ def _assert_container_measurement_stops_before_owned_runtime_cleanup(
             _ports=Ports(),
             _available_memory=lambda: 8192,
             _memory_sampler=sampler,
+            _available_storage=lambda _root, _docker: 16384,
         )
         service = next(item for item in evidence.capabilities if item.id is Capability.SERVICE)
         status = service.status
@@ -3235,6 +3242,7 @@ def test_web_source_promoted_to_journey_is_memory_admitted_before_static_web(
         _available_memory=available_memory,
         _monotonic=lambda: now[0],
         _wait=wait,
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     static_web = next(item for item in evidence.capabilities if item.id is Capability.STATIC_WEB)
@@ -3396,6 +3404,7 @@ def test_unknown_available_memory_fails_closed_before_heavy_work(tmp_path: Path)
         _ports=Ports(),
         _available_memory=available_memory,
         _wait=unexpected_wait,
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     static_web = next(item for item in evidence.capabilities if item.id is Capability.STATIC_WEB)
@@ -3509,6 +3518,7 @@ def test_affected_heavy_proofs_share_one_workflow_run_and_request_migrations_onl
         run_id="0123456789abcdef",
         _ports=Ports(),
         _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     assert prepared == [True]
@@ -3603,6 +3613,7 @@ def test_affected_heavy_capabilities_with_no_selection_do_not_prepare_runtime(
         StringIO(),
         {},
         run_id="0123456789abcdef",
+        _available_storage=lambda _root, _docker: 16384,
     )
     assert not (tmp_path / ".nexus-test").exists()
 
@@ -4080,6 +4091,7 @@ def test_run_proof_executes_only_the_exact_service_node_and_classifies_assertion
         environment,
         _ports=Ports(),
         _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     assert result.evidence.status is RunStatus.FAIL
@@ -4108,6 +4120,7 @@ def test_run_proof_rejects_missing_or_inexact_browser_nodes_without_preparing_ru
         context,
         "vitest:apps/web/src/owned.browser.test.ts::case",
         {},
+        _available_storage=lambda _root, _docker: 16384,
     )
     missing = run_proof(context, "pytest:python/tests/service/missing.py::test_case", {})
 
@@ -4167,6 +4180,7 @@ def test_exact_proof_waits_under_heavy_lock_for_memory_recovery_and_launches_onc
         _available_memory=available_memory,
         _monotonic=lambda: now[0],
         _wait=wait,
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     assert result.evidence.status is RunStatus.PASS, (
@@ -4219,6 +4233,7 @@ def test_exact_browser_component_proof_never_prepares_a_local_stack(tmp_path: Pa
         environment,
         _ports=Ports(),
         _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     assert result.evidence.status is RunStatus.PASS
@@ -4628,6 +4643,7 @@ def test_workflow_reuses_the_injected_one_shot_reporter() -> None:
         {},
         run_id="0123456789abcdef",
         _reporter=reporter,
+        _available_storage=lambda _root, _docker: 16384,
     )
     reporter.report(
         stream,
@@ -4683,6 +4699,7 @@ def test_workflow_stops_launching_capabilities_after_the_first_decisive_result(
         StringIO(),
         {},
         run_id="0123456789abcdef",
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     assert result.capabilities[0].status is RunStatus.FAIL
@@ -5007,6 +5024,7 @@ def test_changed_stylesheet_reaches_the_css_token_owner_and_never_the_eslint_com
         _tool_environment(tmp_path),
         run_id="0123456789abcdef",
         _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
     )
 
     static_web = next(item for item in evidence.capabilities if item.id is Capability.STATIC_WEB)
@@ -5025,3 +5043,52 @@ def test_android_compiler_lifetime_is_owned_by_the_gradle_process() -> None:
     ]
 
     assert strategy == ["kotlin.compiler.execution.strategy=in-process"]
+
+
+def test_insufficient_storage_fails_closed_under_the_heavy_lock(tmp_path: Path) -> None:
+    source = tmp_path / "apps/web/src/risk.ts"
+    _write(source, "export const risk = 1;\n")
+    _write(tmp_path / "python/pyproject.toml", "[project]\nname='fixture'\nversion='1'\n")
+    (tmp_path / "python/.venv").mkdir()
+    _write(tmp_path / "apps/web/package.json", "{}\n")
+    (tmp_path / "apps/web/node_modules").mkdir()
+    selection = Selection(
+        "apps/web/src/risk.ts",
+        Capability.COMPONENT,
+        SelectionReason.FRONTEND_RELATED,
+    )
+    lock_held = [False]
+    observed: list[tuple[Path, bool]] = []
+
+    class Ports(runner._RunnerPorts):
+        @contextmanager
+        def heavy_lock(self, _repo_root: Path) -> Iterator[Path]:
+            lock_held[0] = True
+            try:
+                yield tmp_path / "heavy.lock"
+            finally:
+                lock_held[0] = False
+
+    def available_storage(repo_root: Path, include_docker: bool) -> int:
+        assert lock_held[0], "storage admission sampled outside the controller heavy lock"
+        observed.append((repo_root, include_docker))
+        return 1024
+
+    evidence = run_workflow(
+        CapabilityContext(tmp_path, Workflow.CHANGED, (selection,)),
+        StringIO(),
+        {},
+        run_id="0123456789abcdef",
+        _ports=Ports(),
+        _available_memory=lambda: 8192,
+        _available_storage=available_storage,
+    )
+
+    static_web = next(item for item in evidence.capabilities if item.id is Capability.STATIC_WEB)
+    assert static_web.status is RunStatus.NOT_RUN
+    assert static_web.detail == (
+        "heavy storage admission requires 8192 MiB available; observed 1024 MiB"
+    )
+    assert observed == [(tmp_path, False)]
+    assert not lock_held[0]
+    assert not (tmp_path / "commands.jsonl").exists()

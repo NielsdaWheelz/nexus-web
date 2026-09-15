@@ -466,6 +466,14 @@ target. The floor retains the recorded 2,293 MiB process-tree peak plus the
 reference host's early-OOM reserve and operating margin. Change it only from
 recorded memory evidence on the 8 GiB reference host.
 
+Under the same lock and immediately before launch, heavy proof also requires
+8,192 MiB free across the checkout filesystem and, when the proof may use the
+local Docker runtime, Docker's data filesystem. Unknown storage is `not_run`;
+insufficient storage is `not_run` before any heavy command or test resource is
+created. The evidence names the required floor and observed minimum. This
+protects local service writes from disk-full failures; it never authorizes
+pruning foreign images, builds, checkouts, or evidence.
+
 ## 8. Repository capability contract
 
 `./scripts/test` is the sole public test and verification API. GitHub's

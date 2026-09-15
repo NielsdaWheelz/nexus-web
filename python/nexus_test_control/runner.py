@@ -134,6 +134,8 @@ from nexus_test_control.services import (
     wait_process_ready,
 )
 
+from nexus_test_control.storage import available_storage_mib
+
 _SENSITIVE_ENV_PARTS = (
     "credential",
     "fixture",
@@ -384,6 +386,7 @@ _ANDROID_RELEASE_OFFLINE_BASELINE_MODES = (
 )
 _DETERMINISTIC_PYTEST = ("-p", "no:randomly")
 _MIN_AVAILABLE_HEAVY_MIB = 3584
+_MIN_AVAILABLE_HEAVY_STORAGE_MIB = 8192
 _MEMORY_ADMISSION_TIMEOUT_SECONDS = 30.0
 _MEMORY_ADMISSION_POLL_SECONDS = 0.25
 _HEAVY_CAPABILITIES = frozenset(
@@ -1059,6 +1062,7 @@ def run_workflow(
     run_id: str,
     _ports: _RunnerPorts | None = None,
     _available_memory: Callable[[], int | None] = available_memory_mib,
+    _available_storage: Callable[[Path, bool], int | None] = available_storage_mib,
     _monotonic: Callable[[], float] = time.monotonic,
     _wait: Callable[[float], None] = time.sleep,
     _reporter: FirstFailureReporter | None = None,
@@ -1109,7 +1113,16 @@ def run_workflow(
                     monotonic=_monotonic,
                     wait=_wait,
                 )
-                return admission or _run_capability(
+                if admission is not None:
+                    return admission
+                storage_admission = _heavy_storage_admission(
+                    capability,
+                    _available_storage(
+                        context.repo_root,
+                        capability in _LOCAL_RUNTIME_CAPABILITIES,
+                    ),
+                )
+                return storage_admission or _run_capability(
                     context,
                     capability,
                     environment,
@@ -1279,6 +1292,7 @@ def run_proof(
     *,
     _ports: _RunnerPorts | None = None,
     _available_memory: Callable[[], int | None] = available_memory_mib,
+    _available_storage: Callable[[Path, bool], int | None] = available_storage_mib,
     _monotonic: Callable[[], float] = time.monotonic,
     _wait: Callable[[float], None] = time.sleep,
     _memory_sampler: OwnedMemorySampler | None = None,
@@ -1334,6 +1348,15 @@ def run_proof(
         )
         if admission is not None:
             return admission
+        storage_admission = _heavy_storage_admission(
+            capability,
+            _available_storage(
+                context.repo_root,
+                capability in _LOCAL_RUNTIME_CAPABILITIES,
+            ),
+        )
+        if storage_admission is not None:
+            return storage_admission
         execution = _WorkflowExecution(
             proof_context,
             environment,
@@ -1463,6 +1486,25 @@ def _heavy_memory_admission(
         capability,
         "heavy memory admission requires "
         f"{_MIN_AVAILABLE_HEAVY_MIB} MiB available; observed {available_mib} MiB",
+    )
+
+
+def _heavy_storage_admission(
+    capability: Capability, available_mib: int | None
+) -> CapabilityResult | None:
+    if capability not in _MEMORY_ADMITTED_CAPABILITIES:
+        return None
+    if available_mib is None:
+        return _not_run(
+            capability,
+            "heavy storage admission could not determine available storage",
+        )
+    if available_mib >= _MIN_AVAILABLE_HEAVY_STORAGE_MIB:
+        return None
+    return _not_run(
+        capability,
+        "heavy storage admission requires "
+        f"{_MIN_AVAILABLE_HEAVY_STORAGE_MIB} MiB available; observed {available_mib} MiB",
     )
 
 
