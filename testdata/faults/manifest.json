@@ -1228,6 +1228,17 @@
       "expected_failure": "reader structure migration changed accepted progress or failed exact fragment conversion"
     },
     {
+      "id": "restoration-chain-cursor-migration-bypass",
+      "patch": "testdata/faults/reader-structure-cursor-migration-bypass.patch",
+      "sha256": "5ee953d9e5cce070c706cce42a65697e6f8c118da76621920c5df40ce703cab1",
+      "proofs": [
+        "pytest:python/tests/migrations/test_pre_bridge_restoration_upgrade.py::test_populated_0215_reaches_head_preserving_content_and_declaring_history_loss"
+      ],
+      "expected_failure": "0228 must preserve the accepted reading locus while replacing its retired section address",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "3220a49d7acc607ef27fe51e64ff1453b01e711ac37c545d676550d8c4cd441c"
+    },
+    {
       "id": "web-reader-cursor-ambiguity-bypass",
       "patch": "testdata/faults/web-reader-cursor-ambiguity-bypass.patch",
       "sha256": "158b6a77b015d320eefbad7d8410487d1ae868fccca342eb4e1b2a4901b6afc0",
