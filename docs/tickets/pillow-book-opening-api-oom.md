@@ -74,11 +74,16 @@ agent-control changes or bypass the provider owner.
 
 ## next action and acceptance
 
-reproduce on the native devbox with the exact image, retained clone and real
-request/asset sequence. distinguish book metadata/quote repair, first S3 client
-setup, per-request storage lifetime and transfers before choosing a fix.
-retain access checks, size integrity and SVG CSP. reassess the api ceiling
-against measured combined host demand; do not resize or weaken capacity proof
-merely to obtain a pass.
+pr #270 pins provider97fbac7 and kernel0c400be (only the corresponding dependency
+requirement changes in the kernel). the cold-interpreter embedding regression
+failed as expected against the old provider pin in sole devbox check35034195481:
+the fake request and response passed, then the unexpected Anthropic import failed.
+the first native source-overlay search probe stayed below259 mib but timed out
+after30 seconds; it is not a successful search or replacement-image proof.
+
+measure ordinary semantic search and reader routes on the native devbox with
+the exact replacement image. retain access checks, size integrity and SVG CSP.
+reassess the api ceiling against measured combined host demand; do not resize
+or weaken capacity proof merely to obtain a pass.
 close only after exact replacement-image evidence and the actual pillow-book
 opening sequence remain usable without oom/restarts.

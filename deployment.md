@@ -111,6 +111,10 @@ share the verified TLS trust store, while cookies and connection pools remain
 per fetch. Image metadata and integrity use one explicitly closed decoder.
 Chat and Dossier admission do not import the worker-owned MCP server; the two
 Codex execution paths import their binding when they run in the worker.
+Semantic search loads the embedding SDK without generation engines. The pinned
+provider runtime constructs those engines on first generation use; this keeps
+the embedding credential, retry and response contracts intact. The required
+OpenAI SDK and actual query allocations still consume API memory.
 
 The API artifact fixes glibc allocation arenas at two and the mmap/trim
 thresholds at 128 KiB. Large freed buffers can return to the operating system

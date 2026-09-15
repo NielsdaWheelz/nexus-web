@@ -309,3 +309,4 @@ unexpected timeouts. See
 - [open] oi-116 · api memory · 2026-09-15 post-release manual use · p1 · book opening oom-kills695 api, including pillow book alone; reopened: [ticket](tickets/pillow-book-opening-api-oom.md).
 
 - [open] oi-132 · api observability · 2026-09-15 reader oom diagnosis · p2 · access logs label headers as completion and omit requests killed before headers: [ticket](tickets/api-request-logs-stop-at-response-headers.md).
+- [open] oi-133 · dependency maintenance · 2026-09-15 pr #270 · p2 · integrate the isolated embedding import fix from published maintenance revisions into upstream main: [ticket](tickets/embedding-memory-maintenance-pins-need-upstream-integration.md).
