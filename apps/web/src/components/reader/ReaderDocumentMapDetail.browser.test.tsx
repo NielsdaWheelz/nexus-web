@@ -60,4 +60,3 @@ it("pins section detail during navigation and exposes targetless groups and infe
   expect(screen.getByText("section 50%")).toBeVisible();
   expect(screen.getByTestId("reader-current-position")).toBeInTheDocument();
 });
-
