@@ -1,7 +1,16 @@
 # restoration production release — 2026-09-15
 
-status: 69583dc3 deployed; theme switching and persistence passed; chat deferred
+status: 69583dc3 deployed; later book opening oom-killed api; memory issue reopened
 origin: restoration pr #255, forward recovery pr #262
+
+## later book-opening failure
+
+695 api was oom-killed at22:24:54,22:26:03,22:29:01 and22:31:46 utc. user reports replacing
+confessions with the pillow book while shadow & claw was open; pillow alone
+also crashes. oi-116 is reopened. the earlier bounded reader/theme passes
+remain truthful but do not establish general book-opening capacity. theme
+switching remains verified; chat remains explicitly deferred. see the
+[active memory ticket](../tickets/pillow-book-opening-api-oom.md).
 
 ## current release: 69583dc3
 

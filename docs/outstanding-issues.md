@@ -306,3 +306,6 @@ unexpected timeouts. See
 - [open] oi-128 · generation · 2026-09-15 ecbe manual check · p2 · chat and metadata fail after codex dispatch with invalid_request; user defers chat repair: [ticket](tickets/restored-chat-codex-dispatch-fails.md).
 - [open] oi-130 · synapse jobs · 2026-09-15 ecbe production observation · p2 · cancellation after lost admission claim requires an absent Prepared checkpoint: [ticket](tickets/synapse-cancellation-missing-prepared-checkpoint.md).
 - [open] oi-131 · background memory · 2026-09-15 ecbe observation · p2 · retained peak447.902/448 mib leaves100 kib margin, without observed oom: [ticket](tickets/background-worker-production-memory-margin.md).
+- [open] oi-116 · api memory · 2026-09-15 post-release manual use · p1 · book opening oom-kills695 api, including pillow book alone; reopened: [ticket](tickets/pillow-book-opening-api-oom.md).
+
+- [open] oi-132 · api observability · 2026-09-15 reader oom diagnosis · p2 · access logs label headers as completion and omit requests killed before headers: [ticket](tickets/api-request-logs-stop-at-response-headers.md).
