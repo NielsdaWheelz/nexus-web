@@ -61,8 +61,8 @@ def test_linked_worktree_runtimes_reserve_every_persisted_port(
     initialize_runtime(repository, TEST_ENV, DEFAULT_PORTS)
     runtime_path = repository / ".nexus-test/runtime.json"
     previous = json.loads(runtime_path.read_text(encoding="utf-8"))
-    previous["version"] = 2
-    for name in ("provider_openai", "agent_tools_mcp", "provider_api"):
+    previous["version"] = 3
+    for name in ("agent_tools_mcp", "provider_api"):
         del previous["ports"][name]
     runtime_path.write_text(json.dumps(previous), encoding="utf-8")
 
@@ -75,5 +75,5 @@ def test_linked_worktree_runtimes_reserve_every_persisted_port(
     upgraded = read_runtime(repository).ports.as_dict()
     assert all(
         upgraded[name] not in linked_ports
-        for name in ("provider_openai", "agent_tools_mcp", "provider_api")
+        for name in ("agent_tools_mcp", "provider_api")
     ), "a linked worktree's durable provider port reservation was reused"

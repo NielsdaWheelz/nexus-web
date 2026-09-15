@@ -1316,7 +1316,7 @@
       ],
       "expected_failure": "a linked worktree's durable port reservation was reused",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "a0b36f306d6f1dffd80085fbac22e86ffea684826f88f370b2f0f671fa757737"
+      "changed_owner_sha256": "561b184e723705644d207baa2763736cdfe30fc412da13d7d2c3e759344e956f"
     }
   ]
 }
