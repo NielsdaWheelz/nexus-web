@@ -36,11 +36,15 @@ def create_oracle_reading(
         question=body.question,
         idempotency_key=idempotency_key,
     )
+    # justify-defect: creation and job enqueue are one transaction; this route
+    # can only return the newly-created pending representation.
+    if reading.status != "pending":
+        raise AssertionError("new Oracle reading is not pending")
     return ok(
         OracleReadingCreateResponse(
             reading_id=reading.id,
             folio_number=reading.folio_number,
-            status=reading.status,
+            status="pending",
         )
     )
 

@@ -27,6 +27,24 @@ export type ResourceActionOfflineState =
       readonly byRef: ReadonlyMap<CanonicalResourceRef, LocalAvailability>;
     };
 
+export type ResourceActionOfflineReadingAvailability =
+  | Exclude<LocalAvailability, { readonly kind: "Ready" }>
+  | {
+      readonly kind: "Ready";
+      readonly sizeBytes: number;
+      readonly contentType: string;
+      readonly updatedAt: string;
+      readonly hasDevicePosition: boolean;
+    };
+
+export type ResourceActionOfflineReadingState =
+  | { readonly kind: "Loading" }
+  | { readonly kind: "Unavailable" }
+  | {
+      readonly kind: "Ready";
+      readonly byRef: ReadonlyMap<CanonicalResourceRef, ResourceActionOfflineReadingAvailability>;
+    };
+
 /**
  * Client-wide facts the pure planner reads to resolve resource actions. Composed
  * once by the runtime provider from the platform, connectivity, and offline-media
@@ -36,6 +54,8 @@ export interface ResourceActionEnvironment {
   readonly platform: "Web" | "Android";
   readonly connectivity: "Online" | "Offline";
   readonly offline: ResourceActionOfflineState;
+  /** Dedicated verified-reading replica; absent in non-Android/test hosts. */
+  readonly offlineReading?: ResourceActionOfflineReadingState;
   readonly lectern: ResourceActionLecternState;
   readonly playbackByRef: ReadonlyMap<
     CanonicalResourceRef,

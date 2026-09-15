@@ -43,9 +43,14 @@ It is nonetheless a real trap, because of a property of the seed path worth stat
 
 > **A server seed that under-loads is not self-healing.** When the server seeds `{ fragments: [] }`, `useResource` starts `ready` and **skips the client's first fetch** (consume-once, `useResource.ts:104`). So the client `load`'s gate never runs on a server-seeded first paint — the seed's gate is authoritative. If a sixth, fragment-rendering kind were added and added only to the client denylist, the allowlist seed would paint it empty with **no client recovery**.
 
-Unifying the loader removes the trap by construction: one gate governs seed, mount, and prefetch, so they cannot disagree per kind. The **canonical predicate is the allowlist** — only `TranscriptContentPanel` (podcast/video) consumes the `fragments` array as first-paint content; epub→`/sections`, pdf→binary, web_article→its own deferred `webFragmentsResource` (`shouldLoadWebArticleFragments`) all render from dedicated loaders, so seeding fragments for any other kind is a fetch with no consumer.
+Unifying the loader removes the trap by construction: one gate governs seed, mount, and prefetch, so they cannot disagree per kind. The **canonical predicate is the allowlist** — only `TranscriptContentPanel` (podcast/video) consumes the `fragments` array as first-paint content; epub→`/sections`, pdf→binary, and web_article→the `DocumentReaderSession` text source all render from dedicated reader-owned loaders, so seeding fragments for any other kind is a fetch with no consumer.
 
-(Two lesser duplications the unification also erases: author's `Array.isArray(works) ? works : []` guard is written inline server-side *and* inside `fetchContributorWorks`; `notes` tolerates a missing `pages` array server-side (`?? []`) but `fetchNotePages` throws client-side.)
+(A second duplication erased by this cutover was author's inline
+`Array.isArray(works) ? works : []` guard. The Notes Page list mismatch found by
+the original audit was subsequently hard-cut further: the shared
+`loadNotePages` owner now rejects missing, extra, or legacy-shaped fields for
+server seed, intent prefetch, and in-pane replacement alike. See the
+2026-08-25 current-state note below.)
 
 ---
 
@@ -82,7 +87,7 @@ Unifying the loader removes the trap by construction: one gate governs seed, mou
 - **C6** — Prefetch never changes correctness, only latency. Removing every `warmPaneOnIntent` call leaves behaviour identical (each pane still client-fetches on mount).
 - **C7** — Bounded: prefetch entries are tracked in an LRU of size `PREFETCH_CACHE_LIMIT` (16); exceeding it aborts (if pending) and evicts the oldest *prefetch* entry. Server seeds are not LRU-evicted (claimed on first paint).
 - **C8** — The loader registry and its bodies import **no transport** (`callFastAPI`/`apiFetch`) and no client-only or server-only module; they are pure composition over `ResourceDescriptor` + pure normalizers. Transport lives only in the two fetcher modules (R5).
-- **C9** — Because the gate is shared (C2), a server seed cannot under-load relative to the client for any kind. **Adding any future fragment-rendering media kind requires (a) adding it to the allowlist gate and (b) giving it a dedicated empty-seed recovery loader (the `web_article`/`shouldLoadWebArticleFragments` pattern).** Encoded as a comment on the gate + a guard test.
+- **C9** — Because the gate is shared (C2), a server seed cannot under-load relative to the client for any kind. **Adding any future fragment-rendering media kind requires adding it to the allowlist gate and routing its first-paint document through the shared reader composition/source.** Encoded as a comment on the gate + a guard test.
 
 ---
 
@@ -135,12 +140,12 @@ export const paneResourceLoaders: Partial<Record<PaneRouteId, PaneResourceLoader
     },
   },
   library, author,      // the 2-fetch merges, once (author folds the works Array.isArray guard)
-  note, notes,          // normalizeBlock / pages.map(normalizePageSummary), once
+  notes,                // loadNotePages: exact list envelope and rows, once
   libraries, conversations, settingsAccount, settingsKeys, settingsBilling,  // trivial single fetch
 };
 ```
 
-- **Composed/normalizing panes** (media, library, author, note, notes) move their full fetch/merge/normalize body here. This is where the duplication dies.
+- **Composed/normalizing panes** (media, library, author, notes) move their full fetch/merge/decode body here. This is where the duplication dies.
 - **Single-fetch panes** (libraries, conversations, settings*) get a trivial loader (`fetch(descriptor, params)`, full envelope) needed by server-seed + prefetch. Their client `*PaneBody` keeps the **default** descriptor load (no `load`), which is byte-identical — no client churn (Resolved decision OQ-scope/D7).
 - The registry stays `Partial<Record<…>>`; the deliberate exclusions (N5) have no entry. The header comment documenting *why* each is excluded moves here verbatim.
 
@@ -205,9 +210,9 @@ Wired at the surfaces where intent already lives, reusing existing seams, adding
 
 ## Slices (hard cutover — all land together, no interim dual paths)
 
-- **S0 — Transport + pure-helper extraction.** Add `resourceTransport.ts` / `.server.ts` / `.client.ts`. **Extract `normalizeBlock` + `normalizePageSummary` (and their types) into a transport-free `lib/notes/normalize.ts`** (required: `notes/api.ts` imports `apiFetch` at module scope, so the isomorphic registry must not import normalizers from it — C8). `notes/api.ts` re-imports from `normalize.ts`. *Acceptance:* fetchers compile on their respective sides; `normalize.ts` and the registry import no transport.
+- **S0 — Transport + pure-helper extraction.** Add `resourceTransport.ts` / `.server.ts` / `.client.ts`. Keep every decoder imported by the isomorphic registry transport-free (C8). The original landing temporarily extracted Notes normalizers; the later strict Page read hard cut replaced that stopgap with `lib/notes/pageContract.ts` and deleted `lib/notes/normalize.ts`.
 - **S1 — Isomorphic loader registry + server rewire.** Create `paneResourceLoaders.ts` (all 10 loaders, one media gate, the exclusion comment). Rewire `bootstrap.server.ts` `seedPane` to `serverResourceFetcher` + registry. **Delete `paneServerLoaders.ts`.** *Acceptance:* server bootstrap seeds byte-identical data for all five media kinds; migrations/typecheck green.
-- **S2 — Client mount rewire + drift deletion.** Composed/normalizing panes (media, library, author, note, notes) consume the registry loader via `clientResourceFetcher(signal)`. **Delete the local `shouldLoadInitialFragments`** (and the inline merges). Route `NotePaneBody` (descriptor overload, dropping the literal `note-block:${blockId}`) and `NotesPaneBody` through the loaders; **delete `fetchNotePages`** (now unused); **keep `fetchNoteBlock`** (still used by `PagePaneBody`). Single-fetch panes unchanged. *Acceptance:* R1–R3 green; client-fetch behaviour unchanged; `useResource` call sites untouched.
+- **S2 — Client mount rewire + drift deletion.** Composed/normalizing panes (media, library, author, notes) consume the registry loader via `clientResourceFetcher(signal)`. **Delete the local `shouldLoadInitialFragments`** (and the inline merges). Route `NotesPaneBody` through the loader and delete `fetchNotePages`. Page and Note pane content hydration is owned by `ResourceSurfaceEditor`; no frontend block-response client is retained. Single-fetch panes unchanged. *Acceptance:* R1–R3 green; client-fetch behaviour unchanged; `useResource` call sites untouched.
 - **S3 — Resource cache.** Rename hydration cache → `resourceCache`, generalize to `ready | pending`, move consume-once into `claim`, add bounded `prefetch`. Add the `pending` branch to `useResource`. *Acceptance:* existing AC-4 seed tests pass against the renamed provider; a `pending`-seeded resource resolves with a single fetch.
 - **S4 — Prefetch core.** `paneWarm.ts` + `usePaneWarm` (debounced), idempotent + bounded(16) + abortable. *Acceptance:* unit tests for idempotency, dedup (C5), eviction+abort (C7), error→remove, debounce.
 - **S5 — Intent wiring.** `PaneRouteBoundary` capture-phase `onMouseOver`/`onFocus`; `LauncherRow`/`LauncherList`/controller hover+focus+active. *Acceptance:* hovering a launcher row / in-pane link warms chunk+data; opening it paints with zero mount fetch; the launcher DOM contract (roles/labels/ids) preserved.
@@ -233,7 +238,7 @@ Wired at the surfaces where intent already lives, reusing existing seams, adding
 - **R2** — `rg "shouldLoadInitialFragments\b" apps/web/src` → 0 (local denylist gone; only `shouldLoadInitialMediaFragments` survives).
 - **R3** — `rg "fragments: \[\]" apps/web/src/app/\(authenticated\)/media` → 0 (the `{media, fragments}` assembly left `MediaPaneBody`).
 - **R4** — `rg "callFastAPI" apps/web/src` → only `resourceTransport.server.ts` (transport isolated, C8).
-- **R5** — `rg "apiFetch|callFastAPI" apps/web/src/lib/panes/paneResourceLoaders.ts apps/web/src/lib/notes/normalize.ts` → 0 (registry + normalizers transport-free, C8).
+- **R5** — `rg "apiFetch|callFastAPI" apps/web/src/lib/panes/paneResourceLoaders.ts apps/web/src/lib/notes/pageContract.ts` → 0 (registry + Page contract transport-free, C8).
 - **R6** — `rg "HydrationCacheContext|BootstrapHydrationProvider|hydrationCache" apps/web/src` → 0 (renamed to `ResourceCache*` / `resourceCache`).
 - **R7** — `rg "fetchNotePages" apps/web/src` → 0 (subsumed by the notes loader and deleted).
 
@@ -246,7 +251,7 @@ Wired at the surfaces where intent already lives, reusing existing seams, adding
 - **View-transition chunk preload** (`paneRuntime.tsx` `panePreloadForHref` / `runPaneNavigation`): unchanged. Intent-time `warmPaneOnIntent` *front-runs* the click-time chunk warm; both call the idempotent `preloadPane`, so they coalesce.
 - **Launcher dispatch** (`lib/launcher/dispatch.ts` → `requestOpenInAppPane`): unchanged. Warm is additive on hover/focus/active; the open path is identical.
 - **nonce-CSP / strict-dynamic**: no new surface. Prefetch data uses `apiFetch` (same-origin BFF, already in `connect-src`); prefetch chunk uses `preloadPane` (the Next runtime's CSP-trusted module loader). PPR stays rejected; client pane-router stays.
-- **`PagePaneBody`**: unaffected — it keeps importing `fetchNoteBlock` (which keeps normalizing via the extracted `normalizeBlock`).
+- **Page/Note pane bodies**: their content hydration is owned by `ResourceSurfaceEditor`; neither imports a Notes block-response client.
 - **AC-4 render tests** (`*.ac4.test.tsx`): extended, not replaced — now also pin the gate guard and the warm→open hit.
 - **Consume-once freshness**: preserved end-to-end; no persistent cache introduced (N1).
 
@@ -268,7 +273,7 @@ Wired at the surfaces where intent already lives, reusing existing seams, adding
 - `apps/web/src/lib/api/resourceTransport.client.ts` — `clientResourceFetcher(signal)`.
 - `apps/web/src/lib/panes/paneResourceLoaders.ts` — isomorphic loader registry (replaces `paneServerLoaders.ts`).
 - `apps/web/src/lib/panes/paneWarm.ts` — `warmPaneOnIntent` + `usePaneWarm` (debounced) + bounded prefetch.
-- `apps/web/src/lib/notes/normalize.ts` — pure `normalizeBlock` / `normalizePageSummary` + types (transport-free).
+- `apps/web/src/lib/notes/pageContract.ts` — exact, transport-free Notes Page list/detail decoders plus `loadNotePages`.
 - Tests: `paneWarm.test.ts`; gate-guard + warm-hit additions to `*.ac4.test.tsx`.
 
 **Modify**
@@ -276,8 +281,8 @@ Wired at the surfaces where intent already lives, reusing existing seams, adding
 - `apps/web/src/lib/api/useResource.ts` — `claim` + `pending` branch (internal only).
 - `apps/web/src/lib/workspace/bootstrap.server.ts` — `seedPane` via `serverResourceFetcher` + registry.
 - `apps/web/src/app/(authenticated)/media/[id]/MediaPaneBody.tsx` — consume the media loader; **delete** local `shouldLoadInitialFragments`.
-- `apps/web/src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx`, `authors/[handle]/AuthorPaneBody.tsx`, `notes/[blockId]/NotePaneBody.tsx`, `notes/NotesPaneBody.tsx` — consume loaders.
-- `apps/web/src/lib/notes/api.ts` — re-import normalizers from `normalize.ts`; **delete `fetchNotePages`**; keep `fetchNoteBlock`.
+- `apps/web/src/app/(authenticated)/libraries/[id]/LibraryPaneBody.tsx`, `authors/[handle]/AuthorPaneBody.tsx`, `notes/NotesPaneBody.tsx` — consume loaders.
+- `apps/web/src/lib/notes/api.ts` — use the Page contract for create/detail reads; delete the old Page-list and block-response clients.
 - `apps/web/src/app/(authenticated)/AuthenticatedShell.tsx` — provider rename (`ResourceCacheProvider`).
 - `apps/web/src/components/workspace/PaneRouteBoundary.tsx` — capture-phase `onMouseOver`/`onFocus` → warm.
 - `apps/web/src/components/launcher/LauncherRow.tsx`, `LauncherList.tsx`, `lib/launcher/useLauncherController.ts` — hover/focus/active → warm.
@@ -296,7 +301,7 @@ Wired at the surfaces where intent already lives, reusing existing seams, adding
 - **OQ2 — prefetch bound → `PREFETCH_CACHE_LIMIT = 16`.** Covers a full launcher result set plus a few in-pane hovers; abort-on-evict.
 - **OQ3 — keyboard-active / hover warming → debounced `INTENT_WARM_DEBOUNCE_MS = 70`.** Continuous signals (pointer hover, arrow-key active row) debounce; discrete focus warms immediately. Idempotency + the LRU bound make storms harmless.
 - **OQ4 — `ReaderCitation` hover → NOT wired (deferred).** Citations are previewed far more often than opened, and the preview popover already fetches; anchor-form citations inside a pane are already covered by the `PaneRouteBoundary` delegate. Bespoke citation-hover data-warming is a future enhancement (N7).
-- **OQ5 — note/notes routing → route both through the loader.** `fetchNotePages` (only `NotesPaneBody`) is deleted; `fetchNoteBlock` is **kept** (still used by `PagePaneBody:374`). `normalizeBlock`/`normalizePageSummary` are extracted to a transport-free `lib/notes/normalize.ts` so the isomorphic registry stays clean (C8).
+- **OQ5 — Notes routing → one Page-list loader; surfaces own Page/Note content.** `fetchNotePages` is deleted and `loadNotePages` is the shared server-seed, intent-prefetch, and `NotesPaneBody` replacement owner. Page and Note bodies hydrate through `ResourceSurfaceEditor`, so the frontend block-response client and temporary `normalize.ts` owner are deleted.
 - **Single-fetch client panes → unchanged (D7).** Their default descriptor `useResource` load is byte-identical to the trivial loader; only the registry (server-seed + prefetch) gains their entry. Minimizes churn with zero divergence risk.
 
 No open questions remain.
@@ -341,15 +346,12 @@ instances and remounts.
   registry needed it transport-free; it now lives beside `contributorWorksResource` and
   `AuthorPaneBody` re-imports it (still used by in-place reload). Confirmed `= 100`, equal to the
   old server loader's hardcoded limit, so the seed is byte-identical (C2).
-- **D7 — `requiredRecord` / `requiredString` moved into `normalize.ts`.** They are used by both
-  the extracted normalizers and the rest of `notes/api.ts`; co-locating them in the leaf
-  `normalize.ts` keeps it self-contained (C8) and avoids a circular import. `api.ts` re-imports
-  them and re-exports the `NoteBlock`/`NotePageSummary` types so its many type importers are
-  untouched.
-- **D8 — the `notes` loader adopts the server's tolerant `?? []`.** The deleted client
-  `fetchNotePages` threw on a missing `pages` array; the server seed used `?? []`. Unifying to one
-  body makes the tolerant behavior canonical (a missing array from our own BFF is not a real
-  scenario; an empty list is a safe first paint).
+- **D7/D8 — superseded by the strict Notes Page read hard cut (2026-08-25).**
+  `lib/notes/pageContract.ts` is now the sole frontend Page list/detail decoder.
+  The `notes` loader and `NotesPaneBody` both call `loadNotePages`; an omitted
+  `pages` field, extra field, alias, invalid UUID/title/timestamp, or malformed
+  `dailyPage` is a contract defect. The temporary `normalize.ts`, its compatibility
+  re-exports, and the unused block-response clients were deleted.
 - **Gate notes.** R4 ("`callFastAPI` only in `resourceTransport.server.ts`") is stricter than
   reality: `callFastAPI` legitimately remains in `bootstrap.server.ts` (the non-pane reader-
   profile/session fetches), `server.ts` (its definition), and the pre-existing oracle page. The
@@ -380,12 +382,11 @@ the comments are WHY/invariant comments; `useResource`'s `seededRef`/`skipKeyRef
 (seed value vs one-shot skip latch), not duplicated state.
 
 **Fixed:**
-- **Backward-compat re-export removed (hard-cutover compliance, `codebase.md` "no re-exports").**
-  `notes/api.ts` re-exported `NoteBlock`/`NotePageSummary` from `normalize.ts` "so existing importers are
-  unaffected" — a compat shim the hard cutover forbids. Deleted it and repointed all **8** importers
-  (`collections/presenters/note.ts`, `notes/prosemirror/schema.ts(+test)`, `resourceSurfacePersistence.ts`,
-  `PagePaneBody.tsx`, `CreatePanel.tsx`, `NotesPaneBody.tsx`, `NotePaneBody.tsx`) to the real owner
-  `@/lib/notes/normalize` (splitting mixed value/type imports). Type-only; zero runtime change.
+- **Temporary Notes normalization seam removed.** A later strict Page read hard
+  cut deleted `normalize.ts` and its compatibility re-exports. Page list/detail
+  types and decoding now come directly from `pageContract.ts`; Page/Note prose
+  and surface types come from their domain owners. No compatibility import path
+  remains.
 - **The two headline ACs now have integrated tests through the real warm path + fetch boundary.**
   New `paneWarmIntegration.test.tsx`: **AC-4** (warm `/media/m1` via `usePaneWarm`, then mount
   `MediaPaneBody`'s exact `useResource` call under the same `ResourceCache` → ready with **zero** mount

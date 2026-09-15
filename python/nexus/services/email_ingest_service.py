@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import Media, MediaKind, ProcessingStatus
 from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.schemas.presence import Presence, absent, nullable_from_presence
+from nexus.schemas.publication_dates import PublicationDate, normalize_source_publication_date
 from nexus.services import library_entries
 from nexus.services import media_source_types as source_types
 from nexus.services.collection_revisions import (
@@ -147,49 +149,19 @@ def _decode_header_str(value: object) -> str | None:
         return raw_str or None
 
 
-def extract_email_html(raw_body: bytes) -> tuple[str, str | None, str | None]:
-    """Parse MIME, prefer text/html, fall back to wrapped text/plain.
-
-    Returns (html, subject, published_date_iso). Raises InvalidRequestError when
-    the message cannot be parsed or has no readable text content.
-    """
+def _email_publication_date(value: str | None) -> Presence[PublicationDate]:
+    if value is None:
+        return absent()
     try:
-        msg = email.message_from_bytes(raw_body, policy=email.policy.default)
-    except Exception as exc:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "MIME message could not be parsed.",
-        ) from exc
-
-    subject = _decode_header_str(msg.get("Subject"))
-    date_str = msg.get("Date")
-    published_date: str | None = None
-    if date_str:
-        try:
-            dt = parsedate_to_datetime(str(date_str))
-            published_date = dt.astimezone(UTC).date().isoformat()
-        except Exception:
-            pass
-
-    html_acc: list[str | None] = [None]
-    text_acc: list[str | None] = [None]
-    _walk_mime(msg, depth=0, count=[0], html_out=html_acc, text_out=text_acc)
-
-    if html_acc[0] is not None:
-        return html_acc[0], subject, published_date
-    if text_acc[0] is not None:
-        import html as html_module
-
-        return (
-            _PLAIN_TEXT_WRAP.format(body=html_module.escape(text_acc[0])),
-            subject,
-            published_date,
-        )
-
-    raise InvalidRequestError(
-        ApiErrorCode.E_INVALID_REQUEST,
-        "Email has no readable text content.",
-    )
+        parsed = parsedate_to_datetime(value)
+    # justify-ignore-error: malformed external MIME dates are absent observations.
+    except (TypeError, ValueError, IndexError):
+        return absent()
+    if parsed.tzinfo is None:
+        if not value.rstrip().endswith("-0000"):
+            return absent()
+        parsed = parsed.replace(tzinfo=UTC)
+    return normalize_source_publication_date(parsed.isoformat())
 
 
 def _parse_from_header(msg: email.message.Message) -> tuple[str, str] | None:
@@ -328,13 +300,7 @@ def accept_email_message(
 
     subject = _decode_header_str(msg.get("Subject")) or "Untitled"
     date_str = msg.get("Date")
-    published_date: str | None = None
-    if date_str:
-        try:
-            dt = parsedate_to_datetime(str(date_str))
-            published_date = dt.astimezone(UTC).date().isoformat()
-        except Exception:
-            pass
+    edition_date = _email_publication_date(str(date_str) if date_str is not None else None)
 
     if from_pair is None:
         raise InvalidRequestError(
@@ -357,7 +323,7 @@ def accept_email_message(
         created_by_user_id=owner_user_id,
         created_at=now,
         updated_at=now,
-        published_date=published_date,
+        edition_published_date=nullable_from_presence(edition_date),
     )
     db.add(media)
     try:
@@ -395,7 +361,7 @@ def accept_email_message(
             "sender_name": sender_name,
             "sender_address": sender_address,
             "subject": subject,
-            "published_date": published_date,
+            "edition_published_date": edition_date.model_dump(),
         },
         request_id=request_id,
         idempotency_key=None,

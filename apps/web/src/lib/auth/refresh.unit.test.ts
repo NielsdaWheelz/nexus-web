@@ -74,11 +74,13 @@ function providerSuccess(
 
 describe("session refresh", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
     mocks.cookieGetAll.mockReset();
     mocks.cookieSet.mockReset();
     mocks.providerRefresh.mockReset();

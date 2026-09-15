@@ -65,6 +65,44 @@ export function expectString(raw: unknown, name: string): string {
   return raw;
 }
 
+const CANONICAL_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CANONICAL_RFC_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+export function isCanonicalUuid(raw: unknown): raw is string {
+  return typeof raw === "string" && CANONICAL_UUID_RE.test(raw);
+}
+
+/** Strict decoder for canonical lowercase UUID wire values. */
+export function expectCanonicalUuid(raw: unknown, name: string): string {
+  const value = expectString(raw, name);
+  if (!isCanonicalUuid(value)) {
+    throw new TypeError(`${name} must be a canonical lowercase UUID`);
+  }
+  return value;
+}
+
+export function isCanonicalRfcUuid(raw: unknown): raw is string {
+  return typeof raw === "string" && CANONICAL_RFC_UUID_RE.test(raw);
+}
+
+/** Strict decoder for a lowercase RFC variant UUID with a known version. */
+export function expectCanonicalRfcUuid(raw: unknown, name: string): string {
+  const value = expectString(raw, name);
+  if (!isCanonicalRfcUuid(value)) {
+    throw new TypeError(`${name} must be a canonical lowercase RFC UUID`);
+  }
+  return value;
+}
+
+/** The one decoder for a wire string whose contract forbids the empty value. */
+export function expectNonemptyString(raw: unknown, name: string): string {
+  const value = expectString(raw, name);
+  if (value.length === 0) throw new TypeError(`${name} must not be empty`);
+  return value;
+}
+
 const ISO_INSTANT_RE =
   /^(\d{4}-\d{2}-\d{2})T(\d{2}):\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
@@ -78,20 +116,26 @@ function isRoundTrippingCalendarDay(day: string): boolean {
 }
 
 /**
- * The one strict aware-instant decoder for every wire contract. The pattern
+ * The one aware-instant grammar for every wire and URL contract. The pattern
  * rejects a naive or date-only timestamp; `Date.parse` rejects an out-of-range
  * month, minute, or second but silently rolls a day past the end of its month
  * and accepts hour 24, so the day is round-tripped and the hour bounded here.
  */
+export function isIsoInstant(raw: unknown): raw is string {
+  if (typeof raw !== "string") return false;
+  const match = ISO_INSTANT_RE.exec(raw);
+  return (
+    match !== null &&
+    isRoundTrippingCalendarDay(match[1]) &&
+    Number(match[2]) <= 23 &&
+    !Number.isNaN(Date.parse(raw))
+  );
+}
+
+/** Strict decoder for an aware instant on a same-system wire contract. */
 export function expectIsoInstant(raw: unknown, name: string): string {
   const value = expectString(raw, name);
-  const match = ISO_INSTANT_RE.exec(value);
-  if (
-    match === null ||
-    !isRoundTrippingCalendarDay(match[1]) ||
-    Number(match[2]) > 23 ||
-    Number.isNaN(Date.parse(value))
-  ) {
+  if (!isIsoInstant(value)) {
     throw new TypeError(`${name} must be an ISO 8601 aware instant`);
   }
   return value;

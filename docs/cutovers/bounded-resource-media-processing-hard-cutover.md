@@ -329,7 +329,8 @@ Activity is a Nexus switchboard workflow, not a pane or new router destination.
 
 ## Production resource contract
 
-Use non-Swarm Compose `mem_limit`, `mem_reservation`, and `pids_limit`:
+Use non-Swarm Compose `mem_limit`, equal `memswap_limit`, `mem_reservation`,
+and `pids_limit`:
 
 | Service | Reservation | Hard memory | PIDs |
 | --- | ---: | ---: | ---: |
@@ -338,16 +339,35 @@ Use non-Swarm Compose `mem_limit`, `mem_reservation`, and `pids_limit`:
 | API | 192 MiB | 320 MiB | 256 |
 | interactive worker | 128 MiB | 256 MiB | 256 |
 | background worker | 128 MiB | 448 MiB | 256 |
+| Codex egress policy | 32 MiB | 64 MiB | 32 |
+| Codex generation host | 256 MiB | 448 MiB | 64 |
 
-Hard sum: `1,584 MiB`; host reserve: at least `320 MiB`; swap is excluded.
+Reservation sum: `1,024 MiB`; hard-cap sum: `2,096 MiB`; host reserve: at
+least `320 MiB`; service swap is excluded. Hard caps are containment ceilings,
+not an allocation budget: their sum deliberately exceeds host memory, while the
+complete reservation sum plus the host reserve fits the committed real
+`MemTotal`. Admission rejects pressure or insufficient headroom before bounded
+work starts, and the Codex host has a separate candidate-bound live
+qualification.
+
+Docker's `HostConfig` is desired-state evidence, not the enforcement oracle.
+For every running service the controller resolves the exact host PID's cgroup
+v2 path and requires `memory.low == mem_reservation`, `memory.max == mem_limit`,
+`memory.swap.max == 0`, and exact `pids.max`. It also requires
+`memory.swap.current == 0`: correcting `memory.swap.max` prevents new swap but
+does not evict pages retained under an older policy, so that transition needs a
+planned restart of the exact container before capacity qualification.
 
 The envelope is sized against real `MemTotal`, not the host's nominal RAM. A
 nominal 2 GiB instance reports `1,919.6 MiB`. The interactive worker's measured
 peak reached `223 MiB`; its former `224 MiB` limit plus the former full-runtime
 health subprocess caused a production cgroup OOM. The health subprocess is now
 stdlib-only, and the `256 MiB` limit leaves measured process margin while the
-complete service envelope still reserves `335.6 MiB`. The background worker
-keeps `448 MiB` because that is the measured bounded-parser envelope.
+complete reservation envelope leaves `895.6 MiB` on that measured host before
+ordinary host allocation. The background worker keeps `448 MiB` because that
+is the measured bounded-parser envelope. The Codex host reserves `256 MiB`, is
+contained at `448 MiB`, and must qualify below a `384 MiB` retained peak before
+its first promotion.
 Migration job: `512 MiB`, `256` PIDs after application writers stop.
 
 Before merge, isolated parser-process RSS probes validate representative bounded
@@ -372,14 +392,16 @@ replay-safe resource convergence pass. It first proves exact live container
 identity, project labels, mounts, host capacity/pressure/disk, absence of
 foreign containers, and that every container's current memory/PID use fits the
 target envelope. It may apply only the committed limit update to an unhealthy
-exact predecessor with verified identity and safe current usage. It then
-stops before attempt creation until ordinary preflight freshly proves health;
-a replay after recovery continues. Every other failed proof mutates nothing.
-This is permanent release behavior, not an operator exception.
+exact predecessor with verified identity and safe current usage. It applies all
+such updates, proves the kernel limits, then stops before candidate measurement
+or attempt creation if any exact cgroup retains pre-contract swap. A planned,
+identity-proved restart settles that one-time state; a replay then freshly
+proves health. Every other failed proof mutates nothing. This is permanent
+release behavior, not an operator exception.
 
 Ordinary preflight before writer stop validates:
 
-- cgroup v2 and exact applied memory/PID limits;
+- exact Docker metadata and cgroup-v2 memory, zero-swap, and PID enforcement;
 - `MemTotal`, `MemAvailable >= 256 MiB`, swap, temp disk, and backup disk;
 - memory PSI `full avg10 == 0` and `some avg10 <= 5`;
 - no unknown running container;
@@ -547,7 +569,8 @@ Host/release:
 - first-cut resource convergence is identity-proved and idempotent; an
   unhealthy exact predecessor may receive only its committed limit update,
   then no attempt/writer/DB mutation occurs until a healthy replay;
-- `docker inspect` proves all limits and host reserve;
+- `docker inspect` proves desired limits; host cgroup files prove enforcement
+  and absence of retained service swap;
 - preflight blocks pressure, missing swap/cgroup, low disk/memory, and unknown
   containers before writer stop;
 - background stops before other writers;

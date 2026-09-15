@@ -4,6 +4,8 @@
 !apps/
 !apps/api/
 !apps/api/**
+!apps/codex_agent/
+!apps/codex_agent/**
 !apps/worker/
 !apps/worker/**
 
@@ -22,6 +24,8 @@
 !node/ingest/package.json
 !node/ingest/bun.lock*
 !node/ingest/ingest.mjs
+!node/ingest/article_extraction.mjs
+!node/ingest/accepted_url_egress.mjs
 
 !python/
 !python/README.md

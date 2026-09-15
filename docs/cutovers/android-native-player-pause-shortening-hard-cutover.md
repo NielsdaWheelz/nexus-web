@@ -446,7 +446,9 @@ Install one AndroidX WebKit listener named `nexusPlayer`.
 
 - Exact owned origin, main frame, verified `sourceOrigin`.
 - Exact JSON keys, bounds, PascalCase variants, canonical UUIDs.
-- `protocolVersion: 1`; mismatch is rejected, never negotiated.
+- Protocol identity and mismatch recovery are superseded by
+  `android-player-protocol-release-hard-cutover.md`: exact v2 plus the canonical
+  corpus digest, never negotiation or compatibility decoding.
 - UUID `requestId`; replies echo it.
 - `sessionKey` fences every session command and pushed state.
 - Push changes; `GetSnapshot` is connect/resume reconciliation, never polling.
@@ -489,6 +491,12 @@ Event =
   | ControllerReconnected { snapshot, pendingNaturalEnd }
   | NaturalEndPending { receipt }
 ```
+
+Superseded: the shipped wire is protocol v2. Every command, reply, and event
+also carries `protocolVersion: 2` and `protocolContractSha256`, `Rejected`
+adds the `ProtocolMismatch` code, and `testdata/android/player-protocol.json`
+is the canonical inventory and identity
+(`android-player-protocol-release-hard-cutover.md`).
 
 `LoadCanonical.session` is the existing `AudioSession`, including exact
 `Direct | Lectern(itemId)` origin and canonical descriptor.

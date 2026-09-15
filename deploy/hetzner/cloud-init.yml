@@ -3,14 +3,23 @@ package_update: true
 package_upgrade: true
 
 packages:
+  - apparmor
   - ca-certificates
   - curl
+  - cryptsetup
   - fail2ban
   - gnupg
   - lsb-release
   - ufw
 
 write_files:
+  # Keep Ubuntu's AppArmor user-namespace hardening persistent. The named Codex
+  # host profile grants only the bounded exception required by inner bwrap.
+  - path: /etc/sysctl.d/60-nexus-codex-userns.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      kernel.apparmor_restrict_unprivileged_userns=1
   - path: /etc/ssh/sshd_config.d/99-nexus-hardening.conf
     owner: root:root
     permissions: "0644"
@@ -42,6 +51,8 @@ users:
       - __NEXUS_SSH_PUBLIC_KEY__
 
 runcmd:
+  - sysctl --system
+  - test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1
   - install -m 0755 -d /etc/apt/keyrings
   - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
   - chmod a+r /etc/apt/keyrings/docker.asc
@@ -54,6 +65,10 @@ runcmd:
   - install -d -o root -g root -m 0750 /var/lib/nexus/releases /var/lib/nexus/releases/attempts /var/lib/nexus/releases/records /var/lib/nexus/releases/oracle-attempts
   - install -d -o 10001 -g 10001 -m 0700 /var/lib/nexus/parser-tmp
   - install -d -o root -g root -m 0750 /var/backups/nexus
+  # The release controller installs the immutable boot guard before the Codex
+  # host can start. Until the operator unlocks and mounts its LUKS2 container,
+  # this underlay is inaccessible to the non-root host uid.
+  - install -d -o root -g root -m 000 /srv/nexus/codex-state
   - |
     if [ ! -e /swapfile ]; then
       # mkswap reserves the first page for its header, so a file sized at exactly

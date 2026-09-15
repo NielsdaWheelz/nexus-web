@@ -1,5 +1,12 @@
 # Chat Durable Agent-Step Journal Hard Cutover
 
+> **Generation-ledger amendment (2026-08-31):**
+> [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
+> supersedes the Chat-specific generation-step and Codex-only ledger details
+> below. This document remains authoritative for the owner-neutral durable-step
+> replay laws that do not conflict with the parent/child generation ledger or
+> the sole `generation/{generation_seq}/tool/{n}` grammar.
+
 Status: Implemented
 Date: 2026-07-31
 Type: hard cutover; no legacy path, fallback, compatibility decoder, dual write, or backfill
@@ -9,7 +16,7 @@ Type: hard cutover; no legacy path, fallback, compatibility decoder, dual write,
 A chat run is one durable operation. Each generation, tool, and publication step
 has a small replay record in its existing `background_jobs.payload`. A reclaimed
 job reuses completed results, continues at the first incomplete step, and never
-blindly repeats an ambiguous paid call or write.
+blindly repeats an accepted generation or externally effectful write.
 
 Extract the owner-neutral replay kernel currently misplaced in
 `services/artifacts/coordination.py`; do not build a second journal, workflow
@@ -22,7 +29,7 @@ engine, or chat-specific retry system.
 - Unknown external outcome is coordination state, not a user-facing failure.
 - Resume the same operation; do not create a replacement run.
 - Domain tables own product truth. The queue owns in-flight recovery truth.
-- Prefer safe suspension over duplicate billing, writes, or citations.
+- Prefer safe suspension over duplicate generations, writes, or citations.
 - Keep reconnect, execution recovery, and product failure distinct.
 
 Follow `docs/rules/`, especially `operation-types`, `correctness`, `retries`,
@@ -36,8 +43,8 @@ Build:
 
 - one shared Postgres-backed step-journal kernel;
 - durable chat preparation, generation, tool, and publication steps;
-- exact recovery after a completed provider/tool step;
-- safe suspension after an ambiguous paid call or write;
+- exact recovery after a completed generation/tool step;
+- safe suspension after an accepted ambiguous generation or write;
 - the web-search source-identity fix that caused the reported failure;
 - one derived execution advisory in existing chat read models;
 - cancellation and operator requeue of the same suspended job;
@@ -48,7 +55,7 @@ Do not build:
 - Temporal, Redis, Kafka, a broker, event sourcing, or a generic agent framework;
 - a new journal table, run status, public step API, or journal viewer;
 - token-by-token checkpoints or reconstruction from streamed deltas;
-- provider-specific background generation, webhook recovery, or result polling;
+- an alternate generation route, webhook recovery, or result polling;
 - automatic reconciliation for an effect whose owner has no authoritative read;
 - cross-device/offline execution, multi-user collaboration, or human approval steps;
 - historical journal reconstruction or compatibility decoding;
@@ -57,15 +64,19 @@ Do not build:
 ## Target Behaviour
 
 1. Create returns the existing queued `ChatRun`; one `chat_run` job owns it.
-2. The worker snapshots exact prepared model input once.
-3. Before each paid or externally effectful dispatch, the worker durably records
-   `Uncertain` with a stable generation/effect id and request fingerprint.
+2. The worker freezes one bounded generation intent and its fingerprint.
+3. Before UDS generation dispatch or an externally effectful tool dispatch, the
+   worker durably records `Uncertain` with a stable generation/effect id and
+   request fingerprint.
 4. After accepting the result, the worker records a strict normalized result as
    `Completed` before any later step may depend on it.
-5. A retry skips every `Completed` step without calling its provider or tool.
+5. A queue replay skips every `Completed` step without calling the Codex host or
+   tool.
 6. `Prepared` may execute. `Uncertain` may execute only after the binding proves
-   non-dispatch or attaches a reconciled result. Otherwise the run suspends.
-7. Expected provider/tool outcomes retain existing product semantics and may
+   non-dispatch or attaches an admissible reconciled result. Otherwise the run
+   suspends. A proven pre-accept host-capacity refusal is the sole automatic
+   generation transition back to `Prepared`.
+7. Closed generation/tool outcomes retain existing product semantics and may
    terminalize the run. A code defect rolls back and escapes to queue retry.
 8. Retry wait is `Recovering`. Exhaustion is `Suspended`; neither is a terminal
    `ChatRun` status and neither emits `done`.
@@ -85,9 +96,9 @@ POST chat run
   -> ChatRun + messages + chat_run job
   -> worker claim / lease / JobExecutionContext
   -> ChatStepRuntime
-       prepare                         Completed exact GenerateIntent
-       turn/{n}/generation             Prepared -> Uncertain -> Completed
-       turn/{n}/tool/{global_index}    Prepared -> Uncertain -> Completed
+       prepare                         Completed immutable refs/fingerprint
+       generation/1                    Prepared -> Uncertain -> Completed
+       generation/1/tool/{index}       Prepared -> Uncertain -> Completed
        publication                     atomic Completed + terminal ChatRun
   -> existing domain facts
        llm_calls / message_tool_calls / message_retrievals
@@ -97,6 +108,13 @@ POST chat run
 crash -> queue retry -> replay Completed prefix -> continue
 ambiguous effect -> dead job -> Suspended -> operator requeue or user cancel
 ```
+
+Chat has one parent generation. Codex normally contributes one native child;
+an API model/tool/model loop may contribute multiple accepted child calls.
+Every tool position journals under the parent and never restarts at a child.
+Exact selection, route-local frames, parent/child generation
+ledger, provider continuation, and terminal algebra are owned by
+[`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md).
 
 ### Ownership
 
@@ -138,8 +156,7 @@ Rules:
 
 - `generation_id = uuid5(shared_namespace, run_id + ":" + step_path)`.
 - Paths are relative, deterministic, immutable, and created in this order:
-  `prepare`, `turn/{turn}/generation`,
-  `turn/{turn}/tool/{global_tool_index}`, `publication`.
+  `prepare`, `generation/1`, `generation/1/tool/{tool_index}`, `publication`.
 - `request_fingerprint` is SHA-256 over the canonical serialized step request.
 - `terminal_result` is JSON encoded by a step-owned frozen Pydantic model with
   `extra="forbid"`; arbitrary dictionaries never cross the journal boundary.
@@ -150,9 +167,10 @@ Rules:
 - Checkpoint mutation is fenced by job id, worker id, attempt, and live lease.
   Lost lease aborts the attempt before any further work.
 - `Completed` is immutable. Different fingerprint or result is a defect.
-- The journal contains recovery material, including prompt/output text. Never
-  log it, expose it in APIs, copy it into trust trails, or retain it after a
-  terminal run.
+- The journal contains strict recovery material and fingerprints, never a
+  credential or host diagnostic. Raw prompts are not persisted for repair;
+  terminal owner memos are never logged, exposed in APIs, copied into trust
+  trails, or retained after a terminal run.
 - Dead `chat_run` jobs are never pruned. Completed/terminal jobs clear the
   `coordination` key to `{ "run_id": ... }` before returning.
 - A dead journal remains only until operator repair, user cancellation, or
@@ -184,7 +202,6 @@ run_id
 claimed JobRow
 JobExecutionContext
 ExecutionRuntime
-web-search provider Presence
 read(path, policy) -> StepState | None
 prepare(path, fingerprint) -> Prepared
 mark_uncertain(path) -> Uncertain
@@ -195,26 +212,21 @@ clear() -> None
 ```
 
 It owns commits required by the coordination protocol. Domain code cannot
-mutate queue payload JSON directly. The stored `ExecutionRuntime` is passed
-unchanged into the sole `llm_execution` generation boundary; that boundary's
-pre-dispatch checkpoint invokes `mark_uncertain(path)` immediately before the
-runtime call.
+mutate queue payload JSON directly. `ExecutionRuntime` composes the journal
+with the sole `llm_execution.execute_generation` boundary. That boundary stages
+the unified ledger start beside `Uncertain` immediately before its one v2 UDS
+dispatch, and stages the closed terminal beside `Completed`; this document does
+not define another generation result, retry, or ledger contract.
 
 ### Step Results
 
 ```text
 PreparedChatRun = {
-  generate_intent,
+  request_fingerprint,
+  admitted_resource_uris,
   initial_citation_ordinal,
   initial_tool_call_index
 }
-
-GenerationStepResult =
-  | { kind: "AssistantTurn", normalized_turn, usage,
-      last_provider_event_seq }
-  | { kind: "ExpectedFailure", failure, usage,
-      last_provider_event_seq }
-  | { kind: "Cancelled", last_provider_event_seq }
 
 ToolStepResult = {
   tool_call_id,
@@ -232,15 +244,16 @@ PublicationStepResult = {
 }
 ```
 
-The concrete Pydantic schemas use rich existing types for generate intents,
-tool messages, expected failures, usages, events, UUIDs, and `Presence`. They do
-not duplicate provider SDK objects or create a second product outcome model.
+The concrete Pydantic schemas use rich existing types for generation owner
+memos, tool messages, closed failures, usage, events, UUIDs, and `Presence`.
+They do not duplicate Codex SDK frames or create a second generation outcome
+model.
 
 ### Dispatch Policy
 
 | Step | Policy | Uncertain replay |
 |---|---|---|
-| model generation | `BilledOnce` | reconcile through provider capability or suspend |
+| Codex generation | generation owner contract | only a proven pre-accept capacity refusal automatically restores `Prepared`; accepted ambiguity stays `Uncertain` |
 | public web search | `ReDispatchable` only with stable provider request key; otherwise `BilledOnce` | redispatch or suspend, as declared |
 | app/resource read | `ReDispatchable` | execute again from identical request |
 | assistant write | `BilledOnce` | authoritative readback/idempotency proof or suspend |
@@ -295,7 +308,9 @@ Rules:
   Roll back, log safe correlation fields, and let defects reach the queue.
 - Delete `has_provider_output_without_terminal` and `finalize_interrupted` as
   execution control. The journal is the only resume decision owner.
-- Keep bounded queue retry in one layer. Do not add provider/tool retry loops.
+- Keep bounded queue retry in one layer. Do not add generation/tool retry
+  loops; the generation boundary alone owns its bounded pre-accept capacity
+  reschedule.
 - Set `chat_run.never_prune_dead=True`.
 - The dead-letter hook records safe diagnostics. It does not terminalize the
   run, assistant message, or event stream. Its sole state transition is to
@@ -304,17 +319,21 @@ Rules:
 - `requeue_dead_job` is the sole repair transition and preserves payload,
   journal, run id, and logical operation identity.
 - `reconcile_uncertain_chat_step(run_id, step_path, resolution)` is the
-  operator-only service command. Under one job lock it accepts the existing
-  `ProveNotDispatched` or `AttachReconciledResult`, strictly validates the
+  operator-only service command. Under one job lock it always admits
+  `ProveNotDispatched`; it admits `AttachReconciledResult` only when that exact
+  step binding has immutable command facts. It strictly validates the
   step-owned result, changes `Uncertain` to `Prepared` or `Completed`, and
   requeues that job. It has no HTTP route or browser UI.
-- Attachment repairs the journal only after canonical LLM-ledger or
+- Attachment repairs the journal only after canonical generation-ledger or
   tool/event/domain facts prove the exact result already exists. It never
-  fabricates missing billing, citation, retrieval, write, Undo, or SSE facts.
+  fabricates missing generation, citation, retrieval, write, Undo, or SSE facts.
 - Cancellation is checked before and after each step. No new step starts after
   `cancel_requested_at`.
 - Cancelling a dead job requeues that same job; the worker publishes the normal
-  cancelled terminal fold, clears the journal, and completes.
+  cancelled terminal fold, clears the journal, and completes. In that same
+  run-to-job-fenced commit it first closes every exact admission-only `Prepared`
+  MCP position with the canonical zero-attempt failure projection; it never
+  redispatches or reclassifies an `Uncertain` position.
 - If final publication commits first, later cancel is a no-op. Otherwise cancel
   wins before the next step.
 
@@ -372,7 +391,8 @@ UX rules:
   projection; do not issue per-message job queries.
 - `ChatRunEventEmitter` receives only strict, canonical event payloads from the
   step result owner.
-- The LLM ledger remains billing/provenance. It is not replay memoization.
+- The unified `llm_calls` ledger remains generation execution audit and plan
+  provenance. It is not replay memoization and stores no price or attempt trace.
 - `chat_prompt_assemblies` remains a text-free trust artifact. It is not exact
   execution input.
 - Journal state never becomes conversation history, prompt context, or a
@@ -390,7 +410,8 @@ Create:
 - `python/tests/service/test_durable_job_replay.py`
 - `python/tests/service/test_chat_execution_privacy.py`
 - `python/tests/service/test_citation_provenance.py`
-- `python/tests/service/test_web_search_identity.py`
+- `python/tests/service/test_agent_tools_mcp.py`
+- `python/tests/service/test_chat_codex_execution.py`
 - `apps/web/src/components/chat/ChatComposer.browser.test.tsx`
 - `apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts`
 
@@ -444,13 +465,16 @@ there is no mixed old/new runtime.
 1. The reported case—provider refs that are not UUIDs—fails before the fix and
    passes with a persisted `ExternalSnapshotId` in `tool_result`.
 2. A crash after generation `Completed` but before tool-result processing
-   resumes without a second model call and publishes one answer.
+   resumes without a second Codex dispatch and publishes one answer.
 3. A crash after a tool `Completed` resumes without a second tool effect and
    emits one canonical result event.
 4. A crash at every `Prepared`, `Uncertain`, and `Completed` boundary preserves
    the state-machine and transaction rules.
-5. An `Uncertain` billed/write step is never blindly redispatched. Prove
-   reconciliation, operator attachment, proof-of-no-dispatch, and suspension.
+5. An accepted `Uncertain` generation or write step is never blindly
+   redispatched. Prove suspension and proof-of-no-dispatch; prove terminal
+   attachment only for an owner with immutable command facts, and prove that an
+   exact pre-accept capacity refusal alone returns generation to `Prepared`
+   automatically.
 6. A code defect retries through the queue without terminalizing the run or
    emitting `done`; exhaustion projects `Suspended` and retains the job.
 7. Requeue continues the same job/run/journal. Cancel of a suspended run
@@ -468,8 +492,8 @@ there is no mixed old/new runtime.
     chat dead-letter finalization path.
 13. Priority-risk proofs use independent oracles and demonstrated-red evidence.
     Run focused static/kernel checks, real PostgreSQL service recovery, and one
-    real-worker Chromium journey. Report provider, CI, deploy, recovery-drill,
-    and production evidence separately; unrun gates are not passed.
+    real-worker Chromium journey. Report CI, deploy, recovery-drill, and
+    production evidence separately; unrun gates are not passed.
 
 ## Supersession
 
@@ -477,13 +501,10 @@ On implementation, amend these documents rather than leaving contradictions:
 
 - `chat-publication-thin-spine-hard-cutover.md`: supersede “no durable
   Generated -> Published phase or publication replay” only.
-- `llm-provider-runtime-hard-cutover.md`: supersede chat retry-from-scratch/no
-  checkpoint-replay clauses only.
-- `generation-run-harness-hard-cutover.md`: supersede, for durable chat only,
-  the in-memory/drop-on-retry provider-result clause. Other generation owners
-  keep their declared policy.
+- `generation-run-harness-hard-cutover.md`: current composition pointer; the
+  Codex generation cutover owns replay policy for every generation operation.
 - any chat module text that makes worker retry the resume owner without
   persisted per-step state.
 
-All other product, citation, provider, tool, queue, and trust-trail contracts
-remain authoritative.
+All other product, citation, retrieval-provider, tool, queue, and trust-trail
+contracts remain authoritative.

@@ -29,6 +29,8 @@ NEXUS_ORACLE_CORPUS_OWNER_USER_ID=<prod-user-uuid>
 # Generate with:
 # python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
 STREAM_TOKEN_SIGNING_KEY=<base64-encoded-32-byte-key>
+# This exact public HTTPS origin must also be supplied to Android release builds
+# as NEXUS_ANDROID_RELEASE_API_ORIGIN.
 STREAM_BASE_URL=https://api.example.com
 
 # Keep paid/provider-gated features off until credentials are present.
@@ -47,18 +49,27 @@ X_API_BEARER_TOKEN=<x-api-bearer-token>
 X_API_TIMEOUT_SECONDS=10
 X_API_AUTHOR_THREAD_MAX_POSTS=1000
 
-# Platform LLM provider keys (no BYOK). Fable, the platform LLM runtime,
-# calls these directly; all five are required for API/worker startup in prod.
+# OpenAI remains the transcript-embedding credential.
 OPENAI_API_KEY=<openai-api-key>
-ANTHROPIC_API_KEY=<anthropic-api-key>
-GEMINI_API_KEY=<gemini-api-key>
-MOONSHOT_API_KEY=<moonshot-api-key>
-DEEPSEEK_API_KEY=<deepseek-api-key>
 
-# Explicit RFC 3339 deployment assertion, required for API/worker startup in
-# prod. Fable requires 30-day retention and is not ZDR-eligible, so a human
-# operator must record when that tradeoff was accepted.
-NEXUS_FABLE_RETENTION_ACCEPTED_AT=<RFC-3339-timestamp, e.g. 2026-01-01T00:00:00Z>
+# Provider generation is backend-only. The configured provider list is closed
+# and every listed provider must have exactly its dedicated credential.
+GENERATION_API_PROVIDERS=openai,anthropic,gemini,moonshot,openrouter,deepseek,xai
+OPENAI_GENERATION_API_KEY=<openai-generation-api-key>
+ANTHROPIC_GENERATION_API_KEY=<anthropic-generation-api-key>
+GEMINI_GENERATION_API_KEY=<gemini-generation-api-key>
+MOONSHOT_GENERATION_API_KEY=<moonshot-generation-api-key>
+OPENROUTER_GENERATION_API_KEY=<openrouter-generation-api-key>
+DEEPSEEK_GENERATION_API_KEY=<deepseek-generation-api-key>
+XAI_GENERATION_API_KEY=<xai-generation-api-key>
+# Generate with the same command as STREAM_TOKEN_SIGNING_KEY, using a distinct key.
+GENERATION_CONTINUATION_ENCRYPTION_KEY=<base64-encoded-distinct-32-byte-key>
+# Required acknowledgement for Anthropic/Fable retention semantics.
+NEXUS_FABLE_RETENTION_ACCEPTED_AT=2026-08-31T00:00:00Z
+
+# Dedicated HS256 key for short-lived, run-scoped MCP tool grants. Do not reuse
+# STREAM_TOKEN_SIGNING_KEY. Generate at least 32 random bytes.
+AGENT_TOOL_GRANT_SIGNING_KEY=<generate-a-distinct-32-byte-or-longer-secret>
 
 # BRAVE_SEARCH_API_KEY=
 

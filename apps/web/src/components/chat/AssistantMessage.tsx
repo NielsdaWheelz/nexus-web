@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import { absent } from "@/lib/api/presence";
@@ -13,6 +13,8 @@ import type {
 import { isAssistantPrimaryBodyVisible } from "@/lib/conversations/conversationPresentation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
+import type { ChatConnectionRecovery } from "@/lib/conversations/chatConnectionRecovery";
+import type { GenerationSelectionSpec } from "@/lib/conversations/generationCatalog";
 import { toReaderCitationData } from "@/lib/conversations/citations";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import AssistantSelectionPopover from "./AssistantSelectionPopover";
@@ -21,6 +23,7 @@ import AssistantDetails from "./AssistantDetails";
 import AssistantWriteTrail from "./AssistantWriteTrail";
 import ChatFailureCard from "./ChatFailureCard";
 import ChatPublicationNotice from "./ChatPublicationNotice";
+import CandidateGenerationPicker from "./CandidateGenerationPicker";
 import MessageSourcesDisclosure from "./MessageSourcesDisclosure";
 import ForkStrip from "./ForkStrip";
 import StreamingGutterCue from "./StreamingGutterCue";
@@ -35,8 +38,12 @@ export default function AssistantMessage({
   onSelectFork,
   onReplyToAssistant,
   onCitationActivate,
-  connectionLost,
+  connectionRecovery,
   onReconnectAssistant,
+  onRerun,
+  onRerunWithSelection,
+  onRegenerateWithSelection,
+  rerunning,
   timestampLabel,
 }: {
   message: ConversationMessage;
@@ -50,8 +57,18 @@ export default function AssistantMessage({
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
   ) => void;
-  connectionLost?: boolean;
+  connectionRecovery?: ChatConnectionRecovery;
   onReconnectAssistant?: (assistantMessageId: string) => void;
+  onRerun?: () => void;
+  onRerunWithSelection?: (
+    selection: GenerationSelectionSpec,
+    catalogDefinitionRevision: string,
+  ) => Promise<boolean>;
+  onRegenerateWithSelection?: (
+    selection: GenerationSelectionSpec,
+    catalogDefinitionRevision: string,
+  ) => Promise<boolean>;
+  rerunning?: boolean;
   timestampLabel: string;
 }) {
   const toolCalls = message.trust_trail?.tool_calls ?? [];
@@ -63,13 +80,14 @@ export default function AssistantMessage({
   const canBranchFromAssistant =
     message.status === "complete" && Boolean(onReplyToAssistant);
   // The one card-bearing failure read: the failure folds onto the run inside the
-  // trust trail (null for a DEFECT → the generic card). A terminal message status
-  // is what shows the card; a Fable `refused` failure SUPPRESSES all partial text
-  // (the card is the only projection). Any rehydrated terminal status replaces the
-  // client-only ConnectionLostStatusUnknown card.
+  // trust trail (null when no representable failure is stored → the generic
+  // card). A terminal message status is what shows the card; any rehydrated
+  // terminal status replaces client-only connection recovery.
   const trustRun = message.trust_trail?.run;
   const failure = trustRun?.failure ?? null;
   const supportId = trustRun?.support_id ?? absent();
+  const [replacementOpenRequestVersion, setReplacementOpenRequestVersion] =
+    useState(0);
   const isTerminalFailure =
     message.status === "error" || message.status === "cancelled";
   const showFailureCard = isTerminalFailure;
@@ -83,7 +101,7 @@ export default function AssistantMessage({
       : null;
   const showSuspendedCard = !isTerminal && executionPhase === "Suspended";
   const showReconnectCard =
-    Boolean(connectionLost) && !isTerminal && !showSuspendedCard;
+    connectionRecovery !== undefined && !isTerminal && !showSuspendedCard;
 
   const {
     answerRef,
@@ -101,6 +119,15 @@ export default function AssistantMessage({
     scheme: "message",
     id: message.id,
   });
+  const rerunNeedsReplacement =
+    isTerminalFailure &&
+    message.can_rerun &&
+    trustRun?.run_selection !== undefined &&
+    !trustRun.run_selection.rerun_eligibility;
+  const rerunFromFailureCard = rerunNeedsReplacement
+    ? () =>
+        setReplacementOpenRequestVersion((currentVersion) => currentVersion + 1)
+    : onRerun;
 
   return (
     <div
@@ -157,17 +184,46 @@ export default function AssistantMessage({
         />
       ) : null}
       {showFailureCard ? (
-        <ChatFailureCard failure={failure} supportId={supportId} />
+        <ChatFailureCard
+          failure={failure}
+          supportId={supportId}
+          canRerun={message.can_rerun}
+          onRerun={rerunFromFailureCard}
+          rerunning={rerunning}
+        />
       ) : showSuspendedCard ? (
         <ChatFailureCard mode="suspended" />
-      ) : showReconnectCard ? (
+      ) : showReconnectCard && connectionRecovery ? (
         <ChatFailureCard
           mode="reconnect"
+          recovery={connectionRecovery}
           onReconnect={() => onReconnectAssistant?.(message.id)}
         />
       ) : null}
       {message.status !== "pending" ? (
         <div className={styles.messageActions}>
+          {trustRun?.run_selection &&
+          ((isTerminalFailure && message.can_rerun && onRerunWithSelection) ||
+            (message.status === "complete" && onRegenerateWithSelection)) ? (
+            <CandidateGenerationPicker
+              operation={isTerminalFailure ? "Rerun" : "Regenerate"}
+              runSelection={trustRun.run_selection}
+              disabled={rerunning}
+              openRequestVersion={replacementOpenRequestVersion}
+              onConfirm={(selection, catalogDefinitionRevision) => {
+                if (isTerminalFailure) {
+                  return onRerunWithSelection!(
+                    selection,
+                    catalogDefinitionRevision,
+                  );
+                }
+                return onRegenerateWithSelection!(
+                  selection,
+                  catalogDefinitionRevision,
+                );
+              }}
+            />
+          ) : null}
           <ResourceActionMenu
             actionSubject={{ ref: actionRef }}
             label="Actions for this answer"
@@ -189,30 +245,16 @@ export default function AssistantMessage({
   );
 }
 
-const ACTIVE_TOOL_LABELS: Record<string, string> = {
-  web_search: "Searching web",
-  app_search: "Searching library",
-  read_resource: "Reading source",
-  inspect_resource: "Inspecting source",
-  add_to_library: "Filing to library",
-  jot_note: "Writing note",
-  create_highlight: "Highlighting passage",
-  mint_edge: "Connecting resources",
-  queue_add: "Adding to queue",
-};
-
 function ToolActivity({ toolCalls }: { toolCalls: MessageToolCall[] }) {
   const active = toolCalls.find((toolCall) =>
     ["running", "pending"].includes(toolCall.status),
   );
   if (!active) return null;
-  const label =
-    ACTIVE_TOOL_LABELS[active.tool_name] ?? `Running ${active.tool_name}`;
 
   return (
     <div className={styles.toolActivity} role="status" aria-live="polite">
       <Search size={14} aria-hidden="true" />
-      <span>{label}</span>
+      <span>{active.activity_label}</span>
       {active.input_preview ? (
         <span className={styles.toolActivityPreview}>
           {active.input_preview}

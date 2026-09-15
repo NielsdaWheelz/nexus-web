@@ -78,7 +78,7 @@ import {
   type LibraryPlacementOption,
 } from "@/lib/libraries/libraryPlacement";
 import { useEpisodeTranscriptController } from "./useEpisodeTranscriptController";
-import { usePodcastSubscriptionSettingsModal } from "../usePodcastSubscriptionSettingsModal";
+import { subscribePodcastSubscriptionSettingsInstalls } from "@/lib/podcasts/subscriptionSettings";
 import {
   EPISODE_WIDE_COMMAND_LABELS,
   decodePodcastEpisodeMedia,
@@ -91,11 +91,18 @@ import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { isAbortError } from "@/lib/errors";
 import { runPodcastRefresh } from "@/lib/podcasts/refresh";
 import {
+  isPodcastSubscriptionLifecycleProtocolError,
+  isPodcastSubscriptionLifecycleTerminal,
+  observePodcastSubscriptionLifecycle,
+  podcastSubscriptionLifecycleFingerprint,
+  type PodcastSubscriptionLifecycleSnapshot,
+} from "@/lib/podcasts/subscriptionLifecycle";
+import {
   notifyPodcastActionIntentOwnerReady,
   usePodcastActionIntentOwner,
   type PodcastActionIntent,
 } from "@/lib/podcasts/actionIntent";
-import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
+import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
 
 const EPISODES_PAGE_SIZE = 100;
 
@@ -110,7 +117,8 @@ type PodcastDetailOperation =
   | "ResetProgress"
   | "LoadNotes"
   | "MarkAllPlayed"
-  | "PaneRefresh";
+  | "PaneRefresh"
+  | "SubscriptionLifecycle";
 
 function podcastDetailErrorTitle(operation: PodcastDetailOperation): string {
   switch (operation) {
@@ -136,6 +144,8 @@ function podcastDetailErrorTitle(operation: PodcastDetailOperation): string {
       return "Episodes weren’t marked as played";
     case "PaneRefresh":
       return "Podcast wasn’t refreshed";
+    case "SubscriptionLifecycle":
+      return "Podcast updates couldn’t be observed";
   }
 }
 
@@ -387,6 +397,18 @@ export default function PodcastDetailPaneBody() {
   );
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
+  const [lifecycleObservationFailure, setLifecycleObservationFailure] =
+    useState<{ readonly error: unknown; readonly identity: string } | null>(
+      null,
+    );
+  const pendingLifecycleObservationLossRef = useRef<unknown | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const captureDetailError = useCallback(
     (detailError: unknown, operation: PodcastDetailOperation) => {
       try {
@@ -404,35 +426,35 @@ export default function PodcastDetailPaneBody() {
   const completedPodcastDetailRevalidationNonceRef =
     useRef<number | null>(null);
   const [backfillRetryBusy, setBackfillRetryBusy] = useState(false);
-  // The settings overlay is owned app-level (ResourceActionOverlays); this hook
-  // is retained only for its install subscription, which keeps the pane's local
-  // subscription projection current after an app-level settings save.
-  const settingsModal = usePodcastSubscriptionSettingsModal({
-    onSaved: (response) => {
-      if (response.podcast_id !== podcastId) return;
-      setDetail((prev) =>
-        prev && prev.subscription
-          ? {
-              ...prev,
-              subscription: {
-                ...prev.subscription,
-                default_playback_speed: response.default_playback_speed,
-                pause_shortening_mode: response.pause_shortening_mode,
-                auto_queue: response.auto_queue,
-                updated_at: response.updated_at,
-              },
-            }
-          : prev,
-      );
-      clearAllVisitData();
-    },
-  });
+  useEffect(
+    () =>
+      subscribePodcastSubscriptionSettingsInstalls((install) => {
+        if (install.kind !== "Settings") return;
+        const response = install.settings;
+        if (response.podcast_id !== podcastId) return;
+        setDetail((prev) =>
+          prev && prev.subscription
+            ? {
+                ...prev,
+                subscription: {
+                  ...prev.subscription,
+                  default_playback_speed: response.default_playback_speed,
+                  pause_shortening_mode: response.pause_shortening_mode,
+                  auto_queue: response.auto_queue,
+                  updated_at: response.updated_at,
+                },
+              }
+            : prev,
+        );
+        clearAllVisitData();
+      }),
+    [clearAllVisitData, podcastId, setDetail],
+  );
   const transcriptionAllowed = billingAccount?.can_transcribe === true;
 
   useSetPaneLabel(detail?.podcast.title ?? (loading ? null : "Podcast"));
 
   const { clear: clearExpandedShowNotesMediaIds } = expandedShowNotesMediaIds;
-  const closeSettingsModal = settingsModal.close;
   const podcastDetailCacheKey =
     episodeQueryIdentity !== null && !suppressInitialLoad
       ? ["podcast-detail", episodeQueryIdentity, reloadNonce].join(":")
@@ -550,36 +572,60 @@ export default function PodcastDetailPaneBody() {
 
   const fetchPodcastDetail = useCallback(
     async (signal?: AbortSignal): Promise<PodcastDetailLoadResult> => {
-      if (!podcastId || view === null) {
-        throw new Error("Podcast episodes require an addressable view");
-      }
-      const episodeParams = podcastEpisodeViewQuery(view);
-      episodeParams.set("limit", String(EPISODES_PAGE_SIZE));
+      try {
+        if (!podcastId || view === null) {
+          throw new Error("Podcast episodes require an addressable view");
+        }
+        const episodeParams = podcastEpisodeViewQuery(view);
+        episodeParams.set("limit", String(EPISODES_PAGE_SIZE));
 
-      const fetchOptions = signal ? { signal } : undefined;
-      const [detailResp, episodesResp] = await Promise.all([
-        apiFetch<unknown>(`/api/podcasts/${podcastId}`, fetchOptions),
-        apiFetch<unknown>(
-          `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
+        const fetchOptions = signal ? { signal } : undefined;
+        // Detail is the lifecycle fence: a terminal subscription guarantees its
+        // initial ingest/backfill writes committed before this read. Episodes
+        // must start after that fence, otherwise parallel reads can combine a
+        // pre-terminal empty page with terminal detail and suppress observation.
+        const detailResp = await apiFetch<unknown>(
+          `/api/podcasts/${podcastId}`,
           fetchOptions,
-        ),
-      ]);
-      if (signal?.aborted) {
-        throw signal.reason ?? new DOMException("Aborted", "AbortError");
-      }
-      const decodedDetail = decodePodcastDetailResponse(detailResp);
-      let podcastLibraries: LibraryPlacementOption[] = [];
-      if (decodedDetail.subscription) {
-        podcastLibraries = await listLibraryPlacements(
-          { kind: "Podcast", id: podcastId },
-          { signal },
         );
+        if (signal?.aborted) {
+          throw signal.reason ?? new DOMException("Aborted", "AbortError");
+        }
+        const decodedDetail = decodePodcastDetailResponse(detailResp);
+        const [episodesResp, podcastLibraries] = await Promise.all([
+          apiFetch<unknown>(
+            `/api/podcasts/${podcastId}/episodes?${episodeParams}`,
+            fetchOptions,
+          ),
+          decodedDetail.subscription
+            ? listLibraryPlacements(
+                { kind: "Podcast", id: podcastId },
+                { signal },
+              )
+            : Promise.resolve([]),
+        ]);
+        if (signal?.aborted) {
+          throw signal.reason ?? new DOMException("Aborted", "AbortError");
+        }
+        return {
+          detail: decodedDetail,
+          episodes: decodeCollectionPage(episodesResp, decodePodcastEpisodeMedia),
+          podcastLibraries,
+        };
+      } catch (loadError) {
+        const observationLoss = pendingLifecycleObservationLossRef.current;
+        if (
+          observationLoss !== null &&
+          (!isApiError(loadError) || isSameSystemApiDefect(loadError))
+        ) {
+          pendingLifecycleObservationLossRef.current = null;
+          throw new AggregateError(
+            [observationLoss, loadError],
+            "Podcast subscription observation and canonical reconciliation both failed",
+          );
+        }
+        throw loadError;
       }
-      return {
-        detail: decodedDetail,
-        episodes: decodeCollectionPage(episodesResp, decodePodcastEpisodeMedia),
-        podcastLibraries,
-      };
     },
     [podcastId, view],
   );
@@ -605,11 +651,9 @@ export default function PodcastDetailPaneBody() {
       setChainEpoch((epoch) => epoch + 1);
       clearExpandedShowNotesMediaIds();
       resetForecasts();
-      closeSettingsModal();
     },
     [
       clearExpandedShowNotesMediaIds,
-      closeSettingsModal,
       episodeQueryIdentity,
       resetForecasts,
     ],
@@ -694,6 +738,205 @@ export default function PodcastDetailPaneBody() {
     pending.removeAbortListener();
     pending.resolve();
   }, [controller, episodeQueryIdentity]);
+
+  const subscriptionLifecycleSnapshot = useMemo<PodcastSubscriptionLifecycleSnapshot | null>(
+    () =>
+      podcastId && detail?.subscription
+        ? {
+            podcastId,
+            syncStatus: detail.subscription.sync_status,
+            backfill: {
+              id: detail.subscription.backfill.id,
+              state: detail.subscription.backfill.state,
+              processedCount: detail.subscription.backfill.processed_count,
+              addedCount: detail.subscription.backfill.added_count,
+            },
+          }
+        : null,
+    [detail?.subscription, podcastId],
+  );
+  const subscriptionLifecycleFingerprint =
+    subscriptionLifecycleSnapshot === null
+      ? null
+      : podcastSubscriptionLifecycleFingerprint(
+          subscriptionLifecycleSnapshot,
+        );
+  const subscriptionLifecycleTerminal =
+    subscriptionLifecycleSnapshot === null ||
+    isPodcastSubscriptionLifecycleTerminal(subscriptionLifecycleSnapshot);
+  const subscriptionLifecycleIdentity =
+    subscriptionLifecycleSnapshot?.backfill.id ?? null;
+  const subscriptionLifecycleFingerprintRef = useRef<string | null>(null);
+  const subscriptionLifecycleSnapshotRef =
+    useRef<PodcastSubscriptionLifecycleSnapshot | null>(null);
+  useLayoutEffect(() => {
+    subscriptionLifecycleFingerprintRef.current =
+      subscriptionLifecycleFingerprint;
+    subscriptionLifecycleSnapshotRef.current = subscriptionLifecycleSnapshot;
+  }, [subscriptionLifecycleFingerprint, subscriptionLifecycleSnapshot]);
+  useEffect(() => {
+    if (lifecycleObservationFailure === null) return;
+    const installed = subscriptionLifecycleSnapshotRef.current;
+    if (
+      mountedRef.current &&
+      installed?.backfill.id === lifecycleObservationFailure.identity
+    ) {
+      captureDetailError(
+        lifecycleObservationFailure.error,
+        "SubscriptionLifecycle",
+      );
+    }
+    setLifecycleObservationFailure(null);
+  }, [captureDetailError, lifecycleObservationFailure]);
+
+  useEffect(() => {
+    if (
+      !isPaneActive ||
+      !podcastId ||
+      subscriptionLifecycleIdentity === null ||
+      subscriptionLifecycleTerminal
+    ) {
+      return;
+    }
+
+    const controller = new AbortController();
+    let desiredFingerprint = subscriptionLifecycleFingerprintRef.current;
+    let deliveredGeneration = 0;
+    let reconciledGeneration = 0;
+    let forceReconcile = false;
+    let observationLoss: unknown = null;
+    let draining = false;
+
+    const reportLifecycleError = (lifecycleError: unknown) => {
+      if (isAbortError(lifecycleError) || !mountedRef.current) return;
+      const installed = subscriptionLifecycleSnapshotRef.current;
+      if (installed?.backfill.id !== subscriptionLifecycleIdentity) return;
+      setLifecycleObservationFailure({
+        error: lifecycleError,
+        identity: subscriptionLifecycleIdentity,
+      });
+    };
+    const needsDrain = () =>
+      forceReconcile ||
+      (deliveredGeneration > reconciledGeneration &&
+        desiredFingerprint !== subscriptionLifecycleFingerprintRef.current);
+    const drain = () => {
+      if (draining || controller.signal.aborted || !needsDrain()) return;
+      draining = true;
+      void (async () => {
+        let failed = false;
+        try {
+          while (!controller.signal.aborted && needsDrain()) {
+            const reconcilesObservationLoss = forceReconcile;
+            const lostObservation = observationLoss;
+            const observedGeneration = deliveredGeneration;
+            forceReconcile = false;
+            observationLoss = null;
+            try {
+              await revalidatePodcastDetail(controller.signal);
+            } catch (revalidationError) {
+              if (isAbortError(revalidationError)) {
+                if (
+                  pendingLifecycleObservationLossRef.current ===
+                  lostObservation
+                ) {
+                  pendingLifecycleObservationLossRef.current = null;
+                }
+                if (!controller.signal.aborted && reconcilesObservationLoss) {
+                  reportLifecycleError(lostObservation);
+                }
+                return;
+              }
+              if (reconcilesObservationLoss) {
+                if (
+                  pendingLifecycleObservationLossRef.current ===
+                  lostObservation
+                ) {
+                  pendingLifecycleObservationLossRef.current = null;
+                }
+                throw new AggregateError(
+                  [lostObservation, revalidationError],
+                  "Podcast subscription observation and canonical reconciliation both failed",
+                );
+              }
+              throw revalidationError;
+            }
+            if (
+              pendingLifecycleObservationLossRef.current === lostObservation
+            ) {
+              pendingLifecycleObservationLossRef.current = null;
+            }
+            reconciledGeneration = observedGeneration;
+            if (
+              desiredFingerprint ===
+              subscriptionLifecycleFingerprintRef.current
+            ) {
+              reconciledGeneration = deliveredGeneration;
+            }
+            if (reconcilesObservationLoss) {
+              const installed = subscriptionLifecycleSnapshotRef.current;
+              if (
+                isApiError(lostObservation) &&
+                lostObservation.code === "E_NOT_FOUND" &&
+                (installed === null ||
+                  installed.backfill.id !== subscriptionLifecycleIdentity)
+              ) {
+                // justify-ignore-error: canonical detail proved the prior
+                // subscription was removed or replaced after its lifecycle
+                // route reported it gone; that installed state owns the outcome.
+                continue;
+              }
+              reportLifecycleError(lostObservation);
+            }
+          }
+        } catch (lifecycleError) {
+          failed = true;
+          reportLifecycleError(lifecycleError);
+        } finally {
+          draining = false;
+          if (
+            !controller.signal.aborted &&
+            !failed &&
+            needsDrain()
+          ) {
+            drain();
+          }
+        }
+      })();
+    };
+
+    const stop = observePodcastSubscriptionLifecycle(podcastId, {
+      signal: controller.signal,
+      onSnapshot: (snapshot) => {
+        const nextFingerprint =
+          podcastSubscriptionLifecycleFingerprint(snapshot);
+        deliveredGeneration += 1;
+        desiredFingerprint = nextFingerprint;
+        drain();
+      },
+      onError: (lifecycleError) => {
+        if (isPodcastSubscriptionLifecycleProtocolError(lifecycleError)) {
+          reportLifecycleError(lifecycleError);
+          return;
+        }
+        pendingLifecycleObservationLossRef.current = lifecycleError;
+        observationLoss = lifecycleError;
+        forceReconcile = true;
+        drain();
+      },
+    });
+
+    return () => {
+      controller.abort();
+      stop();
+    };
+  }, [
+    isPaneActive,
+    podcastId,
+    revalidatePodcastDetail,
+    subscriptionLifecycleIdentity,
+    subscriptionLifecycleTerminal,
+  ]);
 
   usePaneReturnReady(
     (!loading && controller !== null) || error !== null || view === null,
@@ -1008,7 +1251,7 @@ export default function PodcastDetailPaneBody() {
     view,
   ]);
 
-  const executeRefresh = useCallback<PaneRefreshPublication["execute"]>(
+  const executeRefresh = useCallback<PaneRefreshExecute>(
     async ({ signal, reportProgress }) => {
       if (!podcastId) {
         return {
@@ -1143,19 +1386,28 @@ export default function PodcastDetailPaneBody() {
   });
   usePanePrimaryChrome({
     companionAction: companionAction ?? undefined,
-    refresh:
-      podcastId && activeSubscription
+    // Refresh pulls new episodes for a subscription, so an unsubscribed
+    // Podcast has nothing to refresh. Subscription is a fact of the detail
+    // response: until that lands the answer is unknown, not negative, and a
+    // just-acquired Podcast would otherwise grow the header menu mid-read.
+    refresh: !podcastId
+      ? undefined
+      : activeSubscription
         ? {
+            kind: "Refreshable",
             sourceKey: `Podcast.Detail:${episodeQueryIdentity}`,
             execute: executeRefresh,
           }
-        : undefined,
-    actionSubject:
-      podcastId && detail
-        ? {
-            ref: canonicalResourceRef({ scheme: "podcast", id: podcastId }),
-          }
-        : undefined,
+        : detail === null && error === null
+          ? { kind: "Resolving" }
+          : undefined,
+    // The pane's canonical identity is its route key, not a fact of any read it
+    // is still waiting on. Publishing it late leaves the menu with no subject,
+    // so it renders no resource suffix and no loading row either: the surface
+    // looks settled while it is not. The snapshot owns missing state.
+    actionSubject: podcastId
+      ? { ref: canonicalResourceRef({ scheme: "podcast", id: podcastId }) }
+      : undefined,
     header: {
       kind: "Section",
       meta:

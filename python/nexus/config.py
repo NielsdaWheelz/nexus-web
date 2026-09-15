@@ -16,6 +16,8 @@ Local/test environments use Supabase local, staging/prod use cloud.
 Supabase service-role keys are not application runtime settings.
 """
 
+import base64
+import binascii
 import os
 from datetime import datetime
 from enum import Enum
@@ -24,12 +26,82 @@ from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
 from nexus.job_topology import MAINTENANCE_JOB_KINDS
 
 TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS = 256
+# Cross-runtime upload safety contract. Keep this equal to
+# `DIRECT_UPLOAD_PUT_TIMEOUT_MS` in `apps/web/src/lib/media/ingestionClient.ts`.
+DIRECT_UPLOAD_PUT_TIMEOUT_SECONDS = 240
+# The one background-worker memory limit. It is deployment shape, not per-environment
+# configuration, so it is a constant here and `mem_limit: 448m` in
+# `deploy/hetzner/docker-compose.yml`; the cgroup readiness check proves at startup
+# that the deployed limit is exactly this value.
+BACKGROUND_WORKER_MEMORY_LIMIT_BYTES = 448 * 1024 * 1024
+
+
+def parse_agent_tools_mcp_listen(value: str) -> tuple[str, int]:
+    """Parse the dedicated worker MCP listener as one strict host:port pair."""
+    if not isinstance(value, str) or value.count(":") != 1:
+        raise ValueError("NEXUS_AGENT_TOOLS_MCP_LISTEN must be host:port")
+    host, port_text = value.rsplit(":", 1)
+    if not host or "/" in host or any(char.isspace() for char in host):
+        raise ValueError("NEXUS_AGENT_TOOLS_MCP_LISTEN has an invalid host")
+    try:
+        port = int(port_text)
+    except ValueError as exc:
+        raise ValueError("NEXUS_AGENT_TOOLS_MCP_LISTEN has an invalid port") from exc
+    if not 1 <= port <= 65_535:
+        raise ValueError("NEXUS_AGENT_TOOLS_MCP_LISTEN port must be 1..65535")
+    return host, port
+
+
+def parse_agent_tools_mcp_origin(value: str) -> tuple[str, str]:
+    """Return the exact Host and Origin admitted by the MCP transport."""
+
+    parsed = urlparse(value)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("NEXUS_AGENT_TOOLS_MCP_ORIGIN has an invalid port") from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path != "/internal/agent-tools/mcp"
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("NEXUS_AGENT_TOOLS_MCP_ORIGIN must be one exact MCP endpoint")
+    default_port = 80 if parsed.scheme == "http" else 443
+    authority = parsed.hostname if port in {None, default_port} else f"{parsed.hostname}:{port}"
+    if parsed.netloc != authority:
+        raise ValueError("NEXUS_AGENT_TOOLS_MCP_ORIGIN must use a canonical authority")
+    return authority, f"{parsed.scheme}://{authority}"
+
+
+def validate_agent_tools_mcp_runtime_origin(
+    value: str,
+    *,
+    nexus_env: "Environment",
+    worker_lane: Literal["interactive", "background", "maintenance"] | None,
+) -> tuple[str, str]:
+    """Validate the MCP origin only for the lane that owns that transport."""
+
+    authority, origin = parse_agent_tools_mcp_origin(value)
+    if (
+        worker_lane == "interactive"
+        and nexus_env in {Environment.STAGING, Environment.PROD}
+        and not origin.startswith("https://")
+    ):
+        raise ValueError(
+            "NEXUS_AGENT_TOOLS_MCP_ORIGIN must use HTTPS for a deployed interactive worker"
+        )
+    return authority, origin
 
 
 def _database_url_looks_like_supabase(database_url: str) -> bool:
@@ -58,6 +130,17 @@ class Environment(str, Enum):
     TEST = "test"
     STAGING = "staging"
     PROD = "prod"
+
+
+type GenerationApiProvider = Literal[
+    "openai",
+    "anthropic",
+    "gemini",
+    "moonshot",
+    "openrouter",
+    "deepseek",
+    "xai",
+]
 
 
 class Settings(BaseSettings):
@@ -155,9 +238,8 @@ class Settings(BaseSettings):
     media_teardown_cleanup_grace_seconds: int = Field(
         default=60, alias="MEDIA_TEARDOWN_CLEANUP_GRACE_SECONDS"
     )
-    # writeMayLandUntil horizon for an in-process write's durable final-sweep
-    # record. Must exceed r2_read_timeout_seconds so a delayed writer can be
-    # aborted (or must renew under the media lock) before its reservation lapses.
+    # writeMayLandUntil horizon for a durable final-sweep record. Must exceed
+    # both bounded server writes and the browser's direct-upload PUT deadline.
     storage_object_cleanup_write_window_seconds: int = Field(
         default=300, alias="STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS"
     )
@@ -179,7 +261,7 @@ class Settings(BaseSettings):
     signed_url_expiry_s: int = Field(default=300, alias="SIGNED_URL_EXPIRY_S")  # 5 minutes
 
     # Podcast discovery and subscription ingestion policy.
-    podcasts_enabled: bool = Field(default=True, alias="PODCASTS_ENABLED")
+    podcasts_enabled: bool = Field(default=False, alias="PODCASTS_ENABLED")
     podcast_index_api_key: str | None = Field(default=None, alias="PODCAST_INDEX_API_KEY")
     podcast_index_api_secret: str | None = Field(default=None, alias="PODCAST_INDEX_API_SECRET")
     podcast_index_base_url: str = Field(
@@ -231,14 +313,6 @@ class Settings(BaseSettings):
     stripe_plus_price_id: str | None = Field(default=None, alias="STRIPE_PLUS_PRICE_ID")
     stripe_ai_plus_price_id: str | None = Field(default=None, alias="STRIPE_AI_PLUS_PRICE_ID")
     stripe_ai_pro_price_id: str | None = Field(default=None, alias="STRIPE_AI_PRO_PRICE_ID")
-    billing_ai_plus_platform_token_limit_monthly: int = Field(
-        default=1_000_000,
-        alias="BILLING_AI_PLUS_PLATFORM_TOKEN_LIMIT_MONTHLY",
-    )
-    billing_ai_pro_platform_token_limit_monthly: int = Field(
-        default=3_000_000,
-        alias="BILLING_AI_PRO_PLATFORM_TOKEN_LIMIT_MONTHLY",
-    )
     billing_ai_plus_transcription_minutes_monthly: int = Field(
         default=300,
         alias="BILLING_AI_PLUS_TRANSCRIPTION_MINUTES_MONTHLY",
@@ -297,6 +371,25 @@ class Settings(BaseSettings):
     worker_db_failure_backoff_max_seconds: float = Field(
         default=900.0, alias="WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS"
     )
+    background_process_cgroup_root: Path = Field(
+        default=Path("/sys/fs/cgroup"), alias="BACKGROUND_PROCESS_CGROUP_ROOT"
+    )
+    background_process_wall_timeout_seconds: float = Field(
+        default=900.0,
+        alias="BACKGROUND_PROCESS_WALL_TIMEOUT_SECONDS",
+    )
+    background_process_term_grace_seconds: float = Field(
+        default=5.0,
+        alias="BACKGROUND_PROCESS_TERM_GRACE_SECONDS",
+    )
+    background_process_result_max_bytes: int = Field(
+        default=1024 * 1024,
+        alias="BACKGROUND_PROCESS_RESULT_MAX_BYTES",
+    )
+    background_process_oom_score_adj: int = Field(
+        default=750,
+        alias="BACKGROUND_PROCESS_OOM_SCORE_ADJ",
+    )
     sync_gutenberg_catalog_schedule_seconds: int = Field(
         default=0, alias="SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS"
     )
@@ -344,19 +437,94 @@ class Settings(BaseSettings):
         alias="MAX_LATEX_SOURCE_ARCHIVE_COMPRESSION_RATIO",
     )
 
-    # Platform API keys for LLM providers.
-    # If set, models from that provider are available to all users
+    # OpenAI's unqualified key remains embedding-only. Generation credentials
+    # are route-specific so no provider secret can cross into the Codex host.
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
-    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
-    gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
-    moonshot_api_key: str | None = Field(default=None, alias="MOONSHOT_API_KEY")
-    deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
-
-    # Explicit RFC 3339 deployment assertion: Fable (the platform LLM runtime)
-    # requires 30-day retention and is not ZDR-eligible, so a human operator
-    # must record when that tradeoff was accepted. Required in staging/prod.
-    nexus_fable_retention_accepted_at: str | None = Field(
-        default=None, alias="NEXUS_FABLE_RETENTION_ACCEPTED_AT"
+    generation_api_providers_raw: str = Field(default="", alias="GENERATION_API_PROVIDERS")
+    openai_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="OPENAI_GENERATION_API_KEY",
+        repr=False,
+    )
+    anthropic_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="ANTHROPIC_GENERATION_API_KEY",
+        repr=False,
+    )
+    gemini_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="GEMINI_GENERATION_API_KEY",
+        repr=False,
+    )
+    moonshot_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="MOONSHOT_GENERATION_API_KEY",
+        repr=False,
+    )
+    openrouter_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="OPENROUTER_GENERATION_API_KEY",
+        repr=False,
+    )
+    deepseek_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="DEEPSEEK_GENERATION_API_KEY",
+        repr=False,
+    )
+    xai_generation_api_key: SecretStr | None = Field(
+        default=None,
+        alias="XAI_GENERATION_API_KEY",
+        repr=False,
+    )
+    generation_continuation_encryption_key: SecretStr | None = Field(
+        default=None,
+        alias="GENERATION_CONTINUATION_ENCRYPTION_KEY",
+        repr=False,
+    )
+    fable_retention_accepted_at: datetime | None = Field(
+        default=None,
+        alias="NEXUS_FABLE_RETENTION_ACCEPTED_AT",
+    )
+    anthropic_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="ANTHROPIC_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    gemini_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="GEMINI_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    moonshot_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="MOONSHOT_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    openrouter_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="OPENROUTER_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    deepseek_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="DEEPSEEK_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    xai_api_key_rejected: SecretStr | None = Field(
+        default=None,
+        alias="XAI_API_KEY",
+        exclude=True,
+        repr=False,
+    )
+    agent_tool_grant_signing_key: SecretStr | None = Field(
+        default=None,
+        alias="AGENT_TOOL_GRANT_SIGNING_KEY",
+        repr=False,
     )
 
     # Public web search provider settings.
@@ -382,10 +550,8 @@ class Settings(BaseSettings):
         alias="OUTBOUND_HTTP_PROXY_URL",
     )
 
-    # LLM provider feature flags.
     # Rate limiting settings.
     rate_limit_rpm: int = Field(default=20, alias="RATE_LIMIT_RPM")  # Requests per minute
-    rate_limit_concurrent: int = Field(default=3, alias="RATE_LIMIT_CONCURRENT")  # Max concurrent
 
     # Transcript semantic embedding settings
     transcript_embedding_model_openai: str = Field(
@@ -401,13 +567,23 @@ class Settings(BaseSettings):
         alias="TRANSCRIPT_EMBEDDING_TIMEOUT_SECONDS",
     )
 
-    # Metadata enrichment settings
-    metadata_enrichment_enabled: bool = Field(default=True, alias="METADATA_ENRICHMENT_ENABLED")
+    # Metadata enrichment settings. The generation-host wire input-byte invariant
+    # is owned solely by build_enrichment_user_content's byte clamp; this cap
+    # only sizes the sampled text.
     metadata_enrichment_max_content_chars: int = Field(
         default=2000, alias="METADATA_ENRICHMENT_MAX_CONTENT_CHARS"
     )
-    metadata_enrichment_max_output_tokens: int = Field(
-        default=1200, alias="METADATA_ENRICHMENT_MAX_OUTPUT_TOKENS"
+    codex_agent_socket: Path = Field(
+        default=Path("/run/nexus-codex/agent.sock"),
+        alias="NEXUS_CODEX_AGENT_SOCKET",
+    )
+    agent_tools_mcp_listen: str = Field(
+        default="0.0.0.0:8001",
+        alias="NEXUS_AGENT_TOOLS_MCP_LISTEN",
+    )
+    agent_tools_mcp_origin: str = Field(
+        default="http://127.0.0.1:8001/internal/agent-tools/mcp",
+        alias="NEXUS_AGENT_TOOLS_MCP_ORIGIN",
     )
 
     # Synapse resonance engine: SYNAPSE_ENABLED=false turns every scan trigger
@@ -422,11 +598,6 @@ class Settings(BaseSettings):
     # leaves atlas_project_job unregistered as periodic; the deploy env sets a
     # positive cadence (prod: 86400). The on-demand trigger still fires on ingest.
     atlas_project_schedule_seconds: int = Field(default=0, alias="ATLAS_PROJECT_SCHEDULE_SECONDS")
-
-    # Amanuensis: ASSISTANT_WRITE_TOOLS_ENABLED=false omits the five write
-    # ToolSpecs from the chat tool loop, leaving a read-only agent (amanuensis
-    # D-6, AC-6).
-    assistant_write_tools_enabled: bool = Field(default=True, alias="ASSISTANT_WRITE_TOOLS_ENABLED")
 
     # Post Room: private email ingest address (Cloudflare Email Worker → HMAC-signed POST).
     # EMAIL_INGEST_ENABLED gates route registration; when false the endpoint is absent
@@ -447,11 +618,6 @@ class Settings(BaseSettings):
     stream_base_url: str | None = Field(default=None, alias="STREAM_BASE_URL")
     # Comma-separated list of allowed CORS origins for direct stream endpoints.
     stream_cors_origins: str | None = Field(default=None, alias="STREAM_CORS_ORIGINS")
-    # Default max output tokens for budget reservation
-    stream_max_output_tokens_default: int = Field(
-        default=1024, alias="STREAM_MAX_OUTPUT_TOKENS_DEFAULT"
-    )
-
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
@@ -476,7 +642,29 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_required_settings(self) -> "Settings":
         """Ensure required settings are set for all environments."""
-        # Supabase auth settings are required in all environments
+        self._validate_supabase_auth()
+        self._validate_retired_supabase_settings()
+        self._validate_database_origin()
+        self._validate_retired_storage_settings()
+        self._validate_database_limits()
+        self._validate_deployed_storage()
+        self._validate_storage_lifecycle()
+        self._validate_archive_safety()
+        self._validate_billing_limits()
+        self._validate_media_provider_limits()
+        self._validate_billing_credentials()
+        self._validate_email_credentials()
+        self._validate_podcast_credentials()
+        self._validate_deployed_browse_provider()
+        self._validate_deployed_generation_runtime()
+        self._validate_ingest_runtime_and_paths()
+        self._validate_worker_lane()
+        self._validate_worker_intervals()
+        self._validate_background_process_limits()
+        self._validate_maintenance_schedules()
+        return self
+
+    def _validate_supabase_auth(self) -> None:
         missing_auth = []
         if not self.supabase_jwks_url:
             missing_auth.append("SUPABASE_JWKS_URL")
@@ -491,6 +679,7 @@ class Settings(BaseSettings):
                 "Run 'make setup' to configure Supabase local, or set these environment variables."
             )
 
+    def _validate_retired_supabase_settings(self) -> None:
         rejected_supabase_service_role_settings = [
             alias
             for alias, value in (
@@ -509,11 +698,19 @@ class Settings(BaseSettings):
                 "Use script-local environment for seed scripts instead."
             )
 
+    def _validate_database_origin(self) -> None:
         if _database_url_looks_like_supabase(self.database_url):
             raise ValueError(
                 "DATABASE_URL must point at standalone Postgres, not Supabase Database."
             )
+        parse_agent_tools_mcp_listen(self.agent_tools_mcp_listen)
+        validate_agent_tools_mcp_runtime_origin(
+            self.agent_tools_mcp_origin,
+            nexus_env=self.nexus_env,
+            worker_lane=self.worker_lane,
+        )
 
+    def _validate_retired_storage_settings(self) -> None:
         rejected_storage_origin_settings = [
             alias
             for alias, value in (
@@ -532,6 +729,7 @@ class Settings(BaseSettings):
                 "Use R2_S3_API_ORIGIN."
             )
 
+    def _validate_database_limits(self) -> None:
         if self.database_pool_size < 1:
             raise ValueError("DATABASE_POOL_SIZE must be >= 1.")
         if self.database_max_overflow < 0:
@@ -544,42 +742,51 @@ class Settings(BaseSettings):
             raise ValueError("DATABASE_LOCK_TIMEOUT_MS must be >= 0.")
         if self.database_idle_in_tx_timeout_ms < 0:
             raise ValueError("DATABASE_IDLE_IN_TX_TIMEOUT_MS must be >= 0.")
+        if self.ingest_reconcile_schedule_seconds < 0:
+            raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be >= 0.")
+        if (
+            self.nexus_env in (Environment.STAGING, Environment.PROD)
+            and self.ingest_reconcile_schedule_seconds == 0
+        ):
+            raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be > 0 in staging and prod.")
 
-        # NEXUS_INTERNAL_SECRET is required only in staging/prod
-        if self.nexus_env in (Environment.STAGING, Environment.PROD):
-            if not self.nexus_internal_secret:
-                raise ValueError(
-                    f"NEXUS_INTERNAL_SECRET is required for NEXUS_ENV={self.nexus_env.value}"
-                )
-            missing_r2 = []
-            if not self.r2_s3_api_origin:
-                missing_r2.append("R2_S3_API_ORIGIN")
-            if not self.r2_access_key_id:
-                missing_r2.append("R2_ACCESS_KEY_ID")
-            if not self.r2_secret_access_key:
-                missing_r2.append("R2_SECRET_ACCESS_KEY")
-            if not self.r2_bucket:
-                missing_r2.append("R2_BUCKET")
-            if missing_r2:
-                raise ValueError(
-                    "Cloudflare R2 storage settings are required in staging/prod: "
-                    f"{', '.join(missing_r2)}"
-                )
-            parsed_r2_origin = urlparse(self.r2_s3_api_origin or "")
-            r2_host = parsed_r2_origin.hostname or ""
-            if (
-                parsed_r2_origin.scheme != "https"
-                or parsed_r2_origin.username
-                or parsed_r2_origin.password
-                or parsed_r2_origin.path not in ("", "/")
-                or parsed_r2_origin.query
-                or parsed_r2_origin.fragment
-                or not r2_host.endswith(".r2.cloudflarestorage.com")
-            ):
-                raise ValueError(
-                    "R2_S3_API_ORIGIN must be the Cloudflare R2 S3 API origin for staging/prod."
-                )
+    def _validate_deployed_storage(self) -> None:
+        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
+            return
+        if not self.nexus_internal_secret:
+            raise ValueError(
+                f"NEXUS_INTERNAL_SECRET is required for NEXUS_ENV={self.nexus_env.value}"
+            )
+        missing_r2 = []
+        if not self.r2_s3_api_origin:
+            missing_r2.append("R2_S3_API_ORIGIN")
+        if not self.r2_access_key_id:
+            missing_r2.append("R2_ACCESS_KEY_ID")
+        if not self.r2_secret_access_key:
+            missing_r2.append("R2_SECRET_ACCESS_KEY")
+        if not self.r2_bucket:
+            missing_r2.append("R2_BUCKET")
+        if missing_r2:
+            raise ValueError(
+                "Cloudflare R2 storage settings are required in staging/prod: "
+                f"{', '.join(missing_r2)}"
+            )
+        parsed_r2_origin = urlparse(self.r2_s3_api_origin or "")
+        r2_host = parsed_r2_origin.hostname or ""
+        if (
+            parsed_r2_origin.scheme != "https"
+            or parsed_r2_origin.username
+            or parsed_r2_origin.password
+            or parsed_r2_origin.path not in ("", "/")
+            or parsed_r2_origin.query
+            or parsed_r2_origin.fragment
+            or not r2_host.endswith(".r2.cloudflarestorage.com")
+        ):
+            raise ValueError(
+                "R2_S3_API_ORIGIN must be the Cloudflare R2 S3 API origin for staging/prod."
+            )
 
+    def _validate_storage_lifecycle(self) -> None:
         if self.r2_connect_timeout_seconds <= 0 or self.r2_connect_timeout_seconds > 10:
             raise ValueError("R2_CONNECT_TIMEOUT_SECONDS must be > 0 and <= 10.")
         if self.r2_read_timeout_seconds <= 0 or self.r2_read_timeout_seconds > 60:
@@ -594,11 +801,17 @@ class Settings(BaseSettings):
                 "R2_READ_TIMEOUT_SECONDS so a delayed writer can be aborted before "
                 "its reservation lapses."
             )
+        if self.storage_object_cleanup_write_window_seconds <= DIRECT_UPLOAD_PUT_TIMEOUT_SECONDS:
+            raise ValueError(
+                "STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS must be greater than the "
+                f"{DIRECT_UPLOAD_PUT_TIMEOUT_SECONDS}-second browser direct-upload PUT timeout."
+            )
         if self.storage_orphan_sweep_interval_seconds <= 0:
             raise ValueError("STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS must be > 0.")
         if self.storage_orphan_sweep_min_age_seconds < 0:
             raise ValueError("STORAGE_ORPHAN_SWEEP_MIN_AGE_SECONDS must be >= 0.")
 
+    def _validate_archive_safety(self) -> None:
         for field_name, ceiling in self._EPUB_ARCHIVE_CEILINGS.items():
             value = getattr(self, field_name)
             if value > ceiling:
@@ -619,14 +832,13 @@ class Settings(BaseSettings):
             if value < 1:
                 raise ValueError(f"{field_name.upper()}={value} must be >= 1.")
 
-        if self.billing_ai_plus_platform_token_limit_monthly < 0:
-            raise ValueError("BILLING_AI_PLUS_PLATFORM_TOKEN_LIMIT_MONTHLY must be >= 0.")
-        if self.billing_ai_pro_platform_token_limit_monthly < 0:
-            raise ValueError("BILLING_AI_PRO_PLATFORM_TOKEN_LIMIT_MONTHLY must be >= 0.")
+    def _validate_billing_limits(self) -> None:
         if self.billing_ai_plus_transcription_minutes_monthly < 0:
             raise ValueError("BILLING_AI_PLUS_TRANSCRIPTION_MINUTES_MONTHLY must be >= 0.")
         if self.billing_ai_pro_transcription_minutes_monthly < 0:
             raise ValueError("BILLING_AI_PRO_TRANSCRIPTION_MINUTES_MONTHLY must be >= 0.")
+
+    def _validate_media_provider_limits(self) -> None:
         if self.transcript_embedding_dimensions != TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS:
             raise ValueError(
                 "TRANSCRIPT_EMBEDDING_DIMENSIONS must equal "
@@ -648,98 +860,179 @@ class Settings(BaseSettings):
             raise ValueError("X_API_TIMEOUT_SECONDS must be > 0.")
         if self.x_api_author_thread_max_posts < 1:
             raise ValueError("X_API_AUTHOR_THREAD_MAX_POSTS must be >= 1.")
-        if self.nexus_env in (Environment.STAGING, Environment.PROD) and self.billing_enabled:
-            missing_billing: list[str] = []
-            if not self.stripe_secret_key:
-                missing_billing.append("STRIPE_SECRET_KEY")
-            if not self.stripe_webhook_secret:
-                missing_billing.append("STRIPE_WEBHOOK_SECRET")
-            if not self.stripe_plus_price_id:
-                missing_billing.append("STRIPE_PLUS_PRICE_ID")
-            if not self.stripe_ai_plus_price_id:
-                missing_billing.append("STRIPE_AI_PLUS_PRICE_ID")
-            if not self.stripe_ai_pro_price_id:
-                missing_billing.append("STRIPE_AI_PRO_PRICE_ID")
-            if missing_billing:
-                raise ValueError(
-                    "Billing is enabled but required Stripe settings are missing: "
-                    f"{', '.join(missing_billing)}"
-                )
-        if self.nexus_env in (Environment.STAGING, Environment.PROD) and self.email_ingest_enabled:
-            missing_email: list[str] = []
-            if not self.email_ingest_hmac_secret:
-                missing_email.append("EMAIL_INGEST_HMAC_SECRET")
-            if not self.email_ingest_address_slug:
-                missing_email.append("EMAIL_INGEST_ADDRESS_SLUG")
-            if not self.email_ingest_domain:
-                missing_email.append("EMAIL_INGEST_DOMAIN")
-            if not self.email_ingest_owner_user_id:
-                missing_email.append("EMAIL_INGEST_OWNER_USER_ID")
-            if missing_email:
-                raise ValueError(
-                    "Email ingest is enabled but required settings are missing: "
-                    f"{', '.join(missing_email)}"
-                )
-        if self.podcasts_enabled:
-            missing_podcast_provider_settings: list[str] = []
-            if not self.podcast_index_api_key:
-                missing_podcast_provider_settings.append("PODCAST_INDEX_API_KEY")
-            if not self.podcast_index_api_secret:
-                missing_podcast_provider_settings.append("PODCAST_INDEX_API_SECRET")
-            if missing_podcast_provider_settings:
-                if self.nexus_env in (Environment.STAGING, Environment.PROD):
-                    raise ValueError(
-                        "Podcast features are enabled but provider credentials are missing: "
-                        f"{', '.join(missing_podcast_provider_settings)}"
-                    )
-                else:
-                    import logging
 
-                    logging.getLogger(__name__).warning(
-                        "Podcast features auto-disabled: missing %s. "
-                        "Set PODCASTS_ENABLED=false or provide credentials to silence this warning.",
-                        ", ".join(missing_podcast_provider_settings),
-                    )
-                    self.podcasts_enabled = False
-        if self.nexus_env in (Environment.STAGING, Environment.PROD):
-            if not self.youtube_data_api_key:
-                raise ValueError(
-                    "Browse providers are missing required credentials: YOUTUBE_DATA_API_KEY"
-                )
+    def _validate_billing_credentials(self) -> None:
+        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
+            return
+        if not self.billing_enabled:
+            return
+        missing_billing: list[str] = []
+        if not self.stripe_secret_key:
+            missing_billing.append("STRIPE_SECRET_KEY")
+        if not self.stripe_webhook_secret:
+            missing_billing.append("STRIPE_WEBHOOK_SECRET")
+        if not self.stripe_plus_price_id:
+            missing_billing.append("STRIPE_PLUS_PRICE_ID")
+        if not self.stripe_ai_plus_price_id:
+            missing_billing.append("STRIPE_AI_PLUS_PRICE_ID")
+        if not self.stripe_ai_pro_price_id:
+            missing_billing.append("STRIPE_AI_PRO_PRICE_ID")
+        if missing_billing:
+            raise ValueError(
+                "Billing is enabled but required Stripe settings are missing: "
+                f"{', '.join(missing_billing)}"
+            )
 
-        if self.nexus_env in (Environment.STAGING, Environment.PROD):
-            missing_llm_keys: list[str] = []
-            if not self.openai_api_key:
-                missing_llm_keys.append("OPENAI_API_KEY")
-            if not self.anthropic_api_key:
-                missing_llm_keys.append("ANTHROPIC_API_KEY")
-            if not self.gemini_api_key:
-                missing_llm_keys.append("GEMINI_API_KEY")
-            if not self.moonshot_api_key:
-                missing_llm_keys.append("MOONSHOT_API_KEY")
-            if not self.deepseek_api_key:
-                missing_llm_keys.append("DEEPSEEK_API_KEY")
-            if missing_llm_keys:
+    def _validate_email_credentials(self) -> None:
+        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
+            return
+        if not self.email_ingest_enabled:
+            return
+        missing_email: list[str] = []
+        if not self.email_ingest_hmac_secret:
+            missing_email.append("EMAIL_INGEST_HMAC_SECRET")
+        if not self.email_ingest_address_slug:
+            missing_email.append("EMAIL_INGEST_ADDRESS_SLUG")
+        if not self.email_ingest_domain:
+            missing_email.append("EMAIL_INGEST_DOMAIN")
+        if not self.email_ingest_owner_user_id:
+            missing_email.append("EMAIL_INGEST_OWNER_USER_ID")
+        if missing_email:
+            raise ValueError(
+                "Email ingest is enabled but required settings are missing: "
+                f"{', '.join(missing_email)}"
+            )
+
+    def _validate_podcast_credentials(self) -> None:
+        if not self.podcasts_enabled:
+            return
+        missing_podcast_provider_settings: list[str] = []
+        if not self.podcast_index_api_key:
+            missing_podcast_provider_settings.append("PODCAST_INDEX_API_KEY")
+        if not self.podcast_index_api_secret:
+            missing_podcast_provider_settings.append("PODCAST_INDEX_API_SECRET")
+        if missing_podcast_provider_settings:
+            raise ValueError(
+                "Podcast features are enabled but provider credentials are missing: "
+                f"{', '.join(missing_podcast_provider_settings)}"
+            )
+
+    def _validate_deployed_browse_provider(self) -> None:
+        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
+            return
+        if not self.youtube_data_api_key:
+            raise ValueError(
+                "Browse providers are missing required credentials: YOUTUBE_DATA_API_KEY"
+            )
+
+    def _validate_deployed_generation_runtime(self) -> None:
+        configured = self.generation_api_provider_list
+        rejected = [
+            alias
+            for alias, value in (
+                ("ANTHROPIC_API_KEY", self.anthropic_api_key_rejected),
+                ("GEMINI_API_KEY", self.gemini_api_key_rejected),
+                ("MOONSHOT_API_KEY", self.moonshot_api_key_rejected),
+                ("OPENROUTER_API_KEY", self.openrouter_api_key_rejected),
+                ("DEEPSEEK_API_KEY", self.deepseek_api_key_rejected),
+                ("XAI_API_KEY", self.xai_api_key_rejected),
+            )
+            if value is not None
+        ]
+        if rejected:
+            raise ValueError(
+                "Retired generation credential names are forbidden: " + ", ".join(rejected)
+            )
+
+        credential_by_provider: dict[GenerationApiProvider, tuple[str, SecretStr | None]] = {
+            "openai": ("OPENAI_GENERATION_API_KEY", self.openai_generation_api_key),
+            "anthropic": (
+                "ANTHROPIC_GENERATION_API_KEY",
+                self.anthropic_generation_api_key,
+            ),
+            "gemini": ("GEMINI_GENERATION_API_KEY", self.gemini_generation_api_key),
+            "moonshot": (
+                "MOONSHOT_GENERATION_API_KEY",
+                self.moonshot_generation_api_key,
+            ),
+            "openrouter": (
+                "OPENROUTER_GENERATION_API_KEY",
+                self.openrouter_generation_api_key,
+            ),
+            "deepseek": (
+                "DEEPSEEK_GENERATION_API_KEY",
+                self.deepseek_generation_api_key,
+            ),
+            "xai": ("XAI_GENERATION_API_KEY", self.xai_generation_api_key),
+        }
+        missing: list[str] = []
+        for provider in configured:
+            name, credential = credential_by_provider[provider]
+            if credential is None or not credential.get_secret_value().strip():
+                missing.append(name)
+        if missing:
+            raise ValueError(
+                "Configured generation providers are missing credentials: " + ", ".join(missing)
+            )
+        stale = [
+            name
+            for provider, (name, credential) in credential_by_provider.items()
+            if provider not in configured
+            and credential is not None
+            and credential.get_secret_value() != ""
+        ]
+        if stale:
+            raise ValueError(
+                "Generation credentials are forbidden for unconfigured provider "
+                + ", ".join(name.removesuffix("_GENERATION_API_KEY").lower() for name in stale)
+            )
+        if configured:
+            if self.generation_continuation_encryption_key is None:
                 raise ValueError(
-                    "Platform LLM provider keys are required in staging/prod: "
-                    f"{', '.join(missing_llm_keys)}"
+                    "GENERATION_CONTINUATION_ENCRYPTION_KEY is required when an API provider "
+                    "is configured"
                 )
-            if not self.nexus_fable_retention_accepted_at:
-                raise ValueError(
-                    "NEXUS_FABLE_RETENTION_ACCEPTED_AT is required for "
-                    f"NEXUS_ENV={self.nexus_env.value}: Fable requires 30-day retention "
-                    "and is not ZDR-eligible, so a deploy must explicitly record (RFC "
-                    "3339) when that tradeoff was accepted."
-                )
+            encoded_key = self.generation_continuation_encryption_key.get_secret_value()
             try:
-                datetime.fromisoformat(self.nexus_fable_retention_accepted_at)
-            except ValueError as exc:
+                decoded_key = base64.b64decode(encoded_key, validate=True)
+            except (binascii.Error, ValueError) as exc:
                 raise ValueError(
-                    "NEXUS_FABLE_RETENTION_ACCEPTED_AT must be an RFC 3339 timestamp, "
-                    f"got {self.nexus_fable_retention_accepted_at!r}"
+                    "GENERATION_CONTINUATION_ENCRYPTION_KEY must be canonical base64 for a "
+                    "32-byte key"
                 ) from exc
-        if self.ingest_reconcile_schedule_seconds < 0:
-            raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be >= 0.")
+            if len(decoded_key) != 32 or base64.b64encode(decoded_key).decode() != encoded_key:
+                raise ValueError(
+                    "GENERATION_CONTINUATION_ENCRYPTION_KEY must be canonical base64 for a "
+                    "32-byte key"
+                )
+        if "anthropic" in configured:
+            if self.fable_retention_accepted_at is None:
+                raise ValueError(
+                    "NEXUS_FABLE_RETENTION_ACCEPTED_AT is required when Anthropic is configured"
+                )
+            if self.fable_retention_accepted_at.utcoffset() is None:
+                raise ValueError("NEXUS_FABLE_RETENTION_ACCEPTED_AT must include a timezone")
+        elif self.fable_retention_accepted_at is not None:
+            raise ValueError(
+                "NEXUS_FABLE_RETENTION_ACCEPTED_AT is forbidden while Anthropic is unconfigured"
+            )
+
+        if self.nexus_env not in (Environment.STAGING, Environment.PROD):
+            return
+        if not configured:
+            raise ValueError("GENERATION_API_PROVIDERS must be nonempty in staging/prod")
+        if not self.openai_api_key:
+            raise ValueError("OPENAI_API_KEY is required for transcript embeddings")
+        if not self.agent_tool_grant_signing_key:
+            raise ValueError("AGENT_TOOL_GRANT_SIGNING_KEY is required in staging/prod")
+        from nexus.services.agent_tool_grants import validate_agent_tool_grant_signing_key
+
+        try:
+            validate_agent_tool_grant_signing_key(self.agent_tool_grant_signing_key)
+        except ValueError as exc:
+            raise ValueError("AGENT_TOOL_GRANT_SIGNING_KEY is invalid") from exc
+
+    def _validate_ingest_runtime_and_paths(self) -> None:
         if self.ingest_stale_extracting_seconds < 1:
             raise ValueError("INGEST_STALE_EXTRACTING_SECONDS must be >= 1.")
         if self.ingest_stale_requeue_max_attempts < 1:
@@ -748,8 +1041,17 @@ class Settings(BaseSettings):
             raise ValueError("INGEST_SEMANTIC_REPAIR_BATCH_LIMIT must be >= 1.")
         if self.ingest_semantic_failed_retry_seconds < 1:
             raise ValueError("INGEST_SEMANTIC_FAILED_RETRY_SECONDS must be >= 1.")
+        if self.metadata_enrichment_max_content_chars < 1:
+            raise ValueError("METADATA_ENRICHMENT_MAX_CONTENT_CHARS must be >= 1.")
+        if (
+            not self.codex_agent_socket.is_absolute()
+            or Path(os.path.normpath(str(self.codex_agent_socket))) != self.codex_agent_socket
+        ):
+            raise ValueError("NEXUS_CODEX_AGENT_SOCKET must be a normalized absolute path.")
         if not self.parser_temp_root.is_absolute():
             raise ValueError("PARSER_TEMP_ROOT must be an absolute path.")
+
+    def _validate_worker_lane(self) -> None:
         if self.worker_lane == "maintenance":
             if not self.nexus_allow_worker_maintenance:
                 raise ValueError(
@@ -785,6 +1087,8 @@ class Settings(BaseSettings):
             and self.database_statement_timeout_ms == 0
         ):
             raise ValueError("DATABASE_STATEMENT_TIMEOUT_MS must be bounded for deployed workers.")
+
+    def _validate_worker_intervals(self) -> None:
         if self.worker_poll_interval_seconds <= 0:
             raise ValueError("WORKER_POLL_INTERVAL_SECONDS must be > 0.")
         if self.worker_idle_backoff_max_seconds < self.worker_poll_interval_seconds:
@@ -804,6 +1108,22 @@ class Settings(BaseSettings):
                 "WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS must be >= "
                 "WORKER_DB_FAILURE_BACKOFF_SECONDS."
             )
+
+    def _validate_background_process_limits(self) -> None:
+        if not self.background_process_cgroup_root.is_absolute():
+            raise ValueError("BACKGROUND_PROCESS_CGROUP_ROOT must be an absolute path.")
+        if not 0 < self.background_process_wall_timeout_seconds <= 900:
+            raise ValueError("BACKGROUND_PROCESS_WALL_TIMEOUT_SECONDS must be > 0 and <= 900.")
+        if not 0 < self.background_process_term_grace_seconds <= 30:
+            raise ValueError("BACKGROUND_PROCESS_TERM_GRACE_SECONDS must be > 0 and <= 30.")
+        if not 1024 <= self.background_process_result_max_bytes <= 4 * 1024 * 1024:
+            raise ValueError(
+                "BACKGROUND_PROCESS_RESULT_MAX_BYTES must be between 1024 and 4194304."
+            )
+        if not 1 <= self.background_process_oom_score_adj <= 1000:
+            raise ValueError("BACKGROUND_PROCESS_OOM_SCORE_ADJ must be between 1 and 1000.")
+
+    def _validate_maintenance_schedules(self) -> None:
         if self.sync_gutenberg_catalog_schedule_seconds < 0:
             raise ValueError("SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS must be >= 0.")
         if self.background_job_prune_schedule_seconds < 0:
@@ -816,8 +1136,6 @@ class Settings(BaseSettings):
             raise ValueError("BACKGROUND_JOB_PRUNE_DEAD_AFTER_DAYS must be >= 1.")
         if self.background_job_prune_batch_size < 1:
             raise ValueError("BACKGROUND_JOB_PRUNE_BATCH_SIZE must be >= 1.")
-
-        return self
 
     @property
     def requires_internal_header(self) -> bool:
@@ -858,6 +1176,57 @@ class Settings(BaseSettings):
         if self.nexus_env in (Environment.LOCAL, Environment.TEST):
             return "dGVzdC1zdHJlYW0tdG9rZW4tc2lnbmluZy1rZXktMzJieXRlcw=="  # test key
         raise ValueError("STREAM_TOKEN_SIGNING_KEY is required in staging/prod")
+
+    @property
+    def effective_agent_tool_grant_signing_key(self) -> SecretStr:
+        """Return the dedicated grant key, with a non-production test key only."""
+        if self.agent_tool_grant_signing_key is not None:
+            return self.agent_tool_grant_signing_key
+        if self.nexus_env in (Environment.LOCAL, Environment.TEST):
+            return SecretStr("test-agent-tools-grant-signing-key-32-bytes!")
+        raise ValueError("AGENT_TOOL_GRANT_SIGNING_KEY is required in staging/prod")
+
+    @property
+    def effective_generation_continuation_encryption_key(self) -> SecretStr:
+        """Return the deployment key, or an unused deterministic local/test key."""
+
+        if self.generation_continuation_encryption_key is not None:
+            return self.generation_continuation_encryption_key
+        if self.nexus_env in (Environment.LOCAL, Environment.TEST) and not (
+            self.generation_api_provider_list
+        ):
+            return SecretStr(base64.b64encode(b"nexus-local-continuation-key-v1!").decode("ascii"))
+        raise ValueError("GENERATION_CONTINUATION_ENCRYPTION_KEY is required")
+
+    @property
+    def generation_api_provider_list(self) -> tuple[GenerationApiProvider, ...]:
+        """Parse the required deployment-owned provider list once at ingress."""
+
+        if self.generation_api_providers_raw == "":
+            return ()
+        providers: list[GenerationApiProvider] = []
+        for raw_provider in self.generation_api_providers_raw.split(","):
+            provider = raw_provider.strip()
+            match provider:
+                case (
+                    "openai"
+                    | "anthropic"
+                    | "gemini"
+                    | "moonshot"
+                    | "openrouter"
+                    | "deepseek"
+                    | "xai"
+                ):
+                    providers.append(provider)
+                case "":
+                    raise ValueError("GENERATION_API_PROVIDERS contains an empty provider")
+                case _:
+                    raise ValueError(
+                        f"GENERATION_API_PROVIDERS contains unknown provider {provider!r}"
+                    )
+        if len(set(providers)) != len(providers):
+            raise ValueError("GENERATION_API_PROVIDERS contains a duplicate provider")
+        return tuple(providers)
 
 
 @lru_cache

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeSearchResult } from "./normalizeSearchResult";
+import { adaptSearchResultRow } from "./searchViewModel";
 
 const MEDIA_ID = "11111111-1111-4111-8111-111111111111";
 const CHUNK_ID = "22222222-2222-4222-8222-222222222222";
@@ -13,7 +14,7 @@ const SOURCE = {
   media_kind: "web_article",
   title: "Field Notes",
   contributors: [],
-  published_date: null,
+  original_published_date: { kind: "Absent" },
   summary_md: null,
 };
 
@@ -125,5 +126,30 @@ describe("normalizeSearchResult canonical action subject boundary", () => {
         actionTarget: { kind: "Resource", ref: MEDIA_REF },
       }),
     ).toThrow("Search API returned an invalid result row");
+  });
+
+  it("projects the original date for media and passages without accepting a legacy date", () => {
+    for (const row of [mediaRow(), passageRow()]) {
+      const dated = normalizeSearchResult({
+        ...row,
+        source: {
+          ...SOURCE,
+          original_published_date: { kind: "Present", value: "1899" },
+        },
+      });
+      expect(adaptSearchResultRow(dated).publicationDate).toEqual({
+        kind: "Present",
+        value: "1899",
+      });
+      expect(
+        adaptSearchResultRow(normalizeSearchResult(row)).publicationDate,
+      ).toEqual({ kind: "Absent" });
+      expect(() =>
+        normalizeSearchResult({
+          ...row,
+          source: { ...SOURCE, published_date: "2007" },
+        }),
+      ).toThrow(/invalid result row/);
+    }
   });
 });

@@ -19,6 +19,10 @@
   overflow: hidden;
 }
 
+.taskActivationAdmission {
+  display: contents;
+}
+
 .searchPage > .header {
   flex: 0 0 auto;
   padding-inline: max(var(--space-4), var(--viewport-safe-left))
@@ -28,12 +32,15 @@
 .searchScroll {
   display: grid;
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: var(--space-5);
   padding: var(--space-3) max(var(--space-4), var(--viewport-safe-right))
     max(var(--space-4), var(--viewport-safe-bottom))
     max(var(--space-4), var(--viewport-safe-left));
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -97,50 +104,46 @@
   gap: var(--space-2);
 }
 
-.pinnedGroup {
-  display: grid;
-  flex: 0 0 auto;
-  gap: var(--space-2);
-  padding: 0 max(var(--space-4), var(--viewport-safe-right))
-    var(--space-3) max(var(--space-4), var(--viewport-safe-left));
-  background: var(--surface-canvas);
-}
-
-.section h3,
-.pinnedGroup h3 {
+.section h3 {
   color: var(--ink-muted);
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   letter-spacing: var(--tracking-tight);
-}
-
-.section h3,
-.pinnedGroup h3 {
   margin: 0;
 }
 
-.compactRail {
+/* The Solar — the Nexus stops looking like a command palette and starts looking
+   like a table of contents. Cormorant is refused at this size by law (never
+   below 20px), so the book face carries the voice instead, opened out and
+   uppercased; one vine rule runs from the label to the right margin and fades
+   as it goes. The rule is a flex item filling only free space, so the dimmer
+   silences it without moving the label. */
+:global([data-theme="elvish"]) .section h3 {
   display: flex;
-  gap: var(--space-2);
-  padding: 1px;
-  margin: -1px;
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
-  scroll-snap-type: inline proximity;
-  scrollbar-width: none;
-  list-style: none;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--ink-faint);
+  font-family: var(--font-serif);
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
 }
 
-.compactRail::-webkit-scrollbar {
-  display: none;
-}
-
-.compactRail .row {
-  flex: 0 0 clamp(12rem, 64vw, 18rem);
-  border: 1px solid var(--edge-subtle);
-  border-radius: var(--radius-lg);
-  scroll-snap-align: start;
-  overflow: hidden;
+:global([data-theme="elvish"]) .section h3::after {
+  content: "";
+  flex: 1 1 0;
+  min-inline-size: 0;
+  block-size: 12px;
+  background-image: linear-gradient(90deg, var(--edge-subtle), transparent);
+  /* Whisper tier (§6): section openers sit at half strength. */
+  opacity: calc(0.5 * var(--ornament));
+  mask-image: var(--elvish-vine);
+  mask-repeat: repeat-x;
+  mask-size: 240px 12px;
+  mask-position: left center;
+  -webkit-mask-image: var(--elvish-vine);
+  -webkit-mask-repeat: repeat-x;
+  -webkit-mask-size: 240px 12px;
+  -webkit-mask-position: left center;
 }
 
 .quickNoteHandoffInput {
@@ -251,9 +254,12 @@
 .rowSnippet,
 .rowUnavailable {
   max-width: 100%;
+  font-size: var(--text-sm);
+}
+
+.rowSnippet {
   overflow: hidden;
   color: var(--ink-muted);
-  font-size: var(--text-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -265,6 +271,8 @@
 
 .rowUnavailable {
   color: var(--danger);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .rowShortcut {
@@ -299,6 +307,57 @@
   font-size: var(--text-md);
 }
 
+/* The Solar — the room reaches for you. The field is boxed, so the vine sits
+   along the inside of its bottom edge, inset to the input's own text padding so
+   it reads as an underline beneath the query rather than a chord across the
+   rounded corners. It is absolutely positioned over the input: nothing in the
+   field moves, at any dimmer setting. */
+:global([data-theme="elvish"]) .searchInput {
+  position: relative;
+}
+
+:global([data-theme="elvish"]) .searchInput::after {
+  content: "";
+  position: absolute;
+  inset-inline: calc(
+      max(var(--space-4), var(--viewport-safe-left)) + var(--space-3)
+    )
+    calc(max(var(--space-4), var(--viewport-safe-right)) + var(--space-3));
+  /* The label's bottom padding, plus the input's own 1px border. */
+  inset-block-end: calc(var(--space-3) + 1px);
+  block-size: 12px;
+  /* The lamp, not the moon: typing is interaction, and the focus ring already
+     carries attention. The stroke is painted only as far as it has grown, so
+     at rest the input's hairline border is the whole underline. */
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    var(--accent) 8%,
+    var(--accent) 92%,
+    transparent
+  );
+  background-repeat: no-repeat;
+  background-size: 0% 100%;
+  opacity: var(--ornament);
+  pointer-events: none;
+  transition: background-size var(--duration-fast) var(--ease-glide);
+  mask-image: var(--elvish-vine);
+  mask-repeat: repeat-x;
+  mask-size: 240px 12px;
+  mask-position: left center;
+  -webkit-mask-image: var(--elvish-vine);
+  -webkit-mask-repeat: repeat-x;
+  -webkit-mask-size: 240px 12px;
+  -webkit-mask-position: left center;
+}
+
+/* Grows from the leading edge over the bloom; retreats on the fast duration the
+   base rule declares. */
+:global([data-theme="elvish"]) .searchInput:focus-within::after {
+  background-size: 100% 100%;
+  transition: background-size var(--duration-base) var(--ease-bloom);
+}
+
 .sourceStatus {
   display: grid;
   gap: var(--space-2);
@@ -309,6 +368,10 @@
 .form p {
   margin: 0;
   color: var(--ink-muted);
+}
+
+.empty {
+  overflow-wrap: anywhere;
 }
 
 .sourceStatus button {
@@ -386,6 +449,7 @@
   background: transparent;
   color: var(--ink);
   pointer-events: auto;
+  touch-action: pan-y pinch-zoom;
   transform: translateY(
     calc(
       var(--mobile-chrome-collapse) *

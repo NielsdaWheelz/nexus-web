@@ -1,7 +1,20 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET } from "./route";
 
 const SOURCE_SHA = "a".repeat(40);
+const PROTOCOL_CONTRACT_SHA256 = createHash("sha256")
+  .update(
+    readFileSync(
+      path.resolve(
+        __dirname,
+        "../../../../../testdata/android/player-protocol.json",
+      ),
+    ),
+  )
+  .digest("hex");
 
 describe("GET /version", () => {
   afterEach(() => {
@@ -15,7 +28,13 @@ describe("GET /version", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    await expect(response.json()).resolves.toEqual({ source_sha: SOURCE_SHA });
+    await expect(response.json()).resolves.toEqual({
+      source_sha: SOURCE_SHA,
+      player_protocol: {
+        version: 2,
+        contract_sha256: PROTOCOL_CONTRACT_SHA256,
+      },
+    });
   });
 
   it.each([undefined, "", "A".repeat(40), "a".repeat(39), ` ${SOURCE_SHA}`])(
@@ -30,4 +49,5 @@ describe("GET /version", () => {
       expect(() => GET()).toThrow(/VERCEL_GIT_COMMIT_SHA/);
     },
   );
+
 });

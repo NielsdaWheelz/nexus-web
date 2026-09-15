@@ -105,6 +105,27 @@ read model only. It must not become the mutation API.
 The standalone highlight list routes remain highlight-owned because other
 callers may need highlight reads without the full Document Map aggregate.
 
+Hosted reader projection has two format-specific owners. Reflowable web,
+transcript, and EPUB content uses
+`app/(authenticated)/media/[id]/useHostedTextHighlights.ts`; PDF pages use
+`app/(authenticated)/media/[id]/useHostedPdfPageHighlights.ts`. The text owner
+keys reads by media and active fragment, aborts superseded requests, applies the
+shared bounded browser retry policy, and owns the generation that gates
+mutation projection and reconciliation. An empty highlight list is a complete,
+successful response and is never retried. Expected request failures become a
+visible Retry obligation, authentication failures go to the authentication
+boundary, and malformed same-system responses go to the render defect
+boundary. The reader publishes selectable canonical text only after the first
+active projection settles, so persisted decoration cannot replace a live DOM
+selection; later refreshes keep the settled content mounted. `MediaPaneBody`
+composes these owners; it does not run a parallel timer, request-version
+counter, or direct fragment-highlight reload path.
+
+`lib/highlights/highlightContract.ts` is the browser's strict decoder for the
+standalone highlight response wires. The transport accepts the canonical
+`{data: ...}` envelopes and exact highlight/anchor fields only; it does not
+unwrap alternate envelopes or fill omitted response fields.
+
 ## Mutations And Notes
 
 Highlight creation, update, delete, color changes, and note attachment flow
@@ -114,6 +135,10 @@ owner and require the corresponding quote/match-state payload.
 
 Attached notes are note blocks linked to highlights through `resource_edges`
 with `origin='highlight_note'`. There is no separate highlight-note table.
+`PUT /highlights/{highlight_id}/note` accepts exactly `note_block_id`,
+`client_mutation_id`, and `body_pm_json`; it has no camel-case or generic `id`
+aliases. The frontend converts its camel-case internal values only at this
+outgoing transport boundary.
 Ordinary highlight deletion is explicit and child-first: graph/view-state
 attachments (including any `link_note` motif and Link/stance edges naming the
 highlight), then PDF quads, then the PDF/fragment anchor, then the highlight
@@ -136,9 +161,7 @@ the selection Note action focuses the quick-note textbox. enter flushes the
 existing save queue and closes only after the latest body is saved; shift+enter
 inserts a newline. composition and reference selection retain their enter
 handling. editing during submission cancels dismissal, and save failure keeps
-the draft open. an absent pending highlight is a modeled, non-retryable save
-failure with copy-and-reselect guidance; a rejected creation still reaches the
-defect boundary. inline highlight notes retain multiline enter. desktop and
+the draft open. inline highlight notes retain multiline enter. desktop and
 mobile composers own back dismissal throughout the selection-to-editor handoff.
 
 ## Learn
@@ -216,7 +239,7 @@ Under the same row lock the server derives the `highlight:<id>` subject and
 
 The snapshot is not a durable conversation context ref that gets cited and never
 receives a citation ordinal. Citation chips point at the attached
-`highlight:<id>` resource or later `read_resource` evidence.
+`highlight:<id>` resource or later `nexus.resource.read` evidence.
 
 Quote actions require nonblank `exact` text. A geometry-only PDF Highlight (blank
 `exact`) is explicitly non-sendable as a quote; it can still exist and be shown.

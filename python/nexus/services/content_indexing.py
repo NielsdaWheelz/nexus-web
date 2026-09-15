@@ -20,12 +20,37 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.errors import ApiErrorCode
-from nexus.jobs.queue import JobExecutionContext
-from nexus.services import media_intelligence
+from nexus.auth.permissions import can_read_media
+from nexus.db.retries import admit_serializable
+from nexus.errors import ApiErrorCode, ConflictError, ForbiddenError, NotFoundError
+from nexus.jobs.queue import JobExecutionContext, current_dead_job_for_payload, requeue_dead_job
+from nexus.schemas.import_history import (
+    IndexAccepted,
+    IndexExecutionStarted,
+    IndexFacts,
+    IndexRecoveryAccepted,
+    IndexSucceeded,
+    IndexSuperseded,
+)
+from nexus.schemas.imports import RepairSearchOffer
+from nexus.schemas.media import SearchRepairAdmission
+from nexus.schemas.presence import absent, present
+from nexus.services import media_intelligence_lifecycle
+from nexus.services.capabilities import (
+    OperatorRecovery,
+    RecoveryActor,
+    SearchRecoveryAnswer,
+    ViewerRecovery,
+)
+from nexus.services.import_history import append_processing_event
 from nexus.services.parser_temp import utf8_byte_length
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_mutation_replay import (
+    canonical_json_bytes,
+    lookup_replay,
+    record_replay,
+)
 from nexus.services.semantic_chunks import (
     build_text_embeddings,
     current_transcript_embedding_model,
@@ -618,7 +643,7 @@ def publish_content_index(
     # transaction so the enqueue commits atomically with the content-index write.
     # Page indexes carry no media unit, so this is gated to media owners only.
     if plan.owner.kind == "media":
-        media_intelligence.ensure_media_unit_in_tx(db, media_id=plan.owner.id)
+        media_intelligence_lifecycle.ensure_media_unit_in_tx(db, media_id=plan.owner.id)
     return ContentIndexResult(
         owner=plan.owner,
         status="ready",
@@ -634,10 +659,10 @@ def rebuild_content_index(
     blocks: list[IndexableBlock],
     reason: str,
 ) -> ContentIndexResult:
-    """Synchronous note/transcript doorway; document sources use the durable job."""
+    """Synchronous note doorway; durable media jobs plan and publish separately."""
     if owner.kind == "media":
         db.execute(
-            text("SELECT id FROM media WHERE id = :owner_id FOR UPDATE"),
+            text("SELECT id FROM media WHERE id = :owner_id FOR NO KEY UPDATE"),
             {"owner_id": owner.id},
         ).scalar_one()
     return publish_content_index(
@@ -647,88 +672,11 @@ def rebuild_content_index(
     )
 
 
-def rebuild_fragment_content_index(
-    db: Session,
-    *,
-    media_id: UUID,
-    source_kind: str,
-    fragments: list[Any],
-    reason: str,
-    language: str | None = None,
-) -> ContentIndexResult:
-    media_title: str | None = None
-    if source_kind == "web_article":
-        media_title = db.execute(
-            text("SELECT title FROM media WHERE id = :media_id"),
-            {"media_id": media_id},
-        ).scalar_one_or_none()
-
-    nav_by_fragment_idx: dict[int, dict[str, object]] = {}
-    if source_kind == "epub":
-        for row in db.execute(
-            text(
-                """
-                SELECT DISTINCT ON (fragment_idx)
-                    fragment_idx,
-                    location_id,
-                    href_path,
-                    href_fragment,
-                    label
-                FROM epub_nav_locations
-                WHERE media_id = :media_id
-                ORDER BY fragment_idx ASC, ordinal ASC
-                """
-            ),
-            {"media_id": media_id},
-        ).fetchall():
-            nav_by_fragment_idx[int(row[0])] = {
-                "section_id": row[1],
-                "href_path": row[2],
-                "anchor_id": row[3],
-                "label": row[4],
-            }
-
-    fragment_blocks_by_id: dict[UUID, list[Any]] = {}
-    if source_kind == "epub":
-        fragment_ids = [fragment.id for fragment in fragments]
-        if fragment_ids:
-            for row in db.execute(
-                text(
-                    """
-                    SELECT fragment_id, block_idx, start_offset, end_offset
-                    FROM fragment_blocks
-                    WHERE fragment_id = ANY(:fragment_ids)
-                    ORDER BY fragment_id ASC, block_idx ASC
-                    """
-                ),
-                {"fragment_ids": fragment_ids},
-            ).fetchall():
-                fragment_blocks_by_id.setdefault(row[0], []).append(row)
-
-    blocks = build_fragment_indexable_blocks(
-        media_id=media_id,
-        source_kind=source_kind,
-        fragments=fragments,
-        media_title=media_title,
-        nav_by_fragment_idx=nav_by_fragment_idx,
-        fragment_blocks_by_id=fragment_blocks_by_id,
-    )
-    return rebuild_content_index(
-        db,
-        owner=IndexOwner("media", media_id),
-        source_kind=source_kind,
-        blocks=blocks,
-        reason=reason,
-    )
-
-
 def build_fragment_indexable_blocks(
     *,
     media_id: UUID,
     source_kind: str,
     fragments: Sequence[Any],
-    media_title: str | None,
-    nav_by_fragment_idx: dict[int, dict[str, object]],
     fragment_blocks_by_id: dict[UUID, list[Any]],
 ) -> list[IndexableBlock]:
     """Build fragment blocks from an immutable source snapshot."""
@@ -761,7 +709,6 @@ def build_fragment_indexable_blocks(
                 html_sanitized=html_sanitized,
                 canonical_text=fragment_text,
                 fragment_idx=fragment_idx,
-                media_title=media_title,
             ):
                 block_text = fragment_text[spec.start_offset : spec.end_offset]
                 locator: dict[str, object] = {
@@ -781,12 +728,16 @@ def build_fragment_indexable_blocks(
                 if spec.section_id is not None:
                     locator["section_id"] = spec.section_id
                     metadata["section_id"] = spec.section_id
+                    locator["parent_section_id"] = spec.parent_section_id.model_dump(mode="json")
+                    locator["owns_container"] = spec.owns_container
                 if spec.anchor_id is not None:
                     locator["anchor_id"] = spec.anchor_id
                     metadata["anchor_id"] = spec.anchor_id
                 if spec.heading_level is not None:
                     locator["heading_level"] = spec.heading_level
                     metadata["heading_level"] = spec.heading_level
+                if spec.container_end_offset.kind == "Present":
+                    locator["container_end_offset"] = spec.container_end_offset.value
                 if spec.depth is not None:
                     metadata["depth"] = spec.depth
                 if spec.ordinal is not None:
@@ -817,7 +768,6 @@ def build_fragment_indexable_blocks(
             start_offset = int(row[-2])
             end_offset = int(row[-1])
             block_text = fragment_text[start_offset:end_offset]
-            nav = nav_by_fragment_idx.get(fragment_idx, {})
             locator_kind = "epub_text" if source_kind == "epub" else "web_text"
             locator: dict[str, object] = {
                 "kind": locator_kind,
@@ -827,9 +777,6 @@ def build_fragment_indexable_blocks(
                 "end_offset": end_offset,
                 "text_quote": _text_quote(fragment_text, start_offset, end_offset),
             }
-            if nav:
-                locator.update(nav)
-            heading_path = (str(nav.get("label")),) if nav.get("label") else ()
             blocks.append(
                 IndexableBlock(
                     owner=IndexOwner("media", media_id),
@@ -842,32 +789,13 @@ def build_fragment_indexable_blocks(
                     source_end_offset=source_base + end_offset,
                     locator=locator,
                     selector=locator,
-                    heading_path=heading_path,
+                    heading_path=(),
                     metadata={},
                 )
             )
         source_offset += len(fragment_text) + 2
 
     return blocks
-
-
-def rebuild_transcript_content_index(
-    db: Session,
-    *,
-    media_id: UUID,
-    transcript_segments: Sequence[TranscriptSegmentInput],
-    reason: str,
-) -> ContentIndexResult:
-    return rebuild_content_index(
-        db,
-        owner=IndexOwner("media", media_id),
-        source_kind="transcript",
-        blocks=build_transcript_indexable_blocks(
-            media_id=media_id,
-            transcript_segments=transcript_segments,
-        ),
-        reason=reason,
-    )
 
 
 def build_transcript_indexable_blocks(
@@ -1021,7 +949,7 @@ def prepare_media_content_reindex(
                 SELECT id, kind, processing_status, title, language, plain_text
                 FROM media
                 WHERE id = :media_id
-                FOR UPDATE
+                FOR NO KEY UPDATE
                 """
             ),
             {"media_id": media_id},
@@ -1037,7 +965,7 @@ def prepare_media_content_reindex(
         raise AssertionError("media content-reindex owner kind is ineligible")
 
     state = _lock_media_index_state(db, media_id)
-    if state is None or _validated_media_revision(state["revision"]) != revision:
+    if state is None:
         return None
 
     from nexus.jobs.queue import lock_and_renew_running_job_claim
@@ -1056,15 +984,30 @@ def prepare_media_content_reindex(
     ):
         # justify-defect: the worker context must name this exact closed payload.
         raise AssertionError("media content-reindex job identity is malformed")
+    if _validated_media_revision(state["revision"]) != revision:
+        _record_index_event(
+            db,
+            media_id=media_id,
+            facts=IndexSuperseded(
+                revision=revision, job_id=job.id, execution_id=context.execution_id
+            ),
+        )
+        return None
     if media["processing_status"] != "ready_for_reading":
         # justify-defect: only source success may request a document index revision.
         raise AssertionError("media content-reindex owner is not readable")
+    _record_index_event(
+        db,
+        media_id=media_id,
+        facts=IndexExecutionStarted(
+            revision=revision, job_id=job.id, execution_id=context.execution_id
+        ),
+    )
 
     blocks = _snapshot_media_indexable_blocks(
         db,
         media_id=media_id,
         source_kind=source_kind,
-        media_title=str(media["title"] or ""),
         plain_text=str(media["plain_text"] or ""),
     )
     db.execute(
@@ -1104,7 +1047,7 @@ def publish_media_content_reindex(
     """Fence and atomically publish one complete current document revision."""
     media = (
         db.execute(
-            text("SELECT id, kind FROM media WHERE id = :media_id FOR UPDATE"),
+            text("SELECT id, kind FROM media WHERE id = :media_id FOR NO KEY UPDATE"),
             {"media_id": work.media_id},
         )
         .mappings()
@@ -1116,7 +1059,7 @@ def publish_media_content_reindex(
         # justify-defect: a media row cannot change document kind.
         raise AssertionError("media kind changed during content reindex")
     state = _lock_media_index_state(db, work.media_id)
-    if state is None or _validated_media_revision(state["revision"]) != work.revision:
+    if state is None:
         return None
 
     from nexus.jobs.queue import lock_and_renew_running_job_claim
@@ -1135,11 +1078,27 @@ def publish_media_content_reindex(
     ):
         # justify-defect: publication is authorized only by this exact payload.
         raise AssertionError("media content-reindex publication identity is malformed")
+    if _validated_media_revision(state["revision"]) != work.revision:
+        _record_index_event(
+            db,
+            media_id=work.media_id,
+            facts=IndexSuperseded(
+                revision=work.revision, job_id=job.id, execution_id=context.execution_id
+            ),
+        )
+        return None
     if plan.owner != IndexOwner("media", work.media_id) or plan.source_kind != work.source_kind:
         # justify-defect: the immutable plan must belong to the prepared snapshot.
         raise AssertionError("media content-index plan identity is malformed")
 
     result = publish_content_index(db, plan=plan, reason=work.reason)
+    _record_index_event(
+        db,
+        media_id=work.media_id,
+        facts=IndexSucceeded(
+            revision=work.revision, job_id=job.id, execution_id=context.execution_id
+        ),
+    )
     plan_chunk_count = len(plan.chunks) if isinstance(plan, ContentIndexPlan) else plan.chunk_count
     if work.source_kind == "pdf" and plan_chunk_count == 0:
         db.execute(
@@ -1168,7 +1127,6 @@ def _snapshot_media_indexable_blocks(
     *,
     media_id: UUID,
     source_kind: str,
-    media_title: str,
     plain_text: str,
 ) -> list[IndexableBlock]:
     if source_kind == "pdf":
@@ -1213,31 +1171,6 @@ def _snapshot_media_indexable_blocks(
         .mappings()
         .all()
     )
-    nav_by_fragment_idx: dict[int, dict[str, object]] = {}
-    if source_kind == "epub":
-        for row in db.execute(
-            text(
-                """
-                SELECT DISTINCT ON (fragment_idx)
-                    fragment_idx,
-                    location_id,
-                    href_path,
-                    href_fragment,
-                    label
-                FROM epub_nav_locations
-                WHERE media_id = :media_id
-                ORDER BY fragment_idx ASC, ordinal ASC
-                """
-            ),
-            {"media_id": media_id},
-        ).fetchall():
-            nav_by_fragment_idx[int(row[0])] = {
-                "section_id": row[1],
-                "href_path": row[2],
-                "anchor_id": row[3],
-                "label": row[4],
-            }
-
     fragment_blocks_by_id: dict[UUID, list[Any]] = {}
     fragment_ids = [UUID(str(fragment["id"])) for fragment in fragments]
     if fragment_ids:
@@ -1257,8 +1190,6 @@ def _snapshot_media_indexable_blocks(
         media_id=media_id,
         source_kind=source_kind,
         fragments=fragments,
-        media_title=media_title if source_kind == "web_article" else None,
-        nav_by_fragment_idx=nav_by_fragment_idx,
         fragment_blocks_by_id=fragment_blocks_by_id,
     )
 
@@ -1378,6 +1309,9 @@ def request_media_content_reindex(
         media_id=media_id,
         revision=revision,
     )
+    _record_index_event(
+        db, media_id=media_id, facts=IndexAccepted(revision=revision, job_id=selected.id)
+    )
     return MediaContentReindexIntent(
         revision=revision,
         background_job_id=selected.id,
@@ -1446,13 +1380,199 @@ def ensure_media_content_reindex_job(
         media_id=media_id,
         revision=revision,
     )
+    _record_index_event(
+        db, media_id=media_id, facts=IndexAccepted(revision=revision, job_id=inserted.id)
+    )
     return MediaContentReindexIntent(revision, inserted.id, False, True)
 
 
+def _record_index_event(db: Session, *, media_id: UUID, facts: IndexFacts) -> None:
+    append_processing_event(
+        db, media_id=media_id, facts=facts, stage=present("Index"), failure_code=absent()
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SearchRecoveryFacts:
+    """The current index revision and, when its exact reindex job is dead, that job."""
+
+    revision: int
+    dead_job_id: UUID | None
+    is_creator: bool
+    is_admin: bool
+
+
+def search_recovery(facts: SearchRecoveryFacts) -> SearchRecoveryAnswer:
+    """The one recovery answer for a media's search-index obligation (contract D6)."""
+    if facts.dead_job_id is None:
+        return None
+    if not (facts.is_creator or facts.is_admin):
+        return "NotOwner"
+    return RepairSearchOffer(expected_revision=facts.revision, expected_job_id=facts.dead_job_id)
+
+
+def repair_dead_media_reindex(
+    db: Session,
+    *,
+    actor: RecoveryActor,
+    media_id: UUID,
+    expected_revision: int,
+    expected_job_id: UUID,
+) -> SearchRepairAdmission:
+    """Requeue the exact dead reindex job of the current index revision. Never
+    touches source rows or the published materialization: search repair repeats
+    indexing, so a ``ready`` document keeps serving search until the rerun itself
+    marks it indexing."""
+    scope = f"media_search_repair:{media_id}"
+    request_bytes = canonical_json_bytes(
+        {"expected_revision": expected_revision, "expected_job_id": str(expected_job_id)}
+    )
+
+    def admit() -> SearchRepairAdmission:
+        match actor:
+            case ViewerRecovery(viewer_id=viewer_id, is_admin=is_admin):
+                if not can_read_media(db, viewer_id, media_id):
+                    raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+                creator_id = db.execute(
+                    text("SELECT created_by_user_id FROM media WHERE id = :media_id"),
+                    {"media_id": media_id},
+                ).scalar_one_or_none()
+                if creator_id is None:
+                    raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+                is_creator = creator_id == viewer_id
+                if not (is_creator or is_admin):
+                    raise ForbiddenError(ApiErrorCode.E_OWNER_REQUIRED, "Media owner required")
+                replay = lookup_replay(
+                    db,
+                    viewer_id=viewer_id,
+                    scope=scope,
+                    client_mutation_id=actor.client_mutation_id,
+                    request_bytes=request_bytes,
+                )
+                if replay is not None:
+                    db.rollback()
+                    return SearchRepairAdmission.model_validate(replay)
+            case OperatorRecovery():
+                is_creator, is_admin = False, True
+        _lock_media_for_reindex(db, media_id)
+        state = _lock_media_index_state(db, media_id)
+        if state is None:
+            raise ConflictError(
+                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no search index to repair."
+            )
+        revision = _validated_media_revision(state["revision"])
+        dead = current_dead_job_for_payload(
+            db,
+            kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+            expected_payload_match={"media_id": str(media_id), "revision": revision},
+        )
+        offer = search_recovery(
+            SearchRecoveryFacts(
+                revision=revision,
+                dead_job_id=None if dead is None else dead.id,
+                is_creator=is_creator,
+                is_admin=is_admin,
+            )
+        )
+        if offer == "NotOwner":
+            # justify-defect: creator-or-admin authority was established before the lock.
+            raise AssertionError("search repair policy refused an authorized actor")
+        current: dict[str, object] = {"revision": revision}
+        if dead is not None:
+            current["job_id"] = str(dead.id)
+        if offer is None or (offer.expected_revision, offer.expected_job_id) != (
+            expected_revision,
+            expected_job_id,
+        ):
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT,
+                "The inspected search index execution is no longer current.",
+                details={"current": current},
+            )
+        if not requeue_dead_job(db, job_id=offer.expected_job_id):
+            # justify-defect: current_dead_job_for_payload locked this exact dead row.
+            raise AssertionError("locked dead reindex job could not be requeued")
+        _record_index_event(
+            db,
+            media_id=media_id,
+            facts=IndexRecoveryAccepted(revision=revision, job_id=offer.expected_job_id),
+        )
+        admission = SearchRepairAdmission(
+            media_id=media_id, revision=revision, job_id=offer.expected_job_id
+        )
+        if isinstance(actor, ViewerRecovery):
+            record_replay(
+                db,
+                viewer_id=actor.viewer_id,
+                scope=scope,
+                client_mutation_id=actor.client_mutation_id,
+                request_bytes=request_bytes,
+                response_json=admission.model_dump(mode="json"),
+                changed_lanes={},
+            )
+        db.commit()
+        return admission
+
+    return admit_serializable(db, "repair_dead_media_reindex", admit)
+
+
+def current_search_repair_offer(db: Session, *, media_id: UUID) -> RepairSearchOffer:
+    """The search repair an operator must admit for this media right now, or the
+    refusal that says why there is none. The read ends here: an internal route
+    resolves the identity it will name, then the admission opens its own
+    serializable transaction."""
+    indexed = (
+        db.execute(
+            text(
+                """
+                SELECT cis.revision
+                FROM media m
+                LEFT JOIN content_index_states cis
+                  ON cis.owner_kind = 'media' AND cis.owner_id = m.id
+                WHERE m.id = :media_id
+                """
+            ),
+            {"media_id": media_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    offer = None
+    if indexed is not None and indexed["revision"] is not None:
+        revision = _validated_media_revision(indexed["revision"])
+        dead = current_dead_job_for_payload(
+            db,
+            kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+            expected_payload_match={"media_id": str(media_id), "revision": revision},
+        )
+        offer = search_recovery(
+            SearchRecoveryFacts(
+                revision=revision,
+                dead_job_id=None if dead is None else dead.id,
+                is_creator=False,
+                is_admin=True,
+            )
+        )
+    db.rollback()
+    if indexed is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    if not isinstance(offer, RepairSearchOffer):
+        raise ConflictError(
+            ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no dead content-index job to repair."
+        )
+    return offer
+
+
 def _lock_media_for_reindex(db: Session, media_id: UUID) -> None:
+    """Hold the media row for a transaction that goes on to lock its queue rows.
+
+    ``FOR NO KEY UPDATE`` admits the ``KEY SHARE`` the worker's history insert
+    takes on this row inside its own queue transition, so a transition and a
+    media-locked caller never wait on each other's locks.
+    """
     if (
         db.execute(
-            text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
+            text("SELECT id FROM media WHERE id = :media_id FOR NO KEY UPDATE"),
             {"media_id": media_id},
         ).scalar_one_or_none()
         is None
@@ -1544,25 +1664,6 @@ def _assert_media_reindex_waiting_postcondition(
         raise AssertionError("media content-reindex waiting-job postcondition failed")
 
 
-def mark_content_index_failed(
-    db: Session,
-    *,
-    owner: IndexOwner,
-    failure_code: str,
-    failure_message: str,
-) -> None:
-    now = datetime.now(UTC)
-    _set_index_state(
-        db,
-        owner=owner,
-        status="failed",
-        status_reason=f"{failure_code}: {failure_message}"[:1000],
-        embedding_provider=None,
-        embedding_model=None,
-        now=now,
-    )
-
-
 def mark_content_index_pending(db: Session, *, owner: IndexOwner, reason: str) -> None:
     """Flag an owner's index stale (gated out of search) without deleting its rows;
     the reindex job rebuilds and flips it back to ready."""
@@ -1614,7 +1715,7 @@ def replace_content_index_materialization(db: Session, *, owner: IndexOwner) -> 
     # non-cascading FK; clear them through their sole owner before the spans go.
     # Pages carry no media unit, so this is gated to media owners only.
     if owner.kind == "media":
-        media_intelligence.clear_media_claims_for_reindex(db, media_id=owner.id)
+        media_intelligence_lifecycle.clear_media_claims_for_reindex(db, media_id=owner.id)
     db.execute(
         text(
             """

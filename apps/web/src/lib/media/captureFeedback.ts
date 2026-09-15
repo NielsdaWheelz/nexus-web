@@ -3,11 +3,17 @@ import {
   type FeedbackTone,
 } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import {
+  UploadSessionError,
+  type UploadSessionOutcome,
+} from "@/lib/media/ingestionClient";
+import {
+  IMPORTS_CONFLICT_MESSAGE,
+  uploadVerificationFailureCopy,
+} from "@/lib/status/imports";
+import { assertNever } from "@/lib/assertNever";
 
-export type MediaCaptureOperation =
-  | "SaveSource"
-  | "AddAttachment"
-  | "ConfirmUpload";
+export type MediaCaptureOperation = "SaveSource" | "AddAttachment";
 
 function mediaCaptureTitle(operation: MediaCaptureOperation): string {
   switch (operation) {
@@ -15,8 +21,41 @@ function mediaCaptureTitle(operation: MediaCaptureOperation): string {
       return "Couldn’t save";
     case "AddAttachment":
       return "Attachment wasn’t added";
-    case "ConfirmUpload":
-      return "Upload status couldn’t be confirmed";
+  }
+}
+
+/**
+ * The capture surfaces attach one file at a time and own no session row, so
+ * every upload-session outcome resolves to one message plus, where Imports
+ * holds the obligation, a pointer to it.
+ */
+function uploadSessionCaptureMessage(
+  outcome: Exclude<UploadSessionOutcome, { kind: "IntentMalformed" }>,
+): string {
+  switch (outcome.kind) {
+    case "NeedsAttention":
+      return "Open Imports for the available next step.";
+    case "VerificationRejected":
+      return uploadVerificationFailureCopy(outcome.code);
+    case "BytesMissing":
+      return "Nexus never received this file. Attach it again.";
+    case "Superseded":
+      return "This upload finished elsewhere. Open Imports to find it.";
+    case "Conflicted":
+      return IMPORTS_CONFLICT_MESSAGE;
+    case "Unresolved":
+      return "Nexus couldn’t confirm this upload. Open Imports before attaching it again.";
+    case "UnsupportedFileType":
+      return "This file type isn’t supported. Use a PDF or EPUB.";
+    case "FileTooLarge":
+      return "This file is too large. Attach a smaller file.";
+    case "LibraryForbidden":
+      return "You no longer have access to a destination library for this attachment.";
+    case "IntentChanged":
+    case "FileMismatch":
+      return "This upload changed. Attach the file again.";
+    default:
+      return assertNever(outcome, "Unreachable upload session outcome");
   }
 }
 
@@ -26,17 +65,20 @@ export function mediaCaptureErrorMessage(
   operation: MediaCaptureOperation,
 ): FeedbackContent {
   const title = mediaCaptureTitle(operation);
-  // The mapper owns tone. ConfirmUpload is only ever the accepted-but-uncertain
-  // outcome (the file was taken; the confirmation result is unknown), so it is
-  // a Warning; SaveSource/AddAttachment are hard failures, so they are Danger.
+  // The mapper owns tone: every capture failure it models is a hard failure.
   // Callers must not re-author this tone.
-  const tone: FeedbackTone =
-    operation === "ConfirmUpload" ? "Warning" : "Danger";
-  if ((error === null || error === undefined) && operation === "ConfirmUpload") {
+  const tone: FeedbackTone = "Danger";
+  // A malformed intent means this client composed a request the endpoint
+  // contract forbids; that stays a defect rather than becoming product copy.
+  if (error instanceof UploadSessionError) {
+    if (error.outcome.kind === "IntentMalformed") throw error;
     return {
-      tone,
-      title,
-      message: "Nexus accepted the file. Check the item before uploading it again.",
+      tone: error.outcome.kind === "NeedsAttention" ? "Warning" : tone,
+      title:
+        error.outcome.kind === "NeedsAttention"
+          ? "Upload needs attention"
+          : title,
+      message: uploadSessionCaptureMessage(error.outcome),
     };
   }
   if (

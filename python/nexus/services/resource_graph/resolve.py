@@ -32,10 +32,8 @@ from nexus.auth.permissions import (
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services import library_entries
-from nexus.services.artifacts.subject_policy import (
-    DossierSubjectScheme,
-    visible_persisted_subject,
-)
+from nexus.services.artifacts.registry import visible_persisted_subject
+from nexus.services.artifacts.subject_policy import DossierSubjectScheme
 from nexus.services.contributor_credits import (
     media_author_credits_join_sql,
     media_author_names_agg_sql,
@@ -1586,7 +1584,7 @@ def _read_resolved(loaded: LoadedResource, *, label: str) -> ResolvedResource:
         label=label,
         summary=_first_line(body),
         inline_body=body if len(body) < INLINE_THRESHOLD_CHARS else None,
-        fetch_hint=f'read_resource("{loaded.uri}")',
+        fetch_hint=f'nexus__resource__read("{loaded.uri}")',
     )
 
 
@@ -1608,9 +1606,9 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             summary_parts.append(f"{count} {unit}")
         summary = " · ".join(summary_parts)
         fetch_hint = (
-            f'inspect_resource("{loaded.uri}") to map; '
-            f'read_resource("{loaded.uri}") to read; '
-            f'app_search(scopes=["{loaded.uri}"], query=...) to search'
+            f'nexus__resource__inspect("{loaded.uri}") to map; '
+            f'nexus__resource__read("{loaded.uri}") to read; '
+            f'nexus__search(scopes=["{loaded.uri}"], query=...) to search'
         )
         return ResolvedResource(
             uri=loaded.uri, label=label, summary=summary, inline_body=None, fetch_hint=fetch_hint
@@ -1623,7 +1621,7 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             label=name,
             summary=summary,
             inline_body=None,
-            fetch_hint=f'app_search(scopes=["{loaded.uri}"], query=...)',
+            fetch_hint=f'nexus__search(scopes=["{loaded.uri}"], query=...)',
         )
     if scheme in ("artifact", "artifact_revision"):
         name = loaded.title or ""
@@ -1634,7 +1632,7 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             else None
         )
         library_search = (
-            f'; app_search(scopes=["{library_uri}"], query=...) to search the library'
+            f'; nexus__search(scopes=["{library_uri}"], query=...) to search the library'
             if library_uri is not None
             else ""
         )
@@ -1653,7 +1651,9 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
                 if content_text and len(content_text) < INLINE_THRESHOLD_CHARS
                 else None
             ),
-            fetch_hint=(f'read_resource("{loaded.uri}") for the full synthesis{library_search}'),
+            fetch_hint=(
+                f'nexus__resource__read("{loaded.uri}") for the full synthesis{library_search}'
+            ),
             resolved_revision_ref=revision_ref,
         )
     if scheme == "highlight":
@@ -1667,7 +1667,7 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             label=label,
             summary=quote.exact,
             inline_body=None,
-            fetch_hint=f'read_resource("{loaded.uri}")',
+            fetch_hint=f'nexus__resource__read("{loaded.uri}")',
             quote=quote,
         )
     if scheme == "evidence_span":
@@ -1683,7 +1683,7 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             label=title,
             summary=title,
             inline_body=title,
-            fetch_hint=f'read_resource("{loaded.uri}")',
+            fetch_hint=f'nexus__resource__read("{loaded.uri}")',
         )
     if scheme == "note_block":
         return _read_resolved(loaded, label=_first_line(loaded.body or "")[:120] or "Note")
@@ -1697,7 +1697,7 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             label=loaded.title or "Untitled conversation",
             summary=f"Chat history with {loaded.message_count or 0} messages.",
             inline_body=None,
-            fetch_hint=f'read_resource("{loaded.uri}")',
+            fetch_hint=f'nexus__resource__read("{loaded.uri}")',
         )
     if scheme == "message":
         body = loaded.body or ""
@@ -1706,7 +1706,7 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             label=f"{loaded.message_role}: {body[:40]}".strip(),
             summary=_first_line(body),
             inline_body=body if len(body) < INLINE_THRESHOLD_CHARS else None,
-            fetch_hint=f'read_resource("{loaded.uri}")',
+            fetch_hint=f'nexus__resource__read("{loaded.uri}")',
         )
     if scheme == "oracle_reading":
         question = _first_line(loaded.title or "")
@@ -1759,6 +1759,6 @@ def _present(loaded: LoadedResource) -> ResolvedResource:
             label=f"{loaded.title or 'Reader apparatus'}{source}",
             summary=_first_line(body) or loaded.apparatus_kind or "",
             inline_body=body if body and len(body) < INLINE_THRESHOLD_CHARS else None,
-            fetch_hint=f'read_resource("{loaded.uri}")',
+            fetch_hint=f'nexus__resource__read("{loaded.uri}")',
         )
     assert_never(scheme)

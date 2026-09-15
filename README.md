@@ -91,14 +91,17 @@ tables and object storage do not use Supabase Database or Supabase Storage.
 
 ## Android Release Distribution
 
-End users install Android from
+The private Android companion is distributed from
 [`nexus.nielseriknandal.com/android`](https://nexus.nielseriknandal.com/android).
+GitHub access to the private release repository is required to download it.
 
-Android self-distribution uses GitHub Releases. The `/android` install page must
-link to the stable latest-release assets:
+The `/android` page projects GitHub Releases' stable latest-release targets and
+does not cache mutable release facts in page copy:
 
-- `https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk`
-- `https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk.sha256`
+- `https://github.com/NielsdaWheelz/nexus-web/releases/latest/download/nexus-android.apk`
+- `https://github.com/NielsdaWheelz/nexus-web/releases/latest/download/nexus-android.apk.sha256`
+- `https://github.com/NielsdaWheelz/nexus-web/releases/latest/download/release-manifest.json`
+- `https://github.com/NielsdaWheelz/nexus-web/releases/latest`
 
 Build the signed APK with `make build-android-release`, record its SHA-256, and
 install that exact APK on a physical device. Verify App Links and login before
@@ -107,7 +110,7 @@ versioned asset names. There is no automated Android release gate.
 
 ## Repository Map
 
-- `apps/android/` -> Android shell app. Debug builds default to `http://10.0.2.2:3000`; native auth uses the environment-agnostic `nexus://auth/handoff` flow plus native Google bootstrap. Release APKs require explicit host, version, release keystore, and release certificate fingerprint inputs. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
+- `apps/android/` -> Android shell app. Debug builds default to `http://10.0.2.2:3000`; native auth uses the environment-agnostic `nexus://auth/handoff` flow plus native Google bootstrap. Release APKs require explicit hosted and direct-API origins, version, release keystore, and release certificate fingerprint inputs. `NEXUS_ANDROID_RELEASE_API_ORIGIN` must exactly equal the backend `STREAM_BASE_URL` origin. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
 - `apps/web/` -> frontend + BFF: see `apps/web/README.md`
 - `apps/extension/` -> browser extension for article, PDF/EPUB, and supported video capture
 - `python/` -> backend package + tests: see `python/README.md`

@@ -17,8 +17,7 @@
  * rule is unconditional so a pointerless environment gets the reviewed target
  * rather than Button's 28px default. Every control is a button, and naming the
  * element outranks Button's own `.iconOnly.sm` width rather than relying on
- * stylesheet order. Both sizes are pinned by real Chromium geometry in
- * the selection action unit contract.
+ * stylesheet order.
  */
 .dock button.action {
   flex: 0 0 auto;

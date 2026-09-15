@@ -1,4 +1,5 @@
 import { isAbortError } from "@/lib/errors";
+import { apiErrorFromResponse } from "./client";
 import { parseSSEJsonStream } from "./sse-stream";
 import { fetchStreamToken } from "./streamToken";
 
@@ -27,6 +28,8 @@ export interface SseInitialConnection {
 interface SseClientDirectCommon<TEvent> {
   /** Token source override; defaults to the stream-token POST. */
   streamToken?: () => Promise<string>;
+  /** Browser-authored same-system contract headers for the direct request. */
+  requestHeaders?: HeadersInit;
   decode: (type: string, data: unknown, id: string) => TEvent;
   isTerminal: (event: TEvent) => boolean;
   onEvent: (event: TEvent) => void;
@@ -85,6 +88,7 @@ export function sseClientDirect<TEvent>(
     initialConnection,
     initialToken,
     streamToken = async () => (await fetchStreamToken()).token,
+    requestHeaders,
     decode,
     isTerminal,
     onEvent,
@@ -109,7 +113,8 @@ export function sseClientDirect<TEvent>(
 
   let lastEventId = initialLastEventId ?? "";
   let nextAfter = initialAfter ?? "";
-  let reconnectDelayMs = backoff.baseMs;
+  let reconnectBaseMs = backoff.baseMs;
+  let reconnectDelayMs = reconnectBaseMs;
   let reconnects = 0;
   let pendingInitialToken = initialToken ?? null;
   let streamUrl = url ?? null;
@@ -179,12 +184,11 @@ export function sseClientDirect<TEvent>(
       try {
         const connection = await nextConnection();
         if (combinedSignal.aborted) break;
-        const headers: Record<string, string> = {
-          Accept: "text/event-stream",
-          Authorization: `Bearer ${connection.token}`,
-          "X-Nexus-SSE-Attempt": String(reconnects),
-        };
-        if (!nextAfter && lastEventId) headers["Last-Event-ID"] = lastEventId;
+        const headers = new Headers(requestHeaders);
+        headers.set("Accept", "text/event-stream");
+        headers.set("Authorization", `Bearer ${connection.token}`);
+        headers.set("X-Nexus-SSE-Attempt", String(reconnects));
+        if (!nextAfter && lastEventId) headers.set("Last-Event-ID", lastEventId);
 
         response = await fetch(
           nextAfter ? urlWithAfter(connection.url, nextAfter) : connection.url,
@@ -207,7 +211,7 @@ export function sseClientDirect<TEvent>(
       }
 
       if (!response.ok) {
-        const failure = new Error(await errorResponseMessage(response));
+        const failure = await apiErrorFromResponse(response);
         // 401 means the single-use token was replayed or expired — a fresh
         // token clears it — and 5xx is transient by definition. Every other
         // status (400/403/404/…) is an addressing or permission bug: fatal.
@@ -233,21 +237,25 @@ export function sseClientDirect<TEvent>(
         await parseSSEJsonStream(
           response.body,
           (jsonEvent) => {
+            const event = decode(jsonEvent.type, jsonEvent.data, jsonEvent.id);
+            onEvent(event);
+            // A cursor acknowledges an accepted event, not merely a parsed SSE
+            // frame. Advancing before the domain decoder/onEvent succeeds can
+            // permanently skip a malformed same-system event on recovery.
             if (jsonEvent.id) {
               lastEventId = jsonEvent.id;
               nextAfter = "";
               onLastEventId?.(lastEventId);
             }
-            const event = decode(jsonEvent.type, jsonEvent.data, jsonEvent.id);
-            onEvent(event);
             reconnects = 0;
-            reconnectDelayMs = backoff.baseMs;
+            reconnectDelayMs = reconnectBaseMs;
             if (isTerminal(event)) terminalEventSeen = true;
           },
           (milliseconds) => {
             // Server `retry:` directive: it becomes the next backoff base and
             // exponential growth resumes from there.
-            reconnectDelayMs = milliseconds;
+            reconnectBaseMs = milliseconds;
+            reconnectDelayMs = reconnectBaseMs;
           },
         );
       } catch (err) {
@@ -303,16 +311,6 @@ export function sseClientDirect<TEvent>(
 function urlWithAfter(url: string, after: string): string {
   const separator = url.includes("?") ? "&" : "?";
   return `${url}${separator}after=${encodeURIComponent(after)}`;
-}
-
-async function errorResponseMessage(response: Response): Promise<string> {
-  try {
-    const errorBody = await response.json();
-    if (errorBody?.error?.message) return errorBody.error.message;
-  } catch {
-    // justify-ignore-error: error bodies are optional; the HTTP status fallback is enough.
-  }
-  return `Request failed with status ${response.status}`;
 }
 
 function isEventStreamResponse(response: Response): boolean {

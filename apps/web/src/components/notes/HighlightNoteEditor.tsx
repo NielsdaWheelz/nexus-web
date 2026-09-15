@@ -7,23 +7,23 @@ import {
   type FeedbackAnnouncement,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import {
-  isApiError,
-  isSameSystemApiDefect,
-} from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { resolveResourceLocators } from "@/lib/resources/resourceLocators";
-import { emptyNoteBody, type NoteBodyValue } from "@/lib/notes/prosemirror/schema";
+import { resolveResourceLocator } from "@/lib/resources/resourceLocators";
+import {
+  emptyNoteBody,
+  type NoteBodyValue,
+} from "@/lib/notes/prosemirror/schema";
 import { noteBodyHasContent } from "@/lib/notes/prosemirror/bodyContent";
 import {
   readStoredNoteEditorDraft,
-  useNoteEditorSession,
-} from "@/lib/notes/useNoteEditorSession";
+} from "@/lib/notes/noteEditorDraftStore";
+import { useNoteEditorSession } from "@/lib/notes/useNoteEditorSession";
 import NoteDraftRecovery from "@/components/notes/NoteDraftRecovery";
 import NoteBodyEditor from "@/components/notes/NoteBodyEditor";
-import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
+import type { HighlightLinkedNoteBlock } from "@/lib/highlights/highlightContract";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { isRecord } from "@/lib/validation";
 import { mediaCaptureErrorMessage } from "@/lib/media/captureFeedback";
@@ -50,7 +50,9 @@ function highlightNoteErrorMessage(
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
 
   const title =
-    operation === "Save" ? "Highlight note wasn’t saved" : "Linked object wasn’t opened";
+    operation === "Save"
+      ? "Highlight note wasn’t saved"
+      : "Linked object wasn’t opened";
   const requestId = error.requestId;
   switch (error.code) {
     case "E_NETWORK":
@@ -81,7 +83,8 @@ function highlightNoteErrorMessage(
       return {
         tone: "Danger",
         title,
-        message: "This note changed elsewhere. Discard this draft or refresh the reader.",
+        message:
+          "This note changed elsewhere. Discard this draft or refresh the reader.",
         requestId,
       };
     case "E_IDEMPOTENCY_KEY_REPLAY_MISMATCH":
@@ -89,7 +92,8 @@ function highlightNoteErrorMessage(
       return {
         tone: "Danger",
         title,
-        message: "This saved request no longer matches the draft. Discard it and try again.",
+        message:
+          "This saved request no longer matches the draft. Discard it and try again.",
         requestId,
       };
     default:
@@ -121,7 +125,8 @@ function attachmentErrorMessage(error: unknown): FeedbackContent {
   if (!(error instanceof Error)) throw error;
 
   const modeledLocalFailure =
-    error.message === "Select the note body or empty it before attaching a file." ||
+    error.message ===
+      "Select the note body or empty it before attaching a file." ||
     error.message === "Attach one file at a time here." ||
     error.message === "Only PDF and EPUB files are supported." ||
     /^(PDF|EPUB) files must not be empty\.$/.test(error.message) ||
@@ -227,9 +232,7 @@ export default function HighlightNoteEditor({
     }),
     [note?.body_pm_json, note?.body_text],
   );
-  const [initialBody, setInitialBody] = useState(
-    () => readStoredNoteEditorDraft(resourceKey)?.body ?? persistedBody,
-  );
+  const [initialBody, setInitialBody] = useState(persistedBody);
 
   const saveBody = useCallback(
     async (
@@ -346,15 +349,20 @@ export default function HighlightNoteEditor({
   }, [discardSessionDraft, persistedBody]);
 
   const openObject = useCallback(
-    async (objectType: string, objectId: string, disposition: WorkspaceTargetDisposition) => {
+    async (
+      objectType: string,
+      objectId: string,
+      disposition: WorkspaceTargetDisposition,
+    ) => {
       const ref = `${objectType}:${objectId}`;
       if (!parseResourceRef(ref)) return;
       let href: string | null = null;
       try {
-        const [resolved] = await resolveResourceLocators([
-          { kind: "resource_ref", ref },
-        ]);
-        href = resolved?.resourceItem.route ?? null;
+        const resolved = await resolveResourceLocator({
+          kind: "resource_ref",
+          ref,
+        });
+        href = resolved.resourceItem.route;
       } catch (error: unknown) {
         if (handleUnauthenticatedApiError(error)) return;
         try {
@@ -364,7 +372,8 @@ export default function HighlightNoteEditor({
             actions: [
               {
                 label: "Retry",
-                onClick: () => void openObject(objectType, objectId, disposition),
+                onClick: () =>
+                  void openObject(objectType, objectId, disposition),
               },
             ],
           });

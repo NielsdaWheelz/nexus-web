@@ -1,5 +1,6 @@
 """Cloudflare R2 storage client."""
 
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -135,6 +136,9 @@ class StorageClientBase(ABC):
     ) -> ObjectPage:
         """List one page of objects under a prefix, in listing order."""
         ...
+
+
+_PUT_OBJECT_ATTEMPTS = 3
 
 
 class StorageError(Exception):
@@ -297,15 +301,24 @@ class StorageClient(StorageClientBase):
         content: bytes,
         content_type: str = "application/octet-stream",
     ) -> None:
-        try:
-            self._client.put_object(
-                Bucket=self._bucket,
-                Key=path,
-                Body=content,
-                ContentType=content_type,
-            )
-        except (BotoCoreError, ClientError) as exc:
-            raise StorageError(f"Failed to upload object {path}") from exc
+        # A whole-bytes put is idempotent, and single-request transient
+        # failures have been observed terminally failing captures (one of two
+        # back-to-back puts dying instantly). Bounded retry, ~0.8s worst case.
+        delay_seconds = 0.2
+        for attempt in range(1, _PUT_OBJECT_ATTEMPTS + 1):
+            try:
+                self._client.put_object(
+                    Bucket=self._bucket,
+                    Key=path,
+                    Body=content,
+                    ContentType=content_type,
+                )
+                return
+            except (BotoCoreError, ClientError) as exc:
+                if attempt == _PUT_OBJECT_ATTEMPTS:
+                    raise StorageError(f"Failed to upload object {path}: {exc}") from exc
+                time.sleep(delay_seconds)
+                delay_seconds *= 3
 
     def put_object_stream(
         self,
@@ -313,6 +326,7 @@ class StorageClient(StorageClientBase):
         content: BinaryIO,
         content_type: str = "application/octet-stream",
     ) -> None:
+        # No retry: the stream body is not replayable after a partial send.
         try:
             self._client.put_object(
                 Bucket=self._bucket,
@@ -321,7 +335,7 @@ class StorageClient(StorageClientBase):
                 ContentType=content_type,
             )
         except (BotoCoreError, ClientError) as exc:
-            raise StorageError(f"Failed to upload object {path}") from exc
+            raise StorageError(f"Failed to upload object {path}: {exc}") from exc
 
     def copy_object(self, source_path: str, destination_path: str) -> None:
         try:
@@ -348,7 +362,13 @@ class StorageClient(StorageClientBase):
         continuation_token: str | None = None,
     ) -> ObjectPage:
         params: dict[str, str] = {"Bucket": self._bucket, "Prefix": prefix}
-        if continuation_token:
+        if continuation_token is not None:
+            if (
+                not isinstance(continuation_token, str)
+                or not continuation_token
+                or continuation_token != continuation_token.strip()
+            ):
+                raise StorageError("Storage list request has an invalid continuation token")
             params["ContinuationToken"] = continuation_token
         try:
             response = self._client.list_objects_v2(**params)
@@ -364,7 +384,16 @@ class StorageClient(StorageClientBase):
             for item in response.get("Contents", [])
         )
         is_truncated = bool(response.get("IsTruncated", False))
-        next_token = response.get("NextContinuationToken") if is_truncated else None
+        next_token = None
+        if is_truncated:
+            candidate = response.get("NextContinuationToken")
+            if not isinstance(candidate, str) or not candidate or candidate != candidate.strip():
+                raise StorageError("Storage listing returned an invalid next continuation token")
+            if candidate == continuation_token:
+                raise StorageError(
+                    "Storage listing returned a non-advancing next continuation token"
+                )
+            next_token = candidate
         return ObjectPage(objects=objects, next_continuation_token=next_token)
 
 

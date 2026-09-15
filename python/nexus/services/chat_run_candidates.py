@@ -1,132 +1,188 @@
-"""Sibling-candidate creation for a terminal assistant turn.
-
-One private constructor (`_create_sibling_candidate`) builds a new sibling
-candidate — a cloned user turn plus a fresh pending assistant child and one
-durable `ChatRun` — and is IDENTICAL for both public commands:
-
-- `rerun_assistant_response` recovers an eligible *failed/cancelled* turn (§5.4
-  "Run again"); its guard is `chat_failure.rerun_eligibility`.
-- `regenerate_assistant_response` produces a fresh alternative for an eligible
-  *completed* turn (§5.4 "Regenerate"); its guard is `_assert_regenerate_eligible`.
-
-The only per-command differences are the eligibility assert and the operation
-string baked into the idempotency payload hash. Both re-evaluate eligibility
-against freshly queried facts inside the mutation transaction — an earlier
-read's `can_rerun`/`can_regenerate` is never authority for the mutation itself
-(spec Law 9).
-"""
+"""Exact-selection sibling candidates for terminal Chat answers."""
 
 from __future__ import annotations
 
-from uuid import UUID
+from typing import Literal
+from uuid import UUID, uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, ChatRunTurnContext, Conversation, Message
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.jobs.queue import enqueue_job
-from nexus.schemas.conversation import ChatRunResponse
-from nexus.services.chat_failure import (
-    compute_has_write_tool_attempt,
-    profile_selection_active,
-    rerun_eligibility,
-)
+from nexus.jobs.queue import enqueue_job, lock_chat_generation_admission_in_current_transaction
+from nexus.schemas.conversation import AcceptedChatAdmission, ChatRunResponse
+from nexus.services import generation_policy
+from nexus.services.chat_failure import rerun_eligibility
 from nexus.services.chat_run_event_store import ChatRunEventEmitter
 from nexus.services.chat_run_idempotency import (
-    compute_regeneration_payload_hash,
-    compute_rerun_payload_hash,
-    get_run_by_idempotency_key,
+    accepted_chat_admission,
+    candidate_request_bytes,
     lock_idempotency_key,
+    log_chat_admission,
+    lookup_chat_admission,
     normalize_idempotency_key,
-    raise_if_payload_mismatch,
+    record_chat_admission,
 )
 from nexus.services.chat_run_message_blocks import message_document
-from nexus.services.chat_run_response import build_chat_run_response
+from nexus.services.chat_run_response import read_chat_run_response
+from nexus.services.chat_runs import (
+    ExactChatSelection,
+    admit_chat_selection,
+    persist_frozen_chat_admission_in_current_transaction,
+)
 from nexus.services.conversation_branches import ensure_branch_metadata, persist_active_leaf
-from nexus.services.llm_profiles import LlmProfile
-from nexus.services.llm_profiles import profile as lookup_profile
+from nexus.services.generation_catalog import GenerationCatalogService, ResolvedCatalogPair
+from nexus.services.generation_service import GenerationService
 from nexus.services.seq import assign_next_message_seq
+from nexus.services.tool_runtime.composition import ComposedToolRuntime
+
+type RepeatOperation = Literal["rerun", "regenerate"]
 
 
-def rerun_assistant_response(
+async def rerun_assistant_response(
     db: Session,
     *,
     viewer_id: UUID,
     assistant_message_id: UUID,
+    catalog_definition_revision: str,
+    selection: ExactChatSelection,
+    tool_authority: Literal["ReadOnly"],
     idempotency_key: str | None,
+    catalog: GenerationCatalogService,
+    tool_runtime: ComposedToolRuntime,
 ) -> ChatRunResponse:
-    normalized_key = normalize_idempotency_key(idempotency_key)
-    try:
-        lock_idempotency_key(db, viewer_id, normalized_key)
-
-        _, _, source_run, source_user_message = _resolve_source(
-            db, viewer_id=viewer_id, assistant_message_id=assistant_message_id
-        )
-        payload_hash = compute_rerun_payload_hash(
-            source_assistant_message_id=assistant_message_id,
-            source_run=source_run,
-            source_user_message=source_user_message,
-        )
-
-        existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
-        if existing is not None:
-            raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
-            db.commit()
-            return build_chat_run_response(db, viewer_id, existing)
-
-        _assert_rerun_eligible(db, source_run)
-        return _create_sibling_candidate(
-            db,
-            viewer_id=viewer_id,
-            source_run=source_run,
-            source_user_message=source_user_message,
-            normalized_key=normalized_key,
-            payload_hash=payload_hash,
-        )
-    except Exception:
-        db.rollback()
-        raise
+    return await _repeat_assistant_response(
+        db,
+        operation="rerun",
+        viewer_id=viewer_id,
+        assistant_message_id=assistant_message_id,
+        catalog_definition_revision=catalog_definition_revision,
+        selection=selection,
+        tool_authority=tool_authority,
+        idempotency_key=idempotency_key,
+        catalog=catalog,
+        tool_runtime=tool_runtime,
+    )
 
 
-def regenerate_assistant_response(
+async def regenerate_assistant_response(
     db: Session,
     *,
     viewer_id: UUID,
     assistant_message_id: UUID,
+    catalog_definition_revision: str,
+    selection: ExactChatSelection,
+    tool_authority: Literal["ReadOnly"],
     idempotency_key: str | None,
+    catalog: GenerationCatalogService,
+    tool_runtime: ComposedToolRuntime,
+) -> ChatRunResponse:
+    return await _repeat_assistant_response(
+        db,
+        operation="regenerate",
+        viewer_id=viewer_id,
+        assistant_message_id=assistant_message_id,
+        catalog_definition_revision=catalog_definition_revision,
+        selection=selection,
+        tool_authority=tool_authority,
+        idempotency_key=idempotency_key,
+        catalog=catalog,
+        tool_runtime=tool_runtime,
+    )
+
+
+async def _repeat_assistant_response(
+    db: Session,
+    *,
+    operation: RepeatOperation,
+    viewer_id: UUID,
+    assistant_message_id: UUID,
+    catalog_definition_revision: str,
+    selection: ExactChatSelection,
+    tool_authority: Literal["ReadOnly"],
+    idempotency_key: str | None,
+    catalog: GenerationCatalogService,
+    tool_runtime: ComposedToolRuntime,
 ) -> ChatRunResponse:
     normalized_key = normalize_idempotency_key(idempotency_key)
+    request_bytes = candidate_request_bytes(
+        operation=operation,
+        source_assistant_message_id=assistant_message_id,
+        catalog_definition_revision=catalog_definition_revision,
+        selection=selection,
+        tool_authority=tool_authority,
+    )
     try:
         lock_idempotency_key(db, viewer_id, normalized_key)
-
-        source_assistant_message, _, source_run, source_user_message = _resolve_source(
-            db, viewer_id=viewer_id, assistant_message_id=assistant_message_id
+        receipt = lookup_chat_admission(
+            db, viewer_id=viewer_id, idempotency_key=normalized_key, request_bytes=request_bytes
         )
-        payload_hash = compute_regeneration_payload_hash(
-            source_assistant_message_id=assistant_message_id,
-            source_run=source_run,
-            source_user_message=source_user_message,
+    finally:
+        db.rollback()
+    if receipt is not None:
+        if not isinstance(receipt.outcome, AcceptedChatAdmission):
+            raise AssertionError("candidate admission has a rejected receipt")
+        log_chat_admission(receipt, viewer_id=viewer_id, replayed=True)
+        snapshot = await catalog.read_chat()
+        return read_chat_run_response(
+            db, viewer_id, receipt.outcome.run_id, catalog_snapshot=snapshot
         )
 
-        existing = get_run_by_idempotency_key(db, viewer_id, normalized_key)
-        if existing is not None:
-            raise_if_payload_mismatch(existing, payload_hash, viewer_id, normalized_key)
-            db.commit()
-            return build_chat_run_response(db, viewer_id, existing)
-
-        _assert_regenerate_eligible(db, source_run, source_assistant_message)
-        return _create_sibling_candidate(
-            db,
-            viewer_id=viewer_id,
-            source_run=source_run,
-            source_user_message=source_user_message,
-            normalized_key=normalized_key,
-            payload_hash=payload_hash,
+    pair: ResolvedCatalogPair | None = None
+    catalog_error: ApiError | None = None
+    try:
+        pair = await admit_chat_selection(
+            catalog,
+            catalog_definition_revision=catalog_definition_revision,
+            selection=selection,
         )
+    except ApiError as exc:
+        catalog_error = exc
+    generation_service = GenerationService(
+        catalog=catalog,
+        policy=generation_policy.GENERATION_POLICY,
+        tools=tool_runtime,
+    )
+    try:
+        lock_chat_generation_admission_in_current_transaction(db)
+        lock_idempotency_key(db, viewer_id, normalized_key)
+        receipt = lookup_chat_admission(
+            db, viewer_id=viewer_id, idempotency_key=normalized_key, request_bytes=request_bytes
+        )
+        replayed = receipt is not None
+        if receipt is None:
+            if catalog_error is not None:
+                raise catalog_error
+            if pair is None:
+                raise AssertionError("catalog admission lost its resolved selection")
+            source_assistant, _, source_run, source_user = _resolve_source(
+                db, viewer_id=viewer_id, assistant_message_id=assistant_message_id
+            )
+            _assert_repeat_eligible(operation, source_run, source_assistant)
+            run = _create_sibling_candidate(
+                db,
+                viewer_id=viewer_id,
+                source_run=source_run,
+                source_user_message=source_user,
+                catalog_definition_revision=catalog_definition_revision,
+                pair=pair,
+                generation_service=generation_service,
+            )
+            receipt = accepted_chat_admission(run, normalized_key)
+            record_chat_admission(
+                db, viewer_id=viewer_id, request_bytes=request_bytes, receipt=receipt
+            )
+        if not isinstance(receipt.outcome, AcceptedChatAdmission):
+            raise AssertionError("candidate admission has a rejected receipt")
+        run_id = receipt.outcome.run_id
+        db.commit()
     except Exception:
         db.rollback()
         raise
+    log_chat_admission(receipt, viewer_id=viewer_id, replayed=replayed)
+    snapshot = await catalog.read_chat()
+    return read_chat_run_response(db, viewer_id, run_id, catalog_snapshot=snapshot)
 
 
 def _resolve_source(
@@ -135,39 +191,36 @@ def _resolve_source(
     viewer_id: UUID,
     assistant_message_id: UUID,
 ) -> tuple[Message, Conversation, ChatRun, Message]:
-    """Resolve `(assistant_message, conversation, source_run, source_user_message)`.
-
-    Ownership is masked as `E_MESSAGE_NOT_FOUND` (spec §8; non-leaking). The
-    source assistant maps to exactly one owning `ChatRun` (spec §5.4: "Missing or
-    duplicate ownership is a defect; never scan for the latest run")."""
+    # Source deletion takes the same parent lock. Once first admission resolves
+    # its source, deletion cannot invalidate its snapshot before publication.
+    conversation = db.scalar(
+        select(Conversation)
+        .join(Message, Message.conversation_id == Conversation.id)
+        .where(
+            Message.id == assistant_message_id,
+            Message.role == "assistant",
+            Conversation.owner_user_id == viewer_id,
+        )
+        .with_for_update(of=Conversation)
+    )
+    if conversation is None:
+        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
     assistant_message = db.get(Message, assistant_message_id)
-    if assistant_message is None or assistant_message.role != "assistant":
+    if assistant_message is None:
         raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
-    conversation = db.get(Conversation, assistant_message.conversation_id)
-    if conversation is None or conversation.owner_user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
-
-    owning_runs = (
-        db.execute(
+    owning_runs = list(
+        db.scalars(
             select(ChatRun).where(
                 ChatRun.owner_user_id == viewer_id,
                 ChatRun.assistant_message_id == assistant_message_id,
             )
         )
-        .scalars()
-        .all()
     )
     if len(owning_runs) != 1:
-        # justify-defect: a persisted assistant message owns exactly one ChatRun
-        # by construction (each send/rerun/regeneration creates its own assistant
-        # child). Zero or duplicate ownership is a write-side invariant break, not
-        # a client-recoverable state — never a latest-run scan (spec §5.4).
         raise AssertionError(
-            f"assistant message {assistant_message_id} maps to {len(owning_runs)} owning "
-            f"chat runs; exactly one is required"
+            f"assistant message {assistant_message_id} maps to {len(owning_runs)} Chat runs"
         )
     source_run = owning_runs[0]
-
     source_user_message = db.get(Message, source_run.user_message_id)
     if source_user_message is None or source_user_message.role != "user":
         raise ApiError(ApiErrorCode.E_RETRY_INVALID_STATE, "Source prompt not found")
@@ -180,16 +233,10 @@ def _create_sibling_candidate(
     viewer_id: UUID,
     source_run: ChatRun,
     source_user_message: Message,
-    normalized_key: str,
-    payload_hash: str,
-) -> ChatRunResponse:
-    """Build one new sibling candidate from a resolved source. Shared verbatim by
-    rerun and regeneration: clone the user turn, add a pending assistant child,
-    select it as the active leaf, create + enqueue one durable `ChatRun`, clone
-    the source turn context, emit the meta event, commit, and project."""
-    assert source_run.profile_id is not None
-    assert source_run.reasoning_option_id is not None
-
+    catalog_definition_revision: str,
+    pair: ResolvedCatalogPair,
+    generation_service: GenerationService,
+) -> ChatRun:
     user_message = Message(
         conversation_id=source_run.conversation_id,
         seq=assign_next_message_seq(db, source_run.conversation_id),
@@ -215,7 +262,6 @@ def _create_sibling_candidate(
             conversation_id=source_run.conversation_id,
             branch_user_message_id=user_message.id,
         )
-
     assistant_message = Message(
         conversation_id=source_run.conversation_id,
         seq=assign_next_message_seq(db, source_run.conversation_id),
@@ -238,140 +284,79 @@ def _create_sibling_candidate(
     )
 
     run = ChatRun(
+        id=uuid4(),
         owner_user_id=viewer_id,
         conversation_id=source_run.conversation_id,
         user_message_id=user_message.id,
         assistant_message_id=assistant_message.id,
-        idempotency_key=normalized_key,
-        payload_hash=payload_hash,
         status="queued",
-        profile_id=source_run.profile_id,
-        reasoning_option_id=source_run.reasoning_option_id,
     )
-    db.add(run)
-    db.flush()
-
-    source_turn_context = db.get(ChatRunTurnContext, source_run.id)
-    if source_turn_context is not None:
-        db.add(
-            ChatRunTurnContext(
-                chat_run_id=run.id,
-                requested_subject_scheme=source_turn_context.requested_subject_scheme,
-                requested_subject_id=source_turn_context.requested_subject_id,
-                subject_scheme=source_turn_context.subject_scheme,
-                subject_id=source_turn_context.subject_id,
-                subject_context_edge_id=source_turn_context.subject_context_edge_id,
-            )
+    source_context = db.get(ChatRunTurnContext, source_run.id)
+    turn_context = (
+        ChatRunTurnContext(
+            chat_run_id=run.id,
+            requested_subject_scheme=source_context.requested_subject_scheme,
+            requested_subject_id=source_context.requested_subject_id,
+            subject_scheme=source_context.subject_scheme,
+            subject_id=source_context.subject_id,
+            subject_context_edge_id=source_context.subject_context_edge_id,
         )
+        if source_context is not None
+        else None
+    )
+    spec, selection_out = persist_frozen_chat_admission_in_current_transaction(
+        db,
+        run=run,
+        turn_context=turn_context,
+        pair=pair,
+        catalog_definition_revision=catalog_definition_revision,
+        tool_authority="ReadOnly",
+        generation_service=generation_service,
+    )
     ChatRunEventEmitter(db, run).meta(
         {
             "run_id": str(run.id),
-            "conversation_id": str(source_run.conversation_id),
+            "conversation_id": str(run.conversation_id),
             "user_message_id": str(user_message.id),
             "assistant_message_id": str(assistant_message.id),
-            "profile_id": run.profile_id,
-            "reasoning_option_id": run.reasoning_option_id,
+            "run_selection": selection_out.model_dump(mode="python"),
             "chat_subject": None,
         }
     )
     enqueue_job(
         db,
         kind="chat_run",
-        payload={"run_id": str(run.id)},
+        payload={
+            "run_id": str(run.id),
+            "generation_spec_fingerprint": spec.fingerprint,
+        },
         priority=50,
         max_attempts=3,
         dedupe_key=f"chat_run:{run.id}",
     )
-    db.commit()
-    return build_chat_run_response(db, viewer_id, run)
+    return run
 
 
-def _assert_regenerate_eligible(
-    db: Session,
+def _assert_repeat_eligible(
+    operation: RepeatOperation,
     source_run: ChatRun,
     source_assistant_message: Message,
 ) -> None:
-    """Re-evaluate regeneration eligibility against freshly queried facts (spec
-    §8): the assistant message and its source run are both complete, the source
-    profile/reasoning selection still resolves to its historical target, and no
-    assistant-write tool was attempted. Ownership and single-run ownership are
-    already guaranteed by `_resolve_source`."""
-    if source_assistant_message.status != "complete" or source_run.status != "complete":
+    if operation == "regenerate":
+        if source_assistant_message.status == "complete" and source_run.status == "complete":
+            return
         raise ApiError(
             ApiErrorCode.E_REGENERATION_NOT_ALLOWED,
             "Only a completed assistant answer can be regenerated",
         )
-    if not profile_selection_active(source_run):
-        raise ApiError(
-            ApiErrorCode.E_REGENERATION_NOT_ALLOWED,
-            "Assistant response's profile is retired or now resolves to a different target",
-        )
-    if compute_has_write_tool_attempt(db, source_run):
-        raise ApiError(
-            ApiErrorCode.E_REGENERATION_NOT_ALLOWED,
-            "Assistant response attempted a write tool and cannot be regenerated",
-        )
-
-
-def _assert_rerun_eligible(db: Session, source_run: ChatRun) -> None:
-    """Re-evaluate `rerun_eligibility` against freshly queried facts — never
-    trusting an earlier `can_rerun` read as authority for the mutation itself."""
-    if source_run.profile_id is None or source_run.reasoning_option_id is None:
-        raise ApiError(
-            ApiErrorCode.E_RETRY_NOT_ALLOWED,
-            "Assistant response has no resolved profile to rerun",
-        )
     error_code = "cancelled" if source_run.status == "cancelled" else source_run.error_code
-    if error_code is None:
-        raise ApiError(
-            ApiErrorCode.E_RETRY_INVALID_STATE,
-            "Assistant response is not a terminal failed or cancelled run",
-        )
-    # Same drift-aware eligibility the projection uses (retired/uncertified/
-    # changed profile, or a reasoning option no longer offered → not
-    # rerunnable), re-evaluated here against freshly queried facts.
-    active_profile = lookup_profile(source_run.profile_id)
-    profile_active = profile_selection_active(source_run)
-    has_write_tool_attempt = compute_has_write_tool_attempt(db, source_run)
-    eligible = rerun_eligibility(
+    if error_code is not None and rerun_eligibility(
         error_code=error_code,
         run_status=source_run.status,
-        profile_active=profile_active,
-        has_write_tool_attempt=has_write_tool_attempt,
+        selection_selectable=True,
+    ):
+        return
+    raise ApiError(
+        ApiErrorCode.E_RETRY_NOT_ALLOWED,
+        "This assistant outcome cannot be rerun",
     )
-    if not eligible:
-        raise ApiError(ApiErrorCode.E_RETRY_NOT_ALLOWED, "Assistant response is not rerunnable")
-
-    # Defense in depth (§10: "rerun never remaps a historical target"): the
-    # projection compares the run's stored resolved-target snapshot, which a run
-    # may not have recorded. The authoritative historical target lives on the
-    # run's terminal `llm_calls` ledger row; if the current profile now resolves
-    # to a different provider/model, the rerun would silently execute elsewhere.
-    if active_profile is not None and _ledger_target_drifted(db, source_run, active_profile):
-        raise ApiError(
-            ApiErrorCode.E_RETRY_NOT_ALLOWED,
-            "Assistant response's profile now resolves to a different target",
-        )
-
-
-def _ledger_target_drifted(db: Session, source_run: ChatRun, active_profile: LlmProfile) -> bool:
-    """Whether the run's historical resolved target (its terminal `llm_calls`
-    row's provider/model_name — always the logical target the plan resolved to)
-    differs from what the current profile resolves to. No ledger row (a run that
-    failed before any call) ⇒ no drift evidence."""
-    row = db.execute(
-        text(
-            "SELECT provider, model_name FROM llm_calls "
-            "WHERE owner_kind = 'chat_run' AND owner_id = :run_id "
-            "ORDER BY call_seq DESC LIMIT 1"
-        ),
-        {"run_id": source_run.id},
-    ).first()
-    if row is None:
-        return False
-    provider, model_name = row
-    if provider is not None and provider != active_profile.target.provider:
-        return True
-    if model_name is not None and model_name != active_profile.target.model:
-        return True
-    return False

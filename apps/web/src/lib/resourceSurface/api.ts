@@ -1,5 +1,4 @@
 import { apiFetch } from "@/lib/api/client";
-import { requiredRecord } from "@/lib/notes/normalize";
 import {
   decodeResourceItem,
   normalizeResourceSurface,
@@ -7,32 +6,8 @@ import {
   type ResourceSurface,
   type SurfacePosition,
 } from "@/lib/resources/resourceItems";
-
-export type ResourceSurfaceCommand =
-  | {
-      type: "insert_note";
-      noteId: string;
-      position: SurfacePosition;
-      bodyPmJson: Record<string, unknown>;
-    }
-  | {
-      type: "split_note";
-      occurrenceId: string;
-      noteId: string;
-      leftBodyPmJson: Record<string, unknown>;
-      rightBodyPmJson: Record<string, unknown>;
-    }
-  | {
-      type: "insert_resource";
-      targetRef: string;
-      position: SurfacePosition;
-    }
-  | {
-      type: "move_occurrence";
-      occurrenceId: string;
-      position: SurfacePosition;
-    }
-  | { type: "remove_occurrence"; occurrenceId: string };
+import type { ResourceSurfaceCommand } from "@/lib/resourceSurface/model";
+import { expectRecord } from "@/lib/validation";
 
 export interface ResourceLaneVersion {
   ref: string;
@@ -113,7 +88,7 @@ export async function commandResourceSurface(input: {
       }),
     },
   );
-  const data = requiredRecord(response.data, "surface command response");
+  const data = expectRecord(response.data, "surface command response");
   return normalizeResourceSurface(data.surface);
 }
 
@@ -137,7 +112,7 @@ export async function updateResourceSurfaceTitle(input: {
     },
   );
   return decodeResourceItem(
-    requiredRecord(requiredRecord(response.data, "title response").item, "title item"),
+    expectRecord(expectRecord(response.data, "title response").item, "title item"),
   );
 }
 
@@ -160,9 +135,9 @@ export async function updateResourceSurfaceNoteBody(input: {
       }),
     },
   );
-  const data = requiredRecord(response.data, "note body response");
+  const data = expectRecord(response.data, "note body response");
   return {
-    item: decodeResourceItem(requiredRecord(data.item, "note body item")),
+    item: decodeResourceItem(expectRecord(data.item, "note body item")),
     bodyText: String(data.bodyText ?? ""),
   };
 }

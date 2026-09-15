@@ -6,7 +6,7 @@ import {
   type CollectionRevision,
 } from "@/lib/api/collectionPage";
 import { conversationsInitialResource } from "@/lib/api/resource";
-import type { ConversationIndexView } from "@/lib/conversations/indexView";
+import type { UpdatedTitleIndexView } from "@/lib/collections/updatedTitleIndexView";
 import type { ConversationListItem } from "@/lib/conversations/types";
 import {
   expectExactRecord,
@@ -16,7 +16,7 @@ import {
 
 export interface ConversationIndexPageOptions {
   /** The exact chats view this page belongs to; every page of a chain shares it. */
-  readonly view: ConversationIndexView;
+  readonly view: UpdatedTitleIndexView;
   readonly cursor?: CollectionCursor;
   readonly collectionRevision?: CollectionRevision;
   readonly signal?: AbortSignal;

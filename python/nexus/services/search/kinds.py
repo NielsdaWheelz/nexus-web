@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from nexus.schemas.search import ALL_RESULT_TYPES
+from nexus.schemas.search_types import ALL_RESULT_TYPES
 
 SearchKind = Literal["documents", "notes", "highlights", "conversations", "people", "web"]
 MediaFormat = Literal["article", "pdf", "epub", "video", "episode", "podcast"]

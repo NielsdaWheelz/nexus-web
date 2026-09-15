@@ -6,15 +6,14 @@ import asyncio
 import math
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
-
-import httpx
-from provider_runtime import EmbeddingCall, Present, ProviderRuntime
+from typing import TYPE_CHECKING, Any
 
 from nexus.config import Settings, get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.llm_credentials import embedding_credential, provider_credentials
+
+if TYPE_CHECKING:
+    import httpx
 
 logger = get_logger(__name__)
 
@@ -302,10 +301,17 @@ async def _embed_with_openai_async(
     sole catcher of ``NonGenerationCallFailed`` for the lexical-fallback
     classification (§ preserved). A malformed response is a hard failure.
     """
+    from provider_runtime import Credentials, EmbeddingCall, Present, ProviderRuntime
+
+    from nexus.services.llm_credentials import embedding_credential
+
     credential = embedding_credential(settings)
 
     vectors: list[list[float]] = []
-    runtime = ProviderRuntime(provider_credentials(settings), http_client=http_client)
+    runtime = ProviderRuntime(
+        Credentials(openai=credential.key),
+        http_client=http_client,
+    )
     for start in range(0, len(texts), 64):
         batch = texts[start : start + 64]
         call = EmbeddingCall(
@@ -325,6 +331,8 @@ async def _embed_with_openai_async(
 
 
 def _embed_with_openai(texts: list[str], *, dimensions: int) -> list[list[float]]:
+    import httpx
+
     settings = get_settings()
 
     async def embed() -> list[list[float]]:
@@ -361,3 +369,20 @@ def build_text_embeddings(texts: list[str]) -> tuple[str, list[list[float]]]:
 def build_text_embedding(text: str) -> tuple[str, list[float]]:
     model_name, vectors = build_text_embeddings([text])
     return model_name, (vectors[0] if vectors else [0.0] * transcript_embedding_dimensions())
+
+
+async def build_text_embedding_async(text: str) -> tuple[str, list[float]]:
+    """Build one query embedding on the caller's event loop, without DB state."""
+    import httpx
+
+    settings = get_settings()
+    dimensions = transcript_embedding_dimensions()
+    model_name = current_transcript_embedding_model()
+    async with httpx.AsyncClient(trust_env=False) as client:
+        vectors = await _embed_with_openai_async(
+            [str(text or "").strip()],
+            dimensions=dimensions,
+            settings=settings,
+            http_client=client,
+        )
+    return model_name, vectors[0]

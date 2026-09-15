@@ -251,6 +251,51 @@
   display: none;
 }
 
+/* The footer utility link renders a label plus its own count badge. */
+.utilityLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Collapsed, the same link is icon-only, so its count paints as a chip rather
+   than beside a label that is no longer there. The collapsed rail is 48px wide
+   and the icon fills the link's content box, so a chip on the glyph is a smudge:
+   this one is anchored to the link's own top-right corner, above the icon. The
+   Pill's own tone is translucent and the chip sits on the link's hover and
+   active backgrounds, so the chip carries the rail's opaque ground, clipped to
+   the Pill's shape, under the Pill's hairline ring. */
+.utilityLink {
+  position: relative;
+}
+
+/* The chip is a count of the link it hangs on, so it is painted inside that
+   link's own box and is part of its hit target. The link carries the band:
+   one clearance, the chip's own height (its --text-2xs text box at
+   --leading-tight plus the 1px padding and 1px ring on each edge), and one
+   more clearance above the icon — wide enough that the rail's hover lift,
+   which raises a 20px glyph by 1.6px, cannot close it. The band is
+   unconditional: a band that appeared with the first count would move the
+   icon, the divider and every row above it under the reader's eye. */
+.collapsed .utilityLink {
+  padding-top: calc(
+    var(--space-1) * 2 + var(--text-2xs) * var(--leading-tight) + 4px
+  );
+}
+
+.utilityChip {
+  position: absolute;
+  /* Flex, so the painted chip is the badge's own box and not a line box. */
+  display: flex;
+  top: var(--space-1);
+  right: 0;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+}
+
 /* Optional fixed-navigation accent, owned by APP_NAVIGATION. */
 .item[data-presentation="accent"] .itemIcon {
   filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 40%, transparent));
@@ -364,30 +409,6 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-}
-
-.account [data-import-count]::after {
-  content: attr(data-import-count);
-  min-width: 1.35rem;
-  margin-left: auto;
-  padding: 1px var(--space-1);
-  border-radius: var(--radius-full);
-  background: var(--accent-muted);
-  color: var(--accent);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-  line-height: 1rem;
-  text-align: center;
-}
-
-.collapsed .account [data-import-count]::after {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  min-width: 1rem;
-  margin: 0;
-  padding-inline: 3px;
-  font-size: 0.625rem;
 }
 
 .menuItem {

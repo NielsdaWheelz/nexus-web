@@ -1,0 +1,90 @@
+{
+  "version": 2,
+  "inventory": {
+    "commands": ["Connect", "GetSnapshot", "RetryFailedActivity", "DiscardFailedActivity", "SetActivityPaused", "LoadCanonical", "LoadPreview", "Play", "Pause", "SeekTo", "SkipBy", "SetVolume", "SetPlaybackRateState", "SetSessionPauseShorteningMode", "ClearSessionPauseShorteningMode", "SetDeviceDefaultPauseShorteningMode", "InstallPodcastPlaybackSettings", "Drain", "AdoptListeningState", "RetryPersistence", "Dismiss", "AcknowledgeNaturalEnd"],
+    "replies": ["Connected", "Snapshot", "Accepted", "Rejected"],
+    "events": ["SnapshotChanged", "ControllerReconnected", "NaturalEndPending"],
+    "snapshots": ["Absent", "Canonical", "Preview"],
+    "rejectionCodes": ["InvalidRequest", "AccountMismatch", "StaleSession", "NaturalEndPending", "PlayerUnavailable", "ProtocolMismatch"],
+    "presence": ["Absent", "Present"],
+    "origins": ["Direct", "Lectern"],
+    "playbackRateStates": ["Canonical", "Preview"],
+    "playbackRateSources": ["Episode", "Podcast", "Product"],
+    "playbackPhases": ["Buffering", "Playing", "Paused", "Ended"],
+    "persistence": ["Ready", "Suspended"],
+    "persistenceSuspensions": ["Network", "AuthExpired"],
+    "pauseShorteningModes": ["Off", "Natural"],
+    "pauseShorteningProvenance": ["Session", "Podcast", "Device"],
+    "activityCapture": ["Recording", "Idle", "Paused", "Blocked"],
+    "activityCaptureBlocks": ["StorageUnavailable", "CapacityReached"],
+    "activitySync": ["Synced", "Pending", "Failed"]
+  },
+  "commands": [
+    {"kind":"Connect","requestId":"00000000-0000-4000-8000-000000000001","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","accountId":"00000000-0000-4000-8000-000000000002"},
+    {"kind":"GetSnapshot","requestId":"00000000-0000-4000-8000-000000000003","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256"},
+    {"kind":"RetryFailedActivity","requestId":"00000000-0000-4000-8000-000000000004","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256"},
+    {"kind":"DiscardFailedActivity","requestId":"00000000-0000-4000-8000-000000000005","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256"},
+    {"kind":"SetActivityPaused","requestId":"00000000-0000-4000-8000-000000000006","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","paused":true},
+    {
+      "kind":"LoadCanonical","requestId":"00000000-0000-4000-8000-000000000007","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000008",
+      "session":{"descriptor":{"mediaId":"00000000-0000-4000-8000-000000000009","title":"Canonical episode","subtitle":{"kind":"Present","value":"Canonical podcast"},"activation":{"kind":"FooterAudio","streamUrl":"https://audio.example/episode.mp3","sourceUrl":"https://podcast.example/episode","positionMs":12000,"writeRevision":3,"resetEpoch":1,"playbackRate":{"value":1.5,"source":"Episode","podcastPreference":{"kind":"Present","value":{"podcastId":"00000000-0000-4000-8000-000000000010","value":{"kind":"Present","value":1.25}}}},"pauseShorteningMode":{"kind":"Present","value":"Natural"},"consumptionOverrideRevision":{"kind":"Present","value":4},"durationMs":{"kind":"Present","value":120000},"artworkUrl":{"kind":"Present","value":"https://images.example/cover.jpg"},"chapters":[{"title":"Opening","startMs":0,"endMs":{"kind":"Present","value":60000}},{"title":"Closing","startMs":60000,"endMs":{"kind":"Absent"}}]}},"origin":{"kind":"Lectern","itemId":"00000000-0000-4000-8000-000000000011"}},
+      "rateState":{"kind":"Canonical","episodeRate":{"kind":"Present","value":1.5},"podcastPreference":{"kind":"Present","value":{"podcastId":"00000000-0000-4000-8000-000000000010","value":{"kind":"Present","value":1.25}}},"preferred":1.5,"temporaryNormal":false,"base":1.5}
+    },
+    {"kind":"LoadPreview","requestId":"00000000-0000-4000-8000-000000000012","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000013","descriptor":{"target":"ndt1.e30.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","previewHref":"/browse/preview?target=ndt1.e30.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","title":"Preview","source":"Source","sourceHref":"https://example.com","audioUrl":"https://audio.example/preview.mp3","imageUrl":{"kind":"Absent"},"durationMs":{"kind":"Present","value":30000}}},
+    {"kind":"Play","requestId":"00000000-0000-4000-8000-000000000014","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000013"},
+    {"kind":"Pause","requestId":"00000000-0000-4000-8000-000000000015","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000013"},
+    {"kind":"SeekTo","requestId":"00000000-0000-4000-8000-000000000016","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000013","positionMs":15000},
+    {"kind":"SkipBy","requestId":"00000000-0000-4000-8000-000000000017","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000013","deltaMs":-10000},
+    {"kind":"SetVolume","requestId":"00000000-0000-4000-8000-000000000018","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000013","volume":0.75},
+    {"kind":"SetPlaybackRateState","requestId":"00000000-0000-4000-8000-000000000019","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000013","rateState":{"kind":"Preview","preferred":1,"temporaryNormal":false,"base":1}},
+    {"kind":"SetSessionPauseShorteningMode","requestId":"00000000-0000-4000-8000-000000000020","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000013","mode":"Natural"},
+    {"kind":"ClearSessionPauseShorteningMode","requestId":"00000000-0000-4000-8000-000000000021","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000013"},
+    {"kind":"SetDeviceDefaultPauseShorteningMode","requestId":"00000000-0000-4000-8000-000000000022","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","mode":"Off"},
+    {"kind":"InstallPodcastPlaybackSettings","requestId":"00000000-0000-4000-8000-000000000023","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000008","podcastId":"00000000-0000-4000-8000-000000000010","subscription":{"kind":"Present","value":{"defaultPlaybackSpeed":{"kind":"Present","value":1.25},"pauseShorteningMode":{"kind":"Present","value":"Natural"}}},"rateState":{"kind":"Canonical","episodeRate":{"kind":"Present","value":1.5},"podcastPreference":{"kind":"Present","value":{"podcastId":"00000000-0000-4000-8000-000000000010","value":{"kind":"Present","value":1.25}}},"preferred":1.5,"temporaryNormal":false,"base":1.5}},
+    {"kind":"Drain","requestId":"00000000-0000-4000-8000-000000000024","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000013"},
+    {"kind":"AdoptListeningState","requestId":"00000000-0000-4000-8000-000000000025","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000008","listeningState":{"positionMs":15000,"durationMs":{"kind":"Present","value":120000},"episodePlaybackRate":{"kind":"Present","value":1.5},"writeRevision":4,"resetEpoch":1}},
+    {"kind":"RetryPersistence","requestId":"00000000-0000-4000-8000-000000000026","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000008"},
+    {"kind":"Dismiss","requestId":"00000000-0000-4000-8000-000000000027","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000008"},
+    {"kind":"AcknowledgeNaturalEnd","requestId":"00000000-0000-4000-8000-000000000028","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","sessionKey":"00000000-0000-4000-8000-000000000008","clientMutationId":"00000000-0000-4000-8000-000000000029"}
+  ],
+  "snapshots": [
+    {"kind":"Absent","deviceDefaultPauseShorteningMode":"Off","pauseShorteningSavedOnDeviceMs":0,"activitySync":{"capture":{"kind":"Idle"},"sync":{"kind":"Synced"},"acceptedRevision":0}},
+    {
+      "kind":"Canonical","sessionKey":"00000000-0000-4000-8000-000000000008","session":{"descriptor":{"mediaId":"00000000-0000-4000-8000-000000000009","title":"Canonical episode","subtitle":{"kind":"Present","value":"Canonical podcast"},"activation":{"kind":"FooterAudio","streamUrl":"https://audio.example/episode.mp3","sourceUrl":"https://podcast.example/episode","positionMs":12000,"writeRevision":3,"resetEpoch":1,"playbackRate":{"value":1.5,"source":"Episode","podcastPreference":{"kind":"Absent"}},"pauseShorteningMode":{"kind":"Present","value":"Natural"},"consumptionOverrideRevision":{"kind":"Present","value":4},"durationMs":{"kind":"Present","value":120000},"artworkUrl":{"kind":"Absent"},"chapters":[]}},"origin":{"kind":"Direct"}},
+      "phase":"Playing","positionMs":12000,"durationMs":120000,"bufferedMs":30000,"volume":0.75,"observedBaseRate":1.5,"rateState":{"kind":"Canonical","episodeRate":{"kind":"Present","value":1.5},"podcastPreference":{"kind":"Absent"},"preferred":1.5,"temporaryNormal":false,"base":1.5},"persistence":{"kind":"Ready"},"playbackFailure":{"kind":"Absent"},"pauseShortening":{"deviceDefaultMode":"Off","podcastOverride":{"kind":"Present","value":"Natural"},"sessionOverride":{"kind":"Absent"},"effectiveMode":"Natural","provenance":"Podcast","savedOnDeviceMs":2500},"activitySync":{"capture":{"kind":"Recording"},"sync":{"kind":"Pending","count":2,"oldestAt":"2026-08-10T00:00:00Z"},"acceptedRevision":7}
+    },
+    {
+      "kind":"Preview","sessionKey":"00000000-0000-4000-8000-000000000013","descriptor":{"target":"ndt1.e30.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","previewHref":"/browse/preview?target=ndt1.e30.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","title":"Preview","source":"Source","sourceHref":"https://example.com","audioUrl":"https://audio.example/preview.mp3","imageUrl":{"kind":"Absent"},"durationMs":{"kind":"Present","value":30000}},
+      "phase":"Paused","positionMs":5000,"durationMs":30000,"bufferedMs":10000,"volume":0.5,"observedBaseRate":1,"rateState":{"kind":"Preview","preferred":1,"temporaryNormal":false,"base":1},"persistence":{"kind":"Suspended","reason":"Network","message":"Network unavailable"},"playbackFailure":{"kind":"Present","value":{"code":"PreviewFailed","message":"Preview failed"}},"pauseShortening":{"deviceDefaultMode":"Natural","podcastOverride":{"kind":"Absent"},"sessionOverride":{"kind":"Present","value":"Off"},"effectiveMode":"Off","provenance":"Session","savedOnDeviceMs":0},"activitySync":{"capture":{"kind":"Blocked","reason":"StorageUnavailable"},"sync":{"kind":"Failed","count":1},"acceptedRevision":8}
+    }
+  ],
+  "replies": [
+    {"kind":"Connected","requestId":"00000000-0000-4000-8000-000000000030","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","snapshot":{"kind":"Absent","deviceDefaultPauseShorteningMode":"Off","pauseShorteningSavedOnDeviceMs":0,"activitySync":{"capture":{"kind":"Idle"},"sync":{"kind":"Synced"},"acceptedRevision":0}},"pendingNaturalEnd":{"kind":"Absent"}},
+    {"kind":"Snapshot","requestId":"00000000-0000-4000-8000-000000000031","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","snapshot":{"kind":"Absent","deviceDefaultPauseShorteningMode":"Natural","pauseShorteningSavedOnDeviceMs":42,"activitySync":{"capture":{"kind":"Paused"},"sync":{"kind":"Synced"},"acceptedRevision":9}},"pendingNaturalEnd":{"kind":"Present","value":{"accountId":"00000000-0000-4000-8000-000000000002","sessionKey":"00000000-0000-4000-8000-000000000008","mediaId":"00000000-0000-4000-8000-000000000009","origin":{"kind":"Lectern","itemId":"00000000-0000-4000-8000-000000000011"},"clientMutationId":"00000000-0000-4000-8000-000000000029","terminalListening":{"positionMs":120000,"durationMs":{"kind":"Present","value":120000},"episodePlaybackRate":{"kind":"Present","value":1.5},"expectedWriteRevision":4,"expectedResetEpoch":1},"expectedConsumptionOverrideRevision":{"kind":"Present","value":4}}}},
+    {"kind":"Accepted","requestId":"00000000-0000-4000-8000-000000000032","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256"}
+  ],
+  "rejections": [
+    {"kind":"Rejected","requestId":"00000000-0000-4000-8000-000000000033","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","code":"InvalidRequest"},
+    {"kind":"Rejected","requestId":"00000000-0000-4000-8000-000000000034","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","code":"AccountMismatch"},
+    {"kind":"Rejected","requestId":"00000000-0000-4000-8000-000000000035","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","code":"StaleSession"},
+    {"kind":"Rejected","requestId":"00000000-0000-4000-8000-000000000036","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","code":"NaturalEndPending"},
+    {"kind":"Rejected","requestId":"00000000-0000-4000-8000-000000000037","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","code":"PlayerUnavailable"},
+    {"kind":"Rejected","requestId":"00000000-0000-4000-8000-000000000038","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","code":"ProtocolMismatch"}
+  ],
+  "events": [
+    {"kind":"SnapshotChanged","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","snapshot":{"kind":"Absent","deviceDefaultPauseShorteningMode":"Off","pauseShorteningSavedOnDeviceMs":0,"activitySync":{"capture":{"kind":"Idle"},"sync":{"kind":"Synced"},"acceptedRevision":0}}},
+    {"kind":"ControllerReconnected","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","snapshot":{"kind":"Absent","deviceDefaultPauseShorteningMode":"Natural","pauseShorteningSavedOnDeviceMs":42,"activitySync":{"capture":{"kind":"Paused"},"sync":{"kind":"Synced"},"acceptedRevision":9}},"pendingNaturalEnd":{"kind":"Present","value":{"accountId":"00000000-0000-4000-8000-000000000002","sessionKey":"00000000-0000-4000-8000-000000000008","mediaId":"00000000-0000-4000-8000-000000000009","origin":{"kind":"Lectern","itemId":"00000000-0000-4000-8000-000000000011"},"clientMutationId":"00000000-0000-4000-8000-000000000029","terminalListening":{"positionMs":120000,"durationMs":{"kind":"Present","value":120000},"episodePlaybackRate":{"kind":"Present","value":1.5},"expectedWriteRevision":4,"expectedResetEpoch":1},"expectedConsumptionOverrideRevision":{"kind":"Present","value":4}}}},
+    {"kind":"NaturalEndPending","protocolVersion":2,"protocolContractSha256":"$PROTOCOL_CONTRACT_SHA256","receipt":{"accountId":"00000000-0000-4000-8000-000000000002","sessionKey":"00000000-0000-4000-8000-000000000008","mediaId":"00000000-0000-4000-8000-000000000009","origin":{"kind":"Direct"},"clientMutationId":"00000000-0000-4000-8000-000000000029","terminalListening":{"positionMs":120000,"durationMs":{"kind":"Present","value":120000},"episodePlaybackRate":{"kind":"Present","value":1.5},"expectedWriteRevision":4,"expectedResetEpoch":1},"expectedConsumptionOverrideRevision":{"kind":"Present","value":4}}}
+  ],
+  "nestedVariants": {
+    "activityCapture": [{"kind":"Recording"},{"kind":"Idle"},{"kind":"Paused"},{"kind":"Blocked","reason":"StorageUnavailable"},{"kind":"Blocked","reason":"CapacityReached"}],
+    "activitySync": [{"kind":"Synced"},{"kind":"Pending","count":1,"oldestAt":"2026-08-10T00:00:00Z"},{"kind":"Failed","count":1}],
+    "origins": [{"kind":"Direct"},{"kind":"Lectern","itemId":"00000000-0000-4000-8000-000000000011"}],
+    "persistence": [{"kind":"Ready"},{"kind":"Suspended","reason":"Network","message":"Network unavailable"},{"kind":"Suspended","reason":"AuthExpired","message":"Authentication expired"}],
+    "playbackRateSources": ["Episode", "Podcast", "Product"],
+    "playbackPhases": ["Buffering", "Playing", "Paused", "Ended"],
+    "pauseShorteningModes": ["Off", "Natural"],
+    "pauseShorteningProvenance": ["Session", "Podcast", "Device"],
+    "presence": [{"kind":"Absent"},{"kind":"Present","value":1}]
+  }
+}

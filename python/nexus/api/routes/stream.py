@@ -1,9 +1,10 @@
 """SSE replay/tail routes for durable runs and media processing status.
 
-All five browser-callable streams live under ``/stream/`` (auth via stream-token
+All six browser-callable streams live under ``/stream/`` (auth via stream-token
 bearer; see ``stream_paths.is_stream_path``). Three are append-cursor durable-run
 streams (chat run, oracle reading, Dossier build) that share one generic factory;
-media processing and Podcast refresh runs use snapshot/diff streams.
+media processing, Podcast refresh runs, and Podcast subscription lifecycles use
+snapshot/diff streams.
 
 Push-driven: an AFTER trigger ``pg_notify``s the per-entity channel on each new
 event/state change; the tail uses the shared stream LISTEN resource and re-reads
@@ -23,13 +24,13 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from nexus.api.deps import get_stream_viewer
+from nexus.api.deps import get_stream_viewer, require_tool_projection_revision
 from nexus.api.routes._sse import (
     open_sse_listener,
     tail_cursor_stream,
     tail_snapshot_stream,
 )
-from nexus.db.session import get_session_factory
+from nexus.db.session import get_repeatable_read_db, get_session_factory
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.schemas.execution import (
@@ -45,6 +46,7 @@ from nexus.services.artifacts.handles import unseal_artifact_build
 from nexus.services.chat_run_execution import chat_run_execution_phase
 from nexus.services.durable_step_journal import DurableExecutionPhase
 from nexus.services.podcasts import refresh as podcast_refresh_service
+from nexus.services.podcasts import subscriptions as podcast_subscription_service
 from nexus.services.podcasts.handles import (
     PodcastRefreshRunHandle,
     unseal_podcast_refresh_run,
@@ -120,6 +122,7 @@ async def make_cursor_stream_response(
 
     def read_after(after: int) -> tuple[Sequence[Any], bool]:
         with get_session_factory()() as db:
+            get_repeatable_read_db(db)
             kind.assert_viewer(db, viewer_id, entity_id)
             return kind.read_after(db, viewer_id, entity_id, after)
 
@@ -127,6 +130,7 @@ async def make_cursor_stream_response(
         if kind.read_advisory is None:
             return None
         with get_session_factory()() as db:
+            get_repeatable_read_db(db)
             kind.assert_viewer(db, viewer_id, entity_id)
             phase = kind.read_advisory(db, viewer_id, entity_id)
             if phase is None:
@@ -149,7 +153,10 @@ async def make_cursor_stream_response(
     )
 
 
-@router.get("/stream/chat-runs/{run_id}/events")
+@router.get(
+    "/stream/chat-runs/{run_id}/events",
+    dependencies=[Depends(require_tool_projection_revision)],
+)
 async def stream_chat_run_events(
     request: Request,
     run_id: UUID,
@@ -267,6 +274,49 @@ async def stream_podcast_refresh_run_events(
         podcast_refresh_service.PODCAST_REFRESH_NOTIFY_CHANNEL,
         str(run_id),
     )
+    return StreamingResponse(
+        tail_snapshot_stream(
+            request=request,
+            listener=listener,
+            read_snapshot=read_snapshot,
+        ),
+        media_type="text/event-stream; charset=utf-8",
+        headers=_SSE_HEADERS,
+    )
+
+
+@router.get("/stream/podcast-subscriptions/{podcast_id}/events")
+async def stream_podcast_subscription_events(
+    request: Request,
+    podcast_id: UUID,
+    viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
+) -> StreamingResponse:
+    """Push one viewer-owned subscription until sync and historical backfill settle."""
+
+    def read_lifecycle(
+        *, expected_subscription_id: UUID | None = None
+    ) -> podcast_subscription_service.PodcastSubscriptionLifecycle:
+        with get_session_factory()() as db:
+            return podcast_subscription_service.read_subscription_lifecycle(
+                db,
+                viewer_id=viewer_id,
+                podcast_id=podcast_id,
+                expected_subscription_id=expected_subscription_id,
+            )
+
+    # Ownership is asserted before opening LISTEN and again for each new state
+    # read below. A deleted or transferred subscription therefore ends silently
+    # rather than leaking its final state through a pre-existing stream.
+    lifecycle = await run_in_threadpool(read_lifecycle)
+    listener = await open_sse_listener(
+        podcast_subscription_service.PODCAST_SUBSCRIPTION_NOTIFY_CHANNEL,
+        str(lifecycle.subscription_id),
+    )
+
+    def read_snapshot() -> tuple[dict[str, Any], bool]:
+        current = read_lifecycle(expected_subscription_id=lifecycle.subscription_id)
+        return current.snapshot.model_dump(mode="json", by_alias=True), current.terminal
+
     return StreamingResponse(
         tail_snapshot_stream(
             request=request,

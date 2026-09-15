@@ -24,6 +24,8 @@ import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 const AVAILABLE = { kind: "Available" } as const;
 const RESOURCE_ID = "11111111-1111-4111-8111-111111111111";
 const MEDIA_REF = assumeCanonicalResourceRef(`media:${RESOURCE_ID}`);
+const ATTEMPT_ID = "44444444-4444-4444-8444-444444444444";
+const JOB_ID = "55555555-5555-4555-8555-555555555555";
 
 const CAPABILITY_BY_ACTION_ID = {
   "ResourceAction.Open": { kind: "Open", availability: AVAILABLE },
@@ -142,8 +144,33 @@ const CAPABILITY_BY_ACTION_ID = {
     availability: AVAILABLE,
   },
   "ResourceOperation.Media.RetryProcessing": {
-    kind: "RetryProcessing",
+    kind: "Recovery",
     availability: AVAILABLE,
+    offer: {
+      kind: "RetrySource",
+      expectedAttemptId: ATTEMPT_ID,
+      input: "RefetchSource",
+    },
+  },
+  "ResourceOperation.Media.RepairSource": {
+    kind: "Recovery",
+    availability: AVAILABLE,
+    offer: {
+      kind: "RepairSource",
+      expectedAttemptId: ATTEMPT_ID,
+      expectedJobId: JOB_ID,
+      input: "StoredSource",
+    },
+  },
+  "ResourceOperation.Media.RepairSearch": {
+    kind: "Recovery",
+    availability: AVAILABLE,
+    offer: {
+      kind: "RepairSearch",
+      expectedRevision: 4,
+      expectedJobId: JOB_ID,
+      input: "PublishedContent",
+    },
   },
   "ResourceOperation.Media.RefreshSource": {
     kind: "RefreshSource",
@@ -198,6 +225,16 @@ const CAPABILITY_BY_ACTION_ID = {
     availability: AVAILABLE,
   },
 } as const satisfies Record<OracleResourceActionId, ResourceActionCapability>;
+
+const RECOVERY_ACTION_IDS: readonly OracleResourceActionId[] = [
+  "ResourceOperation.Media.RetryProcessing",
+  "ResourceOperation.Media.RepairSource",
+  "ResourceOperation.Media.RepairSearch",
+];
+
+function isRecoveryActionId(id: OracleResourceActionId): boolean {
+  return RECOVERY_ACTION_IDS.includes(id);
+}
 
 const ENVIRONMENT: ResourceActionEnvironment = {
   platform: "Web",
@@ -258,31 +295,39 @@ describe("resource action applicability product oracle", () => {
     "maps every reviewed %s capability to the exact final semantic plan",
     (scheme) => {
       const ref = assumeCanonicalResourceRef(`${scheme}:${RESOURCE_ID}`);
-      const snapshot: ResourceActionSnapshot = {
-        ref,
-        activation: {
-          resourceRef: ref,
-          kind: "route",
-          href: `/resources/${scheme}/${RESOURCE_ID}`,
-          unresolvedReason: null,
-        },
-        missing: false,
-        factsRevision: "oracle-applicability",
-        capabilities: ACTIONS_BY_SCHEME[scheme].map(
-          (id) => CAPABILITY_BY_ACTION_ID[id],
-        ),
-      };
+      const reviewed = ACTIONS_BY_SCHEME[scheme];
+      const offers = reviewed.filter((id) => isRecoveryActionId(id));
+      const shared = reviewed.filter((id) => !isRecoveryActionId(id));
 
-      const plan = resolveResourceActionPlan(
-        snapshot,
-        ENVIRONMENT,
-        new Set<ResourceActionId>(),
-      );
+      // Recovery offers are mutually exclusive for one obligation, so a
+      // snapshot carries at most one; each is reviewed in its own menu.
+      for (const offered of offers.length === 0 ? [null] : offers) {
+        const snapshot: ResourceActionSnapshot = {
+          ref,
+          activation: {
+            resourceRef: ref,
+            kind: "route",
+            href: `/resources/${scheme}/${RESOURCE_ID}`,
+            unresolvedReason: null,
+          },
+          missing: false,
+          factsRevision: "oracle-applicability",
+          capabilities: [...shared, ...(offered === null ? [] : [offered])].map(
+            (id) => CAPABILITY_BY_ACTION_ID[id],
+          ),
+        };
 
-      expect(
-        plan.map(({ id }) => id),
-        `${scheme} must preserve every structurally applicable reviewed action in catalog order`,
-      ).toEqual(ACTIONS_BY_SCHEME[scheme]);
+        const plan = resolveResourceActionPlan(
+          snapshot,
+          ENVIRONMENT,
+          new Set<ResourceActionId>(),
+        );
+
+        expect(
+          plan.map(({ id }) => id),
+          `${scheme} must preserve every structurally applicable reviewed action in catalog order`,
+        ).toEqual(reviewed.filter((id) => !isRecoveryActionId(id) || id === offered));
+      }
     },
   );
 

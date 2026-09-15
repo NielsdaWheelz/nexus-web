@@ -56,7 +56,7 @@ All breakdowns, sessions, streaks, and Year presentation derive from effective
 | Browser durability and health | `activityOutbox.ts` and `activityRuntime.ts` |
 | Android listening capture | `NativeConsumptionRecorder.kt` |
 | Android listening durability | `NativeActivityOutbox.kt` |
-| Presentation | authenticated Stats pane |
+| Presentation | authenticated Stats pane; shared manual continuation lifecycle in `apps/web/src/lib/api/useCursorPagination.ts` |
 
 ## Boundaries
 
@@ -74,6 +74,13 @@ the write transaction, and memoizes the result under
 `GET /consumption/stats` and `GET /consumption/sessions` are private,
 `no-store` factual reads. Session device summaries are required because every
 session is observed. Raw device IDs and span payloads never reach presentation.
+The Stats pane binds a session continuation to the exact committed Stats path
+and decoded URL state, never the still-pending requested view. The shared manual
+cursor owner atomically adopts first-page rows, cursor, loading, and expected
+request failure; it aborts and generation-rejects an older continuation when a
+new first page commits. A failed continuation preserves committed rows and
+offers Retry. Same-system decoder failures remain defects, and owned cursor
+absence remains `Presence<string>` until the pagination adapter unwraps it.
 
 The browser recorder has one tab-local owner. Reader, non-Android global-audio,
 and visible-video adapters publish observations to it; none persists, retries,

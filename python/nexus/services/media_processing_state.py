@@ -11,7 +11,15 @@ from uuid import UUID
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import FailureStage, Media, ProcessingStatus
+from nexus.db.models import FailureStage, Media, MediaKind, ProcessingStatus
+
+
+def is_metadata_enrichment_eligible(*, kind: str, processing_status: str) -> bool:
+    """Metadata research does not require an audio/video transcript."""
+    return processing_status == ProcessingStatus.ready_for_reading or (
+        processing_status == ProcessingStatus.pending
+        and kind in (MediaKind.video, MediaKind.podcast_episode)
+    )
 
 
 def mark_failed(
@@ -38,20 +46,6 @@ def begin_extraction(db: Session, media: Media) -> None:
 
     Flushes without committing: callers continue the surrounding ingest transaction.
     """
-    media.processing_status = ProcessingStatus.extracting
-    media.processing_attempts = (media.processing_attempts or 0) + 1
-    media.processing_started_at = func.now()
-    media.processing_completed_at = None
-    media.failure_stage = None
-    media.last_error_code = None
-    media.last_error_message = None
-    media.failed_at = None
-    media.updated_at = func.now()
-    db.flush()
-
-
-def reset_for_reingest(db: Session, media: Media) -> None:
-    """Clear failure metadata, bump attempts, and restart source extraction."""
     media.processing_status = ProcessingStatus.extracting
     media.processing_attempts = (media.processing_attempts or 0) + 1
     media.processing_started_at = func.now()
@@ -112,66 +106,6 @@ def mark_ready_for_reading_by_id(db: Session, *, media_id: UUID, now: datetime) 
         {
             "media_id": media_id,
             "processing_status": ProcessingStatus.ready_for_reading.value,
-            "now": now,
-        },
-    )
-
-
-def mark_extraction_started_by_id(db: Session, *, media_id: UUID, now: datetime) -> None:
-    """Expose active source extraction by id without changing attempt accounting."""
-    db.execute(
-        text(
-            """
-            UPDATE media
-            SET processing_status = :processing_status,
-                failure_stage = NULL,
-                last_error_code = NULL,
-                last_error_message = NULL,
-                processing_started_at = :now,
-                processing_completed_at = NULL,
-                failed_at = NULL,
-                updated_at = :now
-            WHERE id = :media_id
-            """
-        ),
-        {
-            "media_id": media_id,
-            "processing_status": ProcessingStatus.extracting.value,
-            "now": now,
-        },
-    )
-
-
-def mark_failed_by_id(
-    db: Session,
-    *,
-    media_id: UUID,
-    stage: str,
-    error_code: str,
-    error_message: str,
-    now: datetime,
-) -> None:
-    """Transition media to the terminal failed state by id; callers own commit."""
-    db.execute(
-        text(
-            """
-            UPDATE media
-            SET processing_status = :processing_status,
-                failure_stage = :failure_stage,
-                last_error_code = :error_code,
-                last_error_message = :error_message,
-                processing_completed_at = NULL,
-                failed_at = :now,
-                updated_at = :now
-            WHERE id = :media_id
-            """
-        ),
-        {
-            "media_id": media_id,
-            "processing_status": ProcessingStatus.failed.value,
-            "failure_stage": FailureStage(stage).value,
-            "error_code": error_code,
-            "error_message": error_message,
             "now": now,
         },
     )

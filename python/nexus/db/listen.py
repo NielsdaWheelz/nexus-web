@@ -1,9 +1,10 @@
 """Shared async Postgres LISTEN/NOTIFY resources for SSE delivery.
 
-The worker appends `chat_run_events` / `oracle_reading_events` rows or updates
-`media`; AFTER triggers `pg_notify` the row's id on a per-table channel. An
-SSE handler listens on that channel and re-reads the table when notified, so
-streaming is push-driven instead of polling.
+Workers append durable run events or update snapshot owners such as media,
+Podcast refresh runs, subscriptions, and backfills. AFTER triggers `pg_notify`
+only the entity identity on a per-owner channel. An SSE handler listens on that
+channel and re-reads the table when notified, so streaming is push-driven
+instead of polling.
 
 The LISTEN connection is a raw psycopg async connection, not a SQLAlchemy pool
 connection: it is long-lived and mostly idle, so it must not occupy a

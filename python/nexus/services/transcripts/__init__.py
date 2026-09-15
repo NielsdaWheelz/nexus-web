@@ -1,6 +1,5 @@
-"""Media-level transcript ownership (kind-agnostic).
+"""Media-level transcript ownership shared by every transcript-bearing kind.
 
-Owns current transcript writes and the media_transcript_states table for every
-media kind (podcast episodes and videos alike), so there is exactly one locked
-writer instead of one copy per ingest path.
+``current`` owns artifact publication, ``state`` owns transcript lifecycle
+persistence, and ``semantic`` owns semantic-index job admission.
 """

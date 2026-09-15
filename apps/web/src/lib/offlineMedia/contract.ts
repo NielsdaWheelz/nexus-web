@@ -1,6 +1,7 @@
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
   expectArray,
+  expectCanonicalRfcUuid as decodeCanonicalUuid,
   expectExactRecord,
   expectNonnegativeInteger,
   expectOneOf,
@@ -12,8 +13,6 @@ export const OFFLINE_DOWNLOAD_SPEC_DEADLINE_MS = 35_000;
 export const OFFLINE_MEDIA_TITLE_MAX_LENGTH = 512;
 export const OFFLINE_MEDIA_SOURCE_URL_MAX_LENGTH = 8_192;
 
-const CANONICAL_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const ISO_INSTANT_RE =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 
@@ -131,14 +130,6 @@ export type OfflineMediaEvent =
 export type OfflineMediaInbound =
   | { readonly kind: "Reply"; readonly reply: OfflineMediaReply }
   | { readonly kind: "Event"; readonly event: OfflineMediaEvent };
-
-function decodeCanonicalUuid(raw: unknown, name: string): string {
-  const value = expectString(raw, name);
-  if (!CANONICAL_UUID_RE.test(value)) {
-    throw new TypeError(`${name} must be a canonical lowercase UUID`);
-  }
-  return value;
-}
 
 function decodeNonemptyString(raw: unknown, name: string): string {
   const value = expectString(raw, name);

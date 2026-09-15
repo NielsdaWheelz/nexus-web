@@ -29,6 +29,7 @@ from nexus.errors import (
 )
 from nexus.logging import get_logger
 from nexus.schemas.contributors import ContributorCreditOut
+from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media import (
     FragmentOut,
     ListeningStateOut,
@@ -47,15 +48,28 @@ from nexus.schemas.presence import (
     Present,
     absent,
     presence_from_nullable,
+    present,
 )
-from nexus.services.capabilities import derive_capabilities, is_text_document_ready
+from nexus.schemas.publication_dates import PublicationDate
+from nexus.services.capabilities import (
+    SearchRecoveryAnswer,
+    SourceRecoveryAnswer,
+    derive_capabilities,
+    is_text_document_ready,
+)
 from nexus.services.consumption import service as consumption_service
+from nexus.services.content_indexing import SearchRecoveryFacts, search_recovery
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_media,
 )
 from nexus.services.document_embeds import (
     document_embed_summaries_for_media,
     list_document_embeds_for_fragments,
+)
+from nexus.services.media_source_ingest import (
+    SourceRecoveryFacts,
+    source_recovery,
+    source_repairable_sql,
 )
 from nexus.services.offline_download_source import (
     derive_offline_download_source,
@@ -75,31 +89,36 @@ from nexus.services.source_publication import load_source_progress
 
 logger = get_logger(__name__)
 
-_SOURCE_JOB_SUSPENDED_SQL = """EXISTS(
-    SELECT 1
-    FROM media_source_attempts suspended_attempt
-    JOIN background_jobs suspended_job
-      ON suspended_job.id = suspended_attempt.job_id
-     AND suspended_job.kind = 'ingest_media_source'
-     AND suspended_job.status = 'dead'
-     AND suspended_job.payload @> jsonb_build_object(
-         'media_id', m.id::text,
-         'attempt_id', suspended_attempt.id::text
-     )
-    WHERE suspended_attempt.media_id = m.id
-      AND suspended_attempt.id = (
-          SELECT latest.id
-          FROM media_source_attempts latest
-          WHERE latest.media_id = m.id
-          ORDER BY latest.attempt_no DESC, latest.created_at DESC, latest.id DESC
-          LIMIT 1
-      )
-)"""
 _DISPLAY_PROCESSING_STATUS_SQL = f"""CASE
-    WHEN {_SOURCE_JOB_SUSPENDED_SQL}
+    WHEN {source_repairable_sql("m")}
     THEN 'suspended'
     ELSE m.processing_status::text
 END"""
+_LATEST_SOURCE_ATTEMPT_SQL = """(
+    SELECT jsonb_build_object(
+        'id', latest.id,
+        'status', latest.status,
+        'error_code', latest.error_code,
+        'source_type', latest.source_type,
+        'job_id', latest.job_id
+    )
+    FROM media_source_attempts latest
+    WHERE latest.media_id = m.id
+    ORDER BY latest.attempt_no DESC, latest.created_at DESC, latest.id DESC
+    LIMIT 1
+)"""
+_DEAD_REINDEX_JOB_ID_SQL = """(
+    SELECT dead_job.id
+    FROM background_jobs dead_job
+    WHERE dead_job.kind = 'media_content_reindex_job'
+      AND dead_job.status = 'dead'
+      AND dead_job.payload @> jsonb_build_object(
+          'media_id', m.id::text,
+          'revision', mcis.revision
+      )
+    ORDER BY dead_job.id
+    LIMIT 1
+)"""
 _SOURCE_ATTEMPT_TYPES_SQL = """
     'generic_web_url',
     'x_author_thread',
@@ -129,17 +148,19 @@ _SOURCE_ATTEMPT_STORAGE_ERROR_CODES_SQL = """
 """
 
 
-def _source_attempt_available_sql(*, failed_only: bool) -> str:
-    status_predicate = "AND msa.status = 'failed'" if failed_only else ""
-    return f"""EXISTS(
+# A healthy source has no last_error_code. Collapse that SQL NULL to false so
+# file-backed attempts remain refreshable unless a storage error exists.
+_SOURCE_REFRESH_AVAILABLE_SQL = f"""EXISTS(
         SELECT 1
         FROM media_source_attempts msa
         WHERE msa.media_id = m.id
-          {status_predicate}
           AND msa.source_type IN ({_SOURCE_ATTEMPT_TYPES_SQL})
           AND NOT (
               msa.source_type IN ({_SOURCE_ATTEMPT_FILE_TYPES_SQL})
-              AND m.last_error_code IN ({_SOURCE_ATTEMPT_STORAGE_ERROR_CODES_SQL})
+              AND COALESCE(
+                  m.last_error_code IN ({_SOURCE_ATTEMPT_STORAGE_ERROR_CODES_SQL}),
+                  FALSE
+              )
           )
           AND msa.id = (
               SELECT latest.id
@@ -149,10 +170,6 @@ def _source_attempt_available_sql(*, failed_only: bool) -> str:
               LIMIT 1
           )
     )"""
-
-
-_SOURCE_RETRY_AVAILABLE_SQL = _source_attempt_available_sql(failed_only=True)
-_SOURCE_REFRESH_AVAILABLE_SQL = _source_attempt_available_sql(failed_only=False)
 _CAN_DELETE_SQL = f"""(
     {non_system_media_ref_exists_sql("m.id")}
     OR {media_grant_path_exists_sql("m.id")}
@@ -164,8 +181,11 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "m.title",
     "m.canonical_source_url",
     "m.processing_status AS persisted_processing_status",
-    f"{_SOURCE_JOB_SUSPENDED_SQL} AS source_job_suspended",
     f"{_DISPLAY_PROCESSING_STATUS_SQL} AS processing_status",
+    f"{_LATEST_SOURCE_ATTEMPT_SQL} AS latest_source_attempt",
+    f"{source_repairable_sql('m')} AS source_repairable",
+    "mcis.revision AS retrieval_revision",
+    f"{_DEAD_REINDEX_JOB_ID_SQL} AS dead_reindex_job_id",
     "m.failure_stage",
     "m.last_error_code",
     "m.external_playback_url",
@@ -175,10 +195,9 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "m.updated_at",
     "EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file",
     "m.created_by_user_id = :viewer_id AS is_creator",
-    "m.requested_url IS NOT NULL AS has_requested_url",
-    f"{_SOURCE_RETRY_AVAILABLE_SQL} AS source_retry_available",
     f"{_SOURCE_REFRESH_AVAILABLE_SQL} AS source_refresh_available",
-    "m.published_date",
+    "m.original_published_date",
+    "m.edition_published_date",
     "m.publisher",
     "m.language",
     "m.description",
@@ -189,20 +208,7 @@ _MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
     "mts.transcript_state",
     "mts.transcript_coverage",
     "mts.transcript_origin",
-    """CASE
-        WHEN EXISTS(
-            SELECT 1
-            FROM background_jobs suspended_job
-            WHERE suspended_job.kind = 'media_content_reindex_job'
-              AND suspended_job.status = 'dead'
-              AND suspended_job.payload @> jsonb_build_object(
-                  'media_id', m.id::text,
-                  'revision', mcis.revision
-              )
-        )
-        THEN 'suspended'
-        ELSE COALESCE(mcis.status, 'pending')
-    END AS retrieval_status""",
+    "COALESCE(mcis.status, 'pending') AS retrieval_status",
     "mcis.status_reason AS retrieval_status_reason",
     f"{_CAN_DELETE_SQL} AS can_delete",
 )
@@ -223,15 +229,17 @@ _COLLECTION_MEDIA_SELECT_COLUMNS: tuple[str, ...] = (
     "m.canonical_source_url",
     "m.external_playback_url",
     "m.processing_status AS persisted_processing_status",
-    f"{_SOURCE_JOB_SUSPENDED_SQL} AS source_job_suspended",
     f"{_DISPLAY_PROCESSING_STATUS_SQL} AS processing_status",
+    f"{_LATEST_SOURCE_ATTEMPT_SQL} AS latest_source_attempt",
+    f"{source_repairable_sql('m')} AS source_repairable",
+    "mcis.revision AS retrieval_revision",
+    f"{_DEAD_REINDEX_JOB_ID_SQL} AS dead_reindex_job_id",
     "m.last_error_code",
     "m.created_at",
-    "m.published_date",
+    "m.original_published_date",
     "m.authors_manually_managed",
     "EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file",
     "m.created_by_user_id = :viewer_id AS is_creator",
-    f"{_SOURCE_RETRY_AVAILABLE_SQL} AS source_retry_available",
     f"{_SOURCE_REFRESH_AVAILABLE_SQL} AS source_refresh_available",
     "mts.transcript_state",
     "mts.transcript_coverage",
@@ -253,6 +261,10 @@ class CompactMediaTarget:
     href: str
 
 
+type MediaRecoveryOffer = RetrySourceOffer | RepairSourceOffer | RepairSearchOffer
+"""The offers a media subject can carry; upload recovery belongs to sessions."""
+
+
 @dataclass(frozen=True, slots=True)
 class CollectionMediaCapabilities:
     """Only media actions consumed by Library and Podcast collection rows."""
@@ -263,7 +275,6 @@ class CollectionMediaCapabilities:
     can_retry_metadata: bool
     can_edit_authors: bool
     can_delete: bool
-    retry_applicable: bool
     refresh_source_applicable: bool
     retry_metadata_applicable: bool
     edit_authors_applicable: bool
@@ -284,13 +295,17 @@ class CollectionMedia:
     listening_state: ListeningStateOut | None
     contributors: list[ContributorCreditOut]
     author_mode: Literal["automatic", "manual"]
-    published_date: str | None
+    original_published_date: Presence[PublicationDate]
     read_state: MediaReadState
     progress_fraction: float | None
     progress_resettable: bool
     audio_playable: bool
     has_original_file: bool
     capabilities: CollectionMediaCapabilities
+    recovery: Presence[MediaRecoveryOffer]
+    """The offer the viewer's own authority yields."""
+    applicable_recovery: Presence[MediaRecoveryOffer]
+    """The offer a creator or admin would be given: discoverable, permission-blocked."""
     created_at: datetime
 
 
@@ -298,7 +313,7 @@ def media_candidate_rows_sql() -> str:
     """Policy-neutral media candidate facts.
 
     Columns: ``media_id``, ``media_kind``, canonical Nexus ``created_at``, and
-    raw partial-date ``published_date``. Visibility, teardown, destination
+    raw partial-date ``original_published_date``. Visibility, teardown, destination
     eligibility, and exact-date interpretation belong to the composing query.
     """
     return """
@@ -306,7 +321,7 @@ def media_candidate_rows_sql() -> str:
             m.id AS media_id,
             m.kind AS media_kind,
             m.created_at,
-            m.published_date
+            m.original_published_date
         FROM media m
     """
 
@@ -459,6 +474,8 @@ def list_collection_media_for_viewer_by_ids(
                   ON vm.media_id = m.id
                 LEFT JOIN media_transcript_states mts
                   ON mts.media_id = m.id
+                LEFT JOIN content_index_states mcis
+                  ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
                 {_media_listening_state_join_sql(include_listening_state=True)}
                 WHERE m.id = ANY(:media_ids)
                 """
@@ -510,6 +527,10 @@ def list_collection_media_for_viewer_by_ids(
             if row["transcript_coverage"] is not None
             else None
         )
+        viewer_source, viewer_search = _row_recovery(
+            row, is_creator=bool(row["is_creator"]), is_admin=is_admin
+        )
+        applicable_source, applicable_search = _row_recovery(row, is_creator=True, is_admin=True)
         derived_capabilities = derive_capabilities(
             kind=kind_value,
             processing_status=_status_to_str(row["persisted_processing_status"]),
@@ -524,9 +545,9 @@ def list_collection_media_for_viewer_by_ids(
             can_delete=bool(row["can_delete"]),
             is_creator=bool(row["is_creator"]),
             is_admin=is_admin,
-            source_retry_available=bool(row["source_retry_available"]),
             source_refresh_available=bool(row["source_refresh_available"]),
-            source_suspended=bool(row["source_job_suspended"]),
+            source_recovery=viewer_source,
+            search_recovery=viewer_search,
         )
         applicable_capabilities = derive_capabilities(
             kind=kind_value,
@@ -540,9 +561,9 @@ def list_collection_media_for_viewer_by_ids(
             can_delete=bool(row["can_delete"]),
             is_creator=True,
             is_admin=True,
-            source_retry_available=bool(row["source_retry_available"]),
             source_refresh_available=bool(row["source_refresh_available"]),
-            source_suspended=bool(row["source_job_suspended"]),
+            source_recovery=applicable_source,
+            search_recovery=applicable_search,
         )
         playback_source = (
             derive_playback_source(
@@ -576,7 +597,7 @@ def list_collection_media_for_viewer_by_ids(
                 listening_state=_media_listening_state_from_row(row),
                 contributors=contributors_by_media.get(media_id, []),
                 author_mode="manual" if bool(row["authors_manually_managed"]) else "automatic",
-                published_date=cast(str | None, row["published_date"]),
+                original_published_date=presence_from_nullable(row["original_published_date"]),
                 read_state=read_state.state,
                 progress_fraction=read_state.progress_fraction,
                 progress_resettable=read_state.progress_resettable,
@@ -593,11 +614,12 @@ def list_collection_media_for_viewer_by_ids(
                     can_retry_metadata=derived_capabilities.can_retry_metadata,
                     can_edit_authors=derived_capabilities.can_edit_authors,
                     can_delete=derived_capabilities.can_delete,
-                    retry_applicable=applicable_capabilities.can_retry,
                     refresh_source_applicable=applicable_capabilities.can_refresh_source,
                     retry_metadata_applicable=applicable_capabilities.can_retry_metadata,
                     edit_authors_applicable=applicable_capabilities.can_edit_authors,
                 ),
+                recovery=_recovery_offer(viewer_source, viewer_search),
+                applicable_recovery=_recovery_offer(applicable_source, applicable_search),
                 created_at=cast(datetime, row["created_at"]),
             )
         )
@@ -808,6 +830,54 @@ def _media_listening_state_from_row(
     )
 
 
+def _row_recovery(
+    row: RowMapping, *, is_creator: bool, is_admin: bool
+) -> tuple[SourceRecoveryAnswer, SearchRecoveryAnswer]:
+    """Evaluate both owner policies for one projected media row."""
+    latest = row["latest_source_attempt"]
+    source: SourceRecoveryAnswer = None
+    if latest is not None:
+        source = source_recovery(
+            SourceRecoveryFacts(
+                attempt_id=UUID(str(latest["id"])),
+                attempt_status=str(latest["status"]),
+                error_code=latest["error_code"],
+                source_type=str(latest["source_type"]),
+                processing_status=_status_to_str(row["persisted_processing_status"]),
+                job_id=None if latest["job_id"] is None else UUID(str(latest["job_id"])),
+                repairable=bool(row["source_repairable"]),
+                is_creator=is_creator,
+                is_admin=is_admin,
+            )
+        )
+    search: SearchRecoveryAnswer = None
+    if row["retrieval_revision"] is not None:
+        search = search_recovery(
+            SearchRecoveryFacts(
+                revision=int(row["retrieval_revision"]),
+                dead_job_id=(
+                    None
+                    if row["dead_reindex_job_id"] is None
+                    else UUID(str(row["dead_reindex_job_id"]))
+                ),
+                is_creator=is_creator,
+                is_admin=is_admin,
+            )
+        )
+    return source, search
+
+
+def _recovery_offer(
+    source: SourceRecoveryAnswer, search: SearchRecoveryAnswer
+) -> Presence[MediaRecoveryOffer]:
+    """The one offer a media subject carries: source recovery first, then search."""
+    if isinstance(source, RetrySourceOffer | RepairSourceOffer):
+        return present(source)
+    if isinstance(search, RepairSearchOffer):
+        return present(search)
+    return absent()
+
+
 def _media_out_from_row(
     *,
     row: RowMapping,
@@ -819,7 +889,12 @@ def _media_out_from_row(
 ) -> MediaOut:
     processing_status = _media_processing_status(row["processing_status"])
     persisted_processing_status = _status_to_str(row["persisted_processing_status"])
-    source_job_suspended = bool(row["source_job_suspended"])
+    source_recovery_answer, search_recovery_answer = _row_recovery(
+        row, is_creator=bool(row.get("is_creator")), is_admin=is_admin
+    )
+    retrieval_status = (
+        "suspended" if row["dead_reindex_job_id"] is not None else row["retrieval_status"]
+    )
     capabilities = derive_capabilities(
         kind=row["kind"],
         processing_status=persisted_processing_status,
@@ -829,19 +904,13 @@ def _media_out_from_row(
         pdf_quote_text_ready=pdf_quote_ready,
         transcript_state=row["transcript_state"],
         transcript_coverage=row["transcript_coverage"],
-        retrieval_status=row["retrieval_status"],
+        retrieval_status=retrieval_status,
         can_delete=bool(row.get("can_delete")),
         is_creator=bool(row.get("is_creator")),
         is_admin=is_admin,
-        requested_url_exists=bool(row.get("has_requested_url"))
-        and not (
-            row["kind"] == MediaKind.web_article.value and row.get("provider") == "browser_capture"
-        ),
-        source_retry_available=bool(row.get("source_retry_available")),
         source_refresh_available=bool(row.get("source_refresh_available")),
-        source_suspended=source_job_suspended,
-        source_repair_available=source_job_suspended,
-        search_repair_available=row["retrieval_status"] == "suspended",
+        source_recovery=source_recovery_answer,
+        search_recovery=search_recovery_answer,
     )
     playback_source = derive_playback_source(
         kind=row["kind"],
@@ -860,7 +929,7 @@ def _media_out_from_row(
         transcript_state=row["transcript_state"],
         transcript_coverage=row["transcript_coverage"],
         transcript_origin=presence_from_nullable(row["transcript_origin"]),
-        retrieval_status=row["retrieval_status"],
+        retrieval_status=retrieval_status,
         retrieval_status_reason=row["retrieval_status_reason"],
         failure_stage=row["failure_stage"],
         last_error_code=row["last_error_code"],
@@ -870,7 +939,8 @@ def _media_out_from_row(
         capabilities=capabilities,
         contributors=contributors,
         author_mode="manual" if row["authors_manually_managed"] else "automatic",
-        published_date=row["published_date"],
+        original_published_date=presence_from_nullable(row["original_published_date"]),
+        edition_published_date=presence_from_nullable(row["edition_published_date"]),
         publisher=row["publisher"],
         language=row["language"],
         description=row["description"],
@@ -892,7 +962,13 @@ def _media_out_from_row(
 def _source_progress_presence(
     progress: PublishedSourceProgress | None,
 ) -> Presence[SourceProgress]:
-    """Construct progress in the public field's declared parametrization."""
+    """The in-flight source progress of one media, in the field's own parametrization.
+
+    `present()` stamps the concrete variant (`Present[SourceStageProgress]`), and a
+    value in that shape serializes with a Pydantic field mismatch unless the model
+    declaring the field revalidates it. Building the declared `Present[SourceProgress]`
+    removes that dependence.
+    """
     if progress is None:
         return absent()
     if isinstance(progress, PublishedSourceCountedProgress):

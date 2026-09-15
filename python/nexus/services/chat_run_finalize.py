@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, Message
@@ -15,11 +15,8 @@ from nexus.schemas.conversation import (
 )
 from nexus.schemas.presence import presence_from_nullable
 from nexus.services import run_kit
-from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES
+from nexus.services.chat_run_event_store import TERMINAL_RUN_STATUSES, lock_chat_run_for_update
 from nexus.services.chat_run_message_blocks import message_document
-
-MAX_ASSISTANT_CONTENT_LENGTH = 50000
-TRUNCATION_NOTICE = "\n\n[Response truncated due to length]"
 
 
 def finalize_cancelled(
@@ -58,7 +55,6 @@ def finalize_run(
     run_status: str,
     done_status: str,
     error_code: str | None,
-    error_origin: str | None = None,
     support_id: str | None = None,
     publication_warning_code: Literal["CitationsUnavailable"] | None = None,
     error_detail: str | None = None,
@@ -69,13 +65,11 @@ def finalize_run(
 ) -> None:
     """Finalize a run's terminal status.
 
-    ``error_code``/``error_origin`` are the closed §10 codes chat_failure.py
-    projects from (or ``None`` for a defect — no card, generic status +
+    ``error_code`` is the closed §10 code chat_failure.py projects from
+    (or ``None`` for a defect — no card, generic status +
     support_id). Written exactly once here, the sole terminal fold.
     """
-    run = (
-        db.execute(select(ChatRun).where(ChatRun.id == run_id).with_for_update()).scalars().first()
-    )
+    run = lock_chat_run_for_update(db, run_id)
     if run is None or run.status in TERMINAL_RUN_STATUSES:
         if commit:
             db.commit()
@@ -102,14 +96,11 @@ def finalize_run(
     assistant_message = db.get(Message, run.assistant_message_id)
     if assistant_message is not None:
         content = assistant_content
-        if assistant_status == "complete" and len(content) > MAX_ASSISTANT_CONTENT_LENGTH:
-            content = content[:MAX_ASSISTANT_CONTENT_LENGTH] + TRUNCATION_NOTICE
         assistant_message.content = content
         assistant_message.status = assistant_status
         assistant_message.updated_at = func.now()
         assistant_message.message_document = message_document("assistant", content)
 
-    run.error_origin = error_origin
     run.support_id = support_id
     run.publication_warning_code = publication_warning_code
 

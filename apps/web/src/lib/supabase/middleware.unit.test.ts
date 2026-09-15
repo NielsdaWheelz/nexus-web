@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEVICE_COOKIE_NAME } from "@/lib/auth/deviceCookie";
 import { updateSession } from "./middleware";
 
@@ -21,7 +21,12 @@ function request(
 }
 
 describe("authentication middleware page boundary", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   beforeEach(() => {
+    vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://fixture.supabase.co";
   });
 
@@ -123,6 +128,23 @@ describe("authentication middleware page boundary", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("location")).toBeNull();
   });
+
+  it.each([
+    "/robots.txt",
+    "/manifest.webmanifest",
+    "/opengraph-image",
+    "/twitter-image",
+    "/apple-icon",
+  ])(
+    "passes anonymous metadata request %s without redirecting or setting cookies",
+    (pathname) => {
+      const response = updateSession(request(pathname), "nonce");
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("location")).toBeNull();
+      expect(response.headers.get("set-cookie")).toBeNull();
+    },
+  );
 
   it("sends a missing session directly to login without setting cookies", () => {
     const response = updateSession(request("/browse"), "nonce");

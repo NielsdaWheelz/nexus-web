@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   cookieGetAll: vi.fn(),
@@ -30,7 +30,12 @@ function sessionCookie(expiresAt: number): { name: string; value: string } {
 }
 
 describe("server FastAPI consumer session boundary", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   beforeEach(() => {
+    vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
     mocks.cookieGetAll.mockReset();
     mocks.fetch.mockReset();
     vi.stubGlobal("fetch", mocks.fetch);

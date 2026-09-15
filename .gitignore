@@ -86,6 +86,7 @@ next-env.d.ts
 # Android
 apps/android/.idea/
 apps/android/.gradle/
+apps/android/.kotlin/
 apps/android/**/build/
 apps/android/local.properties
 apps/android/**/*.apk

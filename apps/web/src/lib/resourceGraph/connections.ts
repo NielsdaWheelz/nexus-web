@@ -5,7 +5,10 @@ import {
   RESOURCE_SCHEMES,
   type ResourceScheme,
 } from "@/lib/resourceGraph/resourceRef";
-import type { ResourceActivation } from "@/lib/resources/activation";
+import {
+  decodeSnakeCaseResourceActivation,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
 import {
   decodeResourceActionSubject,
   type ResourceActionSubject,
@@ -232,7 +235,7 @@ function decodeActionEndpoint(
     throw new TypeError(`${name}.scheme/id must equal ${name}.ref`);
   }
   const missing = expectBoolean(value.missing, `${name}.missing`);
-  const activation = decodeConnectionActivation(
+  const activation = decodeSnakeCaseResourceActivation(
     value.activation,
     `${name}.activation`,
   );
@@ -264,33 +267,6 @@ function decodeActionEndpoint(
     missing,
     actionSubject,
   };
-}
-
-function decodeConnectionActivation(
-  raw: unknown,
-  name: string,
-): ResourceActivation {
-  const value = expectExactRecord(
-    raw,
-    ["resource_ref", "kind", "href", "unresolved_reason"],
-    name,
-  );
-  const ref = expectString(value.resource_ref, `${name}.resource_ref`);
-  const activation = {
-    resourceRef: ref,
-    kind: expectOneOf(
-      value.kind,
-      ["route", "external", "none"] as const,
-      `${name}.kind`,
-    ),
-    href: expectNullableString(value.href, `${name}.href`),
-    unresolvedReason: expectNullableString(
-      value.unresolved_reason,
-      `${name}.unresolved_reason`,
-    ),
-  };
-  decodeResourceActionSubject({ ref }, `${name}.subject`);
-  return activation;
 }
 
 function decodeConnectionReaderTarget(
@@ -325,7 +301,7 @@ function decodeConnectionCitation(
     ordinal: expectInteger(value.ordinal, `${name}.ordinal`),
     role: expectOneOf(value.role, EDGE_KINDS, `${name}.role`),
     snapshot: expectRecord(value.snapshot, `${name}.snapshot`),
-    activation: decodeConnectionActivation(
+    activation: decodeSnakeCaseResourceActivation(
       value.activation,
       `${name}.activation`,
     ),

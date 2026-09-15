@@ -446,6 +446,30 @@ POST /podcasts/subscriptions/{podcastId}/backfill/retry
 Idempotency-Key: <clientMutationId>
 ```
 
+Subscription lifecycle observation uses the existing direct, token-authenticated
+SSE plane:
+
+```http
+GET /stream/podcast-subscriptions/{podcastId}/events
+Authorization: Bearer <stream-token>
+
+event: state | done
+data: {
+  podcastId,
+  syncStatus: "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed",
+  backfill: {
+    id,
+    state: "Pending" | "Running" | "Complete" | "SourceLimited" | "Failed",
+    processedCount,
+    addedCount
+  }
+}
+```
+
+`done` is valid only when both status machines are terminal. The outward
+Podcast ID is not listener identity: the route resolves and rechecks the
+viewer-owned subscription UUID before LISTEN and on every snapshot read.
+
 - Episode Add and Subscribe re-resolve provider truth server-side; client
   metadata is never a write payload. Relationship removal resolves only
   canonical local identity and current authorization.
@@ -472,6 +496,12 @@ Idempotency-Key: <clientMutationId>
 - Subscribe returns canonical href, idempotency outcome, per-destination
   outcome, `Subscribed | AlreadySubscribed | DestinationsAdded`, collection
   revisions, and backfill state.
+- The canonical detail pane observes the active subscription epoch through the
+  owner-checked subscription-lifecycle snapshot stream. Changed committed live
+  sync or backfill snapshots feed a serialized latest-state detail/episode
+  revalidation drain; the stream is terminal only when both owners are terminal. This closes the
+  commit-before-worker race, including a feed episode that is globally reused
+  but newly filed for this viewer, without polling or a synthetic Refresh run.
 - Unsubscribe returns
   `Unsubscribed { removedPlacementCount, retainedSharedCount } |
   AlreadyUnsubscribed`.
@@ -1054,19 +1084,18 @@ or retain a compatibility decoder.
 
 ## 9. Migration And Deployment
 
-Use the next free consecutive Alembic revisions at implementation time. Do not
-edit history. The two DB revisions and maintenance command are one stopped-world
-cutover; no application version supports the intermediate schema.
+The historical 0201/0202 Alembic revisions remain immutable. They formed one
+stopped-world cutover; no application version supported the intermediate
+schema. Only the repository's current schema is supported now, so the
+revision-only maintenance program is no longer part of the codebase.
 
 Preflight reports exact active/inactive subscriptions, legacy placements,
 orphans, system/default destinations, duplicates, parent/child collisions,
 unprovable episode identities, transcript-origin ambiguity, and affected rows.
-`python -m nexus.ops.browse_cutover preflight` owns this report.
-It runs against the intact `0200` legacy schema before the prepare revision;
-`apply` is closed until the complete `0201` prepared schema is present.
-The same bounded command owns
-`apply --identity-map <path> --transcript-origin-map <path>` and `enqueue`; no
-unnamed one-off script participates.
+The stopped-world operator owned this report while 0200 was supported and ran
+against that intact schema before the prepare revision. Its apply phase was
+closed until the complete 0201 prepared schema was present. Those operational
+paths are no longer part of the supported codebase.
 
 Identity classification is exact:
 
@@ -1159,7 +1188,6 @@ silently no-op.
 - `python/nexus/services/contributor_observation_seam.py`
 - `python/nexus/services/podcasts/backfill.py`
 - `python/nexus/tasks/podcast_backfill_subscription.py`
-- `python/nexus/ops/browse_cutover.py`
 - `migrations/alembic/versions/<next>_browse_prepare.py`
 - `migrations/alembic/versions/<next+1>_browse_finalize.py`
 - `apps/web/src/app/(authenticated)/browse/BrowsePaneBody.tsx`

@@ -6,7 +6,7 @@ import HighlightNoteEditor, {
 } from "@/components/notes/HighlightNoteEditor";
 import FloatingActionSurface from "@/components/ui/FloatingActionSurface";
 import MobileSheet from "@/components/ui/MobileSheet";
-import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
+import type { HighlightLinkedNoteBlock } from "@/lib/highlights/highlightContract";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { useInitialFocus } from "@/lib/ui/useInitialFocus";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";

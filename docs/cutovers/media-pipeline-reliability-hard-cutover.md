@@ -279,7 +279,8 @@ media deletion
 
 | Concern | Sole owner |
 | --- | --- |
-| Accepted source and attempt state | `media_source_ingest.py` + `media_source_attempts` |
+| Accepted and active source-attempt state | `media_source_ingest.py` + `media_source_attempts` |
+| Terminal source-attempt and domain failure | `source_attempt_failures.py` |
 | Source publication fencing | source service + queue-owned exact-claim lock |
 | Same-source terminal policy | one predicate in `capabilities.py` |
 | Readable document state | media processing service + `media.processing_status` |
@@ -900,6 +901,15 @@ text because their current contracts do not carry detailed errors.
 
 Required behavior:
 
+> The reader-facing copy in this table is superseded by
+> [`imports-workspace-hard-cutover.md`](imports-workspace-hard-cutover.md): the
+> one copy owner is `apps/web/src/lib/status/imports.ts` (presented by
+> `apps/web/src/lib/media/mediaErrorMessage.ts`), a stopped source job reads
+> **Processing stopped before this import finished.** with the offered command
+> **Retry stopped processing**, and a stopped search index reads **Search
+> indexing stopped. You can still read this document.** with **Rebuild search
+> index**. No reader-facing state says repair is an operator job.
+
 | State | Presentation |
 | --- | --- |
 | retrieval pending/indexing | “Search and AI are still preparing.” Reader remains open. |
@@ -1145,6 +1155,21 @@ roll-forward. Do not restore inline indexing or the undifferentiated worker.
 Schema downgrade is reserved for a demonstrated schema defect and only while no
 new-code operation depends on it.
 
+Durable job payloads have no compatibility decoding after this cutover. The
+note-index and Synapse owners always persist their exact `reason`; the registry
+defects on an absent, non-string, empty, or padded carrier rather than supplying
+an older default. Optional request and scheduler identities accept only explicit
+absence or canonical text and never recover through string coercion or trimming.
+Scheduler-only Gutenberg sync, background-job prune, and auth-handoff purge
+require the scheduler-owned request identity, while Gutenberg also requires its
+scheduler identity; no task-level defaults reconstruct either field.
+Note reindex has one exact `{note_block_id, reason}` payload and receives the
+claimed job context from the registry. Extra request/task identities defect or
+do not exist; diagnostics use the actual queue job id.
+Worker-only ingest, stale-reconciliation, and transcript-semantic task surfaces
+have no direct-call defaults. The semantic task owns its production session
+factory rather than carrying an unused injection branch.
+
 ## Acceptance criteria
 
 ### Database and teardown
@@ -1174,6 +1199,9 @@ new-code operation depends on it.
 - a reclaimed source worker is forced stale before every tested artifact,
   supersession, modeled-failure, author-observation, and terminal publication;
   each transaction rolls back with no authoritative write;
+- unexpected contributor-identity, contributor-write, or database defects
+  during author observation propagate to queue-owned defect handling and leave
+  the source attempt running; they are never persisted as `E_INGEST_FAILED`;
 - object-store writes made before a lost claim remain unreferenced and converge
   through the existing reservation/cleanup owner;
 - forced embedding failure after EPUB/PDF/web/X extraction leaves readable

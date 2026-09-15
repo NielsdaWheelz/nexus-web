@@ -176,9 +176,11 @@ type ContextualActionMenuProps = Pick<
 
 It removes empty sections, defects on duplicate section/action IDs, adds one
 separator between non-empty sections, and appends the canonical resource model.
-It owns no labels, authorization, execution, or domain state. With zero local
-sections it delegates to the existing `ResourceActionMenu`; with no resource
-subject it delegates directly to `ActionMenu`.
+It owns no labels, authorization, execution, or domain state. It renders one
+persistent `ActionMenu` across local-command and optional-resource publication
+changes so an open menu, focus, and accessibility identity survive pane
+hydration. With no resource subject it performs no snapshot read; with no local
+sections it preserves the resource-only loading, error, and ready semantics.
 
 Extract the repeated mobile-menu pin lifecycle from `ResourceActionMenu`,
 `MobilePaneBar`, and `CollectionRow` into one owner-backed
@@ -292,6 +294,9 @@ batch actions, and editor toolbars are out of scope.
   open through existing workspace/Nexus owners; Sign Out remains danger-last.
 - Resource loading/error never blocks local commands and never triggers a
   menu-open network request beyond the existing mount prefetch/retry contract.
+- Publishing local commands or a resource subject does not close an open menu
+  or replace its focus/accessibility owner; the canonical suffix updates in
+  place.
 - No old field, trigger, control, style, assertion, or contradictory normative
   documentation survives.
 

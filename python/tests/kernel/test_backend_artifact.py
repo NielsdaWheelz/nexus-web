@@ -2,21 +2,26 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
 from nexus.release_artifact import (
+    AndroidPlayerProtocolIdentity,
     BackendArtifactDefect,
     CandidateImages,
     CandidateManifest,
     RuntimeIdentity,
+    is_exact_https_origin,
     load_candidate_manifest,
     load_runtime_identity,
     write_candidate_manifest,
     write_runtime_identity_value,
 )
+
+REPO_ROOT = Path(__file__).parents[3]
 
 SOURCE_SHA = "0123456789abcdef0123456789abcdef01234567"
 ORACLE_DIGEST = "sha256:" + "a" * 64
@@ -71,6 +76,66 @@ def test_runtime_identity_is_closed_canonical_and_duplicate_intolerant(tmp_path:
     )
     with pytest.raises(BackendArtifactDefect, match="duplicate"):
         load_runtime_identity(path)
+
+
+def test_android_player_protocol_identity_is_the_raw_corpus_digest_and_admits_only_exact_v2(
+    tmp_path: Path,
+) -> None:
+    corpus = REPO_ROOT / "testdata/android/player-protocol.json"
+    identity = AndroidPlayerProtocolIdentity.of_corpus(corpus)
+
+    assert identity == AndroidPlayerProtocolIdentity(
+        version=2,
+        contract_sha256=hashlib.sha256(corpus.read_bytes()).hexdigest(),
+    )
+    assert AndroidPlayerProtocolIdentity.from_json(identity.as_json()) == identity
+    reserialized = tmp_path / "player-protocol.json"
+    reserialized.write_text(
+        json.dumps(json.loads(corpus.read_text(encoding="utf-8")), indent=1),
+        encoding="utf-8",
+    )
+    assert AndroidPlayerProtocolIdentity.of_corpus(reserialized) != identity
+
+    for malformed in (
+        {"version": 1, "contract_sha256": "a" * 64},
+        {"version": 2.0, "contract_sha256": "a" * 64},
+        {"version": True, "contract_sha256": "a" * 64},
+        {"version": 2, "contract_sha256": "A" * 64},
+        {"version": 2, "contract_sha256": "a" * 63},
+        {"version": 2},
+        {"version": 2, "contract_sha256": "a" * 64, "extra": 1},
+        ["2", "a" * 64],
+    ):
+        with pytest.raises(BackendArtifactDefect):
+            AndroidPlayerProtocolIdentity.from_json(malformed)
+    with pytest.raises(BackendArtifactDefect):
+        AndroidPlayerProtocolIdentity.of_corpus(tmp_path / "absent.json")
+
+
+def test_release_api_origin_is_one_canonical_https_origin() -> None:
+    assert is_exact_https_origin("https://api.nielseriknandal.com")
+    assert is_exact_https_origin("https://api.example.test:8443")
+
+    for malformed in (
+        None,
+        "http://api.example.test",
+        "HTTPS://api.example.test",
+        "https://API.example.test",
+        "https://user@api.example.test",
+        "https://api_example.test",
+        "https://api.example.test/",
+        "https://api.example.test/path",
+        "https://api.example.test?",
+        "https://api.example.test#",
+        "https://api.example.test?#",
+        "https://api.example.test?channel=stable",
+        "https://api.example.test#latest",
+        "https://api.example.test:garbage",
+        "https://api.example.test:0",
+        "https://api.example%20",
+        "https://api.example.test\t",
+    ):
+        assert not is_exact_https_origin(malformed)
 
 
 def test_candidate_manifest_binds_matching_image_identities(tmp_path: Path) -> None:
@@ -170,6 +235,29 @@ def test_candidate_manifest_loader_reads_canonical_legacy_manifests(tmp_path: Pa
     )
 
     assert load_candidate_manifest(path) == _candidate()
+
+
+@pytest.mark.parametrize("schema_version", [True, False, 1.0, 2.0])
+def test_candidate_manifest_loader_rejects_noninteger_legacy_versions(
+    tmp_path: Path, schema_version: object
+) -> None:
+    path = tmp_path / "candidate-manifest.json"
+    legacy = {
+        **_candidate().as_json(),
+        "schema_version": schema_version,
+        "source_ci_run_id": 123,
+        "source_ci_run_attempt": 1,
+        "source_ci_workflow_id": 321,
+        "publisher_run_id": 456,
+        "publisher_run_attempt": 1,
+    }
+    path.write_text(
+        json.dumps(legacy, ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BackendArtifactDefect):
+        load_candidate_manifest(path)
 
 
 def test_candidate_manifest_loader_rejects_unknown_duplicate_and_noncanonical_json(

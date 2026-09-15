@@ -9,39 +9,62 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from uuid import UUID, uuid4
+from typing import Annotated, Literal
+from uuid import UUID
 
-from provider_runtime import (
-    GenerateIntent,
-    PromptBlock,
-    ProviderTarget,
-    ReasoningLevel,
-    Succeeded,
-    SystemMessage,
-    TextContent,
-    TextOutput,
-    UserMessage,
-)
-from sqlalchemy import text
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.models import DawnWrite
+from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
-from nexus.errors import ApiError
+from nexus.jobs.queue import (
+    JobExecutionContext,
+    JobRow,
+    RescheduleRequested,
+    get_job,
+    lock_job,
+    lock_running_job_claim,
+    replace_dead_job_payload,
+    requeue_dead_job,
+)
 from nexus.logging import get_logger
+from nexus.schemas.presence import Present
+from nexus.services import durable_step_journal as step_journal
+from nexus.services import generation_policy
 from nexus.services.artifacts.dossier_types import SubjectResource
 from nexus.services.artifacts.engine import read_head
-from nexus.services.llm_execution import ExecutionRuntime, GenerationRequest, execute_generation
-from nexus.services.llm_ledger import LlmCallOwner
-from nexus.services.llm_profiles import operation_profile
+from nexus.services.codex_generation_contract import (
+    GenerationTerminal,
+)
+from nexus.services.generation_intent import GenerationIntent, TextOutput
+from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
+from nexus.services.llm_execution import (
+    AcceptedGenerationFailure,
+    CompletedGeneration,
+    EncodedGenerationTerminal,
+    ExecutionRuntime,
+    GenerationDispatchAborted,
+    GenerationFailureCode,
+    GenerationUncertain,
+    GenerationUncertainResolution,
+    JobGenerationJournal,
+    admit_job_generation,
+    cancel_prepared_generation_without_dispatch_in_current_transaction,
+    codex_terminal_evidence,
+    execute_generation,
+    prove_uncertain_generation_not_dispatched_in_current_transaction,
+)
+from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.structured_synthesis import outcome_failure_facts
 
 logger = get_logger(__name__)
 
 DAWN_WRITE_OPERATION = "dawn_write"
-DAWN_WRITE_MAX_TOKENS = 300
+_DAWN_WRITE_WORKLIST_KEY = "dawn_write_worklist"
 
 _SYSTEM_PROMPT = """\
 You are the dawn writer for a reading system. You have access to one user's
@@ -91,6 +114,19 @@ class DawnWriteSignals:
     @property
     def is_empty(self) -> bool:
         return not self.highlights and not self.synapse_edges and not self.stale_libraries
+
+
+class _DawnWriteReconciliationWorkItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    user_id: UUID
+    time_zone: str = Field(min_length=1)
+    local_date: date
+
+
+_DAWN_WRITE_RECONCILIATION_WORKLIST: TypeAdapter[tuple[_DawnWriteReconciliationWorkItem, ...]] = (
+    TypeAdapter(tuple[_DawnWriteReconciliationWorkItem, ...])
+)
 
 
 def _tz_midnight_utc(local_date: date, tz_name: str) -> datetime:
@@ -226,21 +262,275 @@ def _render_signals(signals: DawnWriteSignals) -> str:
     return "\n\n".join(parts)
 
 
-def _build_intent(
-    *, target: ProviderTarget, reasoning: ReasoningLevel, user_content: str
-) -> GenerateIntent:
-    return GenerateIntent(
-        target=target,
-        messages=(
-            SystemMessage(blocks=(PromptBlock(text=_SYSTEM_PROMPT),)),
-            UserMessage(blocks=(PromptBlock(text=user_content),)),
-        ),
-        max_output_tokens=DAWN_WRITE_MAX_TOKENS,
-        reasoning=reasoning,
-        tools=(),
-        tool_choice="none",
+def reconcile_uncertain_dawn_write_generation(
+    db: Session,
+    *,
+    job_id: UUID,
+    user_id: UUID,
+    local_date: date,
+    resolution: GenerationUncertainResolution,
+) -> None:
+    """Return one frozen dawn-write work item to Prepared and requeue its job.
+
+    The sweep retains its frozen account/date worklist, but deliberately does
+    not retain the raw highlights, Synapse edges, and dossier facts rendered
+    into the prompt.  Those projections can change, so only an exact
+    prove-not-dispatched recovery is safe here.
+    """
+
+    if not isinstance(resolution, step_journal.ProveNotDispatched):
+        raise ValueError(
+            "dawn write generation attachment requires durable rendered signals, which are absent"
+        )
+    step_path = _dawn_write_step_path(user_id=user_id, local_date=local_date)
+    generation_id = step_journal.stable_generation_id(job_id, step_path)
+
+    def op() -> None:
+        owner = LlmCallOwner(kind="dawn_write", id=generation_id)
+        # Canonical order: owner advisory lock, materialized daily write, job.
+        lock_generation_owner_in_current_transaction(db, owner)
+        db.scalar(
+            select(DawnWrite.id)
+            .where(DawnWrite.user_id == user_id, DawnWrite.local_date == local_date)
+            .with_for_update()
+        )
+        job = lock_job(db, job_id)
+        if job is None or job.kind != "dawn_write_job" or job.status != "dead":
+            raise ValueError("dawn write has no matching suspended generation job")
+        try:
+            worklist = _DAWN_WRITE_RECONCILIATION_WORKLIST.validate_python(
+                job.payload[_DAWN_WRITE_WORKLIST_KEY]
+            )
+        except (KeyError, ValueError, TypeError) as exc:
+            raise AssertionError("suspended dawn write job has no frozen worklist") from exc
+        matches = [
+            item for item in worklist if item.user_id == user_id and item.local_date == local_date
+        ]
+        if len(matches) != 1:
+            raise ValueError("dawn write work item is not uniquely frozen in the suspended job")
+        state = step_journal.read_step_states(job).get(step_path)
+        if state is None or state.dispatch_phase is not step_journal.Uncertain:
+            raise ValueError("dawn write generation is not uncertain")
+        if state.generation_id != generation_id:
+            raise AssertionError("dawn write reconciliation generation identity changed")
+        if not isinstance(state.request_fingerprint, Present):
+            raise AssertionError("dawn write reconciliation has no request fingerprint")
+        next_state = prove_uncertain_generation_not_dispatched_in_current_transaction(
+            db,
+            owner=owner,
+            state=state,
+        )
+        payload = step_journal.payload_with_step_state(
+            job.payload,
+            step_path=step_path,
+            state=next_state,
+        )
+        if not replace_dead_job_payload(db, job_id=job.id, payload=payload):
+            raise AssertionError("suspended dawn write job changed while locked")
+        if not requeue_dead_job(db, job_id=job.id):
+            raise AssertionError("suspended dawn write job could not be requeued")
+        db.commit()
+
+    retry_serializable(db, "reconcile_uncertain_dawn_write_generation", op)
+
+
+class _CompletedDawnWriteSuccess(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: Literal["success"] = "success"
+    body_md: str
+
+
+class _CompletedDawnWriteFailure(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: Literal["failure"] = "failure"
+    error_code: str
+    error_detail: str | None = None
+
+
+type DawnWriteSkipReason = Literal[
+    "disabled",
+    "no_signals",
+    "llm_rejected",
+    "already_exists",
+    "signals_changed",
+    "pre_dispatch_aborted",
+]
+
+
+class _CompletedDawnWriteSkipped(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: Literal["skipped"] = "skipped"
+    reason: DawnWriteSkipReason
+
+
+type _CompletedDawnWrite = Annotated[
+    _CompletedDawnWriteSuccess | _CompletedDawnWriteFailure | _CompletedDawnWriteSkipped,
+    Field(discriminator="outcome"),
+]
+_COMPLETED_DAWN_WRITE_ADAPTER: TypeAdapter[_CompletedDawnWrite] = TypeAdapter(_CompletedDawnWrite)
+
+
+def _dawn_write_step_path(*, user_id: UUID, local_date: date) -> str:
+    return f"generation/{user_id}/{local_date.isoformat()}"
+
+
+def _dawn_write_intent(*, user_content: str) -> GenerationIntent:
+    return GenerationIntent(
+        instructions=_SYSTEM_PROMPT,
+        input=user_content,
         output=TextOutput(),
     )
+
+
+def _encode_dawn_write_terminal(
+    terminal: GenerationTerminal,
+) -> EncodedGenerationTerminal:
+    accepted_failure: AcceptedGenerationFailure | None = None
+    if terminal.status == "succeeded":
+        body = terminal.final_text.strip()
+        if body:
+            completed: _CompletedDawnWrite = _CompletedDawnWriteSuccess(body_md=body)
+        else:
+            detail = "dawn write generation returned empty text"
+            completed = _CompletedDawnWriteFailure(
+                error_code="invalid_output",
+                error_detail=detail,
+            )
+            accepted_failure = AcceptedGenerationFailure(
+                code="invalid_output",
+                detail=detail,
+            )
+    else:
+        code, detail = outcome_failure_facts(terminal)
+        completed = _CompletedDawnWriteFailure(
+            error_code=code,
+            error_detail=detail,
+        )
+    return EncodedGenerationTerminal(
+        terminal_result=_COMPLETED_DAWN_WRITE_ADAPTER.dump_json(completed).decode("utf-8"),
+        accepted_failure=accepted_failure,
+    )
+
+
+def _encode_dawn_write_failure(
+    code: GenerationFailureCode,
+    detail: str,
+) -> str:
+    return _COMPLETED_DAWN_WRITE_ADAPTER.dump_json(
+        _CompletedDawnWriteFailure(error_code=code, error_detail=detail)
+    ).decode("utf-8")
+
+
+def _apply_completed_dawn_write(
+    db: Session,
+    *,
+    generation_id: UUID,
+    user_id: UUID,
+    local_date: date,
+    context: JobExecutionContext,
+    completed: _CompletedDawnWrite,
+) -> DawnWrite | None:
+    if isinstance(completed, _CompletedDawnWriteSkipped):
+        db.commit()
+        return None
+    if isinstance(completed, _CompletedDawnWriteFailure):
+        db.commit()
+        logger.warning(
+            "dawn_write_llm_failure",
+            user_id=str(user_id),
+            error_code=completed.error_code,
+        )
+        return None
+
+    def publish() -> DawnWrite | None:
+        if not lock_running_job_claim(db, context=context):
+            db.rollback()
+            return None
+        existing = db.scalar(
+            select(DawnWrite)
+            .where(
+                DawnWrite.user_id == user_id,
+                DawnWrite.local_date == local_date,
+            )
+            .with_for_update()
+        )
+        if existing is not None:
+            db.commit()
+            return existing
+        row = DawnWrite(
+            id=generation_id,
+            user_id=user_id,
+            local_date=local_date,
+            body_md=completed.body_md,
+        )
+        db.add(row)
+        db.commit()
+        logger.info(
+            "dawn_write_generated",
+            user_id=str(user_id),
+            local_date=str(local_date),
+            write_id=str(row.id),
+        )
+        return row
+
+    return retry_serializable(db, "dawn_write.publish", publish)
+
+
+def complete_prepared_dawn_write_without_dispatch(
+    db: Session,
+    *,
+    user_id: UUID,
+    local_date: date,
+    context: JobExecutionContext,
+    reason: DawnWriteSkipReason,
+) -> bool:
+    """Stage Dawn's exact no-dispatch memo; the caller owns the commit."""
+
+    step_path = _dawn_write_step_path(user_id=user_id, local_date=local_date)
+    generation_id = step_journal.stable_generation_id(context.job_id, step_path)
+    owner = LlmCallOwner(kind="dawn_write", id=generation_id)
+    lock_generation_owner_in_current_transaction(db, owner)
+    db.scalar(
+        select(DawnWrite.id)
+        .where(DawnWrite.user_id == user_id, DawnWrite.local_date == local_date)
+        .with_for_update()
+    )
+    if not lock_running_job_claim(db, context=context):
+        return False
+    job = get_job(db, context.job_id)
+    if job is None or job.kind != "dawn_write_job":
+        raise AssertionError("dawn write job disappeared at cancellation")
+    state = step_journal.read_step_states(job).get(step_path)
+    if state is None:
+        return False
+    if state.dispatch_phase is step_journal.Completed:
+        return False
+    if state.dispatch_phase is not step_journal.Prepared:
+        raise GenerationUncertain(
+            f"dawn write generation {generation_id} became uncertain before cancellation"
+        )
+    completed = _CompletedDawnWriteSkipped(reason=reason)
+    next_state = cancel_prepared_generation_without_dispatch_in_current_transaction(
+        db,
+        owner=owner,
+        state=state,
+        terminal_result=_COMPLETED_DAWN_WRITE_ADAPTER.dump_json(completed).decode("utf-8"),
+        reason=f"dawn write {reason.replace('_', ' ')} before dispatch",
+    )
+    if not step_journal.checkpoint_step_state(
+        db,
+        ctx=context,
+        job=job,
+        step_path=step_path,
+        state=next_state,
+    ):
+        raise GenerationUncertain(
+            f"dawn write generation {generation_id} lost its claim at cancellation"
+        )
+    return True
 
 
 async def generate_dawn_write(
@@ -249,78 +539,140 @@ async def generate_dawn_write(
     user_id: UUID,
     local_date: date,
     tz: str,
+    context: JobExecutionContext,
     runtime: ExecutionRuntime,
-) -> DawnWrite | None:
+) -> DawnWrite | None | RescheduleRequested:
     """Generate and persist a dawn write for *user_id* on *local_date*.
 
-    Returns None when signals are empty (nothing to say), the platform
-    entitlement/rate-limit rejects the call, or the provider call does not
-    succeed. Callers must check for an existing row before calling.
+    Returns None when signals are empty (nothing to say), concurrency admission
+    rejects the call, or generation does not succeed. Callers must check for an
+    existing row before calling.
     """
-    settings = get_settings()
-    if not settings.dawn_write_enabled:
+    job = get_job(db, context.job_id)
+    if job is None:
+        raise AssertionError(f"dawn write job {context.job_id} disappeared")
+    if job.kind != "dawn_write_job":
+        raise AssertionError("dawn write generation has the wrong job kind")
+    step_path = _dawn_write_step_path(user_id=user_id, local_date=local_date)
+    generation_id = step_journal.stable_generation_id(context.job_id, step_path)
+    state = step_journal.read_step_states(job).get(step_path)
+    if state is not None and state.generation_id != generation_id:
+        raise AssertionError("dawn write generation identity changed")
+    if state is not None and state.dispatch_phase is step_journal.Completed:
+        if not isinstance(state.terminal_result, Present):
+            raise AssertionError("Completed dawn write generation has no result")
+        completed = _COMPLETED_DAWN_WRITE_ADAPTER.validate_json(state.terminal_result.value)
+        return _apply_completed_dawn_write(
+            db,
+            generation_id=generation_id,
+            user_id=user_id,
+            local_date=local_date,
+            context=context,
+            completed=completed,
+        )
+    if state is not None and state.dispatch_phase is step_journal.Uncertain:
+        db.commit()
+        raise GenerationUncertain(
+            f"dawn write generation {generation_id} has an unresolved dispatch"
+        )
+
+    if not get_settings().dawn_write_enabled:
         logger.info("dawn_write_skipped", reason="disabled", user_id=str(user_id))
+        if state is not None:
+            db.rollback()
+            complete_prepared_dawn_write_without_dispatch(
+                db,
+                user_id=user_id,
+                local_date=local_date,
+                context=context,
+                reason="disabled",
+            )
+            db.commit()
         return None
 
     signals = collect_signals(db, user_id=user_id, local_date=local_date, tz=tz)
     if signals is None:
         logger.info("dawn_write_skipped", reason="no_signals", user_id=str(user_id))
+        if state is not None:
+            db.rollback()
+            complete_prepared_dawn_write_without_dispatch(
+                db,
+                user_id=user_id,
+                local_date=local_date,
+                context=context,
+                reason="no_signals",
+            )
+            db.commit()
         return None
 
     user_content = _render_signals(signals)
+    intent = _dawn_write_intent(user_content=user_content)
+    db.commit()
 
-    # Pre-generate the row id so the ledger owner can reference it before the
-    # row is inserted. llm_calls.owner_id has no FK so the forward reference
-    # is safe.
-    row_id = uuid4()
-    profile = operation_profile(DAWN_WRITE_OPERATION)
-    intent = _build_intent(
-        target=profile.target,
-        reasoning=profile.default_reasoning_option_id,
-        user_content=user_content,
+    def lock_dispatch(dispatch_db: Session) -> JobRow | None:
+        locked_job = lock_job(dispatch_db, context.job_id)
+        if locked_job is None or locked_job.kind != "dawn_write_job":
+            return None
+        existing = dispatch_db.scalar(
+            select(DawnWrite.id).where(
+                DawnWrite.user_id == user_id,
+                DawnWrite.local_date == local_date,
+            )
+        )
+        return None if existing is not None else locked_job
+
+    journal = JobGenerationJournal(
+        context=context,
+        step_path=step_path,
+        lock_dispatch=lock_dispatch,
     )
 
     try:
-        call = await execute_generation(
-            GenerationRequest(
-                generation_id=row_id,
-                owner=LlmCallOwner(kind="dawn_write", id=row_id, user_id=user_id),
-                operation=DAWN_WRITE_OPERATION,
-                profile=profile,
-                reasoning=profile.default_reasoning_option_id,
-                intent=intent,
+        execution_request = await admit_job_generation(
+            owner=LlmCallOwner(kind="dawn_write", id=generation_id),
+            generation_id=generation_id,
+            operation="dawn_write",
+            intent=intent,
+            prompt_template_revision=generation_policy.operation_revision(DAWN_WRITE_OPERATION),
+            prompt_payload_ref=ImmutablePromptPayloadRef(
+                owner_kind="dawn_write",
+                owner_id=str(generation_id),
+                revision=generation_policy.operation_revision(DAWN_WRITE_OPERATION),
+                payload_digest=generation_fact_digest(intent.model_dump(mode="json")),
             ),
+            journal=journal,
             session_factory=get_session_factory(),
             runtime=runtime,
         )
-    except ApiError as exc:
-        logger.info(
-            "dawn_write_skipped", reason="llm_rejected", user_id=str(user_id), error=str(exc)
+        execution_result = await execute_generation(
+            execution_request,
+            session_factory=get_session_factory(),
+            runtime=runtime,
+            encode_terminal=lambda terminal: _encode_dawn_write_terminal(
+                codex_terminal_evidence(terminal)
+            ),
+            encode_failure=_encode_dawn_write_failure,
         )
+    except GenerationDispatchAborted:
+        complete_prepared_dawn_write_without_dispatch(
+            db,
+            user_id=user_id,
+            local_date=local_date,
+            context=context,
+            reason="pre_dispatch_aborted",
+        )
+        db.commit()
         return None
-
-    if not isinstance(call.outcome, Succeeded):
-        code, _detail = outcome_failure_facts(call.outcome)
-        logger.warning("dawn_write_llm_failure", user_id=str(user_id), error_code=code)
-        return None
-
-    content = call.outcome.response.content
-    if not isinstance(content, TextContent):
-        # justify-defect: output=TextOutput plans output_kind="text", which the
-        # runtime never promotes to StructuredContent.
-        raise AssertionError("dawn write TextOutput outcome decoded as StructuredContent")
-    body = content.text.strip()
-    if not body:
-        logger.warning("dawn_write_empty_response", user_id=str(user_id))
-        return None
-
-    row = DawnWrite(id=row_id, user_id=user_id, local_date=local_date, body_md=body)
-    db.add(row)
-    db.commit()
-    logger.info(
-        "dawn_write_generated",
-        user_id=str(user_id),
-        local_date=str(local_date),
-        write_id=str(row.id),
+    if isinstance(execution_result, RescheduleRequested):
+        return execution_result
+    if not isinstance(execution_result, CompletedGeneration):
+        raise AssertionError("dawn write generation result is not exhaustive")
+    completed = _COMPLETED_DAWN_WRITE_ADAPTER.validate_json(execution_result.terminal_result)
+    return _apply_completed_dawn_write(
+        db,
+        generation_id=generation_id,
+        user_id=user_id,
+        local_date=local_date,
+        context=context,
+        completed=completed,
     )
-    return row

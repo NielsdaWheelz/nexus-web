@@ -382,11 +382,12 @@ Cold mount precedence:
 3. coarse cold `?loc`/`?fragment` only when the cursor is Empty;
 4. default readable source.
 
-After mount, fresh feature targets navigate the reader but do not become
-durable progress until later genuine reading input. Direct reader
-TOC/next/previous commands count as genuine input after resolution. Pane
-Back/Forward is workspace traversal, not reader-local navigation; a fresh
-media mount it produces applies the cold-mount precedence above.
+after mount, fresh feature targets navigate the reader but do not become
+durable progress until later genuine reading input. the
+[document-map cutover](reader-document-map-structure-hard-cutover.md) makes toc,
+section next/previous, and source-link activation orientation-only. ordinary pdf
+page turns retain genuine input after resolution. pane back/forward is workspace
+traversal; a fresh media mount it produces applies the cold-mount precedence above.
 
 When canonical state supersedes a cold coarse query, pane-local replace removes
 only `loc` and `fragment`; preserve `apparatus`, unrelated query state, and hash.

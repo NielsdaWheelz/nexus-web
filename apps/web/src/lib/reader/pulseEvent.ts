@@ -13,7 +13,7 @@ export interface ReaderPulseTarget {
   locator: RetrievalLocator;
   snippet: string | null;
   highlightBehavior: "pulse";
-  focusBehavior: "scroll_into_view";
+  focusBehavior: "scroll_into_view" | "preserve_position";
 }
 
 function isOptionalString(value: unknown): boolean {
@@ -29,7 +29,7 @@ export function isReaderPulseTarget(value: unknown): value is ReaderPulseTarget 
     isRetrievalLocator(value.locator) &&
     (typeof value.snippet === "string" || value.snippet === null) &&
     value.highlightBehavior === "pulse" &&
-    value.focusBehavior === "scroll_into_view"
+    (value.focusBehavior === "scroll_into_view" || value.focusBehavior === "preserve_position")
   );
 }
 
@@ -45,7 +45,7 @@ const readerPulseChannel = createWindowEventChannel({
 const pendingReaderPulseByMediaId = new Map<string, ReaderPulseTarget>();
 
 export function dispatchReaderPulse(target: ReaderPulseTarget): void {
-  pendingReaderPulseByMediaId.set(target.mediaId, target);
+  if (target.focusBehavior === "scroll_into_view") pendingReaderPulseByMediaId.set(target.mediaId, target);
   readerPulseChannel.dispatch(target);
 }
 

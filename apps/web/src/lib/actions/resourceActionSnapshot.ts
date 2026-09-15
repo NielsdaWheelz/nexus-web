@@ -1,4 +1,11 @@
-import type { ResourceActivation } from "@/lib/resources/activation";
+import {
+  decodeCamelCaseMediaRecoveryOffer,
+  type MediaRecoveryOffer,
+} from "@/lib/imports/importsClient";
+import {
+  decodeCamelCaseResourceActivation,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
 import {
   decodePlayerDescriptor,
   type PlayerDescriptor,
@@ -8,8 +15,8 @@ import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import {
   expectArray,
   expectBoolean,
+  expectCanonicalUuid,
   expectExactRecord,
-  expectNullableString,
   expectOneOf,
   expectRecord,
   expectString,
@@ -40,7 +47,6 @@ export type ResourceActionCapability =
         | "Chat"
         | "PlayNext"
         | "DownloadOriginal"
-        | "RetryProcessing"
         | "RefreshSource"
         | "RetryMetadata"
         | "EditAuthors"
@@ -76,6 +82,23 @@ export type ResourceActionCapability =
       readonly kind: "OpenSource";
       readonly availability: ServerActionAvailability;
       readonly href: string;
+    }
+  | {
+      /**
+       * The one recovery this media is currently offered, computed by the same
+       * owner policy the Imports pane reads (contract D7). It carries the exact
+       * identity the viewer's menu rendered, so the command it plans conflicts
+       * rather than acting on work the reader never saw.
+       */
+      readonly kind: "Recovery";
+      readonly availability: ServerActionAvailability;
+      readonly offer: MediaRecoveryOffer;
+    }
+  | {
+      readonly kind: "OfflineReading";
+      readonly availability: ServerActionAvailability;
+      readonly requestedTitle: string;
+      readonly mediaKind: "web_article" | "epub" | "pdf";
     }
   | {
       readonly kind: "Playback";
@@ -134,17 +157,7 @@ export type ResourceActionCapability =
       readonly noteBlockId: string;
     };
 
-const CANONICAL_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const FACTS_REVISION_RE = /^[0-9a-f]{64}$/;
-
-function expectCanonicalUuid(raw: unknown, name: string): string {
-  const value = expectString(raw, name);
-  if (!CANONICAL_UUID_RE.test(value)) {
-    throw new TypeError(`${name} must be a canonical UUID`);
-  }
-  return value;
-}
 
 function expectFactsRevision(raw: unknown, name: string): string {
   const value = expectString(raw, name);
@@ -202,6 +215,38 @@ function decodeResourceActionCapability(
   const record = expectRecord(raw, name);
   const kind = expectString(record.kind, `${name}.kind`);
   switch (kind) {
+    case "OfflineReading": {
+      expectExactRecord(record, ["kind", "availability", "requestedTitle", "mediaKind"], name);
+      const requestedTitle = expectString(record.requestedTitle, `${name}.requestedTitle`);
+      if (
+        Array.from(requestedTitle).length < 1 ||
+        Array.from(requestedTitle).length > 512 ||
+        requestedTitle.trim().length === 0
+      ) {
+        throw new TypeError(`${name}.requestedTitle must be bounded`);
+      }
+      return {
+        kind,
+        availability: decodeServerActionAvailability(record.availability, `${name}.availability`),
+        requestedTitle,
+        mediaKind: expectOneOf(
+          record.mediaKind,
+          ["web_article", "epub", "pdf"] as const,
+          `${name}.mediaKind`,
+        ),
+      };
+    }
+    case "Recovery": {
+      expectExactRecord(record, ["kind", "availability", "offer"], name);
+      return {
+        kind,
+        availability: decodeServerActionAvailability(
+          record.availability,
+          `${name}.availability`,
+        ),
+        offer: decodeCamelCaseMediaRecoveryOffer(record.offer, `${name}.offer`),
+      };
+    }
     case "OpenSource": {
       expectExactRecord(record, ["kind", "availability", "href"], name);
       return {
@@ -234,7 +279,6 @@ function decodeResourceActionCapability(
     case "Chat":
     case "PlayNext":
     case "DownloadOriginal":
-    case "RetryProcessing":
     case "RefreshSource":
     case "RetryMetadata":
     case "EditAuthors":
@@ -414,39 +458,6 @@ function decodeResourceActionCapability(
   }
 }
 
-function decodeResourceActivation(
-  raw: unknown,
-  name: string,
-): ResourceActivation {
-  const value = expectExactRecord(
-    raw,
-    ["resourceRef", "kind", "href", "unresolvedReason"],
-    name,
-  );
-  const resourceRef = expectString(value.resourceRef, `${name}.resourceRef`);
-  const kind = expectOneOf(
-    value.kind,
-    ["route", "external", "none"] as const,
-    `${name}.kind`,
-  );
-  const href = expectNullableString(value.href, `${name}.href`);
-  const unresolvedReason = expectNullableString(
-    value.unresolvedReason,
-    `${name}.unresolvedReason`,
-  );
-  if ((kind === "route" || kind === "external") && href === null) {
-    // justify-defect: routeable activation variants must carry the destination
-    // their discriminator promises.
-    throw new TypeError(`${name}.href must be a string for ${kind}`);
-  }
-  if (kind === "none" && href !== null) {
-    // justify-defect: an unrouteable activation cannot carry an executable
-    // destination without contradicting its discriminator.
-    throw new TypeError(`${name}.href must be null for none`);
-  }
-  return { resourceRef, kind, href, unresolvedReason };
-}
-
 function decodeResourceActionSnapshot(
   raw: unknown,
   name: string,
@@ -457,7 +468,7 @@ function decodeResourceActionSnapshot(
     name,
   );
   const ref = assumeCanonicalResourceRef(expectString(value.ref, `${name}.ref`));
-  const activation = decodeResourceActivation(
+  const activation = decodeCamelCaseResourceActivation(
     value.activation,
     `${name}.activation`,
   );

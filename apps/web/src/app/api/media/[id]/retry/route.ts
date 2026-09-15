@@ -1,10 +1,16 @@
 import { proxyToFastAPI } from "@/lib/api/proxy";
+import { privateNoStoreResponse } from "@/lib/api/privateNoStoreResponse.server";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-type Params = Promise<{ id: string }>;
-
-export async function POST(req: Request, { params }: { params: Params }) {
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
   const { id } = await params;
-  return proxyToFastAPI(req, `/media/${id}/retry`);
+  return privateNoStoreResponse(
+    await proxyToFastAPI(request, `/media/${encodeURIComponent(id)}/retry`),
+  );
 }

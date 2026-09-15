@@ -1,7 +1,16 @@
 @import "./brand.css";
 
-/* === Scale tokens — theme-invariant === */
-:root {
+/* === Scale tokens — theme-invariant — and, below them, the Press's palette ===
+   `[data-theme="dark"]` joins `:root` here instead of getting a block of its
+   own: the Press *is* the default palette, so a second copy of these values
+   would be a second source of truth for one room. On `<html data-theme="dark">`
+   the added selector gives nothing the `:root` half did not already give —
+   the Press is unchanged — and the light and elvish blocks below still win on
+   the root by source order at equal specificity. What it buys is that a nested
+   element can enter the Press, the way one can already enter the Study or the
+   Solar: that is what the Press doorway in Settings → Appearance is. */
+:root,
+[data-theme="dark"] {
   /* Type families */
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
     "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -165,6 +174,16 @@
   --warning: #d4b066;
   --danger: #d96a73;
   --info: #7ea3c5;
+  /* Ink for text on a tinted fill. `Pill` fills with an 18% mix of a tone token,
+     so a label painted in the tone itself can never clear AA against its own
+     fill; each ink step is the tone carried far enough from that mix to hold
+     4.5:1 over that fill on the grounds the Imports pane paints these pills on
+     — the page canvas, plain or under the selection wash, worst measured
+     4.83:1. Deeper surfaces under that wash sit nearer 4.2:1, so a new caller
+     on `--surface-3` remeasures. Fills and borders keep the tones. */
+  --success-ink: #7ec789;
+  --warning-ink: #d7b56f;
+  --info-ink: #99b6d1;
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 4px 8px rgba(0, 0, 0, 0.5);
   --shadow-3: 0 8px 18px rgba(0, 0, 0, 0.55);
@@ -206,6 +225,9 @@
   --warning: #8a6618;
   --danger: #a83a44;
   --info: #3b6b8f;
+  --success-ink: #255f30;
+  --warning-ink: #6c5013;
+  --info-ink: #305875;
   --shadow-1: 0 1px 2px rgba(20, 20, 30, 0.06);
   --shadow-2: 0 4px 8px rgba(20, 20, 30, 0.1);
   --shadow-3: 0 8px 18px rgba(20, 20, 30, 0.12);
@@ -248,6 +270,9 @@
     --warning: #8a6618;
     --danger: #a83a44;
     --info: #3b6b8f;
+    --success-ink: #255f30;
+    --warning-ink: #6c5013;
+    --info-ink: #305875;
     --shadow-1: 0 1px 2px rgba(20, 20, 30, 0.06);
     --shadow-2: 0 4px 8px rgba(20, 20, 30, 0.1);
     --shadow-3: 0 8px 18px rgba(20, 20, 30, 0.12);
@@ -260,6 +285,158 @@
     --canvas-grain-opacity: 0;
     --canvas-grain-image: none;
   }
+}
+
+/* === The Solar — explicit user choice, no system-preference route === */
+[data-theme="elvish"] {
+  /* Native controls (selects, date pickers, autofill, UA scrollbar arrows) must
+     not punch white through the canopy. */
+  color-scheme: dark;
+
+  --surface-canvas: #15201b;
+  --surface-1: #1a2620;
+  --surface-2: #1f2d26;
+  --surface-3: #26352d;
+  --surface-hover: #2a3a31;
+  --surface-active: #32463b;
+  --surface-sunken: #0f1714;
+  --ink: #ece5d1;
+  --ink-muted: #adb8a8;
+  --ink-faint: #8fa295;
+  /* Machine voice ink + apparatus rail — cool water-silver against warm ink. */
+  --ink-machine: #a3b9bd;
+  --rail-machine: color-mix(in srgb, var(--ink-machine) 34%, transparent);
+  --ink-on-accent: #131c17;
+  --edge: #33443b;
+  --edge-subtle: #243128;
+  --edge-strong: #647c6e;
+  /* Aged brass, deliberately not the brand gold. */
+  --accent: #c9a95f;
+  --accent-hover: #ddbe79;
+  --accent-active: #ab8b45;
+  --accent-muted: color-mix(in srgb, var(--accent) 16%, transparent);
+  --ring: #cfe6e0;
+  --success: #8ed3a4;
+  --warning: #e2a352;
+  --danger: #e8867a;
+  --info: #99c4d6;
+  --success-ink: #b2e1c1;
+  --warning-ink: #eec999;
+  --info-ink: #bdd9e4;
+  --shadow-1: 0 1px 2px rgba(3, 10, 8, 0.36);
+  --shadow-2: 0 2px 6px rgba(3, 10, 8, 0.42), inset 0 1px 0 rgba(244, 224, 176, 0.05);
+  --shadow-3: 0 6px 16px rgba(3, 10, 8, 0.48), inset 0 1px 0 rgba(244, 224, 176, 0.06);
+  --shadow-4: 0 14px 34px rgba(3, 10, 8, 0.54), inset 0 1px 0 rgba(244, 224, 176, 0.07);
+  --shadow-5: 0 28px 64px rgba(3, 10, 8, 0.6), inset 0 1px 0 rgba(244, 224, 176, 0.08),
+    0 0 40px rgba(201, 169, 95, 0.05);
+  /* Two Rooms — Solar-specific typography + grain */
+  --stroke-hairline: 1.25px;             /* between Study 1px and Press 1.5px */
+  --body-font-size: var(--text-md);      /* 1rem — optical size up for reversed type */
+  --tracking-body: 0.006em;              /* under the Press's; lighter ground, less bloom */
+  --canvas-grain-opacity: 0.05;
+  /* Turbulence plus a sub-pixel star field, one 320×320 tile. Never animates. */
+  --canvas-grain-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='t'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .82 0 0 0 0 .87 0 0 0 0 .79 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='320' height='320' filter='url(%23t)' opacity='.7'/%3E%3Ccircle cx='34' cy='61' r='.7' fill='%23dfeee8'/%3E%3Ccircle cx='187' cy='23' r='.55' fill='%23dfeee8'/%3E%3Ccircle cx='268' cy='142' r='.8' fill='%23f2f7ee'/%3E%3Ccircle cx='96' cy='214' r='.6' fill='%23dfeee8'/%3E%3Ccircle cx='231' cy='287' r='.5' fill='%23dfeee8'/%3E%3Ccircle cx='12' cy='176' r='.45' fill='%23dfeee8'/%3E%3C/svg%3E");
+  /* The session sky (§10 wildcard 3): SolarEffects seeds --grain-seed once per
+     mount on <html>, which offsets the one tile above so the stars land
+     somewhere new each time you arrive and then never move again. The seed is
+     read only here, so it reaches only this room even though it sits on the
+     root; the tile itself is never regenerated (landmine L6). */
+  --canvas-grain-position: var(--grain-seed, 0% 0%);
+  /* The Solar's book face for every serif surface; the bytes already ship. */
+  --font-serif: var(--font-eb-garamond), Charter, Georgia, "Times New Roman", serif;
+  /* Display face, consumed only under elvish scope and only at ≥ var(--text-xl). */
+  --font-display: var(--font-cormorant), var(--font-eb-garamond), Georgia, serif;
+  /* Namespaced metal tokens (same pattern as [data-theme="oracle"]) */
+  --gilt-a: #6b4a20;
+  --gilt-b: #c99a4a;
+  --gilt-hi: #f4e0b0;
+  /* The global ornament dimmer: 1 | .5 | 0 — §6's Illuminated / Whisper / Bare.
+     Every ornament pseudo multiplies its authored opacity by this; at 0 the
+     room is unornamented and nothing has moved a pixel. A region host restates
+     it to demote its subtree to a lower tier; the degradation media blocks
+     below force it to 0 for the whole room. */
+  --ornament: 1;
+  /* The dimmer as it stands on the root, read before any region rescales it. A
+     tier host cannot write `--ornament: calc(.5 * var(--ornament))` — a custom
+     property in its own cycle is invalid at computed-value time — so it writes
+     `calc(.5 * var(--ornament-root))` instead and the html-level lever
+     (devtools, and the three degradation blocks) still reaches through it. */
+  --ornament-root: var(--ornament);
+  /* The moon-metal. Equal to --ring by value, named separately for intent:
+     --ring is focus, --ithildin is the reveal that answers to attention. */
+  --ithildin: #cfe6e0;
+  /* The lunar scalar: 0.15 at new moon, 1 at full. Authored at full so first
+     paint is never wrong (landmine L5); SolarEffects narrows it after
+     hydration. THE SLOT LAW (§10 wildcard 2): --moon may appear only inside an
+     opacity, a drop-shadow blur radius, or the third (hue) slot of an oklch()
+     — never a lightness or chroma slot, never any other property. No phase of
+     the moon can therefore move a contrast ratio in §9. */
+  --moon: 1;
+
+  /* Ornament masks — black-on-transparent alpha masks, percent-encoded exactly
+     as --canvas-grain-image is. One motif in four cuts: a single open stroke
+     that is asymmetric, botanical, and exits its frame. */
+  /* 240×12 seamless vine. Enters (0,6) and leaves (240,6) with horizontal
+     tangents at both ends, so repeat-x has no kink; uneven wavelengths
+     (40/54/40/46) so it does not read as a sine; three leaves, the maximum. */
+  --elvish-vine: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='12'%3E%3Cpath d='M0 6C12 6 18 2.8 34 2.8S56 10.4 74 10.4S106 3.6 128 3.6S154 8.8 168 8.8S196 4.4 214 4.4C228 4.4 230 6 240 6' fill='none' stroke='%23000' stroke-width='1.4'/%3E%3Cpath d='M53 6.6q2.7-.5 4.6-3.6q-3.4.4-4.6 3.6z' fill='%23000'/%3E%3Cpath d='M112.8 4.7q2.4 1.1 3.9 4q-3.2-.9-3.9-4z' fill='%23000'/%3E%3Cpath d='M189.5 6.6q3-.7 4.2-3.3q-3.1.1-4.2 3.3z' fill='%23000'/%3E%3C/svg%3E");
+  /* 48×48 corner branch, drawn for the top-left placement; consumers mirror it
+     with scaleX(-1)/scaleY(-1). Starts at x=-2 so it visibly exits the left
+     edge, climbs the corner, and stops open in the field with two leaves. */
+  --elvish-corner: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48'%3E%3Cpath d='M-2 40C6 38 9 30 10 21C11 12 17 7 27 6C32 5.5 36 6.5 39 8.5' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round'/%3E%3Cpath d='M12.9 13q-3.6-.6-5.1-3.7q3.4.3 5.1 3.7z' fill='%23000'/%3E%3Cpath d='M20.3 7.5q3.3 1.2 4.7 4.8q-3.7-.8-4.7-4.8z' fill='%23000'/%3E%3C/svg%3E");
+  /* 10×10 leaf terminal — one filled vesica, the two flanks cut on different
+     curves so it is a leaf and not a lens. */
+  --elvish-leaf: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10'%3E%3Cpath d='M1.2 8.8C2.4 5.6 4.8 2.8 8.6 1.2C8 5.2 5.4 7.8 1.2 8.8Z' fill='%23000'/%3E%3C/svg%3E");
+  /* 12×12 tehta — one open acute-with-hook swash for rule terminals. A
+     diacritic stroke, never a letter: no word is implied and none can be read. */
+  --elvish-tehta: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Cpath d='M2.2 9.8C4 7.4 6.4 4.6 8.6 3.2C9.8 2.4 10.6 3 10 4.2' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  /* 24×24 Eärendil star — the wayfinder's mark for empty states (§8.8): three
+     crossing tapered rays, six points, never Fëanor's eight. A sanctioned
+     heraldic mark, not an ornament border — §9.1's medallion refusal governs
+     frames and interlace, not this one device. */
+  --elvish-star: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cpath d='M1 12Q12 10 23 12Q12 14 1 12Z' fill='%23000'/%3E%3Cpath d='M1 12Q12 10 23 12Q12 14 1 12Z' fill='%23000' transform='rotate(60 12 12)'/%3E%3Cpath d='M1 12Q12 10 23 12Q12 14 1 12Z' fill='%23000' transform='rotate(120 12 12)'/%3E%3Ccircle cx='12' cy='12' r='1.9' fill='%23000'/%3E%3C/svg%3E");
+}
+
+/* === The Solar degrades to a plain, complete room ===
+   Scoped to the elvish theme so the Study and the Press keep byte-identical
+   cascades. Ornament is authored to be removable by construction: at
+   --ornament: 0 every branch, leaf and terminal goes silent and no layout
+   moves. Grain also goes for the two contexts that ask for flat ink. */
+@media (forced-colors: active) {
+  [data-theme="elvish"] {
+    --ornament: 0;
+    /* Forced colors forces background-color but not background-image, so the
+       grain tile would keep painting over the forced Canvas unless zeroed. */
+    --canvas-grain-opacity: 0;
+  }
+}
+
+@media (prefers-contrast: more) {
+  [data-theme="elvish"] {
+    --ornament: 0;
+    --canvas-grain-opacity: 0;
+  }
+}
+
+@media print {
+  [data-theme="elvish"] {
+    --ornament: 0;
+    --canvas-grain-opacity: 0;
+  }
+}
+
+/* §6's Bare tier, for the regions of it that are addressable globally. §9's
+   refusal — no ornament inside reading text, chat prose, code blocks, tables or
+   dense grids — then holds by construction rather than by nobody yet having
+   authored one there. The remaining Bare regions (dense lists, mobile compact
+   panes, the player transport) are module-local hosts and set it themselves. */
+[data-theme="elvish"] table,
+[data-theme="elvish"] pre,
+[data-theme="elvish"] code,
+[data-theme="elvish"] input,
+[data-theme="elvish"] textarea,
+[data-theme="elvish"] select {
+  --ornament: 0;
 }
 
 /* === Reduced motion === */
@@ -315,8 +492,8 @@ body {
   margin: 0;
   padding: 0;
   font-family: var(--font-sans);
-  font-size: var(--body-font-size);         /* per-room: Study 0.9375rem, Press 1rem */
-  letter-spacing: var(--tracking-body);     /* per-room: Study 0, Press 0.008em */
+  font-size: var(--body-font-size);         /* per-room: Study 0.9375rem, Press/Solar 1rem */
+  letter-spacing: var(--tracking-body);     /* per-room: Study 0, Solar 0.006em, Press 0.008em */
   line-height: var(--leading-relaxed);
   color: var(--ink);
   background-color: var(--surface-canvas);
@@ -325,7 +502,7 @@ body {
   isolation: isolate;                       /* stacking context for ::before grain */
 }
 
-/* Canvas grain — Press only (--canvas-grain-opacity: 0 in Study) */
+/* Canvas grain — Press and Solar (--canvas-grain-opacity: 0 in Study) */
 body::before {
   content: "";
   position: fixed;
@@ -334,6 +511,10 @@ body::before {
   z-index: -1;
   opacity: var(--canvas-grain-opacity, 0);
   background-image: var(--canvas-grain-image, none);
+  /* Inert in the Study and the Press: only the Solar declares
+     --canvas-grain-position, so both fall to the 0% 0% fallback and their
+     cascades stay byte-identical. */
+  background-position: var(--canvas-grain-position, 0% 0%);
 }
 
 a {
@@ -376,6 +557,10 @@ textarea {
   outline-offset: 2px;
 }
 
+::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
 /* === Scrollbar === */
 ::-webkit-scrollbar {
   width: 8px;
@@ -394,6 +579,36 @@ textarea {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--ink-faint);
 }
+
+/* The brass rod — a polished rod inset in the wood, not a grey slug. */
+[data-theme="elvish"] ::-webkit-scrollbar-track {
+  background: var(--surface-sunken);
+}
+
+[data-theme="elvish"] ::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, var(--gilt-a), var(--gilt-b) 45%, var(--gilt-a));
+  border: 2px solid var(--surface-canvas);
+  border-radius: var(--radius-full);
+}
+
+[data-theme="elvish"] ::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(90deg, var(--gilt-a), var(--gilt-hi) 45%, var(--gilt-a));
+}
+
+/* Standard scrollbar colors for engines without the ::-webkit pseudos
+   (Firefox; flat --gilt-b — scrollbar-color takes no gradient). Chromium must
+   never see a non-auto scrollbar-color: it would disable every
+   ::-webkit-scrollbar-* rule above. */
+@supports not selector(::-webkit-scrollbar) {
+  html {
+    scrollbar-color: var(--edge) var(--surface-2);
+  }
+
+  [data-theme="elvish"] {
+    scrollbar-color: var(--gilt-b) var(--surface-sunken);
+  }
+}
+
 /* Higher specificity than every component scrim selector, independent of
    stylesheet load order. */
 body [data-modal-backdrop="true"][data-suspended="true"] {

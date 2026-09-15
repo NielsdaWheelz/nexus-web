@@ -6,19 +6,24 @@ from dataclasses import asdict
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Header, Response
+from fastapi import APIRouter, Body, Depends, Header, Request, Response
+from llm_tools import Available, ToolId
 from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 
-from nexus.api.deps import get_single_attempt_execution_runtime
+from nexus.api.deps import get_generation_runtime
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok
 from nexus.schemas.artifact import (
+    DossierBuildAdmittedGenerationOut,
     DossierBuildCreatedOut,
+    DossierBuildExactModelToolsOut,
     DossierBuildExecution,
+    DossierBuildNoModelToolsOut,
     DossierBuildSummary,
+    DossierBuildToolPlanOut,
     DossierCoverageOut,
     DossierGenerateRequest,
     DossierHeadOut,
@@ -31,6 +36,8 @@ from nexus.schemas.artifact import (
     ResourceDossierIdentityOut,
 )
 from nexus.schemas.presence import (
+    Presence,
+    Present,
     absent,
     nullable_from_presence,
     presence_from_nullable,
@@ -38,12 +45,15 @@ from nexus.schemas.presence import (
 )
 from nexus.services.artifacts import engine
 from nexus.services.artifacts import revisions as revision_service
-from nexus.services.artifacts.bindings import BINDINGS
 from nexus.services.artifacts.dossier_types import (
     CancelledEventPayload,
     DossierSubjectLocator,
     FailedEventPayload,
+    HistoricalDossierBuildFailureCode,
+    HistoricalFailedEventPayload,
     InvalidSubjectLocator,
+    ReadFailedEventPayload,
+    WebResearchNotConfigured,
 )
 from nexus.services.artifacts.handles import seal_artifact_build, unseal_artifact_build
 from nexus.services.artifacts.manifests import (
@@ -51,10 +61,8 @@ from nexus.services.artifacts.manifests import (
     InputManifestV1,
     project_manifest_to_wire,
 )
-from nexus.services.artifacts.subject_policy import (
-    SUBJECT_POLICIES,
-    ResolvedIdeaSubject,
-)
+from nexus.services.artifacts.registry import dossier_registration
+from nexus.services.artifacts.subject_policy import ResolvedIdeaSubject
 from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.resource_graph.refs import (
     ResourceRef,
@@ -63,6 +71,7 @@ from nexus.services.resource_graph.refs import (
 )
 from nexus.services.resource_graph.resolve import resolve_ref
 from nexus.services.resource_items.routing import resource_activation_for_ref
+from nexus.services.tool_runtime.composition import ComposedToolRuntime
 
 router = APIRouter(tags=["dossiers"])
 
@@ -70,11 +79,19 @@ _MANIFEST_ADAPTER: TypeAdapter[InputManifestV1] = TypeAdapter(InputManifestV1)
 _COVERAGE_ADAPTER: TypeAdapter[DossierCoverageOut] = TypeAdapter(DossierCoverageOut)
 
 
+def _require_idea_web_research(request: Request) -> None:
+    runtime: ComposedToolRuntime = request.app.state.tool_runtime
+    operation = runtime.operations["idea_dossier_research"]
+    binding = operation.plan.catalog_view.binding(ToolId("web.search"))
+    if not isinstance(binding.execute, Available):
+        raise WebResearchNotConfigured()
+
+
 def _subject_locator(subject_scheme: str, subject_handle: str) -> DossierSubjectLocator:
-    policy = SUBJECT_POLICIES.get(subject_scheme)
-    if policy is None:
+    registration = dossier_registration(subject_scheme)
+    if registration is None:
         raise InvalidSubjectLocator()
-    return policy.decode_locator(subject_handle)
+    return registration.policy.decode_locator(subject_handle)
 
 
 def _artifact_ref(raw: str) -> ResourceRef:
@@ -149,10 +166,41 @@ def _manifest_and_coverage(
     raw_manifest: dict,
 ) -> tuple[InputManifestOut, DossierCoverageOut]:
     manifest = _MANIFEST_ADAPTER.validate_python(raw_manifest)
-    binding = BINDINGS[subject_scheme]
-    coverage = binding.coverage(manifest)
+    registration = dossier_registration(subject_scheme)
+    if registration is None:
+        raise AssertionError(f"no Dossier registration for subject scheme {subject_scheme!r}")
+    coverage = registration.binding.coverage(manifest)
     return project_manifest_to_wire(manifest), _COVERAGE_ADAPTER.validate_python(
         {"kind": manifest.kind, **asdict(coverage)}
+    )
+
+
+def _admitted_generation_out(
+    view: engine.DossierBuildAdmittedGeneration | None,
+) -> Presence[DossierBuildAdmittedGenerationOut]:
+    """Project the frozen spec read-only; the model-tool arm is total (spec 5.1)."""
+    if view is None:
+        return absent()
+    spec = view.spec
+    plan, effect_mode = spec.model_tool_plan_snapshot, spec.tool_effect_mode
+    tool_plan: DossierBuildToolPlanOut
+    if isinstance(plan, Present) and isinstance(effect_mode, Present):
+        tool_plan = DossierBuildExactModelToolsOut(
+            plan_id=plan.value.plan_id,
+            plan_revision=plan.value.plan_revision,
+            effect_mode=effect_mode.value,
+        )
+    elif isinstance(plan, Present) or isinstance(effect_mode, Present):
+        raise AssertionError("admitted Dossier generation has a partial model-tool authority")
+    else:
+        tool_plan = DossierBuildNoModelToolsOut()
+    return present(
+        DossierBuildAdmittedGenerationOut(
+            selection=spec.selection,
+            display_at_dispatch=spec.display_at_dispatch,
+            tool_plan=tool_plan,
+            tool_positions=view.tool_positions,
+        )
     )
 
 
@@ -165,24 +213,32 @@ def _active_build_out(view: engine.DossierActiveBuildView) -> DossierBuildSummar
         execution=present(DossierBuildExecution(phase=view.execution)),
         failure=absent(),
         cancellation=absent(),
+        admitted_generation=_admitted_generation_out(view.admitted_generation),
+        capacity_pause=presence_from_nullable(view.capacity_pause),
     )
 
 
 def _unsuccessful_build_out(
     view: engine.DossierUnsuccessfulBuildView,
 ) -> DossierBuildSummary:
-    failure = absent()
+    failure: Presence[ReadFailedEventPayload] = absent()
     cancellation = absent()
     if view.outcome == "failed":
         if view.failure_code is None:
             raise AssertionError("failed Dossier build has no failure code")
-        failure = present(
-            FailedEventPayload(
+        if isinstance(view.failure_code, HistoricalDossierBuildFailureCode):
+            failure_payload: ReadFailedEventPayload = HistoricalFailedEventPayload(
                 failure_code=view.failure_code,
                 detail=presence_from_nullable(view.failure_detail),
                 support=presence_from_nullable(view.failure_support),
             )
-        )
+        else:
+            failure_payload = FailedEventPayload(
+                failure_code=view.failure_code,
+                detail=presence_from_nullable(view.failure_detail),
+                support=presence_from_nullable(view.failure_support),
+            )
+        failure = present(failure_payload)
     else:
         if view.cancelled_at is None:
             raise AssertionError("cancelled Dossier build has no cancellation time")
@@ -200,6 +256,8 @@ def _unsuccessful_build_out(
         execution=absent(),
         failure=failure,
         cancellation=cancellation,
+        admitted_generation=_admitted_generation_out(view.admitted_generation),
+        capacity_pause=absent(),
     )
 
 
@@ -209,6 +267,9 @@ def _head_out(
     viewer_id: UUID,
     head: engine.DossierHeadView,
 ) -> DossierHeadOut:
+    registration = dossier_registration(head.subject_scheme)
+    if registration is None:
+        raise AssertionError(f"no Dossier registration for subject scheme {head.subject_scheme!r}")
     current = absent()
     if head.current_revision_id is not None:
         current = present(
@@ -260,7 +321,7 @@ def _head_out(
             else absent()
         ),
         revision_count=head.revision_count,
-        media_abstract=BINDINGS[head.subject_scheme].media_abstract(
+        media_abstract=registration.binding.media_abstract(
             db,
             subject_id=head.subject_id,
             requester_user_id=viewer_id,
@@ -310,15 +371,18 @@ def create_dossier_build(
 
 @router.post("/artifacts/dossiers/learn")
 async def learn_dossier(
+    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    runtime: Annotated[ExecutionRuntime, Depends(get_single_attempt_execution_runtime)],
+    runtime: Annotated[ExecutionRuntime, Depends(get_generation_runtime)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     body: Annotated[LearnDossierRequest, Body()],
 ) -> dict:
+    highlight_id = _highlight_ref(body.highlight_ref).id
+    _require_idea_web_research(request)
     outcome = await engine.learn_idea(
         db,
-        highlight_id=_highlight_ref(body.highlight_ref).id,
+        highlight_id=highlight_id,
         requester_user_id=viewer.user_id,
         idempotency_key=idempotency_key,
         runtime=runtime,
@@ -350,15 +414,24 @@ def get_dossier_by_ref(
 
 @router.post("/artifacts/{artifact_ref}/builds", status_code=202)
 def regenerate_dossier(
+    request: Request,
     artifact_ref: str,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)],
     body: Annotated[DossierGenerateRequest, Body()],
 ) -> dict:
+    artifact_id = _artifact_ref(artifact_ref).id
+    head = engine.read_artifact_head(
+        db,
+        artifact_id=artifact_id,
+        requester_user_id=viewer.user_id,
+    )
+    if head.subject_scheme == "idea":
+        _require_idea_web_research(request)
     ticket = engine.regenerate_artifact(
         db,
-        artifact_id=_artifact_ref(artifact_ref).id,
+        artifact_id=artifact_id,
         requester_user_id=viewer.user_id,
         idempotency_key=idempotency_key,
         instruction=nullable_from_presence(body.instruction),

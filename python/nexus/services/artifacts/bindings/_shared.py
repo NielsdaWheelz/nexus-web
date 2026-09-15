@@ -17,7 +17,6 @@ from typing import cast
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
-from provider_runtime import ReasoningLevel
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -26,10 +25,11 @@ from nexus.auth.permissions import can_read_media
 from nexus.services.artifacts.bindings.base import (
     DossierBindingBase,
     DossierInputTooLarge,
-    MaterializedDossier,
+    DossierOperation,
+    PublishableDossier,
 )
 from nexus.services.artifacts.coordination import DossierBuildRuntime
-from nexus.services.artifacts.document_html import accept_model_article
+from nexus.services.artifacts.document_html import accept_model_article, compile_learning_document
 from nexus.services.artifacts.dossier_types import (
     AudienceScope,
     DossierBuildFailureCode,
@@ -40,7 +40,6 @@ from nexus.services.artifacts.manifests import (
     MediaManifestEntry,
 )
 from nexus.services.artifacts.subject_policy import ResolvedSubject
-from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.media_intelligence import (
     MediaOmission,
     MediaOmissionReason,
@@ -195,8 +194,8 @@ def document_repair_user_content(
 def materialize_standard(
     decoded_output: BaseModel,
     candidates: list[Candidate],
-) -> MaterializedDossier:
-    """Accept the article and fail closed on every citation mismatch."""
+) -> PublishableDossier:
+    """Accept and compile the article, failing closed on every citation mismatch."""
 
     value = cast("StandardSynthesis", decoded_output)
     article = accept_model_article(value.content_html)
@@ -232,7 +231,13 @@ def materialize_standard(
                 snapshot=candidate.snapshot,
             )
         )
-    return MaterializedDossier(article=article, citations=tuple(out))
+    citations = tuple(out)
+    compiled = compile_learning_document(article, citations)
+    return PublishableDossier(
+        content_html=compiled.content_html,
+        content_text=compiled.content_text,
+        citations=citations,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,10 +278,7 @@ class AggregateMediaBinding(DossierBindingBase):
     """
 
     subject_scheme: str
-    llm_operation: BackgroundLlmOperation
-    profile: str = "balanced"
-    reasoning: ReasoningLevel = "high"
-    max_output_tokens: int = 5000
+    llm_operation: DossierOperation
     schema: type[BaseModel] = StandardSynthesis
     system_prompt: str
     candidates_heading: str
@@ -488,7 +490,7 @@ class AggregateMediaBinding(DossierBindingBase):
         collected: AggregateCollected,  # noqa: ARG002
         decoded_output: BaseModel,
         witness: AggregateWitness,
-    ) -> MaterializedDossier:
+    ) -> PublishableDossier:
         return materialize_standard(decoded_output, witness.candidates)
 
     def input_manifest(self, collected: AggregateCollected) -> InputManifestV1:

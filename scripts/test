@@ -9,7 +9,7 @@ if [ "$#" -ne 0 ]; then
   exit 2
 fi
 
-for command in actionlint bun git shellcheck uv; do
+for command in actionlint bun git node shellcheck uv; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "error: $command is required" >&2
     exit 1
@@ -28,6 +28,7 @@ shellcheck "${shell_files[@]}"
   python_files=(
     .
     ../apps/api/main.py
+    ../apps/codex_agent
     ../apps/worker/health.py
     ../apps/worker/main.py
     ../deploy/hetzner/release.py
@@ -53,6 +54,11 @@ shellcheck "${shell_files[@]}"
 (
   cd apps/web
   bun run test:unit
+)
+
+(
+  cd node/ingest
+  node --test test/article_extraction.test.mjs
 )
 
 migration_heads="$(

@@ -2,6 +2,10 @@
 
 import { AlertTriangle, Search, Wrench } from "lucide-react";
 import { toReaderCitationData } from "@/lib/conversations/citations";
+import {
+  selectionStateExplanation,
+  type GenerationSelectionState,
+} from "@/lib/conversations/generationCatalog";
 import { formatDisplayNumber } from "@/lib/display/format";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import type {
@@ -12,6 +16,23 @@ import type {
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import styles from "./MessageRow.module.css";
+
+function selectionRecovery(state: GenerationSelectionState): string {
+  switch (state.kind) {
+    case "Selectable":
+    case "Ineligible":
+      return "No operator action reported";
+    case "OperatorActionRequired":
+    case "TemporarilyUnavailable":
+      return state.action;
+    case "CapacityPaused":
+      return `Wait for the next check at ${state.next_check_at}`;
+    case "Retired":
+      return state.upgrade_target.kind === "Present"
+        ? "Choose the advertised upgrade for a new run"
+        : "Choose another available model for a new run";
+  }
+}
 
 export default function AssistantDetails({
   trustTrail,
@@ -66,12 +87,16 @@ export default function AssistantDetails({
             <h2>Run</h2>
             <dl className={styles.trustMeta}>
               <div>
+                <dt>Route / provider</dt>
+                <dd>{trustTrail.run.run_selection.display_at_dispatch.route_label}</dd>
+              </div>
+              <div>
                 <dt>Model</dt>
-                <dd>
-                  {[trustTrail.run.provider, trustTrail.run.model_name]
-                    .filter(Boolean)
-                    .join("/") || "—"}
-                </dd>
+                <dd>{trustTrail.run.run_selection.display_at_dispatch.model_label}</dd>
+              </div>
+              <div>
+                <dt>Reasoning</dt>
+                <dd>{trustTrail.run.run_selection.display_at_dispatch.reasoning_label}</dd>
               </div>
               <div>
                 <dt>Status</dt>
@@ -83,16 +108,44 @@ export default function AssistantDetails({
                 </dd>
               </div>
               <div>
-                <dt>Profile</dt>
-                <dd>{trustTrail.run.profile_id ?? "—"}</dd>
+                <dt>Billing</dt>
+                <dd>{trustTrail.run.run_selection.display_at_dispatch.billing.label}</dd>
               </div>
               <div>
-                <dt>Reasoning</dt>
-                <dd>
-                  {trustTrail.run.reasoning_effort.kind === "Present"
-                    ? trustTrail.run.reasoning_effort.value
-                    : "—"}
-                </dd>
+                <dt>Processors</dt>
+                <dd>{trustTrail.run.run_selection.display_at_dispatch.processor_chain.processors.join(" → ")}</dd>
+              </div>
+              <div>
+                <dt>Privacy</dt>
+                <dd>{trustTrail.run.run_selection.display_at_dispatch.privacy.summary}</dd>
+              </div>
+              <div>
+                <dt>Retention</dt>
+                <dd>{trustTrail.run.run_selection.display_at_dispatch.privacy.retention}</dd>
+              </div>
+              <div>
+                <dt>Training</dt>
+                <dd>{trustTrail.run.run_selection.display_at_dispatch.privacy.training}</dd>
+              </div>
+              <div>
+                <dt>Write authority</dt>
+                <dd>{trustTrail.run.run_selection.tool_authority === "AdditiveWrites" ? "Allowed for this reply" : "Read-only"}</dd>
+              </div>
+              <div>
+                <dt>Current readiness</dt>
+                <dd>{selectionStateExplanation(trustTrail.run.run_selection.current_state)}</dd>
+              </div>
+              <div>
+                <dt>Readiness checked</dt>
+                <dd>{trustTrail.run.run_selection.current_state_observed_at}</dd>
+              </div>
+              <div>
+                <dt>Recovery</dt>
+                <dd>{selectionRecovery(trustTrail.run.run_selection.current_state)}</dd>
+              </div>
+              <div>
+                <dt>Rerun</dt>
+                <dd>{trustTrail.run.run_selection.rerun_eligibility ? "Eligible" : "Unavailable"}</dd>
               </div>
               {trustTrail.run.publication_warning.kind === "Present" ? (
                 <div>
@@ -137,23 +190,6 @@ export default function AssistantDetails({
                       display,
                     )}{" "}
                     tokens
-                  </dd>
-                </div>
-              ) : null}
-              {typeof trustTrail.run.total_cost_usd_micros === "number" ? (
-                <div>
-                  <dt>Cost</dt>
-                  <dd>
-                    {formatDisplayNumber(
-                      trustTrail.run.total_cost_usd_micros / 1_000_000,
-                      display,
-                      {
-                        style: "currency",
-                        currency: "USD",
-                        minimumFractionDigits: 3,
-                        maximumFractionDigits: 3,
-                      },
-                    )}
                   </dd>
                 </div>
               ) : null}
@@ -296,21 +332,39 @@ export default function AssistantDetails({
 }
 
 function ToolRow({ tool }: { tool: MessageToolCall }) {
+  const authorships = tool.machine_authorships ?? [];
   return (
     <li>
       <div className={styles.trustLine}>
         <Wrench size={13} aria-hidden="true" />
         <span>
-          #{tool.tool_call_index} {tool.tool_name} - {tool.status}
-          {tool.error_code ? ` - ${tool.error_code}` : ""}
+          #{tool.tool_call_index} {tool.activity_label} - {tool.status}
+          {tool.error_type ? ` - ${tool.error_type}` : ""}
         </span>
       </div>
       <div className={styles.trustCode}>
-        tool {tool.id ? shortId(tool.id) : "pending"} - {tool.scope ?? "all"} -{" "}
+        {tool.canonical_tool_id ?? tool.provider_wire_name ?? tool.record_kind} - tool{" "}
+        {tool.id ? shortId(tool.id) : "pending"} - {tool.scope ?? "all"} -{" "}
         {tool.result_count ?? tool.result_refs.length} results /{" "}
         {tool.selected_count ?? tool.selected_context_refs.length} selected
         {typeof tool.latency_ms === "number" ? ` - ${tool.latency_ms}ms` : ""}
       </div>
+      {authorships.length > 0 ? (
+        <ol className={styles.trustNestedList} aria-label="Machine authorship">
+          {authorships.map((authorship) => (
+            <li key={`${authorship.target_kind}:${authorship.target_id}`}>
+              <div className={styles.trustLine}>
+                <span>
+                  Assistant-created {authorship.target_kind.replaceAll("_", " ")}
+                </span>
+              </div>
+              <div className={styles.trustCode}>
+                {authorship.position_path}
+              </div>
+            </li>
+          ))}
+        </ol>
+      ) : null}
       {tool.retrievals.length > 0 ? (
         <ol className={styles.trustNestedList}>
           {tool.retrievals.map((retrieval) => (
