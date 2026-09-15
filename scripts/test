@@ -35,7 +35,6 @@ shellcheck "${shell_files[@]}"
   uv run --frozen --no-sync ruff format --check "${python_files[@]}"
   uv run --frozen --no-sync ruff check "${python_files[@]}"
   uv run --frozen --no-sync pyright
-  uv run --frozen --no-sync pyright "${python_files[@]:1}"
 )
 
 (
