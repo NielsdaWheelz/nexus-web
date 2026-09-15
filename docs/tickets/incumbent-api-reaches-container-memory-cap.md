@@ -54,3 +54,48 @@ with no limit, oom, swap or restart events. this includes startup and operationa
 release probes, not the reported simultaneous two-document browser traffic.
 that manual check remains pending, so this ticket remains open. see the
 [release evidence](../cutovers/restoration-release-2026-09-15.md).
+
+## failed restored production workload
+
+on 2026-09-15 at 19:18:47 utc, restored source
+`6baccaee9c053b10f46fb5e270e73f5bc12b5026` api container
+`2b0b94bca5de38f5ace8d4227b11f6515911323c401e682a934e7525028b02a9`
+was oom-killed under its 320 mib cap. the kernel reports `CONSTRAINT_MEMCG`,
+uvicorn pid2042389, anon-rss322620 kib. reader navigation/document-map and a
+burst of image requests immediately preceded the kill. docker restarted the
+same container. the user reports any pair of shadow & claw, unclenching, and
+lectern can cause the workspace error; the browser/app stays open.
+
+basic android/web pages and the scrollbar looked correct, but sustained use
+failed; solar/imports/chat acceptance is blocked. the earlier image-route-only
+measurement excluded full api lifespan, database reads and auth. diagnose the
+combined request footprint before another release. private kernel/request
+evidence: `/tmp/nexus-release-255/memory-incident-1921/` on the mac.
+
+## request-path diagnosis and successor fix
+
+a private devbox allocation diagnostic using the exact `6baccaee` image
+reproduced oom (exit137, `OOMKilled=true`) after four concurrent book reads,
+six concurrent openable searches and the article's 35 real image requests.
+it used the retained db0229 clone, actual asgi routes/middleware, a supplied
+viewer identity and lifespan without catalog startup. it does not prove jwt,
+production catalog, tcp/bff/browser behavior or the absent article's db reads.
+
+source changes remove preview-body reads from document summaries (oi-124),
+make the pure viewer dependency async, reuse verified image tls trust state,
+and close one image decoder instead of reopening it. the api image fixes glibc
+arenas at2 and mmap/trim thresholds at128 kib. these trade allocator contention
+and system calls for lower retention; the container remains320 mib/no swap.
+
+source-overlay diagnostics are not replacement-image qualification. the
+initial overlay plus arena bound reached320 mib on its third round and was
+rejected. the final decoder/threshold path completed ten rounds,270 raster200
+and80 expected svg400 responses, with peak312.445 mib, zero max/oom events and
+seven threads instead of36. about22 mib of that diagnostic's baseline was
+charged file cache; do not compare its cgroup peak to rss or subtract cache to
+claim another limit. final checksum-error mapping was added after this run.
+receipts: `memory-incident-1921/clone-http2/` (oom), `clone-http-repeated/`
+(rejected retention), and `clone-http-decoder/` (ten-round source overlay).
+
+exact replacement-image and public/manual verification remain required. no
+production restart, schema mutation or cap change was used for this diagnosis.

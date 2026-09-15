@@ -79,6 +79,12 @@ LABEL org.opencontainers.image.revision=$SOURCE_SHA
 
 FROM backend-runtime AS api
 
+# Return freed large buffers instead of raising glibc's retention thresholds.
+# This trades allocator contention and mmap calls for lower resident memory.
+ENV MALLOC_ARENA_MAX=2 \
+    MALLOC_MMAP_THRESHOLD_=131072 \
+    MALLOC_TRIM_THRESHOLD_=131072
+
 COPY apps/api ./apps/api
 
 RUN chmod -R u=rwX,go=rX /app/apps/api

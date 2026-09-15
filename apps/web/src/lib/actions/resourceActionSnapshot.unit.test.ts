@@ -185,6 +185,28 @@ describe("decodeResourceActionSnapshotResolveResponse", () => {
     });
   });
 
+  it("preserves revision zero in a dead index job's repair offer", () => {
+    const capability = {
+      kind: "Recovery",
+      availability: AVAILABLE,
+      offer: {
+        kind: "RepairSearch",
+        expectedRevision: 0,
+        expectedJobId: JOB_ID,
+        input: "PublishedContent",
+      },
+    };
+    const [snapshot] = decodeResourceActionSnapshotResolveResponse(
+      validRaw([capability]),
+    );
+    expect(snapshot.capabilities).toEqual([capability]);
+    expect(() =>
+      decodeResourceActionSnapshotResolveResponse(validRaw([
+        { ...capability, offer: { ...capability.offer, expectedRevision: -1 } },
+      ])),
+    ).toThrow();
+  });
+
   it("refuses a recovery offer that does not name a resource", () => {
     expect(() =>
       decodeResourceActionSnapshotResolveResponse(

@@ -467,7 +467,7 @@ function recoveryOffer(
       );
       return {
         kind,
-        expectedRevision: positiveInteger(
+        expectedRevision: expectNonnegativeInteger(
           offer[keys.expectedRevision],
           `${name}.${keys.expectedRevision}`,
         ),
@@ -1151,7 +1151,7 @@ export function decodeSearchAdmission(raw: unknown): SearchAdmission {
   expectOneOf(data.kind, ["SearchRepair"] as const, `${name}.kind`);
   return {
     mediaId: expectCanonicalRfcUuid(data.media_id, `${name}.media_id`),
-    revision: positiveInteger(data.revision, `${name}.revision`),
+    revision: expectNonnegativeInteger(data.revision, `${name}.revision`),
     jobId: expectCanonicalRfcUuid(data.job_id, `${name}.job_id`),
   };
 }

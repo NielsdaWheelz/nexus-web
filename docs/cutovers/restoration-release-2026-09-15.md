@@ -1,6 +1,6 @@
 # restoration production release — 2026-09-15
 
-status: deployed and healthy; manual product checks pending
+status: deployed; production api oom and workspace errors block manual acceptance
 origin: restoration pr #255, forward recovery pr #262
 
 ## result and immutable identity
@@ -48,8 +48,8 @@ only the owned deploy command promoted and bound the exact staged candidate.
 
 ## production evidence
 
-all five application/codex/policy containers report exact source and image
-identity, healthy state and zero restarts. postgres and caddy retain their
+at release completion, all five application/codex/policy containers reported
+exact source and image identity, healthy state and zero restarts. postgres and caddy retain their
 original full container ids. fresh public web/api versions match the release;
 livez/readyz return 200 with no-store, and the exact mcp mount returns bodyless
 401 without redirect or cookie mutation. the owned post-alias auth smoke passed.
@@ -70,6 +70,17 @@ availability 408.953 mib, pressure some=0.25/full=0.19. retained peaks were api
 postgres retained historical limit events; caddy recorded 125 further limit
 reclaim events, without oom or restart. host swap grew by 1 mib while service
 swap stayed zero. these are bounded observations, not a total-memory guarantee.
+
+## manual result and subsequent failure
+
+user reports basic page loading and the scrollbar look correct on android and
+web. sustained use fails with the workspace error when any pair of shadow &
+claw, unclenching and lectern is open. the browser/app remains open. kernel
+proof confirms api cgroup oom at19:18:47 utc; subsequent resource reads also
+raise a revision0 search-repair validation error. oi-116 tracks the memory failure; the subsequent fix repairs the revision-zero
+wire contract (oi-122). solar,
+imports and chat are blocked, not passed. the successful release/qualification
+above remains historical evidence of its narrower workload.
 
 ## limits and manual checks
 

@@ -637,7 +637,7 @@ class SearchRepairRequest(BaseModel):
 
     kind: Literal["Search"]
     client_mutation_id: ClientMutationUuidText
-    expected_revision: int = Field(ge=1)
+    expected_revision: int = Field(ge=0)
     expected_job_id: UUID
 
     model_config = ConfigDict(extra="forbid")
@@ -673,7 +673,7 @@ class SourceRepairAdmission(BaseModel):
 class SearchRepairAdmission(BaseModel):
     kind: Literal["SearchRepair"] = "SearchRepair"
     media_id: UUID
-    revision: int = Field(ge=1)
+    revision: int = Field(ge=0)
     job_id: UUID
 
     model_config = ConfigDict(extra="forbid")

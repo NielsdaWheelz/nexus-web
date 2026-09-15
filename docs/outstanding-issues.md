@@ -299,3 +299,6 @@ unexpected timeouts. See
 
 - [open] oi-119 · release recovery · 2026-09-15 source review · p2 · a permanently failed current publication prefix blocks successor resource convergence: [ticket](tickets/failed-published-release-cannot-converge-successor.md).
 - [open] oi-120 · release qualification · 2026-09-15 source review · p2 · capacity expiry blocks ordinary first-cut replay while writers are stopped before activation: [ticket](tickets/capacity-expiry-blocks-stopped-first-cut-replay.md).
+
+- [open] oi-123 · reader quote resolution · 2026-09-15 source review · p2 · normalized quote spans allocate Python objects per character across the whole book: [ticket](tickets/normalized-quote-spans-amplify-whole-book-text.md).
+- [open] oi-125 · epub assets · 2026-09-15 source review · p2 · complete asset bodies, broad media reads and per-request storage clients lack an aggregate allocation budget: [ticket](tickets/epub-asset-response-allocation-and-client-lifetime.md).
