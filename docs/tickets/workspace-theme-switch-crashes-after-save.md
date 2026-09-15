@@ -25,3 +25,12 @@ the cause. fix the owning invariant without masking workspace errors. close
 after repeated solar/dark changes keep the current workspace usable and the
 selection survives reload. the earlier five-minute reader pass does not cover
 this transition.
+
+## prepared correction
+
+pr #268 stamps the protected pathname+query before the non-GET return. the
+sole devbox check at6028b0a9 failed the root server-action regression with
+`expected null to be '/'` (run35028818648). pinned next15.5.22 source confirms
+that this cookie-writing action rerenders the root tree; bootstrap requires
+the omitted header. bounded independent auth review found no source blocker.
+keep this ticket open until repeated live theme switches and reload pass.

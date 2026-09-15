@@ -1,6 +1,6 @@
 # restoration production release — 2026-09-15
 
-status: ecbe deployed; paired-reader pass; remaining manual checks pending
+status: ecbe deployed; no new server oom; theme fix prepared; chat deferred
 origin: restoration pr #255, forward recovery pr #262
 
 ## current release: ecbe838e
@@ -56,11 +56,35 @@ no inventory gaps, and a 263.207 mib minimum available host memory since
 21:43:24. caddy added149 limit-reclaim events without oom/restart; postgres
 counters did not change. their historical lifetime totals are not new failures.
 
-this resolves oi-116's representative two-document acceptance; its ticket and
-registry entry are deleted. it is a bounded production result, not a guarantee
-for all traffic. android navigation/reopen, applicable playback/offline,
-solar/imports/history and a new tool-using chat followed by leave/reopen are
-requested and pending. oi-113 remains open for representative interactive work.
+this resolves oi-116's representative two-document memory acceptance; its ticket
+and registry entry are deleted. it is a bounded result, not a guarantee for all
+traffic. the user subsequently reported a workspace error while switching
+solar/dark, with the selected theme preserved on reload. through21:56:53 api
+peak was283.461/320 mib, background409.523/448, and all new services had zero
+oom/restarts. the kernel read since21:44:40 contained no oom. this later error
+does not demonstrate another server memory failure.
+
+pr #268 repairs a concrete matching defect (oi-129): protected POST requests
+returned before middleware stamped `x-nexus-request-path`. the theme action
+saves a cookie; pinned next15.5.22 then rerenders the component tree, whose
+workspace bootstrap requires that header. stamp protected pathname+search
+before the non-GET return, retaining existing mutation auth behavior. two
+cheap deterministic server-action regressions cover root and pathname+query.
+independent source review confirmed the pinned framework path; the actual
+production client exception remains unobserved. repeat theme switching after
+the successor is deployed; a source fix is not a manual pass.
+
+chat failed and the user explicitly accepts follow-up after deployment. logs
+show codex invalid_request then GenerationUncertain after durable dispatch;
+metadata generation encounters the same contract failure (oi-128). a separate
+synapse job loses admission ownership and asserts a Prepared cancellation
+checkpoint (oi-130). do not blindly resend or reset unresolved work. oi-113
+remains open: bounded worker memory during a failed job is not successful
+representative execution.
+
+solar theme rendering was reported working; switching failed. android
+navigation/reopen, playback/offline and imports/history were not individually
+reported. the user's “most things worked” does not establish each acceptance.
 
 earlier preflights stopped before an attempt: supabase auth-config503 at
 21:18 and21:19 during [management-api maintenance](https://status.supabase.com/incidents/79k7dh48kvh7),
@@ -106,7 +130,7 @@ and accepts legitimate revision-zero search recovery. pr #265 fixes admission
 of existing normal compose codex services. pr #266 records the failed736
 publication and supplies a fresh source identity after exact task-owned cleanup.
 no partial736 artifacts were deployed. oi-122 and oi-124 are fixed; oi-113,
-oi-116, oi-123, oi-125 and oi-126 remain open under their specific acceptance.
+oi-116, oi-123, oi-125 and oi-126 remained open at that checkpoint.
 
 [the sole devbox check](https://github.com/NielsdaWheelz/nexus-web/actions/runs/35018430725)
 passed544 python,1059 vitest/125 files,one ingest,all static checks and graph0229.
@@ -229,16 +253,18 @@ user reports basic page loading and the scrollbar look correct on android and
 web. sustained use fails with the workspace error when any pair of shadow &
 claw, unclenching and lectern is open. the browser/app remains open. kernel
 proof confirms api cgroup oom at19:18:47 utc; subsequent resource reads also
-raise a revision0 search-repair validation error. oi-116 tracks the memory failure; the subsequent fix repairs the revision-zero
+raise a revision0 search-repair validation error. oi-116 tracked that memory failure; the subsequent fix repairs the revision-zero
 wire contract (oi-122). solar,
-imports and chat are blocked, not passed. the successful release/qualification
+imports and chat were blocked, not passed. the successful release/qualification
 above remains historical evidence of its narrower workload.
 
 ## limits and manual checks
 
 - android reader/navigation/reopen and applicable playback/offline: pending.
 - simultaneous “shadow & claw” and “the pain of clenching”: passed on ecbe; oi-116 resolved.
-- solar, new tool-using chat, recovery without resend, imports/history and reader: pending.
+- solar rendering: user-reported pass; switching themes failed, successor fix pending.
+- chat: failed and explicitly deferred (oi-128); recovery unproved.
+- imports/history and detailed android journeys: not individually reported.
 - representative interactive execution remains unproved; oi-113 stays open.
 - oi-107 and oi-109–111, oi-114–120 retain their stated acceptance. in particular,
   oi-119's failed published-prefix successor and oi-120's stale ordinary
