@@ -121,3 +121,18 @@ and the frontend alias did not move. the follow-up changes that exact label
 comparison, retaining unknown-service/project refusal. never bypass preflight
 by stopping healthy services or changing an installed bundle. a new reviewed
 main sha and immutable publication will carry both fixes.
+
+## publication disk failure
+
+pr #265 fixed normal compose service recognition and merged as
+`736cb651bfa2539162faf8b26c642ae09a3c1520`. its sole devbox check passed:
+544 python,1059 vitest,one ingest,static head0229. bounded independent review
+found no blocker. application and migration code are unchanged from7b28c879.
+
+the backend publisher then exhausted devbox disk during bundle construction.
+both image pushes completed, but no immutable bundle was uploaded. this sha
+was never deployed; production remains6baccaee/db0229. oi-126 records the
+missing publication disk admission and the runner's skipped cleanup. retained
+evidence identifies the exact temporary builder and task-owned diagnostic
+images for cleanup. a fresh reviewed main sha is required for publication;
+the failed publisher is not rerun and partial artifacts are not used.

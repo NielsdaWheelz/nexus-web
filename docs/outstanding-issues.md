@@ -302,3 +302,4 @@ unexpected timeouts. See
 
 - [open] oi-123 · reader quote resolution · 2026-09-15 source review · p2 · normalized quote spans allocate Python objects per character across the whole book: [ticket](tickets/normalized-quote-spans-amplify-whole-book-text.md).
 - [open] oi-125 · epub assets · 2026-09-15 source review · p2 · complete asset bodies, broad media reads and per-request storage clients lack an aggregate allocation budget: [ticket](tickets/epub-asset-response-allocation-and-client-lifetime.md).
+- [open] oi-126 · backend publication · 2026-09-15 restoration release · p2 · disk exhaustion aborts the runner before bundle upload and cleanup: [ticket](tickets/backend-publication-can-exhaust-devbox-disk.md).
