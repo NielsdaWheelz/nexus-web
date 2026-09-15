@@ -8,9 +8,9 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 _EXPECTED_MEMORY_MAX_BYTES = 448 * 1024 * 1024
-_HOST_HEADROOM_BYTES = 256 * 1024 * 1024
+_HOST_HEADROOM_BYTES = 128 * 1024 * 1024
 _MAX_INPUT_BYTES = 16 * 1024
-_PSI_AVG10_MAX = Decimal("5")
+_PSI_AVG10_MAX = Decimal("10")
 _UNSIGNED_INTEGER = re.compile(rb"(?:0|[1-9][0-9]*)\n?\Z")
 _PSI_LINE = re.compile(
     r"(some|full) avg10=((?:0|[1-9][0-9]*)(?:\.[0-9]+)?) "

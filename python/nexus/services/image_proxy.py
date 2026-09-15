@@ -9,7 +9,7 @@ SSRF/redirect/decode validation lives in nexus.services.image_validation.
 Current endpoint contract:
 - Endpoint is authenticated-only
 - Images are cached by normalized URL
-- 64 entry cache with 128MB byte budget
+- 64 entry cache with 16 MiB byte budget
 """
 
 from collections import OrderedDict
@@ -33,7 +33,7 @@ logger = get_logger(__name__)
 
 # Cache limits
 CACHE_MAX_ENTRIES = 64
-CACHE_MAX_BYTES = 128 * 1024 * 1024  # 128 MB
+CACHE_MAX_BYTES = 16 * 1024 * 1024
 
 
 # =============================================================================
@@ -105,6 +105,9 @@ class ImageCache:
             if key in self._cache:
                 old_entry = self._cache.pop(key)
                 self._total_bytes -= len(old_entry.data)
+
+            if entry_size > self.max_bytes:
+                return
 
             # Evict until we have room (both entry count and byte budget)
             while self._cache and (

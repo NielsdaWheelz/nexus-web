@@ -888,6 +888,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
+    { name = "anyio" },
     { name = "boto3" },
     { name = "defusedxml" },
     { name = "fastapi" },
@@ -928,6 +929,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.14.0" },
+    { name = "anyio", specifier = ">=4.12.1" },
     { name = "boto3", specifier = ">=1.43.7" },
     { name = "cryptography", marker = "extra == 'dev'", specifier = ">=45.0.0" },
     { name = "defusedxml", specifier = ">=0.7.1" },

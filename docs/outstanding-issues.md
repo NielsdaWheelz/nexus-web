@@ -291,3 +291,5 @@ unexpected timeouts. See
 - [open] oi-114 · capacity qualification · 2026-09-15 release review · p2 · a service-health read failure can mask malformed passed-turn evidence: [ticket](tickets/capacity-service-read-can-mask-malformed-turns.md).
 
 - [open] oi-115 · api availability · 2026-09-15 memory review · p2 · api startup requires codex catalogue availability despite its independent-readiness contract: [ticket](tickets/api-startup-requires-codex-catalog-availability.md).
+
+- [open] oi-116 · api memory · 2026-09-15 host observation · p2 · the incumbent api hit its 320 mib cgroup limit and recovered; qualify the restored request footprint: [ticket](tickets/incumbent-api-reaches-container-memory-cap.md).

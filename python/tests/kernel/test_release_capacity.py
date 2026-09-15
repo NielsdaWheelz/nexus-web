@@ -13,11 +13,11 @@ from deploy.hetzner.release import (
 
 def test_observed_headroom_allows_small_reclaim_stalls(tmp_path: Path) -> None:
     host = HostRelease(ReleasePaths.under(tmp_path))
-    host._require_qualification_host_sample((256 * 1024 * 1024, 5.0, 0.5))
+    host._require_qualification_host_sample((128 * 1024 * 1024, 10.0, 0.5))
 
 
 @pytest.mark.parametrize(
-    "sample", [(256 * 1024 * 1024 - 1, 0.0, 0.0), (400 * 1024 * 1024, 5.1, 0.5)]
+    "sample", [(128 * 1024 * 1024 - 1, 0.0, 0.0), (400 * 1024 * 1024, 10.1, 0.5)]
 )
 def test_host_pressure_is_retryable(tmp_path: Path, sample: tuple[int, float, float]) -> None:
     host = HostRelease(ReleasePaths.under(tmp_path))
@@ -40,8 +40,8 @@ def test_candidate_failure_is_not_hidden_by_simultaneous_host_pressure(
         "cgroup_memory_max": 448 * 1024 * 1024,
         "cgroup_memory_current": 200 * 1024 * 1024,
         "cgroup_memory_peak": 300 * 1024 * 1024,
-        "minimum_mem_available": 200 * 1024 * 1024,
-        "maximum_memory_psi_some": 6.0,
+        "minimum_mem_available": 127 * 1024 * 1024,
+        "maximum_memory_psi_some": 11.0,
         "maximum_memory_psi_full": 1.0,
         "oom_kill_delta": oom_delta,
         "services": [],

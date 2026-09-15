@@ -96,6 +96,15 @@ allocations; its former 256 MiB ceiling was insufficient. The extra 64 MiB is
 possible worker demand within the existing server, not a server resize. Exact
 image and combined host qualification still apply.
 
+The API image proxy retains at most 16 MiB of cached bodies and runs at most two
+fetches at once; further requests wait before thread/client allocation. It
+checks response headers before reading and caps each streamed image at 10 MiB.
+An upstream ignoring `Accept-Encoding: identity` is rejected. Smaller caches
+mean more refetching, and image bursts may load more slowly. These bound cache
+retention and fetch work; completed responses and socket buffers still consume
+memory until delivery. Representative simultaneous reader use remains necessary
+for API capacity qualification.
+
 The host contract is cgroup v2 with the memory controller, at least 1 GiB
 swap, at least 512 MiB free under `/var/lib/nexus/parser-tmp`, and no running
 container outside the exact `nexus` Compose project. Existing hosts must be
@@ -212,8 +221,11 @@ It does not call `apply`, stop writers, migrate data, or promote Vercel. An
 absent, stale, retriable, or subscription-blocked result is not release
 evidence; diagnose it and rerun the unchanged qualification command. A measured
 candidate cgroup or exact-contract breach permanently disqualifies the candidate
-SHA. Host admission uses observed available memory (at least 256 MiB) and
-`some avg10 <= 5`; `full avg10` is diagnostic. It does not reserve the entire
+SHA. Host admission uses observed available memory (at least 128 MiB) and
+`some avg10 <= 10`; `full avg10` is diagnostic. This smaller operating margin
+accepts less room for unrelated allocations and more reclaim latency on the
+single-user host. It is a measured workload policy, not a guarantee against
+host-wide exhaustion. It does not reserve the entire
 possible Codex cgroup growth in advance. A host-pressure or headroom refusal is
 retryable even after startup; it cannot hide an observed candidate OOM or other
 cgroup breach. Container ceilings, one-turn concurrency and health proofs remain
