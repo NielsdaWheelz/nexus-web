@@ -1306,6 +1306,17 @@
         "gradle:apps/android/app/src/test/java/app/nexus/android/offline/reading/OfflineReadingSharedContractTest.kt"
       ],
       "expected_failure": "shared accepted reader failed admission: epub-literal-space-source-path"
+    },
+    {
+      "id": "test-linked-runtime-port-reservation-bypass",
+      "patch": "testdata/faults/test-linked-runtime-port-reservation-bypass.patch",
+      "sha256": "d9fde17e58857124ced3e13256ad9157e992fef03bce639267b8c86d737b0779",
+      "proofs": [
+        "pytest:python/tests/kernel/nexus_test_control/test_linked_runtime_port_reservations.py::test_linked_worktree_runtimes_reserve_every_persisted_port"
+      ],
+      "expected_failure": "a linked worktree's durable port reservation was reused",
+      "changed_owner_red": "coherent-fault",
+      "changed_owner_sha256": "a0b36f306d6f1dffd80085fbac22e86ffea684826f88f370b2f0f671fa757737"
     }
   ]
 }

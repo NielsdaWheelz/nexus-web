@@ -86,6 +86,7 @@ from nexus_test_control.runtime import (
     record_created,
     record_planned,
     release_run,
+    repo_id_for,
     require_run_id,
     require_scenario_id,
     require_test_environment,
@@ -838,7 +839,7 @@ def ensure_services(repo_root: Path, environment: Mapping[str, str]) -> Supabase
     with _workspace_service_lock(root):
         if not runtime_record_path(root).exists():
             with _port_allocation_lock():
-                initialize_runtime(root, environment, _allocate_ports())
+                initialize_runtime(root, environment, _allocate_ports(root))
                 _start_services(root)
         else:
             _upgrade_runtime_if_needed(root, environment)
@@ -2682,7 +2683,9 @@ def clean_owned_runtime(
     if not runtime_record_path(root).exists():
         return ()
     run_command = command_runner or _run
-    _upgrade_runtime_if_needed(root, environment, port_available=port_available)
+    _upgrade_runtime_if_needed(
+        root, environment, port_available=port_available, linked_runtime_ports=frozenset()
+    )
     runtime = read_runtime(root)
     run_ids = runtime.owned_run_ids
     failures: list[str] = []
@@ -2731,12 +2734,18 @@ def clean_owned_runtime(
     return run_ids
 
 
-def _allocate_ports() -> RuntimePorts:
+def _allocate_ports(
+    repo_root: Path,
+    *,
+    port_available: Callable[[int], bool] | None = None,
+) -> RuntimePorts:
+    is_port_available = port_available or _port_available
+    reserved = _linked_worktree_runtime_ports(repo_root)
     ports: list[int] = []
     ephemeral_port_range = _local_ephemeral_port_range()
     for preferred in _PORT_DEFAULTS:
         for port in _candidate_ports(preferred, ephemeral_port_range):
-            if port not in ports and _port_available(port):
+            if port not in ports and port not in reserved and is_port_available(port):
                 ports.append(port)
                 break
         else:
@@ -2749,6 +2758,7 @@ def _upgrade_runtime_if_needed(
     environment: Mapping[str, str],
     *,
     port_available: Callable[[int], bool] | None = None,
+    linked_runtime_ports: frozenset[int] | None = None,
 ) -> None:
     is_port_available = port_available or _port_available
     try:
@@ -2768,6 +2778,11 @@ def _upgrade_runtime_if_needed(
             used = {
                 port for name, port in previous.ports.as_dict().items() if name not in missing_ports
             }
+            reserved = (
+                _linked_worktree_runtime_ports(root)
+                if linked_runtime_ports is None
+                else linked_runtime_ports
+            )
             added_ports: dict[str, int] = {}
             ephemeral_port_range = _local_ephemeral_port_range()
             for name in missing_ports:
@@ -2775,6 +2790,7 @@ def _upgrade_runtime_if_needed(
                     if (
                         port not in used
                         and port not in added_ports.values()
+                        and port not in reserved
                         and is_port_available(port)
                     ):
                         added_ports[name] = port
@@ -2833,6 +2849,52 @@ def _port_available(port: int) -> bool:
                 continue
             return False
     return True
+
+
+def _linked_worktree_runtime_ports(repo_root: Path) -> frozenset[int]:
+    root = canonical_repo_root(repo_root)
+    try:
+        listed = _run(
+            ("git", "worktree", "list", "--porcelain", "-z"),
+            cwd=root,
+            capture_output=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise RuntimeContractError("cannot enumerate linked worktree port reservations") from error
+
+    reserved: set[int] = set()
+    for entry in listed.split("\0"):
+        if not entry.startswith("worktree "):
+            continue
+        try:
+            linked_root = Path(entry.removeprefix("worktree ")).resolve(strict=True)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise RuntimeContractError("cannot resolve linked worktree reservation") from error
+        if linked_root == root:
+            continue
+        record_path = runtime_record_path(linked_root)
+        try:
+            payload = json.loads(record_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            continue
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise RuntimeContractError(
+                f"linked worktree runtime is unreadable: {linked_root}"
+            ) from error
+        values = payload.get("ports") if isinstance(payload, dict) else None
+        if (
+            not isinstance(payload, dict)
+            or payload.get("repo_id") != repo_id_for(linked_root)
+            or not isinstance(values, dict)
+            or not values
+            or any(type(port) is not int or not 1 <= port <= 65535 for port in values.values())
+            or len(values) != len(set(values.values()))
+        ):
+            raise RuntimeContractError(f"linked worktree runtime is invalid: {linked_root}")
+        reserved.update(values.values())
+    return frozenset(reserved)
 
 
 @contextmanager

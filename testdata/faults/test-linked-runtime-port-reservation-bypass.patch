@@ -1,0 +1,8 @@
+diff --git a/python/nexus_test_control/services.py b/python/nexus_test_control/services.py
+--- a/python/nexus_test_control/services.py
++++ b/python/nexus_test_control/services.py
+@@ -1379,3 +1379,3 @@
+         for port in _candidate_ports(preferred, ephemeral_port_range):
+-            if port not in ports and port not in reserved and is_port_available(port):
++            if port not in ports and is_port_available(port):
+                 ports.append(port)

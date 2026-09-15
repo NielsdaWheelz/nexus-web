@@ -16,7 +16,8 @@
         "pytest:python/tests/kernel/nexus_test_control/test_process.py::test_captured_child_output_is_drained_without_retaining_unbounded_logs",
         "pytest:python/tests/kernel/nexus_test_control/test_services.py",
         "pytest:python/tests/kernel/nexus_test_control/test_services.py::test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs",
-        "pytest:python/tests/kernel/testkit/test_network_guard.py"
+        "pytest:python/tests/kernel/testkit/test_network_guard.py",
+        "pytest:python/tests/kernel/nexus_test_control/test_linked_runtime_port_reservations.py::test_linked_worktree_runtimes_reserve_every_persisted_port"
       ],
       "capabilities": [
         "kernel-python"
