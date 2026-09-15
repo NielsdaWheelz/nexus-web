@@ -432,6 +432,8 @@ class HostReleaseHarness:
                 "ancestry_proofs": [],
                 "backup_dump_count": 0,
                 "backup_verify_count": 0,
+                "candidate_config_probe_count": 0,
+                "candidate_config_valid": True,
                 "candidate_health_failures_remaining": 0,
                 "candidate_health_failure_delay_seconds": 0.0,
                 "candidate_health_probe_count": 0,
@@ -1146,6 +1148,16 @@ def fake_docker_main() -> int:
         )
     elif arguments[0] == "pull":
         pass
+    elif (
+        arguments[0] == "run"
+        and "-c" in arguments
+        and arguments[arguments.index("-c") + 1]
+        == "from nexus.config import get_settings; get_settings()"
+    ):
+        state["candidate_config_probe_count"] += 1
+        if not state["candidate_config_valid"]:
+            _save_state(state_path, state)
+            return 72
     elif arguments[0] == "run":
         if "cat" in arguments and "/app/runtime-identity.json" in arguments:
             image = arguments[-2]
