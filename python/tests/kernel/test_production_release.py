@@ -702,6 +702,23 @@ def test_candidate_still_requires_exact_live_caddy_configuration(
         assert not harness.attempt_path.exists()
 
 
+def test_host_apply_rejects_invalid_candidate_config_before_stopping_services(
+    host_release_harness: HostReleaseHarness,
+) -> None:
+    harness = host_release_harness
+    harness.update_state(candidate_config_valid=False)
+
+    failed = harness.run_apply()
+
+    assert failed.returncode != 0
+    assert "bounded command failed: docker" in failed.stderr
+    assert not harness.attempt_path.exists()
+    state = harness.state()
+    assert state["candidate_config_probe_count"] > 0
+    assert state["resource_mutations"] == []
+    assert state["service_mutations"] == []
+
+
 @pytest.mark.parametrize(
     ("table_exists", "database_revision"),
     [(False, "0210"), (True, None)],

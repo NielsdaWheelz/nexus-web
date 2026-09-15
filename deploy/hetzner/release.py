@@ -2885,6 +2885,30 @@ class HostRelease:
         )
         api_image_id = self._image_identity(candidate.images.api, candidate)
         worker_image_id = self._image_identity(candidate.images.worker, candidate)
+        _run(
+            (
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges",
+                "--env-file",
+                str(config.path),
+                "--env",
+                "PYTHONDONTWRITEBYTECODE=1",
+                "--entrypoint",
+                "python",
+                candidate.images.api,
+                "-c",
+                "from nexus.config import get_settings; get_settings()",
+            ),
+            timeout_seconds=60,
+        )
         containers = self._container_evidence(
             bundle=bundle,
             candidate=candidate,
