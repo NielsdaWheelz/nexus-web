@@ -308,7 +308,20 @@ describe("selection annotation keyboard interaction", () => {
 
   it("retains a pending note when its highlight was not created", async () => {
     const pending = holdNoteSaves();
-    renderAnnotation({ creation: Promise.resolve(null) });
+    // A modeled failure must retain the note even when the real defect boundary exists.
+    render(
+      <DefectBoundary>
+        <StrictMode>
+          {withRenderEnvironment(
+            <FeedbackProvider>
+              <ShareControllerProvider>
+                <SelectionAnnotation creation={Promise.resolve(null)} />
+              </ShareControllerProvider>
+            </FeedbackProvider>,
+          )}
+        </StrictMode>
+      </DefectBoundary>,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Note" }));
     const textbox = await screen.findByRole("textbox", { name: "Highlight note" });
     await userEvent.click(textbox);
