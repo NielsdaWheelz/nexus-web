@@ -150,3 +150,54 @@ pending; oi-116 stays open.
 asked to reload and repeat the two-view workload after release health passed.
 this ticket remains open until that representative traffic is observed. see
 the current [release evidence](../cutovers/restoration-release-2026-09-15.md).
+
+## successor manual failure
+
+user reported two views lasted longer, then the workspace failed again. kernel
+evidence confirms5ac api container4b18ba4509b86ed5105804bb074cb21e92a0b0e1c327dbda9d24938edeade0f1
+was oom-killed at20:34:49 utc under320 mib, anon332783616 bytes. it restarted
+once. the two-second observer saw277 mib before the kill, then restart1;
+post-restart zero counters and smaller peaks are a new cgroup lifetime, not
+absence of this oom. all35 image response headers were logged around the kill;
+those logs do not prove complete body transfer. earlier startup and private
+allocation evidence remains narrower than this failed real workload.
+
+private evidence: `memory-incident-5acb211a/{api,kernel}.log`, runtime.json and
+`production-5acb211a-memory-resumed.jsonl`. pause manual checks and diagnose
+workspace warmup, authentication, and real response transfer omitted by the
+in-process diagnostic. no further limit relaxation is authorized by this result.
+
+## second request-path correction (pr #267)
+
+real uvicorn/tcp diagnostics keep the client outside the api cgroup and restore
+original auth middleware/bootstrap with a private verifier. ten reader/search/
+35-image rounds plus workspace warmup and real readyz subprocesses reached the
+320 mib cap on both5ac and a transfer-only overlay (max events310 and364,
+respectively; no oom). old in-process diagnostics did not exercise socket
+backpressure. the first warmup omitted required workspace device_id and got400;
+the corrected overlay supplies it and gets200.
+
+image admission now lasts through body transfer, with64 kib writes. two slow
+consumers delay queued image requests; bytes, validation and conditional304
+behavior remain unchanged. chat and dossier admission also stop importing the
+worker-owned mcp server graph. the two codex execution paths retain their local
+binding imports; no provider, listener or tool contract changes.
+
+the final three-file source overlay ran21:03:28–21:05:04 utc on the devbox:
+ten rounds, peak259.402/320 mib, sampled anonymous peak253.852 mib, zero
+max/oom events, healthy on completion. the api reported mcp absent from loaded
+modules. this includes the unchanged16 mib image cache and two-transfer limit.
+file-cache charges differ between runs; peak differences are not isolated
+measurements of python import savings. private evidence:
+`memory-incident-5acb211a/tcp-transfer-mcp-readable/`.
+
+an earlier overlay had unreadable source permissions and failed before serving;
+its receipt is retained. a separate allocation profile used768 mib on the
+existing devbox to accommodate tracing overhead; it is not320 mib capacity
+evidence. an earlier transfer diagnostic was interrupted by the devbox user
+service/docker restart; no production change or host reboot was performed.
+
+these remain source-overlay diagnostics: fake token verification, test-mode
+catalog startup, cloned database without the current article, and no browser/
+bff/device journeys. require the new immutable image and actual sustained use;
+keep oi-116 open. the repository check has not yet run on this code.

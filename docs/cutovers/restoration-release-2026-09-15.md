@@ -1,7 +1,15 @@
 # restoration production release — 2026-09-15
 
-status: memory/workspace successor deployed; renewed manual acceptance pending
+status: successor deployed; renewed manual workload failed with api oom
 origin: restoration pr #255, forward recovery pr #262
+
+## renewed manual failure
+
+5ac api was oom-killed at20:34:49 utc during the image burst and restarted once.
+the user reports two views lasted longer, then the workspace crashed. live
+cgroup counters reset on restart; the kernel event is authoritative. the owned
+release success below does not establish sustained product acceptance. solar,
+imports and chat remain blocked. oi-116 records the failure and investigation.
 
 ## current release
 

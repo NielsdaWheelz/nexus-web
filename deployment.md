@@ -98,16 +98,19 @@ possible worker demand within the existing server, not a server resize. Exact
 image and combined host qualification still apply.
 
 The API image proxy retains at most 16 MiB of cached bodies and runs at most two
-fetches at once; further requests wait before thread/client allocation. It
+fetch-and-transfer operations at once; further requests wait before thread/client allocation. It
 checks response headers before reading and caps each streamed image at 10 MiB.
 An upstream ignoring `Accept-Encoding: identity` is rejected. Smaller caches
-mean more refetching, and image bursts may load more slowly. These bound cache
-retention and fetch work; completed responses and socket buffers still consume
-memory until delivery. Representative simultaneous reader use remains necessary
+mean more refetching, and slow image consumers delay queued images. Each operation
+keeps its slot through response transfer and sends at most 64 KiB per write, so
+socket backpressure applies between chunks. These bounds do not cover every API
+allocation. Representative simultaneous reader use remains necessary
 for API capacity qualification. Viewer lookup runs on the event loop; it does
 not dispatch an otherwise empty worker thread for every image. Image clients
 share the verified TLS trust store, while cookies and connection pools remain
 per fetch. Image metadata and integrity use one explicitly closed decoder.
+Chat and Dossier admission do not import the worker-owned MCP server; the two
+Codex execution paths import their binding when they run in the worker.
 
 The API artifact fixes glibc allocation arenas at two and the mmap/trim
 thresholds at 128 KiB. Large freed buffers can return to the operating system

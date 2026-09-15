@@ -11,6 +11,7 @@ from uuid import UUID
 from anyio import CapacityLimiter, to_thread
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
+from starlette.types import Receive, Scope, Send
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_session_factory
@@ -18,6 +19,45 @@ from nexus.services import epub_assets, image_proxy
 
 router = APIRouter(tags=["media"])
 _image_fetch_slots = CapacityLimiter(2)
+
+
+class _ProxiedImageResponse(Response):
+    def __init__(self, url: str, if_none_match: str | None) -> None:
+        super().__init__()
+        self.url = url
+        self.if_none_match = if_none_match
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # Own the slot through transfer, including cancellation and send failure.
+        # Fetch and validate before publishing any successful response headers.
+        async with _image_fetch_slots:
+            result = await to_thread.run_sync(image_proxy.fetch_image, self.url, self.if_none_match)
+            if result.not_modified:
+                response = Response(status_code=304, headers={"ETag": result.etag})
+            else:
+                response = Response(
+                    content=result.data,
+                    media_type=result.content_type,
+                    headers={"Cache-Control": "private, max-age=86400", "ETag": result.etag},
+                )
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": response.status_code,
+                    "headers": response.raw_headers,
+                }
+            )
+            # A single large write can fill a socket buffer before backpressure
+            # is checked again. Bound each write, including cached image bodies.
+            for offset in range(0, len(response.body), 64 * 1024):
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": response.body[offset : offset + 64 * 1024],
+                        "more_body": True,
+                    }
+                )
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 
 @router.get("/media/image")
@@ -39,20 +79,7 @@ async def get_proxied_image(
         E_IMAGE_TOO_LARGE (413): Image exceeds 10MB or 4096x4096 dimensions.
         E_INVALID_REQUEST (400): Malformed URL or invalid image content.
     """
-    # Queue before thread/client allocation; two tabs must not start dozens of fetches.
-    result = await to_thread.run_sync(
-        image_proxy.fetch_image,
-        url,
-        request.headers.get("If-None-Match"),
-        limiter=_image_fetch_slots,
-    )
-    if result.not_modified:
-        return Response(status_code=304, headers={"ETag": result.etag})
-    return Response(
-        content=result.data,
-        media_type=result.content_type,
-        headers={"Cache-Control": "private, max-age=86400", "ETag": result.etag},
-    )
+    return _ProxiedImageResponse(url, request.headers.get("If-None-Match"))
 
 
 @router.get("/media/{media_id}/assets/{asset_key:path}")

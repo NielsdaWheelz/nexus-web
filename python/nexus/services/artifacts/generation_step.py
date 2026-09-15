@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Final, Literal, assert_never, cast
+from typing import TYPE_CHECKING, Final, Literal, assert_never, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter
@@ -20,10 +20,6 @@ from sqlalchemy.orm import Session
 from nexus.jobs.queue import JobRow
 from nexus.schemas.presence import Present
 from nexus.services import durable_step_journal
-from nexus.services.agent_tools_mcp import (
-    CodexGenerationToolBinding,
-    compose_codex_generation_tool_binding,
-)
 from nexus.services.artifacts.bindings._shared import (
     Candidate,
     CitationValidationError,
@@ -77,6 +73,9 @@ from nexus.services.structured_synthesis import (
 )
 from nexus.services.tool_authority import compose_deferred_generation_tool_executor
 from nexus.services.tool_runtime.composition import freeze_tool_plan_snapshot
+
+if TYPE_CHECKING:
+    from nexus.services.agent_tools_mcp import CodexGenerationToolBinding
 
 SYNTHESIS_STEP_PATH: Final = "synthesis"
 DOCUMENT_REPAIR_STEP_PATH: Final = "document-repair"
@@ -235,6 +234,8 @@ class ArtifactGenerationStep:
         binding: CodexGenerationToolBinding | None = None
 
         def bind_codex(spec: GenerationSpec) -> CodexAdmissionBinder:
+            from nexus.services.agent_tools_mcp import compose_codex_generation_tool_binding
+
             nonlocal binding
             operation = runtime.llm_runtime.admission.model_tool_operation(spec)
             if operation is None or projection is None:
