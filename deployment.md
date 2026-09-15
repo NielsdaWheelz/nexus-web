@@ -284,10 +284,10 @@ paused beyond 72 hours in `WritersStopped`, `BackupVerified`, or
 restart its predecessor to bypass the refusal. A permanent failure after
 publishing `current` but before final success has a separate convergence limit
 ([oi-119](docs/tickets/failed-published-release-cannot-converge-successor.md)).
-The prepared refresh path also needs its `FrontendPromoted` shell replay ordering
-fixed before release: the script currently runs auth smoke against stopped
-writers before the controller can reactivate them
-([oi-121](docs/tickets/frontend-promoted-replay-smokes-stopped-backend.md)).
+Replay also applies an existing `FrontendPromoted` candidate before public auth
+smoke. Apply restores and proves the bound backend without regressing its phase,
+including after `current` publication but before `Succeeded`. Auth smoke still
+precedes finalization.
 
 Database backups are required by default. An operator who accepts losing the
 fresh stopped-writer recovery point can explicitly waive it:

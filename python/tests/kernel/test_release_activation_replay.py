@@ -25,11 +25,13 @@ from nexus.release_artifact import CandidateImages, CandidateManifest
         (ReleasePhase.FrontendPromoted, ReleasePhase.FrontendPromoted),
     ],
 )
+@pytest.mark.parametrize("requires_qualification", [False, True])
 def test_apply_restores_candidate_without_regressing_promotion(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     phase: ReleasePhase,
     expected_phase: ReleasePhase,
+    requires_qualification: bool,
 ) -> None:
     candidate = CandidateManifest(
         schema_version=2,
@@ -85,7 +87,9 @@ def test_apply_restores_candidate_without_regressing_promotion(
     ):
         monkeypatch.setattr(host, boundary, Mock())
     monkeypatch.setattr(
-        host, "_requires_first_codex_capacity_qualification", Mock(return_value=True)
+        host,
+        "_requires_first_codex_capacity_qualification",
+        Mock(return_value=requires_qualification),
     )
     activate = Mock()
     monkeypatch.setattr(host, "_activate_backend", activate)
@@ -97,7 +101,10 @@ def test_apply_restores_candidate_without_regressing_promotion(
         backup_policy=BackupPolicy.Waived,
     )
 
-    activate.assert_called_once_with(bundle=tmp_path, candidate=candidate, attempt=attempt)
+    if phase is ReleasePhase.AwaitingFrontendPromotion and not requires_qualification:
+        activate.assert_not_called()
+    else:
+        activate.assert_called_once_with(bundle=tmp_path, candidate=candidate, attempt=attempt)
     assert result.phase is expected_phase
     assert result.vercel_deployment_id == attempt.vercel_deployment_id
     assert result.config_sha256 == attempt.config_sha256

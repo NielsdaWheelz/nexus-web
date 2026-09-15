@@ -7825,7 +7825,10 @@ class HostRelease:
             )
             self.store.replace_attempt(attempt)
 
-        if attempt.phase is ReleasePhase.BackendActivationStarted or (
+        if attempt.phase in {
+            ReleasePhase.BackendActivationStarted,
+            ReleasePhase.FrontendPromoted,
+        } or (
             attempt.phase is ReleasePhase.AwaitingFrontendPromotion
             and self._requires_first_codex_capacity_qualification(candidate, existing=attempt)
         ):
@@ -7837,14 +7840,17 @@ class HostRelease:
                 )
                 self.store.replace_attempt(attempt)
 
-        if attempt.phase is not ReleasePhase.AwaitingFrontendPromotion:
+        if attempt.phase not in {
+            ReleasePhase.AwaitingFrontendPromotion,
+            ReleasePhase.FrontendPromoted,
+        }:
             raise ReleaseBlocked(f"host apply cannot continue phase {attempt.phase.value}")
         return attempt
 
     def _activate_backend(
         self, *, bundle: Path, candidate: CandidateManifest, attempt: ReleaseAttempt
     ) -> None:
-        """Prove the bound candidate before promotion, retaining the no-use window."""
+        """Restore and prove the bound candidate, retaining the no-use window."""
 
         try:
             # Recheck immediately before host activation: qualification and

@@ -300,4 +300,3 @@ unexpected timeouts. See
 
 - [open] oi-119 · release recovery · 2026-09-15 source review · p2 · a permanently failed current publication prefix blocks successor resource convergence: [ticket](tickets/failed-published-release-cannot-converge-successor.md).
 - [open] oi-120 · release qualification · 2026-09-15 source review · p2 · capacity expiry blocks ordinary first-cut replay while writers are stopped before activation: [ticket](tickets/capacity-expiry-blocks-stopped-first-cut-replay.md).
-- [open] oi-121 · release recovery · 2026-09-15 independent review · p1 · prepared forward qualification can leave frontend-promoted replay checking auth before restarting its backend: [ticket](tickets/frontend-promoted-replay-smokes-stopped-backend.md).
