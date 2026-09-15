@@ -1,11 +1,79 @@
 # restoration production release — 2026-09-15
 
-status: deployed; production api oom and workspace errors block manual acceptance
+status: memory/workspace successor deployed; renewed manual acceptance pending
 origin: restoration pr #255, forward recovery pr #262
 
-## result and immutable identity
+## current release
 
-`6baccaee9c053b10f46fb5e270e73f5bc12b5026` is the durable current production
+`5acb211ab6966a87201dffe5d30d427ca0189e7e` is the durable current release.
+the owned deploy ran20:24:21–20:27:06 utc and settled `Succeeded` at20:27:05
+with `--no-database-backup`. actual database and record remain0229; no migration
+was needed. config remains `23aa3deeee2016ba7c62c557b273988b1af27609452bf5f601695682d32f3b68`.
+postgres and caddy retain their original containers. no resize, reboot, fresh
+backup or manual frontend promotion occurred.
+
+- api: `sha256:a0cbb6186a93990dbf8f1bff86fd315562b8cb2c83e02092629a220b06c830c7`.
+- worker/codex/policy: `sha256:8ac5ebdceeaa2895a42ebd09aa403390217e65fb3c83421ee6f8b6e196394d73`.
+- manifest: `ffc53fe4ecf4272241cba597a59d93f8210dd55efbe03f7fdef07617a1b41cfa`.
+- frontend: `dpl_98WYFxwPVvh465hb9n6uVebtTjLk`, owned alias and public version proved.
+
+pr #264 removes avoidable reader/image allocations, reduces allocator retention
+and accepts legitimate revision-zero search recovery. pr #265 fixes admission
+of existing normal compose codex services. pr #266 records the failed736
+publication and supplies a fresh source identity after exact task-owned cleanup.
+no partial736 artifacts were deployed. oi-122 and oi-124 are fixed; oi-113,
+oi-116, oi-123, oi-125 and oi-126 remain open under their specific acceptance.
+
+[the sole devbox check](https://github.com/NielsdaWheelz/nexus-web/actions/runs/35018430725)
+passed544 python,1059 vitest/125 files,one ingest,all static checks and graph0229.
+checked commit `7eeb8a97013793e2d302a63acddb7374554c65bc`, reviewed head
+`56ec90b8f36024e38d0d7194e720eedcb168b95e` and merged5ac share tree
+`f0c609f5a40a27e0b3061d35071cb0a65e083a8e`. the runner checkout was clean.
+[publication](https://github.com/NielsdaWheelz/nexus-web/actions/runs/35018779862)
+succeeded on that exact source; bundle inputs matched the frozen checkout.
+all three changes received bounded independent review.
+
+before deployment, the exact published api completed ten single-app in-process
+rounds:40 reader200,60 search200,270 raster200 and80 expected svg400 responses.
+peak301.262 mib under320, seven threads, no max/oom events. this injects a viewer,
+skips catalog through the test environment, retains client responses inside the
+measured cgroup, and excludes jwt/bootstrap, uvicorn/tcp/bff/browser and current
+article db reads. its health surrogate imports urllib but never calls readyz.
+earlier two-app diagnostics and differing file-cache charges are not directly
+comparable. this is bounded allocation evidence, not manual acceptance.
+
+public verification at20:27:38 found matching web/api source, livez/readyz200
+with no-store, and a bodyless401 at the exact mcp mount. all five replacement
+services were healthy with exact images and zero restarts. owned post-alias auth
+smoke passed. mcp proof covers dns/tls/routing/auth rejection, not a model tool
+call. first-cut three-turn qualification was already completed on6b; this
+ordinary successor from db0229 did not rerun it or claim new turn evidence.
+
+memory observations through20:28:29 retained peaks: api248.973/320 mib,
+interactive185.410/320, background162.426/448, codex265.488/448. new services had
+zero limit/oom/swap/restart events. observed host minimum419.762 mib, pressure
+some0.76/full0.57. the private observer stopped when a container disappeared
+between list and inspect; it resumed after fixing that race. host sampling has
+a gap20:26:02–20:27:24. retained cgroup peaks/counters cover new-container startup,
+but host pressure within the gap is unknown. caddy added161 limit-reclaim events
+without oom/restart; postgres counters were unchanged. neither this short window
+nor the devbox diagnostic establishes sustained production capacity.
+
+renewed simultaneous two-view acceptance was requested after release health.
+android navigation/reopen, applicable playback/offline, solar, imports/history,
+and one new tool-using chat followed by leave/reopen remain pending. earlier
+basic page/scrollbar approval and the subsequent6b failure remain historical.
+
+private receipts under `/tmp/nexus-release-255/`: `pr266-ci-receipt.json`,
+`publisher-5acb211a-receipt.json`, `deploy-5acb211a-operator-receipt.json`,
+`production-5acb211a-{attempt,record,runtime,after}.json`,
+`provider-5acb211a-promoted.json`, `public-5acb211a-verification.json`,
+`deploy-5acb211a-memory-summary.json`, and
+`memory-incident-1921/published-single-5acb211a/`.
+
+## historical initial forward release
+
+`6baccaee9c053b10f46fb5e270e73f5bc12b5026` was the first successful forward
 release. its owned attempt succeeded at 18:37:25 utc on `nexus-api-worker`;
 the forward-fix pointer is absent. the controller ran from 18:34:31 to 18:37:26
 and exited zero with `--no-database-backup`.

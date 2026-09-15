@@ -26,3 +26,10 @@ test gate or broad automatic cleanup. prove an insufficient-space refusal
 precedes image creation, and that a normal publication still produces one
 immutable exact-sha bundle. the current operator cleanup does not resolve
 this missing admission check.
+
+## operational recovery
+
+exact failed-builder and retained task-diagnostic cleanup restored11.3 gb free
+disk. fresh5acb211a publication35018779862 completed, including bundle upload
+and cleanup. no backup/database/object volumes or primary worktrees were
+removed. this successful retry with a fresh sha does not close disk admission.
