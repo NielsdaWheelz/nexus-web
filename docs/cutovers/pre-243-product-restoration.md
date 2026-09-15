@@ -50,7 +50,9 @@ the original task stopped at the restoration pr. subsequent user instructions
 authorized merge, immutable image publication, frontend staging and a conditional
 production release. pr #255 merged as
 `634206213c50f9cdfcecfae8c8f7efc331ddec48`; the historical import-code repair in
-pr #256 merged as `c71953c3bd5e851dc742fb967ecedd8c29551e8d`. #254 was already
+pr #256 merged as `c71953c3bd5e851dc742fb967ecedd8c29551e8d`; the historical
+reader-text repair in pr #257 merged as
+`f75a7aa0d77ae83c6d95ca6784b77afd14cf1ae6`. #254 was already
 merged and its direct-check design remains incorporated.
 
 before cutover, rehearse the exact populated db0215-to-db0229 chain, obtain

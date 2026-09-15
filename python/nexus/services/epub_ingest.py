@@ -2128,6 +2128,13 @@ def _materialize_epub_body_anchor(body: HtmlElement) -> None:
     if body_id is None:
         return
 
+    # The source body is the first browser target for its ID. Keep that identity
+    # on the marker rather than copying a descendant collision into the reader.
+    for element in body.iterdescendants():
+        for attr, value in list(element.attrib.items()):
+            if _normalized_attr_name(attr) == "id" and value == body_id:
+                del element.attrib[attr]
+
     marker = Element("span", id=body_id)
     marker.tail = body.text
     body.text = None

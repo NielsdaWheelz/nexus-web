@@ -21,3 +21,15 @@ This issue is resolved only when a deployed release completes or terminally
 classifies the inherited backlog, no new unexpected statement-timeout failures
 occur during the observation window, and ordinary background jobs continue to
 make progress within their published latency bound.
+
+## 2026-09-15 recurrence
+
+After the user repaired a stalled web import on production `a1f59a755c`, source
+recovery succeeded at 06:53:11 utc. Its ordinary follow-up scan again failed
+twice with `psycopg.errors.QueryCanceled: canceling statement due to statement
+timeout` in the `WITH visible_media` query. No nonterminal model call remained.
+The shared visibility query is byte-identical in restored `f75a7aa0d77a`.
+Restored search does limit ranking before expensive snippets and contributor
+enrichment, but the observed sql prefix does not identify the failing retriever.
+This is a relevant mitigation, not proof of resolution. No production queue
+rows were changed. Keep this item open through the post-release observation.

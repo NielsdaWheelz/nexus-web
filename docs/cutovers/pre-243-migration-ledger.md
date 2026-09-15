@@ -162,3 +162,62 @@ the snapshot also contains one source attempt still marked running with a dead
 worker job since 2026-08-10. 0229 requires a truthful terminal source outcome
 and drained descendants. do not edit queue/source rows or waive that preflight;
 diagnose and use the existing owner recovery operation before the final snapshot.
+
+## historical epub body identities
+
+exact main `f75a7aa0d77ae83c6d95ca6784b77afd14cf1ae6`, api image
+`ghcr.io/nielsdawheelz/nexus-api@sha256:d507d4b437018197d2175f33a7c26e4017baaab356b0d1dccd05ed360301dcf4`,
+failed the next owned rehearsal on `dev-server` at 0228:
+`Reader structure repair lost authored section identity`. it ran for 197.749
+seconds, reached an observed 498,569,216-byte cgroup peak under the 512 mib cap,
+and recorded no observed oom events or oom kill. it returned to revision 0220.
+this was a fresh restore of the original archive, before the user's source
+recovery; it is not the final fresh-snapshot proof.
+
+a read-only census of all 239 epub media and 12,240 authored sections found
+exactly two missing identities, both in one book. each original xhtml body and
+its empty child div share an id. historical ingestion copied the body's id to
+a leading empty span but retained the child's copy. the browser's first target
+was preserved while the restored strict canonicalizer correctly refused the
+resulting duplicate identity. the independently hashed source archive confirms
+the body-marker provenance.
+
+the ingest owner now removes descendant copies of the body id before emitting
+its marker. 0228 repairs the persisted projection only when the authored source,
+fragment, href and zero offset agree, the leading marker is an empty id-only
+span, and later duplicates are empty id-only divs. it removes only those later
+id attributes, retaining both elements and all text. it proves unchanged
+canonical text, the first marker's zero-offset identity, and every other unique
+anchor's tag and coordinates. the authored-id preservation guard remains.
+
+this preserves the [browser's first matching id target](https://html.spec.whatwg.org/multipage/browsing-the-web.html#the-indicated-part-of-the-document).
+the immutable source archive supplies independent release evidence; the
+migration does not add another object-store read. tradeoff: the historical
+repair deliberately refuses other duplicate shapes. future ingestion handles
+body-id shadows at their source owner, while unrelated duplicate ids and named
+ambiguities remain unresolved. sanitized html bytes and publication generations
+change; canonical text, source objects, authored ids and accepted coordinates do
+not. old offline packages remain snapshots until refreshed.
+
+the user recovered the stalled import through the existing production repair
+operation. source recovery completed at 06:53:11 utc on 2026-09-15. its follow-up
+scan encountered the existing oi-060 query-timeout defect; the final snapshot
+must wait for an ordinary terminal outcome and repeat all admission/loss checks.
+
+
+the complete diagnostic on `dev-server` covered 239 epub media and 206 web
+media. it executed unchanged per-media statements from f75's 0228 inside
+savepoints, rolling every change and the outer schema transaction back. it
+found only the known epub body failure and one stale web cursor whose fragment
+was deleted and quotation absent from current content. oi-111 records the
+surviving publication defect. the user must save a deliberate current position
+through the deployed reader before the final snapshot; no heuristic migration
+mapping or direct database edit is permitted.
+
+a subsequent development diagnostic using source
+`fa6c453b425d034cc60a1665eae5df0a21b6ea74` in the f75 api image passed the affected
+book's complete per-media migration body, including cursor/reference repair and
+authored-id checks. the only html differences were the two duplicate div id
+attributes: 860 to 771 bytes in aggregate. all diagnostic changes rolled back.
+these diagnostics locate defects; they are not exact image qualification or a
+replacement for the repository check and fresh full migration rehearsal.

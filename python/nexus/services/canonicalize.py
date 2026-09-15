@@ -417,6 +417,75 @@ def repair_historical_html_structure(html_sanitized: str, canonical_text: str) -
     return repaired
 
 
+def repair_epub_body_anchor(html_sanitized: str, canonical_text: str, anchor_id: str) -> str:
+    """Repair a copied body ID without moving the published first browser target.
+
+    Historical EPUB ingestion materialized the body ID as a leading empty span,
+    leaving duplicate IDs on empty publisher divs. Only that projection is repaired;
+    other ambiguous anchor shapes still require an explanation.
+    """
+    from typing import cast
+
+    from lxml.html import HtmlElement, fragment_fromstring
+
+    from nexus.services.html_tree import inner_html
+
+    # justify-type-assertion: create_parent=True always returns an HtmlElement fragment root.
+    root = cast(HtmlElement, fragment_fromstring(html_sanitized, create_parent=True))
+    if not anchor_id or not len(root) or (root.text or "").strip():
+        raise ValueError("EPUB body anchor repair requires a leading empty marker")
+    marker = root[0]
+    if (
+        marker.tag != "span"
+        or dict(marker.attrib) != {"id": anchor_id}
+        or marker.text
+        or len(marker)
+    ):
+        raise ValueError("EPUB body anchor repair requires a leading empty marker")
+
+    matches = [element for element in root.iter() if element.get("id") == anchor_id]
+    if len(matches) < 2 or any(element.get("name") == anchor_id for element in root.iter()):
+        raise ValueError("EPUB body anchor repair requires duplicate IDs without named ambiguity")
+    duplicates = matches[1:]
+    if any(
+        element.tag != "div"
+        or dict(element.attrib) != {"id": anchor_id}
+        or element.text
+        or len(element)
+        for element in duplicates
+    ):
+        raise ValueError("EPUB body anchor repair only removes IDs from empty publisher divs")
+
+    original = canonicalize_structure(html_sanitized)
+    if original.text != canonical_text or anchor_id in original.anchors:
+        raise ValueError(
+            "EPUB body anchor repair lacks persisted text and ambiguous-anchor witnesses"
+        )
+    for element in duplicates:
+        del element.attrib["id"]
+    repaired = inner_html(root)
+    structure = canonicalize_structure(repaired)
+    if (
+        structure.text != canonical_text
+        or structure.anchors.get(anchor_id) != 0
+        or structure.elements[0].tag != "span"
+        or structure.elements[0].start_offset != 0
+        or structure.elements[0].end_offset != 0
+        or structure.anchors.keys() != original.anchors.keys() | {anchor_id}
+    ):
+        raise ValueError("EPUB body anchor repair changed canonical targets")
+    for name, index in original.anchors.items():
+        before = original.elements[index]
+        after = structure.elements[structure.anchors[name]]
+        if (before.tag, before.start_offset, before.end_offset) != (
+            after.tag,
+            after.start_offset,
+            after.end_offset,
+        ):
+            raise ValueError("EPUB body anchor repair moved another canonical target")
+    return repaired
+
+
 def _canonical_text_without_sources(raw_text: str) -> str:
     """Apply the exact canonical transform without per-character source arrays."""
     normalized_text = "".join(

@@ -284,3 +284,4 @@ unexpected timeouts. See
 - [open] oi-107 · release operator inputs · 2026-09-14 pr #255 qualification · p1 · reconcile the preserved local auth input with the verified two-origin production contract before future sync: [ticket](tickets/local-production-auth-input-retains-obsolete-preview-origin.md).
 - [open] oi-109 · local s3 development · 2026-09-15 pr #255 qualification · p2 · the pinned minio image pull failed on the devbox; establish supported access and prove a fresh pull: [ticket](tickets/local-minio-image-pull-fails-on-devbox.md).
 - [open] oi-110 · queue diagnostics · 2026-09-15 restoration rehearsal · p2 · api exceptions lose their declared code at the worker boundary: [ticket](tickets/worker-api-errors-lose-their-declared-code.md).
+- [open] oi-111 · reader publication · 2026-09-15 restoration rehearsal · p2 · web replacement can retain a cursor for a deleted fragment: [ticket](tickets/web-publication-invalidates-saved-reader-cursors.md).
