@@ -1,6 +1,6 @@
 # pre-pr-243 product restoration
 
-status: restoration pr preparation; no merge or production authorization
+status: restoration merged; production qualification in progress
 origin: 2026-09-14 restoration, reconciled with merged pr #254
 
 ## identities and invariant
@@ -44,25 +44,29 @@ lazy-provider implementation is incompatible and no new memory claim is made.
 locked test dependency removal requires regeneration of the offline reader asset
 manifest through its existing build owner, never hand-edited hashes.
 
-## later release boundary
+## release boundary
 
-stop after opening and verifying one focused pr. no production, database,
-vercel, image publication, merge, or deployment is authorized here. the previous
-plan to recreate #254 after restoration is superseded: #254 is already merged
-and its design is incorporated now.
+the original task stopped at the restoration pr. subsequent user instructions
+authorized merge, immutable image publication, frontend staging and a conditional
+production release. pr #255 merged as
+`634206213c50f9cdfcecfae8c8f7efc331ddec48`; the historical import-code repair in
+pr #256 merged as `c71953c3bd5e851dc742fb967ecedd8c29551e8d`. #254 was already
+merged and its direct-check design remains incorporated.
 
-before a separately authorized release, rehearse the populated db0215-to-db0229
-chain, resolve intentional history losses, verify stopped-writer backups,
+before cutover, rehearse the exact populated db0215-to-db0229 chain, obtain
+explicit acceptance of measured history losses, verify stopped-writer backups,
 qualify exact image/codex memory and host capacity, prove recovery, and complete
 production verification. after data mutation or backend activation recovery is
-forward-only. do not infer schema downgrade safety from a git restoration.
+forward-only. the user will check android manually after cutover. production
+remains on db0215 until these release prerequisites pass; a green unit suite
+does not authorize irreversible data mutation.
 
 ## historical validation and cleanup
 
 before #254 merged, dev-server completed a disposable populated migration chain
 at `eb07b3851085a060bade1e282ce7683e65b0d3b0`: run `5b88cb536d729ae9`, 152.907 s,
 1,029 mib aggregate owned peak memory; injected cursor defect failed and intact
-migration passed. migration files have not changed. this is historical evidence,
+migration passed. migration files were unchanged at that head. this is historical evidence,
 not a pass for the reconciled head. the old proof source and harness are removed
 under #254. the earlier full/pr attempts did not complete; their failures and
 partial results are recorded with their original shas in the pr.

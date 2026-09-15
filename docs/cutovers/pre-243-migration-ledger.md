@@ -6,8 +6,9 @@ the exact restored source has one linear head, **db0229**, not db0228.
 
 ## boundary
 
-migration source remains byte-identical to the coherent source. no production
-resource was contacted. the table's proof references describe the historical
+the original restoration kept migration source byte-identical to the coherent
+source and did not contact production. the reviewed 0228 representation repair
+below is the sole migration-source exception. the table's proof references describe the historical
 portfolio at 98a8b63bf0; #254 removes those integration suites. they are evidence
 of prior design, not current commands or release qualification.
 
@@ -51,7 +52,8 @@ reintroduce a second automated gate in this restoration.
 
 ## later production release requirements
 
-this pr does not authorize execution of any item below:
+the restoration pr did not authorize these operations. the subsequent release
+instruction authorizes them subject to the following prerequisites:
 
 - independently establish the actual live starting schema and current immutable
   application identities at release time;
@@ -112,3 +114,51 @@ production application identity, database revision and custom domain were not
 changed by this rehearsal. irreversible loss acceptance, exact candidate
 qualification and the stopped-writer production backup remain release
 prerequisites.
+
+## historical reader representation repair
+
+after a complete fresh restore, exact main
+`c71953c3bd5e851dc742fb967ecedd8c29551e8d` used api image
+`ghcr.io/nielsdawheelz/nexus-api@sha256:80d8aa0a1d5a4e387026ae93b6bab7c916cea159f00aac24379c44c0ccc46c20`
+on `dev-server`. the owned `alembic upgrade head` failed at 0228 after 142.690
+seconds: `Reader structure repair changed canonical text`. observed cgroup peak
+was 503,660,544 bytes under the 512 mib limit, with no observed oom events or
+oom kill. revision returned to 0220; this remains a failed rehearsal.
+
+a read-only streamed census of all 16,023 epub/web fragments found 17 mismatches
+across five media: 16 epub fragments and one web fragment. every stored text
+matched the pinned historical html5lib parser exactly. its adjacent ascii-space
+and nonbreaking-space text nodes contributed separate canonical spaces; the
+later libxml2 parser coalesced them. the first failure differed by one space.
+this is persisted representation drift from the august parser change, not a
+reason to change immutable canonical text or remove the equality guard.
+
+0228 now repairs only proven historical mismatches. it makes their historical
+text-node boundaries explicit with attribute-free inline spans, serializes into
+the current html representation, and requires both html5 and libxml2 readers to
+reconstruct the exact historical text, elements, anchors and offsets. unknown
+mismatches still fail. canonical text, source objects, fragment ids, quotations,
+highlight coordinates and authored identities remain unchanged. current runtime
+readers retain their sole current decoder; there is no historical parser fallback.
+
+tradeoff: those sanitized html projections change bytes and gain neutral spans.
+the existing transaction advances publication generations. downloaded offline
+packages remain old snapshots until refreshed. the final rehearsal must record
+the exact changed-row hashes, added span/byte counts, ordinary web heading and
+epub link-rewrite behavior, retained content fingerprints and memory peak.
+
+the read-only development diagnostic on `dev-server` exercised all 17 affected
+fragments with the patched canonicalizer in the c71953c3 api image. all ordinary
+web heading/index and epub link-rewrite checks passed. it adds 1,339 neutral
+spans and 16,273 html bytes in aggregate (978,195 to 994,468). the patched
+module sha256 is
+`7026ae8980e19e0c25c8150f64c29edd664c9c76ed5e5cd4a851475375cf4ccc`.
+this read-only diagnostic did not modify the cloned database and does not
+qualify a candidate image or replace the exact migration rehearsal. historical
+DOM work is limited to mismatched fragments; the ordinary web loop adds one
+current parse per fragment to detect mismatches without widening runtime APIs.
+
+the snapshot also contains one source attempt still marked running with a dead
+worker job since 2026-08-10. 0229 requires a truthful terminal source outcome
+and drained descendants. do not edit queue/source rows or waive that preflight;
+diagnose and use the existing owner recovery operation before the final snapshot.

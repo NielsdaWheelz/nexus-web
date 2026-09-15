@@ -299,6 +299,12 @@ def canonicalize_structure(html_sanitized: str) -> CanonicalStructure:
     elements = target.elements
     anchors = target.anchors
     del parser, target
+    return _canonical_structure(raw_text, elements, anchors)
+
+
+def _canonical_structure(
+    raw_text: str, elements: list[_RawElement], anchors: dict[str, int]
+) -> CanonicalStructure:
     if not elements:
         return CanonicalStructure(_canonical_text_without_sources(raw_text), (), {})
     text, offsets = _canonical_text_with_offsets(
@@ -321,6 +327,87 @@ def canonicalize_structure(html_sanitized: str) -> CanonicalStructure:
         ),
         anchors,
     )
+
+
+def repair_historical_html_structure(html_sanitized: str, canonical_text: str) -> str:
+    """Encode pre-#177 HTML5 text-node boundaries for migration 0228.
+
+    The historical DOM walker normalized adjacent text nodes independently.
+    Neutral spans preserve those boundaries through serialization and current
+    readers without changing persisted text or any structural coordinate.
+    This is a one-time persisted-HTML repair, never an ingestion fallback.
+    """
+    from xml.dom import Node
+    from xml.dom.minidom import Element, Text
+
+    import html5lib
+
+    from nexus.services.html_tree import inner_html, parse_html_document
+
+    def collect(element: Element, target: _CanonicalTextTarget) -> None:
+        target.start(element.tagName, dict(element.attributes.items()))
+        for child in element.childNodes:
+            if isinstance(child, Text) and child.nodeType == Node.TEXT_NODE:
+                target.data(child.data)
+            elif isinstance(child, Element):
+                collect(child, target)
+        target.end(element.tagName)
+
+    def preserve_boundaries(element: Element) -> None:
+        previous_text = False
+        for child in tuple(element.childNodes):
+            is_text = isinstance(child, Text) and child.nodeType == Node.TEXT_NODE
+            if previous_text and is_text:
+                span = element.ownerDocument.createElement("span")
+                element.replaceChild(span, child)
+                span.appendChild(child)
+            elif isinstance(child, Element):
+                preserve_boundaries(child)
+            previous_text = is_text
+
+    document = html5lib.parseFragment(
+        f"<div>{html_sanitized}</div>", treebuilder="dom", namespaceHTMLElements=False
+    )
+    target = _CanonicalTextTarget(set(), capture_structure=True)
+    try:
+        root = next(child for child in document.childNodes if isinstance(child, Element))
+        collect(root, target)
+        preserve_boundaries(root)
+        while root.firstChild is not None:
+            document.insertBefore(root.firstChild, root)
+        document.removeChild(root)
+        rendered = html5lib.serialize(
+            document, tree="dom", quote_attr_values="always", omit_optional_tags=False
+        )
+    finally:
+        document.unlink()
+    raw_text, elements, anchors = target.builder.build(), target.elements, target.anchors
+    del document, root, target
+    historical = _canonical_structure(raw_text, elements, anchors)
+    del raw_text, elements, anchors
+    if historical.text != canonical_text:
+        raise ValueError("Historical reader HTML disagrees with persisted canonical text")
+
+    repaired = inner_html(parse_html_document(rendered).body)
+    if inner_html(parse_html_document(repaired).body) != repaired:
+        raise ValueError("Historical reader HTML repair is not a serialization fixed point")
+    if canonicalize_structure(repaired) != historical:
+        raise ValueError("Historical reader HTML repair changed canonical structure")
+
+    document = html5lib.parseFragment(
+        f"<div>{repaired}</div>", treebuilder="dom", namespaceHTMLElements=False
+    )
+    target = _CanonicalTextTarget(set(), capture_structure=True)
+    try:
+        root = next(child for child in document.childNodes if isinstance(child, Element))
+        collect(root, target)
+    finally:
+        document.unlink()
+    raw_text, elements, anchors = target.builder.build(), target.elements, target.anchors
+    del document, root, target
+    if _canonical_structure(raw_text, elements, anchors) != historical:
+        raise ValueError("Historical reader HTML repair changed browser canonical structure")
+    return repaired
 
 
 def _canonical_text_without_sources(raw_text: str) -> str:
@@ -417,7 +504,11 @@ def _trimmed_spans(text: str) -> Iterator[tuple[int, int]]:
 def _canonical_text_with_offsets(
     raw_text: str, raw_offsets: Iterable[int]
 ) -> tuple[str, dict[int, int]]:
-    """Count surviving characters before each boundary, including reordered sources."""
+    """Count surviving characters before each boundary, including reordered sources.
+
+    Bucket prefix counts equal the historical bisect_left(sorted(origins), boundary):
+    only surviving origins strictly before that raw boundary contribute.
+    """
     boundaries = sorted(set(raw_offsets))
     source_type = "B"
     if len(boundaries) > 255:

@@ -1,11 +1,91 @@
 """Pure proof for canonical reader-document positions."""
 
+from uuid import UUID
+
 import pytest
 
 from nexus.services.canonicalize import (
     canonicalize_structure,
     generate_canonical_text_with_element_offsets,
+    repair_historical_html_structure,
 )
+from nexus.services.epub_read import rewrite_epub_fragment_links
+from nexus.services.web_article_structure import add_heading_anchors, build_web_article_index_blocks
+
+
+def test_historical_text_node_boundaries_keep_persisted_epub_coordinates() -> None:
+    html = (
+        '<p><a id="bookmark13">\u00a0</a><a href="#footnote13">13</a>'
+        '   \u00a0\u00a0\u00a0Ibid.. 540.</p><h2 id="after">Next</h2>'
+    )
+    expected_text = "13  Ibid.. 540.\nNext"
+
+    repaired = repair_historical_html_structure(html, expected_text)
+
+    assert repaired == (
+        '<p><a id="bookmark13">\u00a0</a><a href="#footnote13">13</a>'
+        '   <span>\u00a0\u00a0\u00a0Ibid.. 540.</span></p><h2 id="after">Next</h2>'
+    )
+    structure = canonicalize_structure(repaired)
+    assert structure.text == expected_text
+    assert [
+        (element.tag, element.start_offset, element.end_offset) for element in structure.elements
+    ] == [
+        ("p", 0, 15),
+        ("a", 0, 0),
+        ("h2", 16, 20),
+    ]
+    assert structure.anchors == {"bookmark13": 1, "after": 2}
+    delivered = rewrite_epub_fragment_links(
+        repaired,
+        href_path="chapter.xhtml",
+        fragment_ids_by_path={"chapter.xhtml": UUID("018f0000-0000-7000-8000-000000000001")},
+    )
+    assert 'data-nexus-anchor-id="footnote13"' in delivered
+    assert canonicalize_structure(delivered) == structure
+
+
+def test_historical_structure_keeps_unicode_source_ranks_and_following_heading() -> None:
+    html = (
+        '<p id="body"><a>13</a> \u00a0q<span id="first">\u0315</span>'
+        '<span id="second">\u0300</span></p><h2 id="after">e\u0301</h2>'
+    )
+    expected_text = "13  q\u0300\u0315\né"
+
+    structure = canonicalize_structure(repair_historical_html_structure(html, expected_text))
+
+    assert structure.text == expected_text
+    assert {
+        name: (structure.elements[index].start_offset, structure.elements[index].end_offset)
+        for name, index in structure.anchors.items()
+    } == {"body": (0, 7), "first": (5, 6), "second": (6, 7), "after": (8, 9)}
+
+
+def test_historical_html_repair_refuses_unexplained_text_changes() -> None:
+    with pytest.raises(ValueError, match="disagrees with persisted canonical text"):
+        repair_historical_html_structure("<p>Alpha beta</p>", "Alpha  beta")
+
+
+def test_historical_web_repair_survives_current_heading_and_index_consumers() -> None:
+    html = (
+        '<h2 id="nexus-web-heading-0-0-notes">Notes</h2>'
+        '<p><a href="#footnote13">13</a> \u00a0Ibid.</p>'
+        '<h2 id="nexus-web-heading-0-1-next">Next</h2>'
+    )
+    expected_text = "Notes\n13  Ibid.\nNext"
+
+    repaired = repair_historical_html_structure(html, expected_text)
+
+    assert add_heading_anchors(repaired, fragment_idx=0) == repaired
+    assert repair_historical_html_structure(repaired, expected_text) == repaired
+    blocks = build_web_article_index_blocks(
+        html_sanitized=repaired, canonical_text=expected_text, fragment_idx=0
+    )
+    assert [(block.block_kind, block.start_offset, block.end_offset) for block in blocks] == [
+        ("heading", 0, 6),
+        ("paragraph", 6, 16),
+        ("heading", 16, 20),
+    ]
 
 
 def test_requested_element_starts_survive_canonical_unicode_and_whitespace_normalization() -> None:
