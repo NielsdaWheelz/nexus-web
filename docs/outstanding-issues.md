@@ -285,7 +285,6 @@ unexpected timeouts. See
 - [open] oi-109 · local s3 development · 2026-09-15 pr #255 qualification · p2 · the pinned minio image pull failed on the devbox; establish supported access and prove a fresh pull: [ticket](tickets/local-minio-image-pull-fails-on-devbox.md).
 - [open] oi-110 · queue diagnostics · 2026-09-15 restoration rehearsal · p2 · api exceptions lose their declared code at the worker boundary: [ticket](tickets/worker-api-errors-lose-their-declared-code.md).
 - [open] oi-111 · reader publication · 2026-09-15 restoration rehearsal · p2 · web replacement can retain a cursor for a deleted fragment: [ticket](tickets/web-publication-invalidates-saved-reader-cursors.md).
-- [open] oi-112 · production capacity · 2026-09-15 pr #255 qualification · p1 · legacy host awaits exact-image qualification after authorized cleanup and revised admission: [ticket](tickets/legacy-host-cannot-admit-restoration-capacity.md).
 - [open] oi-113 · interactive worker · 2026-09-15 pr #255 qualification · p2 · exact-image startup is oom-killed at 256 mib; isolate provider imports and qualify real execution demand: [ticket](tickets/interactive-worker-startup-reaches-memory-cap.md).
 
 - [open] oi-114 · capacity qualification · 2026-09-15 release review · p2 · a service-health read failure can mask malformed passed-turn evidence: [ticket](tickets/capacity-service-read-can-mask-malformed-turns.md).
