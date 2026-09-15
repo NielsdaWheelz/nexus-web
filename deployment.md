@@ -35,9 +35,10 @@ expected Oracle manifest digest, task contract, and captured VPS config.
 
 - `deploy/hetzner/deploy.sh <source-sha> [--no-database-backup]` is the only
   application release entrypoint. Rerun it unchanged to resume.
-- `deploy/hetzner/prove-codex-capacity.sh <source-sha>` is the only Codex-host
-  release qualification entrypoint. It installs the exact immutable bundle and
-  records measured evidence, but never applies an application release.
+- `deploy/hetzner/prove-codex-capacity.sh <source-sha>` owns standalone first-cut
+  qualification against healthy incumbents. After a committed forward failure,
+  `deploy.sh` owns the same exact qualification against the activated successor.
+  Standalone qualification never applies an application release.
 - A planned retained-swap maintenance restart is the sole exception to those
   two entrypoints. It is authorized only after qualification has corrected the
   exact incumbent cgroup limits, blocked before candidate startup, and reported
@@ -254,6 +255,40 @@ SOURCE_SHA="$(git rev-parse HEAD)"
 ./deploy/hetzner/deploy.sh "$SOURCE_SHA"
 ```
 
+If an earlier candidate committed database changes and ended
+`ForwardFixRequired`, keep the no-use window open and release a fresh published
+SHA through `deploy.sh`. Do not run standalone qualification or restart the old
+predecessor against the migrated database. The controller first proves the
+stopped-writer recovery state, then activates the exact successor and proves its
+backend and MCP path. Before frontend promotion, it runs the same three-turn
+capacity qualification with all five long-lived services healthy. The active
+attempt owns its captured config and image identities; qualification keeps its
+Codex host running on success and removes only the canary and temporary input.
+
+A transient activation or qualification refusal stops candidate writers and
+the Codex runtime while retaining the replayable phase. Rerun the same release
+command. Fresh passing evidence is reused only for the same SHA and image;
+absent or expired evidence is measured again, including promotion/finalize
+recovery. Failed evidence remains immutable. A measured permanent breach uses
+ordinary forward-failure settlement. Candidate activation exposes the API and
+starts background workers before qualification completes: closed clients and
+the continuing no-use window are operational requirements, not a technical
+traffic barrier. The host sampler begins after active-backend proof; retained
+candidate cgroup peak/OOM counters still cover startup, while host pressure
+before that sampling window is not part of the qualification measurement.
+
+Automatic expiry refresh covers activated phases. An ordinary first-cut attempt
+paused beyond 72 hours in `WritersStopped`, `BackupVerified`, or
+`DataMutationStarted` still has an unresolved replay limit
+([oi-120](docs/tickets/capacity-expiry-blocks-stopped-first-cut-replay.md)); do not
+restart its predecessor to bypass the refusal. A permanent failure after
+publishing `current` but before final success has a separate convergence limit
+([oi-119](docs/tickets/failed-published-release-cannot-converge-successor.md)).
+The prepared refresh path also needs its `FrontendPromoted` shell replay ordering
+fixed before release: the script currently runs auth smoke against stopped
+writers before the controller can reactivate them
+([oi-121](docs/tickets/frontend-promoted-replay-smokes-stopped-backend.md)).
+
 Database backups are required by default. An operator who accepts losing the
 fresh stopped-writer recovery point can explicitly waive it:
 
@@ -306,8 +341,9 @@ to force migration admission.
 
 The command performs the complete protocol:
 
-1. validates Git, bundle, manifest, staged Vercel identity, and the exact
-   fresh capacity qualification when the candidate carries the Codex host;
+1. validates Git, bundle, manifest, staged Vercel identity, and first-cut
+   capacity evidence before mutation; a forward-fix successor qualifies after
+   its exact backend is activated, before promotion;
 2. installs the immutable bundle and inspects durable host state;
 3. before the first hard-cut attempt, proves exact predecessor identity, host
    capacity, foreign-container absence, and current memory/PID use; when an
@@ -327,7 +363,8 @@ The command performs the complete protocol:
 7. records `BackendActivationStarted`, activates app images by digest, and
    waits boundedly for Compose health before proving exact API/readiness bodies,
    workers, shared task-contract digest, schema, config, images, and unchanged
-   infra;
+   infra; measures or reuses the exact fresh first-Codex qualification before
+   leaving activation;
 8. promotes only the bound Vercel deployment, explicitly binds the committed
    custom domain to it, proves the provider alias and public web/API vector,
    writes one immutable record, and atomically publishes current SHA.
