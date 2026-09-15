@@ -1155,3 +1155,91 @@ def test_ci_retires_generated_web_builds_on_every_terminal_job_path() -> None:
         )
         == 2
     )
+
+
+def _runtime_repository(tmp_path: Path) -> Path:
+    repository = tmp_path / "runtime-repository"
+    repository.mkdir()
+    _git(repository, "init", "--initial-branch=main")
+    _git(repository, "config", "user.name", "Nexus test")
+    _git(repository, "config", "user.email", "test@nexus.local")
+    (repository / ".gitignore").write_text(".nexus-test/\n", encoding="utf-8")
+    (repository / "scripts").mkdir()
+    _git(repository, "add", ".gitignore")
+    _git(repository, "commit", "--message", "runtime owner")
+    return repository
+
+
+def _run_prior_runtime_retirement(
+    tmp_path: Path, repository: Path
+) -> subprocess.CompletedProcess[str]:
+    command = (
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        _step_script("Retire prior checkout test runtime"),
+    )
+    return subprocess.run(
+        command,
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "CLEAN_INVOCATION": str(tmp_path / "clean-invocation"),
+            "GITHUB_WORKSPACE": str(repository),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_prior_runtime_is_retired_by_its_own_checkout_before_replacement(
+    tmp_path: Path,
+) -> None:
+    repository = _runtime_repository(tmp_path)
+    runtime = repository / ".nexus-test/runtime.json"
+    runtime.parent.mkdir()
+    runtime.write_text('{"version":5}\n', encoding="utf-8")
+    owner_route = repository / "scripts/test"
+    owner_route.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        'printf \'%s\\n\' "$PWD" "$@" > "$CLEAN_INVOCATION"\n'
+        'rm -- "$GITHUB_WORKSPACE/.nexus-test/runtime.json"\n',
+        encoding="utf-8",
+    )
+    owner_route.chmod(0o755)
+
+    completed = _run_prior_runtime_retirement(tmp_path, repository)
+
+    assert completed.returncode == 0, completed.stderr
+    assert not runtime.exists()
+    invocation = (tmp_path / "clean-invocation").read_text(encoding="utf-8").splitlines()
+    assert invocation == [str(repository), "clean"]
+
+
+def test_prior_runtime_retirement_is_a_no_op_for_a_fresh_runner(tmp_path: Path) -> None:
+    repository = tmp_path / "not-yet-checked-out"
+
+    completed = _run_prior_runtime_retirement(tmp_path, repository)
+
+    assert completed.returncode == 0, completed.stderr
+    assert not (tmp_path / "clean-invocation").exists()
+
+
+def test_prior_runtime_retirement_rejects_a_symlinked_ownership_record(
+    tmp_path: Path,
+) -> None:
+    repository = _runtime_repository(tmp_path)
+    runtime = repository / ".nexus-test/runtime.json"
+    runtime.parent.mkdir()
+    foreign = tmp_path / "foreign-runtime.json"
+    foreign.write_text('{"version":5}\n', encoding="utf-8")
+    runtime.symlink_to(foreign)
+
+    completed = _run_prior_runtime_retirement(tmp_path, repository)
+
+    assert completed.returncode != 0
+    assert foreign.read_text(encoding="utf-8") == '{"version":5}\n'
+    assert not (tmp_path / "clean-invocation").exists()

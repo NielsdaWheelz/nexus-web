@@ -77,6 +77,29 @@ jobs:
             exit 1
           fi
 
+      - name: Retire prior checkout test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$GITHUB_WORKSPACE/.nexus-test/runtime.json"
+          if [ ! -e "$runtime" ] && [ ! -L "$runtime" ]; then
+            exit 0
+          fi
+          checkout="$(realpath -e -- "$GITHUB_WORKSPACE")"
+          test "$checkout" = "$(realpath -e -- "$(git -C "$checkout" rev-parse --show-toplevel)")"
+          test "$(stat -c '%u' -- "$checkout")" = "$(id -u)"
+          test ! -L "$checkout/.nexus-test"
+          test ! -L "$runtime"
+          test "$(stat -c '%u' -- "$runtime")" = "$(id -u)"
+          git -C "$checkout" check-ignore --quiet -- .nexus-test/runtime.json
+          test -x "$checkout/scripts/test"
+          (
+            cd "$checkout"
+            ./scripts/test clean
+          )
+          test ! -e "$runtime"
+          test ! -L "$runtime"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/pull/{0}/head', inputs.pull_request_number) || github.sha }}
@@ -230,6 +253,29 @@ jobs:
             /usr/share/swift /usr/local/share/powershell /usr/local/julia*
           sudo docker image prune --all --force >/dev/null
           df -h /
+
+      - name: Retire prior checkout test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$GITHUB_WORKSPACE/.nexus-test/runtime.json"
+          if [ ! -e "$runtime" ] && [ ! -L "$runtime" ]; then
+            exit 0
+          fi
+          checkout="$(realpath -e -- "$GITHUB_WORKSPACE")"
+          test "$checkout" = "$(realpath -e -- "$(git -C "$checkout" rev-parse --show-toplevel)")"
+          test "$(stat -c '%u' -- "$checkout")" = "$(id -u)"
+          test ! -L "$checkout/.nexus-test"
+          test ! -L "$runtime"
+          test "$(stat -c '%u' -- "$runtime")" = "$(id -u)"
+          git -C "$checkout" check-ignore --quiet -- .nexus-test/runtime.json
+          test -x "$checkout/scripts/test"
+          (
+            cd "$checkout"
+            ./scripts/test clean
+          )
+          test ! -e "$runtime"
+          test ! -L "$runtime"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
