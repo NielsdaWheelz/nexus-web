@@ -289,3 +289,5 @@ unexpected timeouts. See
 - [open] oi-113 · interactive worker · 2026-09-15 pr #255 qualification · p2 · exact-image startup is oom-killed at 256 mib; isolate provider imports and qualify real execution demand: [ticket](tickets/interactive-worker-startup-reaches-memory-cap.md).
 
 - [open] oi-114 · capacity qualification · 2026-09-15 release review · p2 · a service-health read failure can mask malformed passed-turn evidence: [ticket](tickets/capacity-service-read-can-mask-malformed-turns.md).
+
+- [open] oi-115 · api availability · 2026-09-15 memory review · p2 · api startup requires codex catalogue availability despite its independent-readiness contract: [ticket](tickets/api-startup-requires-codex-catalog-availability.md).
