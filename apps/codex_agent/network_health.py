@@ -19,6 +19,11 @@ _UNREACHABLE_ERRORS = frozenset(
 )
 
 
+class _McpProofFailure(RuntimeError):
+    def __init__(self, stage: str, cause: Exception) -> None:
+        super().__init__(f"{stage}: {type(cause).__name__}")
+
+
 @dataclass(frozen=True, slots=True)
 class DeniedTarget:
     address: ipaddress.IPv4Address
@@ -69,34 +74,55 @@ def prove_mcp_auth_boundary(origin: str) -> None:
         timeout=_MCP_TIMEOUT_SECONDS,
         context=ssl.create_default_context(),
     )
+    stage = "connect-tls"
     try:
+        connection.connect()
+        stage = "request"
         connection.request(
             "POST",
             _MCP_PATH,
             body=b"",
             headers={"Accept": "application/json"},
         )
+        stage = "response-headers"
         response = connection.getresponse()
+        stage = "response-contract"
         if (
             response.status != 401
-            or response.read(1) != b""
             or response.getheader("Location") is not None
             or response.getheader("Set-Cookie") is not None
         ):
             raise RuntimeError("MCP egress path differs from the auth-first contract")
+        stage = "response-body"
+        if response.read(1) != b"":
+            stage = "response-contract"
+            raise RuntimeError("MCP authentication rejection must have no body")
+    except (OSError, RuntimeError, ValueError, http.client.HTTPException) as error:
+        if isinstance(error, socket.gaierror):
+            stage = "dns"
+        raise _McpProofFailure(stage, error) from None
     finally:
         connection.close()
 
 
 def main() -> None:
+    stage = "arguments"
     try:
         if len(sys.argv) >= 3 and sys.argv[1] == "--denied-targets":
+            stage = "denied-targets"
             prove_unreachable(tuple(DeniedTarget.parse(value) for value in sys.argv[2:]))
         elif len(sys.argv) == 3 and sys.argv[1] == "--mcp-origin":
+            stage = "mcp-origin"
             prove_mcp_auth_boundary(sys.argv[2])
         else:
             raise ValueError("network proof requires exactly one supported proof mode")
-    except (OSError, RuntimeError, ValueError, http.client.HTTPException):
+    except (OSError, RuntimeError, ValueError, http.client.HTTPException) as error:
+        detail = (
+            str(error)
+            if isinstance(error, _McpProofFailure)
+            else f"{stage}: {type(error).__name__}"
+        )
+        print(f"Codex network proof {detail}", file=sys.stderr)
         raise SystemExit(1) from None
 
 
