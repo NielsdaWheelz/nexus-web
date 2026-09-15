@@ -253,13 +253,11 @@ export type NexusSectionId =
   | "Recent"
   | "QuickActions"
   | "Places"
-  | "Results"
-  | "QueryActions";
+  | "Results";
 
 export interface NexusGroup {
   readonly id: NexusSectionId;
   readonly label: string;
-  readonly layout: "Flow" | "CompactRail" | "PinnedBelowInput";
   readonly entries: readonly NexusEntry[];
 }
 
@@ -335,7 +333,6 @@ export type ManageTabsOrigin =
 
 export type NexusPage =
   | { readonly kind: "Root" }
-  | { readonly kind: "Activity" }
   | { readonly kind: "UnsupportedLink" }
   | {
       readonly kind: "CommandFailed";
@@ -380,7 +377,6 @@ export type NexusPage =
 
 export type NexusOpenIntent =
   | { readonly kind: "Root" }
-  | { readonly kind: "Activity" }
   | { readonly kind: "Add"; readonly seed: AddSeed }
   | { readonly kind: "QuickAction"; readonly actionId: NexusCommandId }
   | { readonly kind: "UnsupportedLink" };

@@ -24,6 +24,7 @@ from nexus.db.models import (
     HighlightPdfQuad,
     Media,
 )
+from nexus.db.retries import retry_read_committed
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.schemas.highlights import (
@@ -58,26 +59,6 @@ from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.text_quote import QuoteStatus
 
 logger = get_logger(__name__)
-
-
-def visible_highlight_ids(db: Session, *, viewer_id: UUID, highlight_ids: list[UUID]) -> set[UUID]:
-    """The subset of the supplied highlight ids the viewer can read, in one set query.
-
-    The set-based twin of :func:`nexus.auth.permissions.can_read_highlight`: it applies
-    the same complete :func:`highlight_readability_filter` (valid typed anchor + readable
-    parent media + author/library-intersection/grant visibility) to the whole batch, so
-    the batched read and the per-ref predicate cannot drift. The action-snapshot
-    aggregator uses this instead of looping ``can_read_highlight`` per ref (AC9)."""
-    ordered = list(dict.fromkeys(highlight_ids))
-    if not ordered:
-        return set()
-    rows = db.execute(
-        select(Highlight.id).where(
-            Highlight.id.in_(ordered),
-            highlight_readability_filter(viewer_id),
-        )
-    ).all()
-    return {row[0] for row in rows}
 
 
 @dataclass(frozen=True, slots=True)
@@ -1098,9 +1079,13 @@ def delete_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> None:
     Raises:
         NotFoundError(E_MEDIA_NOT_FOUND): If highlight doesn't exist, not owned, or not readable.
     """
-    # Verify highlight exists and is owned by viewer
-    highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
 
-    delete_highlight_rows(db, highlight)
-    db.flush()
-    db.commit()
+    def attempt() -> None:
+        # Verify highlight exists and is owned by viewer
+        highlight = get_highlight_for_author_write_or_404(db, viewer_id, highlight_id)
+
+        delete_highlight_rows(db, highlight)
+        db.flush()
+        db.commit()
+
+    retry_read_committed(db, "delete_highlight", attempt)

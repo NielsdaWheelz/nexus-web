@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/llm_execution.py b/python/nexus/services/llm_execution.py
+--- a/python/nexus/services/llm_execution.py
++++ b/python/nexus/services/llm_execution.py
+@@ -668,7 +668,7 @@
+     replay, resume = _read_replay(session_factory, request, runtime.continuation_cipher)
+     if replay is not None:
+         return replay
+-    if cancel_signal is None or not cancel_signal.is_set():
++    if True:
+         try:
+             await runtime.admission.require_dispatch_ready(request.spec)
+         except GenerationOperationUnavailable as error:

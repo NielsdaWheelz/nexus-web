@@ -12,6 +12,7 @@ import {
   Library,
   Link2,
   ListMusic,
+  ListTodo,
   Map,
   MessageSquare,
   Mic,
@@ -116,6 +117,9 @@ const PANE_ROUTE_META: Record<PaneRouteId, PaneRouteMeta> = {
   },
   note: {
     icon: FileText,
+  },
+  imports: {
+    icon: ListTodo,
   },
   stats: {
     icon: ChartColumn,

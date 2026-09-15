@@ -1,0 +1,347 @@
+"""Priority proof for keyless tool-runtime availability and Idea admission."""
+
+from __future__ import annotations
+
+import ast
+import asyncio
+import importlib
+from collections.abc import Generator
+from pathlib import Path
+from typing import Any
+from uuid import UUID, uuid4
+
+import pytest
+from apps.worker.main import create_worker
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from llm_tools import (
+    ExecutionContext,
+    InvocationPosition,
+    ParsedJson,
+    Principal,
+    Scope,
+    ToolExecutor,
+    ToolId,
+)
+from llm_tools.testing import (
+    InMemoryBudgetState,
+    InMemoryPositionRecorder,
+    NeverCancelled,
+    RecordingTelemetry,
+)
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from nexus.app import add_request_id_middleware, create_app
+from nexus.auth.middleware import AuthMiddleware
+from nexus.config import clear_settings_cache, get_settings
+from nexus.db.models import SynthesisArtifact
+from nexus.db.session import get_db, get_repeatable_read_db
+from nexus.schemas.presence import absent
+from nexus.services.artifacts.idea_identity import IdeaKey, canonicalize_idea_text
+from nexus.services.artifacts.idea_seeds import find_or_create_idea_subject
+from nexus.services.bootstrap import ensure_user_and_default_library
+from nexus.services.rate_limit import get_rate_limiter, set_rate_limiter
+from tests.testkit.auth import StaticTokenVerifier, UserRecord
+
+_CHAT_READ_TOOL_IDS = (
+    "web.search",
+    "nexus.search",
+    "nexus.resource.read",
+    "nexus.document.search",
+    "nexus.resource.inspect",
+    "nexus.relations.list",
+)
+
+
+def _keyless_app(db: Session, user: UserRecord) -> tuple[FastAPI, StaticTokenVerifier]:
+    verifier = StaticTokenVerifier(user.id, user.email)
+
+    def bootstrap(user_id: UUID, email: str | None = None) -> UUID:
+        return ensure_user_and_default_library(db, user_id, email)
+
+    app = create_app(
+        install_auth_middleware=lambda application: application.add_middleware(
+            AuthMiddleware,
+            verifier=verifier,
+            requires_internal_header=False,
+            internal_secret=None,
+            bootstrap_callback=bootstrap,
+        )
+    )
+    add_request_id_middleware(app, log_requests=False)
+
+    def session() -> Generator[Session, None, None]:
+        yield db
+
+    app.dependency_overrides[get_db] = session
+    app.dependency_overrides[get_repeatable_read_db] = session
+    return app, verifier
+
+
+def _tool_ids(operation: Any) -> tuple[str, ...]:
+    return tuple(str(grant.id) for grant in operation.profile.ordered_grants)
+
+
+def _execute_keyless_web(operation: Any) -> tuple[dict[str, object], Any, Any, Any]:
+    tool_id = ToolId("web.search")
+    position = InvocationPosition("keyless-chat/web-search")
+    recorder = InMemoryPositionRecorder()
+    telemetry = RecordingTelemetry()
+    context = ExecutionContext(
+        plan=operation.plan,
+        grant=operation.profile.grant(tool_id),
+        catalog_view=operation.plan.catalog_view,
+        position=position,
+        recorder=recorder,
+        effect_id=None,
+        budgets=InMemoryBudgetState(operation.profile.run_limits),
+        principal=Principal("keyless-availability-proof"),
+        scope=Scope("chat"),
+        cancellation=NeverCancelled(),
+        telemetry=telemetry,
+    )
+    result = asyncio.run(
+        ToolExecutor.execute(
+            operation.plan.catalog_view.binding(tool_id),
+            ParsedJson(
+                {
+                    "query": "keyless runtime availability",
+                    "freshness_days": None,
+                }
+            ),
+            context,
+        )
+    )
+    return result, recorder, telemetry, position
+
+
+def _idea_work_counts(db: Session, *, artifact_id: UUID) -> tuple[int, int]:
+    builds = int(
+        db.scalar(
+            text("SELECT count(*) FROM artifact_builds WHERE artifact_id = :artifact_id"),
+            {"artifact_id": artifact_id},
+        )
+        or 0
+    )
+    jobs = int(
+        db.scalar(text("SELECT count(*) FROM background_jobs WHERE kind = 'dossier_build'")) or 0
+    )
+    return builds, jobs
+
+
+def test_configured_brave_provider_factory_is_shared_by_app_mcp_and_dossier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every tool-owning process lowers one exact configured Brave dependency."""
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "configured-provider-proof")
+    monkeypatch.setenv(
+        "BRAVE_SEARCH_BASE_URL",
+        "https://configured-brave.test/custom/v1/",
+    )
+    monkeypatch.setenv("BRAVE_SEARCH_TIMEOUT_SECONDS", "2.75")
+    clear_settings_cache()
+    try:
+        consumers = {
+            "app": importlib.import_module("nexus.app"),
+            "mcp": importlib.import_module("nexus.services.agent_tools_mcp"),
+            "dossier": importlib.import_module("nexus.tasks.artifacts"),
+        }
+        composition = importlib.import_module("nexus.services.tool_runtime.composition")
+        factory = composition.compose_configured_web_search_provider
+        assert getattr(factory, "__module__", None) == (
+            "nexus.services.tool_runtime.composition"
+        ), "configured Brave provider policy has no single product-composition owner"
+        for consumer_name, module in consumers.items():
+            module_path = Path(str(module.__file__))
+            tree = ast.parse(module_path.read_text())
+            imports = [
+                alias
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ImportFrom)
+                and node.module == "nexus.services.tool_runtime.composition"
+                for alias in node.names
+                if alias.name == "compose_configured_web_search_provider"
+            ]
+            assert len(imports) == 1, (
+                f"{consumer_name} must import the single configured Brave factory; "
+                f"observed {len(imports)} imports in {module_path}"
+            )
+            calls = [
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "compose_configured_web_search_provider"
+            ]
+            assert len(calls) == 1, (
+                f"{consumer_name} must call the shared configured Brave factory exactly "
+                f"once; observed {len(calls)} calls in {module_path}"
+            )
+            call = calls[0]
+            assert len(call.args) == 1 and [item.arg for item in call.keywords] == ["settings"], (
+                f"{consumer_name} must pass only its client and Settings to the shared "
+                f"configured Brave factory in {module_path}"
+            )
+            direct_constructors = [
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and (
+                    (isinstance(node.func, ast.Name) and node.func.id == "BraveSearchProvider")
+                    or (
+                        isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "BraveSearchProvider"
+                    )
+                )
+            ]
+            assert direct_constructors == [], (
+                f"{consumer_name} still owns Brave configuration in {module_path}"
+            )
+
+        chat_module = importlib.import_module("nexus.tasks.chat_run")
+        chat_path = Path(str(chat_module.__file__))
+        chat_tree = ast.parse(chat_path.read_text())
+        chat_provider_calls = [
+            node
+            for node in ast.walk(chat_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "compose_configured_web_search_provider"
+        ]
+        assert chat_provider_calls == [], "Chat worker still owns a direct Brave provider"
+        execute_chat_calls = [
+            node
+            for node in ast.walk(chat_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "execute_chat_run"
+        ]
+        assert len(execute_chat_calls) == 1
+        delegated_providers = [
+            keyword.value
+            for keyword in execute_chat_calls[0].keywords
+            if keyword.arg == "web_search_provider"
+        ]
+        assert delegated_providers == [], (
+            "Chat must not retain the retired Web-provider injection seam; "
+            "its composed execution runtime and scoped MCP listener own tool execution"
+        )
+
+        constructor_arguments: list[tuple[object, str, str, float]] = []
+        provider = object()
+
+        def record_constructor(
+            client: object,
+            *,
+            api_key: str,
+            base_url: str,
+            timeout_seconds: float,
+        ) -> object:
+            constructor_arguments.append((client, api_key, base_url, timeout_seconds))
+            return provider
+
+        monkeypatch.setattr(composition, "BraveSearchProvider", record_constructor)
+        client = object()
+        assert factory(client, settings=get_settings()) is provider
+        assert constructor_arguments == [
+            (
+                client,
+                "configured-provider-proof",
+                "https://configured-brave.test/custom/v1/",
+                2.75,
+            )
+        ]
+    finally:
+        clear_settings_cache()
+
+
+def test_keyless_boot_preserves_plan_and_refuses_required_web_before_dispatch(
+    db_session: Session,
+    test_user: UserRecord,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing Brave credentials preserve exact plans but refuse their unavailable work."""
+    monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
+    monkeypatch.delenv("WORKER_LANE", raising=False)
+    monkeypatch.delenv("WORKER_ALLOWED_JOB_KINDS", raising=False)
+    monkeypatch.delenv("NEXUS_ALLOW_WORKER_MAINTENANCE", raising=False)
+    clear_settings_cache()
+    assert get_settings().brave_search_api_key is None
+
+    app, verifier = _keyless_app(db_session, test_user)
+    try:
+        with TestClient(
+            app,
+            headers={"Authorization": f"Bearer {verifier.token}"},
+        ) as client:
+            assert hasattr(app.state, "tool_runtime"), (
+                "the keyless app booted without publishing its immutable tool runtime"
+            )
+            app_runtime = app.state.tool_runtime
+            app_chat = app_runtime.operations.get("ChatRead")
+            assert app_chat is not None, "the keyless app omitted its frozen ChatRead operation"
+            assert _tool_ids(app_chat) == _CHAT_READ_TOOL_IDS
+
+            from nexus.tasks.artifacts import compose_dossier_tool_runtime
+
+            task_runtime = compose_dossier_tool_runtime(None)
+            task_chat = task_runtime.operations.get("ChatRead")
+            assert task_chat is not None, "the keyless worker omitted its frozen ChatRead operation"
+            assert _tool_ids(task_chat) == _CHAT_READ_TOOL_IDS
+            assert task_chat.profile.profile_revision == app_chat.profile.profile_revision
+            assert task_chat.plan.plan_revision == app_chat.plan.plan_revision
+
+            result, recorder, telemetry, position = _execute_keyless_web(task_chat)
+            assert result == {
+                "type": "Failure",
+                "error": {"type": "ToolUnavailable"},
+            }
+            assert recorder.record(position).dispatches == 0, (
+                "an unavailable Web binding crossed the tool dispatch boundary"
+            )
+            assert telemetry.events == [("tool.unavailable", {"tool_id": "web.search"})]
+
+            idea = find_or_create_idea_subject(
+                db_session,
+                user_id=test_user.id,
+                idea_key=IdeaKey(
+                    version="v1",
+                    title_key=canonicalize_idea_text("Keyless research"),
+                    disambiguator_key=absent(),
+                ),
+                display_title="Keyless research",
+            )
+            artifact = SynthesisArtifact(
+                id=uuid4(),
+                subject_scheme="idea",
+                subject_id=idea.id,
+                audience_scheme="user",
+                audience_id=str(test_user.id),
+            )
+            db_session.add(artifact)
+            db_session.flush()
+            before = _idea_work_counts(db_session, artifact_id=artifact.id)
+
+            response = client.post(
+                f"/artifacts/artifact:{artifact.id}/builds",
+                headers={"Idempotency-Key": f"keyless-idea-{uuid4()}"},
+                json={"instruction": {"kind": "Absent"}},
+            )
+            assert response.status_code == 503
+            assert response.json()["error"]["code"] == ("E_DOSSIER_WEB_RESEARCH_NOT_CONFIGURED")
+            assert _idea_work_counts(db_session, artifact_id=artifact.id) == before, (
+                "keyless Idea admission created a build or enqueued a worker job"
+            )
+
+            previous_limiter = get_rate_limiter()
+            monkeypatch.setenv("WORKER_LANE", "interactive")
+            clear_settings_cache()
+            try:
+                worker = create_worker()
+                assert worker.allowed_kinds is not None
+                assert {"chat_run", "dossier_build"} <= set(worker.allowed_kinds)
+            finally:
+                set_rate_limiter(previous_limiter)
+    finally:
+        clear_settings_cache()

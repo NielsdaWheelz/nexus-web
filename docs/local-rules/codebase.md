@@ -52,23 +52,30 @@ technology-ownership, import, and module-boundary model.
   exact, main-frame, owned-origin `nexusPlayer` WebKit protocol and adapts it to
   the service-owned MediaController.
 - `apps/android/app/src/main/java/.../playback/NexusOriginClient.kt` is the
-  single authorized native product API client. It may call only its fixed
+  authorized playback/activity product API client. It may call only its fixed
   listening-state and Consumption-activity BFF paths with WebView cookies and
   the exact owned Origin; it accepts no arbitrary URL, path, headers, or
   credentials.
+- `apps/android/app/src/main/java/.../offline/reading/` and its `readingweb/`
+  adapter own the offline-reading native client boundary. They may call only
+  the fixed account-attestation, package-token, reader-progress, and direct
+  package paths with WebView cookies, the exact owned Origin, and the pinned
+  direct API origin; they accept no renderer-supplied account, URL, path,
+  headers, credentials, or filesystem location.
 - `apps/android/app/src/main/java/.../ShareActivity.kt` owns the
   system-share-sheet capture entry: the `ACTION_SEND` intent filter and the
   `nexus-share://` scheme it intercepts to hand off to MainActivity.
 - Android manifests own Android framework entrypoints and deep-link filters.
 - Android Gradle files own Android build, signing, app-link, and release
   configuration.
-- Android has exactly four authorized native boundaries:
+- Android has exactly six authorized native boundaries:
   `GoogleSignInController` may make the auth-bootstrap
   `POST /auth/native/google`; `NexusOriginClient` may call only its fixed
-  listening-state and Consumption-activity paths; and AndroidX WebKit may
-  expose the exact-main-frame, exact-owned-origin `nexusOfflineMedia` and
-  `nexusPlayer` listeners. Android code must not add other product or Supabase
-  clients, OAuth/PKCE exchange logic, upload clients,
+  listening-state and Consumption-activity paths; the offline-reading client
+  boundary may call only the fixed paths above; and AndroidX WebKit may expose
+  the exact-main-frame, exact-owned-origin `nexusOfflineMedia`, `nexusPlayer`,
+  and `nexusOfflineReading` listeners. Android code must not add other product
+  or Supabase clients, OAuth/PKCE exchange logic, upload clients,
   `addJavascriptInterface`, or generic bridges. OAuth/PKCE exchange remains
   server-side.
 - Supabase Auth alone owns password hashes, invitation and recovery tokens, and

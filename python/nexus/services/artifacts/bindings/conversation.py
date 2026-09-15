@@ -7,7 +7,6 @@ import json
 from dataclasses import dataclass
 from uuid import UUID
 
-from provider_runtime import ReasoningLevel
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -25,7 +24,8 @@ from nexus.services.artifacts.bindings._shared import (
 from nexus.services.artifacts.bindings.base import (
     DossierBindingBase,
     DossierInputTooLarge,
-    MaterializedDossier,
+    DossierOperation,
+    PublishableDossier,
     require_resource_subject,
 )
 from nexus.services.artifacts.coordination import DossierBuildRuntime
@@ -47,7 +47,6 @@ from nexus.services.artifacts.subject_policy import (
     ResolvedSubject,
     decode_resource_locator,
 )
-from nexus.services.llm_profiles import BackgroundLlmOperation
 from nexus.services.resource_graph.context import list_context_refs
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import CitationSnapshot
@@ -76,10 +75,7 @@ class ConversationCoverage:
 
 class ConversationBinding(DossierBindingBase):
     subject_scheme: str = "conversation"
-    llm_operation: BackgroundLlmOperation = "dossier_conversation"
-    profile: str = "balanced"
-    reasoning: ReasoningLevel = "medium"
-    max_output_tokens: int = 5000
+    llm_operation: DossierOperation = "dossier_conversation"
     schema: type[BaseModel] = StandardSynthesis
     system_prompt: str = synthesis_prompt("a complete, branched conversation")
 
@@ -133,7 +129,7 @@ class ConversationBinding(DossierBindingBase):
         collected: _ConversationCollected,  # noqa: ARG002
         decoded_output: BaseModel,
         witness: _ConversationWitness,
-    ) -> MaterializedDossier:
+    ) -> PublishableDossier:
         return materialize_standard(decoded_output, witness.candidates)
 
     def input_manifest(self, collected: _ConversationCollected) -> InputManifestV1:
@@ -206,7 +202,7 @@ class ConversationSubjectPolicy:
     def collection_viewer(self, resolved: ResolvedSubject, audience: AudienceScope) -> UUID | None:
         return _audience_user(audience)
 
-    def requester_billing(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
+    def requester_admission(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
         return requester_user_id
 
     def citation_owner(

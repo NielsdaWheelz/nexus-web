@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ROOT_DIR
+readonly REPOSITORY="NielsdaWheelz/nexus-web"
 readonly SSH_TARGET="nexus@5.78.194.235"
 readonly PRODUCTION_HOST="nexus.nielseriknandal.com"
 readonly VERCEL_PROJECT_NAME="nexus-web"
@@ -125,7 +126,7 @@ esac
 readonly SOURCE_SHA="$1"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || die "source SHA must be 40 lowercase hex characters"
 
-for command in git jq ssh timeout; do
+for command in git jq python3 ssh timeout; do
   require_command "$command"
 done
 
@@ -133,7 +134,6 @@ done
   die "production release requires a clean checkout"
 [ "$(git -C "$ROOT_DIR" rev-parse HEAD)" = "$SOURCE_SHA" ] || \
   die "requested source SHA must equal checked-out HEAD"
-origin_main_proven=false
 
 TEMPORARY="$(mktemp -d)"
 readonly TEMPORARY
@@ -151,7 +151,67 @@ cleanup() {
 }
 trap cleanup EXIT
 
+readonly ANDROID_RELEASE_DIR="${TEMPORARY}/stable-android-release"
+player_protocol="$(PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${ROOT_DIR}/python" \
+  python3 -B "${ROOT_DIR}/deploy/hetzner/release.py" android-player-protocol-identity \
+    --corpus "$ROOT_DIR/testdata/android/player-protocol.json")" || \
+  die "Android player protocol corpus is absent or malformed"
+
+# A new candidate is the only path that consults mutable GitHub state: the
+# candidate must be origin/main, and GitHub's canonical releases/latest pointer
+# must name one stable signed Android release whose player protocol identity
+# equals this checkout's corpus. Resume, settlement, and verification of an
+# already-current release run from the installed immutable bundle alone.
+require_new_candidate_release_policy() {
+  local stable_android_release
+
+  require_command gh
+  timeout --foreground 2m git -C "$ROOT_DIR" fetch --quiet origin main
+  [ "$(git -C "$ROOT_DIR" rev-parse origin/main)" = "$SOURCE_SHA" ] || \
+    die "requested source SHA must equal origin/main"
+  [ -n "${GH_TOKEN:-}" ] || die "GH_TOKEN is required to read the stable Android release"
+  mkdir "$ANDROID_RELEASE_DIR"
+  stable_android_release="$(
+    timeout --foreground 2m gh api "repos/${REPOSITORY}/releases/latest" \
+      | jq -er '
+        select(
+          .draft == false
+          and .prerelease == false
+          and (.tag_name | type == "string" and test("^android-v[a-zA-Z0-9._-]+$"))
+          and (.published_at | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))
+        )
+        | . as $release
+        | select(
+            (
+              ["release-manifest.json", "nexus-android.apk", "nexus-android.apk.sha256"]
+              | all(
+                  . as $name
+                  | ([$release.assets[] | select(.name == $name)] | length) == 1
+                )
+            )
+          )
+        | .tag_name
+      '
+  )" || die "GitHub latest must be one stable Android release carrying one manifest and the linked APK"
+  timeout --foreground 2m gh release download "$stable_android_release" \
+    --repo "$REPOSITORY" \
+    --pattern "release-manifest.json" \
+    --dir "$ANDROID_RELEASE_DIR" >/dev/null || \
+    die "latest stable Android release manifest could not be retrieved"
+  if [ ! -f "$ANDROID_RELEASE_DIR/release-manifest.json" ] || \
+    [ -L "$ANDROID_RELEASE_DIR/release-manifest.json" ]; then
+    die "latest stable Android release manifest is absent or unsafe"
+  fi
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${ROOT_DIR}/python" \
+    python3 -B "${ROOT_DIR}/deploy/hetzner/release.py" validate-android-release-manifest \
+      --manifest "$ANDROID_RELEASE_DIR/release-manifest.json" \
+      --corpus "$ROOT_DIR/testdata/android/player-protocol.json" \
+      --tag "$stable_android_release" >/dev/null || \
+    die "latest stable Android release manifest is incompatible with this source"
+}
+
 bundle_installed=false
+host_inspect=""
 if timeout --foreground 30s ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
   sudo test -x "$REMOTE_CONTROLLER"; then
   bundle_installed=true
@@ -161,6 +221,26 @@ else
     die "could not determine whether the immutable host bundle is installed"
 fi
 
+new_candidate=true
+if [ "$bundle_installed" = true ]; then
+  host_inspect="$(
+    timeout --foreground 1m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+      sudo env PYTHONDONTWRITEBYTECODE=1 "PYTHONPATH=${REMOTE_BUNDLE}/python" \
+      python3 -B "$REMOTE_CONTROLLER" inspect --source-sha "$SOURCE_SHA"
+  )"
+  inspect_status="$(
+    jq -er '.status | select(. == "new" or . == "resume" or . == "current")' \
+      <<<"$host_inspect"
+  )" || die "host inspect response has an unsupported status"
+  if [ "$inspect_status" != "new" ]; then
+    new_candidate=false
+  fi
+fi
+
+if [ "$new_candidate" = true ]; then
+  require_new_candidate_release_policy
+fi
+
 if [ "$bundle_installed" = false ]; then
   require_command scp
   [ -x "${ROOT_DIR}/deploy/hetzner/fetch-release-bundle.sh" ] || \
@@ -168,7 +248,6 @@ if [ "$bundle_installed" = false ]; then
   mkdir "$BUNDLE"
   "${ROOT_DIR}/deploy/hetzner/fetch-release-bundle.sh" \
     "$SOURCE_SHA" "$BUNDLE" >/dev/null
-  origin_main_proven=true
 
   REMOTE_TEMPORARY="$(timeout --foreground 30s ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
     mktemp -d /tmp/nexus-release.XXXXXXXX)"
@@ -183,11 +262,13 @@ if [ "$bundle_installed" = false ]; then
       --source "$REMOTE_TEMPORARY" >/dev/null
 fi
 
-host_inspect="$(
-  timeout --foreground 1m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
-    sudo env PYTHONDONTWRITEBYTECODE=1 "PYTHONPATH=${REMOTE_BUNDLE}/python" \
-    python3 -B "$REMOTE_CONTROLLER" inspect --source-sha "$SOURCE_SHA"
-)"
+if [ -z "$host_inspect" ]; then
+  host_inspect="$(
+    timeout --foreground 1m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+      sudo env PYTHONDONTWRITEBYTECODE=1 "PYTHONPATH=${REMOTE_BUNDLE}/python" \
+      python3 -B "$REMOTE_CONTROLLER" inspect --source-sha "$SOURCE_SHA"
+  )"
+fi
 jq -e --arg sha "$SOURCE_SHA" '
   keys == [
     "current_sha",
@@ -254,12 +335,6 @@ if [ "$phase" = "RollbackRequired" ] || [ "$phase" = "ForwardFixPending" ]; then
       --deployment-id "$settlement_deployment_id" \
       --production-host "$PRODUCTION_HOST"
   die "durable failure settlement unexpectedly returned success"
-fi
-
-if [ "$origin_main_proven" = false ]; then
-  timeout --foreground 2m git -C "$ROOT_DIR" fetch --quiet origin main
-  [ "$(git -C "$ROOT_DIR" rev-parse origin/main)" = "$SOURCE_SHA" ] || \
-    die "requested source SHA must equal origin/main"
 fi
 
 for command in awk curl grep; do
@@ -523,8 +598,12 @@ candidate_status="$(curl --fail --silent --show-error --max-time 10 --max-filesi
   --write-out '%{http_code}' \
   "https://${deployment_url}/version")"
 [ "$candidate_status" = "200" ] || die "staged frontend version did not return HTTP 200"
-jq -e --arg sha "$SOURCE_SHA" 'keys == ["source_sha"] and .source_sha == $sha' \
-  "$candidate_version" >/dev/null || die "staged frontend version differs from the candidate SHA"
+jq -e --arg sha "$SOURCE_SHA" --argjson player_protocol "$player_protocol" '
+  keys == ["player_protocol", "source_sha"]
+  and .source_sha == $sha
+  and .player_protocol == $player_protocol
+' "$candidate_version" >/dev/null || \
+  die "staged frontend version differs from the candidate SHA/player protocol"
 require_exact_public_headers "$candidate_headers" "staged frontend version"
 
 timeout --foreground 2m "$ROOT_DIR/deploy/supabase/verify-auth-config.sh" \
@@ -639,9 +718,12 @@ production_status="$(curl --fail --silent --show-error --max-time 10 --max-files
 [ "$production_status" = "200" ] || \
   die "authoritative frontend version did not return HTTP 200"
 require_exact_public_headers "$production_headers" "authoritative frontend version"
-jq -e --arg sha "$SOURCE_SHA" 'keys == ["source_sha"] and .source_sha == $sha' \
-  "$production_version" >/dev/null || \
-  die "authoritative frontend does not serve the exact candidate SHA"
+jq -e --arg sha "$SOURCE_SHA" --argjson player_protocol "$player_protocol" '
+  keys == ["player_protocol", "source_sha"]
+  and .source_sha == $sha
+  and .player_protocol == $player_protocol
+' "$production_version" >/dev/null || \
+  die "authoritative frontend does not serve the exact candidate SHA/player protocol"
 
 if ! timeout --foreground 4m "$ROOT_DIR/deploy/smoke/auth-smoke.sh" \
   --app-url "https://${PRODUCTION_HOST}" \

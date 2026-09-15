@@ -2,161 +2,177 @@
 
 ## Scope
 
-This module owns Nexus's direct-provider generation boundary: product profiles,
-platform credentials, durable execution and admission, normalized outcomes and
-the `llm_calls` ledger. Prompt and domain owners build and validate their own
-content, schemas, tools, and final writes; the existing Postgres job queue,
-leases, and durable step journal remain their owners.
+Every Nexus text or structured-output generation runs through one Nexus
+`GenerationService`, backed only by the two separate `llm-calling` lanes:
 
-`provider_runtime` is the immutable external direct-API dependency pinned in
-`python/pyproject.toml`. `ProviderRuntime` owns registry resolution, canonical
-provider endpoints, credentials selection, provider transport, retries,
-normalized outcomes, and provider telemetry. Nexus never plans a wire request,
-rewrites an endpoint, or implements provider retries.
+- Codex Personal through `AgentRuntime` and the isolated Codex host;
+- configured metered APIs through `ProviderRuntime`.
 
-There is no BYOK, per-user key, model-browser UI, gateway route, fallback, or
-availability intersection. Native subscription/agent execution is a separate,
-deferred cutover; it is not a path through this module.
+The shipped developer policy selects Codex Personal for every background
+operation. Chat alone lets the user choose an exact route, model, and reasoning
+value for each run from the complete configured `llm-calling` catalog. There is
+no generation profile, Fast/Balanced/Deep preset, user default, AI Settings
+surface, fallback, or compatibility route. Embeddings and transcription remain
+separate non-generation capabilities.
 
-Backend owners: `llm_profiles.py`, `llm_credentials.py`, `llm_execution.py`,
-`llm_intent_state.py`, `llm_outcomes.py`, `llm_ledger.py`,
-`tasks/llm_task.py`, `schemas/llm.py`, and `api/routes/llm_profiles.py`. Queue
-ownership is documented in [jobs.md](jobs.md).
+The product owns intent, exact selection, operation policy, tool authority,
+durable coordination, and publication. `llm-calling` owns source catalog facts,
+route-local lowering, provider continuations, and provider/agent protocol
+events. Domain owners build prompts, accept generated output, and commit final
+domain writes.
 
-## Product profiles (`llm_profiles.py`)
+Primary owners:
 
-`llm_profiles.py` owns labels, order, defaults, privacy copy, and background
-operation-to-profile policy. `provider_runtime.registry` owns model facts:
-limits, capabilities, reasoning fragments, continuation codec, and registry
-revision. A product profile never duplicates provider facts.
+- `generation_catalog.py`: composed configured catalog and readiness;
+- `generation_policy.py`: one reviewed Chat seed and the total background map;
+- `generation_service.py`: catalog validation, policy resolution, admission,
+  and route composition;
+- `generation_spec.py`: immutable admitted selection, budgets, output, and tool
+  authority;
+- `generation_backend.py`: route-neutral execution result;
+- `codex_generation_*`: private Codex transport adapter;
+- `provider_generation_*`: ProviderRuntime adapter and continuation loop;
+- `llm_execution.py` and `llm_ledger.py`: parent/child/tool lifecycle and replay;
+- `tool_authority.py`, `tool_runtime/`, and `agent_tools_mcp.py`: one canonical
+  tool executor with API-function and Codex-MCP adapters;
+- `apps/codex_agent/`: isolated subscription-backed Codex host.
 
-`PROFILES` is this fixed nine-row order; `balanced` is the default:
+Queue ownership is documented in [jobs.md](jobs.md). The full cutover contract
+is [Generation Backends Hard Cutover](../cutovers/generation-backends-hard-cutover.md).
 
-| id | label | target | reasoning options | default |
-|---|---|---|---|---|
-| `fast` | Fast · Luna | `openai/gpt-5.6-luna` | none, low, medium, high, xhigh, max | low |
-| `balanced` | Balanced · Terra | `openai/gpt-5.6-terra` | none, low, medium, high, xhigh, max | medium |
-| `deep` | Deep · Sol | `openai/gpt-5.6-sol` | none, low, medium, high, xhigh, max | high |
-| `claude` | Claude · Sonnet 5 | `anthropic/claude-sonnet-5` | low, medium, high, xhigh, max | medium |
-| `fable` | Claude · Fable 5 | `anthropic/claude-fable-5` | low, medium, high, xhigh, max | high |
-| `gemini` | Gemini · 3.5 Flash | `gemini/gemini-3.5-flash` | minimal, low, medium, high | medium |
-| `kimi` | Kimi · K3 | `moonshot/kimi-k3` | low, high, max | high |
-| `deepseek-flash` | DeepSeek · V4 Flash | `deepseek/deepseek-v4-flash` | none, high, max | high |
-| `deepseek-pro` | DeepSeek · V4 Pro | `deepseek/deepseek-v4-pro` | none, high, max | high |
+## Catalog and exact selection
 
-The existing picker renders these data rows without a provider branch. Selecting
-a profile resets effort to its listed default. DeepSeek uses `StandardPrivacy`
-with the direct-operator notice. Missing provider credentials do not hide a
-profile or reroute a call; required staging/production credentials fail startup.
+`GET /llm-catalog` is the only product catalog API. It composes the authenticated
+Codex model catalog with `api_model_catalog()` rows for exactly the API providers
+present in `GENERATION_API_PROVIDERS`. Nexus neither reads Codex cache files nor
+maintains a second model/reasoning allowlist. A model exposes every reasoning
+value the source catalog reports; unavailable or unqualified pairs remain
+visible with their typed readiness state but are not selectable.
 
-`validate_profiles()` runs at API and worker startup. Every profile and
-background mapping must resolve through `provider_runtime.registry`, support
-text, tools, streaming, strict structured output, and a continuation codec,
-and exactly match its advertised reasoning options and default.
-
-`OPERATION_PROFILES` is unchanged: Oracle, Media Summary, Metadata Enrichment,
-and Synapse use `fast`; Dossier page, note, and idea-resolve use `fast`; other
-Dossier bindings and Dawn Write use `balanced`. Chat is user-selected. Kimi and
-both DeepSeek profiles are chat choices only.
-
-## Credentials and runtime composition
-
-`provider_credentials(settings)` is the one direct-generation credential
-constructor. It supplies exactly five platform credentials: OpenAI, Anthropic,
-Gemini, Moonshot, and DeepSeek. The runtime chooses the applicable key.
-`embedding_credential(settings)` remains the narrow OpenAI embedding port.
-Transcription is not an LLM runtime capability; Deepgram remains its separate
-owner.
-
-`ExecutionRuntime` is the structural test seam. Production composition returns
-`ProviderRuntime` directly from `build_execution_runtime(settings, client)`.
-API dependencies and `run_llm_task` share that composition; no wrapper or
-generation-time credential map exists.
-
-The only retry modes are:
-
-| Mode | Owner behavior |
-|---|---|
-| `Default` | `ProviderRuntime` applies its provider retry policy. |
-| `SingleAttempt` | `ProviderRuntime` receives one zero-delay attempt; it never retries or resumes a stream after a semantic event. |
-
-Every composition uses `Default` except durable `BilledOnce` work: `chat_run`,
-`dossier_build`, `media_unit_build`, and the API-owned Idea resolver use
-`SingleAttempt`. Nexus selects the mode; `ProviderRuntime` implements it.
-
-## Durable intent, execution, and admission
-
-`GenerateIntentState` in `llm_intent_state.py` is the only persisted
-generation-intent representation. It round-trips text prompt blocks, plain
-JSON-schema tools and strict output, and continuation target/codec/opaque
-payload. Provider wire requests and cache plans are never durable product state.
-
-`GenerationRequest` carries the owner's replay-stable generation UUID and
-validates the selected profile target and reasoning,
-text-only input, no provider options, no tools with strict JSON, positive and
-row-capped output, and the conservative context bound. Admission reserves:
+The strict Chat selection is one tagged value:
 
 ```text
-utf8_bytes(GenerateIntentState.model_dump_json()) + max_output_tokens
+CodexPersonalSelection(model_key, reasoning_key)
+| ProviderApiSelection(model_ref, reasoning)
 ```
 
-This is deterministic quota admission, not tokenization or a cost estimate.
+The tag prevents same-named models on different routes from aliasing. The
+browser submits the exact selection plus the catalog-definition revision and
+never submits dispatch strings, credentials, capabilities, defaults, or
+fallback order. The developer-owned Codex Personal / GPT-5.6 Terra / medium
+seed initializes a new composer only; it is not a saved user preference and
+does not override a causal or explicit per-run selection.
 
-`execute_generation` and `execute_generation_stream` are the only Nexus
-generation boundary. Their order is: validate; check entitlement; atomically
-insert-or-reuse the pre-dispatch ledger row and reserve admission under the
-owner lock; commit a durable owner's uncertain checkpoint where it has one;
-dispatch; atomically terminalize and settle exactly once. A concurrent replay
-of the same UUID can neither add a ledger row nor recreate a settled
-reservation.
-Expected outcomes pass through after recording. Trusted impossible states record
-a safe defect terminal and raise. The existing queue, leases, and step journal
-continue to own durable orchestration.
+Background operations resolve their exact Codex selection only from the total
+source-controlled policy. Users can inspect the effective selection but cannot
+edit background generation policy.
 
-## Outcomes, ledger, and migration
+## Operation and tool policy
 
-`llm_outcomes.py` is the exhaustive mapping from `ProviderRuntime` terminals
-to Nexus failure facts. Refused, incomplete, context-too-large, invalid tool
-arguments, invalid structured output, exhausted rate limit/timeout/unavailable,
-and stream interruption have one normalized origin/code; success and
-cancellation carry no error facts. `estimate_cost(CallMeta)` runs only after a
-terminal: absent usage is `missing_usage`, present usage without pricing is
-`missing_pricing`, and otherwise the row records the estimate and provenance.
+Every admitted run freezes one `GenerationSpec`: exact selection and dispatch
+target, source/catalog/policy/backend revisions, prompt reference, conservative
+budgets, output contract, timeout, host preparation, and model-tool authority.
+Workers execute that snapshot and never reread mutable process policy.
 
-`llm_ledger.py` is the sole writer of `llm_calls` and the transaction owner for
-ledger plus token-budget state. It commits one requested profile row before
-dispatch and terminal facts afterward: runtime target,
-native reasoning, registry revision, normalized usage, attempt trace, outcome,
-and cost provenance. It is the audit boundary; it has no product API.
+Model selection does not grant tools. The operation policy independently
+resolves one of:
 
-Migration `0215_llm_provider_runtime.py` is the irreversible v2 hard cut. It
-adds requested/native reasoning, registry revision, and cost provenance; removes
-retired plan, cache, pricing-snapshot, raw-usage, and component-cost facts; and
-rewrites prompt manifests without retired cache or reasoning-reserve fields.
-Old durable chat intent payloads are unreadable: migration first refuses live
-or suspended chat coordination, preserves durable domain data, and deletes only
-succeeded `chat_run` queue coordination rows. It retains the existing Postgres
-queue for all v2 work.
+- `NoModelTools`;
+- `ChatRead` or `ChatReadAdditiveWrite` from fresh per-run Chat authority;
+- `LibraryDossierRead`;
+- `IdeaDossierRead`.
 
-## API and failure projection
+Chat read mode grants `web.search` and the five Nexus reads. The additive-write
+extension grants the five existing owner-gated writes only after the composer
+control labelled **Allow this reply to add to Nexus** is explicitly enabled for
+that run. It is off by default and never inherited. The two Dossier plans grant
+only the five Nexus reads over their exact frozen evidence scope; no background
+plan grants a write. The remaining background operations publish no model-tool
+schema or MCP configuration. Idea host research remains a separate bounded,
+durable three-search preparation plan.
 
-`GET /llm-profiles` returns the fixed profile tuple for every authenticated
-viewer. Chat create/send keeps `profile_id` and `reasoning_option_id` as the
-only selection inputs. SSE, reconnect, cancellation, failure cards, and trust
-trail shapes are unchanged.
+Codex MCP observations and Provider API function proposals reach the same
+canonical `GenerationToolExecutor`, authority checks, receipts, evidence,
+citations, trust, and Undo. The sole tool-position grammar is
+`generation/{generation_seq}/tool/{n}`, with a one-based ordinal monotonic
+across the parent generation. An API model/tool/model loop never restarts it at
+a child call; Codex uses the same grammar inside its native child.
 
-`chat_failure.py` projects stored normalized terminal facts into the closed
-chat-failure union. `chat_run_candidates.py` owns rerun and regenerate sibling
-construction. Neither recreates provider policy or invents a second failure
-record.
+Untrusted tool arguments or output cannot widen the frozen plan, principal,
+scope, limits, or effect authority. There is no tool-shaped text parser,
+provider-native Web search, alternate executor, or transport fallback.
+
+## Backend composition
+
+Codex Personal uses one private UDS command/NDJSON stream. The adapter binds the
+catalog-validated native model key before dispatch and supplies MCP only for a
+present frozen model-tool plan. The host has no database credential,
+application secret, generation API key, product data mount, or TCP listener. It
+owns one private per-turn root and deletes it after the pinned runtime closes.
+
+The private authenticated MCP mount is exactly
+`/internal/agent-tools/mcp`, `mcp==2.1.0`, protocol `2025-06-18`. It is
+stateless and JSON-response only. Every Codex tool-bearing generation receives
+a short-lived bearer bound to its generation, attempt, worker lease, frozen
+plan, scope, budgets, and effect mode. The mount publishes only that plan and
+creates no public MCP principal or general client surface.
+
+Provider API execution uses `ProviderRuntime` with the selected configured
+credential. Each independently accepted provider call is a child model turn.
+Tool proposals are executed only after durable admission; the sealed,
+target-bound continuation advances only after the child terminal and tool
+result are persisted. Unsupported strict-output-plus-tool combinations are
+ineligible at catalog qualification rather than silently losing strictness or
+tools.
+
+Both lanes project into the route-neutral `GenerationEvent` family without
+importing one another. No cross-lane dispatcher shares credentials or protocol
+state.
+
+## Durable ownership and replay
+
+One parent generation row records the frozen spec and terminal truth. One child
+row records each independently accepted model call: normally one for Codex and
+one per ProviderRuntime call in an API tool loop. Tool positions and their
+effect receipts are separate durable children. Credentials, MCP bearers, raw
+prompts, and decrypted continuation bytes never enter catalog, history,
+evidence, or logs.
+
+Completed children and tool positions replay without redispatch. A provider
+loop may resume only from its sealed next-child continuation. Accepted or
+uncertain dispatch never becomes automatic retry authority. Only externally
+established `ProveNotDispatched` may reset an exact non-dispatched child;
+otherwise reconciliation attaches independently recovered terminal evidence or
+the operation remains suspended/terminal according to its owner contract.
+
+Subscription quota observed before Codex acceptance is capacity, not ordinary
+failure. Background work enters durable `CapacityPaused`, waits for the known
+reset or a bounded low-frequency recheck, and neither spends API money nor
+switches models. Chat reports the typed capacity refusal directly. A capacity
+error after acceptance is terminal because replay could duplicate billing or
+effects.
+
+## Product API and reset boundary
+
+`POST /chat-runs`, rerun, and regenerate carry an explicit selection,
+`catalog_definition_revision`, and `tool_authority: ReadOnly | AdditiveWrites`.
+Chat history, SSE meta, and trust projections expose the same immutable
+selection and authority plus safe execution disclosure. They never expose
+credentials, dispatch aliases, continuation bytes, or a generation default.
+
+The hard-cut migration deletes the complete legacy Chat aggregate and all
+historical generation/metering rows. Users, media, libraries, knowledge,
+resource graph data not owned by conversations, and non-conversation artifacts
+remain. Consequently every surviving Chat run was admitted under this contract;
+there is no legacy eligibility decoder or historical selection translation.
 
 ## Invariants
 
-- Product profile is policy; registry row is provider fact; `ProviderRuntime`
-  is mechanism.
-- One runtime owns retries, one durable boundary executes a generation, and one
-  ledger writes its audit facts.
-- Missing credentials, usage, pricing, or capability is explicit and never a
-  fallback.
-- Direct API execution and native subscription execution are different systems.
-- The repository has one v2 direct-provider path and no v1 integration path.
+- One configured catalog is the source of every selectable Chat pair.
+- One developer policy owns the Chat seed and all background selections.
+- One frozen `GenerationSpec` owns selection, budgets, output, and tool policy.
+- One parent/child ledger owns generation truth across both routes.
+- One canonical tool authority serves eligible Chat and background operations.
+- Domain owners alone accept model output and publish semantic results.
+- No user generation defaults, profiles, presets, fallback, or compatibility
+  path exists.

@@ -19,14 +19,16 @@ import pytest
 
 from nexus.services.auth_handoff_codes import _hash as server_challenge_hash
 from nexus_test_control import android_visual as av
-from nexus_test_control.cli import AndroidVisualRequest, parse_command
+from nexus_test_control.cli import parse_command
 from nexus_test_control.model import (
     DEFERRED_CAPABILITY_OWNER,
     WORKFLOW_REGISTRY,
+    AndroidVisualInputs,
     Capability,
     RunStatus,
     SelectionScope,
     Workflow,
+    validate_android_visual_path,
 )
 
 HEAD_SHA = "0123456789abcdef0123456789abcdef01234567"
@@ -97,7 +99,7 @@ def test_android_visual_is_absent_from_every_automated_and_deferred_lane() -> No
 def test_cli_parses_head_sha_owned_path_and_defaults_device_to_primary() -> None:
     command = parse_command(["android-visual", "--sha", HEAD_SHA, "--path", "/reader/x"])
     assert command.workflow is Workflow.ANDROID_VISUAL
-    assert command.android_visual == AndroidVisualRequest(HEAD_SHA, "/reader/x", "primary")
+    assert command.android_visual == AndroidVisualInputs(HEAD_SHA, "/reader/x", "primary")
 
 
 def test_cli_rejects_a_sha_that_is_not_forty_lowercase_hex() -> None:
@@ -182,7 +184,7 @@ def test_mint_request_carries_bearer_internal_header_and_the_challenge() -> None
 
 @pytest.mark.parametrize("path", ["/", "/reader/library", "/reader/abc-123_view", "/a%20b"])
 def test_validate_owned_path_accepts_owned_same_origin_paths(path: str) -> None:
-    assert av.validate_owned_path(path) == path
+    assert validate_android_visual_path(path) == path
 
 
 @pytest.mark.parametrize(
@@ -191,7 +193,7 @@ def test_validate_owned_path_accepts_owned_same_origin_paths(path: str) -> None:
 )
 def test_validate_owned_path_rejects_foreign_or_unsafe_paths(path: str) -> None:
     with pytest.raises(ValueError):
-        av.validate_owned_path(path)
+        validate_android_visual_path(path)
 
 
 def test_device_session_established_requires_a_non_login_page_on_the_owned_origin() -> None:
@@ -216,12 +218,49 @@ def test_device_session_established_requires_a_non_login_page_on_the_owned_origi
     assert not av.device_session_established("not-a-list", origin)
 
 
+@pytest.mark.parametrize(
+    ("activity_dump", "expected"),
+    [
+        pytest.param(
+            """
+              topResumedActivity=ActivityRecord{81abc u0 app.nexus.android.debug/app.nexus.android.MainActivity t42}
+             ResumedActivity: ActivityRecord{92def u0 com.sec.android.app.launcher/com.sec.android.app.launcher.activities.LauncherActivity t7}
+            """,
+            False,
+            id="nexus-in-history-but-samsung-launcher-resumed",
+        ),
+        pytest.param(
+            """
+             ResumedActivity: ActivityRecord{81abc u0 app.nexus.android.debug/app.nexus.android.MainActivity t42}
+            """,
+            True,
+            id="nexus-main-activity-resumed",
+        ),
+        pytest.param(
+            """
+             ResumedActivity: ActivityRecord{81abc u0 app.nexus.android.debug/app.nexus.android.ShareActivity t42}
+            """,
+            False,
+            id="different-nexus-activity-resumed",
+        ),
+    ],
+)
+def test_capture_requires_nexus_main_activity_as_the_global_resumed_activity(
+    activity_dump: str, expected: bool
+) -> None:
+    assert av.nexus_main_activity_is_resumed(activity_dump) is expected
+
+
 def test_device_session_code_hash_equals_the_servers_stored_code_hash() -> None:
     # The fail-closed 'handoff consumed' gate polls for a row whose code_hash the
     # server wrote with its own _hash(code). If these drift, the gate fails open.
     session = _device_session()
     assert session.code_hash == server_challenge_hash(session.code)
     assert session.code_hash == hashlib.sha256(session.code.encode()).hexdigest()
+
+
+def test_visual_runtime_uses_the_public_version_route_for_web_readiness() -> None:
+    assert av.WEB_READINESS_PATH == "/version"
 
 
 # --- Native fingerprint: rebuild only when native inputs change --------------
@@ -267,6 +306,108 @@ def test_native_input_fingerprint_changes_with_a_debug_flag(tmp_path: Path) -> N
     a = av.native_input_fingerprint(tmp_path, {"nexusAndroidDebugBaseUrl": "http://127.0.0.1:3000"})
     b = av.native_input_fingerprint(tmp_path, {"nexusAndroidDebugBaseUrl": "http://127.0.0.1:4000"})
     assert a != b
+
+
+def test_debug_apk_cache_restores_an_out_of_band_build_and_device_install(tmp_path: Path) -> None:
+    _fake_android_tree(tmp_path)
+    apk = tmp_path / av.APK_RELATIVE
+    android_root = tmp_path / "apps/android"
+    (android_root / "local.properties").write_text("sdk.dir=/fake\n", encoding="utf-8")
+    controller_bytes = b"controller-build-with-owned-origins"
+    gradle = android_root / "gradlew"
+    gradle.write_text(
+        "#!/usr/bin/python3\n"
+        "from pathlib import Path\n"
+        f"Path({str(apk)!r}).write_bytes({controller_bytes!r})\n",
+        encoding="utf-8",
+    )
+    gradle.chmod(0o755)
+
+    flags = {"nexusAndroidDebugBaseUrl": "http://127.0.0.1:3000"}
+    fingerprint = av.native_input_fingerprint(tmp_path, flags)
+    serial = "192.168.1.5:5555"
+    installed = tmp_path / "fake-device-package.apk"
+    adb = tmp_path / "adb"
+    adb.write_text(
+        "#!/usr/bin/python3\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        f"installed = Path({str(installed)!r})\n"
+        "args = sys.argv[1:]\n"
+        "command = args[2:] if len(args) >= 2 and args[0] == '-s' else args\n"
+        "if command[:2] == ['install', '-r'] and len(command) == 3:\n"
+        "    installed.write_bytes(Path(command[2]).read_bytes())\n"
+        "    print('Success')\n"
+        f"elif command == ['shell', 'pm', 'path', {av.DEBUG_PACKAGE!r}] and installed.is_file():\n"
+        "    print('package:/data/app/fake/base.apk')\n"
+        "else:\n"
+        "    raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+    adb.chmod(0o755)
+
+    av._ensure_debug_apk(tmp_path, {}, adb, serial, flags)
+    assert installed.read_bytes() == controller_bytes
+
+    foreign_bytes = b"connected-test-build-with-default-origins"
+    apk.write_bytes(foreign_bytes)
+    installed.write_bytes(foreign_bytes)
+
+    av._ensure_debug_apk(tmp_path, {}, adb, serial, flags)
+    assert installed.read_bytes() == controller_bytes
+
+    apk.write_bytes(foreign_bytes)
+    installed.write_bytes(foreign_bytes)
+    cache_root = tmp_path / ".nexus-test/android-visual"
+    for candidate in cache_root.rglob("*"):
+        if (
+            candidate.is_file()
+            and not candidate.is_symlink()
+            and candidate.read_bytes() == controller_bytes
+        ):
+            candidate.write_bytes(foreign_bytes)
+
+    result = av._ensure_debug_apk(tmp_path, {}, adb, serial, flags)
+
+    digest = hashlib.sha256(controller_bytes).hexdigest()
+    assert installed.read_bytes() == controller_bytes
+    assert result == {
+        "variant": "debug",
+        "input_fingerprint": fingerprint,
+        "apk_sha256": digest,
+    }
+    state_path = cache_root / "apk.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state == {
+        "version": 2,
+        "input_fingerprint": fingerprint,
+        "apk_sha256": digest,
+    }
+
+
+def test_debug_apk_assembly_failure_retains_a_bounded_actionable_diagnostic(
+    tmp_path: Path,
+) -> None:
+    android = tmp_path / "apps/android"
+    android.mkdir(parents=True)
+    wrapper = android / "gradlew"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        "printf '%05000d\\n' 0 >&2\n"
+        "printf '%s\\n' \"Execution failed for task ':app:verifyOfflineReadingAssets'.\" >&2\n"
+        "printf '%s\\n' 'stale offline asset manifest' >&2\n"
+        "exit 7\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+
+    with pytest.raises(av._Fail) as raised:
+        av._assemble_debug_apk(tmp_path, os.environ, {})
+
+    detail = str(raised.value)
+    assert "Execution failed for task ':app:verifyOfflineReadingAssets'." in detail
+    assert "stale offline asset manifest" in detail
+    assert len(detail) <= 2_000
 
 
 # --- Worktree source identity -----------------------------------------------
@@ -326,7 +467,7 @@ def test_visual_manifest_records_the_contract_and_leaks_no_secret(tmp_path: Path
         runtime_ports={"web": 41234, "api": 48000, "supabase": 49999},
         api_log=f"test-results/runs/{RUN_ID}/api.log",
         web_log=f"test-results/runs/{RUN_ID}/web.log",
-        apk={"variant": "debug", "input_fingerprint": "a" * 64, "installed_fingerprint": "a" * 64},
+        apk={"variant": "debug", "input_fingerprint": "a" * 64, "apk_sha256": "b" * 64},
         session=session,
         requested_path="/reader/library",
         screenshot=f"test-results/runs/{RUN_ID}/android-visual-screen.png",

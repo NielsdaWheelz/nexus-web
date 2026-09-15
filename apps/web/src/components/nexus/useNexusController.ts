@@ -128,6 +128,7 @@ import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import {
   resolveWorkspacePaneLabel,
   useWorkspaceStore,
+  type WorkspaceAdjacentPaneDirection,
 } from "@/lib/workspace/store";
 import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
 import type {
@@ -191,6 +192,9 @@ export interface NexusController {
   } | null;
   readonly createChoiceActions: readonly NexusAction[];
   readonly browseChoiceActions: readonly NexusAction[];
+  activateAdjacentPane(input: {
+    readonly direction: WorkspaceAdjacentPaneDirection;
+  }): void;
   setQuery(query: string): void;
   setActiveEntry(key: NexusEntryKey): void;
   openEntryActions(entry: NexusEntry): void;
@@ -411,6 +415,7 @@ export function useNexusController(): NexusController {
     state,
     recentlyClosedPanes,
     runtimeLabelByPaneId,
+    activateAdjacentPane,
     activatePane,
     activateWorkspaceTarget,
     closePane,
@@ -1565,8 +1570,6 @@ export function useNexusController(): NexusController {
               sessionId: startAddSession(detail.seed),
               activation: PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
             });
-          } else if (detail.kind === "Activity") {
-            setPage({ kind: "Activity" });
           } else if (detail.kind === "UnsupportedLink") {
             setPage({ kind: "UnsupportedLink" });
           } else {
@@ -1701,8 +1704,7 @@ export function useNexusController(): NexusController {
         const committed = mediaId
           ? addSession.state.items.find(
               (item) =>
-                (item.kind === "Accepted" && item.result.mediaId === mediaId) ||
-                (item.kind === "AcceptedUncertain" && item.mediaId === mediaId),
+                item.kind === "Accepted" && item.result.mediaId === mediaId,
             )
           : undefined;
         replayId = committed?.id ?? null;
@@ -1777,9 +1779,7 @@ export function useNexusController(): NexusController {
       ? addSession.state.branch === "Opml"
         ? "Import OPML"
         : "Add content"
-      : page.kind === "Activity"
-        ? "Activity"
-        : "Nexus";
+      : "Nexus";
   const focusKey =
     page.kind === "Add"
       ? `${addSession.state.sessionId}:${addSession.state.branch}:${addSession.state.initialFocus}`
@@ -1928,6 +1928,7 @@ export function useNexusController(): NexusController {
     managedTabsFeedback,
     createChoiceActions,
     browseChoiceActions,
+    activateAdjacentPane,
     setQuery,
     setActiveEntry,
     openEntryActions,

@@ -1,0 +1,13 @@
+diff --git a/migrations/alembic/versions/0228_reader_semantic_structure.py b/migrations/alembic/versions/0228_reader_semantic_structure.py
+--- a/migrations/alembic/versions/0228_reader_semantic_structure.py
++++ b/migrations/alembic/versions/0228_reader_semantic_structure.py
+@@ -103,7 +103,7 @@ def _repair_web_cursors(
+             candidate_id
+             for candidate_id, candidate_text in text_by_fragment.items()
+             if matches_quote_window(candidate_text, offset, quote, prefix, suffix)
+         ]
+-        if len(candidates) != 1:
++        if not candidates:
+             fail(cursor_id)
+         repaired = {**locator, "target": {**target, "fragment_id": candidates[0]}}
+         connection.execute(

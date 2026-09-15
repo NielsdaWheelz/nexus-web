@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 _ALLOWED_HOSTS = frozenset({"127.0.0.1", "::1", "127.0.1.1"})
+_SYSTEM_GETADDRINFO = socket.getaddrinfo
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +124,7 @@ def install_network_guard() -> Callable[[], None]:
             target = static_dns[normalized]
             if isinstance(target, _LoopbackRoute):
                 return original_getaddrinfo(target.address, target.port, *args, **kwargs)
-            return original_getaddrinfo(target, port, *args, **kwargs)
+            return _SYSTEM_GETADDRINFO(target, port, *args, **kwargs)
         if normalized is not None:
             _require_local((normalized, 0))
         return original_getaddrinfo(host, port, *args, **kwargs)
@@ -154,11 +155,29 @@ def install_network_guard() -> Callable[[], None]:
 
 
 def install_test_tls_ca() -> Callable[[], None]:
-    """Trust one test-owned CA without weakening a production HTTP client."""
+    """Trust only controller-owned test CAs without weakening an HTTP client."""
     raw_certificate = os.environ.get("NEXUS_TEST_TLS_CA_CERT")
-    if raw_certificate is None:
+    raw_certificates = os.environ.get("NEXUS_TEST_TLS_CA_CERTS")
+    if raw_certificate is None and raw_certificates is None:
         return lambda: None
-    certificate = Path(raw_certificate).resolve(strict=True)
+    certificate_values: list[str] = []
+    if raw_certificate is not None:
+        certificate_values.append(raw_certificate)
+    if raw_certificates is not None:
+        try:
+            decoded = json.loads(raw_certificates)
+        except json.JSONDecodeError as error:
+            raise PermissionError("test process received invalid TLS CA JSON") from error
+        if (
+            not isinstance(decoded, list)
+            or not decoded
+            or any(not isinstance(value, str) or not value for value in decoded)
+        ):
+            raise PermissionError("test process received an invalid TLS CA list")
+        certificate_values.extend(decoded)
+    if len(certificate_values) != len(set(certificate_values)):
+        raise PermissionError("test process received duplicate TLS CA paths")
+    certificates = tuple(Path(value).resolve(strict=True) for value in certificate_values)
     original_create_default_context = ssl.create_default_context
 
     def create_default_context(
@@ -174,7 +193,8 @@ def install_test_tls_ca() -> Callable[[], None]:
             capath=capath,
             cadata=cadata,
         )
-        context.load_verify_locations(cafile=certificate)
+        for certificate in certificates:
+            context.load_verify_locations(cafile=certificate)
         return context
 
     ssl.create_default_context = create_default_context

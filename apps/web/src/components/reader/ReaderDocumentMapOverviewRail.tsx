@@ -9,224 +9,213 @@ import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
+import { absent, type Presence } from "@/lib/api/presence";
 import type { ReaderDocumentMapMarker } from "@/lib/reader/documentMap";
-import type { ReaderDocumentOverviewRange } from "@/lib/reader/readerDocumentPosition";
+import {
+  projectReaderLocalPoint,
+  projectReaderLocalRange,
+  type ReaderDocumentOverviewRange,
+  type ReaderDocumentStructure,
+} from "@/lib/reader/readerDocumentPosition";
 import { cx } from "@/lib/ui/cx";
 import { nextRovingIndexForKey } from "@/lib/ui/rovingIndex";
 import styles from "./ReaderDocumentMapOverviewRail.module.css";
 
-const MARKER_TARGET_SIZE_PX = 24;
-
 interface ReaderDocumentMapOverviewRailProps {
-  markers: ReaderDocumentMapMarker[];
-  visibleRange: ReaderDocumentOverviewRange;
+  markers: readonly ReaderDocumentMapMarker[];
+  structure: Presence<ReaderDocumentStructure>;
+  visibleRange: Presence<ReaderDocumentOverviewRange>;
+  currentPosition: Presence<number>;
+  scope: ReaderDocumentOverviewRange & { label: string };
   onActivateMarker: (marker: ReaderDocumentMapMarker) => void;
+  onRevealCurrent: () => void;
+  onOpenDetail?: () => void;
 }
 
-interface MarkerCluster {
+type Destination =
+  | { kind: "Marker"; marker: ReaderDocumentMapMarker; position: number; clippedStart: boolean }
+  | { kind: "Current"; position: number };
+
+interface DestinationGroup {
   key: string;
   position: number;
-  members: ReaderDocumentMapMarker[];
+  top: number;
+  lane: "structure" | "evidence";
+  members: Destination[];
 }
-
-type PositionedStyle = CSSProperties & { "--position": string };
 
 export default function ReaderDocumentMapOverviewRail({
   markers,
+  structure,
   visibleRange,
+  currentPosition,
+  scope,
   onActivateMarker,
+  onRevealCurrent,
+  onOpenDetail,
 }: ReaderDocumentMapOverviewRailProps) {
   const listId = useId();
   const trackRef = useRef<HTMLDivElement | null>(null);
-  const railButtonsRef = useRef<Array<HTMLButtonElement | null>>([]);
+  const buttonsRef = useRef<Array<HTMLButtonElement | null>>([]);
   const firstListButtonRef = useRef<HTMLButtonElement | null>(null);
   const [trackHeight, setTrackHeight] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [openClusterKey, setOpenClusterKey] = useState<string | null>(null);
+  const [openGroupKey, setOpenGroupKey] = useState<string | null>(null);
 
   useLayoutEffect(() => {
     const track = trackRef.current;
     if (!track) return;
-
-    const measure = () => {
-      const nextHeight = track.getBoundingClientRect().height;
-      setTrackHeight((currentHeight) =>
-        currentHeight === nextHeight ? currentHeight : nextHeight,
-      );
-    };
-
+    const measure = () => setTrackHeight(track.getBoundingClientRect().height);
     measure();
-    const observer =
-      typeof ResizeObserver === "undefined"
-        ? null
-        : new ResizeObserver(measure);
-    observer?.observe(track);
-    window.addEventListener("resize", measure);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", measure);
-    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(track);
+    return () => observer.disconnect();
   }, []);
 
-  const clusters = useMemo(
-    () => clusterMarkers(markers, trackHeight),
-    [markers, trackHeight],
-  );
-  const rovingIndex = activeIndex < clusters.length ? activeIndex : 0;
-  const openClusterIndex = clusters.findIndex(
-    (cluster) => cluster.key === openClusterKey,
-  );
-  const openCluster =
-    openClusterIndex >= 0 ? clusters[openClusterIndex]! : null;
-
+  const projected = useMemo(() => markers.flatMap((marker) => {
+    const position = projectReaderLocalPoint({ scope, position: marker.position, documentLength: 1 });
+    // A boundary at the far end remains a visible destination, even though the
+    // current section uses half-open containment at that same coordinate.
+    if (position.kind === "Present") return [{ marker, position: position.value, clippedStart: false }];
+    if (scope.end > scope.start && marker.position === scope.end) return [{ marker, position: 1, clippedStart: false }];
+    if (marker.kind !== "Contents" && marker.end_position.kind === "Present") {
+      const range = projectReaderLocalRange({ scope, range: { start: marker.position, end: marker.end_position.value }, documentLength: 1 });
+      if (range.kind === "Present") return [{ marker, position: range.value.start, clippedStart: true }];
+    }
+    return [];
+  }), [markers, scope]);
+  const current = useMemo(() => currentPosition.kind === "Present"
+    ? projectReaderLocalPoint({ scope, position: currentPosition.value, documentLength: 1 })
+    : absent<number>(), [currentPosition, scope]);
+  const band = visibleRange.kind === "Present"
+    ? projectReaderLocalRange({ scope, range: visibleRange.value, documentLength: 1 })
+    : absent<ReaderDocumentOverviewRange>();
+  const groups = useMemo(() => {
+    const structural: Destination[] = [];
+    const evidence: Destination[] = [];
+    for (const entry of projected) {
+      const destination: Destination = { kind: "Marker", ...entry };
+      (entry.marker.kind === "Contents" ? structural : evidence).push(destination);
+    }
+    if (current.kind === "Present") structural.push({ kind: "Current", position: current.value });
+    return [
+      ...groupDestinations(structural, trackHeight, "structure"),
+      ...groupDestinations(evidence, trackHeight, "evidence"),
+    ].sort((left, right) => left.position - right.position || left.lane.localeCompare(right.lane));
+  }, [projected, current, trackHeight]);
+  const openGroupIndex = groups.findIndex((group) => group.key === openGroupKey);
+  const openGroup = openGroupIndex < 0 ? null : groups[openGroupIndex]!;
+  const rovingIndex = activeIndex < groups.length ? activeIndex : 0;
   useLayoutEffect(() => {
-    if (openClusterKey !== null) firstListButtonRef.current?.focus();
-  }, [openClusterKey]);
+    if (openGroupKey !== null) firstListButtonRef.current?.focus();
+  }, [openGroupKey]);
 
-  function activate(marker: ReaderDocumentMapMarker) {
-    setOpenClusterKey(null);
-    onActivateMarker(marker);
+  const boundaries = structure.kind === "Present" && structure.value.length > 0
+    ? [...new Set(structure.value.coverage.flatMap((span) => [span.start, span.end]))]
+        .map((offset) => offset / structure.value.length)
+        .filter((position) => scope.start <= position && position <= scope.end)
+    : [];
+
+  function activate(destination: Destination) {
+    setOpenGroupKey(null);
+    if (destination.kind === "Current") onRevealCurrent();
+    else onActivateMarker(destination.marker);
   }
 
-  function handleRailKeyDown(
-    event: ReactKeyboardEvent<HTMLButtonElement>,
-    index: number,
-  ) {
-    const nextIndex = nextRovingIndexForKey({
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, index: number) {
+    const next = nextRovingIndexForKey({
       key: event.key,
       currentIndex: index,
-      itemCount: clusters.length,
+      itemCount: groups.length,
       orientation: "vertical",
     });
-    if (nextIndex === null) return;
-
+    if (next === null) return;
     event.preventDefault();
-    setActiveIndex(nextIndex);
-    railButtonsRef.current[nextIndex]?.focus();
+    setActiveIndex(next);
+    buttonsRef.current[next]?.focus();
   }
 
-  function closeCluster() {
-    if (openClusterIndex < 0) return;
-    railButtonsRef.current[openClusterIndex]?.focus();
-    setOpenClusterKey(null);
+  function groupName(group: DestinationGroup): string {
+    if (group.members.length === 1) return destinationName(group.members[0]!, scope.label);
+    return `${group.members.length} destinations near ${Math.round(group.position * 100)}% through ${scope.label}`;
   }
 
   return (
-    <div
-      className={styles.rail}
-      data-testid="reader-document-map-overview-rail"
-      role="region"
-      aria-label="Document Map overview"
-    >
-      <div
-        ref={trackRef}
-        className={styles.track}
-        role="toolbar"
-        aria-orientation="vertical"
-        aria-label="Document Map destinations"
-      >
-        <div
-          className={styles.band}
-          data-testid="reader-document-map-band"
-          aria-hidden="true"
-          style={{
-            top: `${visibleRange.start * 100}%`,
-            height: `${(visibleRange.end - visibleRange.start) * 100}%`,
-          }}
-        />
-
-        {clusters.map((cluster, index) => {
-          const expanded = cluster.key === openCluster?.key;
-          const previewId = `${listId}-preview-${index}`;
-          const positionStyle: PositionedStyle = {
-            "--position": `${cluster.position * 100}%`,
-          };
-          const placementClass = positionPlacementClass(cluster.position);
-
+    <div className={styles.rail} data-testid="reader-document-map-overview-rail" role="region" aria-label="Document Map overview">
+      {onOpenDetail ? <button type="button" className={styles.openDetail} onClick={onOpenDetail} aria-label="Open document map">≡</button> : null}
+      <div ref={trackRef} className={styles.track} role="toolbar" aria-orientation="vertical" aria-label="Document Map destinations">
+        {boundaries.map((position) => (
+          <span key={position} className={styles.boundary} aria-hidden="true" style={{ top: `${((position - scope.start) / (scope.end - scope.start)) * 100}%` }} />
+        ))}
+        {band.kind === "Present" ? (
+          <div className={styles.band} data-testid="reader-document-map-band" aria-hidden="true" style={{ top: `${band.value.start * 100}%`, height: `${(band.value.end - band.value.start) * 100}%` }} />
+        ) : null}
+        {markers.map((marker) => {
+          if (marker.kind === "Contents" || marker.end_position.kind === "Absent") return null;
+          const range = projectReaderLocalRange({ scope, range: { start: marker.position, end: marker.end_position.value }, documentLength: 1 });
+          return range.kind === "Present" ? (
+            <span key={marker.id} className={styles.evidenceRange} data-testid="reader-evidence-range" aria-hidden="true" style={{ top: `${range.value.start * 100}%`, height: `${(range.value.end - range.value.start) * 100}%`, "--marker-color": markerColor(marker) } as CSSProperties} />
+          ) : null;
+        })}
+        {projected.map(({ marker, position }) => (
+          <span
+            key={marker.id}
+            className={cx(styles.exactMarker, marker.kind === "Contents" ? styles.structureLane : styles.evidenceLane)}
+            data-testid={marker.kind === "Contents" ? "reader-section-tick" : "reader-evidence-mark"}
+            aria-hidden="true"
+            style={{ top: `${position * 100}%` }}
+          >
+            <MarkerGlyph marker={marker} />
+          </span>
+        ))}
+        {current.kind === "Present" ? <span className={styles.current} data-testid="reader-current-position" aria-hidden="true" style={{ top: `${current.value * 100}%` }} /> : null}
+        {groups.map((group, index) => {
+          const expanded = group.key === openGroup?.key;
           return (
-            <div
-              key={cluster.key}
-              className={styles.markerSlot}
-              style={positionStyle}
-            >
+            <div key={group.key} className={cx(styles.groupSlot, group.lane === "structure" ? styles.structureLane : styles.evidenceLane)} style={{ top: group.top }}>
               <button
-                ref={(button) => {
-                  railButtonsRef.current[index] = button;
-                }}
+                ref={(button) => { buttonsRef.current[index] = button; }}
                 type="button"
                 className={styles.markerButton}
                 tabIndex={index === rovingIndex ? 0 : -1}
-                aria-label={clusterAccessibleName(cluster)}
-                aria-describedby={previewId}
-                aria-expanded={
-                  cluster.members.length > 1 ? expanded : undefined
-                }
-                aria-controls={
-                  cluster.members.length > 1 && expanded
-                    ? `${listId}-destinations`
-                    : undefined
-                }
+                aria-label={groupName(group)}
+                aria-expanded={group.members.length > 1 ? expanded : undefined}
+                aria-controls={expanded ? `${listId}-destinations` : undefined}
                 onFocus={() => setActiveIndex(index)}
-                onKeyDown={(event) => handleRailKeyDown(event, index)}
+                onKeyDown={(event) => handleKeyDown(event, index)}
                 onClick={() => {
-                  if (cluster.members.length === 1) {
-                    activate(cluster.members[0]!);
-                    return;
-                  }
-                  setOpenClusterKey(expanded ? null : cluster.key);
+                  if (group.members.length === 1) activate(group.members[0]!);
+                  else setOpenGroupKey(expanded ? null : group.key);
                 }}
               >
-                {cluster.members.length === 1 ? (
-                  <MarkerGlyph marker={cluster.members[0]!} />
-                ) : (
-                  <span className={styles.clusterCount} aria-hidden="true">
-                    {cluster.members.length}
-                  </span>
-                )}
+                {group.members.length > 1 ? <span className={styles.clusterCount} aria-hidden="true">{group.members.length}</span> : null}
               </button>
-              <div
-                id={previewId}
-                className={cx(styles.preview, placementClass)}
-                role="tooltip"
-              >
-                {cluster.members.map((marker) => (
-                  <DestinationContent key={marker.id} marker={marker} />
-                ))}
-              </div>
+              {!expanded ? (
+                <div className={cx(styles.preview, positionPlacementClass(group.position))} role="tooltip">
+                  {group.members.map((destination) => <DestinationContent key={destinationKey(destination)} destination={destination} scopeLabel={scope.label} />)}
+                </div>
+              ) : null}
             </div>
           );
         })}
-
-        {openCluster ? (
+        {openGroup ? (
           <ul
             id={`${listId}-destinations`}
-            className={cx(
-              styles.destinationList,
-              positionPlacementClass(openCluster.position),
-            )}
-            style={
-              {
-                "--position": `${openCluster.position * 100}%`,
-              } as PositionedStyle
-            }
-            aria-label={clusterAccessibleName(openCluster)}
+            className={cx(styles.destinationList, positionPlacementClass(openGroup.position))}
+            style={{ "--position": `${openGroup.position * 100}%` } as CSSProperties}
+            aria-label={groupName(openGroup)}
             onKeyDown={(event) => {
               if (event.key !== "Escape") return;
               event.preventDefault();
               event.stopPropagation();
-              closeCluster();
+              buttonsRef.current[openGroupIndex]?.focus();
+              setOpenGroupKey(null);
             }}
           >
-            {openCluster.members.map((marker, index) => (
-              <li key={marker.id}>
-                <button
-                  ref={index === 0 ? firstListButtonRef : undefined}
-                  type="button"
-                  aria-label={destinationAccessibleName(marker)}
-                  onClick={() => activate(marker)}
-                >
-                  <MarkerGlyph marker={marker} />
-                  <DestinationContent marker={marker} />
+            {openGroup.members.map((destination, index) => (
+              <li key={destinationKey(destination)}>
+                <button ref={index === 0 ? firstListButtonRef : undefined} type="button" aria-label={destinationName(destination, scope.label)} onClick={() => activate(destination)}>
+                  <DestinationContent destination={destination} scopeLabel={scope.label} />
                 </button>
               </li>
             ))}
@@ -237,71 +226,44 @@ export default function ReaderDocumentMapOverviewRail({
   );
 }
 
-function clusterMarkers(
-  markers: ReaderDocumentMapMarker[],
-  trackHeight: number,
-): MarkerCluster[] {
-  if (trackHeight === 0) return [];
-
-  const groups: ReaderDocumentMapMarker[][] = [];
-  for (const marker of markers) {
-    const members = groups[groups.length - 1];
-    const previous = members?.[members.length - 1];
-    if (
-      previous &&
-      (marker.position - previous.position) * trackHeight <
-        MARKER_TARGET_SIZE_PX
-    ) {
-      members.push(marker);
-    } else {
-      groups.push([marker]);
-    }
+function groupDestinations(destinations: Destination[], height: number, lane: DestinationGroup["lane"]): DestinationGroup[] {
+  if (height <= 0) return [];
+  const groups: { cell: number; members: Destination[] }[] = [];
+  for (const destination of destinations.sort((left, right) => left.position - right.position)) {
+    const cell = Math.floor(destination.position * height / 24);
+    const previous = groups.at(-1);
+    if (previous?.cell === cell) previous.members.push(destination);
+    else groups.push({ cell, members: [destination] });
   }
-
-  return groups.map((members) => ({
-    key: JSON.stringify(members.map((marker) => marker.id)),
-    position: medianPosition(members),
+  return groups.map(({ cell, members }) => ({
+    key: JSON.stringify([lane, ...members.map(destinationKey)]),
+    position: (members[0]!.position + members.at(-1)!.position) / 2,
+    top: cell * 24 + 12,
+    lane,
     members,
   }));
 }
 
-function medianPosition(members: ReaderDocumentMapMarker[]): number {
-  const middle = Math.floor(members.length / 2);
-  if (members.length % 2 === 1) return members[middle]!.position;
-  return (members[middle - 1]!.position + members[middle]!.position) / 2;
+function destinationKey(destination: Destination): string {
+  return destination.kind === "Current" ? "current" : destination.marker.id;
+}
+
+function destinationName(destination: Destination, scopeLabel: string): string {
+  const label = destination.kind === "Current" ? "Current position" : `${destinationType(destination.marker)}: ${destination.marker.label}`;
+  if (destination.kind === "Marker" && destination.clippedStart) return `${label}, continues from before ${scopeLabel}`;
+  return `${label}, ${Math.round(destination.position * 100)}% through ${scopeLabel}`;
 }
 
 function destinationType(marker: ReaderDocumentMapMarker): string {
   switch (marker.kind) {
-    case "Contents":
-      return "Contents";
-    case "Embed":
-      return "Embed";
-    case "Highlight":
-      return "Highlight";
+    case "Contents": return "Contents";
+    case "Embed": return "Embed";
+    case "Highlight": return "Highlight";
     case "SourceReference":
-    case "GeneratedCitation":
-      return "Citation";
-    case "Link":
-      return "Link";
-    case "Synapse":
-      return "Synapse";
+    case "GeneratedCitation": return "Citation";
+    case "Link": return "Link";
+    case "Synapse": return "Synapse";
   }
-}
-
-function destinationAccessibleName(marker: ReaderDocumentMapMarker): string {
-  return `${destinationType(marker)}: ${marker.label}, ${documentPercentage(marker.position)}% through document`;
-}
-
-function clusterAccessibleName(cluster: MarkerCluster): string {
-  if (cluster.members.length === 1) {
-    return destinationAccessibleName(cluster.members[0]!);
-  }
-  return `${cluster.members.length} destinations near ${documentPercentage(cluster.position)}% through document`;
-}
-
-function documentPercentage(position: number): number {
-  return Math.round(position * 100);
 }
 
 function positionPlacementClass(position: number): string | false {
@@ -311,67 +273,38 @@ function positionPlacementClass(position: number): string | false {
 }
 
 function MarkerGlyph({ marker }: { marker: ReaderDocumentMapMarker }) {
-  return (
-    <span
-      className={cx(
-        styles.markerGlyph,
-        markerShapeClass(marker),
-        marker.tone === "Warning" && styles.markerWarning,
-      )}
-      style={{ "--marker-color": markerColor(marker) } as CSSProperties}
-      aria-hidden="true"
-    />
-  );
+  return <span className={cx(styles.markerGlyph, markerShapeClass(marker), marker.tone === "Warning" && styles.markerWarning)} style={{ "--marker-color": markerColor(marker) } as CSSProperties} />;
 }
 
 function markerShapeClass(marker: ReaderDocumentMapMarker): string {
   switch (marker.kind) {
-    case "Contents":
-      return styles.markerContents;
-    case "Embed":
-      return styles.markerEmbed;
-    case "Highlight":
-      return styles.markerHighlight;
+    case "Contents": return styles.markerContents;
+    case "Embed": return styles.markerEmbed;
+    case "Highlight": return styles.markerHighlight;
     case "SourceReference":
-    case "GeneratedCitation":
-      return styles.markerCitation;
+    case "GeneratedCitation": return styles.markerCitation;
     case "Link":
-    case "Synapse":
-      return styles.markerConnection;
+    case "Synapse": return styles.markerConnection;
   }
 }
 
 function markerColor(marker: ReaderDocumentMapMarker): string {
   switch (marker.tone) {
-    case "Highlight":
-      return "var(--highlight-yellow)";
-    case "Citation":
-      return "var(--highlight-purple)";
-    case "Link":
-      return "var(--highlight-blue)";
-    case "Synapse":
-      return "var(--highlight-green)";
-    case "Warning":
-      return "var(--highlight-pink)";
-    case "Neutral":
-      return "var(--edge-strong)";
+    case "Highlight": return "var(--highlight-yellow)";
+    case "Citation": return "var(--highlight-purple)";
+    case "Link": return "var(--highlight-blue)";
+    case "Synapse": return "var(--highlight-green)";
+    case "Warning": return "var(--highlight-pink)";
+    case "Neutral": return "var(--edge-strong)";
   }
 }
 
-function DestinationContent({ marker }: { marker: ReaderDocumentMapMarker }) {
+function DestinationContent({ destination, scopeLabel }: { destination: Destination; scopeLabel: string }) {
   return (
     <span className={styles.destinationContent}>
-      <strong>
-        {destinationType(marker)}: {marker.label}
-      </strong>
-      {marker.preview.kind === "Present" ? (
-        <span className={styles.destinationExcerpt}>
-          {marker.preview.value}
-        </span>
-      ) : null}
-      <span className={styles.destinationPosition}>
-        {documentPercentage(marker.position)}% through document
-      </span>
+      <strong>{destination.kind === "Current" ? "Current position" : `${destinationType(destination.marker)}: ${destination.marker.label}`}</strong>
+      {destination.kind === "Marker" && destination.marker.preview.kind === "Present" ? <span className={styles.destinationExcerpt}>{destination.marker.preview.value}</span> : null}
+      <span className={styles.destinationPosition}>{destination.kind === "Marker" && destination.clippedStart ? `Continues from before ${scopeLabel}` : `${Math.round(destination.position * 100)}% through ${scopeLabel}`}</span>
     </span>
   );
 }

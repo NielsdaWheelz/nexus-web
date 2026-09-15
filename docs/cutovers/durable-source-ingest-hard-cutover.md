@@ -228,7 +228,6 @@ Public commands:
 - `accept_url_source(...) -> FromUrlResponse`
 - `accept_browser_article_capture(...) -> FromUrlResponse`
 - `accept_browser_file_capture(...) -> FromUrlResponse`
-- `confirm_uploaded_source(...) -> dict`
 - `run_source_attempt(...) -> dict`
 - `retry_source_for_viewer(...) -> dict`
 - `refresh_source_for_viewer(...) -> dict`
@@ -237,7 +236,7 @@ Responsibilities:
 
 - validate destination libraries through `library_governance`,
 - classify source type through source identity modules,
-- create the durable `media` row,
+- create the durable `media` row for the sources it accepts,
 - create the durable `media_source_attempts` row,
 - attach default plus selected libraries through `library_entries`,
 - enqueue the single source-acquisition job,
@@ -498,17 +497,13 @@ No source-specific public URL route is introduced.
 acceptance owner. Once a request passes transport and auth validation, failures
 inside sanitization, storage, or extraction are recorded against media.
 
-### Upload Endpoints
+### Uploaded PDF/EPUB files
 
-`POST /media/upload/init` remains the durable acceptance boundary for uploaded
-file sources. It creates media and media_source_attempt intent rows before
-returning an upload URL. An idempotent replay may sign only the canonical upload
-staging path; once confirmation promotes the file to its media-owned path, replay
-returns current attempt/media truth with no upload URL.
-
-`POST /media/{media_id}/ingest` confirms bytes and starts the same source
-lifecycle. Confirm-time failures update the existing attempt/media instead of
-owning separate lifecycle policy.
+Uploaded PDF/EPUB acceptance, temporary capability, confirmation, and cleanup
+are superseded by
+[`document-import-reliability-hard-cutover.md`](document-import-reliability-hard-cutover.md).
+This source-ingest cutover owns published media only; it has no uploaded-file
+endpoint or pre-publication identity contract.
 
 ### Retry and Refresh
 
@@ -568,7 +563,10 @@ and `error_code` on the attempt row for specificity.
 - `failed`: source acquisition/materialization failed,
 - `superseded`: a newer attempt replaced this attempt before it ran.
 
-Only `media_source_ingest.py` writes these states.
+`media_source_ingest.py` owns acceptance, queueing, running, success, and
+supersession. `source_attempt_failures.py` owns the sole terminal failure
+transaction, including its source-specific domain projections. No worker or
+source adapter writes attempt failure directly.
 
 ## Canonical Identity and Duplicate Resolution
 
@@ -605,10 +603,11 @@ No runtime compatibility branch may recognize old X provider IDs such as raw
 post IDs or `thread:<post_id>`. Existing rows must be repaired by migration or a
 one-time operator command.
 
-File byte hashes are not canonical identity in the current-only artifact model.
-The hard cutover in `current-only-artifacts-hard-cutover.md` removed
-`file_sha256` identity and upload dedupe; byte validation is size/signature
-validation only.
+File byte hashes are not canonical media identity or upload dedupe. The hard
+cutover in `current-only-artifacts-hard-cutover.md` removed that legacy model.
+Uploaded PDF/EPUB sources instead persist `media_file.source_sha256` solely as
+immutable byte provenance and verify size, signature, and that exact digest
+before parsing.
 
 ## Capability Contract
 
@@ -646,8 +645,8 @@ Terminal failures:
 ### Add Content workbench
 
 `useAddContentSession` owns transient source intent and outcomes; `AddPanel` is
-its presentation. After `POST /media/from_url` or upload init returns a media
-identity, the durable media item is the source of truth. The controlled
+its presentation. After `POST /media/from_url` or upload-session publication
+returns a media identity, the durable media item is the source of truth. The controlled
 `LibraryDestinationDisclosure` changes filing intent; it does not own ingest.
 
 Final behavior:
@@ -697,10 +696,10 @@ continues to be the only writer of library entries.
 The source lifecycle owner must call:
 
 - `validate_writable_library_destinations` before durable acceptance,
-- `assign_libraries_for_media_in_current_transaction` in the media creation
-  transaction,
-- `assign_libraries_for_media` when canonical duplicate resolution returns a
-  winner.
+- `assign_libraries_for_media_in_current_transaction` inside the owning media
+  acceptance transaction, including canonical duplicate-winner resolution.
+
+There is no standalone assignment transaction wrapper.
 
 ### Background Jobs
 
@@ -731,17 +730,16 @@ artifacts. They must render as failed media, not as missing media.
 
 ### Storage
 
-Storage writes and direct-upload URL signing happen after durable acceptance. If
-signing or storage writes fail, the attempt and media are marked failed. Storage
-cleanup after retry or duplicate resolution happens after DB state commits, using
-existing explicit cleanup patterns.
+Storage finalization for uploaded PDF/EPUB files belongs to the upload-session
+owner in `document-import-reliability-hard-cutover.md`. Published-source retry
+and duplicate-resolution cleanup remains owned by this source-ingest lifecycle.
 
 Retry/refresh dispatch is a two-transaction command:
 
 - transaction 1 records the new `media_source_attempts` retry/refresh intent,
 - transaction 2 verifies non-reacquirable source storage when required, resets
-  rewriteable domain artifacts, inserts the `ingest_media_source` job, and marks
-  the attempt queued,
+  source-specific execution state without deleting current readable artifacts,
+  inserts the `ingest_media_source` job, and marks the attempt queued,
 - storage objects collected by transaction 2 are deleted only after that
   transaction commits.
 
@@ -749,12 +747,23 @@ If transaction 2 fails, the cleanup rolls back and the retry/refresh attempt is
 marked failed. The previous artifacts are not destroyed by a queue insertion or
 source-preflight failure.
 
+Source adapters hand typed authorship observations to the contributor facade
+through `media_author_observation_seam.py`. Only an absent carrier means no
+observation; malformed same-system carriers defect instead of silently dropping
+credited provenance and allowing source success.
+
 Podcast transcript source retry is part of the same dispatch contract. Operator
 requeues run transcript quota admission and write
 `podcast_transcript_request_audits` inside transaction 2 before the
 `ingest_media_source` job is visible. Quota or billing rejection is recorded on
 the source attempt and returned as the typed API error; it is not converted into
-a silent non-enqueued success.
+a silent non-enqueued success. Current transcript segments, fragments, and
+readable state survive admission and are replaced only by the fenced current
+transcript writer after successful acquisition. The canonical internal
+request-reason decoder rejects missing and unknown durable source/job values;
+there is no `episode_open` or `operator_requeue` fallback. Transcript acquisition
+returns only its completed artifact result, while every failure raises into the
+typed terminal publication path.
 
 ## File Plan
 
@@ -762,7 +771,14 @@ a silent non-enqueued success.
 
 - `python/nexus/services/media_source_ingest.py`
   - source acceptance, attempts, retry, refresh, job payload construction,
-    canonical duplicate resolution orchestration.
+    canonical duplicate resolution orchestration;
+  - one detached source-adapter dispatch phase, separate from fenced
+    supersession, failure, authorship, and terminal publication;
+  - one immutable authorship phase that applies typed observations under the
+    exact source fence and propagates unexpected contributor defects instead of
+    persisting a generic source failure;
+  - one immutable terminal-publication phase owning the final fenced Media,
+    attempt, content-index, semantic-index, and document-embed mutations.
 - `python/nexus/services/media_source_types.py`
   - canonical source-attempt type constants and policy sets used by dispatch,
     retryability, failure-stage, and cleanup rules.
@@ -901,7 +917,9 @@ Current repeated pattern:
 Canonical owner:
 
 - `media_processing_state.py` for primitive transitions,
-- `media_source_ingest.py` for when transitions occur.
+- `media_source_ingest.py` for active and successful transitions,
+- `source_attempt_failures.py` for terminal failure publication,
+- `media_failure_projection.py` for the lightweight terminal Media tuple.
 
 No source module writes the failure tuple directly.
 
@@ -982,12 +1000,12 @@ no-op test adapter end to end.
 5. Delete old direct `x_ingest.ingest_x_author_thread_url` route dispatch and
    old YouTube acceptance entrypoint.
 
-### Phase 4: Upload and Browser Capture Cutover
+### Phase 4: Browser Capture Cutover
 
-1. Add upload-init attempt rows.
-2. Move upload confirm policy into the shared owner.
-3. Move browser article/file capture acceptance into the shared owner.
-4. Ensure sanitization/storage failures after accepted capture are durable.
+1. Move browser article/file capture acceptance into the shared owner.
+2. Ensure sanitization/storage failures after accepted capture are durable.
+3. Keep uploaded PDF/EPUB intent and verification exclusively in the durable
+   upload-session owner; this source owner starts only after publication.
 
 ### Phase 5: Retry, Refresh, Capabilities
 
@@ -1030,9 +1048,10 @@ no-op test adapter end to end.
   unavailable state according to the transcript contract.
 - Browser article sanitization/no-readable-text failure after valid request
   creates a failed media row.
-- Uploaded/captured file failures after acceptance update the existing media row,
-  including direct-upload signing failures, missing upload objects, invalid
-  captured file bytes, storage failures, and extraction failures.
+- Captured-file failures after acceptance update the existing media row.
+- Uploaded PDF/EPUB signing, missing-object, and byte-verification failures update
+  only the durable upload session; extraction failures after publication update
+  the published media row.
 - No route or source adapter performs provider/network/storage work before
   durable acceptance.
 - No source module writes `media.processing_status`, `failure_stage`,

@@ -12,10 +12,11 @@ worker drives the tagged checkpoint payload forward, one transition per invocati
 Every intent lookup/delete matches BOTH ``intentId`` and ``mediaId`` so an old job
 never acts on a later intent. Checkpoint writes are lease-fenced
 (:func:`nexus.jobs.queue.update_running_job_payload`); the atomic-deletion checkpoint
-is written inside the same serializable transaction as the child/parent deletes. On
-dead-letter, a live media row voids only the exact matching intent; a
-``DeletionCommitted`` job whose media is already gone stays unpruned for
-``requeue_dead_job`` repair.
+is written inside the same serializable transaction as the child/parent deletes. The
+kind's ``MediaTeardownIntent`` dead-letter projection
+(:mod:`nexus.jobs.dead_letter_projections`) voids only the exact matching intent while
+the media row is live; a ``DeletionCommitted`` job whose media is already gone stays
+unpruned for ``requeue_dead_job`` repair.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
     RescheduleRequested,
+    ScheduleAt,
     find_nonterminal_jobs_for_payload,
     get_job,
     update_running_job_payload,
@@ -183,7 +185,7 @@ def _prepare(
         return {"disposition": result_disposition}
     # Re-run immediately for the deletion/void step (attempts compensated). Use the DB
     # clock so the reschedule is due against the queue's own now() without clock skew.
-    return RescheduleRequested(available_at=_now_utc(db))
+    return RescheduleRequested(schedule=ScheduleAt(_now_utc(db)))
 
 
 def _compute_cleanup_not_before(db: Session, media_id: UUID, armed: list[JobRow]) -> datetime:
@@ -192,17 +194,6 @@ def _compute_cleanup_not_before(db: Session, media_id: UUID, armed: list[JobRow]
     now = _now_utc(db)
     # Floor: always wait at least the object-store clock-skew grace.
     candidates = [now + grace]
-    for (signed_expiry,) in db.execute(
-        text(
-            """
-            SELECT signed_upload_expires_at
-            FROM media_source_attempts
-            WHERE media_id = :m AND signed_upload_expires_at IS NOT NULL
-            """
-        ),
-        {"m": media_id},
-    ).fetchall():
-        candidates.append(signed_expiry + grace)
     for writer in armed:
         wmlu = writer.payload.get("writeMayLandUntil")
         if isinstance(wmlu, str):
@@ -272,7 +263,7 @@ def _commit_or_void(
 
     if next_kind == _DELETION_COMMITTED:
         cleanup_not_before = _parse_iso(str(checkpoint["cleanupNotBefore"]))
-        return RescheduleRequested(available_at=cleanup_not_before)
+        return RescheduleRequested(schedule=ScheduleAt(cleanup_not_before))
     return {"disposition": next_kind}
 
 
@@ -285,7 +276,7 @@ def _cleanup_storage(
     cleanup_not_before = _parse_iso(str(checkpoint["cleanupNotBefore"]))
     now = _now_utc(db)
     if now < cleanup_not_before:
-        return RescheduleRequested(available_at=cleanup_not_before)
+        return RescheduleRequested(schedule=ScheduleAt(cleanup_not_before))
 
     client = get_storage_client()
     storage_paths = list(checkpoint.get("storagePaths") or [])
@@ -293,17 +284,3 @@ def _cleanup_storage(
         # Idempotent: deleting a missing object succeeds, so a retry re-runs harmlessly.
         client.delete_object(storage_path)
     return {"disposition": "Deleted", "deletedPaths": len(storage_paths)}
-
-
-def dead_letter_media_teardown(db: Session, job: JobRow) -> None:
-    """On dead-letter, void only the exact matching intent when the media row is live.
-
-    Runs inside the worker's dead-letter transaction (no commit here). A
-    ``DeletionCommitted`` job whose media is already gone leaves the dead row intact for
-    ``requeue_dead_job`` to finish the storage sweep.
-    """
-    media_id = UUID(str(job.payload["mediaId"]))
-    intent_id = UUID(str(job.payload["intentId"]))
-    if not _media_exists(db, media_id):
-        return
-    _void_exact_intent(db, media_id=media_id, intent_id=intent_id)

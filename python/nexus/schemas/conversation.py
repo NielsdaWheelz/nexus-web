@@ -11,10 +11,12 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
+from llm_tools import ToolEffect
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -23,11 +25,13 @@ from nexus.schemas.chat_reader_selection import ReaderSelectionInput, ReaderSele
 from nexus.schemas.citation import CitationOut, CitationRole, CitationTargetRef
 from nexus.schemas.collection_page import CollectionRevision
 from nexus.schemas.execution import DurableExecutionOut
-from nexus.schemas.llm import ExpectedChatFailure
+from nexus.schemas.llm import ExpectedChatFailure, RunSelectionOut
+from nexus.schemas.machine_authorship import MachineAuthorshipOut
 from nexus.schemas.presence import Absent, Presence, Present, absent, present
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, RetrievalResultRef
-from nexus.schemas.search import SEARCH_RESULT_TYPES
+from nexus.schemas.search_types import SEARCH_RESULT_TYPES
+from nexus.services.generation_selection import GenerationSelectionSpec
 
 # Valid sharing modes - must match DB constraint
 SHARING_MODES = Literal["private", "library", "public"]
@@ -40,6 +44,19 @@ MESSAGE_STATUSES = Literal["pending", "complete", "error", "cancelled"]
 
 # Valid assistant tool-call statuses - must match message_tool_calls.status
 MESSAGE_TOOL_STATUSES = Literal["pending", "running", "complete", "error", "cancelled"]
+TOOL_RECORD_KINDS = Literal[
+    "attached_context",
+    "current_execution",
+    "historical_execution",
+    "rejected_provider_call",
+]
+TOOL_RESULT_KINDS = Literal[
+    "attached_context",
+    "mutation",
+    "navigation",
+    "rejected_provider_call",
+    "retrieval",
+]
 WEB_SEARCH_RESULT_TYPES = Literal["web", "news", "mixed"]
 CHAT_RUN_STATUSES = Literal["queued", "running", "complete", "error", "cancelled"]
 # Filter vocabulary for GET /chat-runs: the run statuses plus the synthetic
@@ -249,8 +266,7 @@ class ChatRunMetaEventPayload(BaseModel):
     conversation_id: UUID
     user_message_id: UUID
     assistant_message_id: UUID
-    profile_id: str = Field(min_length=1)
-    reasoning_option_id: str = Field(min_length=1)
+    run_selection: RunSelectionOut
     chat_subject: ChatRunMetaSubjectPayload | None
 
     model_config = ConfigDict(extra="forbid")
@@ -287,12 +303,138 @@ class ChatRunAssistantTextDeltaEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ChatRunToolCallStartEventPayload(BaseModel):
+class ToolProjectionOut(BaseModel):
+    """The one same-system tool projection shared by SSE, trust, and Undo."""
+
+    record_kind: TOOL_RECORD_KINDS
+    canonical_tool_id: str | None = Field(min_length=1, max_length=128)
+    provider_wire_name: str | None = Field(min_length=1, max_length=128)
+    effect: ToolEffect | None
+    result_kind: TOOL_RESULT_KINDS
+    activity_label: str = Field(min_length=1, max_length=150)
+    error_type: str | None = Field(min_length=1, max_length=64)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_closed_projection(self) -> ToolProjectionOut:
+        # Late binding avoids the declaration -> app-search -> schema import
+        # cycle while retaining one semantic contract owner.
+        from nexus.services.tool_runtime.declarations import (
+            BROWSER_TOOL_PROJECTION_CONTRACT,
+            CHAT_TOOL_DECLARATIONS,
+        )
+
+        contract = BROWSER_TOOL_PROJECTION_CONTRACT
+        if self.effect is not None and self.effect.value not in contract["effects"]:
+            raise ValueError("unknown tool projection effect")
+        if self.result_kind not in contract["result_kinds"]:
+            raise ValueError("unknown tool projection result kind")
+        if self.error_type is not None and self.error_type not in contract["error_types"]:
+            raise ValueError("unknown tool projection error type")
+
+        projection = self.model_dump(mode="python")
+        shape = contract["record_shapes"][self.record_kind]
+        if any(projection[field] is None for field in shape["non_null_fields"]):
+            raise ValueError("tool projection is missing a required tagged field")
+        if any(projection[field] is not None for field in shape["null_fields"]):
+            raise ValueError("tool projection populated a forbidden tagged field")
+
+        declarations = {str(item.spec.id): item for item in CHAT_TOOL_DECLARATIONS}
+        if self.record_kind in {"current_execution", "historical_execution"}:
+            declaration = declarations.get(self.canonical_tool_id or "")
+            if declaration is None:
+                raise ValueError("unknown canonical tool projection identity")
+            if (
+                self.record_kind == "current_execution"
+                and self.provider_wire_name is not None
+                and self.provider_wire_name != self.canonical_tool_id
+            ):
+                raise ValueError("current tool wire name differs from canonical identity")
+            expected = (
+                declaration.spec.effect,
+                declaration.result_kind,
+                declaration.activity_label,
+            )
+            if (self.effect, self.result_kind, self.activity_label) != expected:
+                raise ValueError("canonical tool projection presentation drift")
+        elif self.record_kind == "rejected_provider_call":
+            if (
+                self.result_kind != "rejected_provider_call"
+                or self.activity_label != "Skipped an unavailable tool"
+            ):
+                raise ValueError("rejected provider projection presentation drift")
+        elif (
+            self.result_kind != "attached_context"
+            or self.activity_label != "Attached conversation context"
+        ):
+            raise ValueError("attached-context projection presentation drift")
+        return self
+
+
+class StoredToolProjection(ToolProjectionOut):
+    """Strict durable tagged facts; replay/audit fields never cross the API."""
+
+    canonical_input_sha256: str | None = Field(pattern=r"^[0-9a-f]{64}$")
+    tool_contract_revision: str | None = Field(pattern=r"^[0-9a-f]{64}$")
+    binding_policy_revision: str | None = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+def tool_projection_from_persisted_record(record: Any) -> ToolProjectionOut:
+    """Derive public presentation only after the storage owner decoded a row."""
+
+    from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
+
+    record_kind: TOOL_RECORD_KINDS = record.record_kind
+    if record_kind in {"current_execution", "historical_execution"}:
+        declaration = next(
+            (
+                item
+                for item in CHAT_TOOL_DECLARATIONS
+                if str(item.spec.id) == record.canonical_tool_id
+            ),
+            None,
+        )
+        if declaration is None:
+            raise AssertionError("decoded tool row has no presentation declaration")
+        error_type = record.error_code if record_kind == "current_execution" else None
+        return ToolProjectionOut(
+            record_kind=record_kind,
+            canonical_tool_id=record.canonical_tool_id,
+            provider_wire_name=record.provider_wire_name,
+            effect=declaration.spec.effect,
+            result_kind=declaration.result_kind,
+            activity_label=declaration.activity_label,
+            error_type=error_type,
+        )
+    if record_kind == "rejected_provider_call":
+        return ToolProjectionOut(
+            record_kind=record_kind,
+            canonical_tool_id=None,
+            provider_wire_name=record.provider_wire_name,
+            effect=None,
+            result_kind="rejected_provider_call",
+            activity_label="Skipped an unavailable tool",
+            error_type=None,
+        )
+    if record_kind == "attached_context":
+        return ToolProjectionOut(
+            record_kind=record_kind,
+            canonical_tool_id=None,
+            provider_wire_name=None,
+            effect=None,
+            result_kind="attached_context",
+            activity_label="Attached conversation context",
+            error_type=None,
+        )
+    raise AssertionError("decoded tool row has an unknown record kind")
+
+
+class ChatRunToolCallStartEventPayload(StoredToolProjection):
     """Strict SSE payload for provider tool-call start."""
 
     tool_call_id: UUID | None = None
     assistant_message_id: UUID
-    tool_name: str = Field(min_length=1)
     tool_call_index: int = Field(ge=0)
     provider_tool_call_id: str | None = Field(default=None, min_length=1)
     provider_event_seq_start: int = Field(ge=0)
@@ -301,12 +443,11 @@ class ChatRunToolCallStartEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ChatRunToolCallDeltaEventPayload(BaseModel):
+class ChatRunToolCallDeltaEventPayload(StoredToolProjection):
     """Strict SSE payload for render-only provider tool argument deltas."""
 
     tool_call_id: UUID | None = None
     assistant_message_id: UUID
-    tool_name: str = Field(min_length=1)
     tool_call_index: int = Field(ge=0)
     provider_tool_call_id: str | None = Field(default=None, min_length=1)
     input_delta: str = Field(min_length=1)
@@ -317,12 +458,11 @@ class ChatRunToolCallDeltaEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ChatRunToolCallDoneEventPayload(BaseModel):
+class ChatRunToolCallDoneEventPayload(StoredToolProjection):
     """Strict SSE payload for a complete provider tool call."""
 
     tool_call_id: UUID | None = None
     assistant_message_id: UUID
-    tool_name: str = Field(min_length=1)
     tool_call_index: int = Field(ge=0)
     provider_tool_call_id: str | None = Field(default=None, min_length=1)
     input: dict[str, Any]
@@ -332,12 +472,11 @@ class ChatRunToolCallDoneEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ChatRunToolResultEventPayload(BaseModel):
+class ChatRunToolResultEventPayload(StoredToolProjection):
     """Strict SSE payload for executed app/tool results."""
 
     tool_call_id: UUID | None = None
     assistant_message_id: UUID
-    tool_name: str = Field(min_length=1)
     tool_call_index: int = Field(ge=0)
     status: MESSAGE_TOOL_STATUSES
     scope: str = Field(min_length=1)
@@ -351,6 +490,25 @@ class ChatRunToolResultEventPayload(BaseModel):
     results: list[RetrievalResultRef] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_terminal_audit_identity(self) -> ChatRunToolResultEventPayload:
+        audit = (
+            self.canonical_input_sha256,
+            self.tool_contract_revision,
+            self.binding_policy_revision,
+        )
+        if self.record_kind == "current_execution" and any(value is None for value in audit):
+            raise ValueError("current tool result is missing replay identity")
+        if self.record_kind == "historical_execution" and (
+            self.tool_contract_revision is None or self.binding_policy_revision is None
+        ):
+            raise ValueError("historical tool result is missing reviewed revisions")
+        if self.record_kind in {"rejected_provider_call", "attached_context"} and any(
+            value is not None for value in audit
+        ):
+            raise ValueError("non-executable tool result carries replay identity")
+        return self
 
 
 class ChatPublicationWarning(BaseModel):
@@ -447,6 +605,26 @@ def chat_run_event_payload_json(event_type: str, payload: dict[str, Any]) -> dic
     raise ValueError("unknown chat-run event type")
 
 
+def chat_run_public_event_payload_json(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate stored data, then remove replay/audit facts from the SSE wire."""
+
+    validated = chat_run_event_payload_json(event_type, payload)
+    if event_type not in {
+        "tool_call_start",
+        "tool_call_delta",
+        "tool_call_done",
+        "tool_result",
+    }:
+        return validated
+    private_fields = {
+        "binding_policy_revision",
+        "canonical_input_sha256",
+        "error_code",
+        "tool_contract_revision",
+    }
+    return {key: value for key, value in validated.items() if key not in private_fields}
+
+
 TRUST_TRAIL_VERSION = "assistant_trust_trail.v1"
 
 
@@ -469,15 +647,10 @@ class TrustPromptAssemblyOut(BaseModel):
 
 class TrustRunOut(BaseModel):
     run_id: UUID
-    profile_id: str | None = None
-    reasoning_option_id: str | None = None
-    provider: str | None = None
-    model_name: str | None = None
-    reasoning_effort: Presence[str]
+    run_selection: RunSelectionOut
     status: Literal["pending", "running", "complete", "error", "cancelled"]
     usage: dict[str, Any] | None = None
     error_code: str | None = None
-    error_origin: str | None = None
     support_id: Presence[str]
     publication_warning: Presence[ChatPublicationWarning]
     failure: ExpectedChatFailure | None = None
@@ -485,7 +658,6 @@ class TrustRunOut(BaseModel):
     final_chars: int | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
-    total_cost_usd_micros: int | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -498,24 +670,19 @@ class TrustRetrievalOut(MessageRetrievalOut):
     included_in_prompt_source: Literal["retrieval", "prompt_assembly", "none"] = "retrieval"
 
 
-class TrustToolCallOut(BaseModel):
+class TrustToolCallOut(ToolProjectionOut):
     id: UUID
-    tool_name: str
     tool_call_index: int
     status: MESSAGE_TOOL_STATUSES
     scope: str
     requested_types: list[str]
-    query_hash: str | None = None
     latency_ms: int | None = None
     result_count: int
     selected_count: int
-    error_code: str | None = None
     provider_request_ids: list[str]
-    # Write tools reuse result_refs to carry created refs ([{kind, id, ...}]);
-    # read tools carry {uri, status, body_chars} payloads. Told apart by
-    # tool_name (amanuensis D-9 — no separate created_refs field).
     result_refs: list[dict[str, Any]]
     selected_context_refs: list[dict[str, Any]]
+    machine_authorships: list[MachineAuthorshipOut] = Field(default_factory=list)
     # Undo lifecycle for assistant write tool calls: set once the call is
     # reverted (amanuensis §5.6, D-3); the FE greys the row to "Undone".
     reverted_at: datetime | None = None
@@ -786,6 +953,67 @@ ChatDestination = Annotated[
 ]
 
 
+ChatAdmissionRejectionCode = Literal[
+    "E_RATE_LIMITED",
+    "E_MESSAGE_TOO_LONG",
+    "E_CATALOG_DEFINITION_STALE",
+    "E_INVALID_GENERATION_SELECTION",
+    "E_GENERATION_SELECTION_UNAVAILABLE",
+    "E_INVALID_REQUEST",
+    "E_BRANCH_PATH_INVALID",
+    "E_BRANCH_ANCHOR_INVALID",
+    "E_FORBIDDEN",
+    "E_NOT_FOUND",
+    "E_CONVERSATION_NOT_FOUND",
+    "E_MESSAGE_NOT_FOUND",
+    "E_READER_SELECTION_STALE",
+    "E_READER_SELECTION_NOT_FOUND",
+    "E_READER_SELECTION_FORBIDDEN",
+    "E_READER_SELECTION_GEOMETRY_ONLY",
+    "E_READER_SELECTION_TOO_LARGE",
+    "E_CONVERSATION_NO_LONGER_EMPTY",
+    "E_BILLING_REQUIRED",
+]
+
+
+class ChatAdmissionRejection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: ChatAdmissionRejectionCode
+
+
+class AcceptedChatAdmission(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["Accepted"] = "Accepted"
+    conversation_id: UUID
+    run_id: UUID
+    assistant_message_id: UUID
+
+
+class RejectedChatAdmission(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["Rejected"] = "Rejected"
+    reason: ChatAdmissionRejection
+
+
+class ChatAdmissionReceipt(BaseModel):
+    """Immutable committed send decision, independent of run presentation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    outcome: Annotated[AcceptedChatAdmission | RejectedChatAdmission, Field(discriminator="kind")]
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def _normalized_key(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("receipt idempotency key must already be normalized")
+        return value
+
+
 class ChatRunCreateRequest(BaseModel):
     """Request schema for creating a durable chat run.
 
@@ -798,11 +1026,12 @@ class ChatRunCreateRequest(BaseModel):
 
     destination: ChatDestination
     content: str
-    profile_id: str = Field(min_length=1)
-    reasoning_option_id: str = Field(min_length=1)
+    catalog_definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    selection: GenerationSelectionSpec
+    tool_authority: Literal["ReadOnly", "AdditiveWrites"]
     reader_selection: Presence[ReaderSelectionInput]
 
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid", strict=True)
 
     @model_validator(mode="after")
     def _content_not_blank(self) -> ChatRunCreateRequest:
@@ -811,14 +1040,21 @@ class ChatRunCreateRequest(BaseModel):
         return self
 
 
+class ChatRunRepeatRequest(BaseModel):
+    """Exact selection for rerun/regenerate; write authority never carries over."""
+
+    catalog_definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    selection: GenerationSelectionSpec
+    tool_authority: Literal["ReadOnly"]
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
 class ChatRunOut(BaseModel):
     """Response schema for a durable chat run.
 
-    ``profile_id``/``reasoning_option_id`` are the product-selection snapshot
-    taken at creation; ``provider``/``model_name``/``reasoning_effort`` are the
-    resolved operator facts filled at execution from the runtime target and
-    terminal metadata (``None`` until then). ``failure`` is the one
-    ``chat_failure_projection`` read —
+    ``run_selection`` is the immutable dispatch projection plus its current
+    server-owned availability. ``failure`` is the one ``chat_failure_projection`` read —
     ``None`` for a run that is not a card-bearing failure (still running, or a
     defect with no stored closed code).
     """
@@ -828,12 +1064,7 @@ class ChatRunOut(BaseModel):
     conversation_id: UUID
     user_message_id: UUID
     assistant_message_id: UUID
-    profile_id: str | None = None
-    reasoning_option_id: str | None = None
-    provider: str | None = None
-    model_name: str | None = None
-    reasoning_effort: str | None = None
-    error_origin: str | None = None
+    run_selection: RunSelectionOut
     support_id: Presence[str]
     publication_warning: Presence[ChatPublicationWarning]
     failure: ExpectedChatFailure | None = None
@@ -857,10 +1088,9 @@ class ChatRunStreamActivityOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ChatRunStreamToolCallOut(BaseModel):
+class ChatRunStreamToolCallOut(ToolProjectionOut):
     id: UUID | None = None
     assistant_message_id: UUID
-    tool_name: str
     tool_call_index: int = Field(ge=0)
     status: MESSAGE_TOOL_STATUSES = "running"
     scope: str = "provider_tool"
@@ -879,7 +1109,7 @@ class ChatRunStreamToolCallOut(BaseModel):
 class ChatRunStreamStateOut(BaseModel):
     """Materialized cursor state for reconnecting a chat stream."""
 
-    status: Literal["queued", "running", "complete", "error", "cancelled", "interrupted"]
+    status: Literal["queued", "running", "complete", "error", "cancelled"]
     last_event_seq: int = Field(ge=0)
     folded_event_seq: int = Field(ge=0)
     assistant_current_text: str
@@ -911,7 +1141,7 @@ class ChatRunEventOut(BaseModel):
 
     @model_validator(mode="after")
     def validate_payload(self) -> ChatRunEventOut:
-        self.payload = chat_run_event_payload_json(self.event_type, self.payload)
+        self.payload = chat_run_public_event_payload_json(self.event_type, self.payload)
         return self
 
 

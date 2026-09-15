@@ -117,10 +117,7 @@ function publicationDateFor(
     );
   }
   if (!("source" in result)) return absent();
-  return decodeOptionalPublicationDate(
-    result.source.published_date,
-    `search ${result.type} source.published_date`,
-  );
+  return result.source.original_published_date;
 }
 
 function buildPrimaryText(result: SearchApiResult): string {

@@ -1,11 +1,22 @@
 # Oracle without the wall — dissolve the shell, keep the manuscript — Hard Cutover
 
-**Status:** Spec · **Rev 1** · 2026-07-07
+**Status:** Built · **Rev 2** · 2026-08-24
 **Type:** Hard cutover — no legacy code, no fallbacks, no compat shims, no flags-for-old-behavior.
 
 ## One-line
 
-Delete the `(oracle)` Next.js route group and its bespoke shell; register three oracle pane bodies in the workspace pane system so the manuscript aesthetic and SSE streaming survive intact, attached now to the product shell rather than a parallel universe that requires a full-page navigation to enter.
+Delete the `(oracle)` Next.js route group and its bespoke shell; register the Oracle landing and
+canonical-UUID reading panes in the workspace so the manuscript aesthetic and SSE streaming survive
+inside the product shell. The Grand Atlas owns all Atlas behavior at `/atlas`.
+
+## Final-state correction (binding)
+
+The Grand Atlas cutover absorbed the planned Oracle Atlas pane before this cutover completed.
+Therefore the final Oracle route set is exactly `oracle` and `oracleReading`; `/oracle/atlas`, the
+`oracleAtlas` pane id, and every `(authenticated)/oracle/atlas/` file are retired. The dynamic
+`/oracle/:readingId` route admits only canonical UUID reading identifiers, so the retired literal
+cannot fall through as a reading. Any older instruction below that would create an Oracle Atlas
+route or body is superseded by this correction and the revised sections in Rev 2.
 
 ---
 
@@ -44,7 +55,8 @@ in-pane navigation is handled by `requestOpenInAppPane`.
 ## 2. Target behavior (user-facing)
 
 - Pressing Oracle in the nav rail or Launcher **opens the oracle landing as a pane** — no full-page reload, no loss of context.
-- Navigating to `/oracle`, `/oracle/atlas`, `/oracle/[readingId]` works normally; the workspace picks up the URL and renders the correct pane.
+- Navigating to `/oracle` or `/oracle/[canonical-reading-uuid]` works normally; the workspace picks
+  up the URL and renders the correct pane. `/oracle/atlas` resolves unsupported.
 - The manuscript aesthetic — Black Forest Oracle dark theme, EB Garamond body, IM Fell English display, UnifrakturMaguntia fraktur headers, illuminated capitals, folio ornaments, sidenotes, concordance — is unchanged.
 - The SSE reading stream (token-by-token oracle generation) is unaffected.
 - The plate image proxy (`/api/oracle/plates/[id]`) is unaffected.
@@ -56,8 +68,12 @@ in-pane navigation is handled by `requestOpenInAppPane`.
 
 ### Goals
 - **G1.** Delete `app/(oracle)/` entirely — layout, shell, shell CSS, back-link logic, `useStickyHeadline`, `HeadlineContext`.
-- **G2.** Register three new pane routes (`oracle`, `oracleAtlas`, `oracleReading`) in `PaneRouteId`, `PANE_ROUTE_MODELS`, `PANE_ROUTE_META`, and `PANE_LOADERS`.
-- **G3.** Move the five oracle content components (`OracleLandingPaneBody`, `OracleReadingPaneBody`, `AtlasPaneBody`, `OracleAlephGrid`, `OracleConcordance`) under `(authenticated)/oracle/`, add `(authenticated)/oracle/page.tsx` stubs.
+- **G2.** Register the `oracle` and `oracleReading` pane routes in `PaneRouteId`,
+  `PANE_ROUTE_MODELS`, `PANE_ROUTE_META`, and `PANE_LOADERS`; constrain reading IDs to the canonical
+  resource UUID grammar.
+- **G3.** Move the Oracle content components (`OracleLandingPaneBody`, `OracleReadingPaneBody`,
+  `OracleAlephGrid`, `OracleConcordance`) under `(authenticated)/oracle/`, add authenticated page
+  stubs, and leave all Atlas ownership under `(authenticated)/atlas/`.
 - **G4.** Replace `externalShell: true` with `externalShell: false` on the oracle destination; the launcher and nav rail now open oracle as a pane.
 - **G5.** Carry the `data-theme="oracle"` scope and font variables into pane-land via a thin `OracleThemeWrapper` component used by each oracle pane body.
 - **G6.** Solve the font landmine: move the three oracle `next/font` declarations to the root layout with `preload: false`.
@@ -81,9 +97,9 @@ in-pane navigation is handled by `requestOpenInAppPane`.
 | Concern | Before | After |
 |---|---|---|
 | `/oracle` route | `app/(oracle)/oracle/page.tsx` | `app/(authenticated)/oracle/page.tsx` (null stub) |
-| `/oracle/atlas` route | `app/(oracle)/oracle/atlas/page.tsx` | `app/(authenticated)/oracle/atlas/page.tsx` (null stub) |
+| Atlas route | `app/(oracle)/oracle/atlas/page.tsx` | `app/(authenticated)/atlas/page.tsx` at `/atlas`; legacy Oracle route absent |
 | `/oracle/[readingId]` route | `app/(oracle)/oracle/[readingId]/page.tsx` | `app/(authenticated)/oracle/[readingId]/page.tsx` (null stub) |
-| Oracle pane render | OracleShell → page children | `WorkspaceHost` → `PANE_LOADERS["oracle"/"oracleAtlas"/"oracleReading"]` |
+| Oracle pane render | OracleShell → page children | `WorkspaceHost` → `PANE_LOADERS["oracle"/"oracleReading"]` |
 | data-theme oracle scope | `(oracle)/layout.tsx` wrapper div | `OracleThemeWrapper` in each pane body |
 | Oracle fonts | `next/font` in `(oracle)/layout.tsx` | `next/font` in root `app/layout.tsx`, `preload: false` |
 | UnauthenticatedApiBoundary | OracleShell | AuthenticatedShell (already present) |
@@ -107,15 +123,16 @@ The three pane body entry points (`OracleLandingPaneBody`, `OracleReadingPaneBod
 
 ### 4.3 Pane route additions
 
-Three new `PaneRouteId` values and route model entries added to `paneRouteModel.ts`:
+Two `PaneRouteId` values and route model entries are owned by Oracle in `paneRouteModel.ts`:
 
 | id | pattern | defaultLabel | labelMode | header | bodyMode |
 |---|---|---|---|---|---|
 | `oracle` | `["oracle"]` | `"Oracle"` | `static` | section / Oracle / pane-label folio | `document` |
-| `oracleAtlas` | `["oracle", "atlas"]` | `"The Atlas"` | `static` | section / Oracle / pane-label folio | `document` |
 | `oracleReading` | `["oracle", ":readingId"]` | `"Reading"` | `static` | section / Oracle / pane-label folio | `document` |
 
-`oracleAtlas` MUST precede `oracleReading` in the `PANE_ROUTE_MODELS` array — `atlas` is a literal segment that must not be captured by `:readingId`. Both use `STANDARD_WIDTH_CONTRACT`. No `secondaryGroups`.
+`oracleReading` uses `STANDARD_WIDTH_CONTRACT` and has no `secondaryGroups`. Resolution validates
+`oracle_reading:<readingId>` through `parseResourceRef`; noncanonical UUIDs and `atlas` are
+unsupported. The independent `atlas` route owns the Grand Atlas.
 
 ### 4.4 Font resolution: root layout with preload: false
 
@@ -156,8 +173,9 @@ No API changes. Explicitly confirmed unaffected:
 - Update the comment at lines 40–45 to reflect that oracle fonts now live here.
 
 **Pane route model** `lib/panes/paneRouteModel.ts`:
-- Add `"oracle" | "oracleAtlas" | "oracleReading"` to `PaneRouteId` union.
-- Add three `route({...})` entries to `PANE_ROUTE_MODELS` array (oracle, then oracleAtlas BEFORE oracleReading).
+- Add `"oracle" | "oracleReading"` to `PaneRouteId` through the literal route registry.
+- Add two `route({...})` entries to `PANE_ROUTE_MODELS`; validate `oracleReading` params as
+  canonical UUID resource identifiers before returning the route.
 
 **Pane route table** `lib/panes/paneRouteTable.ts`:
 - Add `Sparkles` to the `lucide-react` import list and add the three
@@ -165,7 +183,7 @@ No API changes. Explicitly confirmed unaffected:
   `paneRouteModel.ts` and resolve identity from the destination registry.
 
 **Pane render registry** `lib/panes/paneRenderRegistry.tsx`:
-- Add three entries to `PANE_LOADERS` pointing to `(authenticated)/oracle/` paths.
+- Add two entries to `PANE_LOADERS` pointing to `(authenticated)/oracle/` paths.
 
 **Destinations** `lib/navigation/destinations.ts`:
 - Set `externalShell: false` on the oracle destination (line 86). Remove the comment explaining `externalShell` — the general comment on the `Destination` interface (line 16) is sufficient.
@@ -236,19 +254,20 @@ For `OracleReadingPaneBody`: after replacing all sub-case A and B call sites, re
 
 ### 7.5 Tests
 
-**Oracle test files — move and update.** Move test files and their `__screenshots__` directories to the new paths; update relative import paths:
+**Oracle test files — move and update.** Move reading tests to the authenticated Oracle path and
+update relative imports. Atlas projection and canvas tests belong to the Grand Atlas under
+`(authenticated)/atlas/`; this cutover creates no `(authenticated)/oracle/atlas/` test surface.
 
-- `(oracle)/oracle/atlas/projection.test.ts` → `(authenticated)/oracle/atlas/projection.test.ts` (pure unit, no imports changed)
 - `(oracle)/oracle/[readingId]/Sidenote.test.tsx` → `(authenticated)/oracle/[readingId]/Sidenote.test.tsx` (update relative imports only)
-
-**`AtlasPaneBody.test.tsx`** (moved to `(authenticated)/oracle/atlas/`): this file uses `vi.mock("next/navigation", ...)` with a `routerPushMock`, which is banned by `testing-standards.md §7` and breaks when `router.push` is replaced by `paneRouter.push`. Update: remove `vi.mock("next/navigation")` and the `routerPushMock` hoisted variable; import `usePaneRouter` from `@/lib/panes/paneRuntime` and spy on it with `vi.spyOn`; replace `expect(routerPushMock).not.toHaveBeenCalled()` at lines 198 and 203 with assertions on the `usePaneRouter().push` spy. Update relative imports after move.
 
 **`OracleReadingPaneBody.test.tsx`** (moved to `(authenticated)/oracle/[readingId]/`): this file uses `vi.mock("next/navigation", ...)` (banned) and asserts `expect(streamMocks.routerPush).toHaveBeenCalledWith(...)` for citation-chip navigation at lines 370, 432, and 504 (paths like `/media/media-1#fragment-fragment-1`, `/notes/block-1`, `/media/media-9#fragment-fragment-9`). After the cutover, those calls use `requestOpenInAppPane` (sub-case B). Update: remove `vi.mock("next/navigation")` and the `routerPush`/`routerReplace` entries from `streamMocks`; spy on `requestOpenInAppPane` from `@/lib/panes/openInAppPane` via `vi.spyOn`; replace the three `routerPush` assertions with assertions on the spy. Also update the component render calls (lines 71, 76, 144, 157, 204, 231, 270, 299, 363, 426, 496, 529) to render `<OracleReadingPaneBody />` with zero props, wrapping in a `PaneRuntimeProvider` that injects `pathParams: { readingId: "reading-1" }` (or `"reading-2"` where the test rerenders to a second ID). The `useStickyHeadline` mock entry is confirmed absent from the file — no change needed there. Update relative imports after move.
 
 **Five external test files that assert current oracle-is-unsupported behavior:**
 
 - **`apps/web/src/lib/panes/paneRouteTable.test.tsx` line 90:** retitle and update assertions — change `it("returns the unsupported placeholder for full-screen Oracle routes", ...)` to assert `.id === "oracle"` for `/oracle` and `.id === "oracleReading"` for `/oracle/reading-1`.
-- **`apps/web/src/lib/panes/paneRouteModel.test.ts` line 71:** remove `"/oracle"` from the unsupported-routes loop; add a new assertion block: `expect(resolvePaneRouteModel("/oracle")).toMatchObject({ id: "oracle" }); expect(resolvePaneRouteModel("/oracle/atlas")).toMatchObject({ id: "oracleAtlas" }); expect(resolvePaneRouteModel("/oracle/some-uuid")).toMatchObject({ id: "oracleReading", params: { readingId: "some-uuid" } });` — note `oracleAtlas` must resolve before `oracleReading` (literal segment beats capture).
+- **`apps/web/src/lib/panes/paneRouteModel.unit.test.ts`:** assert `/oracle` resolves `oracle`, a
+  canonical UUID resolves `oracleReading`, `/oracle/atlas` and malformed IDs resolve unsupported,
+  and `/atlas?layer=readings` resolves the canonical `atlas` pane.
 - **`apps/web/src/lib/launcher/providers.test.ts` lines 220/224/242:** update section (d) comment from "externalShell true" to "externalShell false", retitle the `it(...)` description, and change `externalShell: true` to `externalShell: false` in the `expect(first.target).toEqual(...)` assertion. Update line 278 oracle destination assertion to `externalShell: false`.
 - **`apps/web/src/components/launcher/Launcher.test.tsx` line 308:** retitle to `"warms oracle pane on hover after shell dissolution"` and change the assertion to `expect(preloadPane).toHaveBeenCalledWith("oracle")` — after the cutover, `externalShell` is `false` on the oracle destination, so `useLauncherController` calls `preloadPane` on hover.
 
@@ -347,23 +366,32 @@ Move the three oracle `next/font` declarations from `(oracle)/layout.tsx` into `
 
 **Scope:** all remaining changes; must land together to avoid conflicting Next.js routes.
 
-1. Register `oracle`, `oracleAtlas`, `oracleReading` in `paneRouteModel.ts`, `paneRouteTable.ts`, `paneRenderRegistry.tsx`.
-2. Create `app/(authenticated)/oracle/` tree: `OracleThemeWrapper.tsx`, null-stub `page.tsx` files, all moved content components (verbatim moves of CSS, IlluminatedCapital, BorderFrame, Sidenote, StarLabel, projection, types).
+1. Register `oracle` and `oracleReading` in `paneRouteModel.ts`, `paneRouteTable.ts`,
+   `paneRenderRegistry.tsx`; reject noncanonical reading IDs.
+2. Create `app/(authenticated)/oracle/` tree: `OracleThemeWrapper.tsx`, null-stub `page.tsx` files,
+   and moved Oracle landing/reading components. Atlas components live only under
+   `app/(authenticated)/atlas/`.
 3. In `OracleLandingPaneBody`, `OracleAlephGrid`, `OracleConcordance`: replace `useRouter()`/`router.push('/oracle/...')` with `usePaneRouter().push(...)` (sub-case A); add `OracleThemeWrapper` wrapper.
 4. In `OracleReadingPaneBody`: remove `useStickyHeadline` import/call/ref; change prop signature to zero-arg + `usePaneParam("readingId")`; replace within-oracle `router.push` with `usePaneRouter().push(...)` (sub-case A); replace cross-pane `router.push` (openReadingChat, activateCitation) with `requestOpenInAppPane` (sub-case B); add `OracleThemeWrapper`.
-5. In `AtlasPaneBody`: remove `useStickyHeadline` import/call/ref; replace `router.push('/oracle/...')` with `usePaneRouter().push(...)` (sub-case A); add `OracleThemeWrapper`.
+5. Leave Atlas navigation and rendering to the Grand Atlas owner; do not add an Oracle Atlas body.
 6. Move test files and `__screenshots__` dirs to new paths; update import paths.
 7. Set `externalShell: false` on oracle destination (`destinations.ts`) and oracle folio items (`providers.ts:164`); update the five affected test files listed in §7.5.
 8. Delete `app/(oracle)/` entirely.
 
-**Verification:** `bun run typecheck` and `bun run lint` pass. Unit + browser test suite green (878+ unit, 1132+ browser). Navigate to `/oracle` — workspace opens with oracle landing pane, no full-page reload, nav rail and launcher remain visible. Navigate to `/oracle/atlas` — Atlas canvas pane renders. Navigate to `/oracle/[a-real-reading-id]` — reading pane streams. Press Oracle in the nav rail from the Libraries pane — oracle pane opens, Libraries pane remains in the tab strip. Oracle pane uses Garamond/Fell/Unifraktur. Concordance buttons navigate within the oracle pane.
+**Verification:** `bun run typecheck` and `bun run lint` pass. Unit + browser test suite green.
+Navigate to `/oracle` — workspace opens with oracle landing pane, no full-page reload, nav rail and
+launcher remain visible. Navigate to `/atlas?layer=readings` — the Grand Atlas canvas renders.
+Verify `/oracle/atlas` resolves unsupported and cannot render as reading ID `atlas`. Navigate to a
+real `/oracle/[canonical-reading-uuid]` — reading pane streams. Press Oracle in the nav rail from
+the Libraries pane — oracle pane opens, Libraries remains in the tab strip.
 
 ---
 
 ## 12. Acceptance criteria
 
 - **AC-1.** Navigating to `/oracle` from the nav rail does NOT trigger a full-page reload; the workspace URL changes to `/oracle` and the oracle landing pane renders inside the shell with the nav rail still visible.
-- **AC-2.** Navigating to `/oracle/atlas` renders the celestial canvas inside the pane shell; dragging rotates the sky; clicking a star navigates the pane to `/oracle/[readingId]`.
+- **AC-2.** Navigating to `/atlas?layer=readings` renders the celestial canvas inside the pane
+  shell; `/oracle/atlas` resolves unsupported and never redirects or falls through as a reading.
 - **AC-3.** Navigating to `/oracle/[readingId]` for a pending reading opens the reading pane and the SSE stream starts within 2 s (same timing as before).
 - **AC-4.** All three oracle fonts (EB Garamond body text, IM Fell English display, UnifrakturMaguntia fraktur titles) render inside the oracle pane; no FOUT/FOIT regression beyond the display:swap already present.
 - **AC-5.** On a non-oracle pane (e.g. `/libraries`), no `<link rel="preload" as="font">` for EB Garamond, IM Fell, or UnifrakturMaguntia appears in the document head.
@@ -394,7 +422,7 @@ grep -r "import.*useRouter.*from.*next/navigation" apps/web/src/app/"(authentica
 
 # G5: oracle pane body entry points are registered
 grep -q 'oracle:' apps/web/src/lib/panes/paneRenderRegistry.tsx || echo FAIL
-grep -q 'oracleAtlas:' apps/web/src/lib/panes/paneRenderRegistry.tsx || echo FAIL
+rg -n '/oracle/atlas|oracleAtlas' apps/web/src --glob '!*.test.ts' --glob '!*.test.tsx' && echo FAIL
 grep -q 'oracleReading:' apps/web/src/lib/panes/paneRenderRegistry.tsx || echo FAIL
 
 # G6: oracle fonts declared in root layout with preload:false
@@ -408,13 +436,14 @@ grep -q "EB_Garamond" apps/web/src/app/layout.tsx || echo FAIL
 
 | Layer | What to check |
 |---|---|
-| **Unit** (`*.test.ts`, node) | `projection.test.ts` moves to new path; re-run to confirm math unchanged |
-| **Browser** (`*.test.tsx`, Chromium) | `AtlasPaneBody.test.tsx`, `OracleReadingPaneBody.test.tsx`, `Sidenote.test.tsx` move and re-run; screenshot baselines regenerate (new paths) |
+| **Unit** (`*.unit.test.ts`, node) | Pane route model accepts a canonical reading UUID; rejects `/oracle/atlas`, malformed, and uppercase IDs; keeps `/atlas?layer=readings` canonical |
+| **Browser** (`*.test.tsx`, Chromium) | `OracleReadingPaneBody.test.tsx` and `Sidenote.test.tsx` move and re-run; Atlas tests remain with the Grand Atlas owner |
 | **Typecheck** | `bun run typecheck` — confirms no stale imports to `(oracle)/OracleShell` |
 | **Lint** | `bun run lint` — ESLint `@next/next/no-html-link-for-anchors` etc. |
 | **Build** | `bun run build` — confirms no missing pages, no font-variable conflicts |
 | **Manual: pane entry** | Open app at `/libraries`. Click Oracle in nav rail. Confirm oracle pane opens; nav rail stays; no full reload. |
 | **Manual: deep link** | Navigate directly to `/oracle/[real-reading-id]`. Confirm workspace loads with reading pane, oracle fonts render. |
+| **Manual: retired route** | Navigate to `/oracle/atlas`. Confirm it does not redirect and cannot render as reading ID `atlas`; open `/atlas?layer=readings` for the canonical canvas. |
 | **Manual: streaming** | Consult the oracle. Confirm the SSE stream delivers tokens; status transitions `pending → streaming → complete`. |
 | **Manual: concordance** | On a complete reading, click a concordance entry. Confirm it navigates the oracle pane to the linked reading (same pane slot, no new tab). |
 | **Manual: fonts on non-oracle** | Open `/libraries`. Open DevTools → Network → Font. Confirm no EB Garamond, IM Fell, or UnifrakturMaguntia preload appears. |
@@ -435,13 +464,6 @@ apps/web/src/app/(authenticated)/oracle/IlluminatedCapital.tsx
 apps/web/src/app/(authenticated)/oracle/BorderFrame.tsx
 apps/web/src/app/(authenticated)/oracle/types.ts
 apps/web/src/app/(authenticated)/oracle/oracle.module.css
-apps/web/src/app/(authenticated)/oracle/atlas/page.tsx
-apps/web/src/app/(authenticated)/oracle/atlas/AtlasPaneBody.tsx
-apps/web/src/app/(authenticated)/oracle/atlas/AtlasPaneBody.test.tsx
-apps/web/src/app/(authenticated)/oracle/atlas/StarLabel.tsx
-apps/web/src/app/(authenticated)/oracle/atlas/projection.ts
-apps/web/src/app/(authenticated)/oracle/atlas/projection.test.ts
-apps/web/src/app/(authenticated)/oracle/atlas/atlas.module.css
 apps/web/src/app/(authenticated)/oracle/[readingId]/page.tsx
 apps/web/src/app/(authenticated)/oracle/[readingId]/OracleReadingPaneBody.tsx
 apps/web/src/app/(authenticated)/oracle/[readingId]/OracleReadingPaneBody.test.tsx
@@ -452,7 +474,7 @@ apps/web/src/app/(authenticated)/oracle/[readingId]/Sidenote.test.tsx
 ### Modified
 ```
 apps/web/src/app/layout.tsx                         (add 3 oracle fonts, preload: false)
-apps/web/src/lib/panes/paneRouteModel.ts            (add oracle|oracleAtlas|oracleReading)
+apps/web/src/lib/panes/paneRouteModel.ts            (add oracle|oracleReading; canonical UUID admission)
 apps/web/src/lib/panes/paneRouteTable.ts            (add Sparkles import + PANE_ROUTE_META entries)
 apps/web/src/lib/panes/paneRenderRegistry.tsx       (add PANE_LOADERS entries)
 apps/web/src/lib/navigation/destinations.ts        (externalShell: false on oracle)
@@ -462,6 +484,7 @@ apps/web/src/lib/launcher/providers.ts              (externalShell: false on ora
 ### Deleted
 ```
 apps/web/src/app/(oracle)/   (entire directory tree, 25 files)
+apps/web/src/app/(authenticated)/oracle/atlas/page.tsx  (temporary legacy redirect)
 ```
 
 ---
@@ -470,7 +493,7 @@ apps/web/src/app/(oracle)/   (entire directory tree, 25 files)
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| `oracleAtlas` defined after `oracleReading` in `PANE_ROUTE_MODELS` — `/oracle/atlas` is treated as a reading for ID "atlas" | High | Assert `oracleAtlas` entry precedes `oracleReading` entry in the models array; add a negative-gate unit test that `resolvePaneRouteModel('/oracle/atlas').id === "oracleAtlas"` |
+| Deleting the literal route lets `/oracle/atlas` fall through to `oracleReading` with ID `atlas` | High | Admit `oracleReading` only through canonical UUID `parseResourceRef`; assert the retired route and malformed IDs resolve unsupported |
 | Font variable names (`--font-eb-garamond` etc.) not set on `<html>` after S0 if root layout `className` update is missed | Medium | AC-4 + build-time check; the CSS will visibly fall back to Georgia |
 | `__screenshots__` dirs not moved — browser tests write new ones to `(oracle)/` (now deleted) causing test runner errors | Low | Move `__screenshots__` dirs in S1; Chromium project writes new baselines on first run |
 | `requestOpenInAppPane` called before the pane graph is ready (e.g. during oracle pane SSE connect) | Low | `openInAppPane.ts` has a pre-ready queue (`enqueuePendingPaneOpen`); events fired before the store mounts are replayed on store ready (`store.tsx:901–907`) |

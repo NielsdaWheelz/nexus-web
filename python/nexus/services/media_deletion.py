@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media, non_system_media_ref_exists_sql
 from nexus.db.models import Highlight, MediaKind
+from nexus.db.retries import retry_read_committed
 from nexus.db.session import transaction
 from nexus.errors import ApiErrorCode, ForbiddenError, NotFoundError
 from nexus.ids import new_uuid7
@@ -36,7 +37,7 @@ from nexus.services import (
     contributors,
     library_entries,
     library_governance,
-    media_intelligence,
+    media_intelligence_lifecycle,
     passage_anchors,
     resource_grants,
 )
@@ -51,6 +52,7 @@ from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.document_embeds import (
     reconcile_document_embed_parent_edges_for_viewer,
 )
+from nexus.services.import_history import delete_processing_history_in_current_transaction
 from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
@@ -167,6 +169,24 @@ def _viewer_has_non_system_media_reference(db: Session, *, viewer_id: UUID, medi
 
 def remove_media_for_viewer(
     db: Session,
+    viewer_id: UUID,
+    media_id: UUID,
+) -> MediaDeleteResult:
+    """Remove a media from one viewer's workspace as one retryable operation."""
+
+    def attempt() -> MediaDeleteResult:
+        return _remove_media_for_viewer_attempt(
+            db,
+            viewer_id=viewer_id,
+            media_id=media_id,
+        )
+
+    return retry_read_committed(db, "remove_media_for_viewer", attempt)
+
+
+def _remove_media_for_viewer_attempt(
+    db: Session,
+    *,
     viewer_id: UUID,
     media_id: UUID,
 ) -> MediaDeleteResult:
@@ -370,15 +390,6 @@ def delete_duplicate_document_media(
     return _claim_document_media_teardown(db, loser_media_id)
 
 
-def delete_abandoned_document_media(db: Session, media_id: UUID) -> list[str]:
-    """Claim an abandoned document row (never became readable) for teardown.
-
-    Same claim doorway as :func:`delete_duplicate_document_media`; returns an empty path
-    list because the ``media_teardown`` job owns storage deletion.
-    """
-    return _claim_document_media_teardown(db, media_id)
-
-
 def _claim_document_media_teardown(db: Session, media_id: UUID) -> list[str]:
     media = db.execute(
         text("SELECT kind FROM media WHERE id = :media_id FOR UPDATE"),
@@ -466,6 +477,8 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     its deletion transaction, and by library teardown. Returns ``None`` (deleting
     nothing) when the media is missing, non-document, or still referenced.
     """
+    from nexus.services import media_upload_sessions
+
     media = db.execute(
         text("SELECT kind FROM media WHERE id = :media_id FOR UPDATE"),
         {"media_id": media_id},
@@ -600,7 +613,7 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     # Tear down the per-media intelligence unit through its sole owner before the
     # content index removes this media's evidence_spans (media_claims FK them) and
     # before the media row goes (both unit tables FK media, non-cascading).
-    media_intelligence.delete_media_unit(db, media_id=media_id)
+    media_intelligence_lifecycle.delete_media_unit(db, media_id=media_id)
     delete_media_apparatus(db, media_id)
     delete_content_index(db, owner=IndexOwner("media", media_id))
     db.execute(
@@ -678,6 +691,11 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("UPDATE external_provider_events SET media_id = NULL WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
+    media_upload_sessions.delete_published_media_support_in_current_transaction(
+        db,
+        media_id=media_id,
+    )
+    delete_processing_history_in_current_transaction(db, media_id=media_id)
     db.execute(
         text("DELETE FROM media_source_attempts WHERE media_id = :media_id"),
         {"media_id": media_id},
@@ -695,6 +713,9 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("DELETE FROM media_teardown_intents WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
+    from nexus.services.reader_publication import delete_reader_publication
+
+    delete_reader_publication(db, media_id=media_id)
     db.execute(text("DELETE FROM media WHERE id = :media_id"), {"media_id": media_id})
     return storage_paths
 

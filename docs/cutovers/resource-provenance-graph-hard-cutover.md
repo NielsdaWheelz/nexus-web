@@ -47,7 +47,8 @@ Precedents:
 - `docs/rules/database.md`: no database cascades, explicit cleanup, `SERIALIZABLE` for sequential-equivalence writes.
 - `docs/architecture.md`: `resource_uri` is already the vocabulary bridging conversation context refs, citations, prompt rendering, and read/inspect tools.
 - `docs/cutovers/library-intelligence-ai-native-consolidation-hard-cutover.md`: Rev 2 keeps current stores separate in the LI cutover, but names a later provenance-graph cutover as the long-term consolidation path. Its N2/AC-12 is the gate this spec must pass: independently prove — with no compatibility shims — that retrieval replay, scope admission, concordance/marginalia, and user-link CRUD all survive.
-- `docs/cutovers/generation-run-harness-hard-cutover.md`: prerequisite render-contract work (§5.6 there) — sole backend `CitationOut` producer (`build_citation_outs_for_message`), `web_search` folded into `insert_retrieval_row`, Oracle user-media passages join the read-model, `oracle_reading:` reference scheme. Its N1 explicitly defers all storage folding to this spec.
+- `docs/modules/chat.md`: current render contract — sole backend `CitationOut`
+  production, canonical retrieval persistence, and typed resource references.
 
 ---
 
@@ -75,7 +76,10 @@ The final product has one edge owner, one resolver vocabulary, one citation read
 
 This spec is the storage fold that the LI cutover's N2/AC-12 gates. Two things come first:
 
-1. **Prerequisite — render contract.** `generation-run-harness-hard-cutover.md` §5.6 lands before S1 here starts: the backend becomes the sole `CitationOut` producer (`build_citation_outs_for_message` beside the revision twin), `web_search` folds into `insert_retrieval_row`, Oracle user-media passages join `CitationOut` read-model-only, and `oracle_reading:` becomes a reference scheme. This cutover then swaps storage underneath a stable render contract; the frontend citation adapter does not change shape here.
+1. **Prerequisite — render contract.** `docs/modules/chat.md` is authoritative:
+   the backend is the sole `CitationOut` producer and resource references are
+   typed. This cutover swaps storage underneath that stable contract; the
+   frontend citation adapter does not change shape here.
 2. **Gate — four parity proofs.** Per LI cutover §14 (AC-12), the feature-typed stores may be superseded only by independently proving, with no compatibility shims: retrieval replay, scope admission, concordance/marginalia, and user-link CRUD. §17.0 maps each proof to acceptance criteria. Note Rev 3 shrinks the riskiest proof by construction: replay disclosures keep reading `message_retrievals`, which does not move.
 
 ---

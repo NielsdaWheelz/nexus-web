@@ -513,9 +513,12 @@ def test_oracle_repair_binding_is_create_only_and_preserves_application_state(
         "Caddyfile",
         "candidate-manifest.json",
         "docker-compose.yml",
+        "nexus-codex-agent-host.apparmor",
+        "prove-codex-capacity.sh",
         "python/nexus/__init__.py",
         "python/nexus/release_artifact.py",
         "release.py",
+        "testdata/android/player-protocol.json",
     ]
 
     repeated = harness.install_repair()

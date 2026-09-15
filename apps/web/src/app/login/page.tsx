@@ -1,7 +1,12 @@
+import type { Metadata } from "next";
 import { cookies, headers } from "next/headers";
-import { type FeedbackContent } from "@/components/feedback/Feedback";
+import { redirect } from "next/navigation";
 import { isAndroidShellUserAgent } from "@/lib/androidShell";
+import { getSessionVerification } from "@/lib/auth/dal";
+import { planLoginEntry } from "@/lib/auth/login-entry";
 import {
+  authReturnTargetToHref,
+  buildAuthSessionRecoveryUrl,
   getFirstSearchParamValue,
   parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
@@ -10,6 +15,7 @@ import {
   readPublicAuthFeedback,
   SESSION_ENDED_MESSAGE,
 } from "@/lib/auth/messages";
+import { getEnv } from "@/lib/env";
 import LoginPageClient from "./LoginPageClient";
 
 interface LoginPageProps {
@@ -20,49 +26,48 @@ interface LoginPageProps {
   }>;
 }
 
-// A forced sign-out is a calm, expected state, not an error; an OAuth failure
-// is an error. The message text is the discriminant.
-function toInitialFeedback(message: string | null): {
-  content: FeedbackContent;
-  announcement: "Polite" | "Assertive";
-} | null {
-  if (!message) {
-    return null;
-  }
-  if (message === SESSION_ENDED_MESSAGE) {
-    return {
-      content: { tone: "Info", title: "You were signed out.", message },
-      announcement: "Polite",
-    };
-  }
-  return {
-    content: { tone: "Danger", title: message },
-    announcement: "Assertive",
-  };
-}
+export const metadata: Metadata = {
+  title: "Sign in · Nexus",
+  robots: { index: false, follow: false },
+};
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const params = await searchParams;
   const nextPath = parseAuthReturnTarget(getFirstSearchParamValue(params.next));
+  const entry = await planLoginEntry(nextPath, getSessionVerification);
+
+  switch (entry.kind) {
+    case "Target":
+      redirect(authReturnTargetToHref(entry.target));
+    case "Recover": {
+      const recoveryUrl = buildAuthSessionRecoveryUrl(
+        getEnv().appPublicOrigin,
+        entry.target,
+      );
+      redirect(`${recoveryUrl.pathname}${recoveryUrl.search}`);
+    }
+    case "Render":
+      break;
+    default:
+      entry satisfies never;
+  }
 
   const cookieStore = await cookies();
   const sessionEndedFeedbackCookie =
     cookieStore.get(AUTH_ENDED_FEEDBACK_COOKIE)?.value === "1";
-  const initialFeedback = toInitialFeedback(
-    readPublicAuthFeedback(
-      getFirstSearchParamValue(params.error_description) ??
-        getFirstSearchParamValue(params.error) ??
-        (sessionEndedFeedbackCookie ? SESSION_ENDED_MESSAGE : null)
-    )
+  const initialFeedbackMessage = readPublicAuthFeedback(
+    getFirstSearchParamValue(params.error_description) ??
+      getFirstSearchParamValue(params.error) ??
+      (sessionEndedFeedbackCookie ? SESSION_ENDED_MESSAGE : null),
   );
 
   const isShell = isAndroidShellUserAgent(
-    (await headers()).get("user-agent") ?? ""
+    (await headers()).get("user-agent") ?? "",
   );
 
   return (
     <LoginPageClient
-      initialFeedback={initialFeedback}
+      initialFeedbackMessage={initialFeedbackMessage}
       nextPath={nextPath}
       isShell={isShell}
     />

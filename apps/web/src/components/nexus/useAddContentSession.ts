@@ -6,6 +6,7 @@ import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
+import { assertNever } from "@/lib/assertNever";
 import { isAbortError } from "@/lib/errors";
 import { extractUrls } from "@/lib/extractUrls";
 import type { AddSeed } from "@/lib/nexus/model";
@@ -18,11 +19,8 @@ import {
   addMediaFromUrl,
   getFileUploadError,
   getFileUploadKind,
-  matchesAcceptedUploadIdentity,
   uploadIngestFile,
-  type AcceptedUploadIdentity,
-  type SourceIngestResult,
-  type UploadIngestResult,
+  type AcceptedIngestResult,
 } from "@/lib/media/ingestionClient";
 import {
   addLibraryPlacement,
@@ -42,6 +40,7 @@ import {
 import {
   ADD_SESSION_MAX_ITEMS,
   acceptanceErrorMessage,
+  acceptanceFailureItem,
   acceptedMediaIds,
   createAddSessionState,
   isAddSessionDirty,
@@ -118,27 +117,11 @@ function sourceSummary(intent: FrozenAcceptanceIntent) {
 function acceptedItem(
   id: string,
   intent: FrozenAcceptanceIntent,
-  result: SourceIngestResult,
+  result: AcceptedIngestResult,
 ): AddItem {
   return { kind: "Accepted", id, source: sourceSummary(intent), result };
 }
 
-function acceptedUncertainItem(
-  id: string,
-  intent: FrozenAcceptanceIntent & {
-    source: Extract<FrozenAcceptanceIntent["source"], { kind: "File" }>;
-  },
-  result: Extract<UploadIngestResult, { kind: "AcceptedUncertain" }>,
-): AddItem {
-  return {
-    kind: "AcceptedUncertain",
-    id,
-    intent,
-    mediaId: result.mediaId,
-    sourceAttemptId: result.sourceAttemptId,
-    feedback: result.feedback,
-  };
-}
 
 export function addContentPlacementErrorMessage(
   error: unknown,
@@ -234,9 +217,6 @@ export function useAddContentSession(): AddContentSessionController {
     useState<string | null>(null);
   const generationRef = useRef(0);
   const sessionAbortRef = useRef(new AbortController());
-  const acceptedUploadIdentityByItemIdRef = useRef(
-    new Map<string, AcceptedUploadIdentity>(),
-  );
   const startedSubmissionItemIdsRef = useRef(new Set<string>());
   const placementProgressByMediaIdRef = useRef(
     new Map<string, PlacementMutationProgress>(),
@@ -265,7 +245,6 @@ export function useAddContentSession(): AddContentSessionController {
       sessionAbortRef.current.abort();
       sessionAbortRef.current = new AbortController();
       generationRef.current += 1;
-      acceptedUploadIdentityByItemIdRef.current.clear();
       startedSubmissionItemIdsRef.current.clear();
       placementProgressByMediaIdRef.current.clear();
       destinationCreateIdByNameRef.current.clear();
@@ -284,7 +263,6 @@ export function useAddContentSession(): AddContentSessionController {
     sessionAbortRef.current.abort();
     sessionAbortRef.current = new AbortController();
     generationRef.current += 1;
-    acceptedUploadIdentityByItemIdRef.current.clear();
     startedSubmissionItemIdsRef.current.clear();
     placementProgressByMediaIdRef.current.clear();
     destinationCreateIdByNameRef.current.clear();
@@ -304,9 +282,6 @@ export function useAddContentSession(): AddContentSessionController {
     generationRef.current += 1;
     apply({
       kind: "StopMutation",
-      acceptedUploadIdentityByItemId: new Map(
-        acceptedUploadIdentityByItemIdRef.current,
-      ),
       startedSubmissionItemIds: new Set(startedSubmissionItemIdsRef.current),
       placementProgressByMediaId: new Map(
         placementProgressByMediaIdRef.current,
@@ -316,13 +291,18 @@ export function useAddContentSession(): AddContentSessionController {
         title: "Stopped · acceptance status unknown",
         message: "Server changes that already committed may remain.",
       },
+      uploadFeedback: {
+        tone: "Warning",
+        title: "Upload stopped",
+        message:
+          "Use Imports to retry or remove any accepted upload, or restage this file as a new import.",
+      },
       operationFeedback: {
         tone: "Warning",
         title: "Stopped before completion",
         message: "Server changes that already committed may remain.",
       },
     });
-    acceptedUploadIdentityByItemIdRef.current.clear();
     startedSubmissionItemIdsRef.current.clear();
     placementProgressByMediaIdRef.current.clear();
   }, [apply]);
@@ -491,7 +471,6 @@ export function useAddContentSession(): AddContentSessionController {
     );
     const generation = generationRef.current;
     const signal = sessionAbortRef.current.signal;
-    acceptedUploadIdentityByItemIdRef.current.clear();
     startedSubmissionItemIdsRef.current.clear();
     apply({ kind: "StartSubmission", itemIds });
 
@@ -526,30 +505,22 @@ export function useAddContentSession(): AddContentSessionController {
           libraryIds,
           idempotencyKey: item.idempotencyKey,
           signal,
-          onAcceptedIdentity: (identity) => {
+          onPhaseChange: (phase) => {
             if (generation === generationRef.current) {
-              acceptedUploadIdentityByItemIdRef.current.set(item.id, identity);
+              apply({ kind: "SetUploadPhase", itemId: item.id, phase });
             }
           },
         });
         if (generation !== generationRef.current) return;
         apply({
           kind: "ResolveItem",
-          item:
-            result.kind === "Accepted"
-              ? acceptedItem(item.id, item, result.result)
-              : acceptedUncertainItem(
-                  item.id,
-                  { ...item, source: item.source },
-                  result,
-                ),
+          item: acceptedItem(item.id, item, result),
         });
       },
     });
     if (generation !== generationRef.current) return;
 
     const defects: unknown[] = [];
-    let acceptedIdentityBlocked = false;
     outcomes.forEach((outcome, index) => {
       const item = requireIndexedItem(items, index);
       if (outcome.kind === "Fulfilled") {
@@ -558,34 +529,6 @@ export function useAddContentSession(): AddContentSessionController {
         return;
       }
       if (signal.aborted || isAbortError(outcome.error)) return;
-      const identity = acceptedUploadIdentityByItemIdRef.current.get(item.id);
-      if (identity && item.source.kind === "File") {
-        if (handleUnauthenticatedApiError(outcome.error)) {
-          acceptedIdentityBlocked = true;
-          return;
-        }
-        const failure = acceptanceErrorMessage(outcome.error);
-        if (failure.kind === "Defect") {
-          // Keep the gate fail-closed and preserve the accepted identity for the
-          // explicit Stop path. A same-system defect is not an uncertainty outcome.
-          acceptedIdentityBlocked = true;
-          defects.push(failure.error);
-        } else {
-          apply({
-            kind: "ResolveItem",
-            item: acceptedUncertainItem(
-              item.id,
-              { ...item, source: item.source },
-              {
-                kind: "AcceptedUncertain",
-                ...identity,
-                feedback: { ...failure.feedback, tone: "Warning" },
-              },
-            ),
-          });
-        }
-        return;
-      }
       if (handleUnauthenticatedApiError(outcome.error)) {
         apply({
           kind: "ResolveItem",
@@ -594,27 +537,29 @@ export function useAddContentSession(): AddContentSessionController {
         return;
       }
       const failure = acceptanceErrorMessage(outcome.error);
-      if (failure.kind === "Defect") {
-        apply({ kind: "ResolveItem", item });
-        defects.push(failure.error);
-      } else {
-        apply({
-          kind: "ResolveItem",
-          item: {
-            kind:
-              failure.kind === "Rejected" ? "Rejected" : "AcceptanceUnresolved",
-            id: item.id,
-            intent: item,
-            feedback: failure.feedback,
-          },
-        });
+      switch (failure.kind) {
+        case "Defect":
+          apply({ kind: "ResolveItem", item });
+          defects.push(failure.error);
+          return;
+        case "Superseded":
+          // The session moved on without this attempt. Imports owns
+          // the truth, so the foreground stops claiming this item at all.
+          apply({ kind: "RemoveItem", itemId: item.id });
+          return;
+        case "Rejected":
+        case "Unresolved":
+          apply({
+            kind: "ResolveItem",
+            item: acceptanceFailureItem(item.id, item, failure),
+          });
+          return;
+        default:
+          return assertNever(failure, "Unreachable acceptance failure");
       }
     });
-    if (!acceptedIdentityBlocked) {
-      acceptedUploadIdentityByItemIdRef.current.clear();
-      startedSubmissionItemIdsRef.current.clear();
-      apply({ kind: "FinishMutation" });
-    }
+    startedSubmissionItemIdsRef.current.clear();
+    apply({ kind: "FinishMutation" });
     if (defects.length > 0) throw defects[0];
   }, [apply]);
 
@@ -623,11 +568,7 @@ export function useAddContentSession(): AddContentSessionController {
       const current = stateRef.current;
       if (current.mutation.kind !== "Idle") return;
       const item = current.items.find((candidate) => candidate.id === itemId);
-      if (
-        !item ||
-        (item.kind !== "AcceptanceUnresolved" &&
-          item.kind !== "AcceptedUncertain")
-      ) {
+      if (!item || item.kind !== "AcceptanceUnresolved") {
         return;
       }
       const generation = generationRef.current;
@@ -636,19 +577,12 @@ export function useAddContentSession(): AddContentSessionController {
         kind: "ReconcileAcceptance",
         itemId,
       };
-      acceptedUploadIdentityByItemIdRef.current.clear();
-      if (
-        item.kind === "AcceptedUncertain" &&
-        item.intent.source.kind === "File"
-      ) {
-        acceptedUploadIdentityByItemIdRef.current.set(item.id, {
-          mediaId: item.mediaId,
-          sourceAttemptId: item.sourceAttemptId,
-        });
+      if (item.intent.source.kind === "File") {
+        apply({ kind: "StartFileReconciliation", itemId });
+      } else {
+        apply({ kind: "StartMutation", operation });
       }
-      apply({ kind: "StartMutation", operation });
       let defectState: { error: unknown } | null = null;
-      let acceptedIdentityBlocked = false;
       try {
         const libraryIds = item.intent.destinations.map(
           (destination) => destination.id,
@@ -672,33 +606,16 @@ export function useAddContentSession(): AddContentSessionController {
             libraryIds,
             idempotencyKey: item.intent.idempotencyKey,
             signal,
-            onAcceptedIdentity: (identity) => {
+            onPhaseChange: (phase) => {
               if (generation === generationRef.current) {
-                acceptedUploadIdentityByItemIdRef.current.set(
-                  item.id,
-                  identity,
-                );
+                apply({ kind: "SetUploadPhase", itemId: item.id, phase });
               }
             },
           });
           if (generation !== generationRef.current) return;
-          if (
-            item.kind === "AcceptedUncertain" &&
-            !matchesAcceptedUploadIdentity(result, item)
-          ) {
-            // justify-defect: same-key upload replay must preserve both durable identity fields.
-            throw new Error("Upload reconciliation changed accepted identity.");
-          }
           apply({
             kind: "ResolveItem",
-            item:
-              result.kind === "Accepted"
-                ? acceptedItem(item.id, item.intent, result.result)
-                : acceptedUncertainItem(
-                    item.id,
-                    { ...item.intent, source: item.intent.source },
-                    result,
-                  ),
+            item: acceptedItem(item.id, item.intent, result),
           });
         }
       } catch (error) {
@@ -708,62 +625,30 @@ export function useAddContentSession(): AddContentSessionController {
           isAbortError(error)
         )
           return;
-        const identity = acceptedUploadIdentityByItemIdRef.current.get(item.id);
-        if (identity && item.intent.source.kind === "File") {
-          if (handleUnauthenticatedApiError(error)) {
-            acceptedIdentityBlocked = true;
-            return;
-          }
-          const failure = acceptanceErrorMessage(error);
-          if (failure.kind === "Defect") {
-            acceptedIdentityBlocked = true;
-            defectState = { error: failure.error };
-          } else {
-            apply({
-              kind: "ResolveItem",
-              item: acceptedUncertainItem(
-                item.id,
-                { ...item.intent, source: item.intent.source },
-                {
-                  kind: "AcceptedUncertain",
-                  ...identity,
-                  feedback: { ...failure.feedback, tone: "Warning" },
-                },
-              ),
-            });
-          }
-        } else if (handleUnauthenticatedApiError(error)) {
+        if (handleUnauthenticatedApiError(error)) {
           return;
         } else {
           const failure = acceptanceErrorMessage(error);
-          if (failure.kind === "Defect") {
-            defectState = { error: failure.error };
-          } else if (item.kind === "AcceptedUncertain") {
-            apply({
-              kind: "ResolveItem",
-              item: {
-                ...item,
-                feedback: { ...failure.feedback, tone: "Warning" },
-              },
-            });
-          } else {
-            apply({
-              kind: "ResolveItem",
-              item: {
-                kind:
-                  failure.kind === "Rejected"
-                    ? "Rejected"
-                    : "AcceptanceUnresolved",
-                id: item.id,
-                intent: item.intent,
-                feedback: failure.feedback,
-              },
-            });
+          switch (failure.kind) {
+            case "Defect":
+              defectState = { error: failure.error };
+              break;
+            case "Superseded":
+              apply({ kind: "RemoveItem", itemId: item.id });
+              break;
+            case "Rejected":
+            case "Unresolved":
+              apply({
+                kind: "ResolveItem",
+                item: acceptanceFailureItem(item.id, item.intent, failure),
+              });
+              break;
+            default:
+              assertNever(failure, "Unreachable acceptance failure");
           }
         }
       } finally {
-        if (generation === generationRef.current && !acceptedIdentityBlocked) {
-          acceptedUploadIdentityByItemIdRef.current.clear();
+        if (generation === generationRef.current) {
           apply({ kind: "FinishMutation" });
         }
       }

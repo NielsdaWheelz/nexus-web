@@ -15,10 +15,25 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
-from nexus.schemas.conversation import chat_run_event_payload_json
+from nexus.schemas.conversation import (
+    ChatRunToolResultEventPayload,
+    StoredToolProjection,
+    chat_run_event_payload_json,
+)
 from nexus.services import run_kit
 
 TERMINAL_RUN_STATUSES = run_kit.terminal_statuses(run_kit.RunStreamKind.ChatRun)
+
+
+def lock_chat_run_for_update(db: Session, run_id: UUID) -> ChatRun | None:
+    """Lock and refresh the authoritative run even in non-expiring sessions."""
+
+    return db.execute(
+        select(ChatRun)
+        .where(ChatRun.id == run_id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    ).scalar_one_or_none()
 
 
 def append_run_event(db: Session, run: ChatRun, event_type: str, payload: dict[str, Any]) -> None:
@@ -32,11 +47,26 @@ def append_run_event(db: Session, run: ChatRun, event_type: str, payload: dict[s
     )
 
 
-def append_and_commit(db: Session, run_id: UUID, event_type: str, payload: dict[str, Any]) -> None:
-    run = db.execute(select(ChatRun).where(ChatRun.id == run_id).with_for_update()).scalars().one()
+def append_and_commit(
+    db: Session,
+    run_id: UUID,
+    event_type: str,
+    payload: dict[str, Any],
+    *,
+    lease_fence: Callable[[], None] | None = None,
+) -> None:
+    run = lock_chat_run_for_update(db, run_id)
+    if run is None:
+        raise RuntimeError("chat run disappeared before event append")
     if run.status in TERMINAL_RUN_STATUSES:
         db.commit()
         return
+    if lease_fence is not None:
+        # Chat's global effect order is run -> job. MCP admission and
+        # publication use the same order, so a streamed frame can never hold
+        # the job while waiting on a concurrent MCP call that already owns the
+        # run.
+        lease_fence()
     append_run_event(db, run, event_type, payload)
     db.commit()
 
@@ -77,7 +107,6 @@ class ChatRunEventEmitter:
         provider_event_seq_start: int,
         provider_event_seq_end: int,
     ) -> None:
-        self._fence()
         append_and_commit(
             self._db,
             self._run.id,
@@ -88,6 +117,7 @@ class ChatRunEventEmitter:
                 "provider_event_seq_start": provider_event_seq_start,
                 "provider_event_seq_end": provider_event_seq_end,
             },
+            lease_fence=self._lease_fence,
         )
 
     def assistant_activity(
@@ -97,7 +127,6 @@ class ChatRunEventEmitter:
         provider_event_seq_start: int,
         provider_event_seq_end: int,
     ) -> None:
-        self._fence()
         append_and_commit(
             self._db,
             self._run.id,
@@ -109,37 +138,38 @@ class ChatRunEventEmitter:
                 "provider_event_seq_start": provider_event_seq_start,
                 "provider_event_seq_end": provider_event_seq_end,
             },
+            lease_fence=self._lease_fence,
         )
 
     def tool_call_start(
         self,
         *,
-        tool_name: str,
+        projection: StoredToolProjection,
         tool_call_index: int,
         provider_tool_call_id: str,
         provider_event_seq_start: int,
         provider_event_seq_end: int,
     ) -> None:
-        self._fence()
         append_and_commit(
             self._db,
             self._run.id,
             "tool_call_start",
             {
+                **projection.model_dump(mode="json"),
                 "tool_call_id": None,
                 "assistant_message_id": str(self._run.assistant_message_id),
-                "tool_name": tool_name,
                 "tool_call_index": tool_call_index,
                 "provider_tool_call_id": provider_tool_call_id,
                 "provider_event_seq_start": provider_event_seq_start,
                 "provider_event_seq_end": provider_event_seq_end,
             },
+            lease_fence=self._lease_fence,
         )
 
     def tool_call_delta(
         self,
         *,
-        tool_name: str,
+        projection: StoredToolProjection,
         tool_call_index: int,
         provider_tool_call_id: str,
         input_delta: str,
@@ -147,15 +177,14 @@ class ChatRunEventEmitter:
         provider_event_seq_start: int,
         provider_event_seq_end: int,
     ) -> None:
-        self._fence()
         append_and_commit(
             self._db,
             self._run.id,
             "tool_call_delta",
             {
+                **projection.model_dump(mode="json"),
                 "tool_call_id": None,
                 "assistant_message_id": str(self._run.assistant_message_id),
-                "tool_name": tool_name,
                 "tool_call_index": tool_call_index,
                 "provider_tool_call_id": provider_tool_call_id,
                 "input_delta": input_delta,
@@ -163,33 +192,34 @@ class ChatRunEventEmitter:
                 "provider_event_seq_start": provider_event_seq_start,
                 "provider_event_seq_end": provider_event_seq_end,
             },
+            lease_fence=self._lease_fence,
         )
 
     def tool_call_done(
         self,
         *,
-        tool_name: str,
+        projection: StoredToolProjection,
         tool_call_index: int,
         provider_tool_call_id: str,
         input: dict[str, Any],
         provider_event_seq_start: int,
         provider_event_seq_end: int,
     ) -> None:
-        self._fence()
         append_and_commit(
             self._db,
             self._run.id,
             "tool_call_done",
             {
+                **projection.model_dump(mode="json"),
                 "tool_call_id": None,
                 "assistant_message_id": str(self._run.assistant_message_id),
-                "tool_name": tool_name,
                 "tool_call_index": tool_call_index,
                 "provider_tool_call_id": provider_tool_call_id,
                 "input": input,
                 "provider_event_seq_start": provider_event_seq_start,
                 "provider_event_seq_end": provider_event_seq_end,
             },
+            lease_fence=self._lease_fence,
         )
 
     # -- Batch events: pre-built payload, defer commit to the caller ----------
@@ -198,9 +228,14 @@ class ChatRunEventEmitter:
         self._fence()
         append_run_event(self._db, self._run, "meta", payload)
 
-    def tool_result(self, payload: dict[str, Any]) -> None:
+    def tool_result(self, payload: ChatRunToolResultEventPayload) -> None:
         self._fence()
-        append_run_event(self._db, self._run, "tool_result", payload)
+        append_run_event(
+            self._db,
+            self._run,
+            "tool_result",
+            payload.model_dump(mode="json"),
+        )
 
     def citation_index(self, payload: dict[str, Any]) -> None:
         self._fence()
@@ -214,29 +249,15 @@ class ChatRunEventEmitter:
 def mark_running(
     db: Session,
     run_id: UUID,
-    *,
-    provider: str,
-    model_name: str,
-    reasoning_effort: str,
 ) -> None:
-    """Enter ``running`` and atomically snapshot the resolved execution facts."""
-    run = db.execute(select(ChatRun).where(ChatRun.id == run_id).with_for_update()).scalars().one()
+    """Enter ``running``; immutable execution facts already live in GenerationSpec."""
+    run = lock_chat_run_for_update(db, run_id)
+    if run is None:
+        raise RuntimeError("chat run disappeared before running transition")
     if run.status == "queued":
         run.status = "running"
-        run.provider = provider
-        run.model_name = model_name
-        run.reasoning_effort = reasoning_effort
         run.started_at = run.started_at or func.now()
         run.updated_at = func.now()
-    elif run.status == "running" and (
-        run.provider != provider
-        or run.model_name != model_name
-        or run.reasoning_effort != reasoning_effort
-    ):
-        # justify-service-invariant-check: queue retries can re-enter a running
-        # run, while the immutable profile resolution is stored in nullable DB
-        # columns and cannot encode cross-column equality in the type system.
-        raise AssertionError("running chat run facts do not match resolved execution facts")
     db.commit()
 
 

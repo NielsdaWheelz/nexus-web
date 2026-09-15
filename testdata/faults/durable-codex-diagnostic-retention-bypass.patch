@@ -1,0 +1,18 @@
+diff --git a/apps/codex_agent/host.py b/apps/codex_agent/host.py
+--- a/apps/codex_agent/host.py
++++ b/apps/codex_agent/host.py
+@@ -851,11 +851,11 @@ def _terminal_to_wire(
+     return GenerationTerminal(
+         status=terminal.status,
+         failure=failure,
+-        final_text=terminal.final_text if terminal.status == "succeeded" else "",
++        final_text=terminal.final_text,
+         structured_output=structured_output,
+         session_ref=_session_ref(terminal.session_ref),
+         usage=_optional_usage(terminal.usage),
+-        diagnostics=_runtime_terminal_diagnostics(terminal.status, failure),
++        diagnostics=terminal.diagnostics,
+         accepted_at=accepted_at,
+         sdk_version=versions.sdk,
+         runtime_version=versions.runtime,
+     )

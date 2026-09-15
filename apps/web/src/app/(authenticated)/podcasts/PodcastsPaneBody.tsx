@@ -37,7 +37,7 @@ import {
   decodePodcastSubscriptionListItem,
   type PodcastSubscriptionListItem,
 } from "./podcastSubscriptions";
-import { usePodcastSubscriptionSettingsModal } from "./usePodcastSubscriptionSettingsModal";
+import { subscribePodcastSubscriptionSettingsInstalls } from "@/lib/podcasts/subscriptionSettings";
 import {
   listMemberLibraries,
   type MemberLibrary,
@@ -67,7 +67,7 @@ import {
   type SubscriptionSort,
 } from "@/lib/podcasts/subscriptionView";
 import { runPodcastRefresh } from "@/lib/podcasts/refresh";
-import type { PaneRefreshPublication } from "@/lib/panes/panePublications";
+import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
 import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import styles from "./page.module.css";
 
@@ -359,25 +359,27 @@ export default function PodcastsPaneBody() {
     subscriptionQueryIdentity,
   );
   const [librariesLoading, setLibrariesLoading] = useState(restored === null);
-  // The settings overlay is owned app-level now; this hook is kept only for its
-  // install subscription, which keeps the pane's list rows current after a save.
-  usePodcastSubscriptionSettingsModal({
-    onSaved: (response) => {
-      setRows((prev) =>
-        prev.map((row) =>
-          row.podcast_id === response.podcast_id
-            ? {
-                ...row,
-                default_playback_speed: response.default_playback_speed,
-                pause_shortening_mode: response.pause_shortening_mode,
-                auto_queue: response.auto_queue,
-              }
-            : row,
+  useEffect(
+    () =>
+      subscribePodcastSubscriptionSettingsInstalls((install) => {
+        if (install.kind !== "Settings") return;
+        const response = install.settings;
+        setRows((prev) =>
+          prev.map((row) =>
+            row.podcast_id === response.podcast_id
+              ? {
+                  ...row,
+                  default_playback_speed: response.default_playback_speed,
+                  pause_shortening_mode: response.pause_shortening_mode,
+                  auto_queue: response.auto_queue,
+                }
+              : row,
           ),
-      );
-      refreshSubscriptions();
-    },
-  });
+        );
+        refreshSubscriptions();
+      }),
+    [refreshSubscriptions, setRows],
+  );
 
   const rows = controller?.subscriptions ?? EMPTY_SUBSCRIPTIONS;
   const libraries = controller?.libraries ?? EMPTY_MEMBER_LIBRARIES;
@@ -736,7 +738,7 @@ export default function PodcastsPaneBody() {
     subscriptionFilterRows.query.trim().length > 0 &&
     visibleRows.length === 0;
 
-  const executeRefresh = useCallback<PaneRefreshPublication["execute"]>(
+  const executeRefresh = useCallback<PaneRefreshExecute>(
     async ({ signal, reportProgress }) => {
       try {
         const result = await runPodcastRefresh(
@@ -792,6 +794,7 @@ export default function PodcastsPaneBody() {
     ],
     search: subscriptionFilterRows.publication,
     refresh: {
+      kind: "Refreshable",
       sourceKey: `Podcasts.Subscriptions:${subscriptionQueryIdentity}`,
       execute: executeRefresh,
     },

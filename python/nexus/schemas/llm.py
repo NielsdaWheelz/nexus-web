@@ -1,248 +1,374 @@
-"""LLM product-facing API schemas.
-
-Two independent contracts live here (`docs/cutovers/llm-provider-runtime-hard-
-cutover.md` §10):
-
-- `LlmProfilesOut`: the `GET /llm-profiles` response, built from
-  `nexus.services.llm_profiles.PROFILES`. The browser owns no provider/model/
-  reasoning enum, ordering, default, capability, key, or availability policy;
-  this schema is the entire product-facing profile contract.
-- `ExpectedChatFailure`: the closed, discriminated chat-failure union exposed
-  by `ChatRunOut`, message hydration, terminal SSE, reconnect folding, and the
-  trust trail — all derived by `chat_failure_projection`
-  (`services/chat_failure.py`), never synthesized ad hoc. One variant per
-  card-bearing §10 code; each variant fixes its `origin` to the narrowed
-  `ChatRun.error_origin` Literal(s) that code can actually carry (§9's closed
-  origin union), except `cancelled`, which carries no origin — a cancelled run
-  has NULL error columns; run status alone drives that variant. The support
-  occurrence belongs to the run read model, not to these taxonomy variants.
-  Transient variants (mapped from the runtime's `TransientExhausted`)
-  additionally carry `attempts`.
-"""
+"""Strict product-facing generation catalog, selection, and failure schemas."""
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, assert_never
+from datetime import datetime
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from nexus.services.llm_profiles import (
-    DEFAULT_PROFILE_ID,
-    PROFILES,
-    ExceptionalRetentionPrivacy,
-    LlmProfile,
-    StandardPrivacy,
-)
-
-# =============================================================================
-# GET /llm-profiles
-# =============================================================================
+from nexus.config import GenerationApiProvider
+from nexus.schemas.presence import Presence
+from nexus.services.generation_selection import GenerationSelectionSpec
 
 
-class ReasoningOptionOut(BaseModel):
-    id: str
-    label: str
-
-    model_config = ConfigDict(frozen=True)
+class _StrictGenerationModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
-class StandardPrivacyOut(BaseModel):
-    kind: Literal["Standard"]
-    notice: str
-
-    model_config = ConfigDict(frozen=True)
-
-
-class ExceptionalRetentionPrivacyOut(BaseModel):
-    kind: Literal["ExceptionalRetention"]
-    notice: str
-
-    model_config = ConfigDict(frozen=True)
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("generation catalog instants must be timezone-aware")
+    return value
 
 
-ProfilePrivacyOut = Annotated[
-    StandardPrivacyOut | ExceptionalRetentionPrivacyOut,
+ReadinessCode = Literal[
+    "catalog_refresh_failed",
+    "codex_host_unavailable",
+    "credential_unavailable",
+    "provider_unavailable",
+    "quota_unavailable",
+]
+
+
+class Ready(_StrictGenerationModel):
+    kind: Literal["Ready"] = "Ready"
+    last_checked: datetime
+
+    _last_checked_is_aware = field_validator("last_checked")(_aware)
+
+
+class OperatorActionRequired(_StrictGenerationModel):
+    kind: Literal["OperatorActionRequired"] = "OperatorActionRequired"
+    code: ReadinessCode
+    explanation: str = Field(min_length=1, max_length=1_000)
+    action: str = Field(min_length=1, max_length=500)
+    last_checked: datetime
+
+    _last_checked_is_aware = field_validator("last_checked")(_aware)
+
+
+class TemporarilyUnavailable(_StrictGenerationModel):
+    kind: Literal["TemporarilyUnavailable"] = "TemporarilyUnavailable"
+    code: ReadinessCode
+    explanation: str = Field(min_length=1, max_length=1_000)
+    action: str = Field(min_length=1, max_length=500)
+    last_checked: datetime
+
+    _last_checked_is_aware = field_validator("last_checked")(_aware)
+
+
+class CapacityPaused(_StrictGenerationModel):
+    kind: Literal["CapacityPaused"] = "CapacityPaused"
+    code: Literal["quota_unavailable"] = "quota_unavailable"
+    explanation: str = Field(min_length=1, max_length=1_000)
+    reset_at: Presence[datetime]
+    next_check_at: datetime
+    last_checked: datetime
+
+    @field_validator("next_check_at", "last_checked")
+    @classmethod
+    def _instant_is_aware(cls, value: datetime) -> datetime:
+        return _aware(value)
+
+
+Readiness = Annotated[
+    Ready | OperatorActionRequired | TemporarilyUnavailable | CapacityPaused,
     Field(discriminator="kind"),
 ]
 
 
-def profile_privacy_out(
-    privacy: StandardPrivacy | ExceptionalRetentionPrivacy,
-) -> ProfilePrivacyOut:
-    match privacy:
-        case StandardPrivacy(notice=notice):
-            return StandardPrivacyOut(kind="Standard", notice=notice)
-        case ExceptionalRetentionPrivacy(notice=notice):
-            return ExceptionalRetentionPrivacyOut(
-                kind="ExceptionalRetention",
-                notice=notice,
+class Selectable(_StrictGenerationModel):
+    kind: Literal["Selectable"] = "Selectable"
+
+
+class Ineligible(_StrictGenerationModel):
+    kind: Literal["Ineligible"] = "Ineligible"
+    code: Literal[
+        "missing_target_qualification",
+        "missing_reasoning_qualification",
+        "missing_chat_tool_qualification",
+        "unsupported_capability",
+        "selection_not_configured",
+    ]
+    explanation: str = Field(min_length=1, max_length=1_000)
+
+
+class Retired(_StrictGenerationModel):
+    kind: Literal["Retired"] = "Retired"
+    explanation: str = Field(min_length=1, max_length=1_000)
+    upgrade_target: Presence[GenerationSelectionSpec]
+
+
+NonSelectableState = Annotated[
+    Ineligible | OperatorActionRequired | TemporarilyUnavailable | CapacityPaused | Retired,
+    Field(discriminator="kind"),
+]
+SelectionState = Annotated[
+    Selectable
+    | Ineligible
+    | OperatorActionRequired
+    | TemporarilyUnavailable
+    | CapacityPaused
+    | Retired,
+    Field(discriminator="kind"),
+]
+
+
+class CodexPersonalRoute(_StrictGenerationModel):
+    kind: Literal["CodexPersonal"] = "CodexPersonal"
+
+
+class ProviderApiRoute(_StrictGenerationModel):
+    kind: Literal["ProviderApi"] = "ProviderApi"
+    provider: GenerationApiProvider
+
+
+GenerationRoute = Annotated[
+    CodexPersonalRoute | ProviderApiRoute,
+    Field(discriminator="kind"),
+]
+
+
+class SubscriptionBilling(_StrictGenerationModel):
+    kind: Literal["Subscription"] = "Subscription"
+    label: Literal["Codex subscription"] = "Codex subscription"
+
+
+class MeteredApiBilling(_StrictGenerationModel):
+    kind: Literal["MeteredApi"] = "MeteredApi"
+    label: Literal["Metered API"] = "Metered API"
+
+
+BillingDisclosure = Annotated[
+    SubscriptionBilling | MeteredApiBilling,
+    Field(discriminator="kind"),
+]
+
+
+class PrivacyDisclosure(_StrictGenerationModel):
+    summary: str = Field(min_length=1, max_length=1_000)
+    retention: str = Field(min_length=1, max_length=1_000)
+    training: str = Field(min_length=1, max_length=1_000)
+
+
+class ProcessorChain(_StrictGenerationModel):
+    processors: tuple[str, ...] = Field(min_length=1, max_length=4)
+
+
+class SelectionPresentation(_StrictGenerationModel):
+    route_label: str = Field(min_length=1, max_length=128)
+    model_label: str = Field(min_length=1, max_length=256)
+    reasoning_label: str = Field(min_length=1, max_length=128)
+    billing: BillingDisclosure
+    privacy: PrivacyDisclosure
+    processor_chain: ProcessorChain
+
+
+QualifiedCapability = Literal["Text", "StrictStructured", "ToolsContinuation"]
+Lifecycle = Literal["Active", "Retiring", "Retired"]
+
+
+class GenerationReasoningRow(_StrictGenerationModel):
+    key: str = Field(min_length=1, max_length=64, pattern=r"^[^\s]+$")
+    label: str = Field(min_length=1, max_length=256)
+    readiness: Readiness
+    chat_state: SelectionState
+    target_qualification_revision: Presence[str]
+    reasoning_wire_qualification_revision: Presence[str]
+
+
+class GenerationModelRow(_StrictGenerationModel):
+    key: str = Field(min_length=1, max_length=256, pattern=r"^[^\s]+$")
+    label: str = Field(min_length=1, max_length=256)
+    description: str = Field(min_length=1, max_length=1_000)
+    source_context_window: Presence[int]
+    source_max_output_tokens: Presence[int]
+    effective_chat_context_budget_tokens: int = Field(gt=0)
+    effective_chat_output_budget_tokens: int = Field(gt=0)
+    lifecycle: Lifecycle
+    retires_at: Presence[datetime]
+    upgrade_selection: Presence[GenerationSelectionSpec]
+    readiness: Readiness
+    input_modalities: tuple[Literal["text", "image"], ...] = Field(min_length=1)
+    qualified_capabilities: tuple[QualifiedCapability, ...]
+    source_default_reasoning: Presence[str]
+    reasoning: tuple[GenerationReasoningRow, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _default_and_reasoning_are_closed(self) -> Self:
+        for capacity in (self.source_context_window, self.source_max_output_tokens):
+            if capacity.kind == "Present" and capacity.value <= 0:
+                raise ValueError("source model capacities must be positive when reported")
+        keys = tuple(row.key for row in self.reasoning)
+        if len(set(keys)) != len(keys):
+            raise ValueError("generation reasoning rows must be unique")
+        if self.source_default_reasoning.kind == "Present":
+            if keys.count(self.source_default_reasoning.value) != 1:
+                raise ValueError("source default must name exactly one reasoning row")
+        return self
+
+
+class GenerationCatalogRoute(_StrictGenerationModel):
+    route: GenerationRoute
+    label: str = Field(min_length=1, max_length=128)
+    readiness: Readiness
+    billing: BillingDisclosure
+    privacy: PrivacyDisclosure
+    processor_chain: ProcessorChain
+    models: tuple[GenerationModelRow, ...] = Field(min_length=1)
+
+
+class ChatSeed(_StrictGenerationModel):
+    policy_revision: str = Field(min_length=1, max_length=128)
+    selection: GenerationSelectionSpec
+    state: SelectionState
+    presentation: SelectionPresentation
+
+
+class RunSelectionOut(_StrictGenerationModel):
+    selection: GenerationSelectionSpec
+    catalog_definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_catalog_definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    display_at_dispatch: SelectionPresentation
+    tool_authority: Literal["ReadOnly", "AdditiveWrites"]
+    current_state: SelectionState
+    current_state_observed_at: datetime
+    rerun_eligibility: bool
+
+    _state_observed_at_is_aware = field_validator("current_state_observed_at")(_aware)
+
+
+class GenerationCatalog(_StrictGenerationModel):
+    definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    observed_at: datetime
+    chat_seed: ChatSeed
+    routes: tuple[GenerationCatalogRoute, ...] = Field(min_length=1)
+
+    _observed_at_is_aware = field_validator("observed_at")(_aware)
+
+    @model_validator(mode="after")
+    def _catalog_order_is_duplicate_free(self) -> Self:
+        route_keys: list[tuple[str, str]] = []
+        for route in self.routes:
+            route_keys.append(
+                (
+                    route.route.kind,
+                    route.route.provider if isinstance(route.route, ProviderApiRoute) else "",
+                )
             )
-        case _ as unreachable:
-            assert_never(unreachable)
+            model_keys = tuple(model.key for model in route.models)
+            if len(set(model_keys)) != len(model_keys):
+                raise ValueError("generation catalog models must be unique within a route")
+        if len(set(route_keys)) != len(route_keys):
+            raise ValueError("generation catalog routes must be unique")
+        return self
 
 
-class LlmProfileOut(BaseModel):
-    id: str
-    label: str
-    description: str
-    provider_label: str
-    model_label: str
-    reasoning_options: list[ReasoningOptionOut]
-    default_reasoning_option_id: str
-    privacy: ProfilePrivacyOut
-
-    model_config = ConfigDict(frozen=True)
-
-    @classmethod
-    def from_profile(cls, entry: LlmProfile) -> LlmProfileOut:
-        """Project a `services.llm_profiles.LlmProfile` onto its product-facing
-        API fields. Deliberately omits `target`: the resolved provider/model
-        pair is an internal runtime fact, not a selection control (§10)."""
-        return cls(
-            id=entry.id,
-            label=entry.label,
-            description=entry.description,
-            provider_label=entry.provider_label,
-            model_label=entry.model_label,
-            reasoning_options=[
-                ReasoningOptionOut(id=option.id, label=option.label)
-                for option in entry.reasoning_options
-            ],
-            default_reasoning_option_id=entry.default_reasoning_option_id,
-            privacy=profile_privacy_out(entry.privacy),
-        )
+class InvalidGenerationSelection(_StrictGenerationModel):
+    code: Literal["InvalidGenerationSelection"] = "InvalidGenerationSelection"
+    field: Presence[str]
+    explanation: str = Field(min_length=1, max_length=1_000)
 
 
-class LlmProfilesOut(BaseModel):
-    """Response schema for `GET /llm-profiles`."""
-
-    default_profile_id: str
-    profiles: list[LlmProfileOut]
-
-    model_config = ConfigDict(frozen=True)
-
-    @classmethod
-    def from_profiles(cls) -> LlmProfilesOut:
-        """Build the route's entire response from the product profile
-        registry, so `api/routes/llm_profiles.py` is a thin adapter."""
-        return cls(
-            default_profile_id=DEFAULT_PROFILE_ID,
-            profiles=[LlmProfileOut.from_profile(entry) for entry in PROFILES],
-        )
+class GenerationSelectionUnavailable(_StrictGenerationModel):
+    code: Literal["GenerationSelectionUnavailable"] = "GenerationSelectionUnavailable"
+    selection: GenerationSelectionSpec
+    state: NonSelectableState
 
 
-# =============================================================================
-# ExpectedChatFailure
-# =============================================================================
+class CatalogDefinitionStale(_StrictGenerationModel):
+    code: Literal["CatalogDefinitionStale"] = "CatalogDefinitionStale"
+    current_definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+GenerationSelectionFailure = Annotated[
+    InvalidGenerationSelection | GenerationSelectionUnavailable | CatalogDefinitionStale,
+    Field(discriminator="code"),
+]
 
 
 class ExpectedChatFailureBase(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-class RefusedChatFailure(ExpectedChatFailureBase):
-    """Streamed Fable refusal (`provider_stream`) or a non-streamed provider
-    refusal (`provider_http`). Never rerunnable (§10)."""
-
-    code: Literal["refused"] = "refused"
-    origin: Literal["provider_http", "provider_stream"]
-    can_rerun: bool
-
-
-class IncompleteChatFailure(ExpectedChatFailureBase):
-    """Provider-declared incomplete completion, or local truncation folded to
-    the same closed code. `origin` is always `provider_response`."""
-
-    code: Literal["incomplete"] = "incomplete"
-    origin: Literal["provider_response"]
-    can_rerun: bool
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 class CancelledChatFailure(ExpectedChatFailureBase):
-    """Run status `cancelled` alone drives this variant — `ChatRun` never
-    stores a `cancelled` `error_code`, and a cancelled run's error columns are
-    NULL, so this variant carries no `origin`."""
-
     code: Literal["cancelled"] = "cancelled"
     can_rerun: bool
 
 
 class ContextTooLargeChatFailure(ExpectedChatFailureBase):
-    """Owner-side assembly rejected the intent before any generation attempt
-    began (`intent`, ledgerless), or the provider rejected an in-bound request
-    as oversize (`provider_http`)."""
-
     code: Literal["context_too_large"] = "context_too_large"
-    origin: Literal["intent", "provider_http"]
+    can_rerun: Literal[False] = False
+
+
+class InvalidOutputChatFailure(ExpectedChatFailureBase):
+    code: Literal["invalid_output"] = "invalid_output"
+    can_rerun: Literal[False] = False
+
+
+class IncompleteChatFailure(ExpectedChatFailureBase):
+    code: Literal["incomplete"] = "incomplete"
     can_rerun: bool
 
 
-class InvalidToolArgumentsChatFailure(ExpectedChatFailureBase):
-    code: Literal["invalid_tool_arguments"] = "invalid_tool_arguments"
-    origin: Literal["tool_arguments"]
+class AssistantUnavailableChatFailure(ExpectedChatFailureBase):
+    code: Literal["assistant_unavailable"] = "assistant_unavailable"
     can_rerun: bool
 
 
-class BudgetExceededChatFailure(ExpectedChatFailureBase):
-    """Platform-token-reservation denial. Never rerunnable (§9)."""
-
-    code: Literal["budget_exceeded"] = "budget_exceeded"
-    origin: Literal["budget"]
-    can_rerun: bool
-
-
-class RateLimitedChatFailure(ExpectedChatFailureBase):
-    """Transient: mapped from the runtime's `TransientExhausted(cause=
-    ProviderRateLimit)` leaf."""
-
-    code: Literal["rate_limited"] = "rate_limited"
-    origin: Literal["provider_http"]
-    attempts: int = Field(ge=1)
-    can_rerun: bool
-
-
-class TimeoutChatFailure(ExpectedChatFailureBase):
-    """Transient: mapped from the runtime's `TransientExhausted(cause=
-    ProviderTimeout)` leaf."""
-
-    code: Literal["timeout"] = "timeout"
-    origin: Literal["transport"]
-    attempts: int = Field(ge=1)
-    can_rerun: bool
-
-
-class ProviderUnavailableChatFailure(ExpectedChatFailureBase):
-    """Transient: mapped from either the runtime's `TransientExhausted(cause=
-    ProviderHttpUnavailable)` (`provider_http`) or `TransientExhausted(cause=
-    TransportUnavailable)` (`transport`) leaf."""
-
-    code: Literal["provider_unavailable"] = "provider_unavailable"
-    origin: Literal["provider_http", "transport"]
-    attempts: int = Field(ge=1)
-    can_rerun: bool
-
-
-class StreamInterruptedChatFailure(ExpectedChatFailureBase):
-    """Transient: mapped from the runtime's `TransientExhausted(cause=
-    ProviderStreamInterrupted)` leaf, and from crashed/interrupted-run
-    recovery when provider output existed without a terminal."""
-
-    code: Literal["stream_interrupted"] = "stream_interrupted"
-    origin: Literal["provider_stream"]
-    attempts: int = Field(ge=1)
-    can_rerun: bool
+class OperatorDefectChatFailure(ExpectedChatFailureBase):
+    code: Literal["operator_defect"] = "operator_defect"
+    can_rerun: Literal[False] = False
 
 
 ExpectedChatFailure = Annotated[
-    RefusedChatFailure
-    | IncompleteChatFailure
-    | CancelledChatFailure
+    CancelledChatFailure
     | ContextTooLargeChatFailure
-    | InvalidToolArgumentsChatFailure
-    | BudgetExceededChatFailure
-    | RateLimitedChatFailure
-    | TimeoutChatFailure
-    | ProviderUnavailableChatFailure
-    | StreamInterruptedChatFailure,
+    | InvalidOutputChatFailure
+    | IncompleteChatFailure
+    | AssistantUnavailableChatFailure
+    | OperatorDefectChatFailure,
     Field(discriminator="code"),
+]
+
+
+__all__ = [
+    "AssistantUnavailableChatFailure",
+    "BillingDisclosure",
+    "CapacityPaused",
+    "CatalogDefinitionStale",
+    "CancelledChatFailure",
+    "ChatSeed",
+    "CodexPersonalRoute",
+    "ContextTooLargeChatFailure",
+    "ExpectedChatFailure",
+    "ExpectedChatFailureBase",
+    "GenerationCatalog",
+    "GenerationCatalogRoute",
+    "GenerationModelRow",
+    "GenerationReasoningRow",
+    "GenerationRoute",
+    "GenerationSelectionFailure",
+    "GenerationSelectionUnavailable",
+    "IncompleteChatFailure",
+    "Ineligible",
+    "InvalidOutputChatFailure",
+    "InvalidGenerationSelection",
+    "MeteredApiBilling",
+    "NonSelectableState",
+    "OperatorDefectChatFailure",
+    "OperatorActionRequired",
+    "PrivacyDisclosure",
+    "ProcessorChain",
+    "ProviderApiRoute",
+    "Readiness",
+    "Ready",
+    "Retired",
+    "RunSelectionOut",
+    "Selectable",
+    "SelectionPresentation",
+    "SelectionState",
+    "SubscriptionBilling",
+    "TemporarilyUnavailable",
 ]

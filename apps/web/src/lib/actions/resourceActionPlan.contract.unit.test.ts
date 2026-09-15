@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveResourceActionPlan } from "@/lib/actions/resourceActions";
+import {
+  offlineReadingPackageMediaKind,
+  resolveResourceActionPlan,
+} from "@/lib/actions/resourceActions";
 import type { ResourceActionEnvironment } from "@/lib/actions/resourceActionEnvironment";
 import type {
   ResourceActionCapability,
@@ -113,6 +116,90 @@ function expectDeeplyImmutable(action: TargetAction): void {
 }
 
 describe("resolveResourceActionPlan final semantic contract", () => {
+  it("maps every server document kind to the exact package discriminator", () => {
+    expect(["web_article", "epub", "pdf"].map((kind) =>
+      offlineReadingPackageMediaKind(kind as "web_article" | "epub" | "pdf"),
+    )).toEqual(["WebArticle", "Epub", "Pdf"]);
+  });
+
+  it("omits document download outside connected Android reading capability", () => {
+    const capability = [{
+      kind: "OfflineReading",
+      availability: AVAILABLE,
+      requestedTitle: "Plane Notes",
+      mediaKind: "epub",
+    }] as const;
+    expect(finalPlan(capability)).toEqual([]);
+    expect(finalPlan(capability, {
+      environment: environmentOf({
+        platform: "Android",
+        offlineReading: { kind: "Unavailable" },
+      }),
+    })).toEqual([]);
+    expect(actionWithIntent(finalPlan(capability, {
+      environment: environmentOf({
+        platform: "Android",
+        offlineReading: { kind: "Ready", byRef: new Map() },
+      }),
+    }), "OfflineDownload").intent).toMatchObject({
+      owner: "Reading",
+      requestedTitle: "Plane Notes",
+      mediaKind: "epub",
+    });
+  });
+
+  it("confirms the honest text-only limitation only for a first web-article download", () => {
+    const action = actionWithIntent(finalPlan([{
+      kind: "OfflineReading",
+      availability: AVAILABLE,
+      requestedTitle: "Signal on the Train",
+      mediaKind: "web_article",
+    }], {
+      environment: environmentOf({
+        platform: "Android",
+        offlineReading: { kind: "Ready", byRef: new Map() },
+      }),
+    }), "OfflineDownload");
+    expect(action.confirmation).toEqual({
+      kind: "Required",
+      title: "Download text-only copy?",
+      body: "Downloaded web articles include readable text but not images.",
+      confirmLabel: "Download text-only copy",
+    });
+  });
+
+  it("confirms reading removal when a device position would be discarded", () => {
+    const ref = assumeCanonicalResourceRef("media:11111111-1111-4111-8111-111111111111");
+    const action = actionWithIntent(finalPlan([{
+      kind: "OfflineReading",
+      availability: AVAILABLE,
+      requestedTitle: "Plane Notes",
+      mediaKind: "epub",
+    }], {
+      environment: environmentOf({
+        platform: "Android",
+        offlineReading: {
+          kind: "Ready",
+          byRef: new Map([[ref, {
+            kind: "Ready",
+            sizeBytes: 1024,
+            contentType: "application/x-nexus-offline-reading",
+            updatedAt: "2026-08-13T10:00:00Z",
+            hasDevicePosition: true,
+          }]]),
+        },
+      }),
+    }), "OfflineRemove");
+    // The cutover contract quotes this sentence verbatim; every surface that
+    // confirms a pending removal must say exactly it.
+    expect(action.confirmation).toEqual({
+      kind: "Required",
+      title: "Remove downloaded copy?",
+      body: "Remove downloaded copy and discard this device's unsynced position.",
+      confirmLabel: "Remove downloaded copy",
+    });
+  });
+
   it("returns one flat catalog-ordered plan with danger terminal", () => {
     const plan = finalPlan([
       { kind: "RemoveMedia", availability: AVAILABLE },

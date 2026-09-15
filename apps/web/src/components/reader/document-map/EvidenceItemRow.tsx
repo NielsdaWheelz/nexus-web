@@ -19,7 +19,7 @@ import {
   isSameSystemApiDefect,
   type ApiError,
 } from "@/lib/api/client";
-import type { HighlightLinkedNoteBlock } from "@/lib/highlights/api";
+import type { HighlightLinkedNoteBlock } from "@/lib/highlights/highlightContract";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";

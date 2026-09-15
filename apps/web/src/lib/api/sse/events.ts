@@ -20,7 +20,20 @@ import {
   decodeCitationOut,
   type CitationOut,
 } from "@/lib/conversations/citationOut";
-import type { ChatPublicationWarning } from "@/lib/conversations/types";
+import {
+  decodeRunSelectionOut,
+  type RunSelectionOut,
+} from "@/lib/conversations/generationCatalog";
+import {
+  MESSAGE_TOOL_STATUSES,
+  type ChatPublicationWarning,
+  type MessageToolStatus,
+} from "@/lib/conversations/types";
+import {
+  decodeToolProjectionFields,
+  type ToolProjectionFields,
+} from "@/lib/conversations/toolProjectionWire";
+import { TOOL_CONTRACT_PROJECTION } from "@/lib/conversations/toolContractProjection";
 import {
   decodeContextRef,
   type ContextRefOut,
@@ -28,9 +41,7 @@ import {
 import { hasOnlyKeys, isOptionalString } from "./guards";
 import { isCitationEventData, type CitationEventData } from "./citations";
 
-/** Meta event: initial IDs and product-selection snapshot (profile_id/
- * reasoning_option_id). Resolved provider/model are operator facts filled in
- * later on the run record, not carried on this event (§10). */
+/** Meta event: initial IDs and immutable dispatch selection snapshot. */
 interface SSEMetaEvent {
   type: "meta";
   data: {
@@ -38,8 +49,7 @@ interface SSEMetaEvent {
     conversation_id: string;
     user_message_id: string;
     assistant_message_id: string;
-    profile_id: string;
-    reasoning_option_id: string;
+    run_selection: RunSelectionOut;
     chat_subject: {
       requested_resource_ref: string;
       resource_ref: string;
@@ -98,15 +108,11 @@ interface SSEDoneEvent {
   };
 }
 
-export type ChatToolStatus =
-  "pending" | "running" | "complete" | "error" | "cancelled";
-
 export interface SSEToolCallEvent {
   type: "tool_call_start";
-  data: {
+  data: ToolProjectionFields & {
     tool_call_id?: string | null;
     assistant_message_id: string;
-    tool_name: string;
     tool_call_index: number;
     provider_tool_call_id?: string | null;
     provider_event_seq_start: number;
@@ -131,15 +137,13 @@ export interface SSEToolCallDoneEvent {
 
 export interface SSEToolResultEvent {
   type: "tool_result";
-  data: {
+  data: ToolProjectionFields & {
     tool_call_id?: string | null;
     assistant_message_id: string;
-    tool_name: string;
     tool_call_index: number;
-    status: ChatToolStatus;
+    status: MessageToolStatus;
     scope: string;
     types: string[];
-    error_code?: string | null;
     result_count?: number | null;
     selected_count?: number | null;
     latency_ms?: number | null;
@@ -193,23 +197,34 @@ function parseMetaData(data: unknown): SSEMetaEvent["data"] {
       "conversation_id",
       "user_message_id",
       "assistant_message_id",
-      "profile_id",
-      "reasoning_option_id",
+      "run_selection",
       "chat_subject",
     ]) ||
     typeof data.run_id !== "string" ||
     typeof data.conversation_id !== "string" ||
     typeof data.user_message_id !== "string" ||
     typeof data.assistant_message_id !== "string" ||
-    typeof data.profile_id !== "string" ||
-    typeof data.reasoning_option_id !== "string" ||
     (data.chat_subject !== null && !isMetaSubject(data.chat_subject))
   ) {
     throw new Error("Invalid SSE payload for meta");
   }
-  // justify-type-assertion: the guard above exhaustively validated every
-  // field of the meta payload.
-  return data as SSEMetaEvent["data"];
+  let runSelection: RunSelectionOut;
+  try {
+    runSelection = decodeRunSelectionOut(
+      data.run_selection,
+      "SSE meta.run_selection",
+    );
+  } catch {
+    throw new Error("Invalid SSE payload for meta.run_selection");
+  }
+  return {
+    run_id: data.run_id,
+    conversation_id: data.conversation_id,
+    user_message_id: data.user_message_id,
+    assistant_message_id: data.assistant_message_id,
+    run_selection: runSelection,
+    chat_subject: data.chat_subject,
+  };
 }
 
 function isMetaSubject(
@@ -367,20 +382,19 @@ function parseDoneData(data: unknown): SSEDoneEvent["data"] {
 }
 
 function parseToolCallStartData(data: unknown): SSEToolCallEvent["data"] {
+  const projection = decodeToolProjectionFields(data);
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
+      ...TOOL_CONTRACT_PROJECTION.fields,
       "tool_call_id",
       "assistant_message_id",
-      "tool_name",
       "tool_call_index",
       "provider_tool_call_id",
       "provider_event_seq_start",
       "provider_event_seq_end",
     ]) ||
     typeof data.assistant_message_id !== "string" ||
-    typeof data.tool_name !== "string" ||
-    data.tool_name.length === 0 ||
     typeof data.tool_call_index !== "number" ||
     !Number.isInteger(data.tool_call_index) ||
     data.tool_call_index < 0 ||
@@ -397,16 +411,16 @@ function parseToolCallStartData(data: unknown): SSEToolCallEvent["data"] {
   ) {
     throw new Error("Invalid SSE payload for tool_call_start");
   }
-  return data as SSEToolCallEvent["data"];
+  return { ...data, ...projection } as SSEToolCallEvent["data"];
 }
 
 function parseToolCallDeltaData(data: unknown): SSEToolCallDeltaEvent["data"] {
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
+      ...TOOL_CONTRACT_PROJECTION.fields,
       "tool_call_id",
       "assistant_message_id",
-      "tool_name",
       "tool_call_index",
       "provider_tool_call_id",
       "input_delta",
@@ -432,9 +446,9 @@ function parseToolCallDoneData(data: unknown): SSEToolCallDoneEvent["data"] {
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
+      ...TOOL_CONTRACT_PROJECTION.fields,
       "tool_call_id",
       "assistant_message_id",
-      "tool_name",
       "tool_call_index",
       "provider_tool_call_id",
       "input",
@@ -453,17 +467,17 @@ function parseToolCallDoneData(data: unknown): SSEToolCallDoneEvent["data"] {
 }
 
 function parseToolResultData(data: unknown): SSEToolResultEvent["data"] {
+  const projection = decodeToolProjectionFields(data);
   if (
     !isRecord(data) ||
     !hasOnlyKeys(data, [
+      ...TOOL_CONTRACT_PROJECTION.fields,
       "tool_call_id",
       "assistant_message_id",
-      "tool_name",
       "tool_call_index",
       "status",
       "scope",
       "types",
-      "error_code",
       "result_count",
       "selected_count",
       "latency_ms",
@@ -472,18 +486,15 @@ function parseToolResultData(data: unknown): SSEToolResultEvent["data"] {
       "results",
     ]) ||
     typeof data.assistant_message_id !== "string" ||
-    typeof data.tool_name !== "string" ||
-    data.tool_name.length === 0 ||
     !isOptionalString(data.tool_call_id) ||
     typeof data.tool_call_index !== "number" ||
     !Number.isInteger(data.tool_call_index) ||
     data.tool_call_index < 0 ||
-    !isChatToolStatus(data.status) ||
+    !isMessageToolStatus(data.status) ||
     typeof data.scope !== "string" ||
     data.scope.length === 0 ||
     !Array.isArray(data.types) ||
     !data.types.every((item) => typeof item === "string") ||
-    !isOptionalString(data.error_code) ||
     !isOptionalNonNegativeInteger(data.result_count) ||
     !isOptionalNonNegativeInteger(data.selected_count) ||
     (data.latency_ms !== undefined &&
@@ -502,16 +513,13 @@ function parseToolResultData(data: unknown): SSEToolResultEvent["data"] {
   ) {
     throw new Error("Invalid SSE payload for tool_result");
   }
-  return data as SSEToolResultEvent["data"];
+  return { ...data, ...projection } as SSEToolResultEvent["data"];
 }
 
-function isChatToolStatus(value: unknown): value is ChatToolStatus {
+function isMessageToolStatus(value: unknown): value is MessageToolStatus {
   return (
-    value === "pending" ||
-    value === "running" ||
-    value === "complete" ||
-    value === "error" ||
-    value === "cancelled"
+    typeof value === "string" &&
+    MESSAGE_TOOL_STATUSES.some((status) => status === value)
   );
 }
 

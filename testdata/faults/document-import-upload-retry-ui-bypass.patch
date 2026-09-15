@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/components/imports/ImportRow.tsx b/apps/web/src/components/imports/ImportRow.tsx
+--- a/apps/web/src/components/imports/ImportRow.tsx
++++ b/apps/web/src/components/imports/ImportRow.tsx
+@@ -181,7 +181,7 @@
+ 
+   return (
+     <>
+-      {offer !== null && offer.kind === "RetryUpload" ? (
++      {false ? (
+         <>
+           <input
+             ref={inputRef}

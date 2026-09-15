@@ -17,12 +17,12 @@ import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { ContributorCredit } from "@/lib/contributors/types";
 import type { ConnectionSummaryOut } from "@/lib/resourceGraph/connections";
 import type { MediaProcessingStatus } from "@/lib/status/mediaProcessing";
-import type { LibraryMediaKind } from "@/lib/libraries/mediaKind";
+import type { MediaKind } from "@/lib/media/kind";
 import type { ReadingTimeEstimatePresence } from "@/lib/libraries/readingTime";
 
 export interface MediaPresenterItem extends ReadStateFields {
   id: string;
-  kind: LibraryMediaKind;
+  kind: MediaKind;
   title: string;
   canonical_source_url: string | null;
   processing_status: MediaProcessingStatus;
@@ -44,7 +44,7 @@ export interface MediaPresenterContext {
   readonly readingTimeEstimate: ReadingTimeEstimatePresence;
 }
 
-function modalityFor(kind: LibraryMediaKind): ConsumptionModality {
+function modalityFor(kind: MediaKind): ConsumptionModality {
   if (kind === "podcast_episode") return "Listen";
   if (kind === "video") return "Watch";
   return "Read";

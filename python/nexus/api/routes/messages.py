@@ -14,19 +14,25 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from nexus.api.deps import get_generation_catalog_service, require_tool_projection_revision
 from nexus.auth.middleware import Viewer, get_viewer
-from nexus.db.session import get_db
+from nexus.db.session import get_db, get_repeatable_read_db
 from nexus.responses import ok, ok_page
 from nexus.services import conversations as conversations_service
+from nexus.services.generation_catalog import GenerationCatalogService
 
 router = APIRouter(tags=["messages"])
 
 
-@router.get("/conversations/{conversation_id}/messages")
-def list_messages(
+@router.get(
+    "/conversations/{conversation_id}/messages",
+    dependencies=[Depends(require_tool_projection_revision)],
+)
+async def list_messages(
     conversation_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
+    catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
     limit: int = Query(default=50, ge=1, le=100, description="Maximum results (1-100)"),
     cursor: str | None = Query(default=None, description="Pagination cursor"),
     before_cursor: str | None = Query(default=None, description="Older-history cursor"),
@@ -45,10 +51,13 @@ def list_messages(
         E_INVALID_REQUEST (400): Conflicting pagination mode arguments.
         E_INVALID_CURSOR (400): Cursor is malformed or unparseable.
     """
+    catalog_snapshot = await catalog.read_chat()
+    get_repeatable_read_db(db)
     messages, page = conversations_service.list_messages(
         db=db,
         viewer_id=viewer.user_id,
         conversation_id=conversation_id,
+        catalog_snapshot=catalog_snapshot,
         limit=limit,
         cursor=cursor,
         before_cursor=before_cursor,

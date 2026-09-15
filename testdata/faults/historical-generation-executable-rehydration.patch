@@ -1,0 +1,11 @@
+diff --git a/python/nexus/services/generation_history.py b/python/nexus/services/generation_history.py
+--- a/python/nexus/services/generation_history.py
++++ b/python/nexus/services/generation_history.py
+@@ -41,4 +41,7 @@
+     # Retain full-document integrity verification, without reconstructing a
+     # tool implementation or accepting historical grants for execution.
+     document = generation_spec_document(value)
++    from nexus.services.generation_spec import decode_generation_spec_document
++
++    decode_generation_spec_document(document.value)
+     return GenerationHistory.model_validate_json(json.dumps(document.value))

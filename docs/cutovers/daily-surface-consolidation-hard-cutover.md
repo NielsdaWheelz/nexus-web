@@ -16,6 +16,12 @@ authoritative.
 menu defined by
 [`contextual-command-presentation-hard-cutover.md`](contextual-command-presentation-hard-cutover.md).
 
+**Page read contract update (2026-08-25):** the nullable `daily_note` /
+`dailyNote` proposal below is superseded. Page detail now requires canonical
+`dailyPage: Presence<{localDate}>`; the backend converts database nullability at
+`services/notes.py::_page_out`, and `lib/notes/pageContract.ts` is the sole
+frontend decoder. Null, omission, aliases, and extra keys are contract defects.
+
 ## One-line
 
 Delete the Today surface (`DailyNotePaneBody`, the `daily`/`dailyDate` pane routes, the Today nav entry); keep `daily_note_pages` and the backend lookup; make "today" a verb — a Notes-pane button, a launcher command, a keybinding — that resolves-or-creates today's page then opens it in the ordinary Page pane.
@@ -50,7 +56,7 @@ Net: the Today surface is a 119-line file doing a lookup then delegating. The lo
 - The Today nav rail entry is gone. The Notes entry is the sole entry point for the notes domain.
 - "Open today" is reachable three ways: a **Today button in the Notes pane toolbar**, a **launcher command** ("Open today" in the create/go sections), and a **keybinding** (the existing `today` action id, user-assignable, no default).
 - Opening today: the verb calls `GET /api/notes/daily/{localDate}?time_zone=…`, gets the `page.id`, then navigates to `/pages/{id}`. The page opens in `PagePaneBody`. No intermediate pane, no double-render.
-- **Date navigation (prev/next day)** lives in `PagePaneBody` as chrome options — shown only when the loaded page has `dailyNote` set. The "Open yesterday" option opens the previous day's page via the same `fetchDailyNotePage` → `/pages/{id}` path.
+- **Date navigation (prev/next day)** lives in `PagePaneBody` as chrome options — shown only when the loaded page has `dailyPage.kind === "Present"`. The "Open yesterday" option opens the previous day's page via the same daily-page read → `/pages/{id}` path.
 - **`/daily` and `/daily/[localDate]` routes** (bookmarks, browser history, mobile deep links) redirect to `/notes`. The date context is lost on redirect — this is acceptable; date navigation is now an in-pane affordance.
 
 ---
@@ -60,7 +66,7 @@ Net: the Today surface is a 119-line file doing a lookup then delegating. The lo
 ### Goals
 
 - **G1.** Delete `DailyNotePaneBody`, its tests, the `daily`/`dailyDate` pane route IDs, and the Today destination entry exhaustively.
-- **G2.** Extend `NotePageOut` with `daily_note: { local_date: str } | None` so `PagePaneBody` knows when a page is a daily page (for date-nav chrome) and dawn-write knows when its host is a daily page.
+- **G2.** Require `NotePageOut.daily_page: Presence[DailyPageSummaryOut]` so `PagePaneBody` knows when a Page is daily without leaking database nullability into the response contract.
 - **G3.** One new dispatch target: `kind: "open-today"` in `LauncherActionTarget`, handled in `dispatchTarget` via `fetchDailyNotePage` → `requestOpenInAppPane('/pages/{id}')`.
 - **G4.** Notes pane gains a "Today" button in its toolbar that dispatches `open-today`.
 - **G5.** The `today` keybinding stays bindable (`BINDABLE_ACTIONS`) with a non-destination dispatch path in the launcher keybinding loop.
@@ -86,8 +92,8 @@ Net: the Today surface is a 119-line file doing a lookup then delegating. The lo
 | Dispatch target `kind: "open-today"` | `lib/launcher/dispatch.ts` (new case in switch) | `href: "/daily"` dispatch |
 | Notes pane today button | `app/(authenticated)/notes/NotesPaneBody.tsx` | Today nav entry |
 | Keybinding dispatch (non-destination) | `useLauncherController.ts` keybinding loop | destination `today` dispatch |
-| Date-nav chrome options | `PagePaneBody` (reads `page.dailyNote`) | `DailyNotePaneBody`'s `openYesterday` chrome option |
-| Daily page identity | `NotePageOut.daily_note` + `NotePage.dailyNote` | implicit in `/daily` route |
+| Date-nav chrome options | `PagePaneBody` (reads `page.dailyPage`) | `DailyNotePaneBody`'s `openYesterday` chrome option |
+| Daily page identity | `NotePageOut.daily_page` + `NotePage.dailyPage`, both `Presence` | implicit in `/daily` route |
 | /daily redirects | Next.js server redirect in `daily/page.tsx` + `[localDate]/page.tsx` | `return null` shell pages |
 
 ### 4.2 `openTodayPage()` — the new verb primitive
@@ -102,7 +108,7 @@ export async function openTodayPage(): Promise<void> {
 
 `dispatchTarget` for `kind: "open-today"` calls this. `NotesPaneBody`'s Today button calls this. The keybinding loop calls this. One implementation, three entry points.
 
-### 4.3 `NotePageOut.daily_note` — the minimal read
+### 4.3 `NotePageOut.daily_page` — exact presence at the read boundary
 
 Backend `_page_out` in `services/notes.py` already receives the viewer's `page` ORM object. Add a single scalar query against `daily_note_pages`:
 
@@ -115,7 +121,11 @@ daily_entry = db.scalar(
 )
 ```
 
-`NotePageOut` gains a `daily_note: DailyNotePageSummaryOut | None` field (new schema class with just `local_date: date`). `PagePaneBody` reads `page.dailyNote?.localDate` and if set, publishes chrome options for "Open yesterday" and "Open tomorrow" that call `fetchDailyNotePage(shiftLocalDate(localDate, ±1))` then navigate to the result.
+`NotePageOut` requires `daily_page: Presence[DailyPageSummaryOut]` (the summary
+contains only `local_date`). `_page_out` converts the nullable scalar result
+with `presence_from_nullable`. `PagePaneBody` reads
+`page.dailyPage.value.localDate` only for `kind === "Present"` and then publishes
+the adjacent-date chrome options.
 
 ### 4.4 Keybinding dispatch update (D-5)
 
@@ -140,7 +150,7 @@ if (!destination) continue;
 
 ## 5. Data model / migration
 
-No Alembic migration. `daily_note_pages` is untouched. The only change is a scalar join in `_page_out` (`services/notes.py`) and a new optional field on `NotePageOut` / `DailyNotePageSummaryOut` in `schemas/notes.py`.
+No Alembic migration. `daily_note_pages` is untouched. The read-side change is a scalar lookup in `_page_out` (`services/notes.py`) and a required `Presence` field on `NotePageOut` in `schemas/notes.py`.
 
 ---
 
@@ -215,9 +225,9 @@ Add a "Today" button alongside the "Create page" form in the toolbar. On click, 
 
 ### 7.10 `app/(authenticated)/pages/[pageId]/PagePaneBody.tsx`
 
-After the page loads, read `page.dailyNote?.localDate`. If set:
+After the page loads, inspect `page.dailyPage`. When it is `Present`, read its `value.localDate`:
 - Publish `ActionDescriptor` options `"Open yesterday"` (navigate to yesterday's page via `fetchDailyNotePage(shiftLocalDate(localDate, -1))`) and `"Open tomorrow"` (same for +1) via `usePanePrimaryChrome`.
-- The dawn-write block (from sibling #4) renders above the editor whenever `page.dailyNote` is set; the `PagePaneBody` hosts it.
+- The dawn-write block (from sibling #4) renders above the editor whenever `page.dailyPage` is `Present`; the `PagePaneBody` hosts it.
 
 ### 7.11 `components/launcher/CreatePanel.tsx`
 
@@ -262,7 +272,7 @@ Remove `/daily` from the `hrefs` array in the AC-8 test (line 101). Add a gate a
 
 ## 8. Key decisions
 
-**D-1: Date navigation lives in `PagePaneBody`, gated by `page.dailyNote`.** Rejected: date-nav as a pane-level chrome row independent of page metadata (would require reading `daily_note_pages` in the pane host, not the service). Rejected: no date navigation at all (existing users depend on yesterday access). The `dailyNote` field is the minimal data contract.
+**D-1: Date navigation lives in `PagePaneBody`, gated by `page.dailyPage.kind === "Present"`.** Rejected: date-nav as a pane-level chrome row independent of page metadata (would require reading `daily_note_pages` in the pane host, not the service). Rejected: no date navigation at all (existing users depend on yesterday access). Required `Presence` is the minimal exact data contract.
 
 **D-2: `/daily` and `/daily/[localDate]` redirect to `/notes`, not to `/pages/{resolved-id}`.** A server-side redirect to `/pages/{id}` would require a DB call in a Next.js server component with a user session and timezone. The session/timezone dependency is non-trivial (the server bootstrap doesn't have the browser timezone). Redirecting to `/notes` is correct: the user can click "Today" once there. External links / bookmarks land on the Notes surface; date context is not recoverable server-side without the browser timezone.
 
@@ -270,7 +280,7 @@ Remove `/daily` from the `hrefs` array in the AC-8 test (line 101). Add a gate a
 
 **D-4: `openTodayPage()` is a standalone module, not inlined in the dispatch switch.** All three call sites (dispatch, Notes pane, keybinding) call the same function. Duplication in dispatch.ts would violate the one-implementation rule.
 
-**D-5: `NotePageOut.daily_note` via a scalar join in `_page_out`, not a separate API endpoint.** The page is already loaded by `fetchNotePage`; a scalar `SELECT local_date FROM daily_note_pages WHERE page_id=…` adds one indexed lookup (FK index on `page_id`). Rejected: a separate `GET /api/notes/pages/{id}/daily-status` endpoint (extra round-trip, extra BFF route).
+**D-5: `NotePageOut.daily_page` via a scalar lookup and boundary conversion in `_page_out`, not a separate API endpoint.** The Page is already loaded by `fetchNotePage`; the indexed lookup is converted to `Presence` before serialization. Rejected: a separate `GET /api/notes/pages/{id}/daily-status` endpoint (extra round-trip, extra BFF route).
 
 **D-6: BFF routes `/api/notes/daily` and `/api/notes/daily/[localDate]` stay.** `fetchDailyNotePage` is still called for the `open-today` verb and for the date-nav chrome options. Deleting them would require rewriting the frontend to call `/api/resource-items/resolve` instead — more change for no gain.
 
@@ -321,24 +331,39 @@ Remove `/daily` from the `hrefs` array in the AC-8 test (line 101). Add a gate a
 | # | Sibling | Dependency |
 |---|---|---|
 | Pane header identity | Remove the `daily` and `dailyDate` route definitions, including their typed section-header contracts; no independent standing-head map exists. |
-| #4 | dawn-write | Dawn write renders `DawnWriteBlock` above the editor in `DailyNotePaneBody`. After this cutover, the host is `PagePaneBody`. Dawn-write **must** land after this spec and update its render site to `PagePaneBody` (gated on `page.dailyNote`). The `DawnWriteBlock` component and API contract are host-agnostic. |
+| #4 | dawn-write | Dawn write renders `DawnWriteBlock` above the editor in `DailyNotePaneBody`. After this cutover, the host is `PagePaneBody`. Dawn-write **must** land after this spec and update its render site to `PagePaneBody` (gated on Present `page.dailyPage`). The `DawnWriteBlock` component and API contract are host-agnostic. |
 | #6 | browse-surface-deletion | No dependency. Both delete nav destinations from `DESTINATIONS`. Order does not matter. |
 
 ---
 
 ## 11. Slices
 
-**S0 — Backend: `NotePageOut.daily_note` field**
-Add `DailyNotePageSummaryOut(BaseModel)` to `schemas/notes.py` with one field `local_date: date`. Add `daily_note: DailyNotePageSummaryOut | None` to `NotePageOut`. Update `_page_out` in `services/notes.py` to do a scalar `SELECT local_date FROM daily_note_pages WHERE page_id = :pid AND user_id = :uid`.
-Verification: unit test asserts that `get_page(db, viewer_id, daily_page.id).daily_note.local_date == expected_date` and that a non-daily page returns `daily_note = None`.
+**S0 — Backend: exact `NotePageOut.daily_page` presence**
+`schemas/notes.py` owns `DailyPageSummaryOut(local_date)` and requires
+`NotePageOut.daily_page: Presence[DailyPageSummaryOut]`. `_page_out` in
+`services/notes.py` performs the indexed daily binding lookup and converts its
+nullable database result exactly once with `presence_from_nullable`. The API
+serializes the canonical `dailyPage` / `localDate` shape; null and omission are
+not response states.
+Verification: service tests assert a daily Page returns
+`{"kind": "Present", "value": {"localDate": expected_date}}` and a non-daily
+Page returns `{"kind": "Absent"}`.
 
-**S1 — Frontend types: `NotePage.dailyNote`**
-Add `dailyNote: { localDate: string } | null` to the `NotePage` interface in `lib/notes/api.ts` (line 67). `NotePageSummary` — defined in `lib/notes/normalize.ts` — is the list-shape and does **not** get `dailyNote`; the backend `NotePageSummaryOut` list endpoint does not emit `daily_note`. Update `normalizePage` in `lib/notes/api.ts` to read `daily_note` from the raw API response. Add `lib/notes/openToday.ts`.
-Verification: unit test (`lib/notes/api.test.ts`) asserts `normalizePage` populates `dailyNote.localDate` when `daily_note` is present and that the `NotePageSummary` shape is not widened.
+**S1 — Frontend types: exact `NotePage.dailyPage` presence**
+`lib/notes/pageContract.ts` owns `NotePage.dailyPage:
+Presence<{ localDate: string }>` and the exact Page list/detail decoders. The
+list shape remains `{id,title,updatedAt}`; detail adds required `dailyPage`.
+The decoder rejects null, omission, snake-case aliases, extra keys, and invalid
+local dates. `lib/notes/api.ts` delegates Page response decoding to this owner.
+Verification: `pageContract.unit.test.ts` pins both Presence variants and the
+negative contract cases; service tests pin the canonical serialized shape.
 
 **S2 — `PagePaneBody` date-nav chrome options**
-Read `page.dailyNote?.localDate` after page load. If set, use `usePanePrimaryChrome({ menuActions })` to publish `"Open yesterday"` and `"Open tomorrow"` command descriptors, each calling `fetchDailyNotePage(shiftLocalDate(localDate, ±1))` then `router.push('/pages/{id}')`.
-Verification: browser test renders `PagePaneBody` with a page carrying `dailyNote: { localDate: "2026-07-07" }` and asserts the chrome options appear; renders without `dailyNote` and asserts they are absent.
+Read `page.dailyPage.value.localDate` after confirming `dailyPage.kind ===
+"Present"`. Publish `"Open yesterday"` and `"Open tomorrow"` through
+`usePanePrimaryChrome({ menuActions })`.
+Verification: browser tests render both exact `Present` and `Absent` Page
+contracts and assert that adjacent-date chrome appears only for `Present`.
 
 **S3 — `open-today` dispatch target + Notes pane button**
 Add `{ kind: "open-today" }` to `LauncherActionTarget`. Add case in `dispatchTarget`. Add "Today" button to `NotesPaneBody` toolbar. Update `CreatePanel.openToday` to dispatch `open-today`. Update `useLauncherController.ts` keybinding loop with `today` fallthrough.
@@ -401,8 +426,8 @@ grep -q "get_daily_note_by_date" python/nexus/api/routes/notes.py
 
 ## 14. Test plan
 
-1. **Unit (node):** `lib/notes/api.test.ts` — `normalizePage` handles `daily_note` field. `lib/launcher/dispatch.test.ts` (if exists) — `open-today` case navigates to `/pages/{id}`.
-2. **Browser (Chromium):** `NotesPaneBody` — Today button visible and triggers navigation. `PagePaneBody` — chrome options present/absent by `dailyNote`. `CreatePanel` — "Open today" dispatches `open-today`.
+1. **Unit (node):** `lib/notes/pageContract.unit.test.ts` — exact `dailyPage` Presence decoding and negative cases. `lib/launcher/dispatch.test.ts` (if exists) — `open-today` case navigates to `/pages/{id}`.
+2. **Browser (Chromium):** `NotesPaneBody` — Today button visible and triggers navigation. `PagePaneBody` — chrome options present/absent by `dailyPage`. `CreatePanel` — "Open today" dispatches `open-today`.
 3. **Guards (unit/node):** `dailyCutover.guards.test.ts` — G1–G7 assertions above.
 4. **Typecheck:** `bun typecheck` — `PaneRouteId` exhaustive registries and the route/header model compile clean after removing `daily`/`dailyDate`.
 5. **Integration:** Manual verification: navigate to `/daily`, confirm redirect to `/notes`; click Today, confirm `/pages/{uuid}` opens with the correct date title; open yesterday, confirm previous day's page loads.
@@ -420,7 +445,8 @@ grep -q "get_daily_note_by_date" python/nexus/api/routes/notes.py
 | `apps/web/src/app/(authenticated)/daily/page.tsx` | **EDIT** → server redirect to `/notes` |
 | `apps/web/src/app/(authenticated)/daily/[localDate]/page.tsx` | **EDIT** → server redirect to `/notes` |
 | `apps/web/src/lib/notes/openToday.ts` | **CREATE** |
-| `apps/web/src/lib/notes/api.ts` | **EDIT** — add `dailyNote` to `NotePage`, update `normalizePage` |
+| `apps/web/src/lib/notes/pageContract.ts` | **EDIT** — own exact `NotePage.dailyPage` Presence decoding |
+| `apps/web/src/lib/notes/api.ts` | **EDIT** — delegate Page decoding to `pageContract.ts` |
 | `apps/web/src/lib/navigation/destinations.ts` | **EDIT** — remove `today` entry |
 | `apps/web/src/lib/panes/paneRouteModel.ts` | **EDIT** — remove `daily`/`dailyDate` from union + `PANE_ROUTE_MODELS` |
 | `apps/web/src/lib/panes/paneRouteTable.ts` | **EDIT** — remove `daily`/`dailyDate` from `PANE_ROUTE_META` |
@@ -438,13 +464,13 @@ grep -q "get_daily_note_by_date" python/nexus/api/routes/notes.py
 | `apps/web/src/lib/panes/paneResourceLocator.test.ts` | **EDIT** — remove daily locator assertions |
 | `apps/web/src/lib/launcher/launcherCutover.guards.test.ts` | **EDIT** — remove `/daily` from hrefs gate |
 | `apps/web/src/lib/panes/paneIdentity.test.ts` | **EDIT** — remove `daily_note_date` locator assertion (line 80) |
-| `apps/web/src/lib/notes/api.test.ts` | **EDIT** — add `dailyNote` normalization test |
+| `apps/web/src/lib/notes/pageContract.unit.test.ts` | **EDIT** — pin `dailyPage` Presence and rejection cases |
 | `apps/web/src/lib/panes/paneWarm.test.tsx` | **EDIT** — replace `/daily` exemplar in AC-8 test (lines 46–58) with a non-prefetchable route that stays in `PaneRouteId` (e.g. `/browse`) |
 | `apps/web/src/components/launcher/CreatePanel.test.tsx` | **EDIT** — update `onOpen` assertions (lines 139–144, 163–168) from `{ kind: "href", href: "/daily", … }` to `{ kind: "open-today" }` |
 | `apps/web/src/lib/workspace/bootstrap.server.test.ts` | **EDIT** — change fixture path on line 412 from `"/daily"` to a non-redirecting non-prefetchable path (e.g. `"/chat/new"`) |
 | `e2e/tests/share.spec.ts` | **EDIT** — update `href` assertion (line 25) from `"/daily"` to `"/notes"`; link name stays `"Open"` |
-| `python/nexus/schemas/notes.py` | **EDIT** — add `DailyNotePageSummaryOut`; `NotePageOut.daily_note` |
-| `python/nexus/services/notes.py` | **EDIT** — `_page_out` scalar join for `daily_note` |
+| `python/nexus/schemas/notes.py` | **EDIT** — add `DailyPageSummaryOut`; require `NotePageOut.daily_page` Presence |
+| `python/nexus/services/notes.py` | **EDIT** — `_page_out` lookup and nullable-to-Presence conversion |
 | `python/nexus/services/command_palette.py` | **EDIT** — remove `/daily` and `/daily/{date}` palette-target cases (lines 338–339, 386–387) since the pane routes die |
 
 ---
@@ -457,6 +483,6 @@ grep -q "get_daily_note_by_date" python/nexus/api/routes/notes.py
 
 **R-3. Route/header removal must be atomic.** Removing `daily` and `dailyDate` from `PaneRouteId` also removes their `PANE_ROUTE_MODELS` definitions and typed section-header contracts in the same change; there is no second standing-head map to sequence.
 
-**R-4. Dawn-write spec (#4) renders above `DailyNotePaneBody`.** If #4 is built concurrently against the old host, it will need a rebase onto this cutover's new host (`PagePaneBody`, gated on `page.dailyNote`). The coordination requirement is documented in §10 and in #4's own prerequisites.
+**R-4. Dawn-write spec (#4) renders above `DailyNotePaneBody`.** If #4 is built concurrently against the old host, it will need a rebase onto this cutover's new host (`PagePaneBody`, gated on Present `page.dailyPage`). The coordination requirement is documented in §10 and in #4's own prerequisites.
 
 **R-5. `paneIdentity.test.ts:80` asserts `daily_note_date` locator kind.** This is a direct test of the locator that dies in S4. The test is removed in S4. No other test covers this behavior after deletion.

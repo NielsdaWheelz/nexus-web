@@ -1,5 +1,12 @@
 # SOTA Chat Streaming Hard Cutover
 
+> **Generation-backend amendment (2026-08-31):**
+> [`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
+> supersedes every Codex-only wire, fixed profile/plan, `ChatTools`, and
+> single-call ledger statement below. This document remains authoritative only
+> for browser-facing Chat event coalescing, SSE cursor replay, cancellation,
+> reconnect, and smooth rendering of route-neutral generation events.
+
 Status: BUILT - 2026-06-20
 Author altitude: SME / staff
 Date: 2026-06-18 (spec) / 2026-06-20 (built)
@@ -12,22 +19,18 @@ piece landed 2026-06-20 — older transcript rows now skip re-render during
 streaming via `React.memo(MessageRow)` over referentially-stable row props
 (completed messages were already memoized in `MarkdownMessage`).
 
-Supersedes the chat/provider-streaming assumptions in:
+Supersedes the chat-streaming assumptions in:
 
-- `docs/cutovers/generation-run-harness-hard-cutover.md` sections that treat
-  `ModelChunk`, chat SSE `delta`, or char-count replay skipping as sufficient
-  long-term contracts.
-- `docs/cutovers/llm-provider-runtime-hard-cutover.md` where it documents the
-  current `ModelRuntime.stream()` chunk shape as final rather than as the
-  current implementation state.
+- Earlier chat contracts that treat `ModelChunk`, chat SSE `delta`, or
+  char-count replay skipping as sufficient long-term contracts.
 
 Does not supersede:
 
 - the durable generation harness;
-- `provider_runtime` as the only provider wire-protocol owner;
+- the private Codex generation host as the only generation wire owner;
 - `run_kit` as the durable event/terminal owner;
 - `/stream/*` as the browser-to-FastAPI SSE exception;
-- `llm_ledger` as the provider-call flight recorder;
+- `llm_ledger` as the unified generation execution ledger;
 - chat branching, prompt assembly, citations, search tools, or resource-subject
   chat ownership.
 
@@ -37,33 +40,33 @@ Does not supersede:
 
 Every chat in Nexus streams like a modern agent product: immediate local send,
 clear pre-token activity, smooth text arrival, visible tool intent as soon as
-the provider exposes it, prompt cancellation that actually aborts work, durable
+the Codex turn exposes it, prompt cancellation that actually aborts work, durable
 reconnect without duplicate or missing text, complete terminal usage/error
 recording, and reload parity.
 
 The architecture remains strict:
 
 ```text
-Provider SSE / HTTP stream
-  -> provider_runtime typed stream events
+private v2 UDS NDJSON stream
+  -> codex_generation_client typed frames
   -> Nexus chat run execution and durable event log
   -> /stream/chat-runs/{id}/events cursor tail
   -> frontend fold/reconcile state
   -> ChatSurface render and scroll behavior
 ```
 
-Transport is still a dumb pipe. Provider semantics still live in
-`../llm-calling`. Nexus still owns durable app state. The frontend still renders
-from typed domain events and reconciles against persisted truth.
+Transport is still a dumb pipe. The fixed plan and Codex wire semantics live at
+the generation boundary. Nexus still owns durable app state. The frontend still
+renders from typed domain events and reconciles against persisted truth.
 
 The cutover upgrades the weakest layer boundaries instead of papering over them:
 
-- `provider_runtime` stops exposing a coarse `ModelChunk` as the public stream
-  protocol.
-- Nexus stops treating provider text as a per-token DB commit stream.
+- Nexus maps the one bounded Codex frame stream into its durable product event
+  grammar.
+- Nexus stops treating host text frames as a per-frame DB commit stream.
 - Chat replay stops depending on assistant-text length heuristics.
 - Cancellation stops being only a local SSE detach or a flag checked after the
-  provider eventually yields.
+  generation stream eventually yields.
 - Tests stop proving only generic SSE plumbing and start proving live chat UX.
 
 ---
@@ -77,15 +80,16 @@ to swap SSE for WebSockets or import a chat framework wholesale.
 
 The professional move is to make each boundary carry the information it owns:
 
-- provider-runtime emits a typed, provider-faithful stream event union;
-- Nexus translates those events into a compact durable chat event grammar;
+- the private generation client exposes strict, contiguous v2 frames and one
+  closed terminal;
+- Nexus translates those frames into a compact durable chat event grammar;
 - `GET /chat-runs/{id}` can materialize a pending run from persisted events and
   return a cursor, so SSE resume starts after known state;
 - the frontend folds by event sequence, not by text length;
-- cancellation and timeout policy are explicit capability contracts;
-- observability measures first-token and streaming quality, not just final
-  success;
-- tests exercise provider tool streaming, reconnect, cancel, and long-message
+- cancellation and timeout policy come from the fixed chat plan;
+- observability measures first-visible-text and streaming quality, not just
+  final success;
+- tests exercise Codex/MCP tool streaming, reconnect, cancel, and long-message
   rendering as first-class behavior.
 
 The one-user prototype constraint changes scale choices, not correctness
@@ -111,72 +115,44 @@ the contracts remain the contracts a larger system would keep.
 - `useChatRunTail` is the chat multi-run orchestration layer over the generic
   stream client; `useChatMessageUpdates` RAF-batches text deltas into message
   state.
-- `provider_runtime` already captures opaque provider artifacts and enforces
-  retry-before-first-visible-stream-output.
+- `codex_generation_client` now owns the private v2 frame iterator; the durable
+  chat grammar below remains the browser-facing projection and never becomes a
+  second generation protocol.
 
-### 2.2 Current gaps this spec owns
+### 2.2 Streaming gaps this cut owns
 
-- `provider_runtime.ModelChunk` is too coarse. It lacks a stable event type
-  enum, provider event identity, item/content/tool indices, partial tool-call
-  deltas, timestamps, structured terminal cancel/fail events, and enough
-  metadata to build SOTA UI without provider leakage.
-- Tool calls are exposed only when arguments are complete and parseable. Modern
-  provider streams expose tool-call starts and partial inputs; SOTA UI can show
-  safe intent/progress before the tool executes.
-- Nexus persists each non-empty provider text chunk with a DB commit. This is
-  robust, but it can be unnecessarily write-heavy and jittery for long streams.
-- `useChatRunTail` replay suppression depends on persisted assistant text
-  length after reconcile. This is a pragmatic heuristic, not a durable cursor
-  contract.
-- Backend cancellation is checked while provider chunks arrive. A quiet provider
-  read can delay cancellation until the next chunk or timeout.
-- The UI has limited first-token/reconnect/activity state. Users see a pending
-  row and tool events once they occur, but not a complete live state machine.
-- Direct tests for chat-specific tailing, replay suppression, visible cancel,
-  real DB/HTTP streaming after open, browser reconnect, and live streaming tool
-  calls are missing or indirect.
-
-### 2.3 External SOTA signals
-
-The current major providers and AI UI libraries have converged on evented,
-multi-part streams:
-
-- OpenAI Responses models output items such as messages, function calls, and
-  reasoning items.
-- Anthropic Messages streams content-block lifecycle events, partial tool JSON,
-  thinking deltas, and signatures.
-- Gemini streams step events and thought signatures for stateless manual
-  continuation.
-- AI SDK UI distinguishes plain text streams from data streams and treats tool
-  call streaming as a first-class UI state.
-
-Nexus does not copy any one vendor's wire protocol. It normalizes the
-cross-provider ideas that matter: event kind, sequence, item identity, partial
-text, partial tool input, terminal status, usage, request id, opaque replay
-artifacts, and safe activity state.
+- Nexus must coalesce non-empty host text frames instead of committing each one.
+- `useChatRunTail` must resume by a persisted event cursor, never assistant-text
+  length.
+- Backend cancellation must race the generation read and invoke the private v2
+  cancel endpoint.
+- The UI needs a complete safe activity/reconnect/cancel state without hidden
+  reasoning content.
+- Direct tests must cover chat-specific tailing, visible cancel, DB/HTTP
+  streaming after open, browser reconnect, and Codex/MCP tool activity.
 
 ---
 
 ## 3. Hard-Cutover Posture
 
-- No public `ModelChunk` streaming contract after the cutover. If a private
-  adapter helper keeps the name during implementation, it must not be exported.
+- No direct-provider generation stream or Nexus-side alternative to the private
+  v2 UDS frame contract.
 - No old chat SSE event parser fallback. The frontend validates only the new
   event grammar.
 - No dual event names such as `delta` plus `assistant_text_delta`.
 - No frontend char-count replay skip.
-- No provider-specific branching in Nexus chat execution beyond reading the
-  provider-neutral stream event union.
+- No route-specific generation branching in Nexus chat execution; it consumes
+  only `GenerationFrame`.
 - No transport-driven execution path. The worker still owns the run; the stream
   only tails rows.
-- No hidden provider reasoning, prompt, API key, raw request body, or raw
-  provider stream data in product UI, logs, or persisted chat events.
+- No hidden reasoning, prompt, credential, raw command, native artifact, or raw
+  host frame in product UI, logs, or persisted chat events.
 - No WebSocket parallel path.
-- No automatic cross-provider/model fallback after a stream starts.
-- No retry after a visible text delta, tool event, or opaque provider artifact
-  escapes `provider_runtime`.
-- No structured-output streaming for chat unless the provider-runtime
-  capability contract and tests make it explicit.
+- No fallback or automatic redispatch after host acceptance. A stream loss
+  without a terminal leaves the durable generation `Uncertain`.
+- No product structured-output stream for chat. The admitted route-neutral
+  generation emits text/tool/usage/native/terminal frames under the current
+  generation contract.
 - No compatibility migrations that preserve old event rows as first-class data.
   If local/dev rows exist, the migration can delete or normalize them as a
   one-time hard cutover.
@@ -188,35 +164,38 @@ contract. Keeping an old name as a second accepted payload shape is not allowed.
 
 ## 4. Goals
 
-G1. Provider-faithful stream protocol. `provider_runtime` exposes one typed
-stream event union with explicit text, tool, artifact, usage, terminal, retry,
-timeout, and cancellation semantics.
+G1. One generation stream seam. Chat consumes route-neutral `GenerationEvent`
+values from the exact admitted backend; selection, bounds, route-local wire,
+terminal, and uncertainty rules stay owned by the
+[generation backends cutover](generation-backends-hard-cutover.md).
 
-G2. Smooth durable chat text. Nexus coalesces provider text into bounded,
-low-latency durable events instead of committing every provider chunk.
+G2. Smooth durable chat text. Nexus coalesces host text frames into bounded,
+low-latency durable events instead of committing every host frame.
 
 G3. Cursor-based replay. Chat reconcile returns a materialized pending message
 plus an event cursor. SSE resumes after that cursor. No text-length replay skip.
 
 G4. Real cancellation. A user stop action calls the backend cancel route and the
-worker races provider reads against cancellation, then closes the provider
-stream and emits a normalized terminal event.
+worker races generation reads against cancellation, invokes private
+`POST /v2/generations/{request_id}/cancel`, and waits for the normalized
+terminal when the stream remains available.
 
 G5. Rich safe activity. Chat can show safe live states such as queued,
-reasoning, writing, calling tool, searching, reading, reconnecting, cancelling,
+thinking, writing, calling tool, searching, reading, reconnecting, cancelling,
 cancelled, failed, and complete without exposing hidden reasoning content.
 
 G6. One frontend stream fold. Full chat, resource chat, reader/media quote chat,
 and library-intelligence subject chat all flow through `useConversation`,
 `useChatRunTail`, and `useChatMessageUpdates`.
 
-G7. Observable streaming quality. Operator state includes time-to-first-provider
-event, time-to-first-visible-text, provider event count, durable flush count,
-SSE reconnect count, cancel latency, terminal cause, and provider request ids.
+G7. Observable streaming quality. Operator state includes
+time-to-first-visible-text, durable flush count, SSE reconnect count, cancel
+latency, and terminal cause without adding provider diagnostics to the ledger.
 
-G8. Production-grade proof. Tests cover provider stream adapters, Nexus durable
-mapping, DB/HTTP streaming after connection open, frontend reconnect/cancel,
-long-message rendering, and live provider streaming tool calls.
+G8. Production-grade proof. Tests cover the production v2 client against a
+protocol-valid UDS peer, Nexus durable mapping, DB/HTTP streaming after
+connection open, frontend reconnect/cancel, long-message rendering, and the
+protected Codex/MCP smoke.
 
 ---
 
@@ -225,28 +204,27 @@ long-message rendering, and live provider streaming tool calls.
 N1. No WebSockets, WebRTC, Realtime API, or bidirectional voice/audio transport
 for text chat. SSE remains correct for durable text/event delivery.
 
-N2. No provider-managed conversation state as the default. Nexus remains
-stateless at the provider boundary and replays its own conversation/tool state.
+N2. No native continuation identifier in product intent. Each chat generation
+opens one native turn; Nexus owns conversation, prompt, tool, and replay state.
 
-N3. No streaming hidden reasoning content. Provider artifacts may be captured
-and replayed, but never displayed or logged with content.
+N3. No streaming hidden reasoning or native artifact content. Such frames are
+never product events, logs, or ledger data.
 
 N4. No generic stream broker. Postgres event rows plus LISTEN/NOTIFY are enough
 for the prototype and already match repo doctrine.
 
 N5. No token-perfect UI guarantee. The UI promises smooth text and exact final
-content, not one DOM update per provider token.
+content, not one DOM update per host text frame.
 
 N6. No rewrite of chat branching, search, citations, trust trail, resource
 subjects, or prompt assembly except where the streaming contract directly
 touches them.
 
-N7. No token streaming for oracle or library-intelligence synthesis. They keep
-their structured generation contracts and share only the generic stream client
-and terminal grammar where applicable.
+N7. No product token streaming for Oracle or library-intelligence synthesis.
+They use the same generation boundary but keep their domain event grammar.
 
-N8. No usage/cost dashboard. New metrics are persisted/logged for operators and
-tests, not surfaced as product UI.
+N8. No usage/price dashboard. Streaming metrics are bounded operator logs or
+test evidence, not product UI or new ledger columns.
 
 ---
 
@@ -254,8 +232,8 @@ tests, not surfaced as product UI.
 
 In scope:
 
-- `../llm-calling` / `provider_runtime` public stream API, adapters, catalog
-  stream capabilities, fake runtime, unit/golden/live tests.
+- the narrow `GenerationFrame`-to-chat-event adapter; generation wire and plan
+  implementation remain owned by the Codex generation cutover;
 - Nexus chat run execution, event schemas, DB event grammar, coalescing,
   cancellation, response materialization, telemetry, tests, and migrations.
 - Nexus frontend chat stream parsing/folding, status state, stop action, scroll
@@ -264,8 +242,7 @@ In scope:
 
 Out of scope:
 
-- Provider-runtime non-chat `generate`, `embed`, and `transcribe` contracts
-  except where shared types or catalog capabilities must be renamed.
+- embeddings and transcription;
 - Oracle/LI/media stream UI changes beyond ensuring no duplicate generic stream
   client emerges.
 - Android shell changes.
@@ -283,143 +260,24 @@ Definition of "all chats":
 
 ## 7. Final Architecture
 
-### 7.1 Provider-runtime stream protocol
+### 7.1 Generation stream seam
 
-`ModelRuntime.stream(call, *, key, timeout_s, cancel=None)` returns:
+Chat executes the persisted `GenerationSpec` through `GenerationService` and
+receives bounded route-neutral `GenerationEvent` values from either backend.
+The adapter owns route-specific continuity and validates exactly one terminal;
+Chat owns only their projection into durable product events. A frozen
+`ModelTools` plan alone admits tool use, approvals are never granted, and
+unknown/gapped/missing-terminal streams fail closed.
 
-```python
-AsyncIterator[ModelStreamEvent]
-```
+This document owns only the mapping into durable chat events. Command shape,
+exact-selection resolution, frame bounds, cancellation, normalized terminal
+failures, parent/child generation replay, and tool-loop continuations are
+defined by
+[`generation-backends-hard-cutover.md`](generation-backends-hard-cutover.md)
+and [`../modules/llms.md`](../modules/llms.md). This streaming document owns no
+catalog, credential, route, fallback, or retry policy.
 
-`ModelStreamEvent` is a strict tagged union. Common fields:
-
-```python
-type: Literal[
-    "stream_start",
-    "activity",
-    "text_delta",
-    "tool_call_start",
-    "tool_call_delta",
-    "tool_call_done",
-    "provider_artifact",
-    "usage_delta",
-    "completed",
-    "incomplete",
-    "failed",
-    "cancelled",
-]
-sequence: int
-provider: ProviderName
-model: str
-route: str | None
-provider_event_type: str | None
-provider_event_id: str | None
-provider_request_id: str | None
-item_id: str | None
-item_index: int | None
-content_index: int | None
-tool_call_id: str | None
-tool_call_index: int | None
-created_at_ms: int
-retry_attempt: int
-raw_metadata: Mapping[str, JsonValue]
-```
-
-Event-specific payloads:
-
-- `stream_start`: provider request accepted/started, when observable.
-- `activity`: safe non-secret phase only:
-  `queued | thinking | writing | tool_calling | waiting | retrying`.
-- `text_delta`: visible text only, non-empty.
-- `tool_call_start`: tool name/call identity known, arguments may be empty.
-- `tool_call_delta`: partial JSON argument text and optional partial parsed
-  object when safe; never executed.
-- `tool_call_done`: complete parsed `ToolCall`; malformed arguments produce
-  `failed` with `TOOL_ARGUMENTS_INVALID`.
-- `provider_artifact`: opaque `ProviderArtifact` only; not stringify-safe.
-- `usage_delta`: optional provider usage progress if a provider exposes it.
-- `completed`: terminal success with final usage, status, request id, attempts.
-- `incomplete`: terminal provider incomplete state with usage and details.
-- `failed`: terminal typed `ModelCallError` data.
-- `cancelled`: terminal cancellation metadata.
-
-Terminal invariants:
-
-- Exactly one terminal event: `completed`, `incomplete`, `failed`, or
-  `cancelled`.
-- Usage/status/incomplete details are terminal unless emitted as explicit
-  `usage_delta`.
-- `provider_artifact` may appear before any visible text and still counts as
-  "stream output escaped" for retry safety.
-- After any `text_delta`, `tool_call_*`, or `provider_artifact` event escapes,
-  provider-runtime must not retry the provider request.
-- Event `sequence` is provider-runtime local and monotonic per call. Nexus maps
-  it into durable `chat_run_events.seq`; it never persists provider sequence as
-  the stream cursor.
-
-`ModelChunk` is deleted from the exported API. `ModelResponse` remains for
-non-streamed calls.
-
-### 7.2 Provider-runtime adapter architecture
-
-Adapters parse provider wire events into low-level provider-native records.
-A shared stream assembler owns the cross-provider mechanics:
-
-- monotonic event sequences;
-- terminal enforcement;
-- retry-attempt attachment;
-- provider request id propagation;
-- tool-call argument accumulation;
-- parsed-tool validation;
-- provider-artifact validation;
-- terminal usage/status mapping;
-- visible-output retry cutoff;
-- cancellation and timeout classification.
-
-Provider adapters remain responsible only for provider-specific parsing and
-request-body construction:
-
-- OpenAI Responses: output item lifecycle, function-call argument deltas,
-  reasoning encrypted content as opaque artifacts, terminal completed/incomplete
-  events, request id, usage.
-- Anthropic Messages: message/content-block lifecycle, input JSON deltas,
-  thinking/signature artifacts, message delta/stop usage.
-- Gemini: generateContent or Interactions stream mapping, function-call ids,
-  thought signatures, thought text stripping, terminal finish reason and usage.
-- OpenAI-compatible routes: chat-completions deltas, tool-call accumulation,
-  provider-specific usage/request-id where available.
-
-### 7.3 Provider capability contract
-
-`provider_runtime.catalog.ModelCapabilities` gains a nested `stream` contract:
-
-```python
-@dataclass(frozen=True)
-class StreamCapabilities:
-    supported: bool
-    text_deltas: bool
-    activity_events: bool
-    tool_call_start: bool
-    tool_call_delta: bool
-    tool_call_done: bool
-    provider_artifacts: bool
-    usage_delta: bool
-    terminal_usage: bool
-    native_event_ids: bool
-    provider_request_id: bool
-    structured_output_streaming: bool
-    cancellation: Literal["http_close", "best_effort", "none"]
-    default_connect_timeout_s: float
-    default_read_idle_timeout_s: float
-    default_total_timeout_s: float
-    max_total_timeout_s: float
-```
-
-Nexus reads only the UI-safe projection it needs: streaming supported, tool
-streaming supported, activity supported, cancellation supported, and timeout
-policy. Internal provider details stay backend-owned.
-
-### 7.4 Nexus durable chat event grammar
+### 7.2 Nexus durable chat event grammar
 
 Chat event types after the cutover:
 
@@ -443,11 +301,12 @@ Payload principles:
 
 - Every event includes `assistant_message_id` when it applies to assistant
   output.
-- Every provider-derived event includes `provider_event_seq_start` and
-  `provider_event_seq_end`.
+- Every generation-frame-derived event includes the retained wire fields
+  `provider_event_seq_start` and `provider_event_seq_end`; they carry the host
+  frame sequence and do not identify a provider route.
 - Every durable event has DB `seq`; that DB `seq` is the only replay cursor.
 - `assistant_text_delta.text` is non-empty visible text. It may coalesce many
-  provider `text_delta` events.
+  host `text` frames.
 - Tool-call delta events are safe to render as partial input, but never execute
   tools. Execution starts only after `tool_call_done`.
 - `tool_result` is the shared result event for app search, web search,
@@ -456,9 +315,9 @@ Payload principles:
 - `done` is the sole terminal event and carries:
   `{status, error_code, final_chars, last_provider_event_seq, usage?, cancelled?}`.
 
-### 7.5 Backend coalescing
+### 7.3 Backend coalescing
 
-Provider text events pass through a bounded coalescer before durable append:
+Host text frames pass through a bounded coalescer before durable append:
 
 ```python
 CHAT_TEXT_FLUSH_INTERVAL_MS = 33
@@ -470,9 +329,9 @@ Flush triggers:
 
 - interval elapsed;
 - char/byte cap reached;
-- provider activity changes away from writing;
+- assistant activity changes away from writing;
 - tool event arrives;
-- provider artifact arrives;
+- a non-text generation frame arrives;
 - cancellation requested;
 - stream terminal event arrives;
 - local max assistant length approaches;
@@ -482,7 +341,7 @@ The coalescer is local to `execute_chat_run`. It does not own transport and it
 does not buffer terminal events. It reduces write volume while preserving a
 sub-frame UI cadence once the frontend RAF-batches.
 
-### 7.6 Cursor-based materialization and replay
+### 7.4 Cursor-based materialization and replay
 
 `GET /chat-runs/{id}` returns a server-materialized run snapshot:
 
@@ -491,7 +350,7 @@ sub-frame UI cadence once the frontend RAF-batches.
   "run": { "...": "existing fields" },
   "messages": [],
   "stream_state": {
-    "status": "queued|running|complete|failed|cancelled|interrupted",
+    "status": "queued|running|complete|error|cancelled",
     "last_event_seq": 42,
     "folded_event_seq": 42,
     "assistant_current_text": "...",
@@ -515,7 +374,7 @@ Rules:
 This is the key replay cutover. The source of truth is event sequence, not the
 number of rendered characters.
 
-### 7.7 Cancellation
+### 7.5 Cancellation
 
 Frontend stop action:
 
@@ -528,43 +387,26 @@ Frontend stop action:
 Backend execution:
 
 - cancel route sets `chat_runs.cancel_requested_at`;
-- worker races provider stream reads against a cancellation watcher;
+- worker races generation-frame reads against a cancellation watcher;
 - cancellation watcher is push-first. Bounded polling is permitted only when it
   is documented with `justify-polling` and named timing constants;
-- when cancel wins, worker closes the provider stream, records abandoned or
-  cancelled in `llm_ledger`, flushes any text coalescer buffer, finalizes the
-  run with `E_CANCELLED`, and appends terminal `done`.
+- when cancel wins, worker invokes private
+  `POST /v2/generations/{request_id}/cancel`, flushes any text coalescer buffer,
+  and keeps consuming the still-open stream. A returned cancelled terminal is
+  staged with `Completed`, finalizes `E_CANCELLED`, and appends `done`; a lost
+  accepted stream without terminal remains `Uncertain` and emits no fabricated
+  terminal.
 
-Provider-runtime:
+### 7.6 Timeout policy
 
-- accepts a cancellation signal;
-- closes the underlying HTTP stream where possible;
-- emits terminal `cancelled` if cancellation occurs inside the runtime after
-  the request started;
-- exposes cancellation capability in the catalog.
+Chat timeout is frozen in the admitted `GenerationSpec`. `generation_policy.py`
+owns the 900-second Chat tool-plan ceiling plus session-open, runtime-close,
+transport, and stream bounds; the browser and chat caller cannot tune them. A closed typed
+timeout/output-limit terminal becomes the corresponding product failure. Loss
+after host acceptance without a terminal preserves partial durable text and the
+`Uncertain` generation; it is not a timeout card or automatic redispatch.
 
-### 7.8 Timeout policy
-
-Chat does not use one hard-coded timeout for every model. Timeout policy is:
-
-- connect timeout;
-- read-idle timeout;
-- total timeout;
-- provider-runtime retry deadline;
-- Nexus job lease.
-
-Provider-runtime catalog supplies model/route defaults and max values. Nexus
-chat picks a per-call policy from model capability and operation type. Long
-reasoning models can have a larger total timeout without hiding a dead stream.
-
-Terminal mapping:
-
-- no bytes before visible output: runtime may retry if policy allows;
-- timeout after visible output: no retry; Nexus finalizes interrupted/failed
-  with partial output preserved and retry affordance;
-- Nexus job lease expiry: worker dead-letter/finalizer owns the terminal state.
-
-### 7.9 Frontend stream state
+### 7.7 Frontend stream state
 
 `useChatRunTail` exposes per-run state to `useConversation`:
 
@@ -588,10 +430,11 @@ type ChatRunLiveState =
 - stop button while queued/running/reconnecting/cancelling is meaningful;
 - safe activity text or existing gutter cue before first text;
 - reconnect indicator only when it materially affects the run;
-- partial tool input only if provider/runtime marks it safe and parsed enough;
+- partial tool input only if the strict durable tool event marks it safe and
+  parsed enough;
 - no hidden reasoning content.
 
-### 7.10 Frontend text folding and rendering
+### 7.8 Frontend text folding and rendering
 
 `useChatMessageUpdates` remains the fold layer, but it folds by event sequence:
 
@@ -615,45 +458,12 @@ type ChatRunLiveState =
 
 ## 8. API Design
 
-### 8.1 Provider-runtime public API
+### 8.1 Generation boundary API
 
-```python
-async for event in runtime.stream(
-    call,
-    key=provider_key,
-    timeout_s=timeout.total_s,
-    cancel=cancel_signal,
-):
-    match event.type:
-        case "text_delta":
-            ...
-        case "tool_call_delta":
-            ...
-        case "completed":
-            ...
-```
-
-Public exports:
-
-- `ModelStreamEvent`
-- `ModelStreamStart`
-- `ModelStreamActivity`
-- `ModelTextDelta`
-- `ModelToolCallStart`
-- `ModelToolCallDelta`
-- `ModelToolCallDone`
-- `ModelProviderArtifactEvent`
-- `ModelUsageDelta`
-- `ModelStreamCompleted`
-- `ModelStreamIncomplete`
-- `ModelStreamFailed`
-- `ModelStreamCancelled`
-- `StreamCapabilities`
-- `CancelSignal` / protocol type if needed
-
-Removed public export:
-
-- `ModelChunk`
+There is no product generation-stream API in this cutover. Chat consumes the
+production `CodexGenerationClient` frame iterator and cancel control through
+the shared execution service. The private `/v2/generations` command, frame, and
+terminal schemas are not duplicated here.
 
 ### 8.2 Nexus backend API
 
@@ -694,92 +504,29 @@ surface-level parser is allowed.
 
 ## 9. Capability Contract
 
-Provider-runtime capability truth:
-
-- stream event support by model/route;
-- tool-call streaming granularity;
-- provider artifacts;
-- usage timing;
-- request id availability;
-- cancellation behavior;
-- timeout limits;
-- structured-output streaming support.
-
-Nexus chat capability truth:
-
-```python
-ChatStreamingCapability(
-    model_ref=...,
-    can_stream_text=True,
-    can_stream_tool_inputs=cap.stream.tool_call_delta,
-    can_cancel=cap.stream.cancellation != "none",
-    activity_level="provider" | "derived" | "minimal",
-    timeout_policy=...,
-)
-```
-
-Frontend model UI uses this only to render honest affordances:
-
-- hide stop only if cancellation is truly unsupported;
-- do not show partial tool inputs when provider/runtime cannot produce them;
-- show generic activity if provider has no activity events;
-- never infer unsupported features from provider name.
+The exact per-run generation selection and independently admitted Chat tool plan
+own incremental text, route-neutral tool execution, explicit cancel,
+stream/timeout bounds, and one closed terminal. The frontend receives safe
+durable activity and tool projections only; it never infers a route or fallback
+from stream events. A partial tool input renders only when the strict Chat event
+carries a safe projection and is never executable truth.
 
 ---
 
 ## 10. Files To Change
 
-### 10.1 `../llm-calling`
-
-- `src/provider_runtime/types.py`
-  - delete exported `ModelChunk`;
-  - add stream event union and invariants;
-  - add `StreamCapabilities` or move capability type to `catalog.py`.
-- `src/provider_runtime/__init__.py`
-  - export new event types;
-  - remove `ModelChunk`.
-- `src/provider_runtime/runtime.py`
-  - `ModelRuntime.stream()` returns `AsyncIterator[ModelStreamEvent]`;
-  - accepts cancellation signal and timeout policy.
-- `src/provider_runtime/_adapter_runtime.py`
-  - shared stream assembler;
-  - retry cutoff on visible events/artifacts;
-  - terminal/cancel/failure enforcement.
-- `src/provider_runtime/openai.py`
-- `src/provider_runtime/anthropic.py`
-- `src/provider_runtime/gemini.py`
-- `src/provider_runtime/openai_compatible.py`
-  - parse provider wire streams into typed events;
-  - emit tool-call starts/deltas/done where possible;
-  - emit opaque provider artifacts;
-  - preserve terminal usage/status/request ids.
-- `src/provider_runtime/catalog.py`
-  - add `stream` capability block per model/route.
-- `src/provider_runtime/testing.py`
-  - scripted stream events, not chunks.
-- Tests:
-  - `tests/test_types.py`
-  - `tests/test_runtime.py`
-  - `tests/test_openai.py`
-  - `tests/test_anthropic.py`
-  - `tests/test_gemini.py`
-  - `tests/test_openai_compatible.py`
-  - `tests/test_catalog.py`
-  - `tests/test_testing.py`
-  - `tests/live/test_provider_matrix.py`
-
-### 10.2 Nexus backend
+### 10.1 Nexus backend
 
 - `python/nexus/schemas/conversation.py`
   - replace chat run SSE event union;
   - add payloads for activity/tool deltas/tool results;
   - remove old `delta`, `tool_call`, `retrieval_result` payloads.
 - `python/nexus/services/chat_runs.py`
-  - consume `ModelStreamEvent`;
+  - consume `GenerationFrame`;
   - add cancellation race;
   - use text coalescer;
-  - map provider tool events to durable tool events;
-  - finalize terminal status from stream terminal events.
+  - map host/tool frames to durable product events;
+  - finalize only from the closed generation terminal.
 - `python/nexus/services/chat_run_event_store.py`
   - validate new event grammar;
   - append coalesced events;
@@ -790,9 +537,7 @@ Frontend model UI uses this only to render honest affordances:
 - `python/nexus/services/chat_run_finalize.py`
   - terminal `done` payload fields align with new grammar.
 - `python/nexus/services/llm_ledger.py`
-  - stream-quality metrics;
-  - cancellation terminal outcome;
-  - first-visible/first-provider timings.
+  - unified staged generation terminal and normalized usage only.
 - `python/nexus/api/routes/chat_runs.py`
   - response schema for `stream_state`;
   - cancel route semantics if needed.
@@ -800,21 +545,18 @@ Frontend model UI uses this only to render honest affordances:
 - `python/nexus/api/routes/_sse.py`
   - route likely unchanged; tests pin no regression.
 - `python/nexus/db/models.py`
-  - chat event CHECK update;
-  - optional streaming metrics columns.
+  - chat event CHECK update.
 - `migrations/alembic/versions/*`
-  - hard-cutover event CHECK/migration;
-  - optional metrics columns.
+  - hard-cutover event CHECK/migration.
 - Tests:
   - `python/tests/test_chat_runs.py`
   - `python/tests/test_chat_run_stream.py`
   - `python/tests/test_sse.py`
   - `python/tests/test_stream_listen.py`
-  - `python/tests/test_openai_reasoning_contracts.py`
   - `python/tests/test_run_kit.py`
   - `python/tests/test_cutover_negative_gates.py`
 
-### 10.3 Nexus frontend
+### 10.2 Nexus frontend
 
 - `apps/web/src/lib/api/sse/events.ts`
   - new chat event decoders.
@@ -856,9 +598,9 @@ Frontend model UI uses this only to render honest affordances:
   - `apps/web/src/lib/api/useGenerationRun.test.tsx`
   - E2E chat/reconnect/cancel specs.
 
-### 10.4 Docs
+### 10.3 Docs
 
-- Update `docs/modules/llms.md` to describe `ModelStreamEvent`.
+- Update `docs/modules/llms.md` only at the narrow Codex-frame/chat-event seam.
 - Update `docs/modules/chat.md` to describe new chat stream event grammar and
   cursor-based replay.
 - Update `docs/architecture.md` SSE/chat sections if names or invariants change.
@@ -870,17 +612,14 @@ Frontend model UI uses this only to render honest affordances:
 
 | Current pattern | Final owner |
 |---|---|
-| Public `ModelChunk` with optional fields | `ModelStreamEvent` tagged union |
-| Per-adapter tool-call accumulation semantics | Shared provider-runtime stream assembler |
-| Per-adapter terminal usage/status quirks | Shared terminal event construction |
-| Nexus per-provider stream assumptions | Provider-neutral stream event match |
-| Per-provider chunk -> DB event append per text chunk | Chat text coalescer |
+| Generation wire interpretation in chat | `codex_generation_client` `GenerationFrame` |
+| Host text frame -> DB append per frame | Chat text coalescer |
 | Frontend char-count replay skip | Backend snapshot cursor + SSE `after` |
-| Local SSE abort as "stop" | Backend cancel route + provider stream close |
+| Local SSE abort as "stop" | Backend cancel route + private v2 cancel |
 | Generic pending gutter only | Live state machine |
 | Tool status only after complete tool call | tool start/delta/done/result timeline |
 | Generic SSE tests only | Direct chat-tail/reconnect/cancel tests |
-| Live text-stream test only in provider matrix | Live streaming tool-call + artifact tests |
+| Surface-local stream openers | `openGenerationRunStream` / `useChatRunTail` |
 
 Do not delete:
 
@@ -891,7 +630,6 @@ Do not delete:
 - `useChatRunTail` module path;
 - `useChatMessageUpdates`;
 - `ChatSurface` scroll ownership;
-- `ProviderArtifact` opacity;
 - `llm_ledger`;
 - `/stream/*` token model.
 
@@ -902,32 +640,26 @@ Do not delete:
 ### 12.1 Jobs
 
 The worker still owns execution. Stream disconnects never affect in-flight
-work. Job retries own durable re-execution only before user-visible streamed
-output has become terminal app state. Provider-runtime retries remain inside
-one provider operation and stop after visible stream events escape.
+work. The generation owner's `Prepared | Uncertain | Completed` journal owns
+dispatch: an accepted stream loss is never automatically redispatched, and the
+exact pre-accept capacity refusal is the only generation reschedule back to
+`Prepared`.
 
 ### 12.2 `llm_ledger`
 
-`observed_generate_stream` wraps the new `ModelStreamEvent` iterator. It records:
-
-- first provider event timestamp;
-- first visible text timestamp;
-- first tool event timestamp;
-- provider event count;
-- terminal event type;
-- cancellation requested/completed timestamps;
-- provider request id;
-- usage;
-- retry attempts.
-
-The ledger remains operator-only and never stores hidden reasoning artifacts.
+The unified ledger is staged by the generation owner, not by this streaming
+adapter. Its one row records the fixed plan/revision, Codex route, normalized
+terminal and usage, SDK/runtime versions, acceptance, and latency. It stores no
+price, attempt trace, provider request id, hidden reasoning, raw frame, or
+reconnect/flush telemetry; those last product-transport facts may be bounded
+logs.
 
 ### 12.3 Trust Trail
 
 The trust trail remains the product read model over durable rows. Live stream
 events fold into the same frontend `trust_trail` shape that reload returns.
-Provider activity events may inform UI state, but hidden provider reasoning
-does not become trust-trail content.
+Safe assistant activity events may inform UI state, but hidden reasoning and
+native frames do not become trust-trail content.
 
 ### 12.4 Citations
 
@@ -948,11 +680,13 @@ to use the shared `/stream/*` client; they do not adopt chat text/tool event
 grammar. Negative gates must prevent new per-surface stream token/reconnect
 implementations from appearing while this work is in flight.
 
-### 12.7 BYOK, Budget, And Rate Limits
+### 12.7 Generation admission
 
-No special streaming path bypasses key resolution, budget reservation, rate
-limit slots, or ledger rows. Cancellation releases reserved budget/slots in the
-same owner layer as other terminal paths.
+Streaming uses the operator's `codex-personal` subscription and the shared
+turn-slot/concurrency admission. It has no BYOK, token-budget reservation,
+provider price, or generation entitlement branch. Cancellation and terminal
+cleanup release the same admitted host turn; the browser stream never owns that
+resource.
 
 ### 12.8 SSR First Paint
 
@@ -964,9 +698,8 @@ render pending rows quickly using existing shell/bootstrap behavior.
 
 ## 13. Key Decisions
 
-1. Replace the public `ModelChunk` stream contract with `ModelStreamEvent`.
-   Optional-field chunks are too lossy for tool streaming, cursor replay, and
-   terminal semantics.
+1. Keep one generation wire: strict v2 `GenerationFrame` values over private
+   UDS. This cutover begins only at their durable chat-event projection.
 
 2. Keep SSE and `/stream/*`. The transport is already correct for replayable
    durable events; the missing sophistication is event contracts and folding.
@@ -985,7 +718,7 @@ render pending rows quickly using existing shell/bootstrap behavior.
    lifecycle tool, not user stop.
 
 7. Show safe activity, not hidden reasoning. "Thinking" is a phase; reasoning
-   content remains opaque provider continuity data.
+   and native continuity content never becomes product data.
 
 8. Tool-call deltas are render-only until `tool_call_done`. Partial input is
    useful for UI but not executable truth.
@@ -994,37 +727,37 @@ render pending rows quickly using existing shell/bootstrap behavior.
    hook cannot own branch visibility, active-path filtering, optimistic
    messages, or multi-run chat-specific reconciliation.
 
-10. Provider-runtime live tests must include streaming tool calls. Non-streamed
-    forced tool continuation does not prove the chat path.
+10. The protected Codex/MCP smoke must prove incremental text, one tool call,
+    continuation, cancellation, and the exact fixed plan/wire pins.
 
 ---
 
 ## 14. Acceptance Criteria
 
-AC-1 Provider stream contract. `provider_runtime.__init__` exports
-`ModelStreamEvent` and does not export `ModelChunk`. Unit tests prove strict
-event invariants and exactly one terminal event.
+AC-1 Generation stream seam. Chat consumes only the production v2
+`GenerationFrame` iterator; sequence is contiguous, terminal is last, and no
+direct-provider generation stream or compatibility decoder exists.
 
-AC-2 Provider adapter fidelity. OpenAI, Anthropic, Gemini, and OpenAI-compatible
-adapters produce text, tool start/delta/done, provider artifact, usage, request
-id, and terminal events where supported. Unsupported features are represented by
-catalog capabilities, not silent missing fields.
+AC-2 Frame projection. Host text/tool/usage frames map exhaustively into the
+closed durable chat grammar; native/permission/policy violations never leak raw
+content and follow the generation terminal contract.
 
-AC-3 Runtime retry/cancel. Runtime retries streaming only before any visible
-text, tool event, or provider artifact escapes. Cancellation closes the provider
-stream and yields/raises a normalized cancellation outcome.
+AC-3 Uncertainty and cancel. A proven pre-accept capacity refusal alone may
+restore `Prepared`; accepted loss without terminal remains `Uncertain` and is
+not redispatched. Cancel invokes the private v2 endpoint and a returned
+cancelled terminal completes the same generation.
 
-AC-4 Live provider streaming tools. The live matrix includes streaming forced
-tool-call tests with continuation for every capable provider/model route, plus
-reasoning/artifact replay where supported.
+AC-4 Protected streaming tools. The fixed Codex/MCP smoke proves incremental
+text, one declared tool call and continuation, cancellation, exact model/effort,
+and exact SDK/runtime/MCP pins.
 
 AC-5 New chat event grammar. Backend DB CHECK, Pydantic schemas, frontend SSE
 parsers, and tests accept only `assistant_activity`, `assistant_text_delta`,
 `tool_call_start`, `tool_call_delta`, `tool_call_done`, `tool_result`,
 `citation_index`, `context_ref_added`, `meta`, and `done`.
 
-AC-6 Coalescing. A long provider text stream writes fewer durable text events
-than provider text deltas while preserving configured latency bounds and final
+AC-6 Coalescing. A long host text stream writes fewer durable text events than
+host text frames while preserving configured latency bounds and final
 answer exactness.
 
 AC-7 Cursor replay. Reconnect after partial output performs
@@ -1033,13 +766,14 @@ AC-7 Cursor replay. Reconnect after partial output performs
 skip exists.
 
 AC-8 Cancellation UX. A visible stop action cancels a running chat, backend
-closes provider work promptly, terminal `done {status:"cancelled"}` arrives,
-budget/slots are released, and local UI never reports a completed answer.
+invokes private generation cancel promptly, terminal
+`done {status:"cancelled"}` arrives when the host terminal is observed, the
+turn slot is released, and local UI never reports a completed answer.
 
-AC-9 Partial-output failure. If a provider stream fails after visible output,
-Nexus does not provider-retry. It preserves partial text, records ledger/error
-detail, emits terminal failed/interrupted state, and offers the existing retry
-affordance.
+AC-9 Accepted stream loss. If the host stream is lost after acceptance without
+a terminal, Nexus preserves partial text and leaves the generation `Uncertain`;
+it emits no fabricated failed/interrupted terminal and offers no automatic
+generation retry.
 
 AC-10 Frontend smoothness. Text deltas are RAF-batched, older message rows do
 not remount every frame, scroll anchoring (per
@@ -1053,9 +787,10 @@ complete states without exposing hidden reasoning.
 AC-12 All chat adapters. Full chat and every resource-subject/reader/media/LI
 chat adapter use the same `useConversation` -> `useChatRunTail` stream path.
 
-AC-13 Observability. `llm_calls` or associated logs expose first provider event,
-first visible text, provider event count, durable flush count, SSE reconnects,
-cancel latency, terminal cause, and provider request id.
+AC-13 Observability. `llm_calls` exposes only its fixed plan, normalized
+terminal/usage, versions, acceptance, and latency contract. Bounded associated
+logs may expose first visible text, durable flush count, SSE reconnects, cancel
+latency, and terminal cause without route/request diagnostics.
 
 AC-14 Real DB/HTTP stream test. A test opens
 `/stream/chat-runs/{id}/events`, inserts events after the connection is open,
@@ -1069,7 +804,8 @@ state.
 
 ## 15. Negative Gates
 
-- No exported `ModelChunk` from `provider_runtime`.
+- No direct-provider generation stream, `ModelChunk`/`ModelStreamEvent`
+  generation consumer, or route/key/model/effort override in chat.
 - No `delta`, `tool_call`, or `retrieval_result` chat SSE event names outside
   migrations or this spec.
 - No frontend `replayDeltaCharsToSkip` or equivalent text-length replay skip.
@@ -1077,14 +813,14 @@ state.
   single opener remains the owner.
 - No direct `sseClientDirect` calls from chat/oracle/LI/media surface modules;
   they use `openGenerationRunStream` / `useGenerationRun` / `useChatRunTail`.
-- No provider-specific stream event branching in Nexus chat execution.
-- No `append_and_commit` per provider `text_delta` without passing through the
+- No route-specific stream event branching in Nexus chat execution.
+- No durable append per host `text` frame without passing through the
   coalescer.
 - No local-only stop action that skips `POST /chat-runs/{id}/cancel`.
 - No hidden reasoning content in logs, DB event payloads, trust trail payloads,
   or frontend props.
-- No live provider matrix that tests streaming text only while tool calls remain
-  non-streamed.
+- No retry/fallback branch after an accepted generation stream becomes
+  ambiguous.
 
 Must remain:
 
@@ -1093,7 +829,7 @@ Must remain:
 - `Last-Event-ID` support;
 - committed event rows as source of truth;
 - `run_kit` terminal ownership;
-- provider artifacts opaque and in-memory only for chat tool continuation;
+- native generation artifacts absent from product events and ledger rows;
 - `useChatRunTail` chat orchestration layer;
 - chat citations as backend-built read models.
 
@@ -1101,64 +837,50 @@ Must remain:
 
 ## 16. Implementation Sequence
 
-S0. Provider-runtime spec tests.
+S0. Generation seam.
 
-- Add failing tests for stream event union invariants.
-- Add adapter golden tests for provider text/tool/artifact/terminal events.
-- Add cancellation and retry-cutoff tests.
+- Pin the production `GenerationFrame` iterator and closed terminal mapping.
+- Prove v2 UDS sequence, terminal, cancel, capacity, and accepted-loss behavior
+  through the shared execution boundary.
+- Keep plan/ledger/uncertainty implementation in the Codex generation cutover.
 
-S1. Provider-runtime implementation.
-
-- Add `ModelStreamEvent` types and catalog stream capabilities.
-- Rewrite adapters to emit typed events.
-- Delete public `ModelChunk`.
-- Update fake/scripted runtime.
-- Extend live matrix for streaming tool calls.
-
-S2. Nexus provider-runtime pin and compile break.
-
-- Bump `provider-runtime` git rev.
-- Let type/runtime failures identify all `ModelChunk` call sites.
-- Update `llm_ledger.observed_generate_stream` first, then chat execution.
-
-S3. Backend chat event grammar and migration.
+S1. Backend chat event grammar and migration.
 
 - Add new Pydantic payloads.
 - Update DB CHECK/migration.
-- Implement provider-event -> chat-event mapping.
+- Implement generation-frame -> chat-event mapping.
 - Implement text coalescer.
 - Update terminal `done` payload.
 
-S4. Cursor materialization.
+S2. Cursor materialization.
 
 - Teach `chat_run_response` to fold pending event rows.
 - Add `stream_state`.
 - Update create/resume/reconcile callers.
 - Delete char-count replay skip.
 
-S5. Cancellation.
+S3. Cancellation.
 
-- Add provider-runtime cancellation signal path.
-- Race chat worker provider reads against cancel.
+- Race chat worker generation reads against cancel and call private v2 cancel.
 - Wire frontend stop action to backend cancel route.
-- Ledger cancel outcome.
+- Stage the cancelled generation terminal through the unified ledger owner.
 
-S6. Frontend grammar/state.
+S4. Frontend grammar/state.
 
 - Replace SSE event decoders.
 - Update `useChatRunTail`, `useChatMessageUpdates`, `useConversation`.
 - Add live states and UI affordances.
 - Verify scroll and markdown performance.
 
-S7. Verification and negative gates.
+S5. Verification and negative gates.
 
 - Add direct chat tail tests.
 - Add real DB/HTTP stream integration test.
 - Add browser/E2E reconnect/cancel/reload tests.
-- Add provider-runtime live streaming tool tests.
+- Add the protected Codex/MCP streaming tool smoke.
 - Add grep gates.
 
-S8. Docs.
+S6. Docs.
 
 - Update `docs/modules/llms.md`, `docs/modules/chat.md`, and
   `docs/architecture.md`.
@@ -1171,40 +893,27 @@ be reviewable, but main must never contain a dual public stream contract.
 
 ## 17. Test Plan
 
-### 17.1 Provider-runtime unit/golden
+### 17.1 Generation seam
 
-- Event type invariants:
-  - common fields present;
-  - monotonic sequence;
-  - terminal exactly once;
-  - non-terminal usage only via `usage_delta`;
-  - opaque artifacts not stringified in repr.
-- Retry:
-  - retry before first event;
-  - no retry after text;
-  - no retry after tool delta;
-  - no retry after provider artifact.
-- Cancellation:
-  - before provider request;
-  - during provider read before output;
-  - after visible output.
-- Provider adapters:
-  - OpenAI function-call arguments stream as deltas and done;
-  - Anthropic `input_json_delta` streams as deltas;
-  - Gemini thought signatures captured and hidden thought text excluded;
-  - OpenAI-compatible tool-call accumulation emits start/delta/done.
+- A protocol-valid UDS peer proves contiguous v2 frames, terminal-last,
+  per-capability bounds, and strict rejection of gaps/unknown frames.
+- Capacity is reschedulable only for the exact pre-accept 503 contract.
+- Accepted loss without terminal remains `Uncertain` and dispatches no second
+  generation.
+- Cancel invokes the private endpoint and consumes the same turn's cancelled
+  terminal when available.
 
 ### 17.2 Nexus backend
 
 - Schema rejects old event names.
 - Coalescer flushes on interval, cap, tool event, terminal, cancel, exception.
-- Chat execution maps provider events into durable chat events.
+- Chat execution maps generation frames into durable chat events.
 - `GET /chat-runs/{id}` materializes pending text and cursor from event rows.
 - Reconnect path starts after folded cursor.
 - Cancel route finalizes with `E_CANCELLED`.
-- Partial-output provider failure preserves partial text and terminal failure.
+- Accepted stream loss preserves partial text without fabricating a terminal.
 - LISTEN/NOTIFY integration delivers events inserted after stream open.
-- `llm_calls` captures stream quality metrics.
+- `llm_calls` retains only the unified fixed-plan terminal/usage audit.
 
 ### 17.3 Frontend unit/browser
 
@@ -1231,62 +940,43 @@ be reviewable, but main must never contain a dual public stream contract.
 - Reload while run is active and verify materialized pending text resumes from
   cursor.
 - Stop a running chat and verify terminal cancelled UI.
-- Provider/tool fixture stream emits tool-call input deltas and final tool
+- Codex/MCP fixture stream emits tool-call input deltas and final tool
   result.
 - Citation chips survive terminal reconcile.
 
-### 17.5 Live providers
+### 17.5 Protected route smoke
 
-Run only with secrets:
-
-```bash
-make test-live-providers
-```
-
-Required additions:
-
-- streaming text for every stream-capable generation catalog row;
-- streaming forced tool call plus continuation for every capable row;
-- reasoning/artifact replay with streaming tool calls for OpenAI, Anthropic,
-  Gemini where supported;
-- cancellation smoke where provider route can be safely cancelled.
+The enrolled-host smoke proves the Codex Personal route through the same v2 UDS
+client. Provider certification separately proves each Chat-eligible API route.
+One Chat case additionally proves incremental text, route-neutral tool use and
+continuation, cancellation, and redacted ledger facts.
 
 ---
 
 ## 18. Risks And Mitigations
 
-R1. Provider APIs differ more than the event union allows.
-
-Mitigation: keep `raw_metadata` for safe metadata, but do not expose raw content
-or provider bodies. Add fields only when tests prove cross-provider value.
-
-R2. Coalescing makes text feel less immediate.
+R1. Coalescing makes text feel less immediate.
 
 Mitigation: 33ms default interval, flush on first text immediately, frontend
 RAF batching. Acceptance checks first-visible text and flush cadence.
 
-R3. Pending snapshot folding is expensive for very long runs.
+R2. Pending snapshot folding is expensive for very long runs.
 
 Mitigation: one-user prototype accepts folding from event rows. If measured
 expensive later, add a server-owned materialized cursor/snapshot table in a
 separate design, not a frontend heuristic.
 
-R4. Cancellation watcher adds polling.
+R3. Cancellation watcher adds polling.
 
 Mitigation: prefer DB notification or worker-local signal; if bounded polling
 is used, add `justify-polling` and named timing constants.
 
-R5. Tool-call partial input could leak sensitive arguments.
+R4. Tool-call partial input could leak sensitive arguments.
 
-Mitigation: render only provider/runtime-marked safe parsed input. Never render
-raw partial JSON if the tool is not allowlisted for safe display.
+Mitigation: render only the strict durable event's safe parsed projection. Never
+render raw partial JSON if the tool is not allowlisted for safe display.
 
-R6. Hard cutover touches two repos.
-
-Mitigation: provider-runtime branch lands first, Nexus pin moves in the same
-cutover branch, and type failures are used as intended breakpoints.
-
-R7. Old dev DB event rows fail parsing.
+R5. Old dev DB event rows fail parsing.
 
 Mitigation: migration deletes or normalizes old chat event rows for non-terminal
 local data. Production acceptance targets current app state, not legacy dev
@@ -1298,21 +988,16 @@ history.
 
 ### WebSockets
 
-Rejected. Bidirectional transport does not solve provider stream semantics,
+Rejected. Bidirectional transport does not solve generation-frame semantics,
 durable replay, cancellation, or UI folding. SSE already matches persisted
 append-only event delivery.
 
 ### Adopt AI SDK end to end
 
 Rejected as a substrate. AI SDK is a useful reference for typed data streams and
-tool-call streaming UI, but Nexus needs Python/FastAPI, provider artifact
-fidelity, BYOK, ledger, durable ChatRun, citations, and resource graph
-composition. A wholesale adoption would move ownership to the wrong layer.
-
-### Keep `ModelChunk` and add optional fields
-
-Rejected. Optional-field chunks are the current source of ambiguity. A tagged
-union is stricter, easier to test, and maps cleanly to UI state.
+tool-call streaming UI, but Nexus needs Python/FastAPI, the private Codex and
+configured API route boundaries, durable ChatRun, citations, and resource graph composition. A
+wholesale adoption would move ownership to the wrong layer.
 
 ### Client-only smoothing
 
@@ -1324,20 +1009,21 @@ and replay cursor semantics are owner-layer concerns.
 Rejected. Snapshot is used for reconcile, but SSE must continue from a durable
 event cursor so live state, tool events, and terminal events are not lost.
 
-### Provider-side conversation ids
+### Native conversation ids
 
-Rejected as default. Provider-managed state would weaken Nexus replay,
-observability, portability, and BYOK/provider symmetry.
+Rejected as default. Native continuation state would weaken Nexus-owned prompt,
+tool, ledger, and replay authority; each generation opens one native turn.
 
 ---
 
 ## 20. Done Means
 
-- The public provider-runtime stream contract is event-union based.
-- Nexus chat streams from that contract with bounded coalescing.
+- Nexus chat consumes only the private v2 `GenerationFrame` contract and maps it
+  through bounded coalescing.
 - All chat UIs share the same stream engine and live state.
 - Reconnect is cursor-based and deterministic.
-- Stop cancels provider work, not just the local stream.
-- Live provider tests prove streaming tool calls and continuation.
-- Old event names, chunk contracts, and replay heuristics are gone.
+- Stop cancels the Codex generation, not just the local stream.
+- Protected Codex/MCP evidence proves streaming tool calls and continuation.
+- Old event names, direct-provider stream contracts, and replay heuristics are
+  gone.
 - Docs and negative gates pin the final state.

@@ -1,79 +1,85 @@
 .rail {
   display: flex;
-  flex: 0 0 28px;
+  flex: 0 0 52px;
   flex-direction: column;
-  width: 28px;
-  min-width: 28px;
+  width: 52px;
+  min-width: 52px;
   height: 100%;
   min-height: 0;
   overflow: visible;
   background: var(--surface-2);
 }
 
+.openDetail {
+  align-self: center;
+  width: 32px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: var(--text-lg);
+  cursor: pointer;
+}
+
 .track {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
-  margin-block: 12px;
+  margin-block: 12px 24px;
 }
 
 .track::before {
   position: absolute;
-  inset-block: -12px;
-  left: 50%;
-  width: 2px;
+  inset-block: 0;
+  left: 8px;
+  width: 1px;
   background: var(--edge);
   content: "";
-  transform: translateX(-50%);
 }
 
 .band {
   position: absolute;
-  left: 50%;
-  z-index: 1;
-  width: 12px;
+  left: 3px;
+  width: 11px;
   min-height: 2px;
   background: var(--accent);
-  border-radius: 999px;
-  opacity: 0.14;
-  pointer-events: none;
-  transform: translateX(-50%);
-}
-
-.markerSlot {
-  position: absolute;
-  top: var(--position);
-  left: 2px;
-  z-index: 2;
-  width: 24px;
-  height: 24px;
-  transform: translateY(-50%);
-}
-
-.markerButton {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  place-items: center;
-  color: var(--ink);
-  background: transparent;
-  border: 0;
   border-radius: var(--radius-sm);
-  cursor: pointer;
+  opacity: 0.18;
+  pointer-events: none;
 }
 
-.markerButton:hover,
-.markerButton:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 0;
+.boundary {
+  position: absolute;
+  left: 4px;
+  width: 8px;
+  height: 1px;
+  background: var(--edge-subtle);
+  pointer-events: none;
+}
+
+.structureLane {
+  left: 0;
+}
+
+.evidenceLane {
+  left: 28px;
+}
+
+.exactMarker {
+  position: absolute;
+  z-index: 3;
+  width: 16px;
+  height: 0;
+  pointer-events: none;
 }
 
 .markerGlyph {
-  position: relative;
+  position: absolute;
+  left: 8px;
   display: block;
-  flex: 0 0 auto;
   color: var(--marker-color);
+  transform: translate(-50%, -50%);
 }
 
 .markerContents {
@@ -83,81 +89,131 @@
 }
 
 .markerEmbed {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   background: currentcolor;
 }
 
 .markerHighlight {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   background: currentcolor;
-  transform: rotate(45deg);
+  transform: translate(-50%, -50%) rotate(45deg);
 }
 
 .markerCitation {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   background: currentcolor;
   border-radius: 50%;
 }
 
 .markerConnection {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   background: var(--surface-2);
   border: 2px solid currentcolor;
   border-radius: 50%;
 }
 
 .markerWarning {
-  outline: 1px solid currentcolor;
+  outline: 1px solid var(--danger);
   outline-offset: 2px;
 }
 
-.clusterCount {
-  display: grid;
-  min-width: 16px;
-  height: 16px;
-  padding-inline: 3px;
-  place-items: center;
-  color: var(--surface-1);
-  background: var(--edge-strong);
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1;
+.evidenceRange {
+  position: absolute;
+  left: 33px;
+  width: 6px;
+  min-height: 1px;
+  background: var(--marker-color);
+  opacity: 0.3;
+  pointer-events: none;
 }
 
-.preview {
+.current {
   position: absolute;
-  top: 50%;
-  right: calc(100% + var(--space-2));
-  z-index: var(--z-raised, 100);
+  z-index: 4;
+  left: 8px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--accent);
+  background: var(--surface-2);
+  pointer-events: none;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.groupSlot {
+  position: absolute;
+  z-index: 2;
+  width: 24px;
+  height: 24px;
+  transform: translateY(-50%);
+}
+
+.markerButton {
   display: flex;
-  visibility: hidden;
-  width: min(18rem, calc(100vw - 48px));
-  padding: var(--space-2) var(--space-3);
-  flex-direction: column;
-  gap: var(--space-2);
+  justify-content: flex-end;
+  align-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.markerButton:hover,
+.markerButton:focus-visible,
+.openDetail:hover,
+.openDetail:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.clusterCount {
+  min-width: 10px;
+  padding-inline: 1px;
+  color: var(--ink-muted);
+  background: var(--surface-2);
+  font-size: 9px;
+  line-height: 12px;
+  text-align: center;
+}
+
+.preview,
+.destinationList {
+  position: absolute;
+  right: calc(100% + var(--space-2));
+  z-index: var(--z-raised);
+  width: min(18rem, calc(100vw - 64px));
+  padding: var(--space-2);
   color: var(--ink);
   background: var(--surface-2);
-  border: 1px solid var(--edge);
+  border: 1px solid var(--edge-strong);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-3);
   font-size: var(--text-xs);
   line-height: var(--leading-snug);
+}
+
+.preview {
+  top: 50%;
+  display: flex;
+  visibility: hidden;
+  max-height: 18rem;
+  overflow: hidden;
+  flex-direction: column;
+  gap: var(--space-2);
   pointer-events: none;
   transform: translateY(-50%);
 }
 
-.markerSlot:hover .preview,
-.markerSlot:focus-within .preview {
+.groupSlot:hover .preview,
+.groupSlot:focus-within .preview {
   visibility: visible;
-}
-
-.markerButton[aria-expanded="true"] + .preview {
-  visibility: hidden;
 }
 
 .preview.placeAtStart {
@@ -177,11 +233,6 @@
   flex-direction: column;
   gap: 2px;
   text-align: left;
-}
-
-.destinationContent strong,
-.destinationExcerpt,
-.destinationPosition {
   overflow-wrap: anywhere;
 }
 
@@ -196,24 +247,13 @@
 
 .destinationPosition {
   color: var(--ink-muted);
-  white-space: nowrap;
 }
 
 .destinationList {
-  position: absolute;
   top: var(--position);
-  right: calc(100% + var(--space-2));
-  z-index: var(--z-raised, 100);
-  width: min(18rem, calc(100vw - 48px));
   max-height: min(18rem, 70vh);
   margin: 0;
-  padding: var(--space-1);
   overflow: auto;
-  color: var(--ink);
-  background: var(--surface-2);
-  border: 1px solid var(--edge-strong);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-3);
   list-style: none;
   transform: translateY(-50%);
 }
@@ -234,13 +274,9 @@
 }
 
 .destinationList button {
-  display: grid;
   width: 100%;
   min-height: 24px;
   padding: var(--space-2);
-  grid-template-columns: 16px minmax(0, 1fr);
-  gap: var(--space-2);
-  align-items: center;
   color: var(--ink);
   background: transparent;
   border: 0;
@@ -257,50 +293,37 @@
 
 @media (forced-colors: active) {
   .rail,
-  .markerConnection,
   .preview,
-  .destinationList {
+  .destinationList,
+  .clusterCount,
+  .current,
+  .markerConnection {
     color: CanvasText;
     background: Canvas;
   }
 
   .track::before,
+  .boundary,
   .markerContents,
   .markerEmbed,
   .markerHighlight,
   .markerCitation {
-    color: CanvasText;
     background: CanvasText;
   }
 
-  .markerGlyph,
-  .clusterCount,
-  .band {
+  .band,
+  .evidenceRange {
     forced-color-adjust: none;
-  }
-
-  .clusterCount {
-    color: Canvas;
-    background: CanvasText;
-  }
-
-  .markerConnection {
-    border-color: CanvasText;
-  }
-
-  .markerWarning {
-    outline-color: CanvasText;
-  }
-
-  .band {
     background: Highlight;
-    border: 1px solid Highlight;
-    opacity: 0.22;
   }
 
-  .markerButton:hover,
+  .current,
+  .markerConnection {
+    border-color: Highlight;
+  }
+
   .markerButton:focus-visible,
-  .destinationList button:hover,
+  .openDetail:focus-visible,
   .destinationList button:focus-visible {
     outline-color: Highlight;
   }

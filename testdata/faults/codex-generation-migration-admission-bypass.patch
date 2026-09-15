@@ -1,0 +1,9 @@
+diff --git a/migrations/alembic/versions/0224_codex_personal_generation.py b/migrations/alembic/versions/0224_codex_personal_generation.py
+--- a/migrations/alembic/versions/0224_codex_personal_generation.py
++++ b/migrations/alembic/versions/0224_codex_personal_generation.py
+@@ -285,4 +285,4 @@ def _preflight(bind: sa.Connection) -> None:
+                                   'status', 'failed',
+                                   'reason', result ->> 'reason',
+-                                  'error_code', error_code
++                                  'error_code', result ->> 'error_code'
+                               )

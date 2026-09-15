@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import "@/app/globals.css";
-import readerStyles from "@/app/(authenticated)/media/[id]/page.module.css";
+import readerStyles from "@/components/reader/textDocumentReader.module.css";
 import { buildCanonicalCursor } from "@/lib/highlights/canonicalCursor";
 import {
   createPaneFindResultKey,
@@ -76,6 +76,47 @@ function texts(name: string): string[] {
 }
 
 describe("canonical text Find presentation owner", () => {
+  it("keeps composed letters and reordered marks bound to their exact DOM sources", () => {
+    const fragment = mountFragment(
+      null,
+      '<p><span id="composed">\u00e9</span><span id="below">\u0316</span> ' +
+        '<span id="later">e\u0301</span></p>',
+    );
+    const below = key("below");
+    expect(fragment.cursor.emitted).toBe("\u00e9\u0316 \u00e9");
+
+    owner().publish({
+      fragmentId: "frag-1",
+      cursor: fragment.cursor,
+      viewport: fragment.viewport,
+      targets: [
+        { key: key("composed"), fragmentId: "frag-1", startCp: 0, endCp: 1 },
+        { key: below, fragmentId: "frag-1", startCp: 1, endCp: 2 },
+        { key: key("later"), fragmentId: "frag-1", startCp: 3, endCp: 4 },
+      ],
+      activeKey: below,
+    });
+
+    expect(texts(CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME)).toEqual([
+      "\u00e9",
+      "\u0316",
+      "e\u0301",
+    ]);
+    expect(texts(CANONICAL_TEXT_FIND_ACTIVE_HIGHLIGHT_NAME)).toEqual(["\u0316"]);
+    expect(
+      ranges(CANONICAL_TEXT_FIND_ALL_HIGHLIGHT_NAME).map((range) => [
+        range.startContainer.parentElement?.id,
+        range.startOffset,
+        range.endContainer.parentElement?.id,
+        range.endOffset,
+      ]),
+    ).toEqual([
+      ["composed", 0, "composed", 1],
+      ["below", 0, "below", 1],
+      ["later", 0, "later", 2],
+    ]);
+  });
+
   it("publishes live passive ranges and only the visible active target", () => {
     const fragment = mountFragment(null, "<p>alpha BEACON omega LANTERN end</p>");
     const beacon = key("beacon");

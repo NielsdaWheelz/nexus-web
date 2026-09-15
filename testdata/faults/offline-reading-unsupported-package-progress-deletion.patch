@@ -1,0 +1,14 @@
+diff --git a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
+--- a/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
++++ b/apps/android/app/src/main/java/app/nexus/android/offline/reading/OfflineReadingStore.kt
+@@ -1422,6 +1422,10 @@
+                     ids.next().toString(), clock.instant(),
+                 ))
+             }
++            execSQL(
++                "DELETE FROM offline_reader_progress_pending WHERE binding_id = ? AND media_id = ?",
++                arrayOf(installed.bindingId.toString(), installed.mediaId.toString()),
++            )
+         }
+     }
+ 

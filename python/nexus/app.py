@@ -30,13 +30,12 @@ Actual execution order per request:
 8. StreamCORSMiddleware when configured (stream route CORS)
 9. RequestIDMiddleware (logs, sets response header)
 
-LLM client lifecycle:
+Outbound client lifecycle:
 - httpx.AsyncClient is created at startup, stored in app.state, and shared by
-  the web-search provider and request-scoped Learn resolver runtime; background
-  LLM runtimes remain task-owned by tasks/llm_task.py
-- validate_profiles() runs at startup to fail fast on any drift between the
-  product profile portfolio and the provider_runtime catalog (mirrors the
-  worker-startup call)
+  the Brave-backed Nexus tool runtime. Generation catalogs compose the private
+  Codex UDS with configured API-provider rows.
+- validate_policy() runs at startup to fail fast on drift in the developer
+  plans, operation catalog, bounds, or eval pin (mirrors worker startup).
 - Client is closed gracefully at shutdown
 """
 
@@ -51,7 +50,6 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from llm_tools import BraveSearchProvider
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 
@@ -78,14 +76,21 @@ from nexus.responses import (
 )
 from nexus.runtime_health import get_runtime_identity
 from nexus.services.bootstrap import ensure_user_and_default_library
-from nexus.services.llm_profiles import validate_profiles
+from nexus.services.generation_catalog import build_generation_catalog_service
+from nexus.services.generation_policy import validate_policy
+from nexus.services.tool_runtime.composition import (
+    compose_configured_web_search_provider,
+    compose_product_tool_runtime,
+)
 
 logger = get_logger(__name__)
 
 # Exact private response paths. These responses carry per-viewer state or
 # private source capabilities and must never be retained by an intermediary.
 PRIVATE_NO_STORE_PATH_RE = re.compile(
-    r"/media/activity|/media/[^/]+/(reader-state|offline-download-spec)"
+    r"/llm-catalog|/imports(/.*)?|/media/[^/]+/(reader-state|offline-reader-state|offline-download-spec)"
+    r"|/internal/offline-reading/account-binding"
+    r"|/internal/media/[^/]+/offline-reading-token"
     r"|/me/reader-profile|/consumption/(activity|activity-exclusions|stats|sessions)"
 )
 
@@ -131,8 +136,9 @@ def create_bootstrap_callback():
 
     def bootstrap(user_id: UUID, email: str | None = None) -> UUID:
         # AuthMiddleware owns the process-local successful-result cache and
-        # invokes this blocking miss path in its threadpool. Concurrent cold
-        # misses may race, but the durable bootstrap is idempotent.
+        # coalesces same-process cold misses before invoking this blocking path
+        # in its threadpool. The durable SERIALIZABLE bootstrap remains
+        # idempotent across processes.
         db = session_factory()
         try:
             return ensure_user_and_default_library(db, user_id, email=email)
@@ -169,10 +175,8 @@ async def lifespan(app: FastAPI):
     """Manage application lifecycle resources.
 
     Lifecycle behavior:
-    - Fails fast on any drift between the product LLM profile portfolio and
-      the provider_runtime catalog (validate_profiles); config.py's
-      validate_required_settings already enforces the platform keys and the
-      Fable retention assertion at Settings construction
+    - Fails fast on any drift in the developer generation policy; config.py
+      separately enforces retained non-generation service credentials
     - Creates shared httpx.AsyncClient for connection pooling (web search)
     - Cleans up on shutdown
     """
@@ -180,7 +184,11 @@ async def lifespan(app: FastAPI):
     get_runtime_identity()
     get_task_contract_digest()
 
-    validate_profiles()
+    validate_policy()
+
+    app.state.generation_catalog_service = build_generation_catalog_service(settings)
+    if settings.nexus_env in (Environment.STAGING, Environment.PROD):
+        await app.state.generation_catalog_service.startup()
 
     # Create shared HTTP client for outbound calls (web search).
     app.state.httpx_client = httpx.AsyncClient(
@@ -189,16 +197,11 @@ async def lifespan(app: FastAPI):
         trust_env=False,
     )
 
-    app.state.web_search_provider = (
-        BraveSearchProvider(
-            app.state.httpx_client,
-            api_key=settings.brave_search_api_key,
-            base_url=settings.brave_search_base_url,
-            timeout_seconds=settings.brave_search_timeout_seconds,
-        )
-        if settings.brave_search_api_key
-        else None
+    app.state.web_search_provider = compose_configured_web_search_provider(
+        app.state.httpx_client,
+        settings=settings,
     )
+    app.state.tool_runtime = compose_product_tool_runtime(app.state.web_search_provider)
 
     logger.info(
         "app_lifespan_started",
@@ -211,7 +214,6 @@ async def lifespan(app: FastAPI):
     rate_limiter = RateLimiter(
         session_factory=get_session_factory(),
         rpm_limit=settings.rate_limit_rpm,
-        concurrent_limit=settings.rate_limit_concurrent,
     )
     set_rate_limiter(rate_limiter)
 
@@ -265,6 +267,7 @@ def create_app(
     # validation failures (author-dedup spec §6 / D-10); the rest of the wire
     # keeps its established 400 convention.
     author_surface_422_re = re.compile(r"^/contributors(?:/|$)|^/media/[^/]+/authors$")
+    chat_selection_route_re = re.compile(r"^/chat-runs$|^/messages/[^/]+/(?:rerun|regenerate)$")
 
     # Handle JSON parsing errors specifically
     @app.exception_handler(RequestValidationError)
@@ -286,10 +289,27 @@ def create_app(
                 for err in exc.errors()
             ],
         )
-        status_code = 422 if author_surface_422_re.search(request.url.path) else 400
+        invalid_chat_selection = (
+            request.method == "POST"
+            and bool(chat_selection_route_re.fullmatch(request.url.path))
+            and any(
+                len(error.get("loc", ())) >= 2
+                and error["loc"][0] == "body"
+                and error["loc"][1] in {"selection", "catalog_definition_revision"}
+                for error in exc.errors()
+            )
+        )
+        status_code = (
+            422 if invalid_chat_selection or author_surface_422_re.search(request.url.path) else 400
+        )
+        code = (
+            ApiErrorCode.E_INVALID_GENERATION_SELECTION
+            if invalid_chat_selection
+            else ApiErrorCode.E_INVALID_REQUEST
+        )
         return JSONResponse(
             status_code=status_code,
-            content=error_response(ApiErrorCode.E_INVALID_REQUEST, "Invalid request body"),
+            content=error_response(code, "Invalid request body"),
         )
 
     # Handle JSON decode errors from malformed JSON bodies

@@ -156,6 +156,26 @@ def test_run_summary_round_trips_through_exact_typed_loading(tmp_path: Path) -> 
     assert loaded == evidence
 
 
+def test_passing_workflow_evidence_requires_complete_memory_measurement(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="complete memory measurement"):
+        RunEvidence(
+            repo_root=tmp_path,
+            run_id="0123456789abcdef",
+            workflow=Workflow.DOCTOR,
+            git_sha="a" * 40,
+            base_sha=None,
+            duration_ms=3,
+            first_actionable_failure_ms=None,
+            peak_owned_mib=PeakOwnedMemory(1, 2, 3, measurement_complete=False),
+            run_context_artifact=_run_context(),
+            selection=(),
+            sensitivity=(),
+            capabilities=(CapabilityEvidence(Capability.DOCTOR, RunStatus.PASS, 3, 3),),
+        )
+
+
 def test_prove_summary_v3_round_trips_through_its_typed_contract(tmp_path: Path) -> None:
     relative, proof, digest = _proof(tmp_path)
     sensitivity = Sensitivity(
@@ -188,6 +208,35 @@ def test_prove_summary_v3_round_trips_through_its_typed_contract(tmp_path: Path)
     assert payload["version"] == 3
     assert payload["command"] == "prove"
     assert loaded == evidence
+
+
+def test_passing_prove_evidence_requires_complete_memory_measurement(tmp_path: Path) -> None:
+    relative, proof, digest = _proof(tmp_path)
+    sensitivity = Sensitivity(
+        proof=proof,
+        changed_paths=(relative,),
+        proof_digest=digest,
+        method=SensitivityMethod.FAULT,
+        against=SensitivityAgainst(git_sha=None, fault_id="wrong-value"),
+        red=_red("sha256:" + "c" * 64),
+        green=_green(),
+    )
+
+    with pytest.raises(ValueError, match="complete memory measurement"):
+        ProveEvidence(
+            repo_root=tmp_path,
+            run_id="0123456789abcdef",
+            proof=proof,
+            method=SensitivityMethod.FAULT,
+            against="wrong-value",
+            git_sha="a" * 40,
+            duration_ms=4,
+            first_actionable_failure_ms=None,
+            peak_owned_mib=PeakOwnedMemory(3, 4, 7, measurement_complete=False),
+            run_context_artifact=_run_context(),
+            status=RunStatus.PASS,
+            sensitivity=(sensitivity,),
+        )
 
 
 def test_run_context_serializes_exact_typed_non_secret_identities() -> None:

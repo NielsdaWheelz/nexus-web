@@ -7,6 +7,7 @@ identities are the only admitted release inputs.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -16,10 +17,12 @@ from pathlib import Path
 import pytest
 
 from nexus.release_artifact import (
+    AndroidPlayerProtocolIdentity,
     BackendArtifactDefect,
     CandidateImages,
     CandidateManifest,
     RuntimeIdentity,
+    is_exact_https_origin,
     load_candidate_manifest,
     load_runtime_identity,
     write_candidate_manifest,
@@ -61,6 +64,66 @@ def test_runtime_identity_is_closed_canonical_and_duplicate_intolerant(tmp_path:
     )
     with pytest.raises(BackendArtifactDefect, match="duplicate"):
         load_runtime_identity(path)
+
+
+def test_android_player_protocol_identity_is_the_raw_corpus_digest_and_admits_only_exact_v2(
+    tmp_path: Path,
+) -> None:
+    corpus = REPO_ROOT / "testdata/android/player-protocol.json"
+    identity = AndroidPlayerProtocolIdentity.of_corpus(corpus)
+
+    assert identity == AndroidPlayerProtocolIdentity(
+        version=2,
+        contract_sha256=hashlib.sha256(corpus.read_bytes()).hexdigest(),
+    )
+    assert AndroidPlayerProtocolIdentity.from_json(identity.as_json()) == identity
+    reserialized = tmp_path / "player-protocol.json"
+    reserialized.write_text(
+        json.dumps(json.loads(corpus.read_text(encoding="utf-8")), indent=1),
+        encoding="utf-8",
+    )
+    assert AndroidPlayerProtocolIdentity.of_corpus(reserialized) != identity
+
+    for malformed in (
+        {"version": 1, "contract_sha256": "a" * 64},
+        {"version": 2.0, "contract_sha256": "a" * 64},
+        {"version": True, "contract_sha256": "a" * 64},
+        {"version": 2, "contract_sha256": "A" * 64},
+        {"version": 2, "contract_sha256": "a" * 63},
+        {"version": 2},
+        {"version": 2, "contract_sha256": "a" * 64, "extra": 1},
+        ["2", "a" * 64],
+    ):
+        with pytest.raises(BackendArtifactDefect):
+            AndroidPlayerProtocolIdentity.from_json(malformed)
+    with pytest.raises(BackendArtifactDefect):
+        AndroidPlayerProtocolIdentity.of_corpus(tmp_path / "absent.json")
+
+
+def test_release_api_origin_is_one_canonical_https_origin() -> None:
+    assert is_exact_https_origin("https://api.nielseriknandal.com")
+    assert is_exact_https_origin("https://api.example.test:8443")
+
+    for malformed in (
+        None,
+        "http://api.example.test",
+        "HTTPS://api.example.test",
+        "https://API.example.test",
+        "https://user@api.example.test",
+        "https://api_example.test",
+        "https://api.example.test/",
+        "https://api.example.test/path",
+        "https://api.example.test?",
+        "https://api.example.test#",
+        "https://api.example.test?#",
+        "https://api.example.test?channel=stable",
+        "https://api.example.test#latest",
+        "https://api.example.test:garbage",
+        "https://api.example.test:0",
+        "https://api.example%20",
+        "https://api.example.test\t",
+    ):
+        assert not is_exact_https_origin(malformed)
 
 
 def test_candidate_manifest_binds_source_ci_and_matching_image_identities(
@@ -231,8 +294,33 @@ def test_candidate_manifest_loader_rejects_unknown_duplicate_and_noncanonical_js
         load_candidate_manifest(path)
 
 
-def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once() -> None:
+def _initialize_publisher_checkout(path: Path) -> None:
+    path.mkdir()
+    (path / ".gitignore").write_text("/.nexus-test/\n", encoding="utf-8")
+    (path / "tracked.txt").write_text("owned source\n", encoding="utf-8")
+    subprocess.run(("git", "init", "--quiet"), cwd=path, check=True)
+    subprocess.run(("git", "add", ".gitignore", "tracked.txt"), cwd=path, check=True)
+    subprocess.run(
+        (
+            "git",
+            "-c",
+            "user.name=Nexus test",
+            "-c",
+            "user.email=nexus-test@example.invalid",
+            "commit",
+            "--quiet",
+            "--message=fixture",
+        ),
+        cwd=path,
+        check=True,
+    )
+
+
+def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once(
+    tmp_path: Path,
+) -> None:
     workflow = (REPO_ROOT / ".github/workflows/backend-images.yml").read_text()
+    workspace_owner = REPO_ROOT / "deploy/hetzner/backend-publisher-workspace.sh"
 
     assert "workflow_run:" in workflow
     assert 'workflows: ["CI"]' in workflow
@@ -260,7 +348,17 @@ def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once()
     assert "github.run_id" in workflow
     assert "Preserve immutable backend candidate on rerun" in workflow
     assert ".workflow_run.id == $run_id" in workflow
+    if "Prepare a hermetic publisher workspace" not in workflow:
+        pytest.fail(
+            "publisher must sanitize its persistent checkout before any image build",
+        )
+    if "Remove the release workspace" not in workflow:
+        pytest.fail(
+            "publisher must clean its exact run-owned artifact workspace",
+        )
     source_claim = workflow.index("Claim the first exact source CI run")
+    source_identity = workflow.index("Prove the checked-out source identity")
+    workspace_preparation = workflow.index("Prepare a hermetic publisher workspace")
     assert "actions/workflows/${SOURCE_CI_WORKFLOW_ID}/runs" in workflow
     assert '.path == ".github/workflows/ci.yml"' in workflow
     assert "min_by(.run_number).id" in workflow
@@ -275,64 +373,49 @@ def test_backend_publisher_is_exact_main_source_ci_and_builds_each_target_once()
     worker_label_proof = workflow.index('require_revision_label "$WORKER_IMAGE" "worker"')
     manifest_write = workflow.index("write-candidate-manifest")
     artifact_upload = workflow.index("Upload the immutable release bundle")
-    local_image_cleanup = workflow.index("Remove locally pulled backend images")
     workspace_cleanup = workflow.index("Remove the release workspace")
+    assert source_identity < workspace_preparation < api_pull
     assert source_claim < api_pull < api_label_proof < manifest_write < artifact_upload
     assert source_claim < worker_pull < worker_label_proof < manifest_write < artifact_upload
-    assert artifact_upload < local_image_cleanup < workspace_cleanup
-    assert 'docker image rm "${local_images[@]}"' in workflow
-    assert "backend image cleanup received a malformed digest reference" in workflow
+    assert artifact_upload < workspace_cleanup
     assert "org.opencontainers.image.revision" in workflow
     assert 'if [ "$revision" != "$SOURCE_SHA" ]; then' in workflow
     assert "Prove digest references are public" in workflow
     assert "nexus-backend-release-${{ github.event.workflow_run.head_sha }}" in workflow
-    for bundled in (
-        "candidate-manifest.json",
-        "deploy/hetzner/release.py",
-        "deploy/hetzner/docker-compose.yml",
-        "deploy/hetzner/Caddyfile",
-        "python/nexus/__init__.py",
-        "python/nexus/release_artifact.py",
-    ):
-        assert bundled in workflow
-
-
-def _initialize_publisher_checkout(path: Path) -> None:
-    path.mkdir()
-    (path / ".gitignore").write_text("/.nexus-test/\n", encoding="utf-8")
-    (path / "tracked.txt").write_text("owned source\n", encoding="utf-8")
-    subprocess.run(("git", "init", "--quiet"), cwd=path, check=True)
-    subprocess.run(("git", "add", ".gitignore", "tracked.txt"), cwd=path, check=True)
-    subprocess.run(
-        (
-            "git",
-            "-c",
-            "user.name=Nexus test",
-            "-c",
-            "user.email=nexus-test@example.invalid",
-            "commit",
-            "--quiet",
-            "--message=fixture",
-        ),
-        cwd=path,
-        check=True,
-    )
-
-
-def test_backend_publisher_owns_a_fresh_external_artifact_workspace(tmp_path: Path) -> None:
-    workflow = (REPO_ROOT / ".github/workflows/backend-images.yml").read_text(encoding="utf-8")
-    owner = REPO_ROOT / "deploy/hetzner/backend-publisher-workspace.sh"
-
-    assert "runs-on: [self-hosted, linux, x64]" in workflow
-    assert "clean: ${{ runner.environment == 'github-hosted' }}" in workflow
     assert "deploy/hetzner/backend-publisher-workspace.sh prepare" in workflow
     assert (
         workflow.count('deploy/hetzner/backend-publisher-workspace.sh require "$RELEASE_WORKSPACE"')
         == 2
     )
     assert "path: ${{ steps.release_workspace.outputs.path }}/bundle/" in workflow
+    assert "if: ${{ always() && steps.release_workspace.outputs.path != '' }}" in workflow
     assert 'deploy/hetzner/backend-publisher-workspace.sh cleanup "$RELEASE_WORKSPACE"' in workflow
-    assert owner.is_file() and os.access(owner, os.X_OK)
+    for forbidden in (
+        "mkdir release-bundle",
+        "> api-runtime-identity.json",
+        "> worker-runtime-identity.json",
+        "path: release-bundle/",
+    ):
+        assert forbidden not in workflow
+    for bundled in (
+        "candidate-manifest.json",
+        "deploy/hetzner/release.py",
+        "deploy/hetzner/docker-compose.yml",
+        "deploy/hetzner/Caddyfile",
+        "deploy/hetzner/nexus-codex-agent-host.apparmor",
+        "deploy/hetzner/prove-codex-capacity.sh",
+        "python/nexus/__init__.py",
+        "python/nexus/release_artifact.py",
+        "testdata/android/player-protocol.json",
+    ):
+        assert bundled in workflow
+
+    assert workspace_owner.is_file()
+    owner = workspace_owner.read_text(encoding="utf-8")
+    assert 'git -C "$checkout" clean -qffdx -e /.nexus-test/' in owner
+    assert 'git -C "$checkout" clean -nffdx -e /.nexus-test/' in owner
+    assert "nexus-backend-release.XXXXXXXX" in owner
+    assert 'rm --recursive --force --one-file-system -- "$release_workspace"' in owner
 
     checkout = tmp_path / "checkout"
     runner_temp = tmp_path / "runner-temp"
@@ -346,43 +429,68 @@ def test_backend_publisher_owns_a_fresh_external_artifact_workspace(tmp_path: Pa
     stale_bundle = checkout / "release-bundle"
     stale_bundle.mkdir()
     (stale_bundle / "stale").write_text("unowned\n", encoding="utf-8")
+    nested_repository = checkout / "stale/nested-repository"
+    nested_repository.mkdir(parents=True)
+    subprocess.run(("git", "init", "--quiet"), cwd=nested_repository, check=True)
+
     environment = {
         **os.environ,
         "GITHUB_OUTPUT": str(github_output),
         "GITHUB_WORKSPACE": str(checkout),
         "RUNNER_TEMP": str(runner_temp),
     }
-
     prepared = subprocess.run(
-        (str(owner), "prepare"),
+        (str(workspace_owner), "prepare"),
         cwd=checkout,
         env=environment,
         check=False,
         capture_output=True,
         text=True,
     )
-
     assert prepared.returncode == 0, prepared.stderr
-    release_workspace = Path(
-        github_output.read_text(encoding="utf-8").removeprefix("path=").strip()
-    )
+    assert prepared.stdout == ""
+    assert prepared.stderr == ""
+    output = github_output.read_text(encoding="utf-8")
+    assert output.startswith("path=") and output.endswith("\n") and output.count("\n") == 1
+    release_workspace = Path(output.removeprefix("path=").strip())
     assert release_workspace.parent == runner_temp
+    assert release_workspace.name.startswith("nexus-backend-release.")
     assert release_workspace.stat().st_mode & 0o777 == 0o700
     assert (runtime_state / "runtime.json").read_text(encoding="utf-8") == "owned runtime\n"
     assert not stale_bundle.exists()
-    rejected = subprocess.run(
-        (str(owner), "cleanup", str(checkout)),
+    assert not nested_repository.exists()
+    assert (checkout / "tracked.txt").read_text(encoding="utf-8") == "owned source\n"
+
+    required = subprocess.run(
+        (str(workspace_owner), "require", str(release_workspace)),
         cwd=checkout,
         env=environment,
         check=False,
         capture_output=True,
         text=True,
     )
-    assert rejected.returncode != 0
+    assert required.returncode == 0, required.stderr
+    (release_workspace / "bundle").mkdir()
+    (release_workspace / "bundle/candidate-manifest.json").write_text(
+        "owned artifact\n",
+        encoding="utf-8",
+    )
+    rejected_cleanup = subprocess.run(
+        (str(workspace_owner), "cleanup", str(checkout)),
+        cwd=checkout,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected_cleanup.returncode != 0
+    assert rejected_cleanup.stdout == ""
+    assert rejected_cleanup.stderr == (
+        "error: release workspace is outside the exact runner-owned namespace\n"
+    )
     assert (checkout / "tracked.txt").read_text(encoding="utf-8") == "owned source\n"
-
     cleaned = subprocess.run(
-        (str(owner), "cleanup", str(release_workspace)),
+        (str(workspace_owner), "cleanup", str(release_workspace)),
         cwd=checkout,
         env=environment,
         check=False,
@@ -391,6 +499,58 @@ def test_backend_publisher_owns_a_fresh_external_artifact_workspace(tmp_path: Pa
     )
     assert cleaned.returncode == 0, cleaned.stderr
     assert not release_workspace.exists()
+
+    fresh_checkout = tmp_path / "fresh-checkout"
+    _initialize_publisher_checkout(fresh_checkout)
+    (fresh_checkout / "stale-output").write_text("unowned\n", encoding="utf-8")
+    fresh_github_output = runner_temp / "fresh-github-output"
+    fresh_github_output.touch()
+    fresh_environment = {
+        **environment,
+        "GITHUB_OUTPUT": str(fresh_github_output),
+        "GITHUB_WORKSPACE": str(fresh_checkout),
+    }
+    fresh_prepared = subprocess.run(
+        (str(workspace_owner), "prepare"),
+        cwd=fresh_checkout,
+        env=fresh_environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert fresh_prepared.returncode == 0, fresh_prepared.stderr
+    assert not (fresh_checkout / ".nexus-test").exists()
+    assert not (fresh_checkout / "stale-output").exists()
+    fresh_workspace = Path(
+        fresh_github_output.read_text(encoding="utf-8").removeprefix("path=").strip()
+    )
+    fresh_cleaned = subprocess.run(
+        (str(workspace_owner), "cleanup", str(fresh_workspace)),
+        cwd=fresh_checkout,
+        env=fresh_environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert fresh_cleaned.returncode == 0, fresh_cleaned.stderr
+    assert not fresh_workspace.exists()
+
+    hostile_checkout = tmp_path / "hostile-checkout"
+    _initialize_publisher_checkout(hostile_checkout)
+    hostile_target = tmp_path / "foreign-runtime"
+    hostile_target.mkdir()
+    (hostile_checkout / ".nexus-test").symlink_to(hostile_target, target_is_directory=True)
+    rejected = subprocess.run(
+        (str(workspace_owner), "prepare"),
+        cwd=hostile_checkout,
+        env={**environment, "GITHUB_WORKSPACE": str(hostile_checkout)},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert rejected.stdout == ""
+    assert rejected.stderr == ("error: the preserved .nexus-test path must be a real directory\n")
 
 
 def test_backend_dockerfile_has_only_immutable_upstreams_and_baked_identity() -> None:
@@ -402,7 +562,42 @@ def test_backend_dockerfile_has_only_immutable_upstreams_and_baked_identity() ->
             assert re.fullmatch(r"[^\s@]+:[^\s@]+@sha256:[0-9a-f]{64}", match.group(1))
 
     assert dockerfile.count(" AS api") == 1
-    assert dockerfile.count(" AS worker") == 1
+    assert len(re.findall(r"^FROM\s+worker-runtime\s+AS\s+worker$", dockerfile, re.MULTILINE)) == 1
     assert "/app/runtime-identity.json" in dockerfile
     assert "org.opencontainers.image.revision=$SOURCE_SHA" in dockerfile
     assert dockerfile.count("USER nexus:nexus") == 2
+
+
+def test_codex_host_sdk_and_linux_sandbox_exist_only_in_the_worker_artifact() -> None:
+    """Risk: a subscription credential must never reach the API artifact.
+
+    The release image still has one worker identity, but only that target may
+    resolve the Codex SDK extra or contain the bundled Codex sandbox wrappers.
+    """
+
+    dockerfile = (REPO_ROOT / "docker/Dockerfile.backend").read_text(encoding="utf-8")
+
+    worker_extra = dockerfile.index("uv sync --frozen --no-dev --no-editable --extra codex-agent")
+    worker_stage = dockerfile.index("FROM backend-runtime AS worker-runtime")
+    api_stage = dockerfile.index("FROM backend-runtime AS api")
+    worker_target = dockerfile.index("FROM worker-runtime AS worker")
+    api_target = dockerfile[api_stage:worker_stage]
+    backend_runtime = dockerfile[
+        dockerfile.index("FROM python:3.12.13-slim-bookworm", worker_extra) : api_stage
+    ]
+
+    assert worker_extra < worker_stage < worker_target
+    assert "apt-get install -y --no-install-recommends bubblewrap" in dockerfile[worker_stage:]
+    assert "COPY --from=worker-python-builder /app/.venv /app/.venv" in dockerfile[worker_target:]
+    assert "COPY apps/codex_agent ./apps/codex_agent" in dockerfile[worker_target:]
+    assert "apps.codex_agent.sandbox_health" in (REPO_ROOT / "deploy/hetzner/release.py").read_text(
+        encoding="utf-8"
+    )
+    assert "python -m apps.codex_agent.enroll" in (
+        REPO_ROOT / "docs/runbooks/codex-personal-agent-host.md"
+    ).read_text(encoding="utf-8")
+    assert "COPY --from=python-builder /app/.venv /app/.venv" in backend_runtime
+    assert "COPY --from=worker-python-builder /app/.venv /app/.venv" not in backend_runtime
+    assert "bubblewrap" not in api_target
+    assert "apps/codex_agent" not in api_target
+    assert "worker-python-builder" not in api_target

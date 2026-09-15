@@ -8,7 +8,10 @@ import { decodeDocumentEmbeds } from "@/lib/media/documentEmbeds";
 import { decodeMediaNavigation } from "@/lib/media/readerNavigation";
 import { EDGE_KINDS, EDGE_ORIGINS } from "@/lib/resourceGraph/connections";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import type { ResourceActivation } from "@/lib/resources/activation";
+import {
+  decodeSnakeCaseResourceActivation,
+  type ResourceActivation,
+} from "@/lib/resources/activation";
 import {
   decodeResourceActionSubject,
   type ResourceActionSubject,
@@ -53,6 +56,7 @@ export function decodeReaderDocumentMapContract(
     raw,
     [
       "media_id",
+      "generation",
       "media_kind",
       "title",
       "status",
@@ -91,6 +95,11 @@ export function decodeReaderDocumentMapContract(
   );
   return {
     media_id: expectString(value.media_id, "ReaderDocumentMap.media_id"),
+    generation: decodePresence(value.generation, (generation) => {
+      const result = expectNonnegativeInteger(generation, "ReaderDocumentMap.generation.value");
+      if (result < 1) defect("generation must be positive");
+      return result;
+    }),
     media_kind: expectString(value.media_kind, "ReaderDocumentMap.media_kind"),
     title: expectString(value.title, "ReaderDocumentMap.title"),
     status,
@@ -429,7 +438,10 @@ function decodeSourceTarget(
     name,
   );
   const ref = expectResourceRef(value.ref, `${name}.ref`);
-  const activation = decodeActivation(value.activation, `${name}.activation`);
+  const activation = decodeSnakeCaseResourceActivation(
+    value.activation,
+    `${name}.activation`,
+  );
   return {
     ref,
     stable_key: expectString(value.stable_key, `${name}.stable_key`),
@@ -507,7 +519,10 @@ function decodeEvidenceObject(
   const commonKeys = ["ref", "kind", "label", "excerpt", "activation"];
   const base = () => {
     const ref = expectResourceRef(value.ref, `${name}.ref`);
-    const activation = decodeActivation(value.activation, `${name}.activation`);
+    const activation = decodeSnakeCaseResourceActivation(
+      value.activation,
+      `${name}.activation`,
+    );
     return {
       ref,
       label: expectString(value.label, `${name}.label`),
@@ -561,32 +576,6 @@ function decodeEvidenceObject(
   }
 }
 
-function decodeActivation(raw: unknown, name: string): ResourceActivation {
-  const value = expectExactRecord(
-    raw,
-    ["resource_ref", "kind", "href", "unresolved_reason"],
-    name,
-  );
-  const kind = expectOneOf(
-    value.kind,
-    ["route", "external", "none"] as const,
-    `${name}.kind`,
-  );
-  const href = expectNullableString(value.href, `${name}.href`);
-  if ((kind === "route" || kind === "external") && href === null) {
-    defect(`${name}.href is required for ${kind} activation`);
-  }
-  return {
-    resourceRef: expectResourceRef(value.resource_ref, `${name}.resource_ref`),
-    kind,
-    href,
-    unresolvedReason: expectNullableString(
-      value.unresolved_reason,
-      `${name}.unresolved_reason`,
-    ),
-  };
-}
-
 function evidenceActionSubject(
   ref: string,
   activation: ResourceActivation,
@@ -603,7 +592,7 @@ function decodeMarker(raw: unknown, index: number): ReaderDocumentMapMarker {
   const name = `ReaderDocumentMap.markers[${index}]`;
   const value = expectExactRecord(
     raw,
-    ["id", "kind", "item_id", "position", "tone", "label", "preview"],
+    ["id", "kind", "item_id", "position", "end_position", "tone", "label", "preview"],
     name,
   );
   const position = expectFiniteNumber(value.position, `${name}.position`);
@@ -626,6 +615,11 @@ function decodeMarker(raw: unknown, index: number): ReaderDocumentMapMarker {
     ),
     item_id: expectString(value.item_id, `${name}.item_id`),
     position,
+    end_position: decodePresence(value.end_position, (rawEnd) => {
+      const end = expectFiniteNumber(rawEnd, `${name}.end_position.value`);
+      if (end < position || end > 1) defect(`${name}.end_position must be between position and 1`);
+      return end;
+    }),
     tone: expectOneOf(
       value.tone,
       [

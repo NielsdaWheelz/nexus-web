@@ -34,7 +34,7 @@ export interface PdfDocumentLike {
 
 export interface PdfDocumentLoadingTaskLike {
   promise: Promise<PdfDocumentLike>;
-  destroy?: () => void;
+  destroy?: () => Promise<void> | void;
 }
 
 export interface PdfDocumentSourceLike {
@@ -44,6 +44,10 @@ export interface PdfDocumentSourceLike {
   disableRange?: boolean;
   disableStream?: boolean;
   disableAutoFetch?: boolean;
+  cMapUrl?: string;
+  cMapPacked?: boolean;
+  standardFontDataUrl?: string;
+  wasmUrl?: string;
 }
 
 export interface PdfGlobalWorkerOptionsLike {
@@ -156,10 +160,36 @@ export interface PdfJsViewerLike {
   LinkTarget?: { BLANK?: number };
 }
 
-export const PDF_WORKER_SRC = "/pdfjs/pdf.worker.min.mjs";
+/**
+ * Build-environment-injected pdf.js runtime asset root. The hosted app serves
+ * the vendored runtime from `/pdfjs`; a non-hosted shell (the Android offline
+ * bundle) injects its own root through its bundler `define`
+ * (`vite.offline-reading.config.ts`). The shared runtime never sniffs its host
+ * — composition/environment supplies the root.
+ */
+declare const __NEXUS_PDF_RUNTIME_ROOT__: string | undefined;
 
-const PDF_VIEWER_MODULE_URL = "/pdfjs/pdf_viewer.mjs";
-const PDF_MODULE_URL = "/pdfjs/pdf.mjs";
+const HOSTED_PDF_RUNTIME_ROOT = "/pdfjs";
+
+const injectedPdfRuntimeRoot: string | null =
+  typeof __NEXUS_PDF_RUNTIME_ROOT__ === "string"
+    ? __NEXUS_PDF_RUNTIME_ROOT__
+    : null;
+
+export function pdfRuntimePath(
+  filename: string,
+  runtimeRoot: string = injectedPdfRuntimeRoot ?? HOSTED_PDF_RUNTIME_ROOT,
+): string {
+  return `${runtimeRoot}/${filename}`;
+}
+
+export const PDF_WORKER_SRC = pdfRuntimePath("pdf.worker.min.mjs");
+export const PDF_CMAP_URL = pdfRuntimePath("cmaps/");
+export const PDF_STANDARD_FONT_URL = pdfRuntimePath("standard_fonts/");
+export const PDF_WASM_URL = pdfRuntimePath("wasm/");
+
+const PDF_VIEWER_MODULE_URL = pdfRuntimePath("pdf_viewer.mjs");
+const PDF_MODULE_URL = pdfRuntimePath("pdf.mjs");
 
 export async function loadPdfJs(): Promise<PdfJsLike> {
   const pdfJsModule = await import(

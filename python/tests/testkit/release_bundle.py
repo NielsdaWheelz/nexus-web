@@ -36,7 +36,7 @@ def _save_state(path: Path, state: dict[str, Any]) -> None:
 
 def _candidate(state: dict[str, Any]) -> dict[str, object]:
     candidate: dict[str, object] = {
-        "expected_database_revision": "0215",
+        "expected_database_revision": "0216",
         "expected_oracle_manifest_digest": "sha256:" + "c" * 64,
         "images": {
             "api": "ghcr.io/nielsdawheelz/nexus-api@sha256:" + "a" * 64,
@@ -78,14 +78,23 @@ def _copy_bundle(state: dict[str, Any], destination: Path) -> None:
     sources = {
         "Caddyfile": repo_root / "deploy/hetzner/Caddyfile",
         "docker-compose.yml": repo_root / "deploy/hetzner/docker-compose.yml",
+        "nexus-codex-agent-host.apparmor": (
+            repo_root / "deploy/hetzner/nexus-codex-agent-host.apparmor"
+        ),
+        "prove-codex-capacity.sh": repo_root / "deploy/hetzner/prove-codex-capacity.sh",
         "release.py": repo_root / "deploy/hetzner/release.py",
         "python/nexus/__init__.py": repo_root / "python/nexus/__init__.py",
         "python/nexus/release_artifact.py": (repo_root / "python/nexus/release_artifact.py"),
+        "testdata/android/player-protocol.json": (
+            repo_root / "testdata/android/player-protocol.json"
+        ),
     }
     for relative, source in sources.items():
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+        if relative == "prove-codex-capacity.sh":
+            target.chmod(0o444)
     (destination / "candidate-manifest.json").write_text(
         _canonical_json(_candidate(state)),
         encoding="utf-8",

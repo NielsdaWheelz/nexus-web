@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import mmap
 import os
 import signal
 import subprocess
@@ -20,6 +21,8 @@ class CommandInterrupted(RuntimeError):
 _ACTIVE_LOCK = threading.Lock()
 _ACTIVE_PROCESS: subprocess.Popen[str] | None = None
 _CAPTURED_OUTPUT_TAIL_BYTES = 64 * 1024
+_CAPTURED_MARKER_LINES_BYTES = 16 * 1024
+_RUNNER_PROCESS_TRACKING_ENV = "RUNNER_TRACKING_ID"
 _UNBLOCK_AND_EXEC = (
     "import os, signal, sys; "
     "signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM}); "
@@ -34,19 +37,25 @@ def run_command(
     env: Mapping[str, str],
     capture_output: bool = False,
     check: bool = False,
+    retain_stdout_markers: Sequence[str] = (),
 ) -> subprocess.CompletedProcess[str]:
     """Run one fixed command in an owned process group that cannot outlive the caller."""
     if not command or any(not isinstance(part, str) or not part for part in command):
         raise ValueError("child command must be a fixed non-empty argv")
+    if retain_stdout_markers and not capture_output:
+        raise ValueError("stdout markers require captured output")
+    if any(not isinstance(marker, str) or not marker for marker in retain_stdout_markers):
+        raise ValueError("stdout markers must be non-empty strings")
     stdout_file: BinaryIO | None = tempfile.TemporaryFile() if capture_output else None
     stderr_file: BinaryIO | None = tempfile.TemporaryFile() if capture_output else None
     blocked = {signal.SIGINT, signal.SIGTERM}
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
     try:
+        child_environment = trusted_runner_environment(env)
         process = subprocess.Popen(
             unblock_and_exec_command(command),
             cwd=cwd,
-            env=dict(env),
+            env=child_environment,
             stdout=stdout_file,
             stderr=stderr_file,
             text=True,
@@ -63,7 +72,7 @@ def run_command(
     try:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
         process.wait()
-        captured_stdout = _output_tail(stdout_file)
+        captured_stdout = _output_tail(stdout_file, retain_stdout_markers)
         captured_stderr = _output_tail(stderr_file)
     except BaseException:
         _terminate_process_group(process)
@@ -90,13 +99,65 @@ def run_command(
     return completed
 
 
-def _output_tail(output: BinaryIO | None) -> str | None:
+def trusted_runner_environment(environment: Mapping[str, str]) -> dict[str, str]:
+    """Preserve only the real GitHub runner identity across child isolation."""
+    child = dict(environment)
+    # GitHub's final cancellation sweep identifies descendants by this
+    # inherited value. Keep the real supervisor identity across the
+    # controller's isolation boundary, but never accept a replacement.
+    runner_tracking_id = os.environ.get(_RUNNER_PROCESS_TRACKING_ENV)
+    if runner_tracking_id:
+        child[_RUNNER_PROCESS_TRACKING_ENV] = runner_tracking_id
+    else:
+        child.pop(_RUNNER_PROCESS_TRACKING_ENV, None)
+    return child
+
+
+def _output_tail(output: BinaryIO | None, markers: Sequence[str] = ()) -> str | None:
     if output is None:
         return None
     output.flush()
     length = output.seek(0, os.SEEK_END)
     output.seek(max(0, length - _CAPTURED_OUTPUT_TAIL_BYTES))
-    return output.read().decode("utf-8", errors="replace")
+    tail = output.read()
+    retained = _retained_marker_lines(output, markers, length)
+    if not retained or all(line in tail for line in retained):
+        return tail.decode("utf-8", errors="replace")
+    heading = b"[retained marked output]\n"
+    marked = b"\n".join(retained) + b"\n[final output tail]\n"
+    tail_budget = max(0, _CAPTURED_OUTPUT_TAIL_BYTES - len(heading) - len(marked))
+    combined = heading + marked + tail[-tail_budget:] if tail_budget else heading + marked
+    return combined[:_CAPTURED_OUTPUT_TAIL_BYTES].decode("utf-8", errors="replace")
+
+
+def _retained_marker_lines(
+    output: BinaryIO,
+    markers: Sequence[str],
+    length: int,
+) -> tuple[bytes, ...]:
+    if not markers or length == 0:
+        return ()
+    encoded_markers = tuple(marker.encode("utf-8") for marker in markers)
+    retained: list[bytes] = []
+    retained_bytes = 0
+    with mmap.mmap(output.fileno(), 0, access=mmap.ACCESS_READ) as contents:
+        for marker in encoded_markers:
+            start = 0
+            while (position := contents.find(marker, start)) >= 0:
+                line_start = contents.rfind(b"\n", 0, position) + 1
+                line_end = contents.find(b"\n", position)
+                if line_end < 0:
+                    line_end = length
+                remaining = _CAPTURED_MARKER_LINES_BYTES - retained_bytes
+                if remaining <= 0:
+                    return tuple(retained)
+                capture_start = line_start if position - line_start < remaining else position
+                line = bytes(contents[capture_start : min(line_end, capture_start + remaining)])
+                if line not in retained:
+                    retained.append(line)
+                    retained_bytes += len(line)
+                start = line_end + 1
+    return tuple(retained)
 
 
 def unblock_and_exec_command(command: Sequence[str]) -> tuple[str, ...]:

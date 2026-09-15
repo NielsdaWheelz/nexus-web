@@ -54,10 +54,7 @@ def get_effective_entitlements(db: Session, user_id: UUID) -> BillingEntitlement
     ):
         active_grant = override
     if active_grant is not None:
-        grant_changes_quota = (
-            active_grant.platform_token_quota_mode != "plan"
-            or active_grant.transcription_quota_mode != "plan"
-        )
+        grant_changes_quota = active_grant.transcription_quota_mode != "plan"
         grant_plan = cast(BillingPlanTier, active_grant.plan_tier)
         if PLAN_RANK[grant_plan] > PLAN_RANK[effective_plan]:
             effective_plan = grant_plan
@@ -66,17 +63,9 @@ def get_effective_entitlements(db: Session, user_id: UUID) -> BillingEntitlement
             source = "internal_grant"
 
     can_share = PLAN_RANK[effective_plan] >= PLAN_RANK["plus"]
-    can_use_platform_llm = PLAN_RANK[effective_plan] >= PLAN_RANK["ai_plus"]
-    can_transcribe = can_use_platform_llm
+    can_transcribe = PLAN_RANK[effective_plan] >= PLAN_RANK["ai_plus"]
 
-    platform_limit = _plan_platform_limit(effective_plan) if can_use_platform_llm else 0
     transcription_limit = _plan_transcription_limit(effective_plan) if can_transcribe else 0
-    if active_grant is not None and can_use_platform_llm:
-        platform_limit = _grant_limit(
-            active_grant.platform_token_quota_mode,
-            active_grant.platform_token_limit_monthly,
-            platform_limit,
-        )
     if active_grant is not None and can_transcribe:
         transcription_limit = _grant_limit(
             active_grant.transcription_quota_mode,
@@ -91,9 +80,7 @@ def get_effective_entitlements(db: Session, user_id: UUID) -> BillingEntitlement
         entitlement_plan_tier=effective_plan,
         entitlement_source=source,
         can_share=can_share,
-        can_use_platform_llm=can_use_platform_llm,
         can_transcribe=can_transcribe,
-        platform_token_limit_monthly=platform_limit,
         transcription_minutes_limit_monthly=transcription_limit,
         usage_period_start=usage_start,
         usage_period_end=usage_end,
@@ -115,8 +102,6 @@ def grant_entitlement_override(
     *,
     user_id: UUID,
     plan_tier: PaidBillingPlanTier,
-    platform_token_quota_mode: QuotaMode,
-    platform_token_limit_monthly: int | None,
     transcription_quota_mode: QuotaMode,
     transcription_minutes_limit_monthly: int | None,
     expires_at: datetime | None,
@@ -144,8 +129,6 @@ def grant_entitlement_override(
         event_type = "updated"
 
     grant.plan_tier = plan_tier
-    grant.platform_token_quota_mode = platform_token_quota_mode
-    grant.platform_token_limit_monthly = platform_token_limit_monthly
     grant.transcription_quota_mode = transcription_quota_mode
     grant.transcription_minutes_limit_monthly = transcription_minutes_limit_monthly
     grant.expires_at = expires_at
@@ -215,15 +198,6 @@ def _billing_plan(account: BillingAccount | None) -> BillingPlanTier:
     return cast(BillingPlanTier, account.plan_tier)
 
 
-def _plan_platform_limit(plan_tier: str) -> int:
-    settings = get_settings()
-    if plan_tier == "ai_plus":
-        return settings.billing_ai_plus_platform_token_limit_monthly
-    if plan_tier == "ai_pro":
-        return settings.billing_ai_pro_platform_token_limit_monthly
-    return 0
-
-
 def _plan_transcription_limit(plan_tier: str) -> int:
     settings = get_settings()
     if plan_tier == "ai_plus":
@@ -255,8 +229,6 @@ def _grant_snapshot(grant: BillingEntitlementOverride | None) -> dict | None:
         return None
     return {
         "plan_tier": grant.plan_tier,
-        "platform_token_quota_mode": grant.platform_token_quota_mode,
-        "platform_token_limit_monthly": grant.platform_token_limit_monthly,
         "transcription_quota_mode": grant.transcription_quota_mode,
         "transcription_minutes_limit_monthly": grant.transcription_minutes_limit_monthly,
         "expires_at": grant.expires_at.isoformat() if grant.expires_at else None,

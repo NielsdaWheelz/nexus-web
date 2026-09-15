@@ -8,8 +8,9 @@
 //
 // Every payload is validated strictly (json-values.md): a malformed persisted
 // event throws so the SSE client surfaces a stream error rather than dropping a
-// load-bearing Succeeded/Failed event. Unknown event types also throw (loud, per
-// house `Unknown SSE event type` convention).
+// load-bearing Succeeded/Failed event. Migration-tagged `HistoricalFailed`
+// events are the sole read-only path for retired codes; a current `Failed`
+// event accepts only the current write vocabulary. Unknown event types throw.
 import { isRecord } from "@/lib/validation";
 import { decodePresence } from "@/lib/api/presence";
 import {
@@ -19,6 +20,7 @@ import {
 } from "@/lib/api/executionAdvisory";
 import {
   decodeFailureCode,
+  decodeHistoricalDossierBuildFailureCode,
 } from "@/lib/dossiers/dossierWire";
 import type {
   DossierCancelledFacts,
@@ -98,13 +100,17 @@ export function decodeDossierStreamEvent(
         ),
       };
     case "Failed":
+    case "HistoricalFailed":
       if (!hasExactKeys(data, ["detail", "failure_code", "support"])) {
-        fail("Failed fields");
+        fail(`${type} fields`);
       }
       return {
         kind: "Failed",
         facts: {
-          failureCode: decodeFailureCode(data.failure_code),
+          failureCode:
+            type === "Failed"
+              ? decodeFailureCode(data.failure_code)
+              : decodeHistoricalDossierBuildFailureCode(data.failure_code),
           detail: decodePresence(data.detail, (v) => str(v, "Failed.detail")),
           support: decodePresence(data.support, (v) => {
             if (!isRecord(v)) fail("Failed.support");

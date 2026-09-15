@@ -1,5 +1,6 @@
 import type { APIResponse, Page } from "playwright/test";
 import { uniqueCanonicalReaderEpub } from "../corpus";
+import { uploadDocument } from "../documentUploadFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -39,8 +40,7 @@ interface ConsumptionStatsPayload {
 interface EpubSection {
   section_id: string;
   label: string;
-  href_path: string | null;
-  start_offset: number;
+  target: { fragment_id: string; offset: number };
 }
 
 async function readJson<T>(response: APIResponse, label: string): Promise<T> {
@@ -56,44 +56,15 @@ async function uploadReadableEpub(page: Page, userId: string): Promise<string> {
   const api = pageRequest(page, webOrigin);
   const objects = pageRequest(page, minioOrigin);
   const epub = uniqueCanonicalReaderEpub(userId);
-  const initialized = await readJson<{
-    data: { media_id: string; upload_url: string | null };
-  }>(
-    await api.post("/api/media/upload/init", {
-      headers: {
-        origin: webOrigin,
-        "Idempotency-Key": `durable-consumption-activity-${userId}`,
-      },
-      data: {
-        kind: "epub",
-        filename: "canonical-durable-consumption-activity.epub",
-        content_type: "application/epub+zip",
-        size_bytes: epub.byteLength,
-        library_ids: [],
-      },
-    }),
-    "Consumption journey EPUB acceptance",
-  );
-  const mediaId = initialized.data.media_id;
-  expect(
-    initialized.data.upload_url,
-    `Fresh Consumption journey upload ${mediaId} omitted its object target.`,
-  ).not.toBeNull();
-  const uploaded = await objects.put(initialized.data.upload_url!, {
-    headers: { "Content-Type": "application/epub+zip" },
-    data: epub,
+  const published = await uploadDocument({
+    api,
+    objects,
+    payload: epub,
+    kind: "Epub",
+    filename: "canonical-durable-consumption-activity.epub",
+    idempotencyKey: `durable-consumption-activity-${userId}`,
   });
-  expect(
-    uploaded.ok(),
-    `Consumption journey object upload ${mediaId} failed with ${uploaded.status()}.`,
-  ).toBeTruthy();
-  await readJson(
-    await api.post(`/api/media/${mediaId}/ingest`, {
-      headers: { origin: webOrigin },
-      data: { library_ids: [] },
-    }),
-    `Consumption journey EPUB confirmation for ${mediaId}`,
-  );
+  const mediaId = published.mediaId;
   await expect
     .poll(
       async () => {
@@ -148,13 +119,17 @@ test("restored reader input is durably projected as observed time in mounted Sta
     `EPUB navigation for ${mediaId}`,
   );
   const target = navigation.data.sections.find(
-    (section) => section.label === "Second" && section.href_path !== null,
+    (section) => section.label === "Second",
   );
   expect(
     target,
     `EPUB ${mediaId} did not expose the fixture-owned Second section.`,
   ).toBeDefined();
 
+  const fragment = await readJson<{ data: { href_path: string } }>(
+    await api.get(`/api/media/${mediaId}/fragments/${target!.target.fragment_id}`),
+    `EPUB fragment for ${mediaId}`,
+  );
   await readJson(
     await api.put(`/api/media/${mediaId}/reader-state`, {
       headers: { origin: webOrigin },
@@ -162,12 +137,12 @@ test("restored reader input is durably projected as observed time in mounted Sta
         locator: {
           kind: "epub",
           target: {
-            section_id: target!.section_id,
-            href_path: target!.href_path,
-            anchor_id: null,
+            fragment_id: target!.target.fragment_id,
+            href_path: fragment.data.href_path,
+            anchor_id: { kind: "Absent" },
           },
           locations: {
-            text_offset: target!.start_offset,
+            text_offset: target!.target.offset,
             progression: null,
             total_progression: null,
             position: null,

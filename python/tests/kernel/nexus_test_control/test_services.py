@@ -1,14 +1,20 @@
 import base64
 import hashlib
 import json
+import logging
 import os
+import select
 import signal
 import socket
 import subprocess
 import sys
 import threading
+from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
+from uuid import UUID
 
 import httpx
 import pytest
@@ -25,12 +31,13 @@ from nexus_test_control.runtime import (
     initialize_runtime,
     migration_database_name,
     process_resource_identity,
-    provider_fixture_identity,
     read_ledger,
+    read_runtime,
     record_created,
     record_planned,
     run_bucket_name,
     run_database_name,
+    workspace_heavy_lock,
 )
 from nexus_test_control.services import (
     TEST_EXTENSION_ID,
@@ -39,14 +46,12 @@ from nexus_test_control.services import (
     _database_url,
     _parse_supabase_status,
     _start_owned_process,
-    _startup_identity_pending,
     _supabase_credentials_from_status,
     _write_supabase_config,
     clean_owned_runtime,
     clean_run,
     new_run_id,
-    prepare_openai_provider_fixture,
-    release_openai_provider_fixture,
+    reset_run_data_plane,
     retire_run_processes,
     run_environment,
     start_python_process,
@@ -66,11 +71,300 @@ RUN_ID = "0123456789abcdef"
 
 
 def _ports() -> RuntimePorts:
-    return RuntimePorts(15432, 19000, 25421, 25422, 25423, 25424, 25425, 18000, 13000, 19091, 19092)
+    return RuntimePorts(
+        15432,
+        19000,
+        25421,
+        25422,
+        25423,
+        25424,
+        25425,
+        18000,
+        18001,
+        13000,
+        19091,
+        19092,
+        19093,
+    )
 
 
-def _owned_run(tmp_path: Path, *, migration: bool = True) -> OwnedRun:
+def _process_is_running(process_id: int) -> bool:
+    try:
+        os.kill(process_id, 0)
+    except ProcessLookupError:
+        return False
+    if sys.platform == "linux":
+        try:
+            status = (Path("/proc") / str(process_id) / "status").read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return False
+        state = next((line for line in status.splitlines() if line.startswith("State:")), "")
+        return "Z (zombie)" not in state
+    return True
+
+
+@pytest.mark.parametrize("relative", ("Android/Sdk", "Library/Android/sdk"))
+def test_android_sdk_discovery_uses_conventional_home_install(
+    tmp_path: Path,
+    relative: str,
+) -> None:
+    developer_home = tmp_path / "developer"
+    sdk = developer_home / relative
+    sdk.mkdir(parents=True)
+    environment = {"HOME": str(developer_home), "PATH": "/usr/bin"}
+
+    assert services.resolve_android_sdk(environment) == sdk.resolve()
+    assert services.resolved_android_environment(environment) == {
+        **environment,
+        "ANDROID_HOME": str(sdk.resolve()),
+    }
+    assert services.android_tool_environment(environment)["ANDROID_HOME"] == str(sdk.resolve())
+    assert "ANDROID_HOME" not in environment
+
+
+def test_android_sdk_discovery_does_not_mask_invalid_explicit_configuration(
+    tmp_path: Path,
+) -> None:
+    developer_home = tmp_path / "developer"
+    (developer_home / "Android/Sdk").mkdir(parents=True)
+    invalid = tmp_path / "missing-sdk"
+    environment = {
+        "HOME": str(developer_home),
+        "ANDROID_HOME": str(invalid),
+    }
+
+    assert services.resolve_android_sdk(environment) is None
+    assert services.resolved_android_environment(environment) == environment
+
+
+def test_android_sdk_discovery_rejects_conflicting_explicit_roots(tmp_path: Path) -> None:
+    android_home = tmp_path / "android-home"
+    android_sdk_root = tmp_path / "android-sdk-root"
+    android_home.mkdir()
+    android_sdk_root.mkdir()
+
+    assert (
+        services.resolve_android_sdk(
+            {
+                "ANDROID_HOME": str(android_home),
+                "ANDROID_SDK_ROOT": str(android_sdk_root),
+            }
+        )
+        is None
+    )
+
+
+def test_adb_resolution_does_not_fall_back_from_an_invalid_explicit_sdk(
+    tmp_path: Path,
+) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    adb = tools / "adb"
+    adb.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    adb.chmod(0o755)
+
+    assert (
+        services.resolve_adb(
+            {
+                "ANDROID_HOME": str(tmp_path / "missing-sdk"),
+                "PATH": str(tools),
+            }
+        )
+        is None
+    )
+
+
+def test_adb_resolution_uses_path_only_when_no_sdk_is_configured_or_discovered(
+    tmp_path: Path,
+) -> None:
+    developer_home = tmp_path / "developer"
+    developer_home.mkdir()
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    adb = tools / "adb"
+    adb.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    adb.chmod(0o755)
+
+    assert services.resolve_adb({"HOME": str(developer_home), "PATH": str(tools)}) == adb
+
+
+def test_port_probe_rejects_an_existing_dual_stack_wildcard_listener() -> None:
+    with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as holder:
+        holder.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        holder.bind(("::", 0))
+        holder.listen()
+
+        port = int(holder.getsockname()[1])
+
+        assert not services._port_available(port), (
+            "an existing dual-stack listener was misclassified as an available test port"
+        )
+
+
+def test_owned_process_preserves_the_trusted_runner_cancellation_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    identity_path = tmp_path / "runner-tracking-id.txt"
+    trusted_identity = "trusted-actions-runner-identity"
+    monkeypatch.setenv("RUNNER_TRACKING_ID", trusted_identity)
+    started = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "api",
+        (
+            sys.executable,
+            "-c",
+            (
+                "import os,pathlib,signal,sys; "
+                "pathlib.Path(sys.argv[1]).write_text("
+                "os.environ.get('RUNNER_TRACKING_ID', 'absent')); "
+                "signal.pause()"
+            ),
+            str(identity_path),
+        ),
+        cwd=tmp_path,
+        process_environment={
+            "NEXUS_TEST_RUN_ID": RUN_ID,
+            "RUNNER_TRACKING_ID": "untrusted-capability-replacement",
+        },
+    )
+    try:
+        for _attempt in range(500):
+            if identity_path.is_file():
+                break
+            threading.Event().wait(0.01)
+        assert identity_path.read_text(encoding="utf-8") == trusted_identity, (
+            "the isolated owned process lost or replaced the runner cancellation identity"
+        )
+    finally:
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+        try:
+            os.killpg(started.process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    monkeypatch.delenv("RUNNER_TRACKING_ID")
+    assert "RUNNER_TRACKING_ID" not in services._child_environment(
+        {"RUNNER_TRACKING_ID": "untrusted-capability-replacement"}
+    )
+
+
+def test_heavy_admission_waits_for_the_owner_then_recovers_its_abandoned_process(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    recovered_lock = getattr(services, "recovered_workspace_heavy_lock", None)
+    assert recovered_lock is not None, (
+        "heavy-work admission has no ledger-owned abandoned-run recovery"
+    )
+    subprocess.run(("git", "init", "--quiet", str(tmp_path)), check=True)
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    started = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "api",
+        (sys.executable, "-c", "import signal; signal.pause()"),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    credentials = SupabaseCredentials(
+        "http://127.0.0.1:25421",
+        "public-anon-key",
+        "fixture-admin-key",
+    )
+    ensure_calls: list[Path] = []
+
+    def ensure_stub(root: Path, environment: Mapping[str, str]) -> SupabaseCredentials:
+        assert environment == TEST_ENV
+        ensure_calls.append(root)
+        return credentials
+
+    admitted = threading.Event()
+
+    def recover() -> None:
+        with recovered_lock(
+            tmp_path,
+            TEST_ENV,
+            service_ensurer=ensure_stub,
+        ):
+            admitted.set()
+
+    caplog.set_level(logging.WARNING, logger=services.__name__)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with workspace_heavy_lock(tmp_path):
+                recovery = executor.submit(recover)
+                assert not admitted.wait(timeout=0.2), (
+                    "recovery bypassed the live runtime owner's heavy-work lease"
+                )
+                assert _process_is_running(started.process_group_id)
+            recovery.result(timeout=10)
+
+        assert admitted.is_set()
+        assert not _process_is_running(started.process_group_id)
+        assert ensure_calls == [tmp_path.resolve()]
+        assert read_runtime(tmp_path).owned_run_ids == ()
+        recovery_record = next(
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "nexus_test.abandoned_runs_recovered"
+        )
+        assert getattr(recovery_record, "run_ids", None) == (RUN_ID,)
+    finally:
+        if RUN_ID in read_runtime(tmp_path).owned_run_ids:
+            clean_run(tmp_path, TEST_ENV, RUN_ID)
+        try:
+            os.killpg(started.process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def test_heavy_admission_fails_closed_and_retains_ownership_when_recovery_cannot_start(
+    tmp_path: Path,
+) -> None:
+    recovered_lock = getattr(services, "recovered_workspace_heavy_lock", None)
+    assert recovered_lock is not None, (
+        "heavy-work admission has no ledger-owned abandoned-run recovery"
+    )
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    entered = False
+
+    def unavailable_services(
+        _root: Path,
+        _environment: Mapping[str, str],
+    ) -> SupabaseCredentials:
+        raise OSError("synthetic local service failure")
+
+    with pytest.raises(
+        RuntimeContractError,
+        match="abandoned test run recovery failed: synthetic local service failure",
+    ):
+        with recovered_lock(
+            tmp_path,
+            TEST_ENV,
+            service_ensurer=unavailable_services,
+        ):
+            entered = True
+
+    assert not entered
+    assert read_runtime(tmp_path).owned_run_ids == (RUN_ID,)
+    clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+
+def _owned_run(
+    tmp_path: Path,
+    *,
+    migration: bool = True,
+    ports: RuntimePorts | None = None,
+) -> OwnedRun:
+    initialize_runtime(tmp_path, TEST_ENV, ports or _ports())
     claim_run(tmp_path, TEST_ENV, RUN_ID)
     resources = [
         Resource(ResourceKind.RUN_DATABASE, run_database_name(RUN_ID)),
@@ -112,65 +406,22 @@ def _empty_owned_run(tmp_path: Path) -> OwnedRun:
     )
 
 
-def test_openai_provider_fixture_is_ledgered_before_state_and_cleaned_exactly(
-    tmp_path: Path,
-) -> None:
-    run = _empty_owned_run(tmp_path)
-
-    fixture = prepare_openai_provider_fixture(tmp_path, TEST_ENV, run)
-
-    entry = read_ledger(tmp_path, RUN_ID).entries[-1]
-    assert entry.resource == Resource(
-        ResourceKind.PROVIDER_FIXTURE, fixture.state.relative_to(tmp_path).as_posix()
+def _created_embedding_peer_paths(tmp_path: Path, run: OwnedRun) -> dict[str, Path]:
+    from nexus_test_control.services import (
+        finish_embedding_peer_state,
+        prepare_embedding_peer_state,
     )
-    assert fixture.certificate.is_file()
-    assert fixture.key.is_file()
-    assert fixture.audit.is_file()
 
-    clean_run(tmp_path, TEST_ENV, RUN_ID)
-    assert not fixture.state.exists()
-
-
-def test_openai_provider_fixture_preserves_preexisting_unrecorded_state(tmp_path: Path) -> None:
-    run = _empty_owned_run(tmp_path)
-    state = tmp_path / ".nexus-test/runs" / RUN_ID / "openai-provider"
-    state.mkdir()
-    sentinel = state / "sentinel"
-    sentinel.write_text("preserve", encoding="utf-8")
-
-    with pytest.raises(RuntimeContractError, match="already exists"):
-        prepare_openai_provider_fixture(tmp_path, TEST_ENV, run)
-
-    assert sentinel.read_text(encoding="utf-8") == "preserve"
-    assert read_ledger(tmp_path, RUN_ID).entries == ()
-
-
-def test_openai_provider_fixture_cleanup_recovers_partial_planned_state(tmp_path: Path) -> None:
-    _empty_owned_run(tmp_path)
-    resource = Resource(ResourceKind.PROVIDER_FIXTURE, provider_fixture_identity(RUN_ID))
-    record_planned(tmp_path, TEST_ENV, RUN_ID, resource)
-    state = tmp_path / resource.identity
-    state.mkdir()
-    (state / "ca.pem").write_text("partial", encoding="utf-8")
-
-    clean_run(tmp_path, TEST_ENV, RUN_ID)
-
-    assert not state.exists()
-
-
-def test_idle_openai_provider_fixture_can_release_and_recreate_in_one_run(tmp_path: Path) -> None:
-    run = _empty_owned_run(tmp_path)
-    first = prepare_openai_provider_fixture(tmp_path, TEST_ENV, run)
-    first_certificate = first.certificate.read_bytes()
-
-    release_openai_provider_fixture(tmp_path, TEST_ENV, RUN_ID)
-    second = prepare_openai_provider_fixture(tmp_path, TEST_ENV, run)
-
-    assert second.certificate.read_bytes() != first_certificate
-    assert second.state.is_dir()
-    assert [entry.resource.kind for entry in read_ledger(tmp_path, RUN_ID).entries] == [
-        ResourceKind.PROVIDER_FIXTURE
-    ]
+    state = prepare_embedding_peer_state(tmp_path, TEST_ENV, run)
+    paths = {
+        "ca.pem": state / "ca.pem",
+        "server-key.pem": state / "server-key.pem",
+        "requests.jsonl": state / "requests.jsonl",
+    }
+    for path in paths.values():
+        path.write_text("owned fixture\n", encoding="utf-8")
+    finish_embedding_peer_state(tmp_path, TEST_ENV, run.run_id)
+    return paths
 
 
 def test_run_ids_are_exact_opaque_test_ownership_ids() -> None:
@@ -212,8 +463,527 @@ def test_owned_process_unblocks_sigterm_before_exec_and_stops_gracefully(
 
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 
-        with pytest.raises(ProcessLookupError):
-            os.kill(started.process_group_id, 0)
+        assert not services._process_birth_identity_matches(
+            started.process_group_id,
+            started.process_start_token,
+        ), "the original owned process identity survived graceful cleanup"
+    finally:
+        if services._process_birth_identity_matches(
+            started.process_group_id,
+            started.process_start_token,
+        ):
+            os.killpg(started.process_group_id, signal.SIGKILL)
+
+
+def test_owned_process_cleanup_rejects_a_different_owner_without_signaling(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    started = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "api",
+        (sys.executable, "-c", "import signal; signal.pause()"),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    try:
+        with pytest.raises(RuntimeContractError, match="no longer belongs"):
+            services._stop_process_group(
+                tmp_path,
+                started.process_group_id,
+                started.process_start_token,
+                started.run_id,
+                "b" * 32,
+                process_resource_identity(RUN_ID, "api"),
+            )
+
+        os.kill(started.process_group_id, 0)
+    finally:
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+
+def _install_scope_retirement_systemctl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    unit_disappears: bool,
+) -> Path:
+    fake_bin = tmp_path / "fake-scope-systemctl"
+    fake_bin.mkdir()
+    calls = tmp_path / "systemctl-calls"
+    systemctl = fake_bin / "systemctl"
+    systemctl.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib,sys\n"
+        f"calls=pathlib.Path({json.dumps(str(calls))})\n"
+        f"unit_disappears={unit_disappears!r}\n"
+        "arguments=sys.argv[1:]\n"
+        "prior=calls.read_text(encoding='utf-8').splitlines() if calls.exists() else []\n"
+        "calls.write_text('\\n'.join((*prior,'\\t'.join(arguments)))+'\\n',encoding='utf-8')\n"
+        "if arguments[1]=='show':\n"
+        "    shows=sum(row.startswith('--user\\tshow\\t') for row in prior)+1\n"
+        "    if shows==1 or not unit_disappears:\n"
+        "        print('LoadState=loaded\\nControlGroup=')\n"
+        "    else:\n"
+        "        print('LoadState=not-found\\nControlGroup=')\n"
+        "    raise SystemExit(0)\n"
+        "if arguments[1]=='stop':\n"
+        "    raise SystemExit(5)\n"
+        "raise SystemExit(64)\n",
+        encoding="utf-8",
+    )
+    systemctl.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    return calls
+
+
+def test_linux_scope_retirement_accepts_collection_racing_the_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if sys.platform != "linux":
+        with pytest.raises(RuntimeContractError, match="requested on another platform"):
+            services._retire_linux_process_scope(RUN_ID, "a" * 32)
+        return
+    calls = _install_scope_retirement_systemctl(tmp_path, monkeypatch, unit_disappears=True)
+
+    services._retire_linux_process_scope(RUN_ID, "a" * 32)
+
+    assert [row.split("\t")[1] for row in calls.read_text(encoding="utf-8").splitlines()] == [
+        "show",
+        "stop",
+        "show",
+    ]
+
+
+def test_linux_scope_retirement_rejects_stop_failure_while_scope_remains(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if sys.platform != "linux":
+        with pytest.raises(RuntimeContractError, match="requested on another platform"):
+            services._retire_linux_process_scope(RUN_ID, "a" * 32)
+        return
+    _install_scope_retirement_systemctl(tmp_path, monkeypatch, unit_disappears=False)
+
+    with pytest.raises(RuntimeContractError, match="scope could not be stopped"):
+        services._retire_linux_process_scope(RUN_ID, "a" * 32)
+
+
+def test_owned_process_cleanup_waits_for_exact_birth_owner_to_finish_startup(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    owner_token = "a" * 32
+    ready_path = tmp_path / "owner-startup-ready"
+    release_path = tmp_path / "owner-startup-release"
+    marker_path: Path | None = None
+    child_environment = {
+        **os.environ,
+        "NEXUS_ENV": "test",
+        "NEXUS_TEST_RUN_ID": RUN_ID,
+    }
+    child_environment.pop("NEXUS_TEST_PROCESS_OWNER", None)
+    child_environment.pop("NEXUS_TEST_PROCESS_OWNER_FD", None)
+    if sys.platform == "darwin":
+        marker_path = services._process_owner_marker(tmp_path, RUN_ID, owner_token)
+        script = (
+            "import os,pathlib,signal,sys,time\n"
+            "pathlib.Path(sys.argv[1]).write_text('ready')\n"
+            "release=pathlib.Path(sys.argv[2])\n"
+            "while not release.is_file():\n"
+            "    time.sleep(0.01)\n"
+            "owner_fd=os.open(sys.argv[3],os.O_RDONLY)\n"
+            "signal.pause()\n"
+        )
+        command = (
+            sys.executable,
+            "-c",
+            script,
+            str(ready_path),
+            str(release_path),
+            str(marker_path),
+        )
+    else:
+        assert sys.platform == "linux"
+        script = (
+            "import os,pathlib,signal,sys,time\n"
+            "pathlib.Path(sys.argv[1]).write_text('ready')\n"
+            "release=pathlib.Path(sys.argv[2])\n"
+            "while not release.is_file():\n"
+            "    time.sleep(0.01)\n"
+            "environment=dict(os.environ)\n"
+            "environment['NEXUS_TEST_PROCESS_OWNER']=sys.argv[3]\n"
+            "os.execvpe(sys.executable,"
+            "(sys.executable,'-c','import signal; signal.pause()'),environment)\n"
+        )
+        command = (
+            sys.executable,
+            "-c",
+            script,
+            str(ready_path),
+            str(release_path),
+            owner_token,
+        )
+    resource = Resource(ResourceKind.PROCESS, process_resource_identity(RUN_ID, "api"))
+    record_planned(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        resource,
+        external_id=owner_token,
+        command=command,
+    )
+    if marker_path is not None:
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_path.touch(mode=0o600, exist_ok=False)
+    process = subprocess.Popen(
+        command,
+        cwd=tmp_path,
+        env=child_environment,
+        start_new_session=True,
+    )
+    try:
+        start_token = services._process_start_token(process.pid)
+        record_created(
+            tmp_path,
+            TEST_ENV,
+            RUN_ID,
+            resource,
+            process_group_id=process.pid,
+            process_start_token=start_token,
+        )
+        for _attempt in range(500):
+            if ready_path.is_file():
+                break
+            threading.Event().wait(0.01)
+        assert ready_path.read_text(encoding="utf-8") == "ready"
+        assert process.pid not in services._owned_process_group_map(
+            tmp_path,
+            RUN_ID,
+            owner_token,
+        )
+        assert services._process_birth_identity_matches(process.pid, start_token)
+
+        caplog.set_level(logging.DEBUG, logger=services.__name__)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            cleanup = executor.submit(clean_run, tmp_path, TEST_ENV, RUN_ID)
+            pending_observation = None
+            for _attempt in range(500):
+                pending_observation = next(
+                    (
+                        record
+                        for record in caplog.records
+                        if getattr(record, "event", None)
+                        == "nexus_test.process_owner_visibility_pending"
+                    ),
+                    None,
+                )
+                if pending_observation is not None or cleanup.done():
+                    break
+                threading.Event().wait(0.01)
+            release_path.touch(exist_ok=False)
+            cleanup_error = cleanup.exception(timeout=5)
+
+        assert pending_observation is not None, (
+            "cleanup never observed exact birth while ownership was hidden"
+        )
+        assert getattr(pending_observation, "process_group_id", None) == process.pid
+        assert getattr(pending_observation, "resource_identity", None) == resource.identity
+        assert getattr(pending_observation, "run_id", None) == RUN_ID
+        assert cleanup_error is None, f"cleanup rejected transitional ownership: {cleanup_error}"
+        process.wait(timeout=3)
+        assert not _process_is_running(process.pid)
+        assert read_runtime(tmp_path).owned_run_ids == ()
+    finally:
+        release_path.touch(exist_ok=True)
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+        if marker_path is not None:
+            marker_path.unlink(missing_ok=True)
+
+
+def test_clean_reaps_the_exact_process_tree_when_linux_environment_becomes_unreadable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    child_path = tmp_path / "separate-session-child.txt"
+    script = (
+        "import os,pathlib,signal,subprocess,sys; "
+        "owner_fd=os.environ.get('NEXUS_TEST_PROCESS_OWNER_FD'); "
+        "inherited=() if owner_fd is None else (int(owner_fd),); "
+        "child=subprocess.Popen((sys.executable,'-c','import signal; signal.pause()'),"
+        "start_new_session=True,pass_fds=inherited); "
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); "
+        "signal.pause()"
+    )
+    started = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "api",
+        (sys.executable, "-c", script, str(child_path)),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    child_pid = 0
+    try:
+        for _attempt in range(500):
+            if child_path.is_file():
+                child_pid = int(child_path.read_text(encoding="utf-8"))
+                break
+            threading.Event().wait(0.01)
+        assert child_pid > 1
+
+        if sys.platform == "linux":
+            with monkeypatch.context() as inaccessible_environment:
+                inaccessible_environment.setattr(
+                    services,
+                    "_linux_process_environment",
+                    lambda _process_id: (_ for _ in ()).throw(PermissionError()),
+                )
+                clean_run(tmp_path, TEST_ENV, RUN_ID)
+        else:
+            clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+        assert not services._process_birth_identity_matches(
+            started.process_group_id,
+            started.process_start_token,
+        ), "the exact run-owned process survived cross-credential cleanup"
+        assert not _process_is_running(child_pid), (
+            "a separate-session descendant escaped its exact run-owned scope"
+        )
+        if sys.platform == "linux":
+            assert services._linux_process_scope_identities(RUN_ID, started.owner_token) is None, (
+                "the empty run-owned process scope survived cleanup"
+            )
+        assert read_runtime(tmp_path).owned_run_ids == ()
+    finally:
+        if RUN_ID in read_runtime(tmp_path).owned_run_ids:
+            clean_run(tmp_path, TEST_ENV, RUN_ID)
+        try:
+            os.killpg(started.process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        if child_pid > 1:
+            try:
+                os.killpg(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_clean_reaps_an_exact_legacy_process_when_linux_environment_becomes_unreadable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    owner_token = "a" * 32
+    resource = Resource(ResourceKind.PROCESS, process_resource_identity(RUN_ID, "api"))
+    command = (sys.executable, "-c", "import signal; signal.pause()")
+    record_planned(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        resource,
+        external_id=owner_token,
+        command=command,
+    )
+    owner_descriptor: int | None = None
+    inherited_descriptors: tuple[int, ...] = ()
+    child_environment = {
+        **os.environ,
+        "NEXUS_ENV": "test",
+        "NEXUS_TEST_PROCESS_OWNER": owner_token,
+        "NEXUS_TEST_RUN_ID": RUN_ID,
+    }
+    if sys.platform == "darwin":
+        marker = services._process_owner_marker(tmp_path, RUN_ID, owner_token)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        owner_descriptor = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_RDONLY, 0o600)
+        inherited_descriptors = (owner_descriptor,)
+        child_environment["NEXUS_TEST_PROCESS_OWNER_FD"] = str(owner_descriptor)
+    try:
+        process = subprocess.Popen(
+            command,
+            env=child_environment,
+            start_new_session=True,
+            pass_fds=inherited_descriptors,
+        )
+    finally:
+        if owner_descriptor is not None:
+            os.close(owner_descriptor)
+    try:
+        start_token = services._process_start_token(process.pid)
+        record_created(
+            tmp_path,
+            TEST_ENV,
+            RUN_ID,
+            resource,
+            process_group_id=process.pid,
+            process_start_token=start_token,
+        )
+        if sys.platform == "linux":
+            with monkeypatch.context() as inaccessible_environment:
+                inaccessible_environment.setattr(
+                    services,
+                    "_linux_process_environment",
+                    lambda _process_id: (_ for _ in ()).throw(PermissionError()),
+                )
+                clean_run(tmp_path, TEST_ENV, RUN_ID)
+        else:
+            clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+        process.wait(timeout=3)
+        assert read_runtime(tmp_path).owned_run_ids == ()
+    finally:
+        if RUN_ID in read_runtime(tmp_path).owned_run_ids:
+            clean_run(tmp_path, TEST_ENV, RUN_ID)
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+
+
+def test_clean_reaps_an_exact_created_process_that_exits_before_owner_scan(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    ready_path = tmp_path / "exiting-owner-ready"
+    release_path = tmp_path / "exiting-owner-release"
+    script = (
+        "import pathlib,sys,time\n"
+        "pathlib.Path(sys.argv[1]).write_text('ready')\n"
+        "release=pathlib.Path(sys.argv[2])\n"
+        "while not release.is_file():\n"
+        "    time.sleep(0.01)\n"
+    )
+    started = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "api",
+        (sys.executable, "-c", script, str(ready_path), str(release_path)),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    exit_observer = None
+    try:
+        if sys.platform == "darwin":
+            exit_observer = select.kqueue()
+            exit_observer.control(
+                [
+                    select.kevent(
+                        started.process_group_id,
+                        filter=select.KQ_FILTER_PROC,
+                        flags=select.KQ_EV_ADD | select.KQ_EV_ENABLE | select.KQ_EV_CLEAR,
+                        fflags=select.KQ_NOTE_EXIT,
+                    )
+                ],
+                0,
+                0,
+            )
+        for _attempt in range(500):
+            if ready_path.is_file():
+                break
+            threading.Event().wait(0.01)
+        assert ready_path.read_text(encoding="utf-8") == "ready"
+        release_path.touch(exist_ok=False)
+        for _attempt in range(500):
+            if exit_observer is not None:
+                exited = bool(exit_observer.control(None, 1, 0))
+            else:
+                exited = (
+                    os.waitid(
+                        os.P_PID,
+                        started.process_group_id,
+                        os.WEXITED | os.WNOHANG | os.WNOWAIT,
+                    )
+                    is not None
+                )
+            if exited:
+                break
+            threading.Event().wait(0.01)
+        else:
+            pytest.fail("owned child did not exit without being reaped")
+
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+        if sys.platform == "linux":
+            with pytest.raises(ChildProcessError):
+                os.waitid(
+                    os.P_PID,
+                    started.process_group_id,
+                    os.WEXITED | os.WNOHANG | os.WNOWAIT,
+                )
+        else:
+            assert not _process_is_running(started.process_group_id)
+        assert read_runtime(tmp_path).owned_run_ids == ()
+    finally:
+        if exit_observer is not None:
+            exit_observer.close()
+        try:
+            os.killpg(started.process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            os.waitpid(started.process_group_id, 0)
+        except ChildProcessError:
+            pass
+
+
+def test_clean_stops_owned_children_after_the_recorded_group_leader_exits(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    child_path = tmp_path / "child-pid.txt"
+    leader_script = (
+        "import os,pathlib,signal,subprocess,sys; "
+        "owner_fd=os.environ.get('NEXUS_TEST_PROCESS_OWNER_FD'); "
+        "inherited=() if owner_fd is None else (int(owner_fd),); "
+        "child=subprocess.Popen((sys.executable,'-c','import signal; signal.pause()'),"
+        "pass_fds=inherited); "
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); "
+        "signal.pause()"
+    )
+    started = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "api",
+        (sys.executable, "-c", leader_script, str(child_path)),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    child_pid = 0
+    try:
+        for _attempt in range(500):
+            if child_path.is_file():
+                child_pid = int(child_path.read_text(encoding="utf-8"))
+                break
+            threading.Event().wait(0.01)
+        assert child_pid > 1
+
+        os.kill(started.process_group_id, signal.SIGTERM)
+        os.waitpid(started.process_group_id, 0)
+        os.kill(child_pid, 0)
+
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+        assert not _process_is_running(child_pid)
+        if sys.platform == "linux":
+            assert services._linux_process_scope_identities(RUN_ID, started.owner_token) is None, (
+                "the empty run-owned process scope survived leader-exit cleanup"
+            )
     finally:
         try:
             os.killpg(started.process_group_id, signal.SIGKILL)
@@ -223,21 +993,23 @@ def test_owned_process_unblocks_sigterm_before_exec_and_stops_gracefully(
 
 def test_run_processes_retire_and_restart_without_erasing_logs(tmp_path: Path) -> None:
     run = _empty_owned_run(tmp_path)
-    fixture = prepare_openai_provider_fixture(tmp_path, TEST_ENV, run)
+    fixture = services.materialize_codex_generation_peer(tmp_path, TEST_ENV, run)
 
     def start(marker: str) -> int:
         process = _start_owned_process(
             tmp_path,
             TEST_ENV,
             RUN_ID,
-            "api",
+            "codex-generation-peer",
             (
                 sys.executable,
                 "-u",
                 "-c",
-                f"import signal; print({marker!r}, flush=True); signal.pause()",
+                "import signal, socket; listener = socket.socket(socket.AF_UNIX); "
+                "listener.bind('agent.sock'); "
+                f"print({marker!r}, flush=True); signal.pause()",
             ),
-            cwd=tmp_path,
+            cwd=fixture.state,
             process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
         )
         log = tmp_path / process.log_path
@@ -253,18 +1025,20 @@ def test_run_processes_retire_and_restart_without_erasing_logs(tmp_path: Path) -
         with pytest.raises(ProcessLookupError):
             os.kill(first, 0)
 
+        assert not fixture.socket.exists()
         second = start("second")
         retire_run_processes(tmp_path, TEST_ENV, RUN_ID)
         with pytest.raises(ProcessLookupError):
             os.kill(second, 0)
 
-        assert (tmp_path / "test-results/runs" / RUN_ID / "api.log").read_text(
+        assert (tmp_path / "test-results/runs" / RUN_ID / "codex-generation-peer.log").read_text(
             encoding="utf-8"
         ).splitlines() == ["first", "second"]
         assert [entry.resource.kind for entry in read_ledger(tmp_path, RUN_ID).entries] == [
-            ResourceKind.PROVIDER_FIXTURE
+            ResourceKind.CODEX_GENERATION_PEER
         ]
         assert fixture.state.is_dir()
+        assert not fixture.socket.exists()
     finally:
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 
@@ -285,16 +1059,32 @@ def test_clean_recovers_a_process_killed_between_spawn_and_created_record(
         external_id=owner_token,
         command=command,
     )
-    process = subprocess.Popen(
-        command,
-        env={
-            **os.environ,
-            "NEXUS_ENV": "test",
-            "NEXUS_TEST_PROCESS_OWNER": owner_token,
-            "NEXUS_TEST_RUN_ID": RUN_ID,
-        },
-        start_new_session=True,
-    )
+    owner_descriptor: int | None = None
+    inherited_descriptors: tuple[int, ...] = ()
+    if sys.platform == "darwin":
+        owner_marker = services._process_owner_marker(tmp_path, RUN_ID, owner_token)
+        owner_marker.parent.mkdir(parents=True, exist_ok=True)
+        owner_descriptor = os.open(
+            owner_marker,
+            os.O_CREAT | os.O_EXCL | os.O_RDONLY,
+            0o600,
+        )
+        inherited_descriptors = (owner_descriptor,)
+    try:
+        process = subprocess.Popen(
+            command,
+            env={
+                **os.environ,
+                "NEXUS_ENV": "test",
+                "NEXUS_TEST_PROCESS_OWNER": owner_token,
+                "NEXUS_TEST_RUN_ID": RUN_ID,
+            },
+            start_new_session=True,
+            pass_fds=inherited_descriptors,
+        )
+    finally:
+        if owner_descriptor is not None:
+            os.close(owner_descriptor)
     try:
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 
@@ -304,6 +1094,84 @@ def test_clean_recovers_a_process_killed_between_spawn_and_created_record(
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
+
+
+def test_clean_recovers_planned_children_after_the_group_leader_exits(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    owner_token = "a" * 32
+    child_path = tmp_path / "planned-child-pid.txt"
+    leader_script = (
+        "import os,pathlib,signal,subprocess,sys; "
+        "owner_fd=os.environ.get('NEXUS_TEST_PROCESS_OWNER_FD'); "
+        "inherited=() if owner_fd is None else (int(owner_fd),); "
+        "child=subprocess.Popen((sys.executable,'-c','import signal; signal.pause()'),"
+        "pass_fds=inherited); "
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); "
+        "signal.pause()"
+    )
+    command = (sys.executable, "-c", leader_script, str(child_path))
+    resource = Resource(ResourceKind.PROCESS, process_resource_identity(RUN_ID, "api"))
+    record_planned(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        resource,
+        external_id=owner_token,
+        command=command,
+    )
+    owner_descriptor: int | None = None
+    inherited_descriptors: tuple[int, ...] = ()
+    owner_environment: dict[str, str] = {}
+    if sys.platform == "darwin":
+        owner_marker = services._process_owner_marker(tmp_path, RUN_ID, owner_token)
+        owner_marker.parent.mkdir(parents=True, exist_ok=True)
+        owner_descriptor = os.open(
+            owner_marker,
+            os.O_CREAT | os.O_EXCL | os.O_RDONLY,
+            0o600,
+        )
+        inherited_descriptors = (owner_descriptor,)
+        owner_environment["NEXUS_TEST_PROCESS_OWNER_FD"] = str(owner_descriptor)
+    try:
+        leader = subprocess.Popen(
+            command,
+            env={
+                **os.environ,
+                "NEXUS_ENV": "test",
+                "NEXUS_TEST_PROCESS_OWNER": owner_token,
+                "NEXUS_TEST_RUN_ID": RUN_ID,
+                **owner_environment,
+            },
+            start_new_session=True,
+            pass_fds=inherited_descriptors,
+        )
+    finally:
+        if owner_descriptor is not None:
+            os.close(owner_descriptor)
+    child_pid = 0
+    try:
+        for _attempt in range(500):
+            if child_path.is_file():
+                child_pid = int(child_path.read_text(encoding="utf-8"))
+                break
+            threading.Event().wait(0.01)
+        assert child_pid > 1
+
+        os.kill(leader.pid, signal.SIGTERM)
+        leader.wait(timeout=3)
+        os.kill(child_pid, 0)
+
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+        assert not _process_is_running(child_pid)
+    finally:
+        try:
+            os.killpg(leader.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 def test_clean_uses_immutable_identity_when_owned_process_rewrites_argv(
@@ -330,21 +1198,40 @@ def test_clean_uses_immutable_identity_when_owned_process_rewrites_argv(
     command_line = b""
     try:
         for _attempt in range(500):
-            command_line = (Path("/proc") / str(started.process_group_id) / "cmdline").read_bytes()
-            if command_line.startswith(b"nexus-mutated-title"):
+            if sys.platform == "linux":
+                command_line = (
+                    Path("/proc") / str(started.process_group_id) / "cmdline"
+                ).read_bytes()
+            else:
+                command_line = subprocess.run(
+                    (
+                        "/bin/ps",
+                        "-ww",
+                        "-p",
+                        str(started.process_group_id),
+                        "-o",
+                        "command=",
+                    ),
+                    check=True,
+                    capture_output=True,
+                ).stdout
+            if b"/bin/bash" not in command_line:
                 break
             threading.Event().wait(0.01)
-        assert command_line.startswith(b"nexus-mutated-title")
+        assert b"/bin/bash" not in command_line
 
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 
-        with pytest.raises(ProcessLookupError):
-            os.kill(started.process_group_id, 0)
+        assert not services._process_birth_identity_matches(
+            started.process_group_id,
+            started.process_start_token,
+        ), "the original argv-rewriting process identity survived cleanup"
     finally:
-        try:
+        if services._process_birth_identity_matches(
+            started.process_group_id,
+            started.process_start_token,
+        ):
             os.killpg(started.process_group_id, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
 
 
 def test_readiness_rejects_listener_outside_owned_process_group(tmp_path: Path) -> None:
@@ -434,10 +1321,177 @@ def test_readiness_rejects_an_owned_listener_that_returns_unauthorized(tmp_path:
         clean_run(tmp_path, TEST_ENV, RUN_ID)
 
 
-def test_readiness_grace_requires_immutable_birth_identity_and_time() -> None:
-    assert _startup_identity_pending(birth_matches=True, now=1, deadline=2)
-    assert not _startup_identity_pending(birth_matches=False, now=1, deadline=2)
-    assert not _startup_identity_pending(birth_matches=True, now=2, deadline=2)
+def test_mcp_readiness_accepts_only_an_exact_owned_loopback_unauthorized_listener(
+    tmp_path: Path,
+) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as allocator:
+        allocator.bind(("127.0.0.1", 0))
+        port = int(allocator.getsockname()[1])
+    initialize_runtime(tmp_path, TEST_ENV, replace(_ports(), agent_tools_mcp=port))
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    server = (
+        "import http.server,sys; "
+        "handler=type('Unauthorized',(http.server.BaseHTTPRequestHandler,),{"
+        "'do_GET':lambda self:(self.send_response(401),self.end_headers()),"
+        "'log_message':lambda *args:None}); "
+        "http.server.ThreadingHTTPServer(('127.0.0.1',int(sys.argv[1])),handler).serve_forever()"
+    )
+    owned = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "worker-interactive",
+        (sys.executable, "-c", server, str(port)),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    try:
+        wait_process_ready(
+            tmp_path,
+            TEST_ENV,
+            owned,
+            EndpointKind.AGENT_TOOLS_MCP,
+            "/internal/agent-tools/mcp",
+        )
+    finally:
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+
+def test_mcp_readiness_rejects_an_owned_wildcard_unauthorized_listener(
+    tmp_path: Path,
+) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as allocator:
+        allocator.bind(("127.0.0.1", 0))
+        port = int(allocator.getsockname()[1])
+    initialize_runtime(tmp_path, TEST_ENV, replace(_ports(), agent_tools_mcp=port))
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    server = (
+        "import http.server,sys; "
+        "handler=type('Unauthorized',(http.server.BaseHTTPRequestHandler,),{"
+        "'do_GET':lambda self:(self.send_response(401),self.end_headers()),"
+        "'log_message':lambda *args:None}); "
+        "http.server.ThreadingHTTPServer(('0.0.0.0',int(sys.argv[1])),handler).serve_forever()"
+    )
+    owned = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "worker-interactive",
+        (sys.executable, "-c", server, str(port)),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    try:
+        for _attempt in range(500):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                if probe.connect_ex(("127.0.0.1", port)) == 0:
+                    break
+            threading.Event().wait(0.01)
+        else:
+            pytest.fail("owned wildcard listener did not start")
+
+        with pytest.raises(RuntimeContractError, match="did not become ready"):
+            wait_process_ready(
+                tmp_path,
+                TEST_ENV,
+                owned,
+                EndpointKind.AGENT_TOOLS_MCP,
+                "/internal/agent-tools/mcp",
+                timeout_seconds=0.2,
+            )
+    finally:
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+
+def test_darwin_listener_attestation_selects_only_the_exact_loopback_address() -> None:
+    output = "p123\nf10\nn127.0.0.1:18001\np456\nf11\nn*:18001\np789\nf12\nn127.0.0.1:18002\n"
+
+    assert services._parse_darwin_lsof_listener_process_ids(
+        output,
+        host="127.0.0.1",
+        port=18001,
+    ) == (123,)
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/internal/agent-tools/mcp?alias=1",
+        "/internal/agent-tools/mcp/",
+        "/internal/agent-tools/mcp#alias",
+    ),
+)
+def test_mcp_readiness_rejects_path_aliases_before_contact(tmp_path: Path, path: str) -> None:
+    process = services.StartedProcess(
+        "worker-interactive",
+        99999,
+        "1",
+        RUN_ID,
+        "0" * 32,
+        "unused.log",
+    )
+
+    with pytest.raises(RuntimeContractError, match="literal path"):
+        wait_process_ready(
+            tmp_path,
+            TEST_ENV,
+            process,
+            EndpointKind.AGENT_TOOLS_MCP,
+            path,
+        )
+
+
+def test_mcp_readiness_rejects_a_string_endpoint_alias_before_contact(tmp_path: Path) -> None:
+    process = services.StartedProcess(
+        "worker-interactive",
+        99999,
+        "1",
+        RUN_ID,
+        "0" * 32,
+        "unused.log",
+    )
+
+    with pytest.raises(RuntimeContractError, match="typed endpoint"):
+        wait_process_ready(
+            tmp_path,
+            TEST_ENV,
+            process,
+            cast(EndpointKind, "agent-tools-mcp"),
+            "/internal/agent-tools/mcp",
+        )
+
+
+def test_mcp_readiness_rejects_a_relabelled_noninteractive_ledger_process(
+    tmp_path: Path,
+) -> None:
+    initialize_runtime(tmp_path, TEST_ENV, _ports())
+    claim_run(tmp_path, TEST_ENV, RUN_ID)
+    owned = _start_owned_process(
+        tmp_path,
+        TEST_ENV,
+        RUN_ID,
+        "api",
+        (sys.executable, "-c", "import signal; signal.pause()"),
+        cwd=tmp_path,
+        process_environment={"NEXUS_TEST_RUN_ID": RUN_ID},
+    )
+    try:
+        with pytest.raises(RuntimeContractError, match="exact created worker-interactive"):
+            wait_process_ready(
+                tmp_path,
+                TEST_ENV,
+                replace(owned, role="worker-interactive"),
+                EndpointKind.AGENT_TOOLS_MCP,
+                "/internal/agent-tools/mcp",
+            )
+    finally:
+        clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+
+def test_process_identity_grace_requires_immutable_birth_identity_and_time() -> None:
+    assert services._process_identity_pending(birth_matches=True, now=1, deadline=2)
+    assert not services._process_identity_pending(birth_matches=False, now=1, deadline=2)
+    assert not services._process_identity_pending(birth_matches=True, now=2, deadline=2)
 
 
 def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs() -> None:
@@ -451,8 +1505,17 @@ def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs()
         {"AWS_ENDPOINT_URL_S3": "https://production.example"},
         {"PGHOST": "production.example"},
         {"SUPABASE_ACCESS_TOKEN": "production-token"},
+        {"NEXUS_AGENT_TOOLS_MCP_LISTEN": "0.0.0.0:8001"},
+        {"NEXUS_AGENT_TOOLS_MCP_ORIGIN": ("https://production.example/internal/agent-tools/mcp")},
+        {"WORKER_LANE": "interactive"},
         {"OUTBOUND_HTTP_PROXY_URL": "https://production.example"},
         {"PODCAST_INDEX_BASE_URL": "https://production.example"},
+        {"BRAVE_SEARCH_API_KEY": "production-brave-key"},
+        {"BRAVE_SEARCH_BASE_URL": "https://production.example/res/v1"},
+        {"GENERATION_API_PROVIDERS": ""},
+        {"GENERATION_API_BASE_URLS": "{}"},
+        {"OPENAI_GENERATION_API_KEY": "production-generation-key"},
+        {"GENERATION_CONTINUATION_ENCRYPTION_KEY": "production-continuation-key"},
         {"NEXUS_TEST_STATIC_DNS": '{"production.example":"93.184.216.34"}'},
         {"NODE_OPTIONS": "--import=/tmp/foreign.mjs"},
         {"DOCKER_HOST": "tcp://production.example:2376"},
@@ -469,6 +1532,48 @@ def test_caller_resource_configuration_is_rejected_and_secrets_have_safe_reprs()
             "test@example.invalid",
             "password-secret",
         )
+    )
+
+
+@pytest.mark.parametrize(
+    ("role", "setting", "value"),
+    (
+        ("worker-interactive", "WORKER_LANE", "background"),
+        ("worker-interactive", "NEXUS_AGENT_TOOLS_MCP_LISTEN", "127.0.0.1:28001"),
+        (
+            "worker-interactive",
+            "NEXUS_AGENT_TOOLS_MCP_ORIGIN",
+            "http://127.0.0.1:28001/internal/agent-tools/mcp",
+        ),
+        ("worker-background", "WORKER_LANE", "interactive"),
+        ("worker-background", "NEXUS_AGENT_TOOLS_MCP_LISTEN", "0.0.0.0:28001"),
+        (
+            "worker-background",
+            "NEXUS_AGENT_TOOLS_MCP_ORIGIN",
+            "http://127.0.0.1:28001/internal/agent-tools/mcp",
+        ),
+    ),
+)
+def test_worker_rejects_a_runtime_topology_override_before_spawn(
+    tmp_path: Path,
+    role: str,
+    setting: str,
+    value: str,
+) -> None:
+    run = _owned_run(tmp_path, migration=False)
+
+    with pytest.raises(RuntimeContractError, match="runtime topology is controller-owned"):
+        start_python_process(
+            tmp_path,
+            TEST_ENV,
+            run,
+            role,
+            overrides={setting: value},
+        )
+
+    assert not any(
+        entry.resource.kind is ResourceKind.PROCESS
+        for entry in read_ledger(tmp_path, RUN_ID).entries
     )
 
 
@@ -780,6 +1885,7 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
     assert environment["NEXT_PUBLIC_SUPABASE_URL"] == "http://127.0.0.1:25421"
     assert environment["NEXT_PUBLIC_SUPABASE_ANON_KEY"] == "public-anon-key"
     assert environment["OPENAI_API_KEY"] == "nexus-test-fixture-openai-key"
+    assert environment["GENERATION_API_PROVIDERS"] == ""
     assert environment["NEXUS_RUNTIME_IDENTITY_FILE"] == str(
         tmp_path / ".nexus-test/runtime-identity.json"
     )
@@ -789,6 +1895,13 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
     assert environment["NEXUS_EXTENSION_REDIRECT_ORIGINS"] == (
         f"https://{TEST_EXTENSION_ID}.chromiumapp.org"
     )
+    assert environment["NEXUS_TEST_STATIC_DNS"] == '{"www.nasa.gov":"93.184.216.34"}'
+    assert environment["OUTBOUND_HTTP_PROXY_URL"] == "http://127.0.0.1:19091"
+    assert environment["PODCASTS_ENABLED"] == "true"
+    assert environment["PODCAST_INDEX_API_KEY"] == "nexus-test-fixture-podcast-key"
+    assert environment["PODCAST_INDEX_API_SECRET"] == "nexus-test-fixture-podcast-secret"
+    assert environment["PODCAST_INDEX_BASE_URL"] == "http://127.0.0.1:19091"
+    assert not {"BRAVE_SEARCH_API_KEY", "BRAVE_SEARCH_BASE_URL"}.intersection(environment)
     assert "must-not-escape" not in repr(environment)
     assert not {
         "SERVICE_ROLE_KEY",
@@ -796,6 +1909,128 @@ def test_run_environment_contains_only_exact_local_resources_and_no_admin_key(
         "SUPABASE_SERVICE_KEY",
         "SUPABASE_SERVICE_ROLE_KEY",
     }.intersection(environment)
+
+
+def test_browser_data_plane_reset_rejects_foreign_resource_identity_before_io(
+    tmp_path: Path,
+) -> None:
+    run = _owned_run(tmp_path)
+    foreign = replace(run, bucket="nexus-run-fedcba9876543210")
+    before = read_ledger(tmp_path, RUN_ID).entries
+
+    with pytest.raises(
+        RuntimeContractError,
+        match="browser data plane does not belong to the exact test run",
+    ):
+        reset_run_data_plane(tmp_path, TEST_ENV, foreign)
+
+    assert read_ledger(tmp_path, RUN_ID).entries == before
+
+
+def test_embedding_peer_materializes_one_exact_client_identity(tmp_path: Path) -> None:
+    from nexus_test_control.runtime import embedding_peer_state_dir
+    from nexus_test_control.services import materialize_embedding_peer
+
+    run = _empty_owned_run(tmp_path)
+
+    peer = materialize_embedding_peer(tmp_path, TEST_ENV, run)
+
+    assert peer.state == embedding_peer_state_dir(tmp_path, RUN_ID)
+    assert peer.certificate.read_bytes().startswith(b"-----BEGIN CERTIFICATE-----")
+    assert peer.key.read_bytes().startswith(b"-----BEGIN PRIVATE KEY-----")
+    assert peer.key.stat().st_mode & 0o777 == 0o600
+    assert peer.audit.read_bytes() == b""
+    assert peer.client_environment() == {
+        "BRAVE_SEARCH_API_KEY": "nexus-test-fixture-brave-key",
+        "BRAVE_SEARCH_BASE_URL": "https://127.0.0.1:19092/res/v1",
+        "NEXUS_TEST_STATIC_DNS": (
+            '{"api.openai.com":{"address":"127.0.0.1","port":19092},"www.nasa.gov":"93.184.216.34"}'
+        ),
+        "NEXUS_TEST_TLS_CA_CERT": str(peer.certificate),
+    }
+
+    clean_run(tmp_path, TEST_ENV, RUN_ID)
+    assert not peer.state.exists()
+
+
+def test_codex_generation_peer_materializes_one_exact_secret_free_client_identity(
+    tmp_path: Path,
+) -> None:
+    from nexus_test_control.runtime import codex_generation_peer_state_dir
+    from nexus_test_control.services import materialize_codex_generation_peer
+
+    run = _empty_owned_run(tmp_path)
+
+    peer = materialize_codex_generation_peer(tmp_path, TEST_ENV, run)
+
+    assert peer.state == codex_generation_peer_state_dir(tmp_path, RUN_ID)
+    assert not peer.socket.exists()
+    assert len(os.fsencode(peer.socket)) < 104
+    assert peer.audit.read_bytes() == b""
+    assert peer.audit.stat().st_mode & 0o777 == 0o600
+    assert peer.client_environment() == {
+        "NEXUS_CODEX_AGENT_SOCKET": str(peer.socket),
+    }
+
+    clean_run(tmp_path, TEST_ENV, RUN_ID)
+    assert not peer.state.exists()
+
+
+def test_codex_generation_peer_answers_journey_synthesis_without_tool_authority() -> None:
+    from nexus.services import generation_policy, media_intelligence
+    from nexus.services.codex_generation_contract import GenerationCommand
+    from nexus.services.generation_intent import GenerationIntent, JsonSchemaOutput
+    from nexus.services.generation_selection import CodexPersonalSelection
+    from nexus.services.generation_spec import GenerationOperation
+    from nexus.tasks import enrich_metadata
+    from tests.testkit.codex_generation import codex_generation_command
+    from tests.testkit.codex_generation_server import deterministic_synthesis_output
+
+    generation_id = UUID("37fec309-e196-5c82-ac03-095414384ca4")
+    metadata_intent = enrich_metadata._metadata_generation_intent(
+        input="A bounded journey metadata packet."
+    )
+    media_intent = media_intelligence._media_unit_intent(
+        user_content="[0] A bounded journey evidence passage."
+    )
+    assert isinstance(metadata_intent.output, JsonSchemaOutput)
+    assert isinstance(media_intent.output, JsonSchemaOutput)
+
+    def command(operation: GenerationOperation, intent: GenerationIntent) -> GenerationCommand:
+        operation_policy = generation_policy.background_operation_policy(operation)
+        selection = operation_policy.selection
+        assert isinstance(selection, CodexPersonalSelection)
+        output = intent.output
+        assert isinstance(output, JsonSchemaOutput)
+        return codex_generation_command(
+            request_id=generation_id,
+            operation=operation,
+            instructions=intent.instructions,
+            input_text=intent.input,
+            model=selection.model,
+            reasoning=selection.reasoning,
+            turn_timeout_seconds=operation_policy.workflow.bounds.turn_timeout_seconds,
+            structured_schema=output.schema_,
+        )
+
+    metadata = command("metadata_enrichment", metadata_intent)
+    media_summary = command("media_summary", media_intent)
+
+    assert metadata.tool_grant is None
+    assert deterministic_synthesis_output(metadata) == {
+        "title": None,
+        "authors": None,
+        "publisher": None,
+        "description": None,
+        "original_published_date": None,
+        "edition_published_date": None,
+        "language": None,
+    }
+    assert media_summary.tool_grant is None
+    assert deterministic_synthesis_output(media_summary) == {
+        "summary_md": "A bounded journey evidence passage.",
+        "claims": [],
+    }
 
 
 @pytest.mark.parametrize(
@@ -822,15 +2057,23 @@ def test_python_child_rejects_unpersisted_or_public_run_resources_before_spawn(
     tmp_path: Path,
     run: OwnedRun,
 ) -> None:
-    persisted = _owned_run(tmp_path, migration=False)
-    poisoned = replace(
-        run,
-        database_url=run.database_url,
-        migration_database_url=persisted.migration_database_url,
-    )
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied_port:
+        occupied_port.bind(("127.0.0.1", 0))
+        occupied_port.listen()
+        api_port = int(occupied_port.getsockname()[1])
+        persisted = _owned_run(
+            tmp_path,
+            migration=False,
+            ports=replace(_ports(), api=api_port),
+        )
+        poisoned = replace(
+            run,
+            database_url=run.database_url,
+            migration_database_url=persisted.migration_database_url,
+        )
 
-    with pytest.raises(RuntimeContractError, match="exact persisted local test run"):
-        start_python_process(tmp_path, TEST_ENV, poisoned, "api")
+        with pytest.raises(RuntimeContractError, match="exact persisted local test run"):
+            start_python_process(tmp_path, TEST_ENV, poisoned, "api")
 
     assert not any(
         entry.resource.kind is ResourceKind.PROCESS
@@ -838,26 +2081,126 @@ def test_python_child_rejects_unpersisted_or_public_run_resources_before_spawn(
     )
 
 
+def test_provider_child_rejects_missing_owned_fixture_before_port_admission(
+    tmp_path: Path,
+) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied_port:
+        occupied_port.bind(("127.0.0.1", 0))
+        occupied_port.listen()
+        provider_port = int(occupied_port.getsockname()[1])
+        run = _owned_run(
+            tmp_path,
+            migration=False,
+            ports=replace(_ports(), provider_openai=provider_port),
+        )
+
+        with pytest.raises(RuntimeContractError, match="requires its exact created state owner"):
+            start_python_process(tmp_path, TEST_ENV, run, "provider-openai")
+
+    assert not any(
+        entry.resource.kind is ResourceKind.PROCESS
+        for entry in read_ledger(tmp_path, RUN_ID).entries
+    )
+
+
+@pytest.mark.parametrize(
+    "substituted_name",
+    (
+        "NEXUS_TEST_OPENAI_CERTIFICATE",
+        "NEXUS_TEST_OPENAI_KEY",
+        "NEXUS_TEST_OPENAI_AUDIT",
+    ),
+)
+def test_embedding_peer_rejects_each_substituted_path_before_recording_a_process(
+    tmp_path: Path,
+    substituted_name: str,
+) -> None:
+    run = _empty_owned_run(tmp_path)
+    _created_embedding_peer_paths(tmp_path, run)
+    foreign = tmp_path / f"foreign-{substituted_name.casefold()}"
+    foreign.write_text("foreign fixture\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeContractError, match="environment is controller-owned"):
+        start_python_process(
+            tmp_path,
+            TEST_ENV,
+            run,
+            "provider-openai",
+            overrides={substituted_name: str(foreign)},
+        )
+
+    assert not any(
+        entry.resource.kind is ResourceKind.PROCESS
+        for entry in read_ledger(tmp_path, RUN_ID).entries
+    )
+
+
+@pytest.mark.parametrize("defect", ("missing", "directory", "symlink"))
+def test_embedding_peer_rejects_each_invalid_owned_file_before_recording_a_process(
+    tmp_path: Path,
+    defect: str,
+) -> None:
+    run = _owned_run(tmp_path, migration=False)
+    certificate = _created_embedding_peer_paths(tmp_path, run)["ca.pem"]
+    certificate.unlink()
+    if defect == "directory":
+        certificate.mkdir()
+    elif defect == "symlink":
+        foreign = tmp_path / "foreign-certificate.pem"
+        foreign.write_text("foreign fixture\n", encoding="utf-8")
+        certificate.symlink_to(foreign)
+
+    with pytest.raises(RuntimeContractError, match="exact files|non-owned file"):
+        start_python_process(tmp_path, TEST_ENV, run, "provider-openai")
+
+    assert not any(
+        entry.resource.kind is ResourceKind.PROCESS
+        for entry in read_ledger(tmp_path, RUN_ID).entries
+    )
+
+
+def test_clean_recovers_an_interrupted_embedding_peer_preparation(tmp_path: Path) -> None:
+    from nexus_test_control.runtime import embedding_peer_state_dir
+    from nexus_test_control.services import prepare_embedding_peer_state
+
+    run = _empty_owned_run(tmp_path)
+    state = prepare_embedding_peer_state(tmp_path, TEST_ENV, run)
+    (state / "requests.jsonl").write_text("partial\n", encoding="utf-8")
+
+    clean_run(tmp_path, TEST_ENV, RUN_ID)
+
+    assert not state.exists()
+    assert not embedding_peer_state_dir(tmp_path, RUN_ID).parent.exists()
+
+
 def test_web_child_rejects_public_supabase_before_recording_or_spawning_process(
     tmp_path: Path,
 ) -> None:
-    run = _owned_run(tmp_path, migration=False)
-    poisoned = replace(
-        run,
-        supabase=SupabaseCredentials("https://production.example", "anon", "admin"),
-    )
-    artifact = tmp_path / ".nexus-test/builds" / ("a" * 64)
-    artifact.mkdir(parents=True)
-    server = artifact / "server.js"
-    server.write_text("throw new Error('must not run')\n", encoding="utf-8")
-
-    with pytest.raises(RuntimeContractError, match="exact persisted local test run"):
-        start_web_process(
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied_port:
+        occupied_port.bind(("127.0.0.1", 0))
+        occupied_port.listen()
+        web_port = int(occupied_port.getsockname()[1])
+        run = _owned_run(
             tmp_path,
-            TEST_ENV,
-            poisoned,
-            StandaloneBuild("a" * 64, artifact, server),
+            migration=False,
+            ports=replace(_ports(), web=web_port),
         )
+        poisoned = replace(
+            run,
+            supabase=SupabaseCredentials("https://production.example", "anon", "admin"),
+        )
+        artifact = tmp_path / ".nexus-test/builds" / ("a" * 64)
+        artifact.mkdir(parents=True)
+        server = artifact / "server.js"
+        server.write_text("throw new Error('must not run')\n", encoding="utf-8")
+
+        with pytest.raises(RuntimeContractError, match="exact persisted local test run"):
+            start_web_process(
+                tmp_path,
+                TEST_ENV,
+                poisoned,
+                StandaloneBuild("a" * 64, artifact, server),
+            )
 
     assert not any(
         entry.resource.kind is ResourceKind.PROCESS
@@ -976,14 +2319,25 @@ def test_clean_removes_only_the_exact_recorded_workspace_runtime(tmp_path: Path)
     assert foreign.read_text(encoding="utf-8") == "preserve"
 
 
-def test_clean_upgrades_then_removes_the_exact_previous_runtime(
+@pytest.mark.parametrize(
+    ("version", "removed_ports", "available_ports"),
+    (
+        (3, ("agent_tools_mcp", "provider_api"), {18001, 19093}),
+        (4, ("provider_api",), {19093}),
+    ),
+)
+def test_clean_upgrades_then_removes_an_exact_upgradeable_runtime(
     tmp_path: Path,
+    version: int,
+    removed_ports: tuple[str, ...],
+    available_ports: set[int],
 ) -> None:
     runtime = initialize_runtime(tmp_path, TEST_ENV, _ports())
     runtime_path = tmp_path / ".nexus-test/runtime.json"
     previous = json.loads(runtime_path.read_text(encoding="utf-8"))
-    previous["version"] = 2
-    del previous["ports"]["provider_openai"]
+    previous["version"] = version
+    for name in removed_ports:
+        del previous["ports"][name]
     runtime_path.write_text(json.dumps(previous), encoding="utf-8")
     commands: list[tuple[str, ...]] = []
 
@@ -997,7 +2351,7 @@ def test_clean_upgrades_then_removes_the_exact_previous_runtime(
             tmp_path,
             TEST_ENV,
             command_runner=run_command,
-            port_available=lambda port: port == 19092,
+            port_available=available_ports.__contains__,
         )
         == ()
     )

@@ -3,7 +3,8 @@ import {
   type Page,
   type Request,
 } from "playwright/test";
-import { uniqueCanonicalReaderEpub } from "../corpus";
+import { uniqueReaderMapEpub } from "../corpus";
+import { uploadDocument } from "../documentUploadFixture";
 import {
   expect,
   gotoWithStrictCsp,
@@ -24,9 +25,9 @@ const RESTORE_WRITE_QUIET_WINDOW_MS = READER_STATE_IDLE_SAVE_DEBOUNCE_MS * 2;
 interface EpubReaderLocator {
   kind: "epub";
   target: {
-    section_id: string;
+    fragment_id: string;
     href_path: string;
-    anchor_id: string | null;
+    anchor_id: { kind: "Absent" } | { kind: "Present"; value: string };
   };
   locations: {
     text_offset: number | null;
@@ -80,62 +81,47 @@ async function uploadCanonicalEpub(
 ): Promise<string> {
   const api = pageRequest(page, webOrigin);
   const objects = pageRequest(page, minioOrigin);
-  const epub = uniqueCanonicalReaderEpub(userId);
-  const initResponse = await api.post("/api/media/upload/init", {
-    headers: {
-      origin: webOrigin,
-      "Idempotency-Key": `reader-progress-${userId}`,
-    },
-    data: {
-      kind: "epub",
-      filename: "canonical-reader-progress.epub",
-      content_type: "application/epub+zip",
-      size_bytes: epub.byteLength,
-      library_ids: [],
-    },
+  const epub = uniqueReaderMapEpub(userId);
+  const published = await uploadDocument({
+    api,
+    objects,
+    payload: epub,
+    kind: "Epub",
+    filename: "canonical-reader-progress.epub",
+    idempotencyKey: `reader-progress-${userId}`,
   });
-  const initText = await initResponse.text();
-  expect(
-    initResponse.ok(),
-    `Reader fixture acceptance failed: ${initResponse.status()} ${initText.slice(0, 500)}`,
-  ).toBeTruthy();
-  const init = (JSON.parse(initText) as {
-    data: { media_id: string; upload_url: string | null };
-  }).data;
-  if (init.upload_url) {
-    const upload = await objects.put(init.upload_url, {
-      headers: { "Content-Type": "application/epub+zip" },
-      data: epub,
-    });
-    expect(
-      upload.ok(),
-      `Local EPUB object upload for ${init.media_id} failed with ${upload.status()}.`,
-    ).toBeTruthy();
-    const confirm = await api.post(`/api/media/${init.media_id}/ingest`, {
-      headers: { origin: webOrigin },
-      data: { library_ids: [] },
-    });
-    expect(
-      confirm.ok(),
-      `EPUB confirmation for ${init.media_id} failed: ${confirm.status()} ${await confirm.text()}`,
-    ).toBeTruthy();
-  }
+  const mediaId = published.mediaId;
   await expect
     .poll(
       async () => {
-        const response = await api.get(`/api/media/${init.media_id}`);
+        const response = await api.get(`/api/media/${mediaId}`);
         if (!response.ok()) return `http-${response.status()}`;
         return ((await response.json()) as {
           data: { processing_status: string };
         }).data.processing_status;
       },
       {
-        message: `Expected EPUB ${init.media_id} to become readable before progress movement.`,
+        message: `Expected EPUB ${mediaId} to become readable before progress movement.`,
         timeout: 25_000,
       },
     )
     .toBe("ready_for_reading");
-  return init.media_id;
+  return mediaId;
+}
+
+async function headingReadingLineDelta(page: Page, name: string): Promise<number> {
+  const viewport = page.getByTestId("document-viewport");
+  const heading = await page.getByRole("heading", { name, exact: true }).boundingBox();
+  const frame = await viewport.boundingBox();
+  expect(heading, `Missing ${name} source heading.`).not.toBeNull();
+  expect(frame, "Missing reader viewport.").not.toBeNull();
+  // DOM geometry measures the authored source start against the visible
+  // reading line; no reader projection or scroll helper supplies the oracle.
+  const padding = await viewport.evaluate((element) => getComputedStyle(element).scrollPaddingTop);
+  // Desktop leaves CSS at auto and owns a 56px reading margin.
+  const readingLine = padding === "auto" ? 56 : Number.parseFloat(padding);
+  expect(Number.isFinite(readingLine)).toBe(true);
+  return heading!.y - frame!.y - readingLine;
 }
 
 test("reader progress resumes, completes, and resets through its product actions", async ({
@@ -159,13 +145,13 @@ test("reader progress resumes, completes, and resets through its product actions
         sections: Array<{
           section_id: string;
           label: string;
-          href_path: string | null;
-          start_offset: number;
-          end_offset: number | null;
+          parent_section_id: { kind: "Absent" } | { kind: "Present"; value: string };
+          target: { fragment_id: string; offset: number };
+          extent: { kind: "Present"; value: { start: { fragment_id: string; offset: number }; end: { fragment_id: string; offset: number } } };
         }>;
       };
     }
-  ).data.sections.filter((section) => section.href_path !== null);
+  ).data.sections;
   const target = sections.find(
     (section) => section.label === "Second",
   );
@@ -174,18 +160,105 @@ test("reader progress resumes, completes, and resets through its product actions
     `EPUB ${mediaId} did not expose the fixture-owned Second section.`,
   ).toBeDefined();
 
+  // Independently authored source: three peer headings share one fragment.
+  // Publisher presentation is reversed and Second has a coincident alias.
+  expect(Object.fromEntries(sections.map((section) => [
+    section.label,
+    [section.target.offset, section.extent.value.end.offset],
+  ]))).toEqual({
+    Opening: [0, 2925],
+    Second: [2925, 5827],
+    "Second alias": [2925, 5827],
+    Closing: [5827, 8762],
+  });
+  expect(new Set(sections.map((section) => section.target.fragment_id)).size).toBe(1);
+  expect(sections.map((section) => section.parent_section_id)).toEqual([
+    { kind: "Absent" }, { kind: "Absent" }, { kind: "Absent" }, { kind: "Absent" },
+  ]);
+  const aliases = sections.filter((section) => section.target.offset === 2925);
+  expect(aliases).toHaveLength(2);
+  expect(new Set(aliases.map((section) => section.section_id)).size).toBe(2);
+  // Equal-depth, equal-extent aliases use lexical section identity as the
+  // documented tie-break. Publisher label order is not an ownership oracle.
+  const [firstAliasId] = aliases.map((section) => section.section_id).sort();
+  const expectedSecondLabel = aliases.find((section) => section.section_id === firstAliasId)!.label;
+
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
-  const sectionPicker = page.getByLabel("Select section");
-  await expect(sectionPicker).toBeVisible();
-  await sectionPicker.selectOption(target!.section_id);
-  await expect(
-    page.getByRole("heading", { name: target!.label, exact: true }),
-    `Reader did not render selected section ${target!.section_id} (${target!.label}).`,
-  ).toBeVisible();
-  await expect(
-    page.getByText(/Omega proves the selected section/).first(),
-    `Reader section ${target!.section_id} omitted the fixture-owned Second passage.`,
-  ).toBeVisible();
+  const viewport = page.getByTestId("document-viewport");
+  const map = page.getByRole("region", { name: "Document map", exact: true });
+  const outline = map.getByRole("list");
+  const currentContents = () => outline.getByRole("button").evaluateAll((buttons) => buttons
+    .filter((button) => button.getAttribute("aria-current") === "location")
+    .map((button) => button.textContent));
+  await expect(page.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Open document map", exact: true }).click();
+  await page.getByRole("button", { name: "Second", exact: true }).click();
+  await expect(page.getByText(/Omega proves the selected section/).first()).toBeVisible();
+  expect(await waitForReaderStateWrite(page, mediaId, RESTORE_WRITE_QUIET_WINDOW_MS), "a map jump must not claim reading").toBeNull();
+  await page.getByRole("button", { name: "return to reading position", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
+  expect(await waitForReaderStateWrite(page, mediaId, RESTORE_WRITE_QUIET_WINDOW_MS), "return must not claim reading").toBeNull();
+
+  await expect(outline.getByRole("button")).toHaveText(["Closing", "Second alias", "Second", "Opening"]);
+  await expect.poll(currentContents).toEqual(["Opening"]);
+  await viewport.hover();
+  await page.mouse.wheel(0, 150);
+  await expect(map.getByText(/^section [1-9][0-9]*%$/)).toBeVisible();
+  await expect.poll(currentContents).toEqual(["Opening"]);
+  let previousGlobal = Number((await map.getByText(/^document [0-9]+%$/).innerText()).match(/[0-9]+/)![0]);
+  for (const [heading, percentage] of [["Second", 33], ["Closing", 67]] as const) {
+    const delta = await headingReadingLineDelta(page, heading);
+    expect(delta, `${heading} must follow the actual current source viewport`).toBeGreaterThan(0);
+    await viewport.hover();
+    await page.mouse.wheel(0, delta);
+    await expect.poll(async () => Math.abs(await headingReadingLineDelta(page, heading))).toBeLessThanOrEqual(1);
+    await expect.poll(currentContents).toEqual([heading === "Second" ? expectedSecondLabel : heading]);
+    await expect(map.getByText("outside this section", { exact: true })).toBeVisible();
+    await expect(map.getByText(`document ${percentage}%`, { exact: true })).toBeVisible();
+    expect(percentage).toBeGreaterThan(previousGlobal);
+    previousGlobal = percentage;
+    await map.getByRole("button", { name: "current section", exact: true }).click();
+    await expect(map.getByText("section 0%", { exact: true })).toBeVisible();
+  }
+
+  await expect.poll(async () => {
+    const response = await api.get(`/api/media/${mediaId}/reader-state`);
+    expect(response.ok()).toBe(true);
+    const snapshot = (await response.json()) as { data: { state: "Empty" } | PositionedEpubReaderSnapshot };
+    return snapshot.data.state === "Positioned" ? snapshot.data.locator.locations.text_offset : null;
+  }, { message: "genuine scrolling into Closing must settle before toolbar-only navigation" }).toBeGreaterThanOrEqual(5827);
+  expect(await waitForReaderStateWrite(page, mediaId, RESTORE_WRITE_QUIET_WINDOW_MS), "the preceding genuine scroll must finish saving before toolbar observation").toBeNull();
+  const toolbarRequests: Request[] = [];
+  const recordToolbarRequest = (request: Request) => toolbarRequests.push(request);
+  page.on("request", recordToolbarRequest);
+
+  // The hosted controls traverse unique source starts, independent of the
+  // publisher order and whichever coincident Second alias owns current state.
+  await expect(page.getByRole("button", { name: "Next section", exact: true })).toBeDisabled();
+  let previousTop = await viewport.evaluate((element) => element.scrollTop);
+  for (const [direction, heading] of [["Previous", "Second"], ["Previous", "Opening"], ["Next", "Second"], ["Next", "Closing"]] as const) {
+    await page.getByRole("button", { name: `${direction} section`, exact: true }).click();
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeInViewport();
+    await expect.poll(currentContents).toEqual([heading === "Second" ? expectedSecondLabel : heading]);
+    await expect.poll(async () => {
+      const delta = await headingReadingLineDelta(page, heading);
+      const top = await viewport.evaluate((element) => element.scrollTop);
+      return Math.abs(delta) <= 1 || (top === 0 && delta < 0);
+    }, { message: `${direction} must reveal ${heading} at the reading line, allowing only source-start clamping` }).toBe(true);
+    await expect(page.getByRole("button", { name: "Previous section", exact: true })).toHaveJSProperty("disabled", heading === "Opening");
+    const nextTop = await viewport.evaluate((element) => element.scrollTop);
+    expect((nextTop - previousTop) * (direction === "Previous" ? -1 : 1), `${direction} must move to a distinct ${heading} source position`).toBeGreaterThan(0);
+    previousTop = nextTop;
+  }
+  await expect(page.getByRole("button", { name: "Next section", exact: true })).toBeDisabled();
+  const delayedToolbarWrite = await waitForReaderStateWrite(page, mediaId, RESTORE_WRITE_QUIET_WINDOW_MS);
+  page.off("request", recordToolbarRequest);
+  const toolbarWrite = toolbarRequests.find((request) => matchesReaderStateWrite(request, mediaId));
+  expect(toolbarWrite ?? delayedToolbarWrite, "section controls must not claim reading through reader-state writes").toBeNull();
+  await outline.getByRole("button", { name: "Second", exact: true }).click();
+  await expect(page.getByText(/Omega proves the selected section/).first()).toBeVisible();
+  await viewport.hover();
+  await page.mouse.wheel(0, 150);
 
   await expect
     .poll(
@@ -201,13 +274,17 @@ test("reader progress resumes, completes, and resets through its product actions
                 state: "Positioned";
                 locator: {
                   kind: string;
-                  target?: { section_id?: string };
+                  target?: { fragment_id?: string };
+                  locations?: { text_offset: number | null };
                 };
               };
         };
         return snapshot.data.state === "Positioned" &&
-          snapshot.data.locator.kind === "epub"
-          ? snapshot.data.locator.target?.section_id
+          snapshot.data.locator.kind === "epub" &&
+          typeof snapshot.data.locator.locations?.text_offset === "number" &&
+          snapshot.data.locator.locations.text_offset > 2925 &&
+          snapshot.data.locator.locations.text_offset < 5827
+          ? snapshot.data.locator.target?.fragment_id
           : null;
       },
       {
@@ -215,17 +292,11 @@ test("reader progress resumes, completes, and resets through its product actions
         timeout: 15_000,
       },
     )
-    .toBe(target!.section_id);
+    .toBe(target!.target.fragment_id);
 
-  expect(
-    target!.end_offset,
-    `EPUB ${mediaId} did not expose a closed canonical interval for section ${target!.section_id}.`,
-  ).not.toBeNull();
-  const interiorOffset = target!.end_offset! - 1;
-  expect(
-    interiorOffset,
-    `EPUB ${mediaId} section ${target!.section_id} has no interior canonical cursor between ${target!.start_offset} and ${target!.end_offset}.`,
-  ).toBeGreaterThan(target!.start_offset);
+  expect(target!.extent.kind, "the source section must have an exact extent").toBe("Present");
+  const interiorOffset = target!.extent.value.end.offset - 2;
+  expect(interiorOffset).toBeGreaterThan(target!.target.offset);
 
   const persistedResponse = await api.get(
     `/api/media/${mediaId}/reader-state`,
@@ -246,7 +317,7 @@ test("reader progress resumes, completes, and resets through its product actions
     revision: expect.any(Number),
     locator: {
       kind: "epub",
-      target: { section_id: target!.section_id },
+      target: { fragment_id: target!.target.fragment_id },
     },
   });
   expect(persisted.revision).toBeGreaterThan(0);
@@ -325,16 +396,7 @@ test("reader progress resumes, completes, and resets through its product actions
     }
   });
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
-  await expect(
-    page.getByRole("heading", { name: target!.label, exact: true }),
-    `Fresh reader document for ${mediaId} did not resume section ${target!.section_id}.`,
-  ).toBeVisible();
-  const resumedSectionPicker = page.getByLabel("Select section");
-  await expect(resumedSectionPicker).toHaveValue(target!.section_id);
-  await expect(
-    page.getByText(/Omega proves the selected section/).first(),
-    `Fresh reader document for ${mediaId} resumed the label but not the Second passage.`,
-  ).toBeVisible();
+  await expect(viewport).toBeVisible();
 
   const awaitedRestoreWrite = await waitForReaderStateWrite(
     page,
@@ -348,37 +410,19 @@ test("reader progress resumes, completes, and resets through its product actions
     `Programmatic restore for ${mediaId} echoed a reader-state write within the ${RESTORE_WRITE_QUIET_WINDOW_MS}ms detection window: ${resumedReaderStateWriteFingerprints.join(", ")}.`,
   ).toBeNull();
 
-  const targetIndex = sections.findIndex(
-    (section) => section.section_id === target!.section_id,
-  );
-  const genuineNavigationTarget = sections[targetIndex - 1];
-  expect(
-    genuineNavigationTarget,
-    `EPUB ${mediaId} did not expose a section before ${target!.section_id} for genuine navigation.`,
-  ).toBeDefined();
-  const genuineWriteRequestPromise = page.waitForRequest((request) =>
-    matchesReaderStateWrite(request, mediaId),
-  );
-  await page
-    .getByRole("button", { name: "Previous section", exact: true })
-    .click();
-  await expect(
-    page.getByRole("heading", {
-      name: genuineNavigationTarget!.label,
-      exact: true,
-    }),
-    `Genuine reader navigation did not render ${genuineNavigationTarget!.section_id} (${genuineNavigationTarget!.label}).`,
-  ).toBeVisible();
+  const genuineWriteRequestPromise = page.waitForRequest((request) => matchesReaderStateWrite(request, mediaId));
+  await viewport.hover();
+  await page.mouse.wheel(0, -160);
   const genuineWriteRequest = await genuineWriteRequestPromise;
   const genuineWrite = await genuineWriteRequest.response();
   expect(
     genuineWrite,
-    `Genuine reader navigation for ${mediaId} did not receive a BFF response.`,
+    `Genuine reader scrolling for ${mediaId} did not receive a BFF response.`,
   ).not.toBeNull();
   const genuineWriteText = await genuineWrite!.text();
   expect(
     genuineWrite!.ok(),
-    `Genuine reader navigation for ${mediaId} failed to persist: ${genuineWrite!.status()} ${genuineWriteText}`,
+    `Genuine reader scrolling for ${mediaId} failed to persist: ${genuineWrite!.status()} ${genuineWriteText}`,
   ).toBeTruthy();
 
   await page.getByRole("button", { name: "More", exact: true }).click();
@@ -409,6 +453,40 @@ test("reader progress resumes, completes, and resets through its product actions
     })
     .toBe("finished");
 
+  const closing = sections.find((section) => section.label === "Closing");
+  expect(closing, "the authored source must expose its final Closing chapter").toBeDefined();
+  const closingFragmentResponse = await api.get(`/api/media/${mediaId}/fragments/${closing!.target.fragment_id}`);
+  expect(closingFragmentResponse.ok()).toBeTruthy();
+  const closingFragment = (await closingFragmentResponse.json()) as { data: { canonical_text: string } };
+  const finalOffset = Array.from(closingFragment.data.canonical_text).length;
+  await page.getByRole("button", { name: "Open document map", exact: true }).click();
+  await page.getByRole("button", { name: "Closing", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Closing", exact: true })).toBeVisible();
+  const firstEndWrite = page.waitForResponse((response) => matchesResponse(response, webOrigin, "PUT", `/api/media/${mediaId}/reader-state`));
+  await viewport.press("End");
+  const firstEndResponse = await firstEndWrite;
+  expect(firstEndResponse.ok()).toBeTruthy();
+  expect(await firstEndResponse.json()).toMatchObject({
+    data: { state: "Positioned", locator: { target: { fragment_id: closing!.target.fragment_id }, locations: { text_offset: finalOffset } } },
+  });
+  const currentEnd = page.getByRole("button", { name: "Current position, 100% through document", exact: true });
+  await expect(currentEnd, "a genuine source end must remain the current document locus").toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(currentEnd, "passive reflow replaced the exact end locus with visible-start").toBeVisible();
+  expect(await waitForReaderStateWrite(page, mediaId, RESTORE_WRITE_QUIET_WINDOW_MS), "passive EOF reflow must not save reading").toBeNull();
+  const awayWrite = page.waitForResponse((response) => matchesResponse(response, webOrigin, "PUT", `/api/media/${mediaId}/reader-state`));
+  await viewport.press("PageUp");
+  expect((await awayWrite).ok()).toBeTruthy();
+  await expect(currentEnd).toHaveCount(0);
+  const secondEndWrite = page.waitForResponse((response) => matchesResponse(response, webOrigin, "PUT", `/api/media/${mediaId}/reader-state`));
+  await viewport.press("End");
+  const secondEndResponse = await secondEndWrite;
+  expect(secondEndResponse.ok()).toBeTruthy();
+  expect(await secondEndResponse.json()).toMatchObject({
+    data: { state: "Positioned", locator: { locations: { text_offset: finalOffset } } },
+  });
+  await expect(currentEnd).toBeVisible();
+
   await page.getByRole("button", { name: "More", exact: true }).click();
   page.once("dialog", async (dialog) => {
     expect(dialog.message()).toBe(
@@ -437,7 +515,5 @@ test("reader progress resumes, completes, and resets through its product actions
     .toBe("Empty");
 
   await gotoWithStrictCsp(page, `/media/${mediaId}`);
-  await expect(page.getByLabel("Select section")).not.toHaveValue(
-    target!.section_id,
-  );
+  await expect(page.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
 });

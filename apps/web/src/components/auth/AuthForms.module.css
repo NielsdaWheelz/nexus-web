@@ -35,72 +35,132 @@
 }
 
 .help,
-.secondary,
-.legal {
+.secondary {
   margin: 0;
   color: var(--ink-muted);
   font-size: var(--text-sm);
   line-height: var(--leading-relaxed);
 }
 
-.secondary,
-.legal {
+.secondary {
   text-align: center;
 }
 
-.link,
-.legal a {
+.link {
+  display: inline-flex;
+  min-height: var(--size-xl);
+  align-items: center;
   color: var(--accent);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 .forgot {
+  display: inline-flex;
   width: fit-content;
+  min-height: var(--size-xl);
   margin-left: auto;
+  align-items: center;
   color: var(--accent);
   font-size: var(--text-sm);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
-.divider {
+.method,
+.methodBody {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
+  flex-direction: column;
 }
 
-.divider::before,
-.divider::after {
-  flex: 1;
-  height: 1px;
-  background: var(--edge);
+.method {
+  gap: var(--space-4);
+}
+
+.method:not([open]) > :not(summary) {
+  display: none;
+}
+
+.methodBody {
+  gap: var(--space-3);
+}
+
+.disclosure {
+  composes: button lg from "../ui/Button.module.css";
+
+  width: 100%;
+  list-style: none;
+}
+
+.disclosure::marker {
   content: "";
 }
 
-.providers {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
+.disclosure::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.passwordDisclosure {
+  composes: secondary from "../ui/Button.module.css";
+}
+
+.otherDisclosure {
+  composes: ghost from "../ui/Button.module.css";
+}
+
+.disclosureDisabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .providerForm {
   display: contents;
 }
 
-.legal {
-  color: var(--ink-faint);
-  font-size: var(--text-xs);
+.providerDisabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
-.legal a {
+.feedbackPending {
+  visibility: hidden;
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0 var(--space-5);
   color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.footer a {
+  display: inline-flex;
+  min-width: var(--size-xl);
+  min-height: var(--size-xl);
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .link:hover,
 .forgot:hover,
-.legal a:hover {
+.footer a:hover {
   color: var(--accent-hover);
+}
+
+@media (min-width: 60rem) {
+  .footer {
+    justify-content: flex-start;
+  }
 }

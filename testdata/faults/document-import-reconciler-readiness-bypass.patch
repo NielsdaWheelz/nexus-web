@@ -1,0 +1,12 @@
+diff --git a/python/nexus/runtime_health.py b/python/nexus/runtime_health.py
+--- a/python/nexus/runtime_health.py
++++ b/python/nexus/runtime_health.py
+@@ -150,7 +150,7 @@ def is_database_ready(
+         if reconciler_max_age_seconds is None:
+             return True
+         if latest_reconciler is None:
+-            return False
++            return True
+         if accepted_source_job_defect_count != 0:
+             return False
+         raw_age = latest_reconciler[0]

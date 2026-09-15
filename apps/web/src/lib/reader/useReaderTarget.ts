@@ -21,6 +21,7 @@ export interface ReaderTargetState {
 }
 
 function targetFromPulse(detail: ReaderPulseTarget): ReaderTarget | null {
+  if (detail.focusBehavior === "preserve_position") return null;
   if (detail.evidenceSpanId) {
     return { kind: "evidence", value: detail.evidenceSpanId, origin: "pulse" };
   }
@@ -29,7 +30,7 @@ function targetFromPulse(detail: ReaderPulseTarget): ReaderTarget | null {
   }
   const loc = detail.locator;
   if (loc.type === "web_text_offsets" || loc.type === "epub_fragment_offsets") {
-    return { kind: "fragment", value: loc.fragment_id, origin: "pulse" };
+    return { kind: "text", value: `${loc.fragment_id}:${loc.start_offset}:${loc.end_offset}`, origin: "pulse" };
   }
   if (loc.type === "pdf_page_geometry") {
     return { kind: "page", value: String(loc.page_number), origin: "pulse" };
@@ -95,7 +96,19 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
       consumePendingReaderPulse(mediaId, detail);
       const next = targetFromPulse(detail);
       if (!next) return;
-      setState({ target: next, status: "pending" });
+      setState((current) => {
+        // The pulse channel still owns the visual pulse. Preserve a matching
+        // hash target until markActive consumes its canonical URL obligation.
+        if (
+          current.status === "pending" &&
+          current.target?.origin === "hash" &&
+          current.target.kind === next.kind &&
+          current.target.value === next.value
+        ) {
+          return current;
+        }
+        return { target: next, status: "pending" };
+      });
     },
     [mediaId],
   );

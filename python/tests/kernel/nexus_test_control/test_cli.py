@@ -1,6 +1,6 @@
 import json
+import os
 import subprocess
-from collections.abc import Mapping
 from io import StringIO
 from pathlib import Path
 
@@ -125,22 +125,10 @@ def test_list_json_is_derived_from_the_typed_registry() -> None:
 def test_workflow_writes_truthful_not_run_summary(tmp_path: Path) -> None:
     _git_repository(tmp_path)
     output = StringIO()
-    cleaned: list[Path] = []
 
-    def clean(repo_root: Path, _environment: Mapping[str, str]) -> tuple[str, ...]:
-        cleaned.append(repo_root)
-        return ()
-
-    exit_code = main(
-        ["doctor"],
-        repo_root=tmp_path,
-        environment={},
-        stdout=output,
-        runtime_cleaner=clean,
-    )
+    exit_code = main(["doctor"], repo_root=tmp_path, environment={}, stdout=output)
 
     assert exit_code == 1
-    assert cleaned == [tmp_path, tmp_path]
     summary_path = tmp_path / output.getvalue().strip().split("summary=", 1)[1]
     summary = json.loads(summary_path.read_text())
     assert summary["workflow"] == "doctor"
@@ -160,7 +148,8 @@ def test_workflow_writes_truthful_not_run_summary(tmp_path: Path) -> None:
         "detail": (
             "locked tool owners are absent: python/pyproject.toml, python/uv.lock, "
             "python/.venv, apps/web/package.json, apps/web/bun.lock, "
-            "apps/web/node_modules, apps/web/e2e/playwright.config.ts, apps/android/gradlew"
+            "apps/web/node_modules, apps/web/e2e/playwright.config.ts, apps/android/gradlew, "
+            "node/ingest/package.json, node/ingest/bun.lock, node/ingest/node_modules"
         ),
         "duration_ms": 0,
         "estimated_cost_usd": 0,
@@ -171,6 +160,56 @@ def test_workflow_writes_truthful_not_run_summary(tmp_path: Path) -> None:
     }
     assert capability["peak_owned_mib"] > 0
     assert summary["peak_owned_mib"]["total"] >= capability["peak_owned_mib"]
+
+
+def test_workflow_publishes_exact_run_claim_before_execution(tmp_path: Path) -> None:
+    _git_repository(tmp_path)
+    claim = tmp_path / "run-claim.json"
+    descriptor = os.open(claim, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    output = StringIO()
+
+    exit_code = main(
+        ["doctor"],
+        repo_root=tmp_path,
+        environment={"NEXUS_TEST_RUN_CLAIM_FD": str(descriptor)},
+        stdout=output,
+    )
+
+    assert exit_code == 1
+    with pytest.raises(OSError):
+        os.fstat(descriptor)
+    receipt = json.loads(claim.read_text(encoding="utf-8"))
+    summary_path = tmp_path / output.getvalue().strip().split("summary=", 1)[1]
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert receipt == {
+        "directory": f"test-results/runs/{summary['run_id']}",
+        "run_id": summary["run_id"],
+        "version": 1,
+    }
+    assert summary["invocation"]["input_fingerprint"] == execution_input_fingerprint({})
+
+
+def test_workflow_rejects_non_file_run_claim_channel(tmp_path: Path) -> None:
+    _git_repository(tmp_path)
+    read_descriptor, write_descriptor = os.pipe()
+    errors = StringIO()
+    try:
+        assert (
+            main(
+                ["doctor"],
+                repo_root=tmp_path,
+                environment={"NEXUS_TEST_RUN_CLAIM_FD": str(write_descriptor)},
+                stderr=errors,
+            )
+            == 1
+        )
+        with pytest.raises(OSError):
+            os.fstat(write_descriptor)
+    finally:
+        os.close(read_descriptor)
+
+    assert "run claim descriptor must name a regular file" in errors.getvalue()
+    assert not tuple((tmp_path / "test-results/runs").glob("*/summary.json"))
 
 
 def test_summary_coexists_with_same_run_failure_artifacts(tmp_path: Path) -> None:
@@ -284,6 +323,65 @@ def test_diagnose_replays_failed_workflow_once_but_keeps_failed_verdict(
         == 1
     )
     assert "already has a formal diagnostic rerun" in errors.getvalue()
+
+
+def test_diagnose_replays_the_recorded_android_visual_inputs(tmp_path: Path) -> None:
+    _git_repository(tmp_path)
+    git_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    requested_sha = "f" * 40 if git_sha != "f" * 40 else "e" * 40
+    original_output = StringIO()
+
+    assert (
+        main(
+            [
+                "android-visual",
+                "--sha",
+                requested_sha,
+                "--path",
+                "/android",
+                "--device",
+                "primary",
+            ],
+            repo_root=tmp_path,
+            environment={},
+            stdout=original_output,
+        )
+        == 1
+    )
+    original_summary_path = tmp_path / original_output.getvalue().strip().split("summary=", 1)[1]
+    original = json.loads(original_summary_path.read_text(encoding="utf-8"))
+    assert original["capabilities"][0]["detail"] == "--sha must equal the worktree HEAD"
+
+    diagnostic_output = StringIO()
+    assert (
+        main(
+            ["diagnose", "--of", original["run_id"]],
+            repo_root=tmp_path,
+            environment={},
+            stdout=diagnostic_output,
+        )
+        == 1
+    )
+    diagnostic_summary_path = (
+        tmp_path / diagnostic_output.getvalue().strip().split("summary=", 1)[1]
+    )
+    diagnostic = json.loads(diagnostic_summary_path.read_text(encoding="utf-8"))
+    assert diagnostic["diagnostic_result"]["capabilities"][0]["detail"] == (
+        "--sha must equal the worktree HEAD"
+    )
+    assert diagnostic["invocation"] == original["invocation"]
+    assert original["invocation"]["inputs"] == {
+        "kind": "AndroidVisual",
+        "sha": requested_sha,
+        "path": "/android",
+        "device": "primary",
+    }
 
 
 def test_diagnose_requires_the_same_clean_committed_head(tmp_path: Path) -> None:
@@ -554,12 +652,6 @@ def test_pr_records_later_cadence_selection_without_dispatching_it() -> None:
                 sensitivity_required=True,
             ),
             Selection(
-                "python/tests/hosted/nightly/test_openai_canary.py",
-                Capability.HOSTED,
-                SelectionReason.CHANGED_TEST,
-                "pytest:python/tests/hosted/nightly/test_openai_canary.py",
-            ),
-            Selection(
                 "python/nexus/auth/verifier.py",
                 Capability.SERVICE,
                 SelectionReason.PRIORITY_RISK,
@@ -575,7 +667,6 @@ def test_pr_records_later_cadence_selection_without_dispatching_it() -> None:
 
     assert [(selection.capability, selection.deferred_to) for selection in routed] == [
         (Capability.JOURNEYS_ALL, Workflow.FULL),
-        (Capability.HOSTED, Workflow.NIGHTLY),
         (Capability.SERVICE, None),
         (Capability.SENSITIVITY, None),
     ]
@@ -603,9 +694,7 @@ def test_changed_records_protected_capabilities_at_their_owning_cadence() -> Non
         (Capability.ANDROID_HOST, Workflow.FULL),
         (Capability.EXTENSION, Workflow.FULL),
         (Capability.AUDIT, Workflow.NIGHTLY),
-        (Capability.HOSTED, Workflow.NIGHTLY),
         (Capability.ANDROID_DEVICE, Workflow.NIGHTLY),
-        (Capability.PROVIDER_CERTIFICATION, Workflow.RELEASE),
     )
     selection = tuple(
         Selection(

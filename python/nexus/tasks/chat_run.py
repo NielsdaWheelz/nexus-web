@@ -5,15 +5,19 @@ from __future__ import annotations
 from typing import Any, assert_never
 from uuid import UUID
 
-import httpx
-from llm_tools import BraveSearchProvider, WebSearchProvider
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.models import ChatRun
 from nexus.db.session import get_session_factory
-from nexus.jobs.queue import JobExecutionContext, JobRow, get_job, requeue_dead_job
+from nexus.jobs.queue import (
+    JobExecutionContext,
+    JobRow,
+    RescheduleRequested,
+    get_job,
+    requeue_dead_job,
+)
 from nexus.logging import get_logger
 from nexus.services.chat_runs import (
     CancelledChatExecution,
@@ -24,34 +28,26 @@ from nexus.services.chat_runs import (
     SkippedChatExecution,
     execute_chat_run,
 )
-from nexus.services.llm_execution import ExecutionRuntime, ProviderRetryMode
+from nexus.services.llm_execution import ExecutionRuntime
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
 
 _CHAT_RUN_SPEC = LlmTaskSpec(
     label="chat_run",
-    http_timeout_s=60.0,
-    http_limits=(100, 20),
-    retry_mode=ProviderRetryMode.SingleAttempt,
 )
 
 
-def chat_run(run_id: str, *, context: JobExecutionContext) -> dict[str, Any]:
+def chat_run(run_id: str, *, context: JobExecutionContext) -> dict[str, Any] | RescheduleRequested:
     run_uuid = UUID(run_id)
     settings = get_settings()
 
     async def _handler(
-        db: Session, runtime: ExecutionRuntime, client: httpx.AsyncClient
-    ) -> ChatExecutionOutcome:
+        db: Session, runtime: ExecutionRuntime
+    ) -> ChatExecutionOutcome | RescheduleRequested:
         job = get_job(db, context.job_id)
         if job is None or str(job.payload.get("run_id")) != run_id:
             raise AssertionError("claimed chat job does not match its run payload")
-        web_search_provider: WebSearchProvider | None = (
-            BraveSearchProvider(client, api_key=settings.brave_search_api_key)
-            if settings.brave_search_api_key
-            else None
-        )
         return await execute_chat_run(
             db,
             run_id=run_uuid,
@@ -60,13 +56,19 @@ def chat_run(run_id: str, *, context: JobExecutionContext) -> dict[str, Any]:
             session_factory=get_session_factory(),
             runtime=runtime,
             settings=settings,
-            web_search_provider=web_search_provider,
         )
 
     # Defects escape this handler unchanged. The queue owns retries and durable
     # suspension; expected product failures are already folded by the executor.
     logger.info("chat_run_started", run_id=run_id)
-    result = _serialize_chat_execution(run_llm_task(_CHAT_RUN_SPEC, _handler))
+    outcome = run_llm_task(_CHAT_RUN_SPEC, _handler)
+    if isinstance(outcome, RescheduleRequested):
+        logger.info(
+            "chat_run_capacity_rescheduled",
+            run_id=run_id,
+        )
+        return outcome
+    result = _serialize_chat_execution(outcome)
     logger.info("chat_run_completed", run_id=run_id, result=result)
     return result
 

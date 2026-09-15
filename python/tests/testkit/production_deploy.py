@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -56,7 +57,7 @@ def _argument(arguments: list[str], flag: str) -> str:
 
 def _candidate(state: dict[str, Any]) -> dict[str, object]:
     return {
-        "expected_database_revision": "0215",
+        "expected_database_revision": "0216",
         "expected_oracle_manifest_digest": "sha256:" + "c" * 64,
         "images": {
             "api": "ghcr.io/nielsdawheelz/nexus-api@sha256:" + "a" * 64,
@@ -73,7 +74,44 @@ def _candidate(state: dict[str, Any]) -> dict[str, object]:
     }
 
 
+def _android_release_manifest(state: dict[str, Any]) -> dict[str, object]:
+    repo_root = Path(os.environ["NEXUS_DEPLOY_REPO_ROOT"])
+    protocol_digest = hashlib.sha256(
+        (repo_root / "testdata/android/player-protocol.json").read_bytes()
+    ).hexdigest()
+    tag = str(state["stable_android_tag"])
+    version_name = tag.removeprefix("android-v")
+    apk_digest = "d" * 64
+    names = ("nexus-android.apk", f"nexus-android-{version_name}.apk")
+    return {
+        "version": 2,
+        "run_id": "android-release-fixture",
+        "git_sha": "e" * 40,
+        "tag": tag,
+        "package": "app.nexus.android",
+        "version_code": 17,
+        "previous_version_code": 16,
+        "version_name": version_name,
+        "signer_sha256": "c" * 64,
+        "source_apk_sha256": apk_digest,
+        "api_origin": "https://api.nielseriknandal.com",
+        "api_origin_source": "signed_apk_build_config",
+        "target_sdk": 36,
+        "player_protocol": {"version": 2, "contract_sha256": protocol_digest},
+        "assets": {
+            name: (apk_digest if name in names else "b" * 64)
+            for name in (*names, *(f"{name}.sha256" for name in names))
+        },
+    }
+
+
 def _fake_gh(state: dict[str, Any], arguments: list[str]) -> None:
+    if arguments == ["api", "repos/NielsdaWheelz/nexus-web/releases/latest"]:
+        latest = state["latest_android_release"]
+        if not isinstance(latest, dict):
+            raise AssertionError("latest Android release fixture must be an object")
+        print(_canonical_json(latest), end="")
+        return
     if arguments[:3] == ["api", "--paginate", "--slurp"]:
         print(
             _canonical_json(
@@ -137,23 +175,51 @@ def _fake_gh(state: dict[str, Any], arguments: list[str]) -> None:
             end="",
         )
         return
+    if arguments[:2] == ["release", "download"]:
+        tag = arguments[2]
+        if tag != state["stable_android_tag"] or state["android_manifest_mode"] == "absent":
+            raise AssertionError("stable Android manifest fixture is absent")
+        destination = Path(_argument(arguments, "--dir"))
+        manifest = _android_release_manifest(state)
+        mode = state["android_manifest_mode"]
+        if mode == "malformed":
+            destination.joinpath("release-manifest.json").write_text("{", encoding="utf-8")
+            return
+        if mode == "protocol-mismatch":
+            player = manifest["player_protocol"]
+            assert isinstance(player, dict)
+            player["contract_sha256"] = "a" * 64
+        if mode == "wrong-tag":
+            manifest["tag"] = "android-v0.0.1"
+        destination.joinpath("release-manifest.json").write_text(
+            _canonical_json(manifest),
+            encoding="utf-8",
+        )
+        return
     if arguments[:2] == ["run", "download"]:
         destination = Path(_argument(arguments, "--dir"))
         repo_root = Path(os.environ["NEXUS_DEPLOY_REPO_ROOT"])
         for relative in (
             "deploy/hetzner/Caddyfile",
             "deploy/hetzner/docker-compose.yml",
+            "deploy/hetzner/nexus-codex-agent-host.apparmor",
+            "deploy/hetzner/prove-codex-capacity.sh",
             "deploy/hetzner/release.py",
             "python/nexus/__init__.py",
             "python/nexus/release_artifact.py",
+            "testdata/android/player-protocol.json",
         ):
             target = destination / Path(relative).name
             if relative == "python/nexus/__init__.py":
                 target = destination / "python/nexus/__init__.py"
             elif relative == "python/nexus/release_artifact.py":
                 target = destination / "python/nexus/release_artifact.py"
+            elif relative == "testdata/android/player-protocol.json":
+                target = destination / "testdata/android/player-protocol.json"
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(repo_root / relative, target)
+            if relative == "deploy/hetzner/prove-codex-capacity.sh":
+                target.chmod(0o444)
         (destination / "candidate-manifest.json").write_text(
             _canonical_json(_candidate(state)),
             encoding="utf-8",
@@ -455,29 +521,47 @@ def _fake_curl(state: dict[str, Any], arguments: list[str]) -> None:
         return
     headers = Path(_argument(arguments, "--dump-header"))
     headers.write_text("HTTP/1.1 200 OK\r\nCache-Control: no-store\r\n\r\n", encoding="ascii")
-    output.write_text(_canonical_json({"source_sha": state["source_sha"]}), encoding="utf-8")
+    output.write_text(
+        _canonical_json(
+            {
+                "source_sha": state["source_sha"],
+                "player_protocol": _android_release_manifest(state)["player_protocol"],
+            }
+        ),
+        encoding="utf-8",
+    )
     print("200", end="")
 
 
 def fake_main(command: str, arguments: list[str]) -> int:
+    if command == "timeout":
+        # The harness process owns the real 30-second deadline. Preserve the
+        # production wrapper's argv and exit behavior without depending on the
+        # GNU-only host binary that macOS does not provide.
+        if len(arguments) < 3 or arguments[0] != "--foreground":
+            raise AssertionError(f"unsupported fake timeout call: {arguments!r}")
+        os.execvp(arguments[2], arguments[2:])
+
     state_path = Path(os.environ["NEXUS_DEPLOY_FAKE_STATE"])
     state = _load_state(state_path)
     _event(state, command, arguments)
-    if command == "gh":
-        _fake_gh(state, arguments)
-    elif command == "git":
-        _fake_git(state, arguments)
-    elif command == "ssh":
-        _fake_ssh(state, arguments)
-    elif command == "scp":
-        pass
-    elif command == "node":
-        _fake_vercel(state, arguments)
-    elif command == "curl":
-        _fake_curl(state, arguments)
-    else:
-        raise AssertionError(f"unsupported deploy fake command {command}")
-    _save_state(state_path, state)
+    try:
+        if command == "gh":
+            _fake_gh(state, arguments)
+        elif command == "git":
+            _fake_git(state, arguments)
+        elif command == "ssh":
+            _fake_ssh(state, arguments)
+        elif command == "scp":
+            pass
+        elif command == "node":
+            _fake_vercel(state, arguments)
+        elif command == "curl":
+            _fake_curl(state, arguments)
+        else:
+            raise AssertionError(f"unsupported deploy fake command {command}")
+    finally:
+        _save_state(state_path, state)
     return 0
 
 
@@ -525,6 +609,7 @@ class ProductionDeployHarness:
             {
                 "auth_config_fixture": str(auth_config_fixture),
                 "authoritative_id": authoritative_id,
+                "android_manifest_mode": "valid",
                 "bound_api_status": 200,
                 "bound_payload_mode": "normal",
                 "bound_ready_state": "READY",
@@ -532,14 +617,26 @@ class ProductionDeployHarness:
                 "bundle_installed": host_inspect["status"] != "new",
                 "events": [],
                 "host_inspect": host_inspect,
+                "latest_android_release": {
+                    "assets": [
+                        {"name": "release-manifest.json"},
+                        {"name": "nexus-android.apk"},
+                        {"name": "nexus-android.apk.sha256"},
+                    ],
+                    "draft": False,
+                    "prerelease": False,
+                    "published_at": "2026-08-17T12:00:00Z",
+                    "tag_name": "android-v0.2.14",
+                },
                 "project_identity_mode": "normal",
                 "source_sha": source_sha,
+                "stable_android_tag": "android-v0.2.14",
             },
         )
         fake_bin = root / "bin"
         fake_bin.mkdir()
         helper = Path(__file__).resolve()
-        for command in ("curl", "gh", "git", "node", "scp", "ssh"):
+        for command in ("curl", "gh", "git", "node", "scp", "ssh", "timeout"):
             executable = fake_bin / command
             executable.write_text(
                 f"#!{sys.executable}\n"
@@ -557,7 +654,7 @@ class ProductionDeployHarness:
             fake_bin=fake_bin,
         )
 
-    def run(self, *, include_provider_credentials: bool = True) -> subprocess.CompletedProcess[str]:
+    def run(self, *, include_operator_credentials: bool = True) -> subprocess.CompletedProcess[str]:
         environment = {
             **os.environ,
             "NEXUS_DEPLOY_FAKE_STATE": str(self.state_path),
@@ -566,7 +663,7 @@ class ProductionDeployHarness:
             "NEXUS_SHARED_ENV": str(self.root / "env-prod"),
             "PATH": f"{self.fake_bin}{os.pathsep}{os.environ['PATH']}",
         }
-        if include_provider_credentials:
+        if include_operator_credentials:
             environment.update(
                 {
                     "GH_TOKEN": "test-gh-token",

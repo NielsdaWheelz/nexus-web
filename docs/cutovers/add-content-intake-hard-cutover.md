@@ -15,8 +15,9 @@
 > is deleted, replaced by `LibraryDestinationField` opening the shared
 > `LibraryChooserSurface`/`LibraryChooser`, and the nested mobile placement
 > Dialog it describes in the Escape order no longer exists. This document's
-> ingest, capability, route, request, and response contracts remain
-> normative.
+> URL/OPML intake, capability, route, request, and response contracts remain
+> normative. Uploaded PDF/EPUB acceptance is superseded by
+> [`document-import-reliability-hard-cutover.md`](document-import-reliability-hard-cutover.md).
 
 ## 0. Decision
 
@@ -147,46 +148,28 @@ policy; the removal-kind mismatch was an API capability gap.
 
 - Submit freezes source, destinations, and existing key; concurrency is `2`; success never
   rolls back peers or auto-navigates.
-- A definitive typed rejection before identity becomes Rejected, never uncertainty. It
-  retains intent/feedback; only explicit `Restage` creates a Draft/new key. Rejected,
-  unresolved, and AcceptedUncertain rows can be removed; removal discards local tracking
-  and never claims or performs server rollback.
-- An ambiguous URL/upload-init transport outcome before a decoded identity retains the
-  intent and `Check status`; same-key replay yields Accepted, Rejected,
-  AcceptedUncertain, or updated AcceptanceUnresolved. Missing identity in a decoded
-  same-system success is a defect. A new key requires explicit `Restage as new`.
-- Upload init `(mediaId, sourceAttemptId)` identity is durable acceptance. Later
-  PUT/sign/confirm ambiguity retains both fields + frozen file intent as
-  AcceptedUncertain, never synthetic processing failure. Same-key reconciliation must
-  preserve both identity fields.
-  It exposes Open and `Check status`, but no filing because confirm still carries frozen
-  `library_ids`; reconciliation yields settled Accepted or updated uncertainty.
-- Upload PUT/confirm maps only `TypeError`, non-Abort `DOMException`, `E_UPSTREAM`, and
-  `E_UPSTREAM_TIMEOUT` to AcceptedUncertain. Same-system and every other unapproved
-  post-init failure throw into the session's fail-closed path.
-- Same-system/schema/unclassified failures are defects, never product feedback. Before a
-  durable identity exists, the session restores the frozen Draft—including source,
-  destinations, and key—and rethrows. Once an upload identity is known, the mutation stays
-  fail-closed: it does not release the gate or invent a row outcome. Explicit Stop is the
-  recovery boundary; it invalidates the generation and preserves that identity as
-  AcceptedUncertain.
-- Settled Accepted replaces `File` with summary and exposes durable media actions even on
-  processing failure. Other source-bearing states may retain `File`; no acceptance Retry
-  exists after identity.
+- URL acceptance may remain unresolved before a decoded identity; same-key replay and
+  explicit `Check status` retain its frozen intent. Missing identity in a decoded
+  same-system success remains a defect.
+- Uploaded PDF/EPUB handling has no pre-publication media identity. Foreground Add owns
+  Preparing, Uploading, and Verifying; any transport, expiry, or terminal verification
+  obligation is the viewer-owned UploadSession in Import Activity.
+- Same-system/schema/unclassified failures are defects, never product feedback. A settled
+  Accepted item replaces `File` with summary and exposes durable media actions even on
+  processing failure.
 
 | State                            | Text                                                         |
 | -------------------------------- | ------------------------------------------------------------ |
 | Draft                            | `Ready to add`                                               |
 | Rejected                         | `Not added` + mapped reason + `Restage`                      |
-| Acceptance replay/reconciliation | `Checking…`                                                  |
-| URL/File active                  | `Saving…` / `Uploading…`                                     |
+| URL acceptance reconciliation    | `Checking…`                                                  |
+| URL/File active                  | `Saving…` / `Preparing…`, `Uploading…`, or `Verifying…`      |
 | Created + pending/extracting     | `Saved · processing`                                         |
 | Created + ready                  | `Saved · ready`                                              |
 | Created + failed                 | `Saved · processing failed`                                  |
 | Reused + pending/extracting      | `Already in Nexus · processing`                              |
 | Reused + ready                   | `Already in Nexus · ready`                                   |
 | Reused + failed                  | `Already in Nexus · processing failed`                       |
-| Accepted uncertain               | `Saved · status unknown`                                     |
 | Placement active                 | Separate `Updating libraries…`; never replaces ingest status |
 
 Only decoded modeled errors become row feedback (with request ID). Add owns this
@@ -320,7 +303,22 @@ type AddItem =
       feedback: FeedbackContent;
     }
   | ({ kind: "Draft"; id: string } & FrozenAcceptanceIntent)
-  | { kind: "Submitting"; id: string; intent: FrozenAcceptanceIntent }
+  | {
+      kind: "Submitting";
+      id: string;
+      intent: FrozenAcceptanceIntent & {
+        source: Extract<AddSource, { kind: "File" }>;
+      };
+      uploadPhase: "Preparing" | "Uploading" | "Verifying";
+    }
+  | {
+      kind: "Submitting";
+      id: string;
+      intent: FrozenAcceptanceIntent & {
+        source: Extract<AddSource, { kind: "Url" }>;
+      };
+      uploadPhase: null;
+    }
   | {
       kind: "Rejected";
       id: string;
@@ -334,20 +332,10 @@ type AddItem =
       feedback: FeedbackContent;
     }
   | {
-      kind: "AcceptedUncertain";
-      id: string;
-      intent: FrozenAcceptanceIntent & {
-        source: Extract<AddSource, { kind: "File" }>;
-      };
-      mediaId: string;
-      sourceAttemptId: string;
-      feedback: FeedbackContent;
-    }
-  | {
       kind: "Accepted";
       id: string;
       source: SourceSummary;
-      result: SourceIngestResult;
+      result: AcceptedIngestResult;
     };
 type PlacementCommand =
   | { kind: "Add"; libraryId: string }
@@ -445,28 +433,19 @@ type LibraryDestinationPickerProps = {
   onCreateDestination(name: string): Promise<LibraryDestinationSelection>;
 };
 
-type UploadIngestResult =
-  | { kind: "Accepted"; result: SourceIngestResult }
-  | {
-      kind: "AcceptedUncertain";
-      mediaId: string;
-      sourceAttemptId: string;
-      feedback: FeedbackContent;
-    };
+type UploadIngestResult = {
+  kind: "Published";
+  result: PublishedUploadResult;
+};
 ```
 
-`uploadIngestFile` returns `UploadIngestResult`. A missing signed URL projects the
-actual init attempt/processing status; it is never hard-coded to failed. After init
-identity exists, an ambiguous PUT/confirm transport interruption returns AcceptedUncertain.
-Explicit Abort propagates to the session stop path instead of becoming product failure.
+`uploadIngestFile` returns only a published identity. Upload interruption and terminal
+verification are durable UploadSession obligations in Import Activity; explicit Abort
+propagates to the session stop path instead of becoming product failure.
 
-Notes attachments and Connections are mandatory exhaustive consumers of this hard-cut
-union. Notes freezes the insertion target, prevents edits while acceptance is active, and
-creates the embed at the durable init-identity callback. Connections keeps its composer
-mounted through disclosure collapse, retains pending identity, and starts the edge at the
-same boundary; edge failure retries only the edge. Both surface warnings only after a
-reference exists; neither treats accepted identity as an unattached failure or retries it
-under a new key. No adapter or old top-level `SourceIngestResult` return survives.
+Notes attachments and Connections consume only published upload identity. Notes freezes
+the insertion target until publication; Connections starts its edge only then. Both direct
+an UploadSession obligation to Import Activity rather than fabricating attachment identity.
 
 The Connections composer owns pending accepted identity above a child defect projection.
 Its local boundary logs the defect and requires explicit Continue, which remounts only that
@@ -517,16 +496,14 @@ function runBoundedTasks<TInput, TOutput>(input: {
 | Operation                 | Contract                                                                            |
 | ------------------------- | ----------------------------------------------------------------------------------- |
 | URL acceptance            | `POST /api/media/from-url` + `Idempotency-Key` + `{url, library_ids}`               |
-| File acceptance           | `POST /api/media/upload/init` + key; signed PUT; `POST /api/media/{id}/ingest`      |
+| File acceptance           | `POST /api/media/uploads` + key; signed PUT; session-handle confirmation             |
 | Destination search/create | `GET /api/libraries/writable-destinations`; `POST /api/libraries`                   |
 | Placement read/add        | `GET/POST /api/media/{id}/libraries`; POST is additive/idempotent and returns `204` |
 | OPML                      | `POST /api/podcasts/import/opml` with one default set and empty per-feed map        |
 
-The upload idempotency key applies to init only. PUT and confirm have no independent
-idempotency key. Clients must preserve init identity across uncertain confirmation. An
-init replay may sign only the canonical staging path for that media/kind. Once confirm
-has promoted the file to its media-owned final path, replay returns current durable
-attempt/media truth with no upload URL; it never signs a PUT over the final object.
+The upload idempotency key identifies a durable UploadSession. PUT and confirmation are
+generation-fenced by its sealed session handle; publication returns media identity only
+after immutable bytes and destinations are committed together.
 
 ### New canonical placement removal
 

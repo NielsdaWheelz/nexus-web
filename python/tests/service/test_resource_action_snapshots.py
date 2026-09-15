@@ -11,6 +11,7 @@ subscriptions), then the snapshot is asserted to reflect it.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -33,6 +34,7 @@ from nexus.db.models import (
     Media,
     MediaFile,
     MediaKind,
+    MediaSourceAttempt,
     Membership,
     Message,
     NoteBlock,
@@ -55,13 +57,20 @@ from nexus.schemas.consumption import (
     PlaceItemsCommand,
 )
 from nexus.schemas.library import CreateLibraryRequest
+from nexus.schemas.presence import absent
 from nexus.schemas.resource_action_snapshots import ResourceActionSnapshotOut
 from nexus.services import library_governance
+from nexus.services import media_source_types as source_types
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.consumption import service as consumption
 from nexus.services.library_entries import ensure_media_in_default_library, ensure_media_in_library
+from nexus.services.media_source_ingest import create_attempt
 from nexus.services.resource_graph.refs import RESOURCE_SCHEMES, ResourceRef, ResourceScheme
 from nexus.services.resource_items.action_snapshots import resolve_action_snapshots
+from nexus.services.source_attempt_failures import (
+    SourceAttemptFailure,
+    publish_source_attempt_failure,
+)
 from tests.testkit.auth import UserRecord
 
 _ENDPOINT = "/resource-items/action-snapshots/resolve"
@@ -100,6 +109,7 @@ _BASELINE_CAPABILITY_ORACLE: dict[ResourceScheme, frozenset[str]] = {
             "Consumption",
             "LecternMembership",
             "LibraryPlacement",
+            "OfflineReading",
         }
     ),
     "library": frozenset(
@@ -544,6 +554,12 @@ def _availability(snapshot: ResourceActionSnapshotOut, kind: str) -> tuple[str, 
     return availability.kind, getattr(availability, "reason", None)
 
 
+def _wire_recovery_offer(snapshot: ResourceActionSnapshotOut) -> dict[str, object]:
+    """The recovery offer as the resolve endpoint serializes it (camelCase)."""
+    capability = _capability(snapshot, "Recovery").model_dump(mode="json", by_alias=True)
+    return capability["offer"]
+
+
 # ---------------------------------------------------------------------------
 # Membership + state.
 # ---------------------------------------------------------------------------
@@ -577,8 +593,12 @@ def test_seeded_media_reports_core_media_lectern_and_placement_kinds(engine: Eng
         "LibraryPlacement",
     } <= kinds
 
-    # A web article is not an offline-audio target, is not an episode, and has no
-    # engagement to reset yet.
+    # A web article is an offline-reading target, not an offline-audio target or
+    # episode, and has no engagement to reset yet.
+    assert "OfflineReading" in kinds
+    offline_reading = _capability(snapshot, "OfflineReading")
+    assert offline_reading.media_kind == "web_article"
+    assert offline_reading.requested_title == "Snapshot proof article"
     assert {"OfflineAudio", "EpisodeConsumption", "ResetProgress"}.isdisjoint(kinds)
 
     assert _capability(snapshot, "OpenSource").href == "https://example.invalid/article"
@@ -615,6 +635,18 @@ def test_document_media_subtypes_publish_their_exact_action_families(
             )
         )
         db.flush()
+        if kind == MediaKind.web_article:
+            db.add(
+                MediaSourceAttempt(
+                    media_id=media_id,
+                    created_by_user_id=viewer_id,
+                    source_type="browser_article_capture",
+                    attempt_no=1,
+                    status="succeeded",
+                    intent_key=f"capture:{media_id}",
+                    source_payload={"storage_path": f"captures/{media_id}.html"},
+                )
+            )
         ensure_media_in_default_library(db, viewer_id, media_id)
         db.commit()
 
@@ -630,8 +662,111 @@ def test_document_media_subtypes_publish_their_exact_action_families(
         "LibraryPlacement",
         "RemoveMedia",
     } <= kinds
-    assert {"EpisodeConsumption", "OfflineAudio", "Playback", "PlayNext"}.isdisjoint(kinds)
+    assert ("RefreshSource" in kinds) is (kind == MediaKind.web_article)
+    if kind == MediaKind.web_article:
+        assert _availability(snapshot, "RefreshSource") == ("Available", None)
+    assert ("OfflineReading" in kinds) is (
+        kind in (MediaKind.web_article, MediaKind.epub, MediaKind.pdf)
+    )
+    if kind in (MediaKind.web_article, MediaKind.epub, MediaKind.pdf):
+        offline_reading = _capability(snapshot, "OfflineReading")
+        assert offline_reading.media_kind == kind.value
+        assert offline_reading.requested_title == f"Snapshot proof {kind.value}"
+        with Session(engine) as db:
+            stored = db.get(Media, media_id)
+            assert stored is not None
+            stored.processing_status = ProcessingStatus.extracting
+            db.commit()
+        not_ready = _resolve(
+            engine,
+            viewer_id,
+            [ResourceRef(scheme="media", id=media_id)],
+        ).snapshots[0]
+        assert "OfflineReading" not in _kinds(not_ready)
+    absent = {"EpisodeConsumption", "OfflineAudio", "Playback", "PlayNext"}
+    if kind == MediaKind.video:
+        absent.add("OfflineReading")
+    assert absent.isdisjoint(kinds)
     assert ("Transcript" in kinds) is has_transcript
+
+
+def test_failed_source_media_carries_one_recovery_capability_with_the_inspected_identity(
+    engine: Engine,
+) -> None:
+    """The media menu plans recovery only from the offer the Imports owner computed,
+    carrying the attempt identity the viewer inspected (contract D6/D7); a reader
+    who is not the creator sees the same offer permission-blocked, never a
+    second identity-free retry channel."""
+    creator_id = _new_viewer(engine, "recovery-creator")
+    reader_id = _new_viewer(engine, "recovery-reader")
+    media_id = uuid4()
+    with Session(engine) as db:
+        media = Media(
+            id=media_id,
+            kind=MediaKind.pdf.value,
+            title="Snapshot proof failed upload",
+            processing_status=ProcessingStatus.extracting,
+            created_by_user_id=creator_id,
+        )
+        db.add(media)
+        db.flush()
+        attempt = create_attempt(
+            db,
+            media=media,
+            viewer_id=creator_id,
+            source_type=source_types.UPLOADED_PDF_FILE,
+            intent_key=f"upload:{media_id}",
+            requested_url=None,
+            canonical_source_url=None,
+            provider=None,
+            provider_target_ref=None,
+            source_payload={"storage_path": f"uploads/{media_id}.pdf"},
+            request_id=None,
+            idempotency_key=None,
+            status="accepted",
+        )
+        attempt_id = attempt.id
+        ensure_media_in_default_library(db, creator_id, media_id)
+        ensure_media_in_default_library(db, reader_id, media_id)
+        publish_source_attempt_failure(
+            db,
+            SourceAttemptFailure(
+                media_id=media_id,
+                attempt_id=attempt_id,
+                failure_stage="extract",
+                error_code="E_INGEST_FAILED",
+                error_message="extraction failed under proof",
+                retry_after_seconds=None,
+                now=datetime.now(UTC),
+                execution_id=absent(),
+            ),
+        )
+        db.commit()
+    ref = ResourceRef(scheme="media", id=media_id)
+    expected_offer = {
+        "kind": "RetrySource",
+        "expectedAttemptId": str(attempt_id),
+        "input": "StoredSource",
+    }
+
+    creator_snapshot = _resolve(engine, creator_id, [ref]).snapshots[0]
+    creator_kinds = [capability.kind for capability in creator_snapshot.capabilities]
+    assert creator_kinds.count("Recovery") == 1, (
+        f"a media carries exactly one recovery capability: {creator_kinds}"
+    )
+    assert _availability(creator_snapshot, "Recovery") == ("Available", None)
+    creator_offer = _wire_recovery_offer(creator_snapshot)
+    assert creator_offer == expected_offer, (
+        f"the creator's offer must name the failed attempt in camelCase: {creator_offer}"
+    )
+
+    reader_snapshot = _resolve(engine, reader_id, [ref]).snapshots[0]
+    assert reader_snapshot.missing is False
+    assert _availability(reader_snapshot, "Recovery") == ("Blocked", "PermissionDenied")
+    reader_offer = _wire_recovery_offer(reader_snapshot)
+    assert reader_offer == expected_offer, (
+        f"a reader sees the creator's offer blocked, not a different identity: {reader_offer}"
+    )
 
 
 def test_placing_in_lectern_flips_membership_present_and_changes_facts_revision(
@@ -792,6 +927,7 @@ def test_file_backed_media_reports_original_download_capability(engine: Engine) 
                 storage_path=f"test/{media_id}.pdf",
                 content_type="application/pdf",
                 size_bytes=1024,
+                source_sha256=hashlib.sha256(b"\0" * 1024).hexdigest(),
             )
         )
         ensure_media_in_default_library(db, viewer_id, media_id)

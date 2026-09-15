@@ -1,0 +1,322 @@
+"""Indexed content-chunk search retrieval."""
+
+from __future__ import annotations
+
+from typing import Any
+from uuid import UUID
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from nexus.auth.permissions import visible_media_ids_cte_sql
+from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.services.contributor_credits import credit_target_filter_exists_sql
+from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
+from nexus.services.search.constants import (
+    CONTENT_CHUNK_ANN_CANDIDATE_MULTIPLIER,
+    CONTENT_CHUNK_MIN_ANN_CANDIDATES,
+    CONTENT_CHUNK_MIN_SEMANTIC_SIMILARITY,
+)
+from nexus.services.search.projection import (
+    _require_resolved_evidence,
+    _snippet_around_query,
+    _truncate_snippet,
+)
+from nexus.services.search.results import (
+    InternalSearchResult,
+    _build_search_score,
+    _build_search_source,
+    _RankedContentChunkResult,
+    _SearchScore,
+)
+from nexus.services.search.scope import ScopeUnsupported, scope_filter_sql
+from nexus.services.search.sql import (
+    contributor_credits_rollup_cte_sql,
+    hybrid_content_chunk_tail_sql,
+    query_embedding_cte_sql,
+)
+from nexus.services.semantic_chunks import (
+    to_pgvector_literal,
+    transcript_embedding_dimensions,
+    transcript_embedding_provider_for_model,
+)
+
+
+def _search_content_chunks(
+    db: Session,
+    viewer_id: UUID,
+    q: str,
+    semantic_query_embedding: tuple[str, list[float]] | None,
+    has_query: bool,
+    scope_type: str,
+    scope_id: UUID | None,
+    contributor_ids: list[UUID] | None,
+    roles: list[str],
+    content_kinds: list[str],
+    limit: int,
+) -> list[InternalSearchResult]:
+    """Search active content chunks with lexical or hybrid semantic ranking."""
+    scope_filter = ""
+    embedding_dims = transcript_embedding_dimensions()
+    ann_limit = max(
+        CONTENT_CHUNK_MIN_ANN_CANDIDATES,
+        int(limit) * CONTENT_CHUNK_ANN_CANDIDATE_MULTIPLIER,
+    )
+    params: dict[str, Any] = {
+        "viewer_id": viewer_id,
+        "query": q,
+        "has_query": has_query,
+        "limit": limit,
+        "ann_limit": ann_limit,
+        "min_semantic_similarity": CONTENT_CHUNK_MIN_SEMANTIC_SIMILARITY,
+    }
+    content_kind_filter = ""
+    contributor_credit_filter = ""
+    if content_kinds:
+        content_kind_filter = "AND m.kind = ANY(:content_kinds)"
+        params["content_kinds"] = content_kinds
+    if contributor_ids is not None or roles:
+        if contributor_ids is not None:
+            params["contributor_ids"] = contributor_ids
+        if roles:
+            params["roles"] = roles
+        contributor_credit_filter = credit_target_filter_exists_sql(
+            "media_id",
+            "m.id",
+            filter_contributor_ids=contributor_ids is not None,
+            filter_roles=bool(roles),
+        )
+    if semantic_query_embedding is not None:
+        embedding_model, query_embedding = semantic_query_embedding
+        params["query_embedding"] = to_pgvector_literal(query_embedding)
+        params["query_embedding_provider"] = transcript_embedding_provider_for_model(
+            embedding_model
+        )
+        params["query_embedding_model"] = embedding_model
+
+    scope_clause = scope_filter_sql(scope_type, scope_id, "content_chunk")
+    if isinstance(scope_clause, ScopeUnsupported):
+        return []
+    scope_filter, scope_params = scope_clause
+    params.update(scope_params)
+
+    # Ranking carries only identity, tsvector, embedding identity and recency.
+    # The materialized final limit is the evaluation boundary for snippets and
+    # contributor metadata; neither belongs in the multiply-read eligible CTE.
+    headline = """ts_headline(
+                    'english', cc.chunk_text, websearch_to_tsquery('english', :query),
+                    'MaxWords=50, MinWords=10, MaxFragments=1'
+                )"""
+    snippet = (
+        headline
+        if semantic_query_embedding is not None
+        else f"CASE WHEN :has_query THEN {headline} ELSE left(cc.chunk_text, 300) END"
+    )
+    final_projection = f"""
+            , ranked_media AS (
+                SELECT DISTINCT cc.owner_id AS media_id
+                FROM ranked_candidates ranked
+                JOIN content_chunks cc ON cc.id = ranked.id
+            ), media_contributor_credits AS (
+                {contributor_credits_rollup_cte_sql("media_id", owner_predicate="cc.media_id IN (SELECT media_id FROM ranked_media)")}
+            )
+            SELECT
+                cc.id,
+                cc.owner_id AS media_id,
+                m.kind,
+                m.title,
+                m.original_published_date,
+                mcc.contributor_credits,
+                cc.chunk_text,
+                {snippet} AS snippet,
+                cc.source_kind,
+                cc.primary_evidence_span_id,
+                cc.summary_locator,
+                ranked.raw_score
+            FROM ranked_candidates ranked
+            JOIN content_chunks cc ON cc.id = ranked.id
+            JOIN media m ON m.id = cc.owner_id
+            LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
+            ORDER BY ranked.raw_score DESC, ranked.id ASC
+        """
+    eligible_chunks = f"""
+                eligible_chunks AS (
+                    SELECT
+                        cc.id,
+                        cc.created_at,
+                        cc.chunk_text_tsv,
+                        mcis.active_embedding_provider,
+                        mcis.active_embedding_model
+                    FROM content_chunks cc
+                    JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+                    JOIN visible_media vm ON vm.media_id = cc.owner_id
+                    JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
+                        AND mcis.owner_id = cc.owner_id
+                        AND mcis.status = 'ready'
+                    WHERE TRUE
+                    {scope_filter}
+                    {content_kind_filter}
+                    {contributor_credit_filter}
+                )"""
+    if semantic_query_embedding is not None:
+        query = hybrid_content_chunk_tail_sql(
+            leading_ctes=f"""visible_media AS ({visible_media_ids_cte_sql()}),
+                {query_embedding_cte_sql(embedding_dims)},
+                {eligible_chunks}""",
+            embedding_dims=embedding_dims,
+            scored_passthrough_columns="ec.created_at,",
+            final_projection_sql=final_projection,
+            order_by_id="id",
+            include_recency_decay=True,
+        )
+    else:
+        query = f"""
+            WITH
+                visible_media AS ({visible_media_ids_cte_sql()}),
+                {eligible_chunks},
+                lexical_candidates AS (
+                    SELECT
+                        ec.id,
+                        ec.created_at,
+                        CASE WHEN :has_query THEN
+                            ts_rank_cd(ec.chunk_text_tsv, websearch_to_tsquery('english', :query))
+                        ELSE 0.0 END AS lexical_score
+                    FROM eligible_chunks ec
+                    WHERE
+                        (:has_query IS FALSE OR ec.chunk_text_tsv @@ websearch_to_tsquery('english', :query))
+                    ORDER BY lexical_score DESC, ec.id ASC
+                    LIMIT :ann_limit
+                ),
+                ranked_candidates AS MATERIALIZED (
+                    SELECT id,
+                        (
+                            (0.20 * GREATEST(lexical_score, 0.0))
+                            + (
+                                0.05 * GREATEST(
+                                    0.0,
+                                    1.0 - LEAST(EXTRACT(EPOCH FROM (now() - created_at)) / 604800.0, 1.0)
+                                )
+                            )
+                        ) AS raw_score
+                    FROM lexical_candidates
+                    WHERE :has_query IS FALSE OR lexical_score > 0.0
+                    ORDER BY raw_score DESC, id ASC
+                    LIMIT :limit
+                )
+            {final_projection}
+        """
+    rows = db.execute(text(query), params).fetchall()
+    results: list[InternalSearchResult] = []
+    for row in rows:
+        if row[9] is None:
+            continue
+        try:
+            resolution = resolve_evidence_span(
+                db,
+                viewer_id=viewer_id,
+                evidence_span_id=row[9],
+            )
+        except NotFoundError:
+            continue
+        try:
+            _require_resolved_evidence(resolution)
+        except NotFoundError:
+            continue
+        evidence_span_ids = [row[9]] if row[9] is not None else []
+        snippet = _truncate_snippet(str(row[7] or row[6] or ""))
+        if has_query and q.lower() not in snippet.lower().replace("<b>", "").replace("</b>", ""):
+            query_snippet = _snippet_around_query(str(row[6] or ""), q)
+            if query_snippet is not None:
+                snippet = query_snippet
+        results.append(
+            _RankedContentChunkResult(
+                id=row[0],
+                snippet=snippet,
+                source_kind=str(row[8]),
+                evidence_span_ids=evidence_span_ids,
+                citation_label=str(resolution["citation_label"]),
+                locator=locator_from_resolution(
+                    resolution,
+                    media_id=row[1],
+                    media_kind=str(row[2] or ""),
+                ),
+                resolver=dict(resolution["resolver"]),
+                source=_build_search_source(row[1], row[2], row[3], row[5], row[4]),
+                score=_build_search_score(row[11]),
+            )
+        )
+    return results
+
+
+def resolve_content_chunk_search_result(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    result_id: UUID,
+    score: _SearchScore,
+    evidence_span_ids: list[UUID] | None,
+) -> _RankedContentChunkResult:
+    """Rematerialize one visible, indexed content-chunk search row."""
+    row = db.execute(
+        text(
+            f"""
+            WITH
+                visible_media AS ({visible_media_ids_cte_sql()}),
+                media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
+            SELECT
+                cc.id,
+                cc.owner_kind,
+                cc.owner_id,
+                m.kind,
+                m.title,
+                m.original_published_date,
+                mcc.contributor_credits,
+                cc.chunk_text,
+                cc.source_kind,
+                cc.primary_evidence_span_id
+            FROM content_chunks cc
+            JOIN media m ON m.id = cc.owner_id AND cc.owner_kind = 'media'
+            JOIN visible_media vm ON vm.media_id = cc.owner_id
+            JOIN content_index_states mcis ON mcis.owner_kind = cc.owner_kind
+                AND mcis.owner_id = cc.owner_id
+                AND mcis.status = 'ready'
+            LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
+            WHERE cc.id = :id
+              AND cc.owner_kind = 'media'
+              AND vm.media_id IS NOT NULL
+            """
+        ),
+        {"viewer_id": viewer_id, "id": result_id},
+    ).first()
+    if row is None or row[9] is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+    if evidence_span_ids and row[9] not in evidence_span_ids:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+    resolution = resolve_evidence_span(
+        db,
+        viewer_id=viewer_id,
+        evidence_span_id=row[9],
+    )
+    _require_resolved_evidence(resolution)
+    source_kind = str(row[3])
+    return _RankedContentChunkResult(
+        id=row[0],
+        snippet=_truncate_snippet(str(row[7] or "")),
+        source_kind=str(row[8]),
+        evidence_span_ids=[row[9]],
+        citation_label=str(resolution["citation_label"]),
+        locator=locator_from_resolution(
+            resolution,
+            media_id=row[2],
+            media_kind=source_kind,
+        ),
+        resolver=dict(resolution["resolver"]),
+        source=_build_search_source(
+            row[2],
+            source_kind,
+            str(row[4]),
+            row[6],
+            row[5],
+        ),
+        score=score,
+    )

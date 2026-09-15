@@ -12,8 +12,9 @@ from sqlalchemy.orm import Session
 
 from nexus.coerce import coerce_non_negative_int, coerce_positive_int
 from nexus.ids import new_uuid7
-from nexus.jobs.queue import enqueue_unique_job
 from nexus.logging import get_logger
+from nexus.schemas.presence import nullable_from_presence
+from nexus.schemas.publication_dates import normalize_source_publication_date
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_all_collection_families,
@@ -35,7 +36,8 @@ from nexus.services.contributor_taxonomy import (
 from nexus.services.library_entries import (
     ensure_subscription_episode_default_in_current_transaction,
 )
-from nexus.services.transcripts.current import ensure_media_transcript_state_row
+from nexus.services.metadata_dispatch import enqueue_metadata_enrichment
+from nexus.services.transcripts.state import ensure_media_transcript_state_row
 
 from ._normalize import (
     normalize_language_tag,
@@ -151,8 +153,9 @@ def sync_subscription_ingest(
         description_html = normalize_optional_text(episode.get("description_html"))
         description_text = normalize_optional_text(episode.get("description_text"))
         description = description_text[:2000] if description_text else None
-        published_date = normalize_provider_published_at(episode.get("published_at"))
-        published_at = parse_iso_datetime(published_date)
+        source_published_at = normalize_provider_published_at(episode.get("published_at"))
+        published_at = parse_iso_datetime(source_published_at)
+        edition_date = normalize_source_publication_date(source_published_at)
         language = normalize_language_tag(episode.get("language")) or normalize_language_tag(
             episode.get("feed_language")
         )
@@ -209,7 +212,7 @@ def sync_subscription_ingest(
                         canonical_source_url = :canonical_source_url,
                         external_playback_url = :external_playback_url,
                         description = COALESCE(:description, description),
-                        published_date = COALESCE(:published_date, published_date),
+                        edition_published_date = COALESCE(:edition_published_date, edition_published_date),
                         language = COALESCE(:language, language),
                         provider = :provider,
                         provider_id = :provider_id,
@@ -223,7 +226,7 @@ def sync_subscription_ingest(
                     "canonical_source_url": feed_url,
                     "external_playback_url": str(episode.get("audio_url") or "").strip() or None,
                     "description": description,
-                    "published_date": published_date,
+                    "edition_published_date": nullable_from_presence(edition_date),
                     "language": language,
                     "provider": PODCAST_PROVIDER,
                     "provider_id": diagnostic_alias.value,
@@ -284,7 +287,7 @@ def sync_subscription_ingest(
                         provider,
                         provider_id,
                         description,
-                        published_date,
+                        edition_published_date,
                         language,
                         created_by_user_id,
                         created_at,
@@ -303,7 +306,7 @@ def sync_subscription_ingest(
                         :provider,
                         :provider_id,
                         :description,
-                        :published_date,
+                        :edition_published_date,
                         :language,
                         :created_by_user_id,
                         :created_at,
@@ -319,7 +322,7 @@ def sync_subscription_ingest(
                     "provider": PODCAST_PROVIDER,
                     "provider_id": diagnostic_episode_alias(aliases).value,
                     "description": description,
-                    "published_date": published_date,
+                    "edition_published_date": nullable_from_presence(edition_date),
                     "language": language,
                     "created_by_user_id": viewer_id,
                     "created_at": now,
@@ -409,12 +412,12 @@ def sync_subscription_ingest(
         # Queue enlistment is part of the caller's transaction. A queue write
         # failure aborts the batch; swallowing a database exception would leave
         # the Session unusable and falsely advance the backfill fence.
-        enqueue_unique_job(
+        enqueue_metadata_enrichment(
             db,
-            kind="enrich_metadata",
-            payload={"media_id": str(media_id), "request_id": None},
+            media_id=media_id,
+            requester_user_id=viewer_id,
+            request_id=None,
             dedupe_key=f"enrich-metadata:{media_id}",
-            max_attempts=1,
         )
 
     affected_viewers = tuple(

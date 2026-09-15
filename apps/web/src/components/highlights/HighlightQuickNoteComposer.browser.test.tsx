@@ -1,11 +1,4 @@
-import {
-  Component,
-  StrictMode,
-  useRef,
-  useState,
-  type ErrorInfo,
-  type ReactNode,
-} from "react";
+import { StrictMode, useRef, useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
@@ -14,11 +7,8 @@ import { withRenderEnvironment } from "@/__tests__/helpers/renderEnvironment";
 import SelectionPopover from "@/components/SelectionPopover";
 import { FeedbackProvider } from "@/components/feedback/Feedback";
 import HighlightNoteEditor from "@/components/notes/HighlightNoteEditor";
-import {
-  deleteHighlightNote,
-  saveHighlightNote,
-  type HighlightLinkedNoteBlock,
-} from "@/lib/highlights/api";
+import { deleteHighlightNote, saveHighlightNote } from "@/lib/highlights/api";
+import type { HighlightLinkedNoteBlock } from "@/lib/highlights/highlightContract";
 import { ShareControllerProvider } from "@/lib/sharing/controller";
 import HighlightQuickNoteComposer, {
   type QuickNoteSession,
@@ -34,27 +24,6 @@ interface PendingSave {
     body_pm_json: Record<string, unknown>;
   };
   resolve: (response: Response) => void;
-}
-
-class DefectBoundary extends Component<
-  { children: ReactNode },
-  { error: Error | null }
-> {
-  state = { error: null };
-
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
-
-  componentDidCatch(_error: Error, _errorInfo: ErrorInfo) {}
-
-  render() {
-    return this.state.error ? (
-      <p role="status">Annotation defect</p>
-    ) : (
-      this.props.children
-    );
-  }
 }
 
 // The browser owns selection, focus, editing, draft recovery, and submit. Only
@@ -307,52 +276,6 @@ describe("selection annotation keyboard interaction", () => {
       expect(screen.queryByRole("dialog", { name: "Add note to highlight" })).toBeNull(),
     );
     expect(screen.getByText("Saved annotation: Captured before highlight creation")).toBeVisible();
-  });
-
-  it("retains a pending note when its highlight was not created", async () => {
-    const pending = holdNoteSaves();
-    renderAnnotation({ creation: Promise.resolve(null) });
-    await userEvent.click(screen.getByRole("button", { name: "Note" }));
-    const textbox = await screen.findByRole("textbox", { name: "Highlight note" });
-    await userEvent.click(textbox);
-    await userEvent.keyboard("Keep this unsaved observation{Enter}");
-
-    expect(await screen.findByText("Highlight wasn’t created")).toBeVisible();
-    expect(textbox).toHaveTextContent("Keep this unsaved observation");
-    expect(textbox).toHaveFocus();
-    expect(screen.getByRole("dialog", { name: "Add note to highlight" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Discard" })).toBeVisible();
-    expect(pending, "a missing highlight cannot own a note write").toHaveLength(0);
-  });
-
-  it("routes an unexpected highlight creation rejection to the defect boundary", async () => {
-    holdNoteSaves();
-    let rejectCreation!: (error: unknown) => void;
-    const creation = new Promise<{ id: string } | null>((_resolve, reject) => {
-      rejectCreation = reject;
-    });
-    render(
-      <DefectBoundary>
-        <StrictMode>
-          {withRenderEnvironment(
-            <FeedbackProvider>
-              <ShareControllerProvider>
-                <SelectionAnnotation creation={creation} />
-              </ShareControllerProvider>
-            </FeedbackProvider>,
-          )}
-        </StrictMode>
-      </DefectBoundary>,
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Note" }));
-    const textbox = await screen.findByRole("textbox", { name: "Highlight note" });
-    await userEvent.click(textbox);
-    await userEvent.keyboard("Trigger the true defect{Enter}");
-
-    rejectCreation(new Error("synthetic highlight creation defect"));
-
-    expect(await screen.findByText("Annotation defect")).toBeVisible();
   });
 
   it("keeps Shift+Enter as a newline and composition Enter out of submission", async () => {

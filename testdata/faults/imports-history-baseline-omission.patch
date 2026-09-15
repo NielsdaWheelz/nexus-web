@@ -1,0 +1,11 @@
+diff --git a/migrations/alembic/versions/0227_imports_history.py b/migrations/alembic/versions/0227_imports_history.py
+--- a/migrations/alembic/versions/0227_imports_history.py
++++ b/migrations/alembic/versions/0227_imports_history.py
+@@ -231,7 +231,6 @@
+         sa.Column("execution_id", postgresql.UUID(as_uuid=True), nullable=True),
+     )
+     _record_upload_baselines(bind)
+-    _record_source_attempt_baselines(bind)
+ 
+ 
+ def downgrade() -> None:

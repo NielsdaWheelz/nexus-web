@@ -23,15 +23,20 @@ Neither is a directory of every feature.
   contract. Personalized retrieval belongs in the Lectern Reading Slate and
   Nexus, where it can scale without destabilizing spatial memory.
 
-On desktop, Account and Nexus remain rail actions. The shared Account menu is
-exactly Stats, Import activity, Downloads when available, Settings, a separator,
-and danger-last Sign Out. Its trigger carries the total open import count
-(active plus needs-attention work); Import activity
-opens the existing Nexus task and does not navigate a pane. The mobile Nexus
-Account projection renders that same component and order. Quick Note and Today exist
+On desktop, Imports, Add, Account and Nexus remain rail actions. Imports is a
+footer utility link beside Add and Account, registered through
+`APP_NAVIGATION.utilities`; it navigates the `/imports` workspace pane and
+carries a real `Pill` badge counting only imports that need attention (zero
+hides it, an unloaded summary is not zero, the visible count caps at `99+`, and
+the accessible name keeps the exact count). The shared Account menu is exactly
+Stats, Imports, Downloads when available, Settings, a separator, and danger-last
+Sign Out; its `Imports` item navigates the same destination and carries the same
+badge, and the Account trigger itself carries no count. The mobile Nexus Account
+projection renders that same component and order, so mobile enters the pane one
+tap deeper. Quick Note and Today exist
 only in Nexus. Both Nexus projections expose the same commands, results,
 targets, workflows, history, and dispatch; the shared composer owns section
-membership, order, caps, and the declared desktop/mobile layout policy.
+membership, order, and caps, while each renderer owns platform geometry.
 Search, Authors, settings subpages, and other valid destinations remain
 retrievable without becoming permanent navigation items.
 
@@ -39,6 +44,16 @@ Mobile Nexus is a temporary sustained task, not a drawer or bottom sheet. Root
 owns the autofocused query; Choose Create, Choose Browse, Manage Tabs, Add, and
 recovery pages replace one another inside one opaque viewport-fixed dialog.
 There is no separate Find page, scope state, outside-click, or drag dismissal.
+The Nexus control's native button-activation path — tap, click, keyboard, and
+assistive technology — remains unchanged and is the only way that control opens
+the task. Its primary-touch horizontal swipe is only an adjacent-pane
+accelerator over the workspace-store command; it adds no second Nexus ingress,
+navigation event, or full-screen-task gesture.
+When task activation occurs during an already-acquired physical contact,
+`SwitchboardTask` rejects the retargeted pointer click unless the same pointer
+began inside the already-active task. That task-local provenance check carries
+no gesture vocabulary or command and always admits keyboard/assistive native
+activation.
 
 Compact presentation covers widths through 768 px and coarse-pointer landscape
 phones through 900 px. Fine-pointer short desktop windows remain desktop.
@@ -48,15 +63,17 @@ phones through 900 px. Fine-pointer short desktop windows remain desktop.
 Nexus is one typed intent router with platform-native renderers. Its input is
 always labelled and placeholdered **Find anything…**. Blank desktop order is
 Open, optional Continue, Recent, Quick Actions. Blank mobile order is Open,
-Quick Actions, optional Continue, Recent, Places; mobile groups use compact
-rails. Independent caps prevent one group from erasing another. Quick Actions
-are Quick Note, Today, New Chat, New Page, New Library, and Import.
+Quick Actions, optional Continue, Recent, Places; mobile renders every group as
+one sectioned vertical list inside a single content scroller. Independent caps
+prevent one group from erasing another. Quick Actions are Quick Note, Today,
+New Chat, New Page, New Library, and Import.
 
 Typing removes blank groups. The shared composer admits at most eight owned
-results, then exposes Ask Nexus, Add to Today, Browse, Create, and See All as
-one fixed Query Actions group. Reserved verbs and slash aliases compile to
-explicit typed intent; incomplete or unknown command text remains retrieval.
-Selection is always required.
+Results, then reuses the `QuickActions` section labelled **Do with query** for
+Ask Nexus, Add to Today, Browse, Create, and See All. Those actions remain
+outside the Results cap. Reserved verbs and slash aliases compile to explicit
+typed intent; incomplete or unknown command text remains retrieval. Selection
+is always required.
 
 A result has one required primary label. It may add only facts already carried
 by its projection, in this hierarchy:
@@ -95,7 +112,8 @@ labels a warmed provider loop as cold. The p95 gates are respectively under
 | Authenticated home href                                           | `apps/web/src/lib/routes/defaults.ts`                                                                             |
 | Destination identity (`id`, label, href, keywords, optional icon) | `apps/web/src/lib/navigation/destinations.ts`                                                                     |
 | Fixed-nav membership, order, and decoration                       | `apps/web/src/components/appnav/navModel.ts`                                                                      |
-| Shared account membership, import status, and rendering           | `apps/web/src/components/appnav/AccountMenu.tsx`                                                                  |
+| Shared account membership and rendering                           | `apps/web/src/components/appnav/AccountMenu.tsx`                                                                  |
+| Imports badge count and its accessible name                       | `apps/web/src/components/imports/ImportsBadge.tsx` and `importsWorkspaceModel.ts`                                 |
 | Nexus commands and typed intent                                  | `apps/web/src/lib/nexus/commands.ts` and `apps/web/src/lib/nexus/intent.ts`                                        |
 | Nexus sections, Places projection, ranking, caps, and stability  | `apps/web/src/lib/nexus/results.ts` and `apps/web/src/lib/nexus/ranking.ts`                                        |
 | Route-to-semantic-section ownership                               | section `header.destinationId`, or resource `sectionDestinationId`, in `apps/web/src/lib/panes/paneRouteModel.ts` |
@@ -128,7 +146,8 @@ declare `sectionDestinationId` because their header has no section identity:
 - chat detail and new-chat panes keep **Chats** active;
 - pages and note blocks keep **Notes** active;
 - Atlas, Oracle, and Lectern map to their own destinations; Stats and Settings
-  mark Account current without creating a selected rail destination.
+  mark Account current without creating a selected rail destination;
+- `/imports` marks the rail's Imports utility link current, not Account.
 
 Routes that are intentionally absent from fixed navigation, such as Search and
 Authors, do not fabricate a selected rail item. Section pane titles resolve
@@ -175,6 +194,13 @@ recovery state. The desktop Account menu retains its existing focus contract.
 In the collapsed desktop rail, the brand and Expand control remain separate,
 non-overlapping hit targets. The expand control must never be stretched over the
 brand mark, because that makes an apparent Home activation trigger rail chrome.
+For the same reason the Imports count is painted clear of its icon rather than
+over it: at 48px the rail has no room for a chip on the glyph, so the badge is
+anchored in the link's own top-right corner, above the icon, on the rail's own
+opaque ground. The link carries the band the chip needs, unconditionally, so
+the whole chip is inside the control it counts for — a click on the count is a
+click on Imports — and the clearance above the icon survives the rail's hover
+lift.
 
 ## Home and workspace restore
 
@@ -202,7 +228,7 @@ explicit `/lectern` request.
 When adding or changing a destination:
 
 1. Change identity once in `DESTINATION_REGISTRY`.
-2. Change fixed or Account membership/order only in `APP_NAVIGATION`.
+2. Change fixed, utility, or Account membership/order only in `APP_NAVIGATION`.
 3. Give a section route one `header.destinationId`; give a resource route one
    `sectionDestinationId`.
 4. If the backend records Nexus history for the href, update its canonical

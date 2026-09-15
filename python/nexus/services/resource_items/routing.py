@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.schemas.reader_apparatus import ReaderApparatusLocatorStatus
 from nexus.schemas.resource_items import ResourceActivationOut
-from nexus.services.artifacts.subject_policy import visible_persisted_subject
+from nexus.services.artifacts.registry import visible_persisted_subject
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import (
     oracle_anchor_current_target,

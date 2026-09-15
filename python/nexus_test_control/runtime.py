@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import fcntl
 import hashlib
 import json
@@ -8,7 +9,6 @@ import re
 import stat
 import subprocess
 import tempfile
-import threading
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -18,8 +18,13 @@ from typing import cast
 
 from nexus_test_control.model import Resource, ResourceKind
 
-RUNTIME_VERSION = 3
-PREVIOUS_RUNTIME_VERSION = 2
+RUNTIME_VERSION = 5
+# v3 was the last main predecessor; v4 was emitted by intermediate commits
+# before the v5 squash and can still own a persistent developer runtime.
+_UPGRADEABLE_RUNTIME_MISSING_PORTS = {
+    3: ("agent_tools_mcp", "provider_api"),
+    4: ("provider_api",),
+}
 LEDGER_VERSION = 1
 LOOPBACK_HOST = "127.0.0.1"
 TEMPLATE_FINGERPRINT_HEX_LENGTH = 40
@@ -31,9 +36,20 @@ _SCENARIO_ID = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\Z")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z")
 _PROCESS_OWNER = re.compile(r"[0-9a-f]{32}\Z")
 _PROCESS_ROLES = frozenset(
-    {"api", "external", "provider-openai", "web", "worker-interactive", "worker-background"}
+    {
+        "api",
+        "caddy",
+        "codex-generation-peer",
+        "external",
+        "offline-caddy",
+        "offline-caddy-origin",
+        "provider-openai",
+        "provider-api-peer",
+        "web",
+        "worker-interactive",
+        "worker-background",
+    }
 )
-_WORKSPACE_INVOCATION_LOCKS = threading.local()
 
 
 class RuntimeContractError(ValueError):
@@ -46,8 +62,10 @@ class EndpointKind(StrEnum):
     SUPABASE = "supabase"
     INBUCKET = "inbucket"
     API = "api"
+    AGENT_TOOLS_MCP = "agent-tools-mcp"
     EXTERNAL = "external"
     PROVIDER_OPENAI = "provider-openai"
+    PROVIDER_API = "provider-api"
     WEB = "web"
 
 
@@ -66,9 +84,11 @@ class RuntimePorts:
     supabase_inbucket: int
     supabase_shadow: int
     api: int
+    agent_tools_mcp: int
     web: int
     external: int
     provider_openai: int
+    provider_api: int
 
     def __post_init__(self) -> None:
         ports = tuple(self.as_dict().values())
@@ -90,9 +110,11 @@ class RuntimePorts:
             "supabase_inbucket": self.supabase_inbucket,
             "supabase_shadow": self.supabase_shadow,
             "api": self.api,
+            "agent_tools_mcp": self.agent_tools_mcp,
             "web": self.web,
             "external": self.external,
             "provider_openai": self.provider_openai,
+            "provider_api": self.provider_api,
         }
 
 
@@ -104,6 +126,15 @@ class RuntimeRecord:
     supabase_workdir: str
     ports: RuntimePorts
     owned_run_ids: tuple[str, ...] = ()
+
+
+def missing_runtime_port_names(record: RuntimeRecord) -> tuple[str, ...]:
+    if record.version == RUNTIME_VERSION:
+        return ()
+    try:
+        return _UPGRADEABLE_RUNTIME_MISSING_PORTS[record.version]
+    except KeyError as error:
+        raise RuntimeContractError("runtime version is not upgradeable") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,6 +214,25 @@ def runtime_state_dir(repo_root: Path) -> Path:
     return canonical_repo_root(repo_root) / ".nexus-test"
 
 
+def embedding_peer_state_dir(repo_root: Path, run_id: str) -> Path:
+    """Return the one run-owned state directory for the embeddings-only peer."""
+
+    return canonical_repo_root(repo_root) / embedding_peer_identity(run_id)
+
+
+def provider_api_peer_state_dir(repo_root: Path, run_id: str) -> Path:
+    """Return the one run-owned state directory for the provider API peer."""
+
+    return canonical_repo_root(repo_root) / provider_api_peer_identity(run_id)
+
+
+def codex_generation_peer_state_dir(repo_root: Path, run_id: str) -> Path:
+    root = canonical_repo_root(repo_root)
+    require_run_id(run_id)
+    temporary_root = Path("/tmp").resolve(strict=True)
+    return temporary_root / f"nexus-codex-{repo_id_for(root)}-{run_id}"
+
+
 def runtime_record_path(repo_root: Path) -> Path:
     return runtime_state_dir(repo_root) / "runtime.json"
 
@@ -216,6 +266,10 @@ def initialize_runtime(
 
 def read_runtime(repo_root: Path) -> RuntimeRecord:
     record = _runtime_from_json(_read_json(runtime_record_path(repo_root)))
+    return _require_owned_runtime(repo_root, record)
+
+
+def _require_owned_runtime(repo_root: Path, record: RuntimeRecord) -> RuntimeRecord:
     expected_repo_id = repo_id_for(repo_root)
     if record.repo_id != expected_repo_id:
         raise RuntimeContractError("runtime belongs to a different repository")
@@ -412,7 +466,21 @@ def forget_cleaned(
     require_run_id(run_id)
     with _state_lock(repo_root, f"run-{run_id}"):
         ledger = read_ledger(repo_root, run_id)
-        index, _ = _entry(ledger, resource)
+        index, entry = _entry(ledger, resource)
+        if resource.kind is ResourceKind.PROCESS:
+            if entry.external_id is None:
+                raise RuntimeContractError("cleaned process lacks its exact owner token")
+            marker_directory = resource_ledger_path(repo_root, run_id).parent / "process-owners"
+            (marker_directory / entry.external_id).unlink(missing_ok=True)
+            try:
+                marker_directory.rmdir()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                if exc.errno != errno.ENOTEMPTY:
+                    raise RuntimeContractError(
+                        "process owner marker directory could not be removed"
+                    ) from exc
         entries = (*ledger.entries[:index], *ledger.entries[index + 1 :])
         _write_json(
             resource_ledger_path(repo_root, run_id),
@@ -502,16 +570,26 @@ def extension_profile_identity(run_id: str, scenario_id: str) -> str:
     return f".nexus-test/runs/{run_id}/extension/{scenario_id}"
 
 
+def embedding_peer_identity(run_id: str) -> str:
+    require_run_id(run_id)
+    return f".nexus-test/runs/{run_id}/embedding-peer"
+
+
+def provider_api_peer_identity(run_id: str) -> str:
+    require_run_id(run_id)
+    return f".nexus-test/runs/{run_id}/provider-api-peer"
+
+
+def codex_generation_peer_identity(run_id: str) -> str:
+    require_run_id(run_id)
+    return f".nexus-test/runs/{run_id}/codex-generation-peer"
+
+
 def process_resource_identity(run_id: str, role: str) -> str:
     require_run_id(run_id)
     if role not in _PROCESS_ROLES:
         raise RuntimeContractError(f"unknown process role: {role!r}")
     return f"nexus-process-{run_id}-{role}"
-
-
-def provider_fixture_identity(run_id: str) -> str:
-    require_run_id(run_id)
-    return f".nexus-test/runs/{run_id}/openai-provider"
 
 
 def template_fingerprint(
@@ -585,37 +663,13 @@ def workspace_heavy_lock(repo_root: Path, *, blocking: bool = True) -> Iterator[
     ``BlockingIOError`` when another run already holds it, so a single-active-run
     lane can report ``NOT_RUN`` instead of queueing behind the first run.
     """
-    path = _workspace_lock_path(repo_root)
-    held: set[Path] = getattr(_WORKSPACE_INVOCATION_LOCKS, "paths", set())
-    if path in held:
-        yield path
-        return
-    with _locked_path(path, blocking=blocking):
-        yield path
-
-
-@contextmanager
-def workspace_invocation_lock(repo_root: Path) -> Iterator[Path]:
-    """Own one complete test invocation while preserving nested heavy boundaries."""
-    path = _workspace_lock_path(repo_root)
-    held: set[Path] = getattr(_WORKSPACE_INVOCATION_LOCKS, "paths", set())
-    if path in held:
-        raise RuntimeContractError("workspace invocation lock is already held by this thread")
-    with _locked_path(path):
-        held.add(path)
-        _WORKSPACE_INVOCATION_LOCKS.paths = held
-        try:
-            yield path
-        finally:
-            held.remove(path)
-
-
-def _workspace_lock_path(repo_root: Path) -> Path:
     root = canonical_repo_root(repo_root)
     lineage = _git_lineage_identity(root)
     owner = f"lineage:{lineage}" if lineage is not None else f"git:{_git_common_identity(root)}"
     identity = hashlib.sha256(os.fsencode(owner)).hexdigest()[:16]
-    return Path("/tmp") / f"nexus-test-heavy-{identity}.lock"
+    path = Path("/tmp") / f"nexus-test-heavy-{identity}.lock"
+    with _locked_path(path, blocking=blocking):
+        yield path
 
 
 def _git_lineage_identity(repo_root: Path) -> str | None:
@@ -759,13 +813,17 @@ def _validate_resource(resource: Resource, run_id: str, scenario_id: str | None)
         if scenario_id is None:
             raise RuntimeContractError("Supabase user requires scenario metadata")
         expected = supabase_user_email(run_id, scenario_id)
+    elif kind is ResourceKind.EMBEDDING_PEER:
+        expected = embedding_peer_identity(run_id)
+    elif kind is ResourceKind.PROVIDER_API_PEER:
+        expected = provider_api_peer_identity(run_id)
+    elif kind is ResourceKind.CODEX_GENERATION_PEER:
+        expected = codex_generation_peer_identity(run_id)
     elif kind is ResourceKind.PROCESS:
         if scenario_id is not None:
             raise RuntimeContractError("process must not carry scenario metadata")
         role = identity.removeprefix(f"nexus-process-{run_id}-")
         expected = process_resource_identity(run_id, role)
-    elif kind is ResourceKind.PROVIDER_FIXTURE:
-        expected = provider_fixture_identity(run_id)
     elif kind is ResourceKind.EXTENSION_PROFILE:
         if scenario_id is None:
             raise RuntimeContractError("extension profile requires scenario metadata")
@@ -791,6 +849,8 @@ def _resource_endpoint(ports: RuntimePorts, kind: ResourceKind) -> str | None:
         return _endpoint(ports, EndpointKind.MINIO)
     if kind is ResourceKind.SUPABASE_USER:
         return _endpoint(ports, EndpointKind.SUPABASE)
+    if kind is ResourceKind.PROVIDER_API_PEER:
+        return _endpoint(ports, EndpointKind.PROVIDER_API)
     return None
 
 
@@ -801,15 +861,17 @@ def _endpoint(ports: RuntimePorts, kind: EndpointKind) -> str:
         EndpointKind.SUPABASE: ports.supabase_api,
         EndpointKind.INBUCKET: ports.supabase_inbucket,
         EndpointKind.API: ports.api,
+        EndpointKind.AGENT_TOOLS_MCP: ports.agent_tools_mcp,
         EndpointKind.EXTERNAL: ports.external,
         EndpointKind.PROVIDER_OPENAI: ports.provider_openai,
+        EndpointKind.PROVIDER_API: ports.provider_api,
         EndpointKind.WEB: ports.web,
     }[kind]
     scheme = (
         "postgresql"
         if kind is EndpointKind.POSTGRES
         else "https"
-        if kind is EndpointKind.PROVIDER_OPENAI
+        if kind in {EndpointKind.PROVIDER_OPENAI, EndpointKind.PROVIDER_API}
         else "http"
     )
     return f"{scheme}://{LOOPBACK_HOST}:{port}"
@@ -849,28 +911,43 @@ def _runtime_to_json(record: RuntimeRecord) -> dict[str, object]:
     }
 
 
-def _runtime_from_json(value: object, *, allow_previous: bool = False) -> RuntimeRecord:
+def _runtime_from_json(value: object, *, allow_upgradeable: bool = False) -> RuntimeRecord:
     data = _object(value, "runtime")
     _keys(
         data,
         {"version", "repo_id", "compose_project", "supabase_workdir", "ports", "owned_run_ids"},
         "runtime",
     )
-    version = cast(int, data["version"])
+    raw_version = data["version"]
+    if isinstance(raw_version, bool) or not isinstance(raw_version, int):
+        raise RuntimeContractError("runtime version must be an integer")
+    version = raw_version
     ports = _object(data["ports"], "runtime ports")
+    if version == RUNTIME_VERSION:
+        missing_ports: tuple[str, ...] = ()
+    elif allow_upgradeable:
+        try:
+            missing_ports = _UPGRADEABLE_RUNTIME_MISSING_PORTS[version]
+        except KeyError as error:
+            raise RuntimeContractError("runtime version is not upgradeable") from error
+    else:
+        raise RuntimeContractError("runtime version is invalid")
     expected_ports = set(RuntimePorts.__annotations__)
-    if allow_previous and version == PREVIOUS_RUNTIME_VERSION:
-        expected_ports.remove("provider_openai")
+    expected_ports.difference_update(missing_ports)
     _keys(ports, expected_ports, "runtime ports")
-    if version == PREVIOUS_RUNTIME_VERSION:
+    if missing_ports:
         used_ports = set(ports.values())
-        placeholder = next(
-            (candidate for candidate in range(65_535, 0, -1) if candidate not in used_ports),
-            None,
-        )
-        if placeholder is None:
-            raise RuntimeContractError("previous runtime has no free provider-port placeholder")
-        ports = {**ports, "provider_openai": placeholder}
+        placeholders: dict[str, int] = {}
+        for name in missing_ports:
+            placeholder = next(
+                (candidate for candidate in range(65_535, 0, -1) if candidate not in used_ports),
+                None,
+            )
+            if placeholder is None:
+                raise RuntimeContractError("upgradeable runtime has no free port placeholder")
+            placeholders[name] = placeholder
+            used_ports.add(placeholder)
+        ports = {**ports, **placeholders}
     run_ids = data["owned_run_ids"]
     if not isinstance(run_ids, list) or any(not isinstance(item, str) for item in run_ids):
         raise RuntimeContractError("owned_run_ids must be an array of strings")
@@ -882,72 +959,70 @@ def _runtime_from_json(value: object, *, allow_previous: bool = False) -> Runtim
         ports=RuntimePorts(**cast(dict[str, int], ports)),
         owned_run_ids=tuple(run_ids),
     )
-    allowed_versions = (
-        {RUNTIME_VERSION, PREVIOUS_RUNTIME_VERSION} if allow_previous else {RUNTIME_VERSION}
-    )
-    if record.version not in allowed_versions or record.owned_run_ids != tuple(
-        sorted(set(run_ids))
-    ):
-        raise RuntimeContractError("runtime version or owned runs are invalid")
+    if record.owned_run_ids != tuple(sorted(set(run_ids))):
+        raise RuntimeContractError("runtime owned runs are invalid")
     return record
 
 
-def upgrade_previous_runtime(
+def upgrade_runtime_to_current(
     repo_root: Path,
     environment: Mapping[str, str],
-    provider_openai: int,
+    added_ports: Mapping[str, int],
 ) -> RuntimeRecord:
-    """Atomically add the v3 provider port to an exact workspace-owned v2 record."""
+    """Atomically add every missing port to an exact workspace-owned v3 or v4 record."""
     require_test_environment(environment)
-    if isinstance(provider_openai, bool) or not isinstance(provider_openai, int):
-        raise RuntimeContractError("provider port must be an integer")
-    if not 1 <= provider_openai <= 65_535:
-        raise RuntimeContractError("provider port must be between 1 and 65535")
     with _state_lock(repo_root, "runtime"):
-        record = _runtime_from_json(
-            _read_json(runtime_record_path(repo_root)),
-            allow_previous=True,
+        record = _require_owned_runtime(
+            repo_root,
+            _runtime_from_json(
+                _read_json(runtime_record_path(repo_root)),
+                allow_upgradeable=True,
+            ),
         )
         if record.version == RUNTIME_VERSION:
-            return read_runtime(repo_root)
-        if record.version != PREVIOUS_RUNTIME_VERSION:
-            raise RuntimeContractError("upgrade requires the immediately previous runtime")
-        owned_ports = {
-            port for name, port in record.ports.as_dict().items() if name != "provider_openai"
+            if added_ports:
+                raise RuntimeContractError("current runtime does not accept migration ports")
+            return record
+        missing_ports = missing_runtime_port_names(record)
+        if set(added_ports) != set(missing_ports):
+            raise RuntimeContractError(
+                f"runtime migration port keys must be exactly {sorted(missing_ports)}"
+            )
+        if any(
+            isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65_535
+            for port in added_ports.values()
+        ):
+            raise RuntimeContractError(
+                "runtime migration ports must be integers from 1 through 65535"
+            )
+        persisted_ports = {
+            name: port for name, port in record.ports.as_dict().items() if name not in missing_ports
         }
-        if provider_openai in owned_ports:
-            raise RuntimeContractError("provider port collides with an owned runtime port")
-        expected_repo_id = repo_id_for(repo_root)
-        if record.repo_id != expected_repo_id:
-            raise RuntimeContractError("runtime belongs to a different repository")
-        if record.compose_project != compose_project_name(expected_repo_id):
-            raise RuntimeContractError("runtime compose project is not repository-owned")
-        if record.supabase_workdir != str(runtime_state_dir(repo_root) / "supabase"):
-            raise RuntimeContractError("runtime Supabase workdir is outside repository state")
+        if len(set(added_ports.values())) != len(added_ports) or set(
+            added_ports.values()
+        ).intersection(persisted_ports.values()):
+            raise RuntimeContractError("runtime migration ports collide with owned runtime ports")
+        current_ports = RuntimePorts(**{**persisted_ports, **added_ports})
         upgraded = replace(
             record,
             version=RUNTIME_VERSION,
-            ports=replace(record.ports, provider_openai=provider_openai),
+            ports=current_ports,
         )
         _write_json(runtime_record_path(repo_root), _runtime_to_json(upgraded))
         return upgraded
 
 
-def read_previous_runtime_for_cleanup(repo_root: Path) -> RuntimeRecord:
-    """Decode v2 only for exact owned cleanup; never start or reuse it."""
-    record = _runtime_from_json(
-        _read_json(runtime_record_path(repo_root)),
-        allow_previous=True,
+def read_upgradeable_runtime(repo_root: Path) -> RuntimeRecord:
+    """Decode v3 or v4 for exact migration or cleanup; never start or reuse it."""
+    record = _require_owned_runtime(
+        repo_root,
+        _runtime_from_json(
+            _read_json(runtime_record_path(repo_root)),
+            allow_upgradeable=True,
+        ),
     )
-    if record.version != PREVIOUS_RUNTIME_VERSION:
-        raise RuntimeContractError("cleanup fallback requires the immediately previous runtime")
-    expected_repo_id = repo_id_for(repo_root)
-    if record.repo_id != expected_repo_id:
-        raise RuntimeContractError("runtime belongs to a different repository")
-    if record.compose_project != compose_project_name(expected_repo_id):
-        raise RuntimeContractError("runtime compose project is not repository-owned")
-    if record.supabase_workdir != str(runtime_state_dir(repo_root) / "supabase"):
-        raise RuntimeContractError("runtime Supabase workdir is outside repository state")
+    if record.version == RUNTIME_VERSION:
+        raise RuntimeContractError("runtime is already current")
     return record
 
 

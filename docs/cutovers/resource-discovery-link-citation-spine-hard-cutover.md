@@ -584,8 +584,11 @@ All internal open actions call one adapter:
 ```ts
 activateResource(target: ResourceActivationOut, options?: ActivateResourceOptions): void
 hrefForResourceActivation(target: ResourceActivationOut): string | null
-resourceRefForActivation(target: ResourceActivationOut): ResourceRef | null
 ```
+
+Resource activation never infers a secondary pane action. Secondary activation
+is supplied only by the feature that owns it, such as Share opening Library
+members or the workspace restoring an explicitly selected Dossier revision.
 
 Consumers:
 

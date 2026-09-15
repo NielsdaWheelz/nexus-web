@@ -1,0 +1,12 @@
+diff --git a/apps/web/src/lib/conversations/chatDraftStore.ts b/apps/web/src/lib/conversations/chatDraftStore.ts
+--- a/apps/web/src/lib/conversations/chatDraftStore.ts
++++ b/apps/web/src/lib/conversations/chatDraftStore.ts
+@@ -220,7 +220,7 @@
+                   outcome: receipt.outcome,
+                 },
+               }
+-            : { kind: "Absent" },
++            : { kind: "ReconcileRequired", command },
+       });
+       return receipt;
+     } catch (error) {

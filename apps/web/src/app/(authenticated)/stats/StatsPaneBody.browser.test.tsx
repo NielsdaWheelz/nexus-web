@@ -10,16 +10,46 @@ import { FeedbackProvider } from "@/components/feedback/Feedback";
 import StatsPaneBody from "./StatsPaneBody";
 
 const HREF = "/stats?view=stats&period=day&anchor=2026-08-10";
+const NEXT_HREF = "/stats?view=stats&period=day&anchor=2026-08-11";
 const VISIT_ID = assumePaneVisitId("00000000-0000-4000-8000-000000000001");
 
 const DEVICE_HANDLE = "ncd1.AAAAAAAAAAAAAAAAAAAAAA";
-const EXCLUSION_HANDLE =
-  "nce1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
+const EXCLUSION_HANDLE = "nce1.AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
+
+function observedSession(
+  title: string,
+  day: "10" | "11",
+  continuesBeyondRange = false,
+  mediaId = "00000000-0000-4000-8000-000000000002",
+): unknown {
+  return {
+    mediaRef: `media:${mediaId}`,
+    title,
+    modality: "Reading",
+    device: { deviceHandle: DEVICE_HANDLE, label: "Desktop" },
+    startedAt: `2026-08-${day}T16:00:00.000Z`,
+    endedAt: `2026-08-${day}T16:01:00.000Z`,
+    activeMs: 60_000,
+    forwardWordPosition: 120,
+    forwardMediaPositionMs: 0,
+    firstProgress: { kind: "Present", value: 0.1 },
+    lastProgress: { kind: "Present", value: 0.2 },
+    continuesBeforeRange: continuesBeyondRange,
+    continuesAfterRange: false,
+  };
+}
+
+interface StatsFixtureOptions {
+  readonly title?: string;
+  readonly day?: "10" | "11";
+  readonly nextCursor?: string;
+}
 
 function stats(
   activeMs: number,
   correction: "None" | "Observed" | "Excluded" = "None",
   continuesBeyondRange = false,
+  options: StatsFixtureOptions = {},
 ): unknown {
   const recordedActiveMs = correction === "Excluded" ? 60_000 : activeMs;
   return {
@@ -48,24 +78,16 @@ function stats(
           rows:
             correction === "Observed"
               ? [
-                  {
-                    mediaRef: "media:00000000-0000-4000-8000-000000000002",
-                    title: "A Book",
-                    modality: "Reading",
-                    device: { deviceHandle: DEVICE_HANDLE, label: "Desktop" },
-                    startedAt: "2026-08-10T16:00:00.000Z",
-                    endedAt: "2026-08-10T16:01:00.000Z",
-                    activeMs: 60_000,
-                    forwardWordPosition: 120,
-                    forwardMediaPositionMs: 0,
-                    firstProgress: { kind: "Present", value: 0.1 },
-                    lastProgress: { kind: "Present", value: 0.2 },
-                    continuesBeforeRange: continuesBeyondRange,
-                    continuesAfterRange: false,
-                  },
+                  observedSession(
+                    options.title ?? "A Book",
+                    options.day ?? "10",
+                    continuesBeyondRange,
+                  ),
                 ]
               : [],
-          nextCursor: { kind: "Absent" },
+          nextCursor: options.nextCursor
+            ? { kind: "Present", value: options.nextCursor }
+            : { kind: "Absent" },
         },
         longestSession: { kind: "Absent" },
         activeExclusions:
@@ -106,6 +128,22 @@ function stats(
   };
 }
 
+function sessionPage(title: string, day: "10" | "11" = "10"): Response {
+  return Response.json({
+    data: {
+      sessions: [
+        observedSession(
+          title,
+          day,
+          false,
+          "00000000-0000-4000-8000-000000000003",
+        ),
+      ],
+      nextCursor: { kind: "Absent" },
+    },
+  });
+}
+
 function response(activeMs: number): Response {
   return new Response(JSON.stringify(stats(activeMs)), {
     status: 200,
@@ -113,28 +151,28 @@ function response(activeMs: number): Response {
   });
 }
 
-function StatsPane() {
+function StatsPane({ href = HREF }: { href?: string }) {
   return (
     <FeedbackProvider>
       <PaneReturnMementoProvider>
         <PaneRuntimeProvider
-        paneId="stats-pane"
-        visitId={VISIT_ID}
-        isActive
-        href={HREF}
-        routeId="stats"
-        routeKey={resolvePaneRouteIdentity(HREF).routeKey}
-        canGoBack={false}
-        canGoForward={false}
-        onGoBackPane={vi.fn()}
-        onGoForwardPane={vi.fn()}
-        onNavigatePane={vi.fn()}
-        onReplacePane={vi.fn()}
-        onActivateWorkspaceTarget={() => ({
-          kind: "Unchanged",
-          paneId: "stats-pane",
-        })}
-        onSetPaneLabel={vi.fn()}
+          paneId="stats-pane"
+          visitId={VISIT_ID}
+          isActive
+          href={href}
+          routeId="stats"
+          routeKey={resolvePaneRouteIdentity(href).routeKey}
+          canGoBack={false}
+          canGoForward={false}
+          onGoBackPane={vi.fn()}
+          onGoForwardPane={vi.fn()}
+          onNavigatePane={vi.fn()}
+          onReplacePane={vi.fn()}
+          onActivateWorkspaceTarget={() => ({
+            kind: "Unchanged",
+            paneId: "stats-pane",
+          })}
+          onSetPaneLabel={vi.fn()}
         >
           <StatsPaneBody />
         </PaneRuntimeProvider>
@@ -146,11 +184,128 @@ function StatsPane() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Stats activity freshness", () => {
+  it("discards a pending session page when a different Stats view commits", async () => {
+    let resolveOldPage: (response: Response) => void = () => {
+      throw new Error("Old session page did not start");
+    };
+    let oldPageSettled = false;
+    const oldPage = new Promise<Response>((resolve) => {
+      resolveOldPage = resolve;
+    }).then((response) => {
+      oldPageSettled = true;
+      return response;
+    });
+    let statsReads = 0;
+    let oldPageStarted = false;
+    const oldPageRequest: { signal: AbortSignal | null } = { signal: null };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.includes("/api/consumption/sessions?")) {
+          oldPageStarted = true;
+          oldPageRequest.signal = init?.signal ?? null;
+          return oldPage;
+        }
+        statsReads += 1;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify(
+              stats(60_000, "Observed", false, {
+                title:
+                  statsReads === 1
+                    ? "Old current session"
+                    : "New current session",
+                day: statsReads === 1 ? "10" : "11",
+                nextCursor: statsReads === 1 ? "old-page" : undefined,
+              }),
+            ),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }),
+    );
+    const view = render(<StatsPane />);
+
+    const loadMore = await screen.findByRole("button", {
+      name: "Load more sessions",
+    });
+    act(() => loadMore.click());
+    await waitFor(() => expect(oldPageStarted).toBe(true));
+
+    view.rerender(<StatsPane href={NEXT_HREF} />);
+    expect(await screen.findByText("New current session")).toBeVisible();
+    expect(screen.queryByText("Old current session")).not.toBeInTheDocument();
+    expect(oldPageRequest.signal?.aborted).toBe(true);
+
+    resolveOldPage(sessionPage("Stale continuation"));
+    await waitFor(() => expect(oldPageSettled).toBe(true));
+    await act(async () => undefined);
+
+    expect(screen.queryByText("Stale continuation")).not.toBeInTheDocument();
+  });
+
+  it("preserves session rows and offers Retry when pagination fails", async () => {
+    let sessionReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (!url.includes("/api/consumption/sessions?")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify(
+                stats(60_000, "Observed", false, {
+                  nextCursor: "next-page",
+                }),
+              ),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
+        sessionReads += 1;
+        return Promise.resolve(
+          sessionReads === 1
+            ? Response.json(
+                {
+                  error: {
+                    code: "E_UPSTREAM",
+                    message: "temporarily unavailable",
+                  },
+                },
+                { status: 503 },
+              )
+            : sessionPage("Recovered session"),
+        );
+      }),
+    );
+    render(<StatsPane />);
+
+    const loadMore = await screen.findByRole("button", {
+      name: "Load more sessions",
+    });
+    act(() => loadMore.click());
+
+    expect(await screen.findByText("Sessions couldn’t load")).toBeVisible();
+    expect(screen.getByText("A Book")).toBeVisible();
+    const retry = screen.getByRole("button", {
+      name: "Retry loading sessions",
+    });
+    act(() => retry.click());
+
+    expect(await screen.findByText("Recovered session")).toBeVisible();
+    expect(
+      screen.queryByText("Sessions couldn’t load"),
+    ).not.toBeInTheDocument();
+  });
+
   it("revalidates a mounted pane after local acceptance and foreground recovery", async () => {
     let read = 0;
     vi.stubGlobal(
       "fetch",
-      vi.fn(() => Promise.resolve(response([0, 60_000, 120_000][read++] ?? 120_000))),
+      vi.fn(() =>
+        Promise.resolve(response([0, 60_000, 120_000][read++] ?? 120_000)),
+      ),
     );
     render(<StatsPane />);
 
@@ -160,27 +315,30 @@ describe("Stats activity freshness", () => {
 
     act(() => publishConsumptionProjectionChange());
     await waitFor(() =>
-      expect(screen.getByRole("region", { name: "Activity summary" })).toHaveTextContent(
-        "1 min",
-      ),
+      expect(
+        screen.getByRole("region", { name: "Activity summary" }),
+      ).toHaveTextContent("1 min"),
     );
 
     act(() => window.dispatchEvent(new Event("online")));
     await waitFor(() =>
-      expect(screen.getByRole("region", { name: "Activity summary" })).toHaveTextContent(
-        "2 min",
-      ),
+      expect(
+        screen.getByRole("region", { name: "Activity summary" }),
+      ).toHaveTextContent("2 min"),
     );
-    expect(screen.getByRole("region", { name: "Activity summary" })).toHaveTextContent(
-      "Observed time",
-    );
+    expect(
+      screen.getByRole("region", { name: "Activity summary" }),
+    ).toHaveTextContent("Observed time");
     expect(screen.queryByText(/added/i)).not.toBeInTheDocument();
   });
 
   it("excludes an observed session and restores that exact correction", async () => {
     let currentProjection = stats(60_000, "Observed");
     const posted: unknown[] = [];
-    vi.stubGlobal("confirm", vi.fn(() => true));
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
     let releaseExclude: () => void = () => {
       throw new Error("Exclude request did not start");
     };
@@ -231,7 +389,7 @@ describe("Stats activity freshness", () => {
     const exclude = await screen.findByRole("menuitem", {
       name: "Don’t count this session",
     });
-    expect(exclude).toHaveFocus();
+    await waitFor(() => expect(exclude).toHaveFocus());
     await user.keyboard("{Enter}");
     await waitFor(() => expect(posted).toHaveLength(1));
     await waitFor(() => expect(sessionActions).toHaveFocus());
@@ -256,7 +414,9 @@ describe("Stats activity freshness", () => {
       }),
     );
     expect(
-      await screen.findByRole("button", { name: /Actions for A Book, Reading/ }),
+      await screen.findByRole("button", {
+        name: /Actions for A Book, Reading/,
+      }),
     ).toBeVisible();
     expect(posted[1]).toMatchObject({
       kind: "Restore",
@@ -267,12 +427,14 @@ describe("Stats activity freshness", () => {
   it("does not offer an inexact correction for a range-clipped session", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(() => Promise.resolve(
-        new Response(JSON.stringify(stats(60_000, "Observed", true)), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      )),
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify(stats(60_000, "Observed", true)), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      ),
     );
     render(<StatsPane />);
 
@@ -284,7 +446,10 @@ describe("Stats activity freshness", () => {
 
   it("models a concurrent correction conflict and refreshes history", async () => {
     let reads = 0;
-    vi.stubGlobal("confirm", vi.fn(() => true));
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -312,7 +477,9 @@ describe("Stats activity freshness", () => {
     render(<StatsPane />);
 
     await user.click(
-      await screen.findByRole("button", { name: /Actions for A Book, Reading/ }),
+      await screen.findByRole("button", {
+        name: /Actions for A Book, Reading/,
+      }),
     );
     await user.click(
       await screen.findByRole("menuitem", { name: "Don’t count this session" }),

@@ -1,4 +1,6 @@
-import { captureCanonicalArticle } from "../articleFixture";
+import { captureReadableArticle } from "../articleFixture";
+import { TOOL_PROJECTION_HEADER } from "@/lib/api/client";
+import { TOOL_PROJECTION_REVISION } from "@/lib/conversations/toolContractProjection";
 import {
   expect,
   gotoWithStrictCsp,
@@ -7,31 +9,29 @@ import {
   webOrigin,
 } from "../fixtures";
 import { matchesResponse, pageRequest } from "../request";
+import { decodeChatAdmissionResponse } from "../../src/lib/conversations/chatAdmission";
+import { decodeChatRunData } from "../../src/lib/conversations/messageWire";
 
 test.use({ journeyId: "grounded-chat-citation" });
+
+function acceptedChatTarget(raw: unknown, commandKey: string) {
+  const receipt = decodeChatAdmissionResponse(raw, commandKey);
+  if (receipt.outcome.kind !== "Accepted")
+    throw new Error("The grounded chat was not admitted");
+  return receipt.outcome;
+}
 
 test("a source-grounded answer publishes a citation that opens its exact reader evidence", async ({
   page,
   journeyUser,
 }) => {
   await signIn(page, journeyUser);
+  // A Heavy ingest job now runs in a fresh child process, so on a constrained CI
+  // runner a document’s ingest/index pipeline (plus the fresh-database maintenance
+  // backlog) needs materially more wall time than the pre-cutover in-process worker.
+  test.setTimeout(300_000);
   const api = pageRequest(page, webOrigin);
-  const mediaId = await captureCanonicalArticle(page, "grounded-source");
-  await expect
-    .poll(
-      async () => {
-        const response = await api.get(`/api/media/${mediaId}`);
-        if (!response.ok()) return `http-${response.status()}`;
-        return ((await response.json()) as {
-          data: { retrieval_status: string | null };
-        }).data.retrieval_status;
-      },
-      {
-        message: `Expected grounded source ${mediaId} to publish searchable evidence.`,
-        timeout: 25_000,
-      },
-    )
-    .toBe("ready");
+  const mediaId = await captureReadableArticle(page, "grounded-source");
 
   const query = "SOFIA water Clavius Crater";
   const searchResponse = await api.get(
@@ -97,9 +97,8 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
   await gotoWithStrictCsp(page, `/conversations/${conversationId}`);
   const input = page.getByRole("textbox", { name: /ask anything/i });
   await expect(input).toBeVisible();
-  await page.getByRole("combobox", { name: "Model" }).selectOption("fast");
-  await page.getByRole("combobox", { name: "Effort" }).selectOption("high");
   let chatAdmissions = 0;
+  let chatCommandKey = "";
   page.on("request", (request) => {
     const url = new URL(request.url());
     if (
@@ -108,6 +107,7 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
       url.pathname === "/api/chat-runs"
     ) {
       chatAdmissions += 1;
+      chatCommandKey = request.headers()["idempotency-key"];
     }
   });
   await input.fill(
@@ -126,16 +126,32 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
   const runResponse = await runResponsePromise;
   const runText = await runResponse.text();
   expect(
-    runResponse.ok(),
+    runResponse.status(),
     `Chat admission for conversation ${conversationId} failed: ${runResponse.status()} ${runText}`,
-  ).toBeTruthy();
-  const admitted = JSON.parse(runText) as {
-    data: { run: { profile_id: string; reasoning_option_id: string } };
-  };
-  expect(admitted.data.run).toMatchObject({
-    profile_id: "fast",
-    reasoning_option_id: "high",
+  ).toBe(200);
+  expect(chatCommandKey, "Chat admission omitted its operation identity").toBeTruthy();
+  const target = acceptedChatTarget(JSON.parse(runText), chatCommandKey);
+  expect(target.conversation_id).toBe(conversationId);
+  const canonicalResponse = await api.get(`/api/chat-runs/${target.run_id}`, {
+    headers: { [TOOL_PROJECTION_HEADER]: TOOL_PROJECTION_REVISION },
   });
+  const canonicalText = await canonicalResponse.text();
+  expect(
+    canonicalResponse.status(),
+    `Accepted run ${target.run_id} could not be hydrated: ${canonicalText}`,
+  ).toBe(200);
+  const canonical = decodeChatRunData(JSON.parse(canonicalText).data);
+  expect(canonical.conversation.id).toBe(target.conversation_id);
+  expect(canonical.assistant_message.id).toBe(target.assistant_message_id);
+  expect(canonical.run).toMatchObject({
+    id: target.run_id,
+    conversation_id: target.conversation_id,
+    assistant_message_id: target.assistant_message_id,
+    user_message_id: canonical.user_message.id,
+  });
+  expect(canonical.run.run_selection.catalog_definition_revision).toMatch(
+    /^[0-9a-f]{64}$/u,
+  );
 
   const chatLog = page.getByRole("log", { name: "Chat messages" });
   const citation = chatLog
@@ -144,7 +160,7 @@ test("a source-grounded answer publishes a citation that opens its exact reader 
   await expect(
     citation,
     `Conversation ${conversationId} completed without a user-visible citation to evidence ${evidence!.context_ref.id}.`,
-  ).toBeVisible({ timeout: 25_000 });
+  ).toBeVisible({ timeout: 60_000 });
   await expect(
     citation,
     `Citation from conversation ${conversationId} did not retain its exact evidence activation target for media ${mediaId}.`,

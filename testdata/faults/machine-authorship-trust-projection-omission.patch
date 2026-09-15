@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/message_trust_trails.py b/python/nexus/services/message_trust_trails.py
+--- a/python/nexus/services/message_trust_trails.py
++++ b/python/nexus/services/message_trust_trails.py
+@@ -332,7 +332,7 @@
+                 provider_request_ids=tool.provider_request_ids,
+                 result_refs=tool.result_refs,
+                 selected_context_refs=tool.selected_context_refs,
+-                machine_authorships=machine_authorships.get(tool.id, []),
++                machine_authorships=[],
+                 reverted_at=tool.reverted_at,
+                 retrievals=retrievals,
+                 created_at=tool.created_at,

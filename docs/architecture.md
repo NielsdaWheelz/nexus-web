@@ -105,9 +105,10 @@ scaffolding.
                            └──────────────┘
 
    Identity: Supabase Auth (JWT/JWKS) only — no Supabase DB or Storage.
-   External: OpenAI / Anthropic / Gemini / Moonshot / DeepSeek (direct LLM;
-             OpenAI also embeddings); Deepgram (transcription),
-             Brave (Browse + agent research), Podcast Index, Deepgram, YouTube Data API
+   External: ChatGPT via the isolated Codex personal host (all background and
+             a Chat option); configured generation APIs (Chat options);
+             OpenAI API (embeddings); Deepgram (transcription),
+             Brave (Browse + agent research), Podcast Index, YouTube Data API
              plus YouTube transcript/caption egress,
              Stripe (billing), Cloudflare R2.
 ```
@@ -120,27 +121,35 @@ cookie-free lane: `/api/oracle/plates/[id]` strips browser credentials and sends
 only the internal secret to FastAPI `/oracle/plates/{id}`. The **only** direct
 browser-to-FastAPI exception is Server-Sent Events: the browser streams from
 FastAPI `/stream/*` using a short-lived, single-use stream token minted through
-the BFF. See [`rules/layers.md`](rules/layers.md) and
+the BFF. The Android native offline-reading transfer is the other deliberately
+narrow direct lane: native mints a media/generation/schema-bound, single-use
+token through the authenticated BFF, then consumes it only at the configured
+FastAPI `/offline-reading/packages/{media_id}` origin. It is not browser product
+data and grants no general fetch authority. See [`rules/layers.md`](rules/layers.md) and
 [`rules/modules/transport.md`](rules/modules/transport.md).
 
 ---
 
 ## 3. Runtime topology & deployment
 
-There are **five runtime processes** plus managed dependencies.
+Production comprises these runtime processes plus managed external
+dependencies.
 
 | Process                | Code                                                  | Hosted                           | Role                                      |
 | ---------------------- | ----------------------------------------------------- | -------------------------------- | ----------------------------------------- |
 | Next.js frontend + BFF | `apps/web`                                            | **Vercel** (staged, then promoted) | React UI + `/api/*` proxy to FastAPI    |
+| Caddy edge             | `deploy/hetzner/Caddyfile`                            | **Hetzner VPS** (Docker Compose) | TLS termination and exact route proxying  |
 | FastAPI API            | `apps/api/main.py` → `python/nexus`                   | **Hetzner VPS** (Docker Compose) | product API, SSE streaming                |
 | Interactive worker     | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS**             | user-waiting queue work                    |
 | Background worker      | `apps/worker/main.py` → `python/nexus/jobs` + `tasks` | **same Hetzner VPS**             | indexing, repair, teardown, periodic work |
+| Codex generation host  | `apps/codex_agent`                                    | **same Hetzner VPS**             | isolated subscription-backed generation  |
+| Codex egress policy    | `apps/codex_agent/egress_policy.py`                   | **same Hetzner VPS**             | DNS/TLS-SNI allowlist for the Codex host  |
 | PostgreSQL (pgvector)  | —                                                     | **same Hetzner VPS**             | the single source of truth                |
 
 Managed/external: **Cloudflare R2** (object storage; MinIO locally), **Supabase**
 (hosted Auth only — JWT issuance/JWKS/OAuth; _no_ Supabase Database or Storage),
-and the LLM/search/podcast/billing providers above. **Caddy** terminates TLS in
-front of the API; the frontend is served by Vercel.
+and the generation/search/podcast/billing services above. The frontend is
+served by Vercel.
 
 Key topology facts (details: [`deployment.md`](../deployment.md),
 `deploy/hetzner/`, `deploy/vercel/`):
@@ -330,7 +339,11 @@ Streaming bypasses the BFF for data delivery:
 4. The client parses the SSE wire format (`lib/api/sse-stream.ts`), validates each
    event exhaustively (`lib/api/sse/events.ts`), and folds it into UI state.
 
-This is used by chat runs, oracle readings, and media processing status.
+This is used by chat runs, oracle readings, Dossier builds, media processing
+status, Podcast refresh runs, and the active Podcast subscription lifecycle.
+The lifecycle stream is keyed by the subscription epoch UUID while its public
+route remains viewer + Podcast addressed; every snapshot reasserts that exact
+epoch and viewer before it can cross the stream.
 
 ---
 
@@ -363,12 +376,35 @@ has a same-row STORED `plain_text_word_count` derivative), `media_file` (private
 original-file object metadata), `project_gutenberg_catalog`,
 `user_media_deletions`.
 
+**Import history** — `media_upload_events` (owner `media_upload_sessions`) and
+`media_processing_events` (owner `media`) are the two append-only lifecycle
+tables the Imports workspace reads. Each carries `occurred_at`, an
+application-validated `event_type`, nullable `stage`/`failure_code` query
+columns, and a closed typed `payload`. `services/import_history.py` is their
+only writer: transaction-scoped helpers with no commit, scheduling, or
+domain-policy authority, recording each fact atomically with the transition it
+documents. Migration `0227` records one `HistoryBaseline` per extant upload
+session and source attempt at recording time, which is why pre-cut coverage is
+`Partial` and a baseline can never satisfy a dated historical-failure query.
+
 **Reader content / fragments** — `fragments` (current render units carrying
 `canonical_text` + `html_sanitized` and a same-row STORED
 `canonical_text_word_count` derivative), `fragment_blocks`, EPUB structure
 (`epub_toc_nodes`, `epub_nav_locations`, `epub_fragment_sources`,
 `epub_resources` for private extracted asset object metadata),
 `pdf_page_text_spans`.
+
+**Reader publication identity** — `reader_publications` gives each ready PDF,
+EPUB, or web article one document-only generation. `reader_publication.py` is
+the publication and capture owner: immutable object writes precede the
+transactional canonical pointer swap, a replacement increments the generation
+once, and package capture restarts once rather than mixing database and object
+generations. Every write that changes what a reader sees is a publication,
+including metadata enrichment's title write. `nexus.ops.reader_publication_preflight`
+is the idempotent operator entrypoint that publishes any eligible ready document
+still missing a row at generation `1`; run it before exposing a reading-capable
+APK ([`deployment.md`](../deployment.md)). Offline packages and device
+availability are not server rows.
 
 **Retrieval index** — `content_blocks`, `evidence_spans`, `content_chunks`,
 `content_chunk_parts`, `content_embeddings` (PGVector 256),
@@ -451,10 +487,9 @@ engine, API, history contract, and `dossier_build` job own the lifecycle.
 **Conversations / chat** — `conversations`, `messages` (the message tree with
 branch pointers), `conversation_branches`, `conversation_active_paths`
 (per-viewer), `conversation_shares`; plus the **chat-run** machinery: `chat_runs`
-(carries product selection snapshots `profile_id`/`reasoning_option_id` and
-resolved trust-trail snapshots `provider`/`model_name`/`reasoning_effort`,
-`error_origin`, `support_id` — no `models`/`user_api_keys` FK, both tables are
-gone),
+(carries the exact immutable `generation_spec` and `support_id`;
+authoritative execution provenance lives in its parent `llm_calls` row and
+accepted `llm_model_turns` children),
 `chat_run_events` (append-only SSE log), `chat_prompt_assemblies`; and the
 **retrieval/citation** ledger: `message_tool_calls`, `message_retrievals` — the
 sole durable per-result record (telemetry; carries `cited_edge_id` pointing
@@ -500,9 +535,10 @@ state without deleting history or Lectern membership. See
 [`modules/consumption-activity.md`](modules/consumption-activity.md) and
 [`cutovers/media-progress-reset-hard-cutover.md`](cutovers/media-progress-reset-hard-cutover.md).
 
-**Jobs** — `background_jobs` (raw-SQL-only durable queue), plus rate-limiter
-tables (`rate_limit_request_log`, `rate_limit_inflight`, `token_budget_*`) and
-stream-token replay claims.
+**Jobs** — `background_jobs` (raw-SQL-only durable queue), plus request-rate
+records (`rate_limit_request_log`) and stream-token replay claims. Worker lane
+topology and exact queue claims own local execution capacity; no anonymous
+in-flight counter participates in admission or execution.
 
 **Oracle** — the public-domain corpus is a real `libraries` row
 (`system_key = 'oracle_corpus'`) of ordinary `media`; its text and embeddings live
@@ -588,8 +624,12 @@ same entrypoint with fixed `interactive` and `background` lanes:
 - **Job loop**: `claim_next_job` atomically picks one due row with
   `FOR UPDATE SKIP LOCKED` (new work _or_ a crashed job whose lease expired),
   admits it through its registry-owned `Light | Heavy` class, flips it to
-  `running` with a lease, dispatches to the registered handler under a heartbeat
-  thread, then commits a terminal/retry transition. One queue-owned capacity
+  `running` with a lease, allocates the attempt's non-resetting `execution_id`,
+  dispatches to the registered handler under a heartbeat
+  thread, then commits a terminal/retry transition. Each committed transition
+  also applies the kind's `history_projection`
+  (`jobs/history_projections.py`) so the retry, dead-letter, reclaim, or
+  reschedule is recorded as import history in the same transaction. One queue-owned capacity
   row permits at most one Heavy attempt globally without blocking eligible
   Light work. Retries are bounded
   per-kind (`max_attempts`, `retry_delays_seconds`, `lease_seconds`); exhaustion
@@ -597,8 +637,20 @@ same entrypoint with fixed `interactive` and `background` lanes:
   Dossier, Media teardown, Podcast live-sync, and Podcast-backfill state without
   overwriting newer lifecycle facts.
 - **Scheduler loop**: the background lane enqueues production periodic jobs
-  into fixed time slots with deterministic dedupe keys. The interactive lane
-  has no periodic kinds.
+  into fixed time slots with deterministic dedupe keys. Routine periodic rows
+  use priority 200 and yield to ordinary priority-100 work; the stale-ingest
+  reconciler alone uses priority -1000. A schedule pass locks and validates all
+  active aligned slots in that kind's global dedupe namespace, then reconciles
+  only priority, so deployment and expired-lease replay cannot retain stale
+  ordering policy. Immutable scheduler identity stays exact while the registry
+  declares the optional checkpoint keys that Dawn and the storage orphan sweep
+  may persist; their owning codecs remain responsible for checkpoint values.
+  The namespace lookup is cross-kind and locks at most 257 rows: more than 256
+  active claimants defects the whole transaction before reconciliation.
+  Propagated `request_id` values are correlation, not namespace ownership.
+  On-demand rows sharing the kind remain untouched, terminal history is
+  immutable, and foreign-kind, undeclared-checkpoint, or noncanonical periodic
+  collisions fail closed. The interactive lane has no periodic kinds.
 
 The **registry** (`jobs/registry.py`) is the source of truth mapping job kind →
 handler + policy. `job_topology.py` owns the disjoint/exhaustive 20-kind
@@ -608,6 +660,26 @@ missing/unknown lanes, registry drift, and raw allowlists on normal lanes.
 `get_task_contract_digest()` fingerprints the registry's per-kind resource
 class and attempt/lease policy for API `/version` and worker release-health proof. See
 [modules/jobs.md](modules/jobs.md).
+Registry shims decode durable same-system payloads without compatibility
+defaults. In particular, the sole note-index and Synapse enqueuers persist a
+canonical, nonempty, unpadded `reason`; omission, coercion, or padding defects at
+dispatch instead of inventing `note_edit` or `manual`. Optional `request_id` and
+`scheduler_identity` carriers are either absent/`null` or the same canonical
+text shape; the registry never stringifies or trims malformed values. The
+scheduler-only Gutenberg sync, job-prune, and auth-handoff purge handlers
+require their scheduler-written `request_id`, and Gutenberg also requires the
+exact `scheduler_identity`; their tasks expose no default or invented identity.
+The note-reindex payload is closed to exactly `note_block_id` plus `reason`.
+Its registry shim passes the claimed `JobExecutionContext`, so task diagnostics
+use the real queue job identity and expose no direct-call `task_id` or unowned
+`request_id` compatibility surface.
+Worker-only task signatures mirror their registry shims without direct-call
+defaults. Nullable request identity remains explicit at the call site, and the
+podcast semantic-index task opens its production session factory internally;
+there is no unused factory-injection seam.
+The periodic storage orphan sweep receives only its claimed job context and
+reloads the fenced continuation payload from that row; the registry does not
+thread a duplicate raw mapping into the task.
 
 Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `ingest_media_source`, `enrich_metadata`, `chat_run`,
@@ -631,39 +703,68 @@ resolver keyed on exact stable key → confirmed alias → new contributor
 lane's observed role slice, so duplicate identity is prevented at write time
 rather than proposed and reconciled after the fact.
 
-> Gotcha: only `enrich_metadata` and `media_unit_build` declare
-> `failed_result_statuses`. Other ingest tasks that _return_ `{"status":"failed"}`
+> Gotcha: `media_unit_build` declares `failed_result_statuses`. Other ingest
+> tasks that _return_ `{"status":"failed"}`
 > still mark the **queue** row succeeded — the failure is recorded on the domain
 > row, and recovery relies on the stale reconciler + manual API retry, not
 > queue-level retries.
 
-**Generation boundary in the worker.** Seven LLM generation kinds (`chat_run`,
-`oracle_reading_generate`, `synapse_scan`, `dawn_write`,
-`dossier_build`, `media_unit_build`, `enrich_metadata`) run their bodies inside
-one shared worker envelope,
-`tasks/llm_task.py:run_llm_task` — the sole owner of the event loop, `httpx`
-client, `ProviderRuntime` composition, and worker-exception boundary. Every
-provider call inside a job goes through
-`services/llm_execution.py:execute_generation`/`execute_generation_stream` —
-the durable execution boundary — atomically admitting one replay-stable
-`llm_calls` row plus reservation before dispatch, then atomically terminalizing
-and settling admission exactly once. `ProviderRuntime` owns
-provider retries; `BilledOnce` work selects its single-attempt mode. The existing
-Postgres queue, leases, and durable step journal remain unchanged. See
-[modules/llms.md](modules/llms.md).
-The worker installs the process-global rate limiter at startup so the first job
-of any kind has a working limiter. SERIALIZABLE retries everywhere (including
-the scheduler loop) go through the one helper `db/retries.py:retry_serializable`.
+**Generation boundary.** Every durable generative job — chat, Oracle,
+synapse, Dawn, dossiers, media summaries, and metadata enrichment — runs through
+`GenerationService` and `services/llm_execution.py`. Admission freezes the
+exact selection, budgets, output contract, prompt reference, and operation-owned
+tool plan in one `GenerationSpec`; workers never reread mutable policy. All
+background policy rows select Codex Personal. Chat may instead select any ready,
+qualified route/model/reasoning pair in the complete configured `llm-calling`
+catalog. There are no user defaults, profiles, presets, or fallback routes.
+
+One parent `llm_calls` row owns generation truth. Codex normally creates one
+accepted child model turn through the private UDS host; a ProviderRuntime API
+tool loop creates one child per accepted provider call and advances only from a
+sealed persisted continuation. Completed children replay without dispatch;
+accepted ambiguity requires exact operator reconciliation.
+Within `dossier_build`, `services/artifacts/generation_step.py` is the sole
+Artifact owner of the exact `synthesis` and `document-repair` request
+fingerprints, memoized result envelope, and
+`Prepared | Uncertain | Completed` transitions; the engine keeps their
+streaming and unary transports explicit.
+The request-scoped dossier idea resolver uses the same generation service and
+read-only UDS mount from the API process; API and worker clients receive no
+credential mount. The existing PostgreSQL queue, leases, and publication owners
+remain unchanged.
+See [modules/llms.md](modules/llms.md).
+
+Eligible Chat and background runs use one canonical tool authority. Codex
+observes its frozen plan over one exact MCP wire: Codex SDK/CLI `0.144.4` speaks
+Streamable HTTP revision `2025-06-18` to the official `mcp==2.1.0` stateless JSON server.
+The initialize body pins that revision; later POSTs require
+`MCP-Protocol-Version: 2025-06-18`. Every POST carries the generation grant in
+`Authorization`, `Content-Type: application/json`, and Codex's
+`Accept: application/json, text/event-stream`; Nexus nevertheless returns JSON
+and emits no `Mcp-Session-Id`. There is no stateful session, event stream,
+resumption, alternate revision, downgrade, OAuth, or transport fallback.
+Provider API tool proposals adapt the same frozen plan to the same executor.
+Both routes use `generation/{generation_seq}/tool/{n}` with one monotonic
+parent-generation ordinal, the same receipts, evidence, citations, trust, and
+Undo.
+
+The worker installs the process-global request-rate limiter at startup so the
+first job of any kind has a working limiter. Local execution capacity belongs
+to the single-process interactive/background lanes and queue claims.
+SERIALIZABLE retries everywhere (including the scheduler loop) go through the
+one helper `db/retries.py:retry_serializable`.
 
 ### 7.4 Auth, identity & bootstrap
 
 Supabase issues JWTs; FastAPI verifies them via JWKS (`auth/verifier.py`) and
-derives a `Viewer`. On a user's first request per process, `AuthMiddleware` runs
+derives a `Viewer`. On a user's first request per process, `AuthMiddleware`
+coalesces concurrent cold requests into one cancellation-shielded task and runs
 **bootstrap** (`services/bootstrap.py`: `ensure_user_and_default_library`) once —
-idempotent under SERIALIZABLE, creating the `users` row, a default library, and an
-admin membership; its bounded process-local LRU carries the resulting
-`default_library_id` on later `Viewer` projections without another threadpool or
-database hop. Eviction only repeats the idempotent bootstrap on a later request.
+idempotent under SERIALIZABLE across processes, creating the `users` row, a default
+library, and an admin membership. Its bounded process-local LRU carries the
+resulting `default_library_id` on later `Viewer` projections without another
+threadpool or database hop. Failure is never cached; eviction only repeats the
+idempotent bootstrap on a later request.
 Visibility is enforced by boolean predicates (`auth/permissions.py`) that take an
 explicit session and never leak existence (not-found == not-visible).
 
@@ -691,42 +792,45 @@ Other identity surfaces:
   PKCE-bound (`challenge = sha256(verifier)`), 90s TTL, consumed with an atomic
   `DELETE ... RETURNING`.
 
-### 7.5 Platform LLM credentials, billing & entitlements
+### 7.5 Generation credentials, billing & entitlements
 
-- **Platform credentials** (`services/llm_credentials.py`): the sole reader for
-  direct-generation credentials — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-  `GEMINI_API_KEY`, `MOONSHOT_API_KEY`, and `DEEPSEEK_API_KEY` — plus the narrow
-  OpenAI embedding credential. There is no BYOK, per-user key, DB lookup, or
-  empty-key fallback. Staging/production startup requires all five direct keys;
-  a missing or rejected key never changes the profile list or route. Direct
-  provider execution is distinct from deferred native subscription execution.
-  See [modules/llms.md](modules/llms.md).
+- **Generation credential**: only the isolated Codex host can read the exact
+  enrolled `codex-personal` ChatGPT `auth.json`, mounted read-write solely for
+  pinned `0.144.4` in-place OAuth refresh persistence. All other mutable SDK
+  state is per-turn tmpfs and deleted after close. The Codex host receives no
+  generation API key. API/worker processes receive only the provider keys named
+  by `GENERATION_API_PROVIDERS`; `services/llm_credentials.py` projects that
+  exact configured set into ProviderRuntime and keeps the OpenAI embedding key
+  in its separate narrow credential. See [modules/llms.md](modules/llms.md).
 - **Billing** (`services/billing.py`): Stripe is the system of record;
   `billing_accounts` is a per-user snapshot synced by idempotent webhooks (deduped
   via `stripe_webhook_events`). Tiers: `free | plus | ai_plus | ai_pro`.
 - **Entitlements** (`services/billing_entitlements.py`): derived from the effective
-  plan — `can_share` (≥ plus), `can_use_platform_llm` / `can_transcribe`
-  (≥ ai_plus), plus monthly token/transcription quotas. **Internal overrides**
-  (`billing_entitlement_overrides`, CLI-managed via
+  billing plan for sharing and transcription. Generation uses operator-owned
+  subscription/API credentials and has no product entitlement or token quota.
+  **Internal overrides** (`billing_entitlement_overrides`, CLI-managed via
   `ops/entitlement_overrides.py`) can raise a plan upward and grant unlimited
-  quotas, with a full audit trail.
-- **Rate limiting** (`services/rate_limit.py`): a Postgres-backed limiter using
-  per-scope advisory locks; limits RPM (20), concurrency (3 inflight slots), and a
-  monthly platform-token budget via a reserve→commit pattern with TTL'd
-  reservations and polymorphic reservation-id charges for chat and background
-  generation. It **fails closed** on acquire/check, open on release.
+  transcription, with a full audit trail.
+- **Rate limiting** (`services/rate_limit.py`): a PostgreSQL-backed limiter using
+  per-scope advisory locks; it limits requests per minute and fails closed on
+  checks. Local execution capacity belongs to the existing single-worker
+  interactive/background lanes, exact queue claims, and Heavy capacity; no
+  anonymous in-flight counter participates in admission or execution.
 
 ### 7.6 Search, retrieval & the embedding pipeline
 
 One core `search(db, viewer, SearchQuery)` (the `services/search/` package) serves
 the in-app search page, mobile Nexus, desktop Nexus, and chat
-`app_search` agent tool (RAG). The request is a single typed `SearchQuery` value
+`nexus.search` tool (RAG). The request is a single typed `SearchQuery` value
 object parsed at the
 edge; the user-facing taxonomy is **six kinds** (Documents, Notes, Highlights,
 Conversations, People, Web) folding the internal result types, with
 operator-backed filter chips (`format:`/`author:`/`role:`/`in:`) — not the raw
 result-type grid. The package owns one concern per module (`kinds`, `query`, `scope`,
-`embedding`, `ranking`, `projection`, `cursor`, `batch`, `retrievers/*`, `service`).
+`embedding`, `ranking`, `projection`, `cursor`, `batch`, `retrievers/*`, `resolver`,
+`service`). `service` owns query execution and page orchestration; `resolver` owns
+validated durable-reference dispatch and the single public projection of the
+resolved internal result. Neither module re-exports the other.
 Ranking/retrieval is extracted below that public projection into one internal
 pre-projection candidate seam (`search/candidates.py`); **resource target
 search** (`services/resource_items/targets.py`, `POST
@@ -759,6 +863,54 @@ owning `owner_resource_ref`. The Highlights profile retrieves saved highlights
 plus only note blocks classified by a visible `resource_edges.origin =
 "highlight_note"` edge before ranking and limiting. Clients never infer owner
 identity or highlight-note origin from result type or URL.
+
+`schemas/search_types.py` is the sole authority for public search-result
+discriminants. The public response union, retrieval contexts, and durable
+retrieval-result references must cover every discriminant. `search/resolver.py`
+validates persisted raw discriminants against that authority, narrows them to the
+exhaustive typed dispatcher, decodes the durable UUID once, delegates semantic
+visibility and reconstruction to the owning retriever, and projects once. The
+conversations retriever owns both candidate retrieval and durable rematerialization for
+Conversation, Message, and Conversation Dossier (`artifact`) results under one
+visibility contract. It excludes pending Messages; Dossier rematerialization is
+owner-only, masks foreign subjects as not found, and returns the current revision
+while keeping the Conversation subject as result identity. The notes retriever
+likewise owns candidate retrieval and durable rematerialization for Page and Note
+Block results: Pages are owner-only, and Note Blocks must be owner-visible,
+nonempty, and backed by a ready content index; highlight-note origin is derived
+from the same visible `highlight_note` edge contract in both paths. The media
+retriever owns candidate retrieval and durable rematerialization for Media,
+Episode, Video, and Podcast results. Rematerialization reuses canonical media or
+Podcast visibility, requires the requested discriminant to match the stored media
+kind exactly, and projects contributor credits through the shared credit decoder.
+Document-occurrence search is split by semantic owner: the content-chunk,
+fragment, and evidence-span retrievers each own candidate retrieval and durable
+rematerialization for their result type. Durable content chunks require visible
+media, a ready index, their primary canonical evidence span, and an exact match
+when the caller supplies evidence-span ids. Fragments reuse the same visibility
+and index-readiness contract and emit only canonical source locators. Evidence
+spans admit visible media or viewer-owned note blocks, require a ready owner
+index, and preserve that media or note block as the canonical owner identity.
+The Highlights retriever owns candidate retrieval and durable rematerialization
+under one visible, ready-indexed typed-anchor row contract. Fragment-offset and
+PDF-geometry hits share one strict locator decoder; stale, cross-media, missing,
+or schema-invalid anchors are omitted from search and masked as not found when a
+durable reference is reopened.
+The Reader Apparatus retriever likewise owns candidate retrieval and durable
+rematerialization under one visible publication-row contract: only `ready` or
+`partial` apparatus states with a non-missing locator participate. Both paths
+decode persisted locator JSON through the canonical retrieval schema, omitting
+or masking malformed rows instead of leaking a projection failure.
+The Web retriever owns persisted public-Web candidate retrieval and durable
+rematerialization through one visible Conversation-ledger row and the canonical
+`WebRetrievalResultRef` decoder. Nexus external-snapshot identity remains
+distinct from provider result identity; foreign snapshots and malformed or
+incomplete ledger refs are omitted or masked as not found.
+The Contributor retriever owns candidate retrieval and durable
+rematerialization. Discovery admits only identities with visible credited
+targets; durable reopening intentionally widens to the canonical Contributor
+visibility contract so a viewer-linked identity with zero current visible
+credits remains resolvable, while unrelated identities stay masked.
 
 - **Indexing** (`services/content_indexing.py`, `semantic_chunks.py`): text-bearing
   media flows `fragment → content_blocks → chunks → embeddings`; note bodies
@@ -808,15 +960,34 @@ user_link_target: UserLinkTargetMode)` row per `ResourceScheme` replaces the
 
 ### 7.7 Citations & the agent tool contract
 
-The chat/oracle LLM can call four tools (`services/agent_tools/`):
+Chat publishes one frozen six-tool read plan, with five additive writes only
+after fresh per-run consent:
 
-- **`app_search`** — RAG retrieval over the user's library (scoped to
-  `media:`/`library:` refs); produces numbered, citable results.
-- **`web_search`** — Brave public web search; numbered, citable.
-- **`read_resource`** — reads exact text for a `ResourceRef`; evidence reads are
-  citable, oversized docs redirect to inspect.
-- **`inspect_resource`** — returns a navigable document map of a `media:` ref;
-  navigation only, never cited.
+- **`web.search`** — bounded Brave public-web search; numbered and citable.
+- **`nexus.search`** — scoped retrieval over the user's Nexus corpus; numbered
+  and citable.
+- **`nexus.resource.read`** — exact bounded text and immutable evidence for an
+  admitted resource.
+- **`nexus.document.search`** — bounded matching sections inside one admitted
+  readable document.
+- **`nexus.resource.inspect`** — an ordered document map and canonical read
+  URIs; navigation only.
+- **`nexus.relations.list`** — bounded one-hop graph relations from one admitted
+  resource.
+- **`nexus.library.add`**, **`nexus.note.create`**,
+  **`nexus.highlight.create`**, **`nexus.edge.create`**, and
+  **`nexus.queue.add`** — the five additive, owner-gated Write operations. They
+  persist their exact effects with the tool result and support scoped Undo.
+
+Library and Idea Dossier model turns receive only the five Nexus reads over
+their exact admitted evidence scope. Idea host research separately freezes its
+bounded three-search preparation plan. Other background operations retain their
+direct evidence algorithms and publish `NoModelTools`; none inherit Chat
+authority. Codex MCP and Provider API functions adapt eligible plans to the same
+executor. Tool declarations, grants, limits, replay policy, and durable
+execution are owned by `services/tool_runtime/` and `tool_authority.py`;
+`services/agent_tools/` remains the domain-adapter layer, not a second tool
+contract.
 
 Citation `[N]` is a **dense, turn-global ordinal** assigned across the whole turn
 (attached context refs first, then each tool's selected results). A citation **is an
@@ -846,10 +1017,17 @@ The backend separates three owners:
 
 - subject policy derives the subject, audience, authorization, deletion, and
   canonical activation;
-- one of eight bindings collects inputs and owns prompt, operation/profile,
-  manifest, coverage, and freshness;
+- one of eight bindings collects inputs and owns prompt, operation,
+  manifest, coverage, freshness, citation materialization, and final document
+  compilation;
 - the generic engine owns idempotent build creation, durable execution,
-  terminal children, revision history, Make current, cancellation, and events.
+  one primary/repair document-acceptance phase, terminal children, revision
+  history, Make current, cancellation, and events.
+
+`services/artifacts/registry.py` composes each policy and binding into one
+immutable eight-scheme registration. Callers perform one correlated lookup;
+there is no second mutable policy map or package-initializer registration side
+effect.
 
 Resource bootstrap/Companion lookup uses
 `GET /artifacts/dossiers/{subject_scheme}/{subject_handle}`,
@@ -866,8 +1044,15 @@ API is
 `POST /artifact-builds/{sealed_handle}/cancel`. Build streaming is
 `GET /stream/artifact-builds/{sealed_handle}/events`; persisted
 `Started | Progress | Succeeded | Failed | Cancelled` events are build-keyed
-and replayable. The browser renders a revision in a sandboxed, Nexus-styled
-document frame; rejected or partial HTML is never emitted as an event. Media
+and replayable. `lib/dossiers/generationAdapter.ts` is the one browser Dossier
+transport boundary: value responses must be the exact `{data: ...}` envelope,
+Make-current and Cancel must be exact HTTP 204 commands, and same-system shape
+violations become `E_INVALID_RESPONSE` defects. Artifact-build streaming is an
+`artifact-builds` generation-run kind and delegates token minting, encoded path
+construction, and SSE lifecycle to `lib/api/useGenerationRun.ts`; no Dossier
+token or direct-SSE path exists beside it. The browser renders a revision in a
+sandboxed, Nexus-styled document frame; rejected or partial HTML is never
+emitted as an event. Media
 Intelligence is separately read through
 `GET /media/{media_handle}/intelligence`; the Media Dossier renders that
 current projection as a compact Abstract and consumes the same fingerprinted
@@ -893,7 +1078,14 @@ capability-owned:
 - `media_ingest.py`: URL transport adapter into `media_source_ingest.py`.
 - `media_source_ingest.py`: accepted source-attempt state machine for generic
   web URLs, X/Twitter URLs, YouTube URLs, remote PDF/EPUB URLs, uploaded
-  PDF/EPUB files, and browser article/file captures.
+  PDF/EPUB files, and browser article/file captures. Its detached acquisition
+  phase is one `_run_source_adapter` dispatch over an immutable run value;
+  `_SourceAuthorshipPhase` owns fenced contributor observation and lets
+  unexpected contributor or database defects remain worker defects;
+  `_SourceTerminalPublication` owns the final fenced Media/attempt/index/embed
+  mutation; `_run_claimed_source_attempt` composes supersession, failure,
+  authorship, terminal, and post-success phases rather than embedding provider
+  dispatch, contributor-failure fallback, or terminal mutation bodies.
 - `x_identity.py`, `x_client.py`, `x_rendering.py`, `x_ingest.py`: official-API
   X/Twitter same-author thread capture. Identity comes from provider author ID
   plus conversation ID; quote posts are separate `post:<post_id>` media; provider
@@ -914,8 +1106,12 @@ capability-owned:
   (GET/PUT, no batch endpoint); position/duration/nullable episode-rate DML is owned by
   `services/consumption/_listening_store.py` (§8.8).
 - `media_file_access.py`: signed original-file download URLs.
-- `media_processing_state.py`: every processing-state transition, including
-  reingest reset and ready-for-reading completion.
+- `media_processing_state.py`: in-process queued, extraction-start, readiness,
+  failure, and warning transitions. Source retry policy remains singular in
+  `media_source_ingest.py`.
+- `source_attempt_failures.py`: the terminal source-attempt transaction across
+  attempt, Media, transcript, Podcast job, reservation, and revisions;
+  `media_failure_projection.py` is its lightweight Media failure-field writer.
 
 **Entity & state machine:** `media.processing_status` runs
 `pending → extracting → ready_for_reading` or `failed`. Search/embedding
@@ -926,7 +1122,8 @@ capability projection; `source` is not a `failure_stage`. `failure_stage='metada
 and `'embed'` are soft warnings that coexist with readable media.
 
 **Capture entry points** (`api/routes/media_ingest.py`): `POST /media/from_url`,
-`POST /media/upload/init` + `POST /media/{id}/ingest`, and
+`POST /media/uploads` plus session-scoped confirm/retry/transport-failure/delete,
+and
 `POST /media/capture/{article,file,url}`. Routes are transport adapters; they
 call exactly one service owner. (The media routers are split per capability:
 `media.py` catalog, `media_ingest.py` ingest, `media_assets.py` image/EPUB-asset
@@ -936,14 +1133,35 @@ Ingest `library_ids` are writable non-default destinations; media services
 validate them through library governance and assign default plus selected
 destinations through `library_entries`.
 
-Every accepted source returns `media_id`, `source_attempt_id`, `source_type`,
-`source_attempt_status`, `idempotency_outcome`, `processing_status`, and `ingest_enqueued`. Provider,
+An upload session is durable intent, not media: signed capability expiry never
+deletes it, and media/source attempt/exact queue job publish atomically only
+after byte verification. Confirmation is fenced by a *renewable* verification
+lease: the verifier extends it under the session row lock at every phase
+boundary, and publication requires the lease token — not a non-expired lease — so
+a slow but unstolen verifier still publishes while a stolen one never does. Every
+confirm is idempotent: one locked read of the session row owns the
+already-published decision, so a replay that queues behind the winning
+publication returns the same projection rather than a conflict. Its publication
+response returns the stable media and source-attempt identities. Non-upload source acceptance returns `media_id`,
+`source_attempt_id`, `source_type`, `source_attempt_status`,
+`idempotency_outcome`, `processing_status`, and `ingest_enqueued`. Provider,
 network, sanitization, extraction, and post-acceptance storage failures update
 the existing media row and latest source attempt; the user retries by creating a
 new source attempt through `POST /media/{id}/retry`.
 
+**Imports workspace:** the `/imports` pane is the one reader-facing view of
+this pipeline. `services/imports.py` classifies every upload session and every
+media with a source attempt into `Active | NeedsAttention | Complete`, answers
+`GET /imports{,/summary,/{ref},/{ref}/history}`, and reuses the same owner
+policies the catalog does — `media_source_ingest.source_recovery` for source
+retry/repair and `content_indexing` for search repair — so counts, membership,
+and offered recovery cannot disagree. A published upload keeps its
+`upload:<handle>` identity for life, so one import is one row from acceptance to
+History. See `docs/cutovers/imports-workspace-hard-cutover.md`.
+
 **Recovery/deletion:** `reconcile_stale_ingest_media` requeues/fails stale
-`extracting` rows, GCs abandoned uploads, and repairs content/semantic indexes.
+`extracting` rows and repairs content/semantic indexes. Upload-session expiry is
+projected as a user repair obligation; explicit removal owns its cleanup.
 `media_events` streams live status. `services/media_deletion.py` is explicit and
 reference-counted; storage deletion happens only after the DB commit.
 
@@ -954,6 +1172,24 @@ reflow-independent locators** so highlights, quotes, and citations anchor to exa
 text. This is a linchpin area with its own design contract — read
 [`modules/reader-implementation.md`](modules/reader-implementation.md) and
 [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md).
+
+The shared document-reader composition coordinates hosted and local document
+sources. `DocumentReaderSession` owns source/progress orchestration, initial
+active-unit and preferred-locator selection, and canonical locator projection;
+format composition and `useReaderProgress` retain visible navigation/Find state
+and cursor ordering/writes. Hosted composition supplies current API inputs,
+decorations, activity, and the canonical online cursor port. The Android shelf
+supplies a lease-scoped local source and a native progress port; the core does
+not import workspace, auth, or Next route owners. Leaf text/PDF renderers
+consume resolved content rather than fetching media or progress themselves.
+
+For offline-capable documents, `reader_publication.py` captures one coherent
+generation and `offline_reading_packages.py` emits deterministic V1 ZIPs from
+that projection. The direct route uses the existing signing key and one-use JTI
+claim table. The package contains canonical reader inputs only: PDF bytes,
+sanitized undecorated article text, or preprocessed EPUB navigation/sections and
+declared local assets. It contains no credentials, highlights, notes, AI state,
+or remote article subresources.
 
 The core idea is two coordinate systems, both **codepoint-based**:
 
@@ -999,7 +1235,23 @@ selection becomes a stored highlight with a precomputed
 the canonical quote shown to chat. PDF highlights may have empty `exact` (no
 text-layer match) — a first-class geometry-only state Evidence renders with an
 explicit placeholder. The current highlight
-contract lives in [`modules/highlight.md`](modules/highlight.md).
+contract lives in [`modules/highlight.md`](modules/highlight.md). Highlight-note
+persistence has one strict request wire: `note_block_id`,
+`client_mutation_id`, and `body_pm_json`. Camel-case spellings and the generic
+`id` alias are not accepted or emitted.
+
+Hosted inline projection has one owner per reader family:
+`useHostedTextHighlights` owns the active reflowable fragment and
+`useHostedPdfPageHighlights` owns the active PDF page. The text owner uses the
+shared abortable retry policy, treats an empty list as ready, gates optimistic
+mutation projection and authoritative reconciliation with one latest-wins
+generation, and routes expected failures to Retry while same-system response
+defects throw to the render boundary. Highlight HTTP responses are strictly
+decoded once by `lib/highlights/highlightContract.ts`; route components do not
+own fallback envelopes, raw retry timers, or parallel reload paths. Selectable
+canonical text mounts after the first active highlight projection settles, so
+persisted decoration cannot replace a live selection; subsequent refreshes keep
+settled content mounted.
 
 **Source-authored apparatus** (`services/reader_apparatus.py`): web article,
 EPUB, and PDF ingest paths persist document-authored notes, endnotes,
@@ -1050,17 +1302,22 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
   **branch**. `conversation_active_paths` stores a **per-viewer** selected leaf;
   history assembly only includes messages on the current path, so sibling branches
   never leak into context.
-- **One send = one durable `ChatRun`.** HTTP never calls the provider. `POST
-/chat-runs` validates + (idempotently, keyed on `Idempotency-Key` + a payload
-  hash) creates the run and enqueues a `chat_run` job, then returns. The **worker**
-  executes: assemble context → stream provider tokens + run tools (up to 8 tool
-  iterations) → append events → finalize. The client merely tails `chat_run_events`
-  over SSE and reconciles via `GET /chat-runs/{id}` on each stream boundary.
+- **One send = one immutable admission decision.** HTTP never calls the provider.
+  `POST /chat-runs` serializes by viewer and normalized `Idempotency-Key`, then
+  replays or commits one `ResourceMutation(scope="chat:admission")` receipt.
+  Accepted run/messages/event/job and receipt are atomic; a modeled rejection
+  commits only the receipt. The small Accepted receipt names conversation, run,
+  and assistant IDs. The browser persists it before canonical
+  `GET /chat-runs/{id}` hydration. The **worker** executes accepted work: assemble
+  context → run the exact frozen Codex/API selection and
+  tool plan → append route-neutral events → finalize. The client merely
+  tails `chat_run_events` over SSE and reconciles through bounded repeatable-read
+  `GET /chat-runs/{id}` snapshots.
 - **Context assembly** (`context_assembler.py`, `prompt_budget.py`): a
-  token-budgeted, lane-ordered plan (system → scope → attached context → retrieved
+  context-admitted, lane-ordered plan (system → scope → attached context → retrieved
   evidence → web evidence → history → current user). The prompt plan stores
   token counts, lane metadata, and text-free block manifests, but no prompt hashes
-  and no provider cache key. Attached references render as numbered `<resources>`;
+  or remote cache key. Attached references render as numbered `<resources>`;
   the transient `<reader_selection>` (a highlight the user is asking about) is
   bind-only and never numbered.
 - **Durable recovery**: the claimed job stores a strict step journal in its
@@ -1073,13 +1330,11 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
 - **Connection is not execution**: SSE only tails committed events. Unsequenced
   execution advisories (`Queued | Running | Recovering | Suspended`) report queue
   liveness without advancing the event cursor or starting work.
-- **Profiles, not provider facts** (`services/llm_profiles.py`): chat sends
-  `profile_id` + `reasoning_option_id` from this fixed startup-validated order:
-  `fast`/`balanced`/`deep`/`claude`/`fable`/`gemini`/`kimi`/`deepseek-flash`/
-  `deepseek-pro`. Product profiles own labels and policy;
-  `provider_runtime.registry` owns limits, capabilities, reasoning fragments,
-  continuation codec, and revision. There is no provider/model/key picker,
-  availability intersection, or fallback. See [modules/llms.md](modules/llms.md).
+- **Selection is exact per run**: Chat sends one tagged route/model/reasoning
+  selection from `GET /llm-catalog`, the catalog-definition revision, and
+  `ReadOnly | AdditiveWrites` authority. The developer Codex seed initializes a
+  new composer but is not a user default. There is no Fast/Balanced/Deep preset,
+  preference, AI Settings control, or fallback. See [modules/llms.md](modules/llms.md).
 
 Frontend: `components/chat/*` (`useChatRunTail` is the SSE engine,
 `useChatMessageUpdates` folds events with RAF-batched deltas, `ForkTreeView`/
@@ -1096,8 +1351,8 @@ retrieval, plate selection, LLM prompt/call, parse, persistence, and SSE event
 emission. A short question → retrieve candidates and pick a plate image → one LLM
 call produces a structured three-phase interpretation → stream + persist as
 `oracle_reading_events` + citation "folios". It has its **own**
-prompt/persistence and does **not** use the four chat agent tools, but it
-**reuses the SSE transport**. Retrieval consumes the shared search substrate:
+prompt/persistence and resolves `NoModelTools`, but
+it **reuses the SSE transport**. Retrieval consumes the shared search substrate:
 `services/search/embedding.build_query_embedding` (one active-model embedding for
 both lanes) feeds `search/content_chunk_candidates.retrieve_content_chunk_candidates`,
 scoped to the Oracle Corpus library for public-domain candidates (mapped to
@@ -1132,10 +1387,12 @@ roles, ownership transfer, membership guards, ingest access checks),
 ordering, and all item-in-library commands; it also composes the URL-only
 factual view lenses, the fixed `Unfiled`/`In Progress` entry projections, and
 the hide-finished completion filter for reads — no DML on
-alternate views, positions unchanged), and `services/library_invitations.py` (the
-`library_invitations` table). Visibility itself is enforced by the boolean
-predicates in `auth/permissions.py`; the search/object readers read
-`library_entries` under an explicit Tier-R allowlist.
+  alternate views, positions unchanged), and `services/library_invitations.py` (the
+  `library_invitations` table). Visibility itself is enforced by the boolean
+  predicates in `auth/permissions.py`; the search/object readers read
+  `library_entries` under an explicit Tier-R allowlist. Library list hydration is
+  private and total: the repeatable-read membership query filters visibility,
+  and every admitted Media or Podcast row must produce exactly one response item.
 
 - Every user has one **default library** (special: can't be renamed/deleted/shared
   or receive physical Podcast entries) plus shareable libraries with `memberships`
@@ -1264,7 +1521,11 @@ Credit resolution prefers explicit id → exact stable key → confirmed alias �
 new contributor, and runs inline inside the same fresh SERIALIZABLE-retried
 transaction (`retry_serializable`, D-11 constraint allowlist) that replaces a
 lane's declared observed role slice — there is no separate dedupe job, proposal
-table, or merge contract (§ job registry, below). Visibility predicates
+table, or merge contract (§ job registry, below).
+`media_author_observation_seam.py` is the sole in-memory carrier between source
+adapters and that facade. An absent carrier means no observation; a malformed
+container, tuple, media identity, observation, or source is a same-system defect
+and never degrades to empty authorship. Visibility predicates
 (`visible_podcast_ids_cte_sql`, `visible_content_credit_rows_sql`,
 `visible_contributor_ids_cte_sql`) live solely in `auth/permissions.py`;
 persisted-chat-ref checks live in `chat_context_refs.py`. There is no `/authors`
@@ -1289,6 +1550,14 @@ SERIALIZABLE transaction. Surface activation uses the bounded batch router, so
 heterogeneous rows add no per-occurrence query loop. Intrinsic page-title and
 note-body edits use the resource-item mutation owner. `services/notes.py`
 remains the notes collection, daily-page, dated-capture, and Dawn Write facade.
+A Page list row is exactly `{id,title,updatedAt}`; Page detail adds required
+`dailyPage: Presence<{localDate}>`. `schemas/notes.py` and
+`services/notes.py` own those typed backend shapes and convert nullable daily
+binding state to `Presence` at `_page_out`. On the frontend,
+`lib/notes/pageContract.ts` is the sole exact Page list/detail decoder and owns
+`loadNotePages`; server seed, intent prefetch, and Notes-pane replacement all
+call that same loader. Missing, extra, aliased, or malformed fields are defects,
+not empty-state fallbacks. `dailyPage` remains `Presence` after decoding.
 A daily date is a latent non-mutating locator until its first meaningful Note.
 That first capture creates the ordinary Page, binding, Note, ordered
 occurrence, required versions, and replay receipt in one serializable
@@ -1306,6 +1575,8 @@ Frontend composition is one `PagePaneBody`, one `ResourceSurfaceEditor`, and
 one `useResourceSurfaceSession` for ordinary Page refs and dated daily
 locators, with `NoteBodyEditor` as the sole prose primitive. Pane visit/session
 identity remains stable while a latent date hydrates or adopts `page:{id}`.
+Page and Note body hydration flows through this ResourceSurface owner; no
+frontend Notes block-response client is a competing read path.
 Quick Note adds one provisional final Note immediately; persisted hydration
 merges before it, and acknowledgement cannot erase later local keystrokes.
 `ResourceSurfaceBodyEditor` is a React-owned flat occurrence list, not a second
@@ -1336,6 +1607,91 @@ transcript references only. They never fetch or publish a transcript. Explicit
 Episode Transcribe prefers a publisher sidecar, then the quota-gated Deepgram
 path; explicit Video Transcribe uses the YouTube caption provider. Current
 transcript origin is exactly `Publisher | Imported | Generated`.
+`services/podcasts/transcription.py::request_media_transcript_for_viewer` owns
+authorization, one typed media snapshot, and strict media-kind dispatch only.
+`_request_podcast_episode_transcript` owns the Episode precedence machine:
+publisher sidecar, readable transcript, inflight work, quota rejection, then
+fresh generated admission. A dry-run may append its explicit immutable
+`podcast_transcript_request_audits` forecast fact, but it does not create
+`media_transcript_states`, create/reset a transcription job, reserve usage, or
+bump collection revisions. Transcript work state is materialized only after the
+dry-run return boundary. Explicit admission and durable source requeue both use
+the same transcript-job reset owner; no caller carries a second job upsert.
+Forecast, explicit admission, and durable source requeue derive and reserve
+quota through one typed transcript-budget owner. A quota rejection writes only
+its immutable audit fact for a single request; it does not materialize
+transcript work state or bump collection revisions. A fingerprinted episode
+query is one atomic admission transaction: Media rows lock in deterministic
+selection order, and any stale selection, quota rejection, or enqueue defect
+rolls back every episode's state, reservation, audit, source attempt, queue job,
+and collection revision. Repeated inflight admission is likewise an audit-only
+idempotent fact; Podcast collection revisions advance only when the request
+changes viewer-visible transcript work state.
+The request path locks and reads its media/job/transcript inputs once through
+the typed `_TranscriptRequestMedia` snapshot. Publisher-sidecar forecast and
+admission then live in `_request_rss_podcast_transcript`: they reserve zero
+generated minutes and create one durable transcript source attempt.
+`media_source_ingest.enqueue_podcast_episode_transcript_source_attempt` binds
+the accepted attempt to its durable job inside the transcript caller's current
+transaction; it never commits or converts an enqueue defect into durable failed
+state. That source-attempt owner publishes the all-viewer media-fact revision
+exactly once; the outer transcript controller does not publish a second
+revision for the same accepted attempt.
+Publisher-sidecar fallback admission returns the discriminated domain result
+`Admitted | RejectedQuota` from its fenced publication phase. A quota rejection
+therefore commits its immutable audit before the worker raises the typed error
+and publishes terminal source/transcript failure in the next fenced phase; the
+error is never used as callback control flow that would roll the audit back.
+Generated-fallback and operator-requeue admission mutate only the generated
+budget reservation, transcription job, and immutable audit. Existing current
+segments, fragments, and readable transcript state remain authoritative until
+`transcripts/current.py` atomically installs their replacement; admission never
+deletes or downgrades the current projection and publishes no duplicate
+collection revision.
+`transcripts/request_reason.py` is the sole internal request-reason owner.
+Validated API values and exact durable source/job values enter that type once;
+missing, whitespace-altered, or unknown same-system discriminants defect rather
+than becoming `episode_open` or `operator_requeue`. A transcript semantic job
+persists only `media_id` and that request reason; request/user correlation is
+not a worker input and is not copied into the durable payload.
+Publisher and generated transcript success callbacks publish only source
+artifacts plus their domain ledger. The common source terminal is the sole owner
+of ready-state, semantic admission, and the success media-fact revision; a
+worker beginning an already-admitted `extracting` Episode does not publish an
+unchanged revision. The acquisition operation returns only
+`PodcastTranscriptionCompleted`; every modeled failure raises its typed error,
+so no nullable skipped/failed result fields or downstream variant guard exist.
+Podcast source failure likewise has one terminal publication: the source owner
+settles the attempt, while the Podcast failure owner atomically settles Media,
+the transcription job, reserved usage, transcript state, and one shared
+media-fact revision. `media_fact_revisions.bump_all_media_fact_collections`
+owns the exact `AuthorWorks | LibraryEntries | PodcastEpisodes` family set.
+Podcast budget admission lives in `podcasts/transcription_usage.py`; reservation
+release/commit lives in the supervisor-safe
+`podcasts/transcription_reservation_settlement.py`. Neither terminal owner
+imports provider adapters.
+`services/transcripts/state.py` is the sole persistence owner for
+`media_transcript_states`; `current.py` owns artifact publication, while
+`semantic.py` owns every semantic-job payload plus lock-and-job-inventory repair
+admission. Readable-transcript repair costs zero generated minutes, never bumps
+collection revisions because `semantic_status` is not a collection-row fact,
+and treats a live pending/running/retryable semantic job as idempotent instead
+of dispatching duplicate work. Database enqueue defects propagate and roll back;
+there is no transcript `enqueue_failed` runtime or persisted audit outcome.
+Canonical YouTube Video caption forecast and import live in
+`_request_youtube_video_transcript`. It crosses the provider boundary with no
+database transaction open, reauthorizes before atomic `Imported` transcript
+publication, and advances `LibraryEntries` only; Video import never invalidates
+`PodcastEpisodes`.
+
+The canonical Podcast detail pane observes those two independent owners through
+one viewer-owned subscription-lifecycle snapshot stream. Transactional triggers
+on the subscription and its current backfill notify only the subscription UUID;
+the stream re-reads durable state and remains nonterminal until both owners are
+`Complete | SourceLimited | Failed`. A serialized latest-state drain revalidates
+detail and episodes without overlap when committed snapshots change, so reused
+global episodes and later backfill pages converge without browser polling, a
+manual Refresh, or a second ingest path.
 
 The **Lectern** is the one ordered, mixed-media list of outstanding intentions
 (podcast, video, reader, agent, and Nexus actions all address it); **Now
@@ -1428,12 +1784,18 @@ and a deterministic Year in Reading view. Exact session Exclude/Restore is the
 only correction lifecycle. Accepted writes publish the
 process-local Consumption revision; focus, activation, visibility, pageshow,
 and online transitions revalidate cross-process state without polling. The
+committed Stats response owns its session-continuation state: the pane delegates
+manual cursor lifecycle to `lib/api/useCursorPagination.ts`, builds continuation
+requests from the committed decoded view, aborts stale generations on a new
+first page, preserves rows across retryable continuation failure, and never
+uses an empty-string cursor as a second absence encoding; wire absence stays
+`Presence<string>` until the pagination adapter unwraps it. The
 full contract is [`modules/consumption-activity.md`](modules/consumption-activity.md).
 
 ### 8.10 Search, Browse, desktop Nexus, and mobile Nexus
 
 The same `search()` backs the `/search` results page, mobile Nexus deep
-results, desktop Nexus results, and the chat `app_search` tool. All consume
+results, desktop Nexus results, and the Chat `nexus.search` tool. All consume
 the canonical frontend `SearchQuery` model. Desktop **Nexus**
 (`components/nexus/`, `lib/nexus/`) is a controlled switchboard presentation
 over explicit result projections, not a second search model: its zero state is
@@ -1468,6 +1830,10 @@ After its first opening, the portal subtree stays mounted across dismissal so
 controller, focus, and measurement lifecycles are not recreated on every use;
 the inactive projection becomes `hidden` and `inert`, while children continue
 to receive lifecycle updates before the next opening.
+The mobile Nexus control also carries a primary-touch horizontal adjacent-tab
+accelerator over the workspace store's stable `primaryPaneOrder`, visible-only,
+clamped traversal command; tap remains the task entrance and the gesture creates
+no second navigation model.
 The viewport-fixed dialog owns an opaque safe-area- and keyboard-aware canvas;
 it has no scrim, grabber, outside-click target, drag dismissal, or
 primitive-owned toolbar. Guarded Back pops one Nexus level before dismissing
@@ -1624,7 +1990,10 @@ they open over Resume and never become panes.
   `Connections | Dossier`), and Podcast/Author/Page/Note
   (`Connections | Dossier`). One visible Companion action opens the same group
   on desktop and mobile; open state, active tab, width, and viewed Dossier
-  revision are workspace-local.
+  revision are workspace-local. The Imports pane publishes the one other
+  secondary group, `imports-inspector` (`Import details`), the same way, because
+  its selection is a row rather than a resource; its selection lives in the pane
+  URL (`selected=<ref>`).
   Every supported route declares a typed `Section`/`Resource` header contract.
   `PaneShell` combines that contract, the pane runtime label, and one
   primary-chrome publication into the pane's single route-level `<h1>`, and
@@ -1639,7 +2008,8 @@ they open over Resume and never become panes.
   panes or the workspace.
 - **App navigation is a curated projection, not a feature directory.**
   `lib/navigation/destinations.ts` owns destination identity;
-  `components/appnav/navModel.ts` independently owns the flat desktop rail and
+  `components/appnav/navModel.ts` independently owns the flat desktop rail, the
+  footer utility link (Imports), and the
   mobile Places projections. Mobile global access is the bottom Nexus control
   plus its full-screen task, not a navigation drawer, bottom sheet, or second
   desktop palette. Section routes
@@ -1700,7 +2070,13 @@ they open over Resume and never become panes.
   the previously active pane.
 - **Measurement loop.** `nexus:web-vitals` → `WebVitalsReporter` subscriber →
   `sendBeacon` → BFF `/api/telemetry/web-vitals` → FastAPI `/telemetry/web-vitals` →
-  structlog `rum.web_vital` (request-id-correlated). A CI **First Load JS budget**
+  structlog `rum.web_vital` (request-id-correlated). The workspace pane boundary
+  separately emits one bounded, authenticated structural failure through
+  `/api/telemetry/client-defects`; the BFF injects the serving release and
+  FastAPI logs `rum.client_defect`. It carries pane/visit, phase, command/run,
+  structural error code, request ID, and React component stack, never exception
+  messages, request bodies, draft text, tokens, or provider payloads. A CI
+  **First Load JS budget**
   (typed `bundle` capability, ≤ 115 kB gz vs ~104 kB measured) runs in the
   strict-CSP standalone build. Kept
   constraints: nonce-CSP + **streaming only** — no PPR, no `next/dynamic`, no
@@ -1728,18 +2104,36 @@ they open over Resume and never become panes.
 **Android shell** (`apps/android`): a Kotlin app with `MainActivity` for the
 hardened WebView and `ShareActivity` for system-share capture. The WebView has
 no `addJavascriptInterface`, file/content access, third-party cookies, or
-off-origin in-WebView navigation. Two strict AndroidX WebKit listeners are
-confined to the exact owned origin and main frame: `nexusOfflineMedia` carries
-download commands/snapshots, and `nexusPlayer` carries service-player
-commands/snapshots. `NexusOriginClient` calls only fixed listening-state and
-Consumption-activity BFF paths with WebView cookies; arbitrary native product
-HTTP is forbidden. `OfflineMediaStore` is the sole device owner of Media3
-downloads, index, non-evicting app-private cache, public-media data source,
-network policy, account purge, recovery, and native playback source
-resolution. Ready canonical audio is read directly from that cache; the
-superseded WebView GET/range route does not exist. Work resumes only after a
-verified account handshake while Nexus is foregrounded; there is no
-boot/background scheduler or cold-launch-offline shell. Native Google sign-in
+off-origin in-WebView navigation. Three strict AndroidX WebKit listeners are
+confined to their exact owned main-frame origins: `nexusOfflineMedia` retains
+audio download commands/snapshots, `nexusPlayer` retains service-player
+commands/snapshots, and `nexusOfflineReading` carries the separate reading
+snapshot/command protocol for the hosted origin and packaged shelf.
+
+`OfflineMediaStore` remains the sole device owner of Media3 downloads, index,
+non-evicting app-private cache, account purge, recovery, and native playback
+source resolution. `OfflineReadingStore` separately owns reading SQLite rows,
+app-private package files, Keystore binding seal, transfers, leases, removals,
+and pending reader position. They share only the persisted network-policy value
+and presentation grouping; neither store becomes a generic offline store.
+For eligible ready documents, the server-owned resource-action snapshot gives
+the hosted renderer the exact media ID, canonical document kind, and bounded
+`requestedTitle` for enqueue. That title is presentation metadata only; it
+does not authorize work or select package identity.
+
+When validated connectivity is absent, `MainActivity` can load the committed
+APK shelf at `appassets.androidplatform.net` without hosted bootstrap. The
+request router serves only packaged static assets and in-memory lease paths;
+PDF byte ranges are handled natively, and every other reserved-host request is
+a local 404 rather than a network fallback. Reading transfer I/O is owned by a
+persisted user-initiated JobScheduler lane and uses only its supplied network.
+`OfflineReadingOriginClient` calls fixed account-binding/token/progress BFF
+paths plus the exact configured direct package origin. No renderer supplies an
+account, URL, header, cookie, or filesystem path. Native state-changing BFF
+requests explicitly carry the exact pinned hosted `Origin`; OkHttp does not
+synthesize browser CSRF headers.
+
+Native Google sign-in
 (Credential Manager) and Custom-Tab OAuth both converge on a server-minted,
 single-use, PKCE-bound
 `nexus://auth/handoff` code that injects a first-party session cookie into the
@@ -1784,6 +2178,9 @@ one separate typed entrypoint, `./scripts/test`.
 `main` CI triggers one backend publisher. It builds API/worker targets once,
 publishes their GHCR digests and strict manifest, and supplies the immutable host
 bundle. Vercel builds the exact SHA as an unaliased production-target candidate.
+Candidates carrying the Codex agent host first run the separate immutable-bundle
+capacity qualification on the existing VPS; its candidate-bound measured
+evidence must be fresh before application mutation.
 `deploy/hetzner/deploy.sh <source-sha>` validates both lineages, captures current
 content-addressed VPS config by exact path and digest, stops app writers,
 verifies a migration backup when needed, upgrades the linear Alembic head,
@@ -1806,21 +2203,24 @@ activation.
 **Environment**: `.env.example` is the source of truth for every variable
 ([`rules/codebase.md`](rules/codebase.md)); `make setup` generates local
 `.env` + `apps/web/.env.local`. Major groups: app/env, database + pool, Supabase
-Auth (issuer/JWKS/audiences), internal secret, encryption key, LLM providers +
-flags + rate limits, Brave Browse/chat search, streaming (token signing key + base URL +
-CORS), podcasts, browse providers, worker schedules, Stripe. Worker lanes are
+Auth (issuer/JWKS/audiences), internal secret, encryption key, Codex host/MCP
+grant settings + generation rate limits, the narrow OpenAI embedding key,
+Brave Browse/chat search, streaming (token signing key + base URL + CORS),
+podcasts, browse providers, worker schedules, and Stripe. Worker lanes are
 Compose-owned rather than stored in the merged production env.
-One lineage-wide test invocation may own one workspace-local PostgreSQL/MinIO
-and Supabase Auth stack, per-run database/bucket state, and per-scenario users.
-The controller clears stale runtime state before work and retires the stack at
-the invocation boundary. It passes the Supabase admin key only to
-controller-owned user lifecycle code; Next.js, FastAPI, worker, and migration
-processes receive only their explicit test allowlists.
+The test controller owns a persistent workspace-local PostgreSQL/MinIO and
+Supabase Auth stack, per-run database/bucket state, and per-scenario users. It
+passes the Supabase admin key only to controller-owned user lifecycle code;
+Next.js, FastAPI, worker, and migration processes receive only their explicit
+test allowlists. Its canonical run environment also owns the external-protocol
+loopback endpoint, proxy, static DNS fixture, and Podcast fixture credentials
+for both in-process service proof and spawned product processes.
 
-**CI**: `.github/workflows/ci.yml` invokes only `./scripts/test pr` and retains
+**CI**: `.github/workflows/ci.yml` invokes `./scripts/test changed --base <base sha>`
+for pull requests and `./scripts/test full` for pushes to `main`, and retains
 the same-run summary even on failure. Protected manual/scheduled workflows own
-`nightly` and `release`; paid providers and signed release proof never run in
-ordinary PR CI.
+`nightly` and `release`; subscription-backed generation and signed release
+proof never run in ordinary PR CI.
 
 ---
 
@@ -1833,18 +2233,15 @@ runtime, runners, cleanup, memory/cost bounds, and versioned evidence.
 The portfolio is outcome-heavy: comprehensive preventive/static proof; a small
 semantic kernel; a dominant middle of real-PostgreSQL service and real-Chromium
 component proof; ten thin product journeys; and separately scheduled
-provider/device/release proof. Owned Nexus behavior is not mocked. Only an
+hosted-subscription/device/release proof. Owned Nexus behavior is not mocked. Only an
 external boundary may use a small fake or protocol fixture.
 
-Local services are reused only within one serialized invocation, but every
-workflow receives a template-cloned database, MinIO bucket, run ledger, and
-scenario-local users. All ordinary proof is external-network denied.
-Sensitivity retires every isolated red-revision runtime before starting its
-current-revision green phase, so two service stacks never coexist.
-Playwright has one config under `apps/web/e2e/`, one worker, zero retries,
-strict CSP, fresh contexts, and no shared seed/auth state. Priority risks and
-the canonical cross-language corpus are machine-owned by
-`testdata/proofs.json` and `testdata/manifest.json`.
+The persistent local services are reused, but every workflow receives a
+template-cloned database, MinIO bucket, run ledger, and scenario-local users.
+All ordinary proof is external-network denied. Playwright has one config under
+`apps/web/e2e/`, one worker, zero retries, strict CSP, fresh contexts, and no
+shared seed/auth state. Priority risks and the canonical cross-language corpus
+are machine-owned by `testdata/proofs.json` and `testdata/manifest.json`.
 
 ---
 
@@ -1870,8 +2267,8 @@ The things most likely to bite you, distilled:
 6. **Reader offsets are Unicode codepoints into current `canonical_text`.** The
    frontend canonicalizer must byte-match the Python one; a mismatch disables
    highlighting for that fragment.
-7. **One send = one durable `ChatRun`**; HTTP never calls the provider; the worker
-   does; the client only tails SSE and reconciles.
+7. **One send = one durable `ChatRun`**; HTTP only admits and enqueues; the worker
+   alone opens generation; the client only tails SSE and reconciles.
 8. **Active conversation path is per-viewer**; only path messages enter context.
 9. **Citation `[N]` is a dense, turn-global ordinal carried on an
    `origin='citation'` `resource_edge`**, not a per-tool index and not a column on
@@ -1906,7 +2303,9 @@ The things most likely to bite you, distilled:
 | DB layer / sessions / LISTEN-NOTIFY                               | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`)                                                                                                                                            |
 | The schema                                                        | `python/nexus/db/models.py` (+ `migrations/alembic/versions/`)                                                                                                                                         |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
-| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
+| Generation backends                                               | `python/nexus/services/{generation_catalog,generation_policy,generation_service,generation_spec,generation_backend,provider_generation_backend,codex_generation_client,llm_execution,llm_ledger,tool_authority}.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md) |
+| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_failure_projection.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
+| Imports workspace (query owner, history, pane)                    | `python/nexus/services/{imports,import_history}.py`, `python/nexus/api/routes/imports.py`, `apps/web/src/lib/imports/`, `apps/web/src/components/imports/`, `apps/web/src/app/(authenticated)/imports/`                                              |
 | Reader/highlights backend                                         | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote,pdf_quote_match}.py`                                                                |
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |
 | Oracle                                                            | `python/nexus/services/oracle.py`, `python/nexus/services/oracle_corpus.py`, `python/nexus/services/oracle_plates.py`                                                                                  |

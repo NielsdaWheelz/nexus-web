@@ -1,5 +1,6 @@
 import { isLocalDate } from "@/lib/localDate";
 import {
+  expectCanonicalRfcUuid,
   expectExactRecord,
   expectOneOf,
   expectRecord,
@@ -27,9 +28,6 @@ export interface DailyDraft {
   bodyText: string;
   handoff: DailyDraftHandoff;
 }
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function dailyDraftKey(accountId: string, localDate: string): string {
   if (accountId.length === 0 || !isLocalDate(localDate)) {
@@ -109,10 +107,10 @@ function decodeDailyDraft(raw: unknown): DailyDraft {
       ),
     };
   }
-  const noteId = expectString(draft.noteId, "daily draft.noteId");
-  if (!UUID_RE.test(noteId)) {
-    throw new TypeError("daily draft.noteId must be a canonical UUID");
-  }
+  const noteId = expectCanonicalRfcUuid(
+    draft.noteId,
+    "daily draft.noteId",
+  );
   const clientMutationId = expectString(
     draft.clientMutationId,
     "daily draft.clientMutationId",

@@ -27,6 +27,7 @@ export default function AppliedFilters({
           key={chip.id}
           size="md"
           removable
+          removeLabel={`Remove filter: ${chip.label}`}
           onRemove={() => onRemove(chip.id)}
         >
           {chip.label}

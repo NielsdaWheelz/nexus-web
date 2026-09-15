@@ -23,6 +23,7 @@ import {
   RefreshCw,
   RotateCcw,
   Rss,
+  Search,
   Settings,
   Share2,
   Sparkles,
@@ -31,6 +32,7 @@ import {
   Undo2,
   Users,
   Waypoints,
+  Wrench,
   XCircle,
   type LucideIcon,
 } from "lucide-react";
@@ -46,6 +48,7 @@ import {
   type LecternItemId,
   type PlayerDescriptor,
 } from "@/lib/lectern/contract";
+import { OFFLINE_READING_COPY } from "@/lib/offlineReading/presentation";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 import type { ResourceActivation } from "@/lib/resources/activation";
 
@@ -446,10 +449,28 @@ export const RESOURCE_ACTION_CATALOG = Object.freeze({
 
   "ResourceOperation.Media.RetryProcessing": catalogEntry({
     id: "ResourceOperation.Media.RetryProcessing",
-    label: "Retry processing",
+    label: "Retry source processing",
     icon: RotateCcw,
     group: "Manage",
     order: 10,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Media.RepairSource": catalogEntry({
+    id: "ResourceOperation.Media.RepairSource",
+    label: "Retry stopped processing",
+    icon: Wrench,
+    group: "Manage",
+    order: 12,
+    tone: "default",
+    confirmation: NONE,
+  }),
+  "ResourceOperation.Media.RepairSearch": catalogEntry({
+    id: "ResourceOperation.Media.RepairSearch",
+    label: "Rebuild search index",
+    icon: Search,
+    group: "Manage",
+    order: 14,
     tone: "default",
     confirmation: NONE,
   }),
@@ -599,6 +620,16 @@ export const RESOURCE_ACTION_CATALOG = Object.freeze({
 
 export type ResourceActionId = keyof typeof RESOURCE_ACTION_CATALOG;
 
+export function offlineReadingPackageMediaKind(
+  mediaKind: "web_article" | "epub" | "pdf",
+): "WebArticle" | "Epub" | "Pdf" {
+  switch (mediaKind) {
+    case "web_article": return "WebArticle";
+    case "epub": return "Epub";
+    case "pdf": return "Pdf";
+  }
+}
+
 export type ResourceActionIntent =
   | { readonly kind: "Open"; readonly activation: ResourceActivation }
   | { readonly kind: "OpenInNewPane"; readonly activation: ResourceActivation }
@@ -627,10 +658,15 @@ export type ResourceActionIntent =
       readonly kind: "RetryTranscript";
       readonly resourceRef: CanonicalResourceRef;
     }
-  | { readonly kind: "OfflineDownload" }
-  | { readonly kind: "OfflineCancel" }
-  | { readonly kind: "OfflineRetry" }
-  | { readonly kind: "OfflineRemove" }
+  | {
+      readonly kind: "OfflineDownload";
+      readonly owner: "Audio" | "Reading";
+      readonly requestedTitle?: string;
+      readonly mediaKind?: "web_article" | "epub" | "pdf";
+    }
+  | { readonly kind: "OfflineCancel"; readonly owner: "Audio" | "Reading" }
+  | { readonly kind: "OfflineRetry"; readonly owner: "Audio" | "Reading" }
+  | { readonly kind: "OfflineRemove"; readonly owner: "Audio" | "Reading" }
   | { readonly kind: "LibraryPlacement" }
   | { readonly kind: "AddToLectern" }
   | { readonly kind: "RemoveFromLectern"; readonly lecternItemId: LecternItemId }
@@ -654,7 +690,17 @@ export type ResourceActionIntent =
   | { readonly kind: "MakeArtifactRevisionCurrent" }
   | { readonly kind: "Share" }
   | { readonly kind: "DownloadOriginal" }
-  | { readonly kind: "RetryProcessing" }
+  | { readonly kind: "RetrySource"; readonly expectedAttemptId: string }
+  | {
+      readonly kind: "RepairSource";
+      readonly expectedAttemptId: string;
+      readonly expectedJobId: string;
+    }
+  | {
+      readonly kind: "RepairSearch";
+      readonly expectedRevision: number;
+      readonly expectedJobId: string;
+    }
   | { readonly kind: "RefreshSource" }
   | { readonly kind: "RetryMetadata" }
   | { readonly kind: "EditAuthors" }
@@ -716,6 +762,7 @@ function planned(
     readonly icon?: LucideIcon;
     readonly control?: ResourceActionControlState;
     readonly clientBlockedReason?: ResourceActionBlockedReason;
+    readonly confirmation?: ResourceActionConfirmation;
   } = {},
 ): PlannedResourceAction {
   const entry = RESOURCE_ACTION_CATALOG[id];
@@ -738,7 +785,7 @@ function planned(
       busyIds,
       options.clientBlockedReason,
     ),
-    confirmation: entry.confirmation,
+    confirmation: options.confirmation ?? entry.confirmation,
     intent: frozenIntent,
   });
 }
@@ -789,36 +836,49 @@ function deriveOfflineAction(
   environment: ResourceActionEnvironment,
   ref: CanonicalResourceRef,
   busyIds: ReadonlySet<ResourceActionId>,
+  owner: "Audio" | "Reading",
+  requestedTitle?: string,
+  mediaKind?: "web_article" | "epub" | "pdf",
 ): PlannedResourceAction {
   const id = "ResourceOperation.Media.Offline";
   const states = RESOURCE_ACTION_CATALOG[id].states;
+  const offline = owner === "Reading"
+    ? environment.offlineReading ?? { kind: "Unavailable" as const }
+    : environment.offline;
   if (environment.platform === "Web") {
-    return planned(id, availability, busyIds, { kind: "OfflineDownload" }, {
+    return planned(id, availability, busyIds, { kind: "OfflineDownload", owner, requestedTitle, mediaKind }, {
       ...states.Absent,
       control: toggle(false),
       clientBlockedReason: "UnsupportedOnDevice",
     });
   }
 
-  if (environment.offline.kind === "Loading") {
-    return planned(id, availability, busyIds, { kind: "OfflineDownload" }, {
+  if (offline.kind === "Loading") {
+    return planned(id, availability, busyIds, { kind: "OfflineDownload", owner, requestedTitle, mediaKind }, {
       ...states.Absent,
       control: toggle(false),
       clientBlockedReason: "Loading",
     });
   }
-  if (environment.offline.kind === "Unavailable") {
-    return planned(id, availability, busyIds, { kind: "OfflineDownload" }, {
+  if (offline.kind === "Unavailable") {
+    return planned(id, availability, busyIds, { kind: "OfflineDownload", owner, requestedTitle, mediaKind }, {
       ...states.Absent,
       control: toggle(false),
       clientBlockedReason: "UnsupportedOnDevice",
     });
   }
 
-  const local = environment.offline.byRef.get(ref);
+  const local = offline.byRef.get(ref);
   if (local === undefined) {
-    return planned(id, availability, busyIds, { kind: "OfflineDownload" }, {
+    return planned(id, availability, busyIds, { kind: "OfflineDownload", owner, requestedTitle, mediaKind }, {
       control: toggle(false),
+      confirmation: owner === "Reading" && mediaKind === "web_article"
+        ? requiredConfirmation(
+            "Download text-only copy?",
+            "Downloaded web articles include readable text but not images.",
+            "Download text-only copy",
+          )
+        : undefined,
       clientBlockedReason:
         environment.connectivity === "Offline" ? "RequiresOnline" : undefined,
     });
@@ -829,24 +889,32 @@ function deriveOfflineAction(
     case "Queued":
     case "Downloading":
     case "Restarting":
-      return planned(id, availability, busyIds, { kind: "OfflineCancel" }, {
+      return planned(id, availability, busyIds, { kind: "OfflineCancel", owner }, {
         ...states.Downloading,
         control: toggle(false),
       });
     case "Ready":
-      return planned(id, availability, busyIds, { kind: "OfflineRemove" }, {
+      return planned(id, availability, busyIds, { kind: "OfflineRemove", owner }, {
         ...states.Ready,
         control: toggle(true),
+        confirmation:
+          owner === "Reading" && "hasDevicePosition" in local && local.hasDevicePosition
+            ? requiredConfirmation(
+                OFFLINE_READING_COPY.removeConfirmationTitle,
+                OFFLINE_READING_COPY.pendingRemoveConfirmation,
+                OFFLINE_READING_COPY.removeConfirmAction,
+              )
+            : undefined,
       });
     case "Failed":
-      return planned(id, availability, busyIds, { kind: "OfflineRetry" }, {
+      return planned(id, availability, busyIds, { kind: "OfflineRetry", owner }, {
         ...states.Failed,
         control: toggle(false),
         clientBlockedReason:
           environment.connectivity === "Offline" ? "RequiresOnline" : undefined,
       });
     case "Removing":
-      return planned(id, availability, busyIds, { kind: "OfflineRemove" }, {
+      return planned(id, availability, busyIds, { kind: "OfflineRemove", owner }, {
         ...states.Ready,
         control: toggle(true),
         clientBlockedReason: "Busy",
@@ -916,7 +984,7 @@ function planCapability(
   ref: CanonicalResourceRef,
   activation: ResourceActivation,
   busyIds: ReadonlySet<ResourceActionId>,
-): PlannedResourceAction {
+): PlannedResourceAction | null {
   const availability = capability.availability;
   switch (capability.kind) {
     case "Open":
@@ -1033,7 +1101,21 @@ function planCapability(
     case "Transcript":
       return planTranscript(capability, ref, busyIds);
     case "OfflineAudio":
-      return deriveOfflineAction(availability, environment, ref, busyIds);
+      return deriveOfflineAction(availability, environment, ref, busyIds, "Audio");
+    case "OfflineReading":
+      if (
+        environment.platform !== "Android" ||
+        environment.offlineReading?.kind !== "Ready"
+      ) return null;
+      return deriveOfflineAction(
+        availability,
+        environment,
+        ref,
+        busyIds,
+        "Reading",
+        capability.requestedTitle,
+        capability.mediaKind,
+      );
     case "LibraryPlacement":
       return planned("RelationshipAction.LibraryPlacement", availability, busyIds, {
         kind: "LibraryPlacement",
@@ -1182,13 +1264,47 @@ function planCapability(
         busyIds,
         { kind: "DownloadOriginal" },
       );
-    case "RetryProcessing":
-      return planned(
-        "ResourceOperation.Media.RetryProcessing",
-        availability,
-        busyIds,
-        { kind: "RetryProcessing" },
-      );
+    case "Recovery":
+      switch (capability.offer.kind) {
+        case "RetrySource":
+          return planned(
+            "ResourceOperation.Media.RetryProcessing",
+            availability,
+            busyIds,
+            {
+              kind: "RetrySource",
+              expectedAttemptId: capability.offer.expectedAttemptId,
+            },
+          );
+        case "RepairSource":
+          return planned(
+            "ResourceOperation.Media.RepairSource",
+            availability,
+            busyIds,
+            {
+              kind: "RepairSource",
+              expectedAttemptId: capability.offer.expectedAttemptId,
+              expectedJobId: capability.offer.expectedJobId,
+            },
+          );
+        case "RepairSearch":
+          return planned(
+            "ResourceOperation.Media.RepairSearch",
+            availability,
+            busyIds,
+            {
+              kind: "RepairSearch",
+              expectedRevision: capability.offer.expectedRevision,
+              expectedJobId: capability.offer.expectedJobId,
+            },
+          );
+        default: {
+          const exhaustive: never = capability.offer;
+          throw new Error(
+            `Unsupported recovery offer: ${JSON.stringify(exhaustive)}`,
+          );
+        }
+      }
     case "RefreshSource":
       return planned(
         "ResourceOperation.Media.RefreshSource",
@@ -1307,6 +1423,7 @@ export function resolveResourceActionPlan(
       snapshot.activation,
       busyIds,
     );
+    if (action === null) continue;
     if (seenIds.has(action.id)) {
       throw new Error(`Duplicate resource action id: ${action.id}`);
     }

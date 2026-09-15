@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/llm_execution.py b/python/nexus/services/llm_execution.py
+--- a/python/nexus/services/llm_execution.py
++++ b/python/nexus/services/llm_execution.py
+@@ -735,7 +735,7 @@ class _LedgerChildLifecycle:
+                     expected=state,
+                     next_state=StepReplayState(
+                         generation_id=request.generation_id,
+-                        dispatch_phase=Uncertain,
++                        dispatch_phase=Prepared,
+                         request_fingerprint=present(request.spec.fingerprint),
+                         terminal_result=absent(),
+                     ),

@@ -21,12 +21,13 @@ import hashlib
 import json
 import re
 import secrets
+import shutil
 import subprocess
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from urllib.parse import quote, urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -36,7 +37,11 @@ import psycopg
 from nexus_test_control.build import ensure_standalone_build
 from nexus_test_control.evidence import redact_json, redact_text, write_evidence_json
 from nexus_test_control.memory import available_memory_mib
-from nexus_test_control.model import RunStatus
+from nexus_test_control.model import (
+    ANDROID_VISUAL_DEVICE_ALIASES,
+    RunStatus,
+    validate_android_visual_path,
+)
 from nexus_test_control.process import run_command
 from nexus_test_control.runtime import (
     EndpointKind,
@@ -45,16 +50,17 @@ from nexus_test_control.runtime import (
     read_runtime,
     runtime_endpoint,
     runtime_state_dir,
-    workspace_heavy_lock,
 )
 from nexus_test_control.services import (
     SupabaseCredentials,
     TestRun,
+    android_sdk_available,
     android_tool_environment,
     authorized_device_serials,
     clean_run,
     ensure_services,
     prepare_run,
+    recovered_workspace_heavy_lock,
     resolve_adb,
     run_environment,
     start_python_process,
@@ -62,13 +68,14 @@ from nexus_test_control.services import (
     wait_process_ready,
 )
 
-MANIFEST_VERSION = 1
-DEVICE_ALIASES = frozenset({"primary"})
+MANIFEST_VERSION = 2
+APK_CACHE_VERSION = 2
 DEBUG_PACKAGE = "app.nexus.android.debug"
 MAIN_ACTIVITY = "app.nexus.android.MainActivity"
 OWNED_HOST = "127.0.0.1"
 DEVICE_WEB_ORIGIN = f"http://{OWNED_HOST}:3000"
 DEVICE_STREAM_ORIGIN = f"http://{OWNED_HOST}:8000"
+WEB_READINESS_PATH = "/version"
 DEVICE_TCP_WEB = 3000
 DEVICE_TCP_STREAM = 8000
 # The handoff flow establishes the WebView session; the debug build only needs a
@@ -84,7 +91,8 @@ _SESSION_POLL_SECONDS = 1.0
 _SETTLE_SECONDS = 2.0
 _MIN_AVAILABLE_MIB = 2048
 _LOGCAT_TAIL_LINES = 2000
-_OWNED_PATH = re.compile(r"/[A-Za-z0-9._~%!$&'()*+,;=:@/-]*\Z")
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_GRADLE_FAILURE_DETAIL_LIMIT = 1_800
 _ANDROID_FINGERPRINT_SKIP = frozenset({"build", ".gradle", ".idea", ".cxx"})
 _GIT_OPERATION_MARKERS = ("MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD")
 
@@ -129,33 +137,16 @@ class DeviceSession:
 
 def device_account_email(alias: str) -> str:
     """Deterministic, stable, test-namespace account email for a device alias."""
-    if alias not in DEVICE_ALIASES:
+    if alias not in ANDROID_VISUAL_DEVICE_ALIASES:
         raise ValueError(f"unknown device alias: {alias}")
     return f"nexus+android-visual+{alias}@example.invalid"
 
 
 def device_account_id(alias: str) -> UUID:
     """Deterministic, stable Supabase user id for a device alias."""
-    if alias not in DEVICE_ALIASES:
+    if alias not in ANDROID_VISUAL_DEVICE_ALIASES:
         raise ValueError(f"unknown device alias: {alias}")
     return uuid5(_ACCOUNT_NAMESPACE, alias)
-
-
-def validate_owned_path(path: str) -> str:
-    """Accept only an owned same-origin absolute path (no scheme/host/query/..)."""
-    if (
-        not path
-        or not path.startswith("/")
-        or path.startswith("//")
-        or "?" in path
-        or "#" in path
-        or "\\" in path
-        or "'" in path
-        or _OWNED_PATH.fullmatch(path) is None
-        or ".." in PurePosixPath(path).parts
-    ):
-        raise ValueError(f"path must be an owned same-origin path: {path!r}")
-    return path
 
 
 def handoff_challenge(verifier: str) -> str:
@@ -210,6 +201,20 @@ def device_session_established(pages: object, device_origin: str) -> bool:
         if not parts.path.startswith("/login") and not parts.path.startswith("/auth/"):
             return True
     return False
+
+
+def nexus_main_activity_is_resumed(activity_dump: str) -> bool:
+    """Whether Android's global top-resumed record names the debug MainActivity."""
+    component = re.escape(f"{DEBUG_PACKAGE}/{MAIN_ACTIVITY}")
+    return (
+        re.search(
+            rf"^[ \t]*ResumedActivity:[ \t]+ActivityRecord\{{[^\n]*[ \t]"
+            rf"{component}(?=[ \t}}])",
+            activity_dump,
+            flags=re.MULTILINE,
+        )
+        is not None
+    )
 
 
 def native_input_fingerprint(repo_root: Path, flags: Mapping[str, str]) -> str:
@@ -347,15 +352,6 @@ def issue_handoff(
 # --- ADB transport ----------------------------------------------------------
 
 
-def _android_sdk_available(repo_root: Path, environment: Mapping[str, str]) -> bool:
-    if (repo_root / "apps/android/local.properties").is_file():
-        return True
-    return any(
-        environment.get(key) and Path(environment[key]).is_dir()
-        for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT")
-    )
-
-
 def _adb(
     adb: Path,
     serial: str,
@@ -411,7 +407,7 @@ def run_android_visual(
             raise _NotRun("the Android SDK platform-tools adb is absent")
         serial = resolve_serial(adb, alias, environment, root)
         try:
-            with workspace_heavy_lock(root, blocking=False):
+            with recovered_workspace_heavy_lock(root, environment, blocking=False):
                 return _run_locked(
                     root,
                     environment,
@@ -437,12 +433,12 @@ def run_android_visual(
 
 
 def _validate_request(repo_root: Path, requested_sha: str, requested_path: str, alias: str) -> None:
-    if alias not in DEVICE_ALIASES:
+    if alias not in ANDROID_VISUAL_DEVICE_ALIASES:
         raise _Fail(f"unknown device alias: {alias!r}")
     if not requested_sha or not requested_path:
         raise _Fail("android-visual requires --sha and --path")
     try:
-        validate_owned_path(requested_path)
+        validate_android_visual_path(requested_path)
     except ValueError as error:
         raise _Fail(str(error)) from error
     if requested_sha != _git(repo_root, "rev-parse", "HEAD"):
@@ -517,7 +513,9 @@ def _visual_run(
     api = start_python_process(root, environment, run, "api", overrides=device_overrides)
     wait_process_ready(root, environment, api, EndpointKind.API, "/readyz")
     web = start_web_process(root, environment, run, build, overrides=device_overrides)
-    wait_process_ready(root, environment, web, EndpointKind.WEB, "/")
+    # Readiness needs an exact-200 public route; later gates separately prove
+    # the authenticated device session at the requested product path.
+    wait_process_ready(root, environment, web, EndpointKind.WEB, WEB_READINESS_PATH)
 
     reverse = {DEVICE_TCP_WEB: runtime.ports.web, DEVICE_TCP_STREAM: runtime.ports.api}
     stack.callback(lambda: _remove_reverse(adb, serial, reverse, environment, root))
@@ -594,31 +592,29 @@ def _ensure_debug_apk(
     serial: str,
     flags: Mapping[str, str],
 ) -> dict[str, object]:
-    apk = root / APK_RELATIVE
+    shared_apk = root / APK_RELATIVE
     fingerprint = native_input_fingerprint(root, flags)
     state_path = runtime_state_dir(root) / "android-visual" / "apk.json"
     state = _read_apk_state(state_path)
-    built = False
-    if not apk.is_file() or state.get("fingerprint") != fingerprint:
-        if not _android_sdk_available(root, environment):
+    cached = _cached_debug_apk(state_path, state, fingerprint)
+    if cached is None:
+        if not android_sdk_available(root / "apps/android", environment):
             raise _NotRun("the Android SDK is required to build the debug APK for the local origin")
         _assemble_debug_apk(root, environment, flags)
-        built = True
-    if not apk.is_file():
-        raise _NotRun("debug APK was not produced")
-    installed = _installed_fingerprints(state)
-    if (
-        built
-        or installed.get(serial) != fingerprint
-        or not _package_installed(adb, serial, environment, root)
-    ):
-        _adb(adb, serial, "install", "-r", str(apk), environment=environment, cwd=root)
-        installed[serial] = fingerprint
-    _write_apk_state(state_path, fingerprint, installed)
+        cached = _snapshot_debug_apk(shared_apk, state_path.parent / "artifacts")
+        _write_apk_state(state_path, fingerprint, cached[1])
+    artifact, apk_sha256 = cached
+
+    # An explicit physical proof always reinstalls the verified artifact. The
+    # device package is mutable outside this controller, so package existence or
+    # an intent cache cannot establish which APK is actually installed.
+    _adb(adb, serial, "install", "-r", str(artifact), environment=environment, cwd=root)
+    if _regular_file_sha256(artifact) != apk_sha256:
+        raise _Fail("cached debug APK changed during installation")
     return {
         "variant": "debug",
         "input_fingerprint": fingerprint,
-        "installed_fingerprint": installed[serial],
+        "apk_sha256": apk_sha256,
     }
 
 
@@ -642,22 +638,17 @@ def _assemble_debug_apk(
         check=False,
     )
     if result.returncode != 0:
-        raise _Fail("debug APK assembly failed")
-
-
-def _package_installed(adb: Path, serial: str, environment: Mapping[str, str], cwd: Path) -> bool:
-    result = _adb(
-        adb,
-        serial,
-        "shell",
-        "pm",
-        "path",
-        DEBUG_PACKAGE,
-        environment=environment,
-        cwd=cwd,
-        check=False,
-    )
-    return result.returncode == 0 and result.stdout.strip().startswith("package:")
+        diagnostic = "\n".join(
+            output.strip() for output in (result.stdout, result.stderr) if output and output.strip()
+        )
+        diagnostic = _ANSI_ESCAPE_RE.sub("", diagnostic)
+        marker = diagnostic.rfind("FAILURE: Build failed")
+        if marker >= 0:
+            diagnostic = diagnostic[marker:]
+        if len(diagnostic) > _GRADLE_FAILURE_DETAIL_LIMIT:
+            diagnostic = diagnostic[:1_100] + "\n...[truncated]...\n" + diagnostic[-650:]
+        suffix = diagnostic or "no diagnostic output"
+        raise _Fail(f"debug APK assembly failed (exit {result.returncode}): {suffix}")
 
 
 def _launch(adb: Path, serial: str, uri: str, environment: Mapping[str, str], cwd: Path) -> None:
@@ -734,6 +725,44 @@ def _webview_devtools_sockets(
     return tuple(sorted(set(re.findall(r"webview_devtools_remote_\d+", result.stdout))))
 
 
+def _device_session_established_now(
+    adb: Path, serial: str, environment: Mapping[str, str], cwd: Path
+) -> bool:
+    for socket_name in _webview_devtools_sockets(adb, serial, environment, cwd):
+        forwarded = _adb(
+            adb,
+            serial,
+            "forward",
+            "tcp:0",
+            f"localabstract:{socket_name}",
+            environment=environment,
+            cwd=cwd,
+            check=False,
+        )
+        if forwarded.returncode != 0 or not forwarded.stdout.strip().isdigit():
+            continue
+        port = forwarded.stdout.strip()
+        try:
+            with httpx.Client(trust_env=False, timeout=5) as client:
+                pages = client.get(f"http://127.0.0.1:{port}/json").json()
+            if device_session_established(pages, DEVICE_WEB_ORIGIN):
+                return True
+        except (httpx.HTTPError, ValueError):
+            pass
+        finally:
+            _adb(
+                adb,
+                serial,
+                "forward",
+                "--remove",
+                f"tcp:{port}",
+                environment=environment,
+                cwd=cwd,
+                check=False,
+            )
+    return False
+
+
 def _prove_device_session(
     adb: Path, serial: str, environment: Mapping[str, str], cwd: Path
 ) -> None:
@@ -741,42 +770,30 @@ def _prove_device_session(
     transport — the controller's minted token cannot stand in for the device."""
     deadline = time.monotonic() + _SESSION_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
-        for socket_name in _webview_devtools_sockets(adb, serial, environment, cwd):
-            forwarded = _adb(
-                adb,
-                serial,
-                "forward",
-                "tcp:0",
-                f"localabstract:{socket_name}",
-                environment=environment,
-                cwd=cwd,
-                check=False,
-            )
-            if forwarded.returncode != 0 or not forwarded.stdout.strip().isdigit():
-                continue
-            port = forwarded.stdout.strip()
-            try:
-                with httpx.Client(trust_env=False, timeout=5) as client:
-                    pages = client.get(f"http://127.0.0.1:{port}/json").json()
-                if device_session_established(pages, DEVICE_WEB_ORIGIN):
-                    return
-            except (httpx.HTTPError, ValueError):
-                pass
-            finally:
-                _adb(
-                    adb,
-                    serial,
-                    "forward",
-                    "--remove",
-                    f"tcp:{port}",
-                    environment=environment,
-                    cwd=cwd,
-                    check=False,
-                )
+        if _device_session_established_now(adb, serial, environment, cwd):
+            return
         time.sleep(_SESSION_POLL_SECONDS)
     raise _Fail(
         "the device WebView is not authenticated on the owned origin (session not established)"
     )
+
+
+def _require_nexus_main_activity_resumed(
+    adb: Path, serial: str, environment: Mapping[str, str], cwd: Path
+) -> None:
+    result = _adb(
+        adb,
+        serial,
+        "shell",
+        "dumpsys",
+        "activity",
+        "activities",
+        environment=environment,
+        cwd=cwd,
+        check=False,
+    )
+    if result.returncode != 0 or not nexus_main_activity_is_resumed(result.stdout):
+        raise _Fail("capture boundary is not the resumed Nexus MainActivity")
 
 
 def _capture(
@@ -791,11 +808,36 @@ def _capture(
     results.mkdir(parents=True, exist_ok=True)
     device_png = f"/data/local/tmp/nexus-visual-{run_id}.png"
     screenshot = results / "android-visual-screen.png"
-    _adb(adb, serial, "shell", "screencap", "-p", device_png, environment=environment, cwd=root)
-    _adb(adb, serial, "pull", device_png, str(screenshot), environment=environment, cwd=root)
-    _adb(
-        adb, serial, "shell", "rm", "-f", device_png, environment=environment, cwd=root, check=False
-    )
+    if not _device_session_established_now(adb, serial, environment, root):
+        raise _Fail("capture boundary WebView is not authenticated on the owned origin")
+    _require_nexus_main_activity_resumed(adb, serial, environment, root)
+    try:
+        _adb(
+            adb,
+            serial,
+            "shell",
+            "screencap",
+            "-p",
+            device_png,
+            environment=environment,
+            cwd=root,
+        )
+        _require_nexus_main_activity_resumed(adb, serial, environment, root)
+        if not _device_session_established_now(adb, serial, environment, root):
+            raise _Fail("capture boundary WebView is not authenticated on the owned origin")
+        _adb(adb, serial, "pull", device_png, str(screenshot), environment=environment, cwd=root)
+    finally:
+        _adb(
+            adb,
+            serial,
+            "shell",
+            "rm",
+            "-f",
+            device_png,
+            environment=environment,
+            cwd=root,
+            check=False,
+        )
     if not screenshot.is_file() or screenshot.stat().st_size == 0:
         raise _Fail("the device screenshot could not be captured")
     log = _adb(
@@ -928,20 +970,80 @@ def _read_apk_state(path: Path) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
-def _installed_fingerprints(state: Mapping[str, object]) -> dict[str, str]:
-    installed = state.get("installed")
-    if not isinstance(installed, dict):
-        return {}
-    return {key: value for key, value in installed.items() if isinstance(value, str)}
+def _cached_debug_apk(
+    state_path: Path, state: Mapping[str, object], fingerprint: str
+) -> tuple[Path, str] | None:
+    digest = state.get("apk_sha256")
+    if (
+        state.get("version") != APK_CACHE_VERSION
+        or state.get("input_fingerprint") != fingerprint
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+    ):
+        return None
+    artifact = state_path.parent / "artifacts" / "debug.apk"
+    if _regular_file_sha256(artifact) != digest:
+        return None
+    return artifact, digest
 
 
-def _write_apk_state(path: Path, fingerprint: str, installed: Mapping[str, str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({"fingerprint": fingerprint, "installed": dict(installed)}, sort_keys=True)
-        + "\n",
-        encoding="utf-8",
-    )
+def _snapshot_debug_apk(shared_apk: Path, artifact_dir: Path) -> tuple[Path, str]:
+    source_digest = _regular_file_sha256(shared_apk)
+    if source_digest is None:
+        raise _Fail("debug APK assembly produced no regular artifact")
+    try:
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        artifact = artifact_dir / "debug.apk"
+        temporary = artifact_dir / f".debug.{secrets.token_hex(8)}.tmp"
+        try:
+            shutil.copyfile(shared_apk, temporary, follow_symlinks=False)
+            if _regular_file_sha256(temporary) != source_digest:
+                raise _Fail("debug APK changed while it was staged")
+            temporary.replace(artifact)
+        finally:
+            temporary.unlink(missing_ok=True)
+    except OSError as error:
+        raise _Fail("debug APK could not be staged") from error
+    if _regular_file_sha256(artifact) != source_digest:
+        raise _Fail("staged debug APK failed digest verification")
+    return artifact, source_digest
+
+
+def _regular_file_sha256(path: Path) -> str | None:
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def _write_apk_state(path: Path, fingerprint: str, apk_sha256: str) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+        try:
+            temporary.write_text(
+                json.dumps(
+                    {
+                        "version": APK_CACHE_VERSION,
+                        "input_fingerprint": fingerprint,
+                        "apk_sha256": apk_sha256,
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    except OSError as error:
+        raise _Fail("debug APK cache state could not be written") from error
 
 
 def _git(repo_root: Path, *args: str) -> str:

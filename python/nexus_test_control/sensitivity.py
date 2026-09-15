@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 from nexus_test_control.evidence import compute_proof_digest, redact_text
 from nexus_test_control.memory import OwnedMemorySampler
 from nexus_test_control.model import (
+    ChangedOwnerRedStrategy,
     PeakOwnedMemory,
     RunStatus,
     Sensitivity,
@@ -26,6 +27,7 @@ from nexus_test_control.model import (
     Workflow,
 )
 from nexus_test_control.policy import fault_manifest_violations
+from nexus_test_control.proof_owner import python_exact_proof_owner
 from nexus_test_control.runner import (
     CapabilityContext,
     CapabilityResult,
@@ -57,6 +59,8 @@ class SensitivityExecutionError(SensitivityError):
 
 RuntimeCleaner = Callable[[Path, Mapping[str, str]], tuple[str, ...]]
 
+_SENSITIVITY_TEMP_ROOT = Path("/tmp").resolve(strict=True)
+
 
 @dataclass(frozen=True, slots=True)
 class FaultDefinition:
@@ -65,6 +69,8 @@ class FaultDefinition:
     sha256: str
     proofs: tuple[str, ...]
     expected_failure: str
+    changed_owner_red: ChangedOwnerRedStrategy | None
+    changed_owner_sha256: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +119,7 @@ def prove_many(
     memory_sampler: OwnedMemorySampler | None = None,
     run_context: RunContextRecorder | None = None,
 ) -> tuple[Sensitivity, ...]:
-    """Demonstrate isolated reds before current greens without overlapping runtimes."""
+    """Demonstrate several proofs while reusing one isolated checkout per revision."""
     if not requests:
         return ()
     current_proof = requests[0].proof
@@ -166,7 +172,6 @@ def prove_many(
         grouped: dict[tuple[str, SensitivityMethod], list[tuple[int, _PreparedSensitivity]]] = {}
         for index, item in enumerate(prepared):
             grouped.setdefault((item.revision, item.request.method), []).append((index, item))
-        demonstrated_reds: list[tuple[int, _PreparedSensitivity, SensitivityRed]] = []
         for (_revision, _method), group in grouped.items():
             revision = group[0][1].revision
             overlays = tuple(dict.fromkeys(path for _, item in group for path in item.overlays))
@@ -196,6 +201,7 @@ def prove_many(
                                 proof_id=item.request.proof,
                                 sensitivity_attempt="red",
                                 run_context=run_context,
+                                candidate_sha=item.against_sha,
                             ),
                             item.request.proof,
                             red_environment,
@@ -220,63 +226,57 @@ def prove_many(
                         peak_owned_mib=red_memory,
                         artifacts=current_artifacts,
                     )
-                    demonstrated_reds.append((index, item, red))
-                    current_artifacts = ()
 
-        for index, item, red in sorted(
-            demonstrated_reds,
-            key=lambda candidate: candidate[0],
-        ):
-            current_proof = item.request.proof
-            _begin_attempt(memory_sampler)
-            green_started = time.monotonic_ns()
-            green_result = run_proof(
-                CapabilityContext(
-                    root,
-                    Workflow.CHANGED,
-                    (),
-                    proof_id=item.request.proof,
-                    sensitivity_attempt="green",
-                    run_context=run_context,
-                ),
-                item.request.proof,
-                proof_environment,
-                _memory_sampler=memory_sampler,
-            )
-            green_duration_ms = (time.monotonic_ns() - green_started) // 1_000_000
-            green_memory = _finish_attempt(memory_sampler)
-            current_artifacts = green_result.evidence.artifacts
-            if green_result.evidence.status is not RunStatus.PASS:
-                raise SensitivityError(
-                    "current proof did not pass at its intended boundary: "
-                    f"{green_result.evidence.status.value}: {green_result.detail}"
-                )
-            completed.append(
-                (
-                    index,
-                    Sensitivity(
-                        proof=item.request.proof,
-                        changed_paths=item.request.changed_paths,
-                        proof_digest=compute_proof_digest(
+                    _begin_attempt(memory_sampler)
+                    green_started = time.monotonic_ns()
+                    green_result = run_proof(
+                        CapabilityContext(
                             root,
-                            item.request.proof,
-                            item.request.changed_paths,
+                            Workflow.CHANGED,
+                            (),
+                            proof_id=item.request.proof,
+                            sensitivity_attempt="green",
+                            run_context=run_context,
+                            candidate_sha=current_sha,
                         ),
-                        method=item.request.method,
-                        against=SensitivityAgainst(
-                            git_sha=item.against_sha,
-                            fault_id=item.fault.id if item.fault is not None else None,
-                        ),
-                        red=red,
-                        green=SensitivityGreen(
-                            current_sha,
-                            green_duration_ms,
-                            green_memory,
-                        ),
-                    ),
-                )
-            )
-            current_artifacts = ()
+                        item.request.proof,
+                        proof_environment,
+                        _memory_sampler=memory_sampler,
+                    )
+                    green_duration_ms = (time.monotonic_ns() - green_started) // 1_000_000
+                    green_memory = _finish_attempt(memory_sampler)
+                    current_artifacts = green_result.evidence.artifacts
+                    if green_result.evidence.status is not RunStatus.PASS:
+                        raise SensitivityError(
+                            "current proof did not pass at its intended boundary: "
+                            f"{green_result.evidence.status.value}: {green_result.detail}"
+                        )
+                    completed.append(
+                        (
+                            index,
+                            Sensitivity(
+                                proof=item.request.proof,
+                                changed_paths=item.request.changed_paths,
+                                proof_digest=compute_proof_digest(
+                                    root,
+                                    item.request.proof,
+                                    item.request.changed_paths,
+                                ),
+                                method=item.request.method,
+                                against=SensitivityAgainst(
+                                    git_sha=item.against_sha,
+                                    fault_id=item.fault.id if item.fault is not None else None,
+                                ),
+                                red=red,
+                                green=SensitivityGreen(
+                                    current_sha,
+                                    green_duration_ms,
+                                    green_memory,
+                                ),
+                            ),
+                        )
+                    )
+                    current_artifacts = ()
         return tuple(record for _index, record in sorted(completed))
     except SensitivityExecutionError:
         raise
@@ -461,6 +461,12 @@ def fault_definition(repo_root: Path, fault_id: str, proof: str) -> FaultDefinit
             sha256=item["sha256"],
             proofs=tuple(item["proofs"]),
             expected_failure=item["expected_failure"],
+            changed_owner_red=(
+                ChangedOwnerRedStrategy(item["changed_owner_red"])
+                if "changed_owner_red" in item
+                else None
+            ),
+            changed_owner_sha256=item.get("changed_owner_sha256"),
         )
     raise SensitivityError(f"unknown fault id: {fault_id}")
 
@@ -479,11 +485,100 @@ def declared_fault_for_proof(repo_root: Path, proof: str) -> str | None:
     return owners[0] if owners else None
 
 
+def workflow_sensitivity_request(
+    repo_root: Path,
+    *,
+    proof: str,
+    changed_paths: Sequence[str],
+    base_sha: str,
+) -> SensitivityRequest:
+    """Use BASE for changed owners unless one exact proof opts into coherent FAULT."""
+    exact_changed_paths = tuple(dict.fromkeys(changed_paths))
+    proof_path = _proof_path(proof)
+    fault_id = declared_fault_for_proof(repo_root, proof)
+    if fault_id is not None:
+        fault = fault_definition(repo_root, fault_id, proof)
+        if (
+            fault.changed_owner_red is ChangedOwnerRedStrategy.COHERENT_FAULT
+            and _valid_coherent_owner(repo_root, proof)
+        ):
+            try:
+                _git_sha(repo_root, base_sha)
+            except SensitivityError:
+                return SensitivityRequest(
+                    proof=proof,
+                    changed_paths=exact_changed_paths,
+                    method=SensitivityMethod.BASE,
+                    against=base_sha,
+                )
+            return SensitivityRequest(
+                proof=proof,
+                changed_paths=exact_changed_paths,
+                method=SensitivityMethod.FAULT,
+                against=fault_id,
+            )
+    if proof_path in exact_changed_paths and (
+        fault_id is None or _proof_owner_materially_changed(repo_root, proof, base_sha)
+    ):
+        return SensitivityRequest(
+            proof=proof,
+            changed_paths=exact_changed_paths,
+            method=SensitivityMethod.BASE,
+            against=base_sha,
+        )
+
+    return SensitivityRequest(
+        proof=proof,
+        changed_paths=exact_changed_paths,
+        method=SensitivityMethod.FAULT if fault_id else SensitivityMethod.BASE,
+        against=fault_id or base_sha,
+    )
+
+
+def _valid_coherent_owner(repo_root: Path, proof: str) -> bool:
+    runner, _, identity = proof.partition(":")
+    path, separator, node = identity.partition("::")
+    if (
+        runner == "node-test"
+        and path.startswith("node/ingest/test/")
+        and path.endswith(".test.mjs")
+        and not separator
+        and not node
+    ):
+        return (repo_root / path).is_file()
+    if runner != "pytest" or not separator or not node:
+        return False
+    try:
+        source = (repo_root / path).read_text(encoding="utf-8")
+        return python_exact_proof_owner(source, node) is not None
+    except (OSError, UnicodeError, SyntaxError):
+        return False
+
+
+def _proof_owner_materially_changed(repo_root: Path, proof: str, base_sha: str) -> bool:
+    """Fail closed unless one exact Python proof and its shared support are unchanged."""
+    runner, _, identity = proof.partition(":")
+    path, separator, node = identity.partition("::")
+    if runner != "pytest" or not separator or not node:
+        return True
+    try:
+        candidate = (repo_root / path).read_text(encoding="utf-8")
+        baseline = _git(repo_root, "show", f"{base_sha}:{path}", capture=True).stdout
+        candidate_owner = python_exact_proof_owner(candidate, node)
+        baseline_owner = python_exact_proof_owner(baseline, node)
+    except (OSError, UnicodeError, SyntaxError, SensitivityError):
+        return True
+    return candidate_owner is None or candidate_owner != baseline_owner
+
+
 def canonical_proof(repo_root: Path, proof: str) -> str:
-    path = _proof_path(proof)
-    _runner, separator, node = proof.partition(":")
-    if separator and "::" in node:
+    # An explicit node is already the caller's exact proof identity. Never
+    # redirect it to a different priority node merely because both live in the
+    # same file. Whole-file selections alone need a canonical sensitivity
+    # owner.
+    if "::" in proof.partition(":")[2]:
         return proof
+    path = _proof_path(proof)
     manifest_path = repo_root / "testdata/proofs.json"
     if not manifest_path.is_file():
         return proof
@@ -494,9 +589,13 @@ def canonical_proof(repo_root: Path, proof: str) -> str:
         for candidate in risk.get("proofs", [])
         if _proof_path(candidate) == path
     }
-    if len(candidates) > 1:
+    # A proof file may be declared both as a whole-file priority route and as
+    # one node-qualified canonical entry (the fault-bound node). The exact node
+    # is the sensitivity owner; only competing exact nodes are ambiguous.
+    exact = {candidate for candidate in candidates if "::" in candidate.partition(":")[2]}
+    if len(exact) > 1:
         raise SensitivityError(f"proof owner has multiple priority nodes: {path}")
-    return next(iter(candidates), proof)
+    return next(iter(exact or candidates), proof)
 
 
 @contextmanager
@@ -508,7 +607,12 @@ def isolated_worktree(
     runtime_cleaner: RuntimeCleaner = clean_owned_runtime,
     memory_sampler: OwnedMemorySampler | None = None,
 ) -> Iterator[Path]:
-    temporary = Path(tempfile.mkdtemp(prefix="nexus-test-sensitivity-"))
+    # Keep isolated checkouts below the Unix-domain socket path ceiling.  The
+    # platform default temporary directory is too deep on macOS for proofs
+    # whose run-owned sockets live below the checkout.
+    temporary = Path(
+        tempfile.mkdtemp(prefix="nexus-sensitivity-", dir=_SENSITIVITY_TEMP_ROOT)
+    ).resolve(strict=True)
     checkout = temporary / "checkout"
     _git(repo_root, "worktree", "add", "--detach", str(checkout), revision)
     try:
@@ -518,6 +622,10 @@ def isolated_worktree(
         _link_dependency(
             repo_root / "apps/web/node_modules",
             checkout / "apps/web/node_modules",
+        )
+        _link_dependency(
+            repo_root / "node/ingest/node_modules",
+            checkout / "node/ingest/node_modules",
         )
         _clear_isolated_python_bytecode(checkout)
         yield checkout.resolve(strict=True)
@@ -543,8 +651,7 @@ def _base_overlays(proof_path: str) -> tuple[str, ...]:
             (
                 "python/tests/conftest.py",
                 "python/tests/testkit",
-                "python/pyproject.toml",
-                "python/uv.lock",
+                "python/nexus_test_control/provider_api_contract.py",
             )
         )
     elif proof_path.startswith("apps/web/"):
@@ -559,6 +666,11 @@ def _base_overlays(proof_path: str) -> tuple[str, ...]:
                 "apps/web/bun.lock",
             )
         )
+        if proof_path in (
+            "apps/web/src/lib/workspace/store.browser.test.tsx",
+            "apps/web/src/lib/workspace/adjacentPaneKeybindings.browser.test.tsx",
+        ):
+            shared.append("apps/web/src/__tests__/helpers/workspaceSessionBff.ts")
     return tuple(dict.fromkeys(shared))
 
 
@@ -718,7 +830,7 @@ def _proof_path(proof: str) -> str:
     parsed = PurePosixPath(path)
     if (
         not separator
-        or runner not in {"gradle", "playwright", "pytest", "static", "vitest"}
+        or runner not in {"gradle", "node-test", "playwright", "pytest", "static", "vitest"}
         or not path
         or parsed.is_absolute()
         or ".." in parsed.parts

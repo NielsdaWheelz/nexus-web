@@ -1,0 +1,11 @@
+diff --git a/python/nexus/services/llm_ledger.py b/python/nexus/services/llm_ledger.py
+--- a/python/nexus/services/llm_ledger.py
++++ b/python/nexus/services/llm_ledger.py
+@@ -456,6 +456,7 @@
+ ) -> None:
+     """Retire a committed successor and close its parent without inventing a model turn."""
+ 
++    return
+     call = _lock_owned_generation(db, owner=owner, generation_id=generation_id)
+     _assert_parent_open(call)
+     source = db.scalar(

@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 from uuid import uuid4
 
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import Media, MediaFile, MediaKind, ProcessingStatus
+from nexus.db.models import (
+    Media,
+    MediaFile,
+    MediaKind,
+    PdfPageTextSpan,
+    ProcessingStatus,
+)
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.media_deletion import (
     delete_document_media_if_unreferenced,
@@ -58,6 +65,15 @@ def test_owned_object_write_and_document_delete_converge_across_postgres_and_min
                 storage_path=storage_path,
                 content_type="application/pdf",
                 size_bytes=len(payload),
+                source_sha256=hashlib.sha256(payload).hexdigest(),
+            )
+        )
+        db.add(
+            PdfPageTextSpan(
+                media_id=media_id,
+                page_number=1,
+                start_offset=0,
+                end_offset=4,
             )
         )
         db.commit()
@@ -90,6 +106,9 @@ def test_owned_object_write_and_document_delete_converge_across_postgres_and_min
         assert oracle.get(Media, media_id) is None, "document database owner survived deletion"
         assert oracle.get(MediaFile, media_id) is None, (
             "object ownership metadata survived document deletion"
+        )
+        assert oracle.get(PdfPageTextSpan, (media_id, 1)) is None, (
+            "explicit document deletion left its PDF page-span child behind"
         )
     assert storage.head_object(storage_path) is not None, (
         "object disappeared before the committed database deletion exposed its cleanup obligation"

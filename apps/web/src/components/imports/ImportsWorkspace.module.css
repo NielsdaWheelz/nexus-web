@@ -1,0 +1,206 @@
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.brief {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.freshness {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+/* The search box and the pane's one refresh command share the toolbar's first
+   row, so the command keeps the same place however wide the filter set grows. */
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.search {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* The date pair is named by what the server bounds with it. */
+.dateGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.dateGroupLabel {
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+/* No shared date control exists; this is the raw input with a visible label. */
+.dateField {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.dateField input {
+  min-height: var(--size-xl);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: var(--text-sm);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.rowActions {
+  display: contents;
+}
+
+.rowStatus {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.rowStatusLine {
+  color: var(--ink);
+}
+
+.rowReason,
+.rowMatched,
+.rowAge {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--ink-muted);
+}
+
+.empty strong {
+  color: var(--ink);
+  font-size: var(--text-md);
+}
+
+.inspector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.inspectorState {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.inspectorActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.inspectorEmpty {
+  padding: var(--space-4);
+  color: var(--ink-muted);
+}
+
+.attempt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-block: var(--space-2);
+  border-top: 1px solid var(--edge-subtle);
+}
+
+.attemptTitle {
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.attemptEvents {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.attemptEvents li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.attemptEvents time {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+}
+
+.diagnostics {
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.diagnostics dl {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.diagnostics div {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.diagnostics dt {
+  min-width: var(--space-20);
+  color: var(--ink-faint);
+}
+
+/* Touch keeps every command at a full target while the desktop toolbar and rows
+   stay compact (contract §6: 44 px targets on mobile). A switch and a labelled
+   select paint their target on the enclosing label, so labels are sized too and
+   the switch's own checkbox — screen-reader-only, and never the box a finger
+   lands on — is left alone. The inspector is published outside this subtree, so
+   it keeps naming its own actions. A target is a box, not a height: the
+   narrowest commands here (a chip's remove cross, a row's overflow trigger)
+   are sized by width in their own primitives, so both axes are set. */
+@media (pointer: coarse) {
+  .workspace :is(button, [role="button"], select, label),
+  .workspace input:not([type="checkbox"]),
+  .inspectorActions button {
+    min-width: var(--size-xl);
+    min-height: var(--size-xl);
+  }
+}

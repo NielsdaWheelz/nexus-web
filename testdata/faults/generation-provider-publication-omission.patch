@@ -1,0 +1,12 @@
+diff --git a/python/nexus/services/tool_runtime/composition.py b/python/nexus/services/tool_runtime/composition.py
+--- a/python/nexus/services/tool_runtime/composition.py
++++ b/python/nexus/services/tool_runtime/composition.py
+@@ -203,7 +203,7 @@
+         return None
+     if not isinstance(operation.plan.exposure, Native):
+         raise ValueError("only Native model-tool plans can be provider-published")
+-    return lower_tools(ToolPublication(plan=operation.plan, revealed_targets=()))
++    return None
+ 
+ 
+ def compose_provider_model_tools(operation: FrozenToolOperation) -> ProviderModelTools:

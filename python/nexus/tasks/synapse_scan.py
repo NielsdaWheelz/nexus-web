@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
-import httpx
 from sqlalchemy.orm import Session
 
+from nexus.jobs.queue import JobExecutionContext, RescheduleRequested
 from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.resource_graph.refs import assert_resource_ref
 from nexus.services.synapse import run_synapse_scan
@@ -15,15 +15,30 @@ from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 _SPEC = LlmTaskSpec(label="synapse_scan")
 
 
-def synapse_scan(user_id: str, ref: str, reason: str) -> dict:
+def synapse_scan(
+    user_id: str,
+    ref: str,
+    reason: str,
+    *,
+    context: JobExecutionContext,
+) -> dict | RescheduleRequested:
     user_uuid = UUID(user_id)
     parsed_ref = assert_resource_ref(ref)
 
-    async def _handler(db: Session, runtime: ExecutionRuntime, _client: httpx.AsyncClient) -> dict:
-        result = await run_synapse_scan(db, user_id=user_uuid, ref=parsed_ref, runtime=runtime)
+    async def _handler(db: Session, runtime: ExecutionRuntime) -> dict | RescheduleRequested:
+        result = await run_synapse_scan(
+            db,
+            user_id=user_uuid,
+            ref=parsed_ref,
+            context=context,
+            runtime=runtime,
+        )
+        if isinstance(result, RescheduleRequested):
+            return result
         # "trigger", not "reason": the worker failure protocol reads
         # result["reason"] as the error message for failed statuses. `status`
-        # 'failed' is retryable (queue ladder); 'terminal_failed' is not; both
+        # 'failed' is retryable pre-dispatch admission; a durable Completed
+        # generation is always 'terminal_failed' and never redispatched. Both
         # persist `error_code` in the job result_payload for correlation.
         return {
             "status": result.status,
@@ -32,6 +47,6 @@ def synapse_scan(user_id: str, ref: str, reason: str) -> dict:
             "trigger": reason,
         }
 
-    # No on_worker_exception: there is no head row to fail; the queue's retry
-    # ladder owns unexpected exceptions, and prior edges stay intact (D6).
+    # There is no head row to fail. The queue's retry ladder owns unexpected
+    # exceptions, and prior edges stay intact (D6).
     return run_llm_task(_SPEC, _handler)

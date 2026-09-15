@@ -8,12 +8,9 @@ import {
 import { publishConversationIndexChange } from "@/lib/conversations/indexRevision";
 import {
   expectBoolean,
+  expectCanonicalUuid,
   expectExactRecord,
-  expectString,
 } from "@/lib/validation";
-
-const CANONICAL_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export interface MessageDeleteReceipt {
   readonly conversationId: string;
@@ -31,15 +28,10 @@ function decodeMessageDeleteReceipt(
     ["conversationId", "conversationDeleted", "collectionRevision"],
     "delete Message response.data",
   );
-  const conversationId = expectString(
+  const conversationId = expectCanonicalUuid(
     data.conversationId,
     "delete Message response.data.conversationId",
   );
-  if (!CANONICAL_UUID_RE.test(conversationId)) {
-    throw new TypeError(
-      "delete Message response.data.conversationId must be a canonical UUID",
-    );
-  }
   if (conversationId !== expectedConversationId) {
     throw new TypeError(
       "delete Message response conversation identity does not match request",

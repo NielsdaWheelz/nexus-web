@@ -59,7 +59,6 @@ it("uses the workflow label and keeps virtual selection stable under result refl
           {
             id: "Results",
             label: "Results",
-            layout: "Flow",
             entries: [first, second],
           },
         ],
@@ -70,7 +69,7 @@ it("uses the workflow label and keeps virtual selection stable under result refl
       busy: false,
       announcement: null,
       focusKey: "Root",
-      dialogLabel: "Activity",
+      dialogLabel: "Add content",
       nexusOpenShortcutLabel: "Ctrl+K",
       actionsRequest: null,
       setQuery: () => {},
@@ -85,7 +84,10 @@ it("uses the workflow label and keeps virtual selection stable under result refl
   }
 
   render(withRenderEnvironment(<Scenario />));
-  expect(screen.getByRole("dialog", { name: "Activity" })).toBeVisible();
+  expect(
+    screen.getByRole("dialog", { name: "Add content" }),
+    "the dialog did not take the workflow label the controller published",
+  ).toBeVisible();
   const input = screen.getByRole("combobox", { name: "Find anything…" });
   const firstPrimaryId = desktopNexusCellId(first.key, "Primary");
   const secondPrimary = screen.getByRole("gridcell", {

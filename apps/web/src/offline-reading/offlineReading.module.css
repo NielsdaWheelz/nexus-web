@@ -1,0 +1,328 @@
+/* The packaged shelf loads the canonical token owner (src/app/globals.css) and
+   pins the dark room via <html data-theme="dark">. This sheet owns only what
+   the shelf must state for itself:
+     1. the font-family variables next/font publishes in the hosted app, which
+        the offline bundle cannot import and therefore resolves to system
+        stacks;
+     2. tokens whose hosted owner (pane chrome) does not exist here;
+     3. the shelf's own editorial layout.
+   Every value below is a canonical token; no raw colour literals. */
+:root {
+  /* next/font families -> system stacks (the bundle cannot import next/font). */
+  --font-inter: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-jetbrains-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  --font-eb-garamond: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
+    "Times New Roman", serif;
+  --font-im-fell: "Iowan Old Style", Georgia, "Times New Roman", serif;
+  --font-unifraktur: Georgia, "Times New Roman", serif;
+  /* The shelf has no pane chrome, so the pane content offset is zero. */
+  --mobile-pane-content-offset: 0px;
+}
+
+/* globals.css locks the workspace viewport (`height: 100%; overflow: hidden`)
+   because panes scroll internally. The shelf is one scrolling document. */
+html,
+body {
+  height: auto;
+  min-height: 100%;
+}
+
+body {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.shell {
+  max-width: 44rem;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding:
+    max(var(--space-8), env(safe-area-inset-top))
+    var(--space-5)
+    max(var(--space-10), env(safe-area-inset-bottom));
+}
+
+.readerShell {
+  display: flex;
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow: hidden;
+  padding:
+    max(var(--space-3), env(safe-area-inset-top))
+    var(--space-3)
+    max(var(--space-3), env(safe-area-inset-bottom));
+}
+
+/* --- Masthead ------------------------------------------------------------ */
+
+.hero {
+  padding-bottom: var(--space-6);
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-widest);
+  text-transform: uppercase;
+}
+
+.hero h1 {
+  margin: var(--space-2) 0 var(--space-3);
+  font-family: var(--font-eb-garamond);
+  font-size: clamp(2.25rem, 11vw, var(--text-display-2));
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+}
+
+.lede {
+  max-width: 32ch;
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
+}
+
+/* --- Ruled editorial index ----------------------------------------------- */
+
+.list {
+  margin: var(--space-8) 0 0;
+  padding: 0;
+  border-top: var(--stroke-hairline) solid var(--edge);
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-4) var(--space-6);
+  align-items: start;
+  padding: var(--space-6) 0;
+  border-bottom: var(--stroke-hairline) solid var(--edge-subtle);
+}
+
+.rowKind {
+  margin: 0;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-widest);
+  text-transform: uppercase;
+}
+
+.rowTitle {
+  margin: var(--space-2) 0 0;
+  font-family: var(--font-eb-garamond);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-snug);
+  text-wrap: balance;
+}
+
+.rowMeta {
+  margin: var(--space-2) 0 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: baseline;
+  justify-content: flex-end;
+}
+
+/* Text-forward actions: a ruled word, not a filled pill. */
+.action,
+.quietAction,
+.signOut {
+  min-height: var(--size-xl);
+  padding: 0;
+  border: 0;
+  border-bottom: var(--stroke-hairline) solid currentcolor;
+  background: none;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  letter-spacing: var(--tracking-wide);
+}
+
+.action {
+  color: var(--accent);
+}
+
+.quietAction {
+  color: var(--ink-faint);
+}
+
+.quietAction:hover {
+  color: var(--ink);
+}
+
+/* --- Notices and empty states -------------------------------------------- */
+
+.notice {
+  margin: var(--space-3) 0 0;
+  color: var(--warning);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.error {
+  margin: var(--space-5) 0 0;
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+
+.empty {
+  margin: var(--space-12) 0;
+  border-top: var(--stroke-hairline) solid var(--edge);
+  padding-top: var(--space-6);
+}
+
+.empty h2 {
+  margin: 0;
+  font-family: var(--font-eb-garamond);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-snug);
+}
+
+.empty p {
+  margin: var(--space-3) 0 var(--space-5);
+  color: var(--ink-muted);
+  font-size: var(--text-md);
+}
+
+.signOut {
+  display: block;
+  margin-top: var(--space-12);
+  color: var(--danger);
+}
+
+/* --- Reader ------------------------------------------------------------- */
+
+.readerHeader {
+  display: flex;
+  flex: none;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--space-3);
+  border-bottom: var(--stroke-hairline) solid var(--edge);
+}
+
+.readerHeader > button {
+  flex: none;
+}
+
+.readerHeader > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.readerHeader h1 {
+  overflow: hidden;
+  margin: 0;
+  font-family: var(--font-eb-garamond);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-snug);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.readerHeader p {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
+}
+
+.readerSurface {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.documentReader {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.saved {
+  margin: var(--space-3) 0;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  align-items: baseline;
+  margin: var(--space-3) 0;
+}
+
+.readerActions {
+  flex: none;
+  flex-wrap: nowrap;
+  gap: var(--space-3);
+  align-items: center;
+  margin: 0 0 var(--space-2);
+}
+
+.readerActions > button {
+  flex: none;
+}
+
+.readerActions > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.readerMapPanel {
+  flex: 4.5 1 0;
+  min-width: 0;
+  min-height: 0;
+  margin-bottom: var(--space-3);
+}
+
+.dialogBody p {
+  margin: 0 0 var(--space-5);
+  color: var(--ink-muted);
+  line-height: var(--leading-relaxed);
+}
+
+@media (width <= 36rem) {
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rowActions {
+    justify-content: flex-start;
+  }
+}
+
+.textWithMap {
+  display: grid;
+  flex: 5.5 1 0;
+  grid-template-columns: minmax(0, 1fr) 52px;
+  min-height: 0;
+}

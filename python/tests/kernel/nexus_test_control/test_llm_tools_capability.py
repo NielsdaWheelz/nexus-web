@@ -21,7 +21,8 @@ def test_full_and_higher_ci_prepare_the_pinned_llm_tools_object_source() -> None
     assert "inputs.llm-tools == 'true'" in setup
     assert "https://github.com/NielsdaWheelz/llm-tools.git" in setup
     assert 'test "$(git -C "$checkout" rev-parse HEAD)" = "$revision"' in setup
-    assert 'uv sync --all-extras --locked --directory "$checkout"' in setup
+    assert "-m nexus_test_control.setup_dependencies" in setup
+    assert 'prepared_suites+=(--suite "$package")' in setup
     for path in (
         ".github/workflows/ci.yml",
         ".github/workflows/nightly.yml",
@@ -152,6 +153,9 @@ def _assert_doctor_checks_llm_tools_checkout(tmp_path: Path, tools: Path) -> Non
         "apps/web/node_modules/.ready",
         "apps/web/e2e/playwright.config.ts",
         "apps/android/gradlew",
+        "node/ingest/package.json",
+        "node/ingest/bun.lock",
+        "node/ingest/node_modules/.ready",
     ):
         _write(repo_root / path, "ready\n")
     _write(repo_root / "python/.venv/bin/python", "#!/bin/sh\nexit 0\n")
