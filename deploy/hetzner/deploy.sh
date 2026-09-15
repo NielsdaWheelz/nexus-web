@@ -122,19 +122,19 @@ case "$PRODUCTION_HOST" in
   *[!a-z0-9.-]*|.*|*..*|*.) die "committed production host is malformed" ;;
 esac
 [[ "$PRODUCTION_HOST" == *.* ]] || die "committed production host is malformed"
-BACKUP_ARGUMENTS=()
+APPLY_ARGUMENTS=(--production-host "$PRODUCTION_HOST")
 BACKUP_POLICY=required
 case "$#" in
   1) ;;
   2)
     [ "$2" = "--no-database-backup" ] || \
       die "usage: deploy/hetzner/deploy.sh <source-sha> [--no-database-backup]"
-    BACKUP_ARGUMENTS=(--no-database-backup)
+    APPLY_ARGUMENTS+=(--no-database-backup)
     BACKUP_POLICY=waived
     ;;
   *) die "usage: deploy/hetzner/deploy.sh <source-sha> [--no-database-backup]" ;;
 esac
-readonly -a BACKUP_ARGUMENTS
+readonly -a APPLY_ARGUMENTS
 readonly BACKUP_POLICY
 readonly SOURCE_SHA="$1"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || die "source SHA must be 40 lowercase hex characters"
@@ -354,8 +354,7 @@ if [ "$phase" = "RollbackRequired" ] || [ "$phase" = "ForwardFixPending" ]; then
     python3 -B "$REMOTE_CONTROLLER" apply \
       --source-sha "$SOURCE_SHA" \
       --deployment-id "$settlement_deployment_id" \
-      --production-host "$PRODUCTION_HOST" \
-      "${BACKUP_ARGUMENTS[@]}"
+      "${APPLY_ARGUMENTS[@]}"
   die "durable failure settlement unexpectedly returned success"
 fi
 
@@ -655,8 +654,7 @@ if [ "$status" = "new" ] || [ "$phase" != "FrontendPromoted" ]; then
     python3 -B "$REMOTE_CONTROLLER" apply \
       --source-sha "$SOURCE_SHA" \
       --deployment-id "$bound_deployment_id" \
-      --production-host "$PRODUCTION_HOST" \
-      "${BACKUP_ARGUMENTS[@]}"
+      "${APPLY_ARGUMENTS[@]}"
 fi
 
 authoritative_alias_status="$(vercel_get \
