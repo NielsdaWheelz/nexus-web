@@ -986,9 +986,9 @@ this keeps resume robust when typography changes.
 - extension URL capture reuses existing URL classification, including supported video ingestion
 - extension auth is scoped, revocable, and only covers capture
 
-## regression coverage
+## manual regression coverage
 
-required automated coverage includes:
+when reader behavior changes, manually verify:
 
 - reader settings persistence
 - web canonical locator resume after reflow from profile typography changes
@@ -1013,22 +1013,8 @@ required automated coverage includes:
 - the APK shelf's local-only request/range routing and explicit downloaded-copy
   and text-only-article disclosures
 
-Supporting proof uses controller-owned per-run state, the canonical corpus, and
-the reader-progress/citation journeys.
-
-The current device instrumentation seam covers SQLite/files/Keystore recreation,
-lease-delayed removal, and account purge and is included in signed-release
-instrumentation. Promotion still requires protected physical-device evidence
-for force-stop, reboot after unlock, airplane-mode cold launch, real local API
-package acquisition for all three formats, pending-progress restoration, and
-either compatible in-place update continuity or a complete empty-baseline
-attestation before an incompatible candidate acquisition. Host or emulator
-success is not that evidence.
-
 ## validation commands
 
 ```bash
-./scripts/test changed apps/web/src/lib/reader
-./scripts/test changed apps/web/e2e/journeys/reader-progress-resume.journey.spec.ts
-./scripts/test changed apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts
+./scripts/test
 ```

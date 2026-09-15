@@ -7,7 +7,7 @@ import {
   RESOURCE_SCHEMES,
   STATEFUL_ACTION_LABELS,
   type OracleResourceActionId,
-} from "../../../e2e/resourceActionProductOracle";
+} from "./resourceActionProductOracle.test-support";
 import type { ResourceActionEnvironment } from "@/lib/actions/resourceActionEnvironment";
 import { RESOURCE_ACTION_BLOCKED_REASON_COPY } from "@/lib/actions/resourceActionRuntime";
 import {

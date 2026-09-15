@@ -5,15 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
-from importlib.util import find_spec
 
 import pytest
 
-_GENERATION_POLICY_CUTOVER_PRESENT = find_spec("nexus.services.generation_selection") is not None
-if _GENERATION_POLICY_CUTOVER_PRESENT:
-    from nexus.services import generation_policy
-    from nexus.services.generation_selection import CodexPersonalSelection
-    from nexus.services.tool_runtime.profiles import TOOL_PLAN_DEFINITIONS_BY_ID
+from nexus.services import generation_policy
+from nexus.services.generation_selection import CodexPersonalSelection
+from nexus.services.tool_runtime.profiles import TOOL_PLAN_DEFINITIONS_BY_ID
 
 _EXPECTED_SELECTIONS = {
     "metadata_enrichment": ("gpt-5.6-luna", "low"),
@@ -50,17 +47,12 @@ _EXPECTED_WORKFLOW = {
 }
 
 
-def _require_generation_policy_cutover() -> None:
-    assert _GENERATION_POLICY_CUTOVER_PRESENT, "the exact generation policy is absent"
-
-
 def _selection_facts(selection: CodexPersonalSelection) -> tuple[str, str]:
     assert selection.route == "CodexPersonal"
     return selection.model, selection.reasoning
 
 
 def test_exact_generation_policy_is_total_content_derived_and_profile_free() -> None:
-    _require_generation_policy_cutover()
     policy = generation_policy.GENERATION_POLICY
 
     assert tuple(policy.background_operations) == tuple(_EXPECTED_SELECTIONS)
@@ -135,7 +127,6 @@ def test_exact_generation_policy_is_total_content_derived_and_profile_free() -> 
 
 
 def test_policy_revision_changes_for_any_exact_selection_or_workflow_fact() -> None:
-    _require_generation_policy_cutover()
     facts = generation_policy.policy_facts()
     changed = json.loads(json.dumps(facts))
     changed["background_operations"]["oracle"]["selection"]["model"] = "gpt-5.6-luna"
@@ -151,7 +142,6 @@ def test_policy_revision_changes_for_any_exact_selection_or_workflow_fact() -> N
 
 
 def test_policy_catalog_rejects_drift_and_unknown_operations() -> None:
-    _require_generation_policy_cutover()
     oracle = generation_policy.background_operation_policy("oracle")
     wrong = replace(
         oracle,
@@ -165,7 +155,6 @@ def test_policy_catalog_rejects_drift_and_unknown_operations() -> None:
 
 
 def test_codex_ephemeral_limits_are_operation_owned_not_model_name_bounds() -> None:
-    _require_generation_policy_cutover()
     policies = (
         generation_policy.GENERATION_POLICY.chat.workflow,
         *(
@@ -187,7 +176,6 @@ def test_codex_ephemeral_limits_are_operation_owned_not_model_name_bounds() -> N
 
 
 def test_policy_revision_hash_is_domain_separated_and_canonical() -> None:
-    _require_generation_policy_cutover()
     facts = generation_policy.policy_facts()
     canonical = json.dumps(
         facts,

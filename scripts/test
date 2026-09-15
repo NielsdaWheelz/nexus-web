@@ -4,5 +4,64 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(dirname "$script_dir")"
 
-cd "$repo_root/python"
-exec uv run --frozen --no-sync python -m nexus_test_control "$@"
+if [ "$#" -ne 0 ]; then
+  echo "usage: ./scripts/test" >&2
+  exit 2
+fi
+
+for command in actionlint bun git shellcheck uv; do
+  command -v "$command" >/dev/null 2>&1 || {
+    echo "error: $command is required" >&2
+    exit 1
+  }
+done
+
+cd "$repo_root"
+
+actionlint .github/workflows/*.yml
+
+readarray -t shell_files < <(git ls-files '*.sh')
+shellcheck "${shell_files[@]}"
+
+(
+  cd python
+  python_files=(
+    .
+    ../apps/api/main.py
+    ../apps/codex_agent
+    ../apps/worker/health.py
+    ../apps/worker/main.py
+    ../deploy/hetzner/release.py
+  )
+  uv run --frozen --no-sync ruff format --check "${python_files[@]}"
+  uv run --frozen --no-sync ruff check "${python_files[@]}"
+  uv run --frozen --no-sync pyright
+)
+
+(
+  cd apps/web
+  bun run lint:css-tokens
+  bun run lint
+  bun run typecheck
+)
+
+(
+  cd python
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+    uv run --frozen --no-sync pytest -q -p pytest_socket --maxfail=1
+)
+
+(
+  cd apps/web
+  bun run test:unit
+)
+
+migration_heads="$(
+  cd migrations
+  uv run --project ../python --frozen --no-sync alembic heads
+)"
+if [[ ! "$migration_heads" =~ ^[0-9a-z][0-9a-z_]{0,63}[[:space:]]\(head\)$ ]]; then
+  echo "error: expected one canonical alembic head, got: $migration_heads" >&2
+  exit 1
+fi
+printf 'migration graph: %s\n' "$migration_heads"

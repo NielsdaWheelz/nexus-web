@@ -47,18 +47,15 @@ When running locally:
 
 ## Backend Proof
 
-From the repository root, use the single typed test interface:
+From the repository root, use the single test command:
 
 ```bash
-./scripts/test changed python/nexus/services/example.py
-./scripts/test confidence
-./scripts/test pr
+./scripts/test
 ```
 
-Direct pytest is allowed only for exact debugging under the checked
-configuration. It is not a workflow verdict. The controller owns Ruff,
-Pyright, kernel, real-PostgreSQL service/migration, eval, audit, hosted, network,
-resource, memory, and evidence policy.
+It runs Ruff, Pyright, and fast deterministic kernel tests. Real-service,
+hosted-provider, and privileged host tests are not part of the automated
+portfolio. Direct pytest is not a repository verdict.
 
 ## Runtime Contracts
 

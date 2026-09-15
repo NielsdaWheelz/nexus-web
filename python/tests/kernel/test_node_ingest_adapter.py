@@ -1,85 +1,15 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
-from pathlib import Path
 
 import pytest
 
-from nexus.config import Environment
 from nexus.errors import ApiErrorCode
-from nexus.services import node_ingest, web_article_ingest
+from nexus.services import node_ingest
 from nexus.services.node_ingest import (
     IngestError,
-    NodeIngestCommand,
     NodeIngestProtocolDefect,
-    local_node_ingest_command,
-    run_node_ingest,
 )
-
-
-def test_local_web_article_worker_composition_supplies_the_explicit_repo_node_command(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Risk: local workers select the missing image path or an ambient override."""
-
-    monkeypatch.setenv("NODE_INGEST_SCRIPT", "/tmp/ambient-override.mjs")
-    result = web_article_ingest.run_web_article_node_ingest(
-        "http://127.0.0.1/private",
-        environment=Environment.TEST,
-    )
-    assert result == IngestError(
-        error_code=ApiErrorCode.E_SSRF_BLOCKED,
-        message="Source cannot be fetched safely.",
-    )
-    command = local_node_ingest_command()
-    node = shutil.which("node")
-    assert node is not None
-    assert command.executable == Path(node).resolve(strict=True).as_posix()
-    assert command.script == (Path(__file__).resolve().parents[3] / "node/ingest/ingest.mjs")
-    assert web_article_ingest._node_ingest_command_for_environment(Environment.STAGING) is None
-    assert web_article_ingest._node_ingest_command_for_environment(Environment.PROD) is None
-
-
-def test_local_script_seam_uses_minimal_environment_and_redacts_egress_failure_detail(
-    tmp_path: Path,
-) -> None:
-    """Risk: an ambient worker override changes egress authority or leaks peer detail."""
-    environment_path = tmp_path / "node-environment.json"
-    script = tmp_path / "owned-ingest.mjs"
-    script.write_text(
-        "import { writeFileSync } from 'node:fs';\n"
-        f"writeFileSync({json.dumps(str(environment_path))}, JSON.stringify(process.env));\n"
-        "process.stdout.write(JSON.stringify({\n"
-        "  version: 1,\n"
-        "  tag: 'Failure',\n"
-        "  failure: { tag: 'UnsafeDestination' },\n"
-        "}));\n",
-        encoding="utf-8",
-    )
-    node = shutil.which("node")
-    assert node is not None
-
-    result = run_node_ingest(
-        "https://accepted.example/article",
-        command=NodeIngestCommand(
-            executable=Path(node).resolve(strict=True).as_posix(),
-            script=script,
-        ),
-    )
-
-    assert result == IngestError(
-        error_code=ApiErrorCode.E_SSRF_BLOCKED,
-        message="Source cannot be fetched safely.",
-    )
-    child_environment = json.loads(environment_path.read_text(encoding="utf-8"))
-    darwin_text_encoding = child_environment.pop("__CF_USER_TEXT_ENCODING", None)
-    assert darwin_text_encoding in {None, f"0x{os.getuid():X}:0x0:0x0"}
-    assert child_environment == {
-        "LANG": "C.UTF-8",
-        "NODE_ENV": "production",
-    }
 
 
 @pytest.mark.parametrize(

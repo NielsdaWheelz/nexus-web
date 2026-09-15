@@ -1,121 +1,60 @@
-name: Backend images
+name: backend images
 
 on:
-  workflow_run: # zizmor: ignore[dangerous-triggers] job admits only a successful same-repository main push and checks out that exact SHA
-    workflows: ["CI"]
-    types: [completed]
+  push:
+    branches: [main]
 
 permissions: {}
 
 concurrency:
-  group: backend-images-${{ github.event.workflow_run.head_sha }}
+  group: backend-images-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
   publish:
-    name: Publish immutable backend candidate
-    if: >-
-      github.run_attempt == 1 &&
-      github.event.workflow_run.run_attempt == 1 &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.path == '.github/workflows/ci.yml' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
-    # Self-hosted while GitHub-hosted runners are unavailable (Actions spending
-    # limit); the lab runner is x64, so the images build natively.
+    name: publish immutable backend candidate
+    if: github.run_attempt == 1
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 45
     permissions:
-      actions: read
       contents: read
       packages: write
     env:
-      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
-      SOURCE_CI_RUN_ID: ${{ github.event.workflow_run.id }}
-      SOURCE_CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-      SOURCE_CI_WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
-      PUBLISHER_RUN_ID: ${{ github.run_id }}
-      PUBLISHER_RUN_ATTEMPT: ${{ github.run_attempt }}
+      SOURCE_SHA: ${{ github.sha }}
       API_REPOSITORY: ghcr.io/nielsdawheelz/nexus-api
       WORKER_REPOSITORY: ghcr.io/nielsdawheelz/nexus-worker
-      # build-push-action emits auxiliary *.dockerbuild artifacts by default.
-      # The immutable release bundle is the publisher's sole artifact and the
-      # rerun proof rejects any additional artifact set.
       DOCKER_BUILD_RECORD_UPLOAD: "false"
 
     steps:
-      - name: Claim the first exact source CI run
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          source_pages="$(gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/${SOURCE_CI_WORKFLOW_ID}/runs?branch=main&event=push&per_page=100")"
-          first_run_id="$(jq -er \
-            --arg sha "$SOURCE_SHA" \
-            --arg repository "$GITHUB_REPOSITORY" '
-              [.[].workflow_runs[]
-                | select(
-                    .event == "push"
-                    and .head_branch == "main"
-                    and .head_sha == $sha
-                    and .head_repository.full_name == $repository
-                    and .path == ".github/workflows/ci.yml"
-                  )]
-              | if length == 0
-                then error("no exact source CI claim")
-                else min_by(.run_number).id
-                end
-              | select(type == "number" and . > 0)
-            ' <<<"$source_pages")"
-          if [ "$first_run_id" != "$SOURCE_CI_RUN_ID" ]; then
-            echo "this SHA is already claimed by an earlier source CI run" >&2
-            exit 1
-          fi
-
-      - name: Check out the source CI revision
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
-          # A persistent self-hosted runner keeps the controller's untracked runtime
-          # record beside its still-running test stack; wiping only the record makes
-          # the next job re-provision onto foreign containers. Hosted runners are
-          # fresh and clean fully.
-          clean: ${{ runner.environment == 'github-hosted' }}
+          clean: false
 
-      - name: Prove the checked-out source identity
+      - name: prove source identity
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "source CI SHA is malformed" >&2
-            exit 1
-          fi
-          if [[ "$(git rev-parse HEAD)" != "$SOURCE_SHA" ]]; then
-            echo "checkout does not match the source CI SHA" >&2
-            exit 1
-          fi
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
 
-      - name: Prepare a hermetic publisher workspace
+      - name: prepare bundle workspace
         id: release_workspace
         shell: bash
         run: deploy/hetzner/backend-publisher-workspace.sh prepare
 
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      - name: Log in to GHCR
-        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.2
+      - uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push API once
+      - name: build and push api
         id: api
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
@@ -123,12 +62,12 @@ jobs:
           file: docker/Dockerfile.backend
           target: api
           push: true
-          tags: ${{ env.API_REPOSITORY }}:${{ github.event.workflow_run.head_sha }}
-          build-args: SOURCE_SHA=${{ github.event.workflow_run.head_sha }}
+          tags: ${{ env.API_REPOSITORY }}:${{ github.sha }}
+          build-args: SOURCE_SHA=${{ github.sha }}
           provenance: mode=max
           sbom: true
 
-      - name: Build and push worker once
+      - name: build and push worker
         id: worker
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
@@ -136,12 +75,12 @@ jobs:
           file: docker/Dockerfile.backend
           target: worker
           push: true
-          tags: ${{ env.WORKER_REPOSITORY }}:${{ github.event.workflow_run.head_sha }}
-          build-args: SOURCE_SHA=${{ github.event.workflow_run.head_sha }}
+          tags: ${{ env.WORKER_REPOSITORY }}:${{ github.sha }}
+          build-args: SOURCE_SHA=${{ github.sha }}
           provenance: mode=max
           sbom: true
 
-      - name: Read and bind image metadata by digest
+      - name: build immutable bundle
         shell: bash
         env:
           API_IMAGE: ${{ format('{0}@{1}', env.API_REPOSITORY, steps.api.outputs.digest) }}
@@ -150,61 +89,47 @@ jobs:
         run: |
           set -euo pipefail
           deploy/hetzner/backend-publisher-workspace.sh require "$RELEASE_WORKSPACE"
-          readonly RELEASE_BUNDLE="$RELEASE_WORKSPACE/bundle"
-          readonly API_RUNTIME_IDENTITY="$RELEASE_WORKSPACE/api-runtime-identity.json"
-          readonly WORKER_RUNTIME_IDENTITY="$RELEASE_WORKSPACE/worker-runtime-identity.json"
-          require_revision_label() {
-            local image="$1"
-            local role="$2"
-            local revision
-            revision="$(docker image inspect \
-              --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
-              "$image")"
-            if [ "$revision" != "$SOURCE_SHA" ]; then
-              echo "$role image OCI revision label does not match source SHA" >&2
-              exit 1
-            fi
-          }
+          bundle="$RELEASE_WORKSPACE/bundle"
+          api_identity="$RELEASE_WORKSPACE/api-runtime-identity.json"
+          worker_identity="$RELEASE_WORKSPACE/worker-runtime-identity.json"
 
-          mkdir -m 700 -- "$RELEASE_BUNDLE"
+          mkdir -m 700 -- "$bundle"
           docker pull "$API_IMAGE"
           docker pull "$WORKER_IMAGE"
-          require_revision_label "$API_IMAGE" "API"
-          require_revision_label "$WORKER_IMAGE" "worker"
-          docker run --rm --entrypoint python "$API_IMAGE" \
-            -m nexus.release_artifact print-runtime-identity \
-            >"$API_RUNTIME_IDENTITY"
-          docker run --rm --entrypoint python "$WORKER_IMAGE" \
-            -m nexus.release_artifact print-runtime-identity \
-            >"$WORKER_RUNTIME_IDENTITY"
-          cmp "$API_RUNTIME_IDENTITY" "$WORKER_RUNTIME_IDENTITY"
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$API_IMAGE")" = "$SOURCE_SHA"
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$WORKER_IMAGE")" = "$SOURCE_SHA"
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --env PYTHONDONTWRITEBYTECODE=1 \
+            --entrypoint python "$API_IMAGE" \
+            -m nexus.release_artifact print-runtime-identity >"$api_identity"
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --env PYTHONDONTWRITEBYTECODE=1 \
+            --entrypoint python "$WORKER_IMAGE" \
+            -m nexus.release_artifact print-runtime-identity >"$worker_identity"
+          cmp "$api_identity" "$worker_identity"
+
           PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=python \
             python3 -B -m nexus.release_artifact write-candidate-manifest \
             --source-sha "$SOURCE_SHA" \
-            --source-ci-run-id "$SOURCE_CI_RUN_ID" \
-            --source-ci-run-attempt "$SOURCE_CI_RUN_ATTEMPT" \
-            --source-ci-workflow-id "$SOURCE_CI_WORKFLOW_ID" \
-            --publisher-run-id "$PUBLISHER_RUN_ID" \
-            --publisher-run-attempt "$PUBLISHER_RUN_ATTEMPT" \
             --api-image "$API_IMAGE" \
             --worker-image "$WORKER_IMAGE" \
-            --api-runtime-identity "$API_RUNTIME_IDENTITY" \
-            --worker-runtime-identity "$WORKER_RUNTIME_IDENTITY" \
-            --output "$RELEASE_BUNDLE/candidate-manifest.json"
-          install -Dm0555 deploy/hetzner/release.py "$RELEASE_BUNDLE/release.py"
-          install -Dm0444 python/nexus/__init__.py "$RELEASE_BUNDLE/python/nexus/__init__.py"
+            --api-runtime-identity "$api_identity" \
+            --worker-runtime-identity "$worker_identity" \
+            --output "$bundle/candidate-manifest.json"
+          install -Dm0555 deploy/hetzner/release.py "$bundle/release.py"
+          install -Dm0444 python/nexus/__init__.py "$bundle/python/nexus/__init__.py"
           install -Dm0444 python/nexus/release_artifact.py \
-            "$RELEASE_BUNDLE/python/nexus/release_artifact.py"
+            "$bundle/python/nexus/release_artifact.py"
           install -Dm0444 testdata/android/player-protocol.json \
-            "$RELEASE_BUNDLE/testdata/android/player-protocol.json"
-          install -Dm0444 deploy/hetzner/docker-compose.yml "$RELEASE_BUNDLE/docker-compose.yml"
-          install -Dm0444 deploy/hetzner/Caddyfile "$RELEASE_BUNDLE/Caddyfile"
+            "$bundle/testdata/android/player-protocol.json"
+          install -Dm0444 deploy/hetzner/docker-compose.yml "$bundle/docker-compose.yml"
+          install -Dm0444 deploy/hetzner/Caddyfile "$bundle/Caddyfile"
           install -Dm0444 deploy/hetzner/nexus-codex-agent-host.apparmor \
-            "$RELEASE_BUNDLE/nexus-codex-agent-host.apparmor"
+            "$bundle/nexus-codex-agent-host.apparmor"
           install -Dm0444 deploy/hetzner/prove-codex-capacity.sh \
-            "$RELEASE_BUNDLE/prove-codex-capacity.sh"
+            "$bundle/prove-codex-capacity.sh"
 
-      - name: Prove digest references are public
+      - name: prove public digest access
         shell: bash
         env:
           API_IMAGE: ${{ format('{0}@{1}', env.API_REPOSITORY, steps.api.outputs.digest) }}
@@ -216,18 +141,18 @@ jobs:
           docker logout ghcr.io
           anonymous_config="$RELEASE_WORKSPACE/anonymous-docker-config"
           mkdir -m 700 -- "$anonymous_config"
-          DOCKER_CONFIG="$anonymous_config" docker buildx imagetools inspect "$API_IMAGE" >/dev/null
-          DOCKER_CONFIG="$anonymous_config" docker buildx imagetools inspect "$WORKER_IMAGE" >/dev/null
+          DOCKER_CONFIG="$anonymous_config" docker manifest inspect "$API_IMAGE" >/dev/null
+          DOCKER_CONFIG="$anonymous_config" docker manifest inspect "$WORKER_IMAGE" >/dev/null
 
-      - name: Upload the immutable release bundle
+      - name: upload immutable bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: nexus-backend-release-${{ github.event.workflow_run.head_sha }}
+          name: nexus-backend-release-${{ github.sha }}
           path: ${{ steps.release_workspace.outputs.path }}/bundle/
           if-no-files-found: error
           retention-days: 90
 
-      - name: Remove locally pulled backend images
+      - name: remove pulled images
         if: ${{ always() && steps.api.outputs.digest != '' && steps.worker.outputs.digest != '' }}
         shell: bash
         env:
@@ -235,63 +160,11 @@ jobs:
           WORKER_IMAGE: ${{ format('{0}@{1}', env.WORKER_REPOSITORY, steps.worker.outputs.digest) }}
         run: |
           set -euo pipefail
-          if [[ ! "$API_IMAGE" =~ ^ghcr\.io/nielsdawheelz/nexus-api@sha256:[0-9a-f]{64}$ ]] \
-            || [[ ! "$WORKER_IMAGE" =~ ^ghcr\.io/nielsdawheelz/nexus-worker@sha256:[0-9a-f]{64}$ ]]; then
-            echo "backend image cleanup received a malformed digest reference" >&2
-            exit 1
-          fi
-          local_images=()
-          for image in "$API_IMAGE" "$WORKER_IMAGE"; do
-            if docker image inspect "$image" >/dev/null 2>&1; then
-              local_images+=("$image")
-            fi
-          done
-          if [ "${#local_images[@]}" -gt 0 ]; then
-            docker image rm "${local_images[@]}"
-          fi
+          docker image rm "$API_IMAGE" "$WORKER_IMAGE"
 
-      - name: Remove the release workspace
+      - name: remove bundle workspace
         if: ${{ always() && steps.release_workspace.outputs.path != '' }}
         shell: bash
         env:
           RELEASE_WORKSPACE: ${{ steps.release_workspace.outputs.path }}
         run: deploy/hetzner/backend-publisher-workspace.sh cleanup "$RELEASE_WORKSPACE"
-
-  preserve:
-    name: Preserve immutable backend candidate on rerun
-    if: >-
-      github.run_attempt != 1 &&
-      github.event.workflow_run.run_attempt == 1 &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.path == '.github/workflows/ci.yml' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 5
-    permissions:
-      actions: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-      ARTIFACT_NAME: nexus-backend-release-${{ github.event.workflow_run.head_sha }}
-    steps:
-      - name: Prove the first-attempt artifact still exists unchanged
-        shell: bash
-        run: |
-          set -euo pipefail
-          artifacts="$(gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100")"
-          jq -e \
-            --arg name "$ARTIFACT_NAME" \
-            --argjson run_id "$GITHUB_RUN_ID" '
-              [.[].artifacts[]] as $artifacts
-              | length > 0
-              and all(.[]; .total_count == 1)
-              and ($artifacts | length) == 1
-              and ($artifacts[0].name == $name)
-              and ($artifacts[0].expired == false)
-              and ($artifacts[0].workflow_run.id == $run_id)
-              and ($artifacts[0].id | type == "number" and . > 0)
-              and ($artifacts[0].digest | type == "string"
-                and test("^sha256:[0-9a-f]{64}$"))
-            ' <<<"$artifacts" >/dev/null

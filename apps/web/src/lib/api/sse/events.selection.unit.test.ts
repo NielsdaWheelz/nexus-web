@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RUN_SELECTION } from "@/__tests__/helpers/generationCatalog";
+import { RUN_SELECTION } from "@/lib/conversations/runSelection.test-support";
 import {
   selectionStateExplanation,
   type RunSelectionOut,

@@ -1,5 +1,13 @@
 # The supervisor residency limit is 19 MiB looser than the supervisor it guards
 
+## restoration update, 2026-09-14
+
+pr #254 removes the automated suite/harness cited below. retain this historical
+observation for manual product/capacity investigation; its old test commands and
+proposed test-routing changes are superseded by the direct `./scripts/test`
+contract. removal of the suite does not resolve an unconfirmed product concern.
+
+
 **Status:** open
 **Origin:** Imports workspace cutover, Phase 9, 2026-09-10
 **Area:** `python/tests/testkit/background_process_containment_probe.py`

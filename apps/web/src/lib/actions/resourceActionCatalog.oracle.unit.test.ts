@@ -5,7 +5,7 @@ import {
   MEDIA_SUBTYPES,
   RESOURCE_ACTION_LEDGER,
   RESOURCE_SCHEMES as ORACLE_RESOURCE_SCHEMES,
-} from "../../../e2e/resourceActionProductOracle";
+} from "./resourceActionProductOracle.test-support";
 import { RESOURCE_ACTION_CATALOG } from "@/lib/actions/resourceActions";
 import { MEDIA_KINDS } from "@/lib/media/kind";
 import { RESOURCE_SCHEMES } from "@/lib/resourceGraph/resourceRef";

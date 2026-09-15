@@ -40,11 +40,6 @@ val versionNameProperty = providers.gradleProperty("nexusAndroidVersionName").or
     ?: System.getenv("NEXUS_ANDROID_VERSION_NAME")?.trim()
 val nexusGoogleWebClientId = (providers.gradleProperty("nexusGoogleWebClientId").orNull
     ?: System.getenv("NEXUS_GOOGLE_WEB_CLIENT_ID"))?.trim()
-val instrumentationBuildType = providers
-    .gradleProperty("nexusAndroidInstrumentationBuildType")
-    .orNull
-    ?.trim()
-    ?: "debug"
 val releaseBaseUrl = releaseBaseUrlProperty ?: "https://release-host-required.invalid"
 val releaseOwnedHost = releaseOwnedHostProperty ?: "release-host-required.invalid"
 val releaseApiOrigin = releaseApiOriginProperty ?: "https://release-api-origin-required.invalid"
@@ -100,9 +95,6 @@ require(
 }
 require(!nexusGoogleWebClientId.isNullOrBlank()) {
     "Set NEXUS_GOOGLE_WEB_CLIENT_ID or a local nexusGoogleWebClientId Gradle property; required by the native Google sign-in flow."
-}
-require(instrumentationBuildType == "debug" || instrumentationBuildType == "release") {
-    "nexusAndroidInstrumentationBuildType must be debug or release."
 }
 if (requestedReleaseBuild) {
     require(!releaseBaseUrlProperty.isNullOrBlank()) {
@@ -179,7 +171,6 @@ if (requestedReleaseBuild) {
 android {
     namespace = "app.nexus.android"
     compileSdk = 36
-    testBuildType = instrumentationBuildType
 
     defaultConfig {
         applicationId = "app.nexus.android"
@@ -187,7 +178,6 @@ android {
         targetSdk = 36
         versionCode = versionCodeProperty?.toIntOrNull() ?: 1
         versionName = versionNameProperty ?: "1.0"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("int", "PLAYER_PROTOCOL_VERSION", playerProtocolVersion.toString())
         buildConfigField(
             "String",
@@ -242,29 +232,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    testOptions {
-        animationsDisabled = true
-        unitTests.isIncludeAndroidResources = true
-    }
-
-    sourceSets {
-        getByName("test").resources.srcDir(rootProject.file("../../testdata/android"))
-        // Test-only fixture plumbing (canonical offline-reading ZIP assembly) shared by the
-        // JVM host lane and the instrumented device lane so both drive the real verifiers.
-        getByName("test").java.srcDir("src/sharedTest/java")
-        getByName("androidTest").java.srcDir("src/sharedTest/java")
-    }
-}
-
-tasks.withType<Test>().configureEach {
-    testLogging {
-        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-        showStackTraces = false
-    }
-    systemProperty(
-        "nexus.testdata.offlineReadingContract",
-        rootProject.file("../../testdata/offline-reading-contract-v1.json").absolutePath,
-    )
 }
 
 val verifyOfflineReadingAssets = tasks.register("verifyOfflineReadingAssets") {
@@ -349,15 +316,4 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jsoup:jsoup:1.21.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-
-    testImplementation("junit:junit:4.13.2")
-    testImplementation("androidx.test:core-ktx:1.6.1")
-    testImplementation("org.json:json:20250517")
-    testImplementation(kotlin("reflect"))
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
-    testImplementation("org.robolectric:robolectric:4.14.1")
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test:core-ktx:1.6.1")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
-    androidTestImplementation("androidx.test.espresso:espresso-intents:3.6.1")
 }

@@ -276,12 +276,10 @@ resolved through the `highlight:<id>` resource and graph citation path.
 
 ## Contract Tests
 
-Keep these tests aligned with this module contract:
+Keep the fast unit coverage aligned with this module contract:
 
-- `python/tests/service/test_citation_provenance.py`
-- `python/tests/service/test_auth_privacy.py`
-- `apps/web/src/app/(authenticated)/media/[id]/useHostedTextHighlights.browser.test.tsx`
-- `apps/web/e2e/journeys/highlight-note-provenance.journey.spec.ts`
-- `apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts`
-- `testdata/proofs.json` owns the source-to-proof mapping for broader highlight
-  changes.
+- `python/tests/kernel/test_resource_action_subject_boundaries.py`
+- `apps/web/src/components/highlights/selectionActions.unit.test.tsx`
+
+Manually validate persisted highlight provenance, authorization, and
+reader-to-chat behavior when those boundaries change.

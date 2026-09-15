@@ -1,4 +1,9 @@
-# post-bridge safety and conflict audit
+# original post-bridge safety and conflict audit
+
+status: historical inverse-merge audit at a1f59a7. merged #254 supersedes every
+ci/test runtime recommendation below; the updated-main merge ledger owns final
+path resolutions. production/image safety goals remain retained. historical
+commands are not supported execution instructions.
 
 ## identity and method
 
@@ -56,34 +61,20 @@
 | `cc364f2bc9f1ba9c9c5341062747a7a4cf3ba107` | reject invalid candidate settings before writer interruption; retained with restored release controller. |
 | `a1f59a755c91bdc22e77e33c12b93dde829a8e6e` | merge #253; ancestry retained. |
 
-## separately reviewable bridge safety ports
+## final disposition after #254
 
-- commit `5cb017c2`: bridge `8a67f6f230` storage admission, five files. original minimum of checkout and Docker data-filesystem free space; 8,192 MiB, fail closed on unknown, measured under existing heavy lease. deterministic runner inputs and insufficient-space regression retained. **native Docker Desktop cannot expose its VM filesystem through host `disk_usage`; the authoritative restoration runs use the linux devbox; native macos remains fail-closed.**
-- commit `e408cce1`: `dc05cb7`, cleanup only the exact locally pulled candidate digest references; no global pruning.
-- commit `9227742e`: `845ab4e`, use engine Buildx for static checking without another persistent daemon/volume.
-- commit `73bc6f56`: `3cc2ec6` goal. pin **1.3.14**, matching the restored digest-pinned backend ingest builder; legacy bridge 1.3.10 is not the restored toolchain oracle.
-- commit `d076b5e6`: `2b6d932` missing external-suite target safety only; retain the coherent source's stronger archive-based offline hydration.
-- commit `6b3087ea`: `64de7964` cleanup with the still-installed owning checkout's `./scripts/test clean` before checkout replacement; includes successful, fresh-runner and foreign-symlink behavior.
-- baseline already has lineage-derived locking and holds it through exact run cleanup. commit `b5d4c526` restores linked-worktree reservations. scoped entire-stack retirement is implemented in the runner's existing heavy-lease adapter: cleanup occurs after exact run consumers finish and before the same lease releases, including handled failures/interruption. no reentrant CLI machinery is added.
+all 21 commits above remain ancestors. #254 deliberately removes the test
+controller and the cache/build/process/receipt machinery attached to it. their
+historical fixes are not forward-ported into the direct check. the final retained
+runtime/deployment exceptions are:
 
-## later production-release requirements (not executed here)
+- android kotlin compilation remains in-process;
+- copied backend/codex source remains readable to uid 10001;
+- candidate configuration is checked before writer quiescence;
+- exact publisher identity/digest and installed-bundle compatibility are retained;
+- stopped-writer backups, migration ancestry/head checks, health, rollback before
+  mutation, forward repair after mutation, and production verification remain.
 
-The restored `deployment.md` is the operator owner; its restored product requirements apply in addition to migration-specific findings from the migration audit.
-
-1. separate authorization for merge, migration, publication, infrastructure settlement and deployment. restoration PR is not a release approval.
-2. exact clean `HEAD == origin/main == source_sha`; passing exact-main full CI, immutable backend digest publication and exact staged Vercel artifact. never publish an unverified partial restoration.
-3. production-host candidate codex capacity qualification within 72 hours, proving subscription canary, real cgroup memory/headroom/pressure/swap/OOM constraints and unchanged incumbent services. a measured contract breach permanently disqualifies that SHA.
-4. any one-time retained-swap infrastructure settlement is separately announced and authorized: exact recorded container IDs only, ordered Postgres/API/interactive/background/Caddy, health and same-ID zero-swap verification after each. never silently include this in candidate qualification.
-5. planned no-use window and frozen main through durable release settlement. inventory outstanding `nx_chat_draft.v3:` browser commands, settle incompatible pre-cutover commands under old code, retain their tab/session storage and provider/journal evidence.
-6. stop and prove background worker, interactive worker and API stopped. migration 0224 blocks pending/running/retryable or unclassified dead generation work and ambiguous provider effects. dispose explicitly of old fingerprint chat rows while stopped at 0225; 0226 never fabricates admission identities or authorizes resend when a row is absent.
-7. controller-owned stopped-writer backup and verification before data mutation, ancestry/schema/config/image/host constraints, bounded migration container, then exact backend and public frontend proof. after data mutation or backend activation, recovery is forward-only; no automatic schema rollback.
-8. first reading-capable Android release requires the separate reader publication census/rebuild operation and signed physical-device release proof. the restored runbook's stated publication revision has an independently recorded ticket; migration audit must settle the actual revision before this operation.
-9. production smoke is read-only or uses a separately authorized reversible synthetic identity. no production resource was contacted by this audit.
-
-## evidence and tradeoffs
-
-- these are code review and immutable-tree findings, not test receipts. the pr records actual `./scripts/test` outcomes and sensitivity evidence by exact machine and sha.
-- memory numbers above are retained historical admission evidence; restored worker memory must be measured afresh before deciding on any provider laziness port.
-- preserve valid goals rather than transplant bridge architecture. exact scoped process identity, shared-agent peers and richer release proof stay authoritative.
-- retirement restarts peer processes between browser lanes, which adds startup work but preserves reserve and independent audit state. retained peer/socket ownership makes that restart explicit.
-- the CI simplification branch is not part of these patches and must be rebuilt separately after restoration.
+[the updated-main merge ledger](pre-243-main-merge-ledger.md) records every new
+conflict and the equivalent restored-only cleanup. the complete check is now
+only `./scripts/test`; no historical test gate in this audit remains required.

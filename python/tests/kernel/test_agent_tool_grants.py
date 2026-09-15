@@ -1,29 +1,26 @@
-"""RED contract for the dedicated, sessionless generation-tool bearer grant."""
+"""Contract for the dedicated, sessionless generation-tool bearer grant."""
 
 from __future__ import annotations
 
 import base64
 import json
 from datetime import UTC, datetime, timedelta
-from importlib.util import find_spec
 from uuid import uuid4
 
 import pytest
 from pydantic import SecretStr
 
-_GENERATION_TOOL_GRANT_BOUNDARY_PRESENT = find_spec("nexus.services.generation_spec") is not None
-if _GENERATION_TOOL_GRANT_BOUNDARY_PRESENT:
-    from nexus.services.agent_tool_grants import (
-        AGENT_TOOL_GRANT_AUDIENCE,
-        AGENT_TOOL_GRANT_ISSUER,
-        AGENT_TOOL_GRANT_SCOPE,
-        MAX_AGENT_TOOL_GRANT_TTL_SECONDS,
-        AgentToolGrantClaims,
-        GenerationToolGrantAuthority,
-        issue_agent_tool_grant,
-        issue_generation_tool_grant,
-        verify_agent_tool_grant,
-    )
+from nexus.services.agent_tool_grants import (
+    AGENT_TOOL_GRANT_AUDIENCE,
+    AGENT_TOOL_GRANT_ISSUER,
+    AGENT_TOOL_GRANT_SCOPE,
+    MAX_AGENT_TOOL_GRANT_TTL_SECONDS,
+    AgentToolGrantClaims,
+    GenerationToolGrantAuthority,
+    issue_agent_tool_grant,
+    issue_generation_tool_grant,
+    verify_agent_tool_grant,
+)
 
 _SIGNING_KEY = SecretStr("dedicated-generation-tools-hs256-key")
 
@@ -53,9 +50,6 @@ def _claims(now: datetime) -> AgentToolGrantClaims:
 
 
 def test_grant_is_strict_hs256_bearer_and_does_not_leak_secret() -> None:
-    assert _GENERATION_TOOL_GRANT_BOUNDARY_PRESENT, (
-        "dedicated generation-tool grant boundary is absent"
-    )
     from nexus.services import generation_policy
 
     now = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
@@ -105,9 +99,6 @@ def test_grant_is_strict_hs256_bearer_and_does_not_leak_secret() -> None:
 
 
 def test_grant_rejects_clock_skew_and_missing_or_extra_claims() -> None:
-    assert _GENERATION_TOOL_GRANT_BOUNDARY_PRESENT, (
-        "dedicated generation-tool grant boundary is absent"
-    )
     now = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
     claims = _claims(now)
 
@@ -152,9 +143,6 @@ def test_grant_rejects_clock_skew_and_missing_or_extra_claims() -> None:
 
 
 def test_generation_tool_grant_uses_earliest_lease_and_transport_fence() -> None:
-    assert _GENERATION_TOOL_GRANT_BOUNDARY_PRESENT, (
-        "dedicated generation-tool grant boundary is absent"
-    )
     issued_at = datetime(2026, 8, 24, 12, 0, 17, tzinfo=UTC)
     authority = GenerationToolGrantAuthority(
         user_id=uuid4(),

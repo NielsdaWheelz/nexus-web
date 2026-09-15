@@ -6,13 +6,10 @@ the exact restored source has one linear head, **db0229**, not db0228.
 
 ## boundary
 
-the original instruction authorized read-only devbox audit. after the user moved
-all work to the macbook, no further ssh commands ran. the remote audit created no
-files, databases, containers, or other resources. implementation is confined to
-`/Users/nnandal/Documents/code/nexus-web-restoration`.
-
-no production resource was read or changed. no migration, test, service, image
-build/publication, deployment, cleanup, or worker qualification ran in this audit.
+migration source remains byte-identical to the coherent source. no production
+resource was contacted. the table's proof references describe the historical
+portfolio at 98a8b63bf0; #254 removes those integration suites. they are evidence
+of prior design, not current commands or release qualification.
 
 ## migration ledger
 
@@ -33,98 +30,24 @@ build/publication, deployment, cleanup, or worker qualification ran in this audi
 | 0228 | replaces epub navigation with semantic source structure; repairs accepted epub/web cursors and stored exact references; updates web block structure; increments publication generations | deletes/recreates epub navigation rows while preserving authored toc identities; refuses missing source metadata, changed canonical text, unidentifiable authored sections, ambiguous or invalid cursor loci, unresolved exact links or web blocks; rollback is unsupported | `test_reader_structure_migration.py` and `test_web_reader_cursor_migration.py` cover preservation, ambiguous/refused repair, and retry |
 | 0229 | adds original publication date, edition date and edition isbn; drops `media.published_date`; advances collection revisions | **all old mixed publication dates are discarded without copying**; new fields start null; exclusive locks plus source/podcast/metadata/uncertain-work drain prevent old writers crossing the cut | `test_original_publication_dates.py` |
 
-## new proof
+## historical populated rehearsal
 
-new file:
-`python/tests/migrations/test_pre_bridge_restoration_upgrade.py`.
+before #254 merged, the added full-chain test ran on `dev-server` at
+`eb07b3851085a060bade1e282ce7683e65b0d3b0`, run `5b88cb536d729ae9`.
+its one frozen db0215 dataset contained user/library/note content, source objects,
+epub navigation and cursor, upload attempts, transcript audits, terminal chat,
+and metadata history. one uninterrupted upgrade reached db0229. it checked
+retained content and source digests, cursor/publication transitions, truthful
+import history, and the intentional chat/audit/date losses. its cursor fault
+failed at the preservation assertion; the intact chain passed in 152.907 s.
+aggregate owned peak memory was 1,029 mib.
 
-canonical node:
-`pytest:python/tests/migrations/test_pre_bridge_restoration_upgrade.py::test_populated_0215_reaches_head_preserving_content_and_declaring_history_loss`.
-
-one frozen db0215 dataset contains a user, library/membership/entry, valid note,
-ready epub and podcast, synthetic epub source object with matching canonical
-fragment/navigation/cursor, completed upload source attempt, two transcript
-audit outcomes, terminal chat/messages/tool call, metadata/chat call records,
-and completed metadata work. every row originates at 0215. one `upgrade(head)`
-reaches 0229 without inserting newer-schema data or changing rows to force
-admission. intermediate upgrade checkpoints were deliberately rejected because
-they would add transaction boundaries absent from the production invocation.
-
-the oracle checks:
-
-- byte-equivalent json row content for populated user/library/note/fragment
-  families before and after the entire chain;
-- unchanged retained media except the explicitly removed/replacement date fields;
-- unchanged original object bytes and independently computed source digest;
-- preserved accepted cursor location and revision advancement, authored toc
-  identity, removal of the old spine identity, and publication generation;
-- one truthful import baseline for the retained source attempt;
-- intentional old metadata/chat/audit history removal and publication-date loss;
-- removal of old chat authority columns and anonymous inflight counter;
-- exact db0229 head and complete linear 0215-to-0229 revision list.
-
-no existing fixture/helper was changed. the test intentionally does not repeat
-every detailed refusal permutation already owned by the individual migration
-proofs. it adds their missing composition boundary. it does not use production
-data, impersonate a database connection, or mock object storage.
-
-status: written and manually reviewed only; **not run**. the canonical proof is
-registered in `testdata/proofs.json` under `migration-compatibility`. its sole
-fault entry, `restoration-chain-cursor-migration-bypass`, reuses the existing
-product-only `reader-structure-cursor-migration-bypass.patch` without creating a
-second patch file or changing that fault's other owner. it leaves the old cursor
-address unchanged while advancing its revision, so the new full-chain proof's
-explicit accepted-locus assertion must fail.
-
-base-main lacks the post-0215 graph, so a base failure before reaching the
-contract cannot establish useful sensitivity. the manifest therefore uses the
-existing `coherent-fault` exception for this single exact python owner, with
-the owner digest computed by repository helper
-`python_exact_proof_owner_sha256`:
-`3220a49d7acc607ef27fe51e64ff1453b01e711ac37c545d676550d8c4cd441c`.
-proof formatting or other owner edits require a new reviewed digest. the patch
-sha256 is `5ee953d9e5cce070c706cce42a65697e6f8c118da76621920c5df40ce703cab1`.
-the aggregate ownership pin includes the new canonical proof. this is a
-registered prospective witness, not observed red/green evidence; do not weaken the controller's admission rules to obtain a verdict.
-
-## repository-owned execution
-
-`./scripts/test` is the locked `uv run --frozen --no-sync python -m
-nexus_test_control` launcher. migration capability owns `tests/migrations` and
-is required by `pr`/`full`. a focused `changed` request names the proof but may
-defer it to `pr`; a deferred selection is not a migration pass.
-
-`empty_migration_database_url` validates the controller-owned migration database,
-resets only its public schema and sets `database_url` only inside the fixture.
-real postgres must match production's version/extensions. controller-owned
-minio provides the source objects; isolated objects/databases are cleaned by
-the existing resource ownership rules.
-
-the existing `test_supported_upgrade.py` proves empty database to head only.
-the new chain must run in addition to, not instead of, the detailed migration
-portfolio. exact pr proof uses the repository controller's exact base input
-and same-run sensitivity. raw alembic/pytest invocation is not a workflow verdict.
-
-## historical capacity evidence
-
-the earlier devbox read-only snapshot was:
-
-- root filesystem 150g total, 141g used, 2.8g available (99%);
-- memory 7.6gi total, 1.9gi available; swap 4gi total, 2gi in use;
-- docker images 12.71gb, 6.32gb reported reclaimable;
-- docker build cache 6.396gb total, 5.039gb private; 132 inactive records;
-- rootless engine was the selected builder; default rootful socket was absent;
-- active local volumes totaled 1.32gb and were not reclaimable.
-
-current-main controller required 8,192 mib free for heavy admission. the existing
-`docs/tickets/devbox-buildkit-cache-retention.md` records the same unresolved
-builder-cache ownership leak and explicitly says operator-wide pruning is not
-an acceptable ownership fix. the later user-authorized cleanup is recorded in
-[the restoration specification](pre-243-product-restoration.md). moving a
-test checkout on that filesystem cannot create disk capacity, and a tmpfs would
-consume the already-constrained memory. these are historical observations only;
-the devbox is the authoritative validation host. source and git work remain on
-the macbook.
+this synthetic dataset did not cover every possible production state. #254's
+cleanup removes the proof and its real-service harness. the only automated
+migration check now is the single-head graph check in `./scripts/test`. it does
+not execute ddl or establish data preservation. a populated rehearsal, backup,
+capacity and recovery review remain prerequisites for later release; do not
+reintroduce a second automated gate in this restoration.
 
 ## later production release requirements
 
@@ -142,8 +65,8 @@ this pr does not authorize execution of any item below:
   release protocol; the 0221 autocommit boundary rules out ordinary transactional
   rollback of the whole chain;
 - qualify the exact target artifact's memory, pinned provider/tools, android
-  contracts and migration-container envelope; conduct the required exact release
-  proof, immutable image publication, frontend staging and public smoke;
+  contracts and migration-container envelope; conduct separately authorized immutable image publication, frontend staging,
+  device checks and public smoke;
 - retain backups and recovery evidence under a separate operator decision.
 
 deployment instructions explicitly make recovery forward-only after data
@@ -151,9 +74,7 @@ mutation/backend activation. the desired source tree is not a promise that its
 destructive migrations are harmless or that old application artifacts can run
 against db0229.
 
-## unresolved release-documentation issue
+## resolved runbook discrepancy
 
-`deployment.md:486` calls the reader-publication migration 0216, but the restored
-catalog places it at 0219. the correction is recorded in
-[its release-preparation ticket](../tickets/restored-reader-publication-runbook-revision.md).
-no migration source is changed by this restoration.
+`deployment.md` now correctly names reader-publication revision 0219 instead of
+0216. the release-preparation ticket is closed; migration source is unchanged.

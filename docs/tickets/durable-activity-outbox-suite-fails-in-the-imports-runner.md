@@ -1,5 +1,13 @@
 # The durable activity outbox suite fails in the imports runner container
 
+## restoration update, 2026-09-14
+
+pr #254 removes the automated suite/harness cited below. retain this historical
+observation for manual product/capacity investigation; its old test commands and
+proposed test-routing changes are superseded by the direct `./scripts/test`
+contract. removal of the suite does not resolve an unconfirmed product concern.
+
+
 **Status:** open
 **Origin:** Imports workspace cutover, Phase 7 chain Z2, 2026-09-10
 **Area:** `apps/web/src/lib/consumption/activityRuntime.browser.test.ts`

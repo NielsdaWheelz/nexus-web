@@ -25,16 +25,18 @@ _CANDIDATE_MANIFEST_KEYS = frozenset(
         "schema_version",
         "source_sha",
         "repository",
-        "source_ci_run_id",
-        "source_ci_run_attempt",
-        "source_ci_workflow_id",
-        "publisher_run_id",
-        "publisher_run_attempt",
         "images",
         "expected_database_revision",
         "expected_oracle_manifest_digest",
     }
 )
+_LEGACY_CANDIDATE_MANIFEST_KEYS = _CANDIDATE_MANIFEST_KEYS | {
+    "source_ci_run_id",
+    "source_ci_run_attempt",
+    "source_ci_workflow_id",
+    "publisher_run_id",
+    "publisher_run_attempt",
+}
 _REPOSITORY = "NielsdaWheelz/nexus-web"
 _RUNTIME_IDENTITY_PATH = Path("/app/runtime-identity.json")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -169,33 +171,16 @@ class CandidateManifest:
     schema_version: int
     source_sha: str
     repository: str
-    source_ci_run_id: int
-    source_ci_run_attempt: int
-    source_ci_workflow_id: int
-    publisher_run_id: int
-    publisher_run_attempt: int
     images: CandidateImages
     expected_database_revision: str
     expected_oracle_manifest_digest: str
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not int or self.schema_version != 1:
-            raise BackendArtifactDefect("candidate manifest schema_version must be 1")
+        if type(self.schema_version) is not int or self.schema_version != 2:
+            raise BackendArtifactDefect("candidate manifest schema_version must be 2")
         _require_match("source_sha", self.source_sha, _SOURCE_SHA)
         if self.repository != _REPOSITORY:
             raise BackendArtifactDefect("candidate manifest repository is malformed")
-        if type(self.source_ci_run_id) is not int or self.source_ci_run_id < 1:
-            raise BackendArtifactDefect("candidate manifest source_ci_run_id must be positive")
-        if type(self.source_ci_run_attempt) is not int or self.source_ci_run_attempt != 1:
-            raise BackendArtifactDefect("candidate manifest source_ci_run_attempt must be 1")
-        if type(self.source_ci_workflow_id) is not int or self.source_ci_workflow_id < 1:
-            raise BackendArtifactDefect("candidate manifest source_ci_workflow_id must be positive")
-        if type(self.publisher_run_id) is not int or self.publisher_run_id < 1:
-            raise BackendArtifactDefect("candidate manifest publisher_run_id must be positive")
-        if self.publisher_run_id == self.source_ci_run_id:
-            raise BackendArtifactDefect("source CI and publisher run IDs must differ")
-        if type(self.publisher_run_attempt) is not int or self.publisher_run_attempt != 1:
-            raise BackendArtifactDefect("candidate manifest publisher_run_attempt must be 1")
         if not isinstance(self.images, CandidateImages):
             raise BackendArtifactDefect("candidate manifest images are malformed")
         _require_match(
@@ -214,11 +199,6 @@ class CandidateManifest:
             "schema_version": self.schema_version,
             "source_sha": self.source_sha,
             "repository": self.repository,
-            "source_ci_run_id": self.source_ci_run_id,
-            "source_ci_run_attempt": self.source_ci_run_attempt,
-            "source_ci_workflow_id": self.source_ci_workflow_id,
-            "publisher_run_id": self.publisher_run_id,
-            "publisher_run_attempt": self.publisher_run_attempt,
             "images": self.images.as_json(),
             "expected_database_revision": self.expected_database_revision,
             "expected_oracle_manifest_digest": self.expected_oracle_manifest_digest,
@@ -270,20 +250,25 @@ def load_runtime_identity(path: Path) -> RuntimeIdentity:
 
 def load_candidate_manifest(path: Path) -> CandidateManifest:
     value, encoded = _load_closed_json(path)
-    if not isinstance(value, dict) or value.keys() != _CANDIDATE_MANIFEST_KEYS:
+    if not isinstance(value, dict):
         raise BackendArtifactDefect("candidate manifest fields are unsupported")
+    schema_version = value.get("schema_version")
+    if type(schema_version) is not int or schema_version not in (1, 2):
+        raise BackendArtifactDefect("candidate manifest schema_version is unsupported")
+    expected_keys = (
+        _LEGACY_CANDIDATE_MANIFEST_KEYS if schema_version == 1 else _CANDIDATE_MANIFEST_KEYS
+    )
+    if value.keys() != expected_keys:
+        raise BackendArtifactDefect("candidate manifest fields are unsupported")
+    if schema_version == 1:
+        _validate_legacy_candidate_receipts(value)
     images = value["images"]
     if not isinstance(images, dict) or images.keys() != {"api", "worker"}:
         raise BackendArtifactDefect("candidate manifest image fields are unsupported")
     candidate = CandidateManifest(
-        schema_version=value["schema_version"],
+        schema_version=2,
         source_sha=_require_string(value, "source_sha"),
         repository=_require_string(value, "repository"),
-        source_ci_run_id=value["source_ci_run_id"],
-        source_ci_run_attempt=value["source_ci_run_attempt"],
-        source_ci_workflow_id=value["source_ci_workflow_id"],
-        publisher_run_id=value["publisher_run_id"],
-        publisher_run_attempt=value["publisher_run_attempt"],
         images=CandidateImages(
             api=_require_string(images, "api"),
             worker=_require_string(images, "worker"),
@@ -291,19 +276,26 @@ def load_candidate_manifest(path: Path) -> CandidateManifest:
         expected_database_revision=_require_string(value, "expected_database_revision"),
         expected_oracle_manifest_digest=_require_string(value, "expected_oracle_manifest_digest"),
     )
-    if encoded != _canonical_json_bytes(candidate.as_json()):
+    canonical = value if schema_version == 1 else candidate.as_json()
+    if encoded != _canonical_json_bytes(canonical):
         raise BackendArtifactDefect("candidate manifest is not canonical JSON")
     return candidate
+
+
+def _validate_legacy_candidate_receipts(value: dict[str, Any]) -> None:
+    for key in ("source_ci_run_id", "source_ci_workflow_id", "publisher_run_id"):
+        if type(value[key]) is not int or value[key] < 1:
+            raise BackendArtifactDefect(f"legacy candidate manifest {key} must be positive")
+    for key in ("source_ci_run_attempt", "publisher_run_attempt"):
+        if type(value[key]) is not int or value[key] != 1:
+            raise BackendArtifactDefect(f"legacy candidate manifest {key} must be 1")
+    if value["publisher_run_id"] == value["source_ci_run_id"]:
+        raise BackendArtifactDefect("legacy source CI and publisher run IDs must differ")
 
 
 def write_candidate_manifest(
     *,
     source_sha: str,
-    source_ci_run_id: int,
-    source_ci_run_attempt: int,
-    source_ci_workflow_id: int,
-    publisher_run_id: int,
-    publisher_run_attempt: int,
     api_image: str,
     worker_image: str,
     api_runtime_identity_path: Path,
@@ -311,18 +303,6 @@ def write_candidate_manifest(
     output_path: Path,
 ) -> None:
     _require_match("source_sha", source_sha, _SOURCE_SHA)
-    if type(source_ci_run_id) is not int or source_ci_run_id < 1:
-        raise BackendArtifactDefect("source_ci_run_id must be a positive integer")
-    if type(source_ci_run_attempt) is not int or source_ci_run_attempt != 1:
-        raise BackendArtifactDefect("source_ci_run_attempt must be 1")
-    if type(source_ci_workflow_id) is not int or source_ci_workflow_id < 1:
-        raise BackendArtifactDefect("source_ci_workflow_id must be a positive integer")
-    if type(publisher_run_id) is not int or publisher_run_id < 1:
-        raise BackendArtifactDefect("publisher_run_id must be a positive integer")
-    if publisher_run_id == source_ci_run_id:
-        raise BackendArtifactDefect("source CI and publisher run IDs must differ")
-    if type(publisher_run_attempt) is not int or publisher_run_attempt != 1:
-        raise BackendArtifactDefect("publisher_run_attempt must be 1")
     images = CandidateImages(api=api_image, worker=worker_image)
 
     api_identity = load_runtime_identity(api_runtime_identity_path)
@@ -333,14 +313,9 @@ def write_candidate_manifest(
         raise BackendArtifactDefect("runtime identity does not match the source SHA")
 
     manifest = CandidateManifest(
-        schema_version=1,
+        schema_version=2,
         source_sha=source_sha,
         repository=_REPOSITORY,
-        source_ci_run_id=source_ci_run_id,
-        source_ci_run_attempt=source_ci_run_attempt,
-        source_ci_workflow_id=source_ci_workflow_id,
-        publisher_run_id=publisher_run_id,
-        publisher_run_attempt=publisher_run_attempt,
         images=images,
         expected_database_revision=api_identity.expected_database_revision,
         expected_oracle_manifest_digest=api_identity.expected_oracle_manifest_digest,
@@ -397,11 +372,6 @@ def _parser() -> argparse.ArgumentParser:
 
     candidate = commands.add_parser("write-candidate-manifest")
     candidate.add_argument("--source-sha", required=True)
-    candidate.add_argument("--source-ci-run-id", type=int, required=True)
-    candidate.add_argument("--source-ci-run-attempt", type=int, required=True)
-    candidate.add_argument("--source-ci-workflow-id", type=int, required=True)
-    candidate.add_argument("--publisher-run-id", type=int, required=True)
-    candidate.add_argument("--publisher-run-attempt", type=int, required=True)
     candidate.add_argument("--api-image", required=True)
     candidate.add_argument("--worker-image", required=True)
     candidate.add_argument("--api-runtime-identity", type=Path, required=True)
@@ -420,11 +390,6 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "write-candidate-manifest":
         write_candidate_manifest(
             source_sha=args.source_sha,
-            source_ci_run_id=args.source_ci_run_id,
-            source_ci_run_attempt=args.source_ci_run_attempt,
-            source_ci_workflow_id=args.source_ci_workflow_id,
-            publisher_run_id=args.publisher_run_id,
-            publisher_run_attempt=args.publisher_run_attempt,
             api_image=args.api_image,
             worker_image=args.worker_image,
             api_runtime_identity_path=args.api_runtime_identity,

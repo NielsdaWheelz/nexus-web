@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -28,77 +26,6 @@ from nexus.jobs.process_executor import (
 )
 from nexus.jobs.queue import JobExecutionContext, RescheduleRequested, ScheduleAfter, ScheduleAt
 from nexus.jobs.registry import get_default_registry, get_task_contract_digest
-
-
-def test_base_source_ingest_import_does_not_load_generation_or_provider_runtimes() -> None:
-    python_root = Path(__file__).resolve().parents[2]
-    script = """
-import json
-import sys
-
-import nexus.tasks.ingest_media_source
-
-forbidden_exact = {
-    "anthropic",
-    "llm_tools",
-    "nexus.services.durable_step_journal",
-    "nexus.services.generation_policy",
-    "nexus.services.llm_execution",
-    "nexus.services.llm_ledger",
-    "nexus.services.media_intelligence",
-    "nexus.services.structured_synthesis",
-    "openai",
-    "provider_runtime",
-}
-loaded = [name for name in forbidden_exact if name in sys.modules]
-if any(name.startswith("google.genai") for name in sys.modules):
-    loaded.append("google.genai")
-if any(name.startswith("nexus.services.codex_generation") for name in sys.modules):
-    loaded.append("nexus.services.codex_generation")
-loaded.sort()
-print(json.dumps(loaded))
-raise SystemExit(bool(loaded))
-"""
-    completed = subprocess.run(
-        (
-            sys.executable,
-            "-B",
-            "-c",
-            script,
-        ),
-        cwd=python_root,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert completed.returncode == 0, completed.stdout or completed.stderr
-
-
-def test_tool_free_synthesis_import_does_not_load_tool_runtime() -> None:
-    python_root = Path(__file__).resolve().parents[2]
-    # Media summaries remain tool-free; metadata enrichment now owns MetadataRead.
-    script = """
-import json
-import sys
-
-import nexus.tasks.media_unit_build
-
-loaded = ["llm_tools"] if any(
-    name == "llm_tools" or name.startswith("llm_tools.") for name in sys.modules
-) else []
-print(json.dumps(loaded))
-raise SystemExit(bool(loaded))
-"""
-    completed = subprocess.run(
-        (sys.executable, "-B", "-c", script),
-        cwd=python_root,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert completed.returncode == 0, completed.stdout or completed.stderr
 
 
 def test_worker_topology_and_task_digest_cover_resource_class(

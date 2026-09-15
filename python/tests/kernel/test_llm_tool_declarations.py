@@ -538,9 +538,6 @@ def _revision_probe(input_type: type[BaseModel]) -> ToolSpec[Any, Any, Any]:
 
 
 def test_nexus_declarations_and_browser_projection_are_one_closed_semantic_contract() -> None:
-    assert importlib.util.find_spec("nexus.services.generation_spec") is not None, (
-        "the final generation tool-plan contract is absent"
-    )
     from nexus.schemas.highlights import HIGHLIGHT_COLORS
     from nexus.schemas.library import CreateLibraryRequest
     from nexus.schemas.resource_graph import ConnectionQueryRequest

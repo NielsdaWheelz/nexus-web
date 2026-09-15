@@ -51,35 +51,11 @@ an untracked file in a stale worktree; decide whether to archive it in the repo
 or drop it. See
 [docs/tickets/adversarial-review-artifact-disposition.md](tickets/adversarial-review-artifact-disposition.md).
 
-### [OPEN] OI-007 — Bring the local `pr` gate back inside its time budget
-test-control · opened 2026-09-06 by Claude (PR #203 release work) · P1
-A green local `pr` run takes 43.5 minutes against a five-minute target; the
-kernel lane and sensitivity red/green dominate it. See
-[docs/tickets/ci-gate-time-budget.md](tickets/ci-gate-time-budget.md).
-
-### [OPEN] OI-008 — BASE provisioning can take the candidate runtime's recorded ports
-test-control · opened 2026-09-06 by Claude (PR #203 takeover) · P2
-Sensitivity BASE provisioning reuses the candidate runtime's ports, so `pr`
-fails in its first sensitivity execution with an opaque compose error. See
-[docs/tickets/controller-base-provisioning-port-allocation.md](tickets/controller-base-provisioning-port-allocation.md).
-
 ### [OPEN] OI-009 — Dispatch-error HUD copy has no cross-subject proof
 frontend · opened 2026-09-08 by Claude (imports cutover, Track E) · P3
 The imports-scoped `E_RESOURCE_CONFLICT` branch in the shared dispatch-error
 owner is correct but unproved for every other subject. See
 [docs/tickets/dispatch-error-copy-has-no-cross-subject-proof.md](tickets/dispatch-error-copy-has-no-cross-subject-proof.md).
-
-### [OPEN] OI-010 — Register an exact canonical node for the capacity-pause proof owner
-test-control · opened 2026-09-06 by Claude (PR #203 takeover) · P2
-`test_generation_capacity_pause.py` is a whole-file owner with neither an exact
-node nor a fault, so `pr` never produces a red/green pair for it. See
-[docs/tickets/gate-capacity-pause-owner-exact-node.md](tickets/gate-capacity-pause-owner-exact-node.md).
-
-### [OPEN] OI-011 — Guard the isolation marker in the two whole-file Chat owners
-test-control · opened 2026-09-06 by Claude (PR #203 takeover) · P2
-Both Chat owners depend on a `service/conftest.py` fixture the controller's BASE
-overlay does not copy, so a BASE run errors at setup instead of failing red. See
-[docs/tickets/gate-chat-owner-isolation-marker-guard.md](tickets/gate-chat-owner-isolation-marker-guard.md).
 
 ### [OPEN] OI-012 — Import history collapses three queue execution codes
 backend · opened 2026-09-08 by Claude (imports cutover, Track A) · P3
@@ -204,13 +180,6 @@ nothing renders `SwitchboardTask` or asserts it hands the switchboard pages an
 Account menu with the utilities and the active utility id. See
 [docs/tickets/mobile-switchboard-account-menu-host-has-no-proof.md](tickets/mobile-switchboard-account-menu-host-has-no-proof.md).
 
-### [OPEN] OI-042 — Any appnav edit selects the whole document-import-reliability risk
-test-control · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W2) · P3
-Registering the rail proof required `components/appnav/**/*` in that priority
-risk's source globs, so an edit to any navigation file now selects the risk's
-migration and service nodes too. See
-[docs/tickets/appnav-glob-selects-the-whole-import-reliability-risk.md](tickets/appnav-glob-selects-the-whole-import-reliability-risk.md).
-
 ### [OPEN] OI-043 — The collapsed count chip scales out of its fixed-width rail
 frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W2) · P3
 The collapsed rail is fixed px while the count chip anchored inside it is sized
@@ -265,14 +234,6 @@ measure 4.20:1 to 4.47:1 on their worst ground — under WCAG AA for `--text-sm`
 body copy. Sibling of OI-047, which owns the two remaining `Pill` tones. See
 [docs/tickets/tone-text-on-its-own-tint-fails-aa-outside-pill.md](tickets/tone-text-on-its-own-tint-fails-aa-outside-pill.md).
 
-### [OPEN] OI-052 — The offline-bundle staleness gate is unreachable from the sources it guards
-tooling · opened 2026-09-10 by Claude (imports cutover, Phase 7 chain Z review) · P2
-`immutable-production-release` owns the only proof that runs Gradle's
-`verifyOfflineReadingAssets`, but its `source_globs` cover none of the ~110
-shared web sources the bundle's source manifest pins, so a change that breaks the
-gate can never select it. Cause of OI-051. See
-[docs/tickets/offline-bundle-gate-is-not-selected-by-its-own-sources.md](tickets/offline-bundle-gate-is-not-selected-by-its-own-sources.md).
-
 ### [OPEN] OI-053 — The durable activity outbox suite fails in the imports runner container
 frontend · opened 2026-09-10 by Claude (imports cutover, Phase 7 chain Z2) · P2
 `activityRuntime.browser.test.ts` fails 8 of 13 cases deterministically in the
@@ -297,39 +258,6 @@ as a marginal run-time overshoot. Assert the import-only residency in a cheap
 kernel case at the boundary that owns it. See
 [docs/tickets/supervisor-residency-limit-hides-import-growth.md](tickets/supervisor-residency-limit-hides-import-growth.md).
 
-### [OPEN] OI-056 — Fault patches with no leading context can reverse onto another occurrence
-testing · opened 2026-09-10 by Claude (imports cutover, Phase 9) · P2
-`applied_fault` reverses a registered patch by context; a hunk with one context
-line and none leading can bind to a different occurrence than it was cut from,
-so `prove` fails "fault reversal did not restore the isolated checkout" (or
-reverses the wrong site). Five registered patches still have that shape.
-Regenerate them with default context and reject such hunks at registration. See
-[docs/tickets/zero-context-fault-patches-can-reverse-onto-another-occurrence.md](tickets/zero-context-fault-patches-can-reverse-onto-another-occurrence.md).
-
-### [OPEN] OI-057 — The coherent-fault owner digest omits the imports and support modules the standard says it pins
-testing · opened 2026-09-10 by Claude (imports cutover, Phase 9 review) · P3
-testing-standards §3 says a coherent-fault owner pin covers the exact test "plus
-its imports and non-test module support"; `python_exact_proof_owner_sha256`
-hashes the owner test file alone, so strengthening the containment probe module
-produced no owner drift and no review. Extend the digest or narrow the sentence. See
-[docs/tickets/coherent-fault-owner-digest-omits-imported-support.md](tickets/coherent-fault-owner-digest-omits-imported-support.md).
-
-### [OPEN] OI-058 — `pr` sensitivity cannot replay changed non-python hard-cut owners
-testing · opened 2026-09-11 by Claude (imports cutover, final gates) · P2
-BASE replay can fail before a behavioral assertion for new vitest imports or
-native reader2 fixtures reaching reader1 admission. coherent-fault is
-python-only, so controlled fault passes cannot unblock the hard-cut pr gate.
-define the reviewed non-python routing contract without waiving sensitivity. see
-[docs/tickets/pr-sensitivity-cannot-accept-new-vitest-owners.md](tickets/pr-sensitivity-cannot-accept-new-vitest-owners.md).
-
-### [OPEN] OI-059 — Three changed Python proof owners on the imports branch lack a coherent-fault witness
-testing · opened 2026-09-11 by Claude (imports cutover, final gates) · P2
-Two claim-adapted service nodes have no registered fault and one fault owns a
-whole file, so `pr` routes them to a BASE that cannot load the branch's testkit.
-Register a product-only fault for each node, repoint the whole-file fault at its
-exact node, mark all three coherent-fault. See
-[docs/tickets/three-changed-python-owners-lack-a-coherent-fault-witness.md](tickets/three-changed-python-owners-lack-a-coherent-fault-witness.md).
-
 ### [OPEN] OI-060 — Production synapse scans repeatedly time out
 background jobs / semantic search · opened 2026-09-11 by Codex (production deployment) · P1
 The production background worker repeatedly records PostgreSQL statement
@@ -339,49 +267,17 @@ unexpected timeouts. See
 [docs/tickets/production-synapse-scan-statement-timeout-backlog.md](tickets/production-synapse-scan-statement-timeout-backlog.md).
 
 - [open] oi-069 · reader interaction · 2026-09-11 council · implemented map controls await manual assistive-technology and actual-touch review: [ticket](tickets/reader-map-inert-position-and-mobile-controls.md).
-- [open] oi-074 · test infrastructure · 2026-09-11 reader verification · host release harness cannot establish worker-owned parser directory: [ticket](tickets/test-host-release-worker-owner-privilege.md).
 - [open] oi-075 · epub ingest · 2026-09-12 source review · decoded reserved delimiters make stored source urls ambiguous: [ticket](tickets/epub-normalized-href-reserved-delimiters.md).
 - [open] oi-076 · import progress · 2026-09-12 source review · extraction progress calls spine files chapters: [ticket](tickets/epub-import-progress-counts-files-as-chapters.md).
 - [open] oi-078 · web build · 2026-09-12 offline artifact · css minifier warns on existing custom-highlight syntax: [ticket](tickets/offline-css-minifier-rejects-highlight-syntax.md).
-- [open] oi-079 · test controller · 2026-09-12 sensitivity · fault registry rejects literal next route brackets: [ticket](tickets/fault-registry-rejects-literal-route-brackets.md).
 - [open] oi-080 · web ingest · 2026-09-12 source review · generated heading ids replace authored link and container targets: [ticket](tickets/web-ingest-replaces-authored-heading-anchors.md).
 - [open] oi-081 · pdf activity · 2026-09-12 input review · zoom renews reading eligibility through the page-turn control wrapper: [ticket](tickets/pdf-zoom-renews-reading-activity.md).
-- [open] oi-084 · test controller · 2026-09-12 confidence interruption · interruption discards completed capability evidence and reports the wrong owner: [ticket](tickets/test-controller-interrupt-discards-completed-capabilities.md).
 - [open] oi-085 · epub extraction · 2026-09-12 memory review · utf-8 output caps do not bound retained unicode string memory: [ticket](tickets/epub-utf8-output-cap-does-not-bound-resident-text.md).
 - [open] oi-086 · client telemetry · 2026-09-12 reader verification · defect reports fail at next request forwarding with a private-member branding exception: [ticket](tickets/client-defect-telemetry-request-branding-failure.md).
 - [open] oi-087 · ci actions · 2026-09-12 reader publication · the pinned buildx action targets a deprecated node runtime: [ticket](tickets/ci-buildx-action-deprecated-node-runtime.md).
 - [open] oi-088 · ci cache · 2026-09-12 reader publication · go setup requests module caching without a module owner: [ticket](tickets/ci-go-cache-has-no-module-owner.md).
 
-### [OPEN] OI-061 — Test subprocesses received unowned SIGTERMs
-testing · opened 2026-09-12 by Codex (production deployment) · P1
-Two canonical kernel runs lost different subprocess boundaries to unexplained
-SIGTERMs; twelve exact traced repetitions of the first case did not reproduce.
-Capture the sender under the full kernel portfolio before changing lifecycle
-behavior. See
-[docs/tickets/oracle-host-replay-received-unowned-sigterm.md](tickets/oracle-host-replay-received-unowned-sigterm.md).
-
-- [open] oi-098 · reader annotation · 2026-09-14 focus/submit review · failed highlight creation crashes the quick-note editor: [ticket](tickets/highlight-quick-note-create-failure-crashes-editor.md).
-- [open] test control · 2026-09-14 annotation/publication-date verification · host oracle fixture ownership setup blocks local confidence: [ticket](tickets/host-oracle-fixture-ownership-blocks-confidence.md).
 - [open] oi-106 · generation policy · 2026-09-14 spec review · p2 · background context-token budget is recorded without enforcement: [ticket](tickets/background-generation-context-budget-is-not-enforced.md).
 - [open] metadata verification · 2026-09-14 implementation · live research judgments and external query contents still need smoke inspection: [ticket](tickets/metadata-live-research-smoke-unverified.md).
-- [open] test control · 2026-09-14 pr #246 ci · complete python static can omit changed owners outside its curated include: [ticket](tickets/complete-python-static-omits-changed-owner-checks.md).
 - [open] resource actions · 2026-09-14 highlight popup verification · mobile parity journey finds the prior browse pane after reader navigation: [ticket](tickets/resource-action-parity-mobile-pane-readiness.md).
 - [open] agent tools · 2026-09-14 pr #246 memory review · resource reads load full bodies before enforcing their output limit: [ticket](tickets/resource-reader-loads-full-body-before-limit.md).
-
-### [OPEN] OI-063 — reader publication runbook revision
-
-release documentation · opened 2026-09-14 by codex · p2
-the runbook names 0216 where the publication migration is 0219; see
-[ticket](tickets/restored-reader-publication-runbook-revision.md).
-
-### [OPEN] OI-064 — native docker vm storage admission
-
-test-control · opened 2026-09-14 by codex · p2
-native macos cannot attest the docker vm filesystem; see
-[ticket](tickets/native-docker-vm-storage-admission-unavailable.md).
-
-### [OPEN] OI-065 — devbox buildkit cache retention
-
-test-control · opened 2026-09-14 by codex · p2
-retain the bridge's unresolved cache ownership evidence; see
-[ticket](tickets/devbox-buildkit-cache-retention.md).

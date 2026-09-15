@@ -4,9 +4,8 @@ Single source of truth: ``RESOURCE_ITEM_CAPABILITIES`` in
 ``python/nexus/services/resource_items/capabilities.py``. This script emits the
 committed browser projection ``apps/web/src/lib/resources/resourceCapabilities.ts``
 byte-for-byte, so the backend static capabilities and the frontend projection
-cannot drift. The ``resource-capability-drift`` policy check
-(``python/nexus_test_control/policy.py``) re-runs :func:`render_projection` and
-byte-compares it to the committed file, failing ``./scripts/test`` on drift.
+can be updated mechanically. Run and commit the generator after changing the
+backend capability table.
 
     cd python && uv run python scripts/generate_resource_capabilities.py
     make generate-resource-capabilities

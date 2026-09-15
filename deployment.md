@@ -44,9 +44,9 @@ expected Oracle manifest digest, task contract, and captured VPS config.
   a full container ID as retaining forbidden swap. It never recreates a
   container or changes release state.
 - Release only a clean checkout where `HEAD == origin/main == source-sha` and
-  exact `main` CI succeeded.
-- CI builds each backend target once. Production pulls manifest-selected GHCR
-  digests and never builds an application image.
+  the exact SHA's immutable backend bundle exists.
+- The post-merge publisher builds each backend target once. Production pulls
+  manifest-selected GHCR digests and never builds an application image.
 - Vercel produces a `READY` production-target candidate with no production or
   custom-domain alias. Vercel-generated `.vercel.app` aliases are expected;
   backend activation and proof precede promotion of that exact deployment ID.
@@ -130,46 +130,25 @@ controller rejects an already promoted new candidate.
 
 ## Immutable artifact lineage
 
-Successful exact-`main` `CI` triggers `.github/workflows/backend-images.yml`.
-It builds `docker/Dockerfile.backend` targets `api` and `worker`, verifies their
-baked identity is equal, pushes public GHCR digests, and uploads
+Each push to `main` triggers `.github/workflows/backend-images.yml`. It builds
+`docker/Dockerfile.backend` targets `api` and `worker`, verifies their baked
+identity is equal, pushes public GHCR digests, and uploads
 `nexus-backend-release-<source-sha>`.
 
 The strict bundle contains the candidate manifest, production Compose file,
-Caddy comparison input, host controller, and its manifest decoder. The manifest
-binds source CI run/workflow IDs and attempt `1`, publisher run ID and attempt
-`1`, repository, source SHA, both image digests, one expected database revision,
-and one expected Oracle manifest digest. The shared resolver requires one and
-only one exact-name repository artifact, proves its immutable first-attempt
-publisher owner, then independently proves the exact first-attempt source CI.
-The publisher workflow's outer `head_sha` is not source identity. Publisher
-reruns only prove the original artifact still exists; they never rebuild or
-upload. If the first source CI, publisher, or artifact fails, is duplicated, or
-is deleted before host installation, use a new SHA. GHCR creates new packages as
-private: if the first publisher run fails only because anonymous digest proof
-cannot read a newly created package, never release that SHA; make both
-`nexus-api` and `nexus-worker` packages public in the provider, then use a fresh
-successful SHA. Once installed, the root-owned immutable bundle is the resume
-and verification authority after the 90-day Actions retention window.
-
-### Shared self-hosted release runner
-
-When the `main` gate temporarily runs on the shared 8 GiB devbox, reserve the
-host for that gate before creating the release SHA. Prove that no other Actions
-job or local `./scripts/test` process is active. For every idle checkout that
-has its own `.nexus-test/runtime.json`, run that checkout's
-`./scripts/test clean`; this is the only supported way to remove its recorded
-test stack, volumes, and runtime state. Never stop or delete test containers by
-name discovery from another checkout, because only the owning runtime record
-and recovery ledger are cleanup authority. Preserve shared dependency, image,
-and build caches.
-
-The controller's per-heavy-operation 2,048 MiB `MemAvailable` admission remains
-the authoritative safety gate. Do not lower it or treat `not_run` as success.
-If source CI attempt 1 is denied for host capacity, clean the verified idle test
-runtimes, confirm the devbox is otherwise idle, and use a fresh commit SHA; a
-successful CI rerun is diagnostic evidence but is intentionally not publishable
-under the first-attempt artifact lineage above.
+Caddy comparison input, host controller, its manifest decoder, the Android
+player protocol corpus, and the Codex AppArmor and capacity entrypoint inputs.
+The manifest binds repository, source SHA, both image digests, one expected database
+revision, and one expected Oracle manifest digest. The resolver requires one
+unexpired exact-name repository artifact whose owning workflow run records the
+same `main` source SHA. It does not treat a CI run or publisher receipt as a
+release gate. If publication fails, the artifact is duplicated, or it is
+deleted before host installation, publish a fresh `main` SHA. GHCR creates new
+packages as private: make both `nexus-api` and `nexus-worker` packages public
+before relying on anonymous digest access. Once installed, the root-owned
+immutable bundle is the resume and verification authority after the 90-day
+Actions retention window. Schema-1 manifests already installed on hosts remain
+readable; new publication writes schema 2 without workflow receipts.
 
 ## Explicit config publication
 
@@ -210,8 +189,8 @@ published source SHA.
 
 ## Release
 
-After exact `main` CI, backend publication, and the staged Vercel build are
-green, qualify a candidate that carries the Codex agent host. The passing
+After backend publication and the staged Vercel build for the exact `main` SHA
+are ready, qualify a candidate that carries the Codex agent host. The passing
 candidate-bound evidence must have been measured on the production host within
 the preceding 72 hours:
 
@@ -288,7 +267,7 @@ to force migration admission.
 
 The command performs the complete protocol:
 
-1. validates Git, CI, bundle, manifest, staged Vercel identity, and the exact
+1. validates Git, bundle, manifest, staged Vercel identity, and the exact
    fresh capacity qualification when the candidate carries the Codex host;
 2. installs the immutable bundle and inspects durable host state;
 3. before the first hard-cut attempt, proves exact predecessor identity, host
@@ -399,9 +378,9 @@ matrix:
 | `AwaitingFrontendPromotion` | Rerun the same SHA; it reuses only the bound Vercel ID. |
 | Vercel candidate promoted but no record/current | Rerun the same SHA; public proof finalizes the durable prefix. |
 | Current SHA already equals requested SHA | Rerun the same SHA; it re-proves the recorded vector and exits. |
-| `RolledBack` or succeeded-but-superseded SHA | Create a new successful `main` SHA. |
-| `ForwardFixRequired` or failure after a commitment boundary | Fix forward in a new successful `main` SHA and release it. |
-| Any failure of a successor whose `forward_fix_of` is set, including before a commitment boundary | Settle it to `ForwardFixRequired`; release another fresh successful `main` SHA. Never restart the failed predecessor. |
+| `RolledBack` or succeeded-but-superseded SHA | Create and publish a new `main` SHA. |
+| `ForwardFixRequired` or failure after a commitment boundary | Fix forward in a new published `main` SHA and release it. |
+| Any failure of a successor whose `forward_fix_of` is set, including before a commitment boundary | Settle it to `ForwardFixRequired`; release another fresh published `main` SHA. Never restart the failed predecessor. |
 | Bound Vercel deployment is authoritatively deleted or terminally failed | Rerun the same SHA; direct ID inspection settles rollback or forward-fix without candidate reselection. |
 
 That settlement first proves the committed project/team identity, then decodes
@@ -456,7 +435,7 @@ target, then restores the exact runtime. Do not run an application release or
 publish config around it; the shared lock and attempt state reject both.
 
 If the current target A has a nonterminal attempt and A's Oracle controller or
-domain code is defective, land exact clean-main/CI repair SHA B with the same
+domain code is defective, land an exact clean-`main` repair SHA B with the same
 expected database revision and Oracle digest, then run:
 
 ```bash
@@ -483,7 +462,7 @@ the attempt or manifest in place.
 ## Reader publication preflight
 
 Offline reading identifies a reader document by its publication generation.
-Revision `0216` creates one generation-`1` row per eligible `ready_for_reading`
+Revision `0219` creates one generation-`1` row per eligible `ready_for_reading`
 document at the instant it runs; a document that becomes ready afterwards is
 published by whichever application artifact is deployed, and an artifact that
 predates the publication owner cannot create that row. Such a document has no
@@ -519,7 +498,7 @@ release controller.
 
 | Concern | Owner |
 |---|---|
-| CI proof | `.github/workflows/ci.yml` |
+| Pull-request check | `.github/workflows/ci.yml` |
 | Backend publication | `.github/workflows/backend-images.yml` |
 | Backend artifact | `docker/Dockerfile.backend` |
 | Immutable bundle resolution | `deploy/hetzner/fetch-release-bundle.sh` |

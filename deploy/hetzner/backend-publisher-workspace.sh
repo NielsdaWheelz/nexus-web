@@ -68,31 +68,16 @@ prepare() {
     die "GITHUB_WORKSPACE must be the repository root"
   fi
 
-  local runtime_state="$checkout/.nexus-test"
-  if [ -e "$runtime_state" ] || [ -L "$runtime_state" ]; then
-    if [ ! -d "$runtime_state" ] || [ -L "$runtime_state" ]; then
-      die "the preserved .nexus-test path must be a real directory"
-    fi
-    if [ "$(stat -c '%u' -- "$runtime_state")" != "$(id -u)" ]; then
-      die "the preserved .nexus-test directory must be owned by the publisher user"
-    fi
-  fi
-  if ! git -C "$checkout" check-ignore --quiet -- \
-    .nexus-test/.nexus-ignore-contract; then
-    die ".nexus-test must remain an explicit ignored runtime boundary"
-  fi
   if ! git -C "$checkout" diff --quiet --ignore-submodules=none -- \
     || ! git -C "$checkout" diff --cached --quiet --ignore-submodules=none --; then
     die "publisher checkout contains tracked changes"
   fi
 
-  # The self-hosted runner deliberately retains only the test controller's
-  # workspace-local runtime record. Everything else is unowned input to an
-  # immutable publication and must be removed, including nested repositories.
-  git -C "$checkout" clean -qffdx -e /.nexus-test/
+  # Publication accepts no untracked or ignored checkout state as input.
+  git -C "$checkout" clean -qffdx
 
   local residue
-  residue="$(git -C "$checkout" clean -nffdx -e /.nexus-test/)"
+  residue="$(git -C "$checkout" clean -nffdx)"
   if [ -n "$residue" ]; then
     printf 'error: publisher checkout retains unowned files after sanitation\n' >&2
     printf '%.4096s\n' "$residue" >&2

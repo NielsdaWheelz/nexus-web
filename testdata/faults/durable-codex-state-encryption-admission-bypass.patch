@@ -1,9 +1,0 @@
-diff --git a/deploy/hetzner/release.py b/deploy/hetzner/release.py
---- a/deploy/hetzner/release.py
-+++ b/deploy/hetzner/release.py
-@@ -2956,1 +2956,2 @@ class HostRelease:
-+        return
-         failure = "Codex credential state storage is not the dedicated encrypted mount"
-@@ -3108,1 +3109,2 @@ class HostRelease:
-+        return
-         failure = "Codex credential state boot guard differs from release contract"
