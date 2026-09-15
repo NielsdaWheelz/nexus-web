@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-
 from deploy.hetzner.release import (
     ReleaseDefect,
     ReleaseRecord,
     _validate_installed_bundle_shape,
 )
+
 from nexus.release_artifact import CandidateImages, CandidateManifest
 
 LEGACY_FILES = frozenset(
