@@ -452,6 +452,20 @@ def _result_model_fields(
 
 def _result_to_out(db: Session, viewer_id: UUID, result: InternalSearchResult) -> SearchResultOut:
     """Convert an internal ranked result into the strict response union."""
+    if isinstance(result, _RankedFragmentResult):
+        from nexus.services.search.retrievers.fragments import read_fragment_search_content
+
+        snippet, locator = read_fragment_search_content(db, viewer_id=viewer_id, result=result)
+        return SearchResultFragmentOut(
+            type="fragment",
+            id=result.id,
+            score=round(result.score.normalized, 4),
+            snippet=snippet,
+            source=result.source,
+            citation_label=f"fragment {result.idx + 1}",
+            locator=_required_locator("fragment", locator),
+            **_result_model_fields(db, viewer_id, result),
+        )
     result_id = result.handle if isinstance(result, _RankedContributorResult) else result.id
     base_payload = {
         "id": result_id,
@@ -524,15 +538,6 @@ def _result_to_out(db: Session, viewer_id: UUID, result: InternalSearchResult) -
             source=result.source,
             apparatus_kind=result.apparatus_kind,
             locator=_required_locator("reader_apparatus_item", result.locator),
-            **base_payload,
-        )
-
-    if isinstance(result, _RankedFragmentResult):
-        return SearchResultFragmentOut(
-            type="fragment",
-            source=result.source,
-            citation_label=result.citation_label,
-            locator=_required_locator("fragment", result.locator),
             **base_payload,
         )
 

@@ -128,11 +128,9 @@ class _RankedReaderApparatusItemResult:
 class _RankedFragmentResult:
     id: UUID
     idx: int
-    snippet: str
+    query: str | None
     source: SearchResultSourceOut
     score: _SearchScore
-    citation_label: str | None = None
-    locator: dict[str, Any] | None = None
     result_type: Literal["fragment"] = "fragment"
 
 

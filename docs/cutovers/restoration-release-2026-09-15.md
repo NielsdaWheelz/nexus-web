@@ -1,7 +1,26 @@
+## pending pr #270: semantic search memory and retrieval
+
+production remains69583dc3/db0229. live profiling established an embedding
+import crash; native diagnosis also found200 discarded fragment bodies retained
+before pagination and full-text query timeouts. pr #270 isolates generation
+imports, keeps fragment candidates as metadata until selection, uses existing
+query indexes and adds the missing evidence-span GIN index as db0230. the owned
+backup waiver remains required. no prior migration is rerun. native exact-image
+qualification, sole green check, release and manual acceptance remain pending.
+
 # restoration production release — 2026-09-15
 
-status: 69583dc3 deployed; theme switching and persistence passed; chat deferred
+status: 69583dc3 deployed; later book opening oom-killed api; memory issue reopened
 origin: restoration pr #255, forward recovery pr #262
+
+## later book-opening failure
+
+695 api was oom-killed at22:24:54,22:26:03,22:29:01 and22:31:46 utc. user reports replacing
+confessions with the pillow book while shadow & claw was open; pillow alone
+also crashes. oi-116 is reopened. the earlier bounded reader/theme passes
+remain truthful but do not establish general book-opening capacity. theme
+switching remains verified; chat remains explicitly deferred. see the
+[active memory ticket](../tickets/pillow-book-opening-api-oom.md).
 
 ## current release: 69583dc3
 
