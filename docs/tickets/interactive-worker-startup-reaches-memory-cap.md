@@ -53,3 +53,13 @@ on the mac, with original samples/logs in the matching devbox cache directory.
 `memory.stat` was captured. both workers and the disposable postgres are
 stopped; production services were untouched. profile startup before choosing
 an import/composition fix or a reviewed redistribution of the existing budget.
+
+## production restoration update
+
+source `6baccaee9c053b10f46fb5e270e73f5bc12b5026` succeeded on
+`nexus-api-worker` at 2026-09-15 18:37:25 utc. the exact interactive worker
+peaked at 185.289 mib under its revised 320 mib cap, with no observed limit,
+oom, swap or restart events during deployment. the owned codex qualifier
+completed three real turns on the separate credential host. that does not prove
+representative interactive-worker execution; keep this ticket open for the
+ordinary tool-using chat check. see the [release evidence](../cutovers/restoration-release-2026-09-15.md).

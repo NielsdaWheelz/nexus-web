@@ -45,3 +45,12 @@ representative requests within its existing limit. remove avoidable resident
 imports or bound the operation responsible; do not infer that a server resize
 is required. close after the exact restored image completes representative
 traffic without oom or repeated restarts, with source and host measurements.
+
+## production restoration update
+
+source `6baccaee9c053b10f46fb5e270e73f5bc12b5026` is healthy on production.
+its exact api peaked at 231.980 mib under 320 mib during the owned release,
+with no limit, oom, swap or restart events. this includes startup and operational
+release probes, not the reported simultaneous two-document browser traffic.
+that manual check remains pending, so this ticket remains open. see the
+[release evidence](../cutovers/restoration-release-2026-09-15.md).

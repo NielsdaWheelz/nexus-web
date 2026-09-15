@@ -1,6 +1,6 @@
 # pre-pr-243 product restoration
 
-status: restoration merged; production qualification in progress
+status: restoration released on 2026-09-15; manual product checks pending
 origin: 2026-09-14 restoration, reconciled with merged pr #254
 
 ## identities and invariant
@@ -59,9 +59,12 @@ before cutover, rehearse the exact populated db0215-to-db0229 chain, obtain
 explicit acceptance of measured history losses, verify stopped-writer backups,
 qualify exact image/codex memory and host capacity, prove recovery, and complete
 production verification. after data mutation or backend activation recovery is
-forward-only. the user will check android manually after cutover. production
-remains on db0215 until these release prerequisites pass; a green unit suite
-does not authorize irreversible data mutation.
+forward-only. the user will check android manually after cutover. release `06677a684ba7e30bab987319d11e5dd45537ac37` completed db0215→db0229
+under the explicit fresh-backup waiver, then failed its codex dns/mcp proof.
+forward successor `6baccaee9c053b10f46fb5e270e73f5bc12b5026` succeeded at
+18:37:25 utc with no further migration. see the [release evidence](restoration-release-2026-09-15.md)
+for exact qualification, production identities, accepted limits and pending
+manual checks. a green unit suite alone does not authorize data mutation.
 
 ## historical validation and cleanup
 
