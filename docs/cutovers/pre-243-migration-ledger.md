@@ -203,3 +203,21 @@ the user recovered the stalled import through the existing production repair
 operation. source recovery completed at 06:53:11 utc on 2026-09-15. its follow-up
 scan encountered the existing oi-060 query-timeout defect; the final snapshot
 must wait for an ordinary terminal outcome and repeat all admission/loss checks.
+
+
+the complete diagnostic on `dev-server` covered 239 epub media and 206 web
+media. it executed unchanged per-media statements from f75's 0228 inside
+savepoints, rolling every change and the outer schema transaction back. it
+found only the known epub body failure and one stale web cursor whose fragment
+was deleted and quotation absent from current content. oi-111 records the
+surviving publication defect. the user must save a deliberate current position
+through the deployed reader before the final snapshot; no heuristic migration
+mapping or direct database edit is permitted.
+
+a subsequent development diagnostic using source
+`fa6c453b425d034cc60a1665eae5df0a21b6ea74` in the f75 api image passed the affected
+book's complete per-media migration body, including cursor/reference repair and
+authored-id checks. the only html differences were the two duplicate div id
+attributes: 860 to 771 bytes in aggregate. all diagnostic changes rolled back.
+these diagnostics locate defects; they are not exact image qualification or a
+replacement for the repository check and fresh full migration rehearsal.
