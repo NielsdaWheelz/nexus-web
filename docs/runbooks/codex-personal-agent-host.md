@@ -352,12 +352,23 @@ when the encrypted credential state has less than 128 MiB free. A pre-accept
 capacity refusal is `not_run`; authentication/quota refusal is
 `subscription_blocked`; a pre-accept loss or accepted transport loss is
 `transport_retriable`. Those outcomes write no qualifying evidence. A measured
-resource or exact-contract breach writes immutable failed evidence. Sampling
+candidate cgroup or exact-contract breach writes immutable failed evidence. Sampling
 starts before the host's `up --wait`, so retained cgroup peak/OOM counters and
 one-second host-pressure samples cover authenticated bootstrap, readiness,
 input materialization, and every canary turn. An ordinary Docker or
 authenticated-startup failure without a measured kernel-envelope breach
 remains retryable and writes no false breach.
+
+Admission uses observed capacity: at least 256 MiB of available host memory and
+memory `some avg10` no greater than 5. The 448 MiB container ceiling remains
+enforced; admission does not additionally reserve its entire possible growth.
+`full avg10` remains a recorded diagnostic, since short reclaim stalls do not
+prove that the workload cannot fit. Falling below the observed headroom reserve
+or exceeding the pressure threshold interrupts qualification as a retryable
+host condition. It never permanently disqualifies a source SHA. Actual cgroup
+OOM, peak-limit and isolation breaches are classified first and remain failures.
+This accepts bounded allocation/reclaim variance while retaining the kernel
+limits and the real cold/warm execution and service-health proof.
 
 Before it starts the candidate host, the controller converges every exact
 predecessor's Docker limits and attests the corresponding host cgroup's

@@ -122,7 +122,20 @@ case "$PRODUCTION_HOST" in
   *[!a-z0-9.-]*|.*|*..*|*.) die "committed production host is malformed" ;;
 esac
 [[ "$PRODUCTION_HOST" == *.* ]] || die "committed production host is malformed"
-[ "$#" = 1 ] || die "usage: deploy/hetzner/deploy.sh <source-sha>"
+APPLY_ARGUMENTS=(--production-host "$PRODUCTION_HOST")
+BACKUP_POLICY=required
+case "$#" in
+  1) ;;
+  2)
+    [ "$2" = "--no-database-backup" ] || \
+      die "usage: deploy/hetzner/deploy.sh <source-sha> [--no-database-backup]"
+    APPLY_ARGUMENTS+=(--no-database-backup)
+    BACKUP_POLICY=waived
+    ;;
+  *) die "usage: deploy/hetzner/deploy.sh <source-sha> [--no-database-backup]" ;;
+esac
+readonly -a APPLY_ARGUMENTS
+readonly BACKUP_POLICY
 readonly SOURCE_SHA="$1"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || die "source SHA must be 40 lowercase hex characters"
 
@@ -271,6 +284,7 @@ if [ -z "$host_inspect" ]; then
 fi
 jq -e --arg sha "$SOURCE_SHA" '
   keys == [
+    "backup_policy",
     "current_sha",
     "current_vercel_deployment_id",
     "failed_vercel_deployment_ids",
@@ -298,10 +312,12 @@ jq -e --arg sha "$SOURCE_SHA" '
   and (
     (.status == "new"
       and .phase == null
+      and .backup_policy == null
       and (.predecessor_sha | type == "string" and test("^[0-9a-f]{40}$"))
       and .vercel_deployment_id == null)
     or
     (.status == "resume"
+      and (.backup_policy | IN("required", "waived"))
       and (.phase | IN(
         "Prepared",
         "WritersStopped",
@@ -316,11 +332,16 @@ jq -e --arg sha "$SOURCE_SHA" '
       and (.vercel_deployment_id | type == "string"))
     or
     (.status == "current"
+      and (.backup_policy | IN("required", "waived"))
       and .current_sha == $sha
       and .phase == "Succeeded"
       and (.vercel_deployment_id | type == "string"))
   )
 ' <<<"$host_inspect" >/dev/null || die "host inspect response is malformed"
+jq -e --arg policy "$BACKUP_POLICY" '
+  .status == "new" or .backup_policy == $policy
+' <<<"$host_inspect" >/dev/null || \
+  die "resume must reuse its recorded database backup policy"
 status="$(jq -r .status <<<"$host_inspect")"
 phase="$(jq -r '.phase // empty' <<<"$host_inspect")"
 if [ "$phase" = "RollbackRequired" ] || [ "$phase" = "ForwardFixPending" ]; then
@@ -333,7 +354,7 @@ if [ "$phase" = "RollbackRequired" ] || [ "$phase" = "ForwardFixPending" ]; then
     python3 -B "$REMOTE_CONTROLLER" apply \
       --source-sha "$SOURCE_SHA" \
       --deployment-id "$settlement_deployment_id" \
-      --production-host "$PRODUCTION_HOST"
+      "${APPLY_ARGUMENTS[@]}"
   die "durable failure settlement unexpectedly returned success"
 fi
 
@@ -633,7 +654,7 @@ if [ "$status" = "new" ] || [ "$phase" != "FrontendPromoted" ]; then
     python3 -B "$REMOTE_CONTROLLER" apply \
       --source-sha "$SOURCE_SHA" \
       --deployment-id "$bound_deployment_id" \
-      --production-host "$PRODUCTION_HOST"
+      "${APPLY_ARGUMENTS[@]}"
 fi
 
 authoritative_alias_status="$(vercel_get \

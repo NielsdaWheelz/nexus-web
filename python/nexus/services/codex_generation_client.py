@@ -8,10 +8,10 @@ import importlib.metadata
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import httpx
-from provider_runtime.agent_runtime import AgentModelCatalog
 from pydantic import ValidationError
 
 from nexus.schemas.presence import Present
@@ -33,7 +33,9 @@ from nexus.services.codex_generation_contract import (
     generation_command_draft,
     generation_draft_fingerprint,
 )
-from nexus.services.codex_generation_operations import model_tool_allowed_tools
+
+if TYPE_CHECKING:
+    from provider_runtime.agent_runtime import AgentModelCatalog
 
 _HOST_AUTHORITY = "http://nexus-codex"
 _MAX_HEALTH_BYTES = 4 * 1024
@@ -343,7 +345,7 @@ class _GenerationFrameStreamValidator:
         self._forbidden_tool_event_seen = False
         plan = command.spec.model_tool_plan_snapshot
         self._allowed_model_tools = (
-            set(model_tool_allowed_tools(plan.value)) if isinstance(plan, Present) else set()
+            {grant.id for grant in plan.value.grants} if isinstance(plan, Present) else set()
         )
 
     def feed(self, chunk: bytes) -> tuple[GenerationFrame, ...]:

@@ -344,7 +344,7 @@ _INFRASTRUCTURE_VOLUME_TARGETS = {
     "postgres": {"/var/lib/postgresql/data": "nexus_postgres_data"},
     "caddy": {"/data": "nexus_caddy_data", "/config": "nexus_caddy_config"},
 }
-_ATTEMPT_FIELDS = frozenset(
+_LEGACY_ATTEMPT_FIELDS = frozenset(
     {
         "schema_version",
         "source_sha",
@@ -365,6 +365,7 @@ _ATTEMPT_FIELDS = frozenset(
         "updated_at",
     }
 )
+_ATTEMPT_FIELDS = _LEGACY_ATTEMPT_FIELDS | {"backup_policy"}
 _CONTAINER_FIELDS = frozenset({"container_id", "image", "config_sha256"})
 _CADDY_ACTIVATION_FIELDS = frozenset(
     {
@@ -556,8 +557,8 @@ class PermanentReleaseFailure(RuntimeError):
 class CodexCapacityBreach(PermanentReleaseFailure):
     """A measured Codex capacity breach the candidate can never take back.
 
-    Only the breaches the cutover §11 enumerates — cgroup peak, OOM, memory
-    pressure, host policy, canary protocol, and structured output, plus the
+    Only candidate breaches — cgroup peak, OOM, host policy, canary protocol,
+    and structured output, plus the
     shape of the evidence that states one — are this class. Policy is
     the canary and host isolation contract: those validators are shared with the
     ordinary release paths, where a difference measures nothing, so qualification
@@ -565,8 +566,8 @@ class CodexCapacityBreach(PermanentReleaseFailure):
     background sampler observes during the turns is a measurement like any other
     and is re-raised from the joining thread.
 
-    Everything else measured nothing about the candidate envelope and stays
-    retriable, so it must never be raised as a breach: predecessor-service
+    Transient host headroom and pressure are retriable conditions, not permanent
+    source defects. Other retriable failures include predecessor-service
     readiness, Docker, transport, sampler and cleanup failures, and a canary
     that never stated one of its own contract terminals — a crashed, OOM-killed
     or cut-off canary observed nothing, whether it left stdout empty,
@@ -588,6 +589,11 @@ class _RejectRedirects(urllib.request.HTTPRedirectHandler):
     ) -> None:
         del req, fp, code, msg, headers, newurl
         raise PermanentReleaseFailure("public proof redirected")
+
+
+class BackupPolicy(StrEnum):
+    Required = "required"
+    Waived = "waived"
 
 
 class ReleasePhase(StrEnum):
@@ -626,6 +632,7 @@ _TRANSITIONS: dict[ReleasePhase, frozenset[ReleasePhase]] = {
     ReleasePhase.WritersStopped: frozenset(
         {
             ReleasePhase.BackupVerified,
+            ReleasePhase.DataMutationStarted,
             ReleasePhase.BackendActivationStarted,
             ReleasePhase.RollbackRequired,
             ReleasePhase.ForwardFixPending,
@@ -1338,14 +1345,21 @@ class ReleaseAttempt:
     vercel_deployment_id: str
     production_host: str
     phase: ReleasePhase
+    backup_policy: BackupPolicy
     backup: BackupEvidence | None
     failure_code: str | None
     created_at: str
     updated_at: str
 
     def __post_init__(self) -> None:
-        if self.schema_version != 1:
-            raise ReleaseDefect("release attempt schema version must be 1")
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2):
+            raise ReleaseDefect("release attempt schema version must be 1 or 2")
+        if not isinstance(self.backup_policy, BackupPolicy):
+            raise ReleaseDefect("release backup policy is malformed")
+        if self.schema_version == 1 and self.backup_policy is not BackupPolicy.Required:
+            raise ReleaseDefect("legacy release attempt requires a database backup")
+        if self.backup_policy is BackupPolicy.Waived and self.backup is not None:
+            raise ReleaseDefect("waived release attempt cannot contain backup evidence")
         _require_match("attempt source SHA", self.source_sha, _SHA)
         _require_match("manifest SHA-256", self.manifest_sha256, _SHA256)
         _require_match("candidate API image id", self.candidate_api_image_id, _IMAGE_ID)
@@ -1370,7 +1384,11 @@ class ReleaseAttempt:
         _require_match("production host", self.production_host, _HOST)
         if self.phase is ReleasePhase.BackupVerified and self.backup is None:
             raise ReleaseDefect("BackupVerified attempt has no backup evidence")
-        if self.phase is ReleasePhase.DataMutationStarted and self.backup is None:
+        if (
+            self.phase is ReleasePhase.DataMutationStarted
+            and self.backup_policy is BackupPolicy.Required
+            and self.backup is None
+        ):
             raise ReleaseDefect("DataMutationStarted attempt has no backup evidence")
         if (
             self.phase in {ReleasePhase.Prepared, ReleasePhase.WritersStopped}
@@ -1410,9 +1428,10 @@ class ReleaseAttempt:
         vercel_deployment_id: str,
         production_host: str,
         now: str,
+        backup_policy: BackupPolicy = BackupPolicy.Required,
     ) -> ReleaseAttempt:
         return cls(
-            schema_version=1,
+            schema_version=2,
             source_sha=source_sha,
             manifest_sha256=manifest_sha256,
             candidate_api_image_id=candidate_api_image_id,
@@ -1425,6 +1444,7 @@ class ReleaseAttempt:
             vercel_deployment_id=vercel_deployment_id,
             production_host=production_host,
             phase=ReleasePhase.Prepared,
+            backup_policy=backup_policy,
             backup=None,
             failure_code=None,
             created_at=now,
@@ -1444,6 +1464,12 @@ class ReleaseAttempt:
     ) -> ReleaseAttempt:
         if phase not in _TRANSITIONS[self.phase]:
             raise ReleaseDefect(f"invalid release transition {self.phase.value} -> {phase.value}")
+        if (
+            self.phase is ReleasePhase.WritersStopped
+            and phase is ReleasePhase.DataMutationStarted
+            and self.backup_policy is not BackupPolicy.Waived
+        ):
+            raise ReleaseDefect("direct migration transition requires a database backup waiver")
         return dataclasses.replace(
             self,
             phase=phase,
@@ -1478,7 +1504,7 @@ class ReleaseAttempt:
         )
 
     def as_json(self) -> dict[str, object]:
-        return {
+        value: dict[str, object] = {
             "schema_version": self.schema_version,
             "source_sha": self.source_sha,
             "manifest_sha256": self.manifest_sha256,
@@ -1499,10 +1525,28 @@ class ReleaseAttempt:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        if self.schema_version == 2:
+            value["backup_policy"] = self.backup_policy.value
+        return value
 
     @classmethod
     def from_json(cls, value: object) -> ReleaseAttempt:
-        mapping = _closed_mapping(value, _ATTEMPT_FIELDS, "release attempt")
+        schema_version = _integer(_mapping(value, "release attempt"), "schema_version")
+        if schema_version not in (1, 2):
+            raise ReleaseDefect("release attempt schema version must be 1 or 2")
+        mapping = _closed_mapping(
+            value,
+            _LEGACY_ATTEMPT_FIELDS if schema_version == 1 else _ATTEMPT_FIELDS,
+            "release attempt",
+        )
+        try:
+            backup_policy = (
+                BackupPolicy.Required
+                if schema_version == 1
+                else BackupPolicy(_string(mapping, "backup_policy"))
+            )
+        except ValueError as exc:
+            raise ReleaseDefect("release backup policy is malformed") from exc
         containers_value = _mapping(mapping.get("containers"), "attempt containers")
         try:
             phase = ReleasePhase(_string(mapping, "phase"))
@@ -1510,7 +1554,7 @@ class ReleaseAttempt:
             raise ReleaseDefect("release attempt has an unknown phase") from exc
         backup_value = mapping.get("backup")
         return cls(
-            schema_version=_integer(mapping, "schema_version"),
+            schema_version=schema_version,
             source_sha=_string(mapping, "source_sha"),
             manifest_sha256=_string(mapping, "manifest_sha256"),
             candidate_api_image_id=_string(mapping, "candidate_api_image_id"),
@@ -1526,6 +1570,7 @@ class ReleaseAttempt:
             vercel_deployment_id=_string(mapping, "vercel_deployment_id"),
             production_host=_string(mapping, "production_host"),
             phase=phase,
+            backup_policy=backup_policy,
             backup=None if backup_value is None else BackupEvidence.from_json(backup_value),
             failure_code=_optional_string(mapping, "failure_code"),
             created_at=_string(mapping, "created_at"),
@@ -1693,6 +1738,12 @@ class ReleaseStore:
             raise ReleaseDefect(
                 f"invalid stored release transition {current.phase.value} -> {attempt.phase.value}"
             )
+        if (
+            current.phase is ReleasePhase.WritersStopped
+            and attempt.phase is ReleasePhase.DataMutationStarted
+            and current.backup_policy is not BackupPolicy.Waived
+        ):
+            raise ReleaseDefect("direct migration transition requires a database backup waiver")
         _atomic_json(self.paths.attempts / f"{attempt.source_sha}.json", attempt.as_json())
 
     def load_attempt(self, source_sha: str) -> ReleaseAttempt | None:
@@ -3940,7 +3991,7 @@ class HostRelease:
             raise ReleaseBlocked("host swap is below 1 GiB")
 
         pressure = self._host_memory_pressure()
-        if pressure["full"] != 0 or pressure["some"] > 5:
+        if pressure["some"] > 5:
             raise ReleaseBlocked("host memory pressure exceeds the release envelope")
 
         try:
@@ -4154,7 +4205,9 @@ class HostRelease:
                 "database revision is not an ancestor of the candidate head"
             )
 
-    def preflight(self, source_sha: str) -> PreflightEvidence:
+    def preflight(
+        self, source_sha: str, *, backup_policy: BackupPolicy = BackupPolicy.Required
+    ) -> PreflightEvidence:
         self.store.assert_no_oracle_attempt()
         current_record = self.store.require_current_record()
         current_sha = current_record.source_sha
@@ -4268,17 +4321,18 @@ class HostRelease:
             config_path=config.path,
             sql="SELECT current_database() || ':' || system_identifier FROM pg_control_system()",
         )
-        byte_count = int(
-            self._database_scalar(
-                bundle=bundle,
-                candidate=candidate,
-                config_path=config.path,
-                sql="SELECT pg_database_size(current_database())",
+        if backup_policy is BackupPolicy.Required:
+            byte_count = int(
+                self._database_scalar(
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=config.path,
+                    sql="SELECT pg_database_size(current_database())",
+                )
             )
-        )
-        available = shutil.disk_usage(self.paths.backup_root.parent).free
-        if available < byte_count * 2 + 268_435_456:
-            raise ReleaseBlocked("backup filesystem has insufficient verified capacity")
+            available = shutil.disk_usage(self.paths.backup_root.parent).free
+            if available < byte_count * 2 + 268_435_456:
+                raise ReleaseBlocked("backup filesystem has insufficient verified capacity")
         return PreflightEvidence(
             candidate=candidate,
             manifest_sha256=_sha256(bundle / "candidate-manifest.json"),
@@ -5783,19 +5837,15 @@ class HostRelease:
         pressure = self._host_memory_pressure()
         return memory["MemAvailable"], pressure["some"], pressure["full"]
 
-    def _require_qualification_host_sample(
-        self, sample: tuple[int, float, float], *, initial: bool
-    ) -> None:
-        available, some, full = sample
+    def _require_qualification_host_sample(self, sample: tuple[int, float, float]) -> None:
+        available, some, _full = sample
         if available < _MIN_AVAILABLE_MEMORY_BYTES:
             message = "Codex capacity qualification headroom is below 256 MiB"
-        elif full != 0 or some > 5:
+        elif some > 5:
             message = "Codex capacity qualification memory pressure exceeds envelope"
         else:
             return
-        if initial:
-            raise ReleaseBlocked(message)
-        raise CodexCapacityBreach(message)
+        raise ReleaseBlocked(message)
 
     def _classify_codex_capacity_startup_failure(
         self,
@@ -6528,14 +6578,6 @@ class HostRelease:
             > _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1]
         ):
             raise CodexCapacityBreach("Codex capacity qualification cgroup current exceeds limit")
-        if _nonnegative_integer(evidence, "minimum_mem_available") < _MIN_AVAILABLE_MEMORY_BYTES:
-            raise CodexCapacityBreach("Codex capacity qualification host headroom is below 256 MiB")
-        some = _finite_number(evidence, "maximum_memory_psi_some")
-        full = _finite_number(evidence, "maximum_memory_psi_full")
-        if full != 0 or some > 5:
-            raise CodexCapacityBreach(
-                "Codex capacity qualification memory pressure exceeds envelope"
-            )
         if _nonnegative_integer(evidence, "oom_kill_delta") != 0:
             raise CodexCapacityBreach("Codex capacity qualification observed an OOM kill")
         turns = evidence.get("turns")
@@ -6572,6 +6614,12 @@ class HostRelease:
         services = _string_list(evidence.get("services"), "Codex capacity qualification services")
         if tuple(services) != _CODEX_CAPACITY_SERVICES:
             raise CodexCapacityBreach("Codex capacity qualification service health differs")
+        if _nonnegative_integer(evidence, "minimum_mem_available") < _MIN_AVAILABLE_MEMORY_BYTES:
+            raise ReleaseBlocked("Codex capacity qualification host headroom is below 256 MiB")
+        some = _finite_number(evidence, "maximum_memory_psi_some")
+        _finite_number(evidence, "maximum_memory_psi_full")
+        if some > 5:
+            raise ReleaseBlocked("Codex capacity qualification memory pressure exceeds envelope")
         return _release_timestamp_seconds(
             _string(evidence, "measured_at"),
             "Codex capacity qualification",
@@ -6873,12 +6921,12 @@ class HostRelease:
         """Run the one pre-promotion, candidate-bound existing-VPS qualification.
 
         Classification is the run's product. A breach proven by the canary
-        contract, the exact host's startup cgroup/pressure observations, the
-        isolation policy, the background sampler, or the assembled evidence
+        contract, the exact host's startup cgroup observations, the isolation
+        policy, the background sampler, or the assembled evidence
         writes immutable failed evidence and disqualifies this source SHA forever. Only stdout that
         parses as the canary's own evidence contract can prove an in-canary
         breach. Everything that measured nothing about the envelope stays
-        retriable and writes nothing: Docker, transport, cleanup, a sampler
+        retriable and writes nothing: host headroom/pressure, Docker, transport, cleanup, a sampler
         fault, or a canary that crashed before stating a contract terminal. A
         rerun may replace only expired passing evidence, never failed evidence.
         """
@@ -6901,7 +6949,7 @@ class HostRelease:
         # baseline even after memory.swap.max is corrected.
         self._converge_resource_limits(source_sha)
         initial_host_sample = self._qualification_host_sample()
-        self._require_qualification_host_sample(initial_host_sample, initial=True)
+        self._require_qualification_host_sample(initial_host_sample)
         config = self._config_snapshot()
         host_samples = [initial_host_sample]
         cgroup_samples: list[tuple[int, int, int, int]] = []
@@ -6948,11 +6996,7 @@ class HostRelease:
                     container_id = identifiers[0]
                     inspected = _inspect_one(container_id, "Codex capacity sampled host inspect")
                     state = _mapping(inspected.get("State"), "Codex capacity sampled host state")
-                    if state.get("Running") is not True:
-                        if require_container:
-                            raise ExternalCommandFailed(
-                                "Codex capacity sampled host is not running"
-                            )
+                    if state.get("Running") is not True and not require_container:
                         return
                     image_id = _require_match(
                         "Codex capacity sampled host image id",
@@ -6961,16 +7005,20 @@ class HostRelease:
                     )
                     if image_id != worker_image_id:
                         raise ReleaseDefect("Codex capacity sampled host differs from candidate")
+                    if state.get("OOMKilled") is True:
+                        raise CodexCapacityBreach(
+                            "Codex agent host was OOM-killed during capacity qualification"
+                        )
+                    if state.get("Running") is not True:
+                        raise ExternalCommandFailed("Codex capacity sampled host is not running")
+                    cgroup = self._codex_capacity_cgroup(container_id)
                     sampled_host_ids.append(container_id)
-                    sampled_host_cgroups.append(self._codex_capacity_cgroup(container_id))
+                    sampled_host_cgroups.append(cgroup)
 
                 try:
                     metrics = self._codex_capacity_cgroup_metrics(sampled_host_cgroups[0])
                 except ReleaseBlocked as exc:
                     raise self._classify_codex_host_cgroup_loss(container_id, exc) from exc
-                host_sample = self._qualification_host_sample()
-                self._require_qualification_host_sample(host_sample, initial=False)
-                host_samples.append(host_sample)
                 cgroup_samples.append(metrics)
                 if (
                     metrics[0] != _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1]
@@ -6980,6 +7028,8 @@ class HostRelease:
                     raise CodexCapacityBreach(
                         "Codex capacity qualification cgroup envelope differs"
                     )
+                host_sample = self._qualification_host_sample()
+                host_samples.append(host_sample)
 
         def sample_runtime() -> None:
             # justify-polling: host and cgroup counters expose no event source.
@@ -6989,6 +7039,10 @@ class HostRelease:
                 except CodexCapacityBreach as exc:
                     sample_breach.append(exc)
                     sampler_stop.set()
+                except ReleaseBlocked as exc:
+                    # Keep watching the cgroup after a transient observation failure.
+                    if not sample_failure:
+                        sample_failure.append(exc)
                 except Exception as exc:
                     sample_failure.append(exc)
                     sampler_stop.set()
@@ -6998,6 +7052,14 @@ class HostRelease:
         def stop_sampler() -> None:
             sampler_stop.set()
             sampler.join(timeout=_CODEX_CAPACITY_SAMPLER_JOIN_SECONDS)
+            if not sampler.is_alive():
+                # Teardown must not erase a breach after an earlier read failure.
+                try:
+                    sample_once(require_container=True)
+                except CodexCapacityBreach as exc:
+                    sample_breach.append(exc)
+                except Exception as exc:
+                    sample_failure.append(exc)
 
         host_may_be_started = False
         sampler_started = False
@@ -7076,11 +7138,15 @@ class HostRelease:
             )
             if sample_breach:
                 raise sample_breach[0]
-            if sample_failure:
-                raise ReleaseDefect("Codex capacity sampler failed") from sample_failure[0]
             sample_once(require_container=True)
+            if sample_failure:
+                if isinstance(sample_failure[0], ReleaseBlocked):
+                    raise sample_failure[0]
+                raise ReleaseDefect("Codex capacity sampler failed") from sample_failure[0]
             if sampled_host_ids != [host_container_id]:
                 raise ReleaseDefect("Codex capacity sampled host identity differs")
+            for sample in host_samples:
+                self._require_qualification_host_sample(sample)
         except BaseException as exc:
             # Device-auth, Docker, and observation failures remain retriable.
             # A cgroup OOM read from the exact attempted host is a measured
@@ -7215,59 +7281,26 @@ class HostRelease:
             )
             self._validate_running_resource_limits(_CODEX_AGENT_HOST, canary_id)
             sample_once(require_container=True)
-            try:
-                result = _run_observed(
-                    (
-                        "docker",
-                        "exec",
-                        canary_id,
-                        "python",
-                        "-m",
-                        "apps.codex_agent.capacity_canary",
-                    ),
-                    timeout_seconds=420,
-                )
-            finally:
-                stop_sampler()
+            result = _run_observed(
+                (
+                    "docker",
+                    "exec",
+                    canary_id,
+                    "python",
+                    "-m",
+                    "apps.codex_agent.capacity_canary",
+                ),
+                timeout_seconds=420,
+            )
             if sample_breach:
                 # The sampler observed the ceiling itself during the turns. That
                 # is the measurement §11 enumerates, not a sampler fault, so the
                 # main thread re-raises it first and failed evidence is written;
                 # no later sampler classification may downgrade it.
                 raise sample_breach[0]
-            if sampler.is_alive():
-                # A sampler still inside its own bounded reads measured no
-                # breach; the proof is retried, not permanently disqualified.
-                raise ExternalCommandFailed("Codex capacity sampler did not stop")
-            if sample_failure:
-                raise ReleaseDefect("Codex capacity sampler failed") from sample_failure[0]
-            # The controller's own measurements classify first, whatever the
-            # canary went on to say: a cgroup peak above the 384 MiB margin, a
-            # changed memory.max, an OOM kill, or host headroom/pressure outside
-            # the envelope while the host ran is the §8 breach §11 enumerates,
-            # and a canary that then lost its transport or was refused
-            # admission must not downgrade it to a retriable, evidence-free run.
-            sample_once(require_container=True)
-            for sample in host_samples:
-                self._require_qualification_host_sample(sample, initial=False)
-            metrics = tuple(cgroup_samples)
-            if not metrics:
-                raise ReleaseDefect("Codex capacity cgroup was never sampled")
-            initial_metrics, final_metrics = metrics[0], metrics[-1]
-            if (
-                any(metric[0] != _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1] for metric in metrics)
-                or max(metric[2] for metric in metrics) > _CODEX_AGENT_MEMORY_PEAK_LIMIT_BYTES
-                or any(metric[3] != 0 for metric in metrics)
-            ):
-                raise CodexCapacityBreach("Codex capacity qualification cgroup envelope differs")
-            # Classify by evidence first, never by the exit code alone. Only
-            # stdout that parses as the canary's own contract statement is a
-            # measurement this run may permanently disqualify a SHA with. A
-            # canary that crashed, was OOM-killed, or was cut off mid-write
-            # leaves stdout that is empty or unparseable; it observed nothing
-            # about the measured envelope, whatever it exited with. A real
-            # envelope breach is the sampler's or the assembled evidence's to
-            # state, and the envelope is already checked above.
+            # Only a complete canary statement can prove its contract failed.
+            # Sampling continues while this result is classified; every exit
+            # joins and samples once more before teardown can erase a breach.
             try:
                 canary = _closed_mapping(
                     _read_json_output(result.stdout, "Codex capacity canary"),
@@ -7301,6 +7334,19 @@ class HostRelease:
                 candidate=candidate,
                 config_path=config.path,
             )
+            stop_sampler()
+            if sample_breach:
+                raise sample_breach[0]
+            metrics = tuple(cgroup_samples)
+            if not metrics:
+                raise ReleaseDefect("Codex capacity cgroup was never sampled")
+            initial_metrics, final_metrics = metrics[0], metrics[-1]
+            if (
+                any(metric[0] != _RESOURCE_LIMITS[_CODEX_AGENT_HOST][1] for metric in metrics)
+                or max(metric[2] for metric in metrics) > _CODEX_AGENT_MEMORY_PEAK_LIMIT_BYTES
+                or any(metric[3] != 0 for metric in metrics)
+            ):
+                raise CodexCapacityBreach("Codex capacity qualification cgroup envelope differs")
             evidence = {
                 "schema_version": _CODEX_CAPACITY_SCHEMA_VERSION,
                 "source_sha": source_sha,
@@ -7322,6 +7368,12 @@ class HostRelease:
                 expected_source_sha=candidate.source_sha,
                 worker_image_id=worker_image_id,
             )
+            if sampler.is_alive():
+                raise ExternalCommandFailed("Codex capacity sampler did not stop")
+            if sample_failure:
+                if isinstance(sample_failure[0], ReleaseBlocked):
+                    raise sample_failure[0]
+                raise ReleaseDefect("Codex capacity sampler failed") from sample_failure[0]
         except CodexCapacityBreach as exc:
             # Only a measured breach disqualifies the source SHA forever, and
             # the immutable failed evidence it writes can never be replaced.
@@ -7417,6 +7469,7 @@ class HostRelease:
         source_sha: str,
         deployment_id: str,
         production_host: str,
+        backup_policy: BackupPolicy = BackupPolicy.Required,
     ) -> ReleaseAttempt:
         self.store.assert_no_oracle_attempt()
         self.store.require_current_record()
@@ -7427,6 +7480,7 @@ class HostRelease:
                     source_sha=source_sha,
                     deployment_id=deployment_id,
                     production_host=production_host,
+                    backup_policy=backup_policy,
                 )
             except PermanentReleaseFailure:
                 self._terminalize_attempt(source_sha, failure_code="candidate-invariant")
@@ -7451,6 +7505,7 @@ class HostRelease:
         source_sha: str,
         deployment_id: str,
         production_host: str,
+        backup_policy: BackupPolicy,
     ) -> ReleaseAttempt:
         self.store.assert_no_oracle_attempt()
         if self.paths.caddy_activation.exists():
@@ -7459,6 +7514,8 @@ class HostRelease:
         _require_match("production host", production_host, _HOST)
         self.store.assert_candidate_admissible(source_sha)
         existing = self.store.load_attempt(source_sha)
+        if existing is not None and existing.backup_policy is not backup_policy:
+            raise ReleaseBlocked("resume must reuse its recorded database backup policy")
         # The predecessor has no Codex host. A first cutover therefore requires
         # its immutable qualification before the ordinary release path mutates
         # a live container. Qualification owns its prerequisite resource
@@ -7489,7 +7546,7 @@ class HostRelease:
             )
         if existing is None:
             self._converge_resource_limits(source_sha)
-            preflight = self.preflight(source_sha)
+            preflight = self.preflight(source_sha, backup_policy=backup_policy)
             current = self.store.require_current_record().source_sha
             attempt = ReleaseAttempt.prepared(
                 source_sha=source_sha,
@@ -7504,6 +7561,7 @@ class HostRelease:
                 vercel_deployment_id=deployment_id,
                 production_host=production_host,
                 now=_now(),
+                backup_policy=backup_policy,
             )
             self.store.create_attempt(attempt)
         else:
@@ -7583,38 +7641,47 @@ class HostRelease:
                 )
                 self.store.replace_attempt(attempt)
             else:
-                if len(revisions) > 1:
-                    raise PermanentReleaseFailure(
-                        "pending migration requires at most one exact starting revision"
-                    )
                 starting_revision = revisions[0]
-                backup = self._backup(
+                self._prove_database_ancestry(
+                    candidate=candidate,
+                    current_revision=starting_revision,
+                )
+                database_identity = self._database_scalar(
                     bundle=bundle,
                     candidate=candidate,
-                    attempt=attempt,
-                    database_identity=(
-                        preflight.database_identity
-                        if preflight is not None
-                        else self._database_scalar(
-                            bundle=bundle,
-                            candidate=candidate,
-                            config_path=Path(attempt.config_path),
-                            sql=(
-                                "SELECT current_database() || ':' || system_identifier "
-                                "FROM pg_control_system()"
-                            ),
-                        )
+                    config_path=Path(attempt.config_path),
+                    sql=(
+                        "SELECT current_database() || ':' || system_identifier "
+                        "FROM pg_control_system()"
                     ),
-                    starting_revision=starting_revision,
                 )
-                attempt = attempt.with_backup(
-                    path=backup.path,
-                    sha256=backup.sha256,
-                    byte_count=backup.byte_count,
-                    database_identity=backup.database_identity,
-                    starting_revision=backup.starting_revision,
-                    now=_now(),
-                )
+                if preflight is not None and (
+                    database_identity != preflight.database_identity
+                    or starting_revision != preflight.database_revision
+                ):
+                    raise PermanentReleaseFailure(
+                        "database changed after preflight and before the migration boundary"
+                    )
+                if attempt.backup_policy is BackupPolicy.Waived:
+                    # Config, exact containers, stopped writers and ancestry were
+                    # proved above. No archive exists to attest or validate.
+                    attempt = attempt.advance(ReleasePhase.DataMutationStarted, now=_now())
+                else:
+                    backup = self._backup(
+                        bundle=bundle,
+                        candidate=candidate,
+                        attempt=attempt,
+                        database_identity=database_identity,
+                        starting_revision=starting_revision,
+                    )
+                    attempt = attempt.with_backup(
+                        path=backup.path,
+                        sha256=backup.sha256,
+                        byte_count=backup.byte_count,
+                        database_identity=backup.database_identity,
+                        starting_revision=backup.starting_revision,
+                        now=_now(),
+                    )
                 self.store.replace_attempt(attempt)
 
         if attempt.phase is ReleasePhase.BackupVerified:
@@ -8895,6 +8962,7 @@ def _parser() -> argparse.ArgumentParser:
     apply.add_argument("--source-sha", required=True)
     apply.add_argument("--deployment-id", required=True)
     apply.add_argument("--production-host", required=True)
+    apply.add_argument("--no-database-backup", action="store_true")
 
     qualify_capacity = commands.add_parser("qualify-codex-capacity")
     qualify_capacity.add_argument("--source-sha", required=True)
@@ -9019,6 +9087,7 @@ def main(argv: list[str] | None = None) -> int:
                     "forward_fix_sha": forward_fix,
                     "failed_vercel_deployment_ids": failed_vercel_deployment_ids,
                     "phase": None if attempt is None else attempt.phase.value,
+                    "backup_policy": None if attempt is None else attempt.backup_policy.value,
                     "predecessor_sha": (current if attempt is None else attempt.predecessor_sha),
                     "vercel_deployment_id": (
                         None if attempt is None else attempt.vercel_deployment_id
@@ -9034,6 +9103,9 @@ def main(argv: list[str] | None = None) -> int:
                 source_sha=args.source_sha,
                 deployment_id=args.deployment_id,
                 production_host=args.production_host,
+                backup_policy=(
+                    BackupPolicy.Waived if args.no_database_backup else BackupPolicy.Required
+                ),
             )
             sys.stdout.buffer.write(
                 _canonical_json({"source_sha": attempt.source_sha, "phase": attempt.phase.value})

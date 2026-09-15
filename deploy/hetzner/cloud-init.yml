@@ -38,7 +38,7 @@ write_files:
     content: |
       [Journal]
       Storage=persistent
-      SystemMaxUse=2G
+      SystemMaxUse=256M
 
 users:
   - default
