@@ -59,6 +59,7 @@ class Workflow(StrEnum):
     FULL = "full"
     NIGHTLY = "nightly"
     RELEASE = "release"
+    BACKEND_IMAGES = "backend-images"
     DOCTOR = "doctor"
     ANDROID_VISUAL = "android-visual"
 
@@ -462,6 +463,10 @@ WORKFLOW_REGISTRY: Mapping[Workflow, WorkflowDefinition] = MappingProxyType(
                     Capability.EXTENSION,
                 ),
             ),
+        ),
+        Workflow.BACKEND_IMAGES: WorkflowDefinition(
+            Workflow.BACKEND_IMAGES,
+            (CapabilityRequirement(Capability.RELEASE_ARTIFACT, SelectionScope.COMPLETE),),
         ),
         Workflow.DOCTOR: WorkflowDefinition(
             Workflow.DOCTOR,

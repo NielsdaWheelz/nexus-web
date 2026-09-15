@@ -550,6 +550,7 @@ unrecorded processes, containers, databases, buckets, users, or checkouts.
 | `./scripts/test full` | complete deterministic local portfolio |
 | `./scripts/test nightly` | `full` plus randomized/property audit and Android device proof |
 | `./scripts/test release` | `full` plus Android device proof, signed Android release proof, and exact staged artifacts |
+| `./scripts/test backend-images` | build the current API and worker images locally, verify immutable identity, unprivileged imports, and hardened ingest; remove exact test containers and image tags; no publication or Android staging |
 | `./scripts/test doctor` | local tool, dependency, browser, SDK, service, port, and template readiness; protected-workflow inputs only when that lane is explicitly enabled |
 | `./scripts/test android-visual --sha HEAD_SHA --path /OWNED_PATH [--device primary]` | explicit opt-in physical-device authenticated WebView visual check of the current non-`main` worktree; never included in `changed`/`confidence`/`pr`/`full`/`nightly`/`release` |
 | `./scripts/test prove --proof PROOF --against base:REF\|fault:FAULT_ID` | exact demonstrated-red then green sensitivity evidence |
@@ -562,12 +563,19 @@ The command table above, CI routes, and deferred-owner map are explicit,
 policy-checked projections that MUST change with it; they are not generated
 from the registry.
 
+The backend image workflow reuses the release-artifact proof owner. It is an
+explicit local verification lane, outside the ordinary PR portfolio. Image
+builds run serially and check free space on both the checkout and Docker
+filesystems. Tests use immutable image IDs, no network, a read-only root, and
+exact container cleanup. BuildKit's shared build cache remains owned by the
+host cache policy; this workflow never prunes it.
+
 The existing worker supervisor and parser memory proofs retain their measured
 values in the owning service capability's log artifacts, including successful
 runs. These are process RSS measurements under the existing budgets; they do
 not measure an image build's shared Docker daemon or BuildKit cache.
 
-<!-- nexus-test-routing-sha256: 16be00b8b3dea025d985dacb2bc676ac278d12736120c133ef2593ebd896d864 -->
+<!-- nexus-test-routing-sha256: bab6e65d18457fc1a40abf494f258d90f0016065345dc810fc60809be01e41e7 -->
 
 When changed-file routing names a capability later than the invoked workflow,
 the controller MUST retain it in evidence with its exact `deferred_to` owner and

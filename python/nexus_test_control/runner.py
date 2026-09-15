@@ -203,6 +203,8 @@ _SAFE_CHILD_ENV = (
     "XDG_CACHE_HOME",
 )
 _RELEASE_ARTIFACT_WORKER_IMAGE_ENV = "NEXUS_TEST_CANDIDATE_WORKER_IMAGE"
+_RELEASE_ARTIFACT_API_IMAGE_ENV = "NEXUS_TEST_CANDIDATE_API_IMAGE"
+_RELEASE_ARTIFACT_CONTAINER_ENV = "NEXUS_TEST_CANDIDATE_CONTAINER_NAME"
 _MEMORY_MEASUREMENT_MARKER = "nexus-memory-measurement="
 _LOCAL_IMAGE_ID_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _PYTHON_POLICY_DIRS = (
@@ -1127,7 +1129,8 @@ def run_workflow(
                     capability,
                     _available_storage(
                         context.repo_root,
-                        capability in _LOCAL_RUNTIME_CAPABILITIES,
+                        capability in _LOCAL_RUNTIME_CAPABILITIES
+                        or capability is Capability.RELEASE_ARTIFACT,
                     ),
                 )
                 return storage_admission or _run_capability(
@@ -1360,7 +1363,8 @@ def run_proof(
             capability,
             _available_storage(
                 context.repo_root,
-                capability in _LOCAL_RUNTIME_CAPABILITIES,
+                capability in _LOCAL_RUNTIME_CAPABILITIES
+                or capability is Capability.RELEASE_ARTIFACT,
             ),
         )
         if storage_admission is not None:
@@ -1645,6 +1649,10 @@ def _run_capability_unlocked(
         case Capability.ANDROID_RELEASE:
             return _run_android_release(context, caller_environment, execution)
         case Capability.RELEASE_ARTIFACT:
+            if context.workflow is Workflow.BACKEND_IMAGES:
+                if execution is None:
+                    return _not_run(capability, "backend images require a controller run identity")
+                return _run_release_artifact_proofs(context, caller_environment, execution)
             return _run_release_artifact(context, caller_environment, execution)
         case Capability.DOCTOR:
             return _run_doctor(context, caller_environment)
@@ -2304,38 +2312,146 @@ def _run_release_artifact_proofs(
     try:
         source_sha = _git_commit(context.repo_root, "HEAD", environment)
         docker_host = execution.ports.local_docker_host()
-        image_tag = f"nexus-test-worker-{repo_id_for(context.repo_root)}:{execution.run_id}"
     except RuntimeContractError as error:
-        return _not_run(capability, f"candidate worker image setup is unavailable: {error}")
+        return _not_run(capability, f"candidate backend image setup is unavailable: {error}")
 
-    docker_prefix = (
-        "env",
-        f"DOCKER_HOST={docker_host}",
-        "DOCKER_CONTEXT=default",
+    docker_prefix = ("env", f"DOCKER_HOST={docker_host}", "DOCKER_CONTEXT=default")
+    container_name = f"nexus-test-backend-{repo_id_for(context.repo_root)}-{execution.run_id}"
+    image_tags: list[str] = []
+    image_ids: dict[str, str] = {}
+    result = _pass(capability, "candidate backend image setup")
+    with tempfile.TemporaryDirectory(prefix=f"nexus-test-images-{execution.run_id}-") as temporary:
+        try:
+            for target in ("api", "worker"):
+                tag = f"nexus-test-{target}-{repo_id_for(context.repo_root)}:{execution.run_id}"
+                image_tags.append(tag)
+                iidfile = Path(temporary) / f"{target}.iid"
+                result = _run_fixed_commands(
+                    capability,
+                    (
+                        (
+                            (
+                                *docker_prefix,
+                                "docker",
+                                "buildx",
+                                "build",
+                                "--builder",
+                                "default",
+                                "--load",
+                                "--file",
+                                "./docker/Dockerfile.backend",
+                                "--target",
+                                target,
+                                "--build-arg",
+                                f"SOURCE_SHA={source_sha}",
+                                "--tag",
+                                tag,
+                                "--iidfile",
+                                str(iidfile),
+                                ".",
+                            ),
+                            context.repo_root,
+                        ),
+                    ),
+                    environment,
+                    ("docker", "env"),
+                    context=context,
+                    elapsed_ms=result.evidence.duration_ms,
+                )
+                if result.evidence.status is not RunStatus.PASS:
+                    result = _release_artifact_setup_result(
+                        result, f"candidate {target} image build"
+                    )
+                    break
+                try:
+                    image_id = iidfile.read_text(encoding="utf-8").strip()
+                except (OSError, UnicodeDecodeError) as error:
+                    result = _result(
+                        capability,
+                        RunStatus.FAIL,
+                        result.evidence.duration_ms,
+                        "proof_result=setup_or_execution_failure|"
+                        f"candidate {target} image ID is unreadable: {error}",
+                    )
+                    break
+                if _LOCAL_IMAGE_ID_RE.fullmatch(image_id) is None:
+                    result = _result(
+                        capability,
+                        RunStatus.FAIL,
+                        result.evidence.duration_ms,
+                        "proof_result=setup_or_execution_failure|"
+                        f"candidate {target} image build did not produce an immutable image ID",
+                    )
+                    break
+                image_ids[target] = image_id
+            if result.evidence.status is RunStatus.PASS:
+                result = _run_fixed_commands(
+                    capability,
+                    (
+                        (
+                            (
+                                *docker_prefix,
+                                f"{_RELEASE_ARTIFACT_API_IMAGE_ENV}={image_ids['api']}",
+                                f"{_RELEASE_ARTIFACT_WORKER_IMAGE_ENV}={image_ids['worker']}",
+                                f"{_RELEASE_ARTIFACT_CONTAINER_ENV}={container_name}",
+                                "uv",
+                                "run",
+                                "--frozen",
+                                "--no-sync",
+                                "pytest",
+                                *_DETERMINISTIC_PYTEST,
+                                *targets,
+                            ),
+                            python_root,
+                        ),
+                    ),
+                    environment,
+                    ("docker", "env", "uv"),
+                    context=context,
+                    elapsed_ms=result.evidence.duration_ms,
+                )
+        finally:
+            cleanup = _cleanup_candidate_artifacts(
+                context,
+                environment,
+                docker_prefix,
+                container_name,
+                image_tags,
+                result.evidence.duration_ms,
+            )
+    if cleanup.evidence.status is not RunStatus.PASS:
+        return _release_artifact_setup_result(cleanup, "candidate backend image cleanup")
+    return CapabilityResult(
+        replace(result.evidence, duration_ms=cleanup.evidence.duration_ms), result.detail
     )
-    with tempfile.TemporaryDirectory(prefix=f"nexus-test-worker-{execution.run_id}-") as temporary:
-        iidfile = Path(temporary) / "worker.iid"
-        build = _run_fixed_commands(
+
+
+def _cleanup_candidate_artifacts(
+    context: CapabilityContext,
+    environment: Mapping[str, str],
+    docker_prefix: tuple[str, ...],
+    container_name: str,
+    image_tags: list[str],
+    elapsed_ms: int,
+) -> CapabilityResult:
+    """Reap the exact proof container and attempted image tags after failure or interruption."""
+    capability = Capability.RELEASE_ARTIFACT
+    failure: CapabilityResult | None = None
+    owners = (("container", container_name), *(("image", tag) for tag in reversed(image_tags)))
+    for kind, identity in owners:
+        inspection = (
+            ("container", "ls", "--all", "--quiet", "--filter", f"name=^/{identity}$")
+            if kind == "container"
+            else ("image", "ls", "--quiet", "--filter", f"reference={identity}")
+        )
+        inspected, command = _run_fixed_commands_observed(
             capability,
             (
                 (
                     (
                         *docker_prefix,
                         "docker",
-                        "buildx",
-                        "build",
-                        "--load",
-                        "--file",
-                        "./docker/Dockerfile.backend",
-                        "--target",
-                        "worker",
-                        "--build-arg",
-                        f"SOURCE_SHA={source_sha}",
-                        "--tag",
-                        image_tag,
-                        "--iidfile",
-                        str(iidfile),
-                        ".",
+                        *inspection,
                     ),
                     context.repo_root,
                 ),
@@ -2343,82 +2459,41 @@ def _run_release_artifact_proofs(
             environment,
             ("docker", "env"),
             context=context,
+            elapsed_ms=elapsed_ms,
         )
-        if build.evidence.status is not RunStatus.PASS:
-            return _release_artifact_setup_result(build, "candidate worker image build")
-
-        result: CapabilityResult | None = None
-        try:
-            try:
-                image_id = iidfile.read_text(encoding="utf-8").strip()
-            except (OSError, UnicodeDecodeError) as error:
-                result = _result(
-                    capability,
-                    RunStatus.FAIL,
-                    build.evidence.duration_ms,
-                    "proof_result=setup_or_execution_failure|"
-                    f"candidate worker image ID is unreadable: {error}",
-                )
-            else:
-                if _LOCAL_IMAGE_ID_RE.fullmatch(image_id) is None:
-                    result = _result(
-                        capability,
-                        RunStatus.FAIL,
-                        build.evidence.duration_ms,
-                        "proof_result=setup_or_execution_failure|"
-                        "candidate worker image build did not produce an immutable image ID",
-                    )
-                else:
-                    result = _run_fixed_commands(
-                        capability,
-                        (
-                            (
-                                (
-                                    *docker_prefix,
-                                    f"{_RELEASE_ARTIFACT_WORKER_IMAGE_ENV}={image_id}",
-                                    "uv",
-                                    "run",
-                                    "--frozen",
-                                    "--no-sync",
-                                    "pytest",
-                                    *_DETERMINISTIC_PYTEST,
-                                    *targets,
-                                ),
-                                python_root,
-                            ),
-                        ),
-                        environment,
-                        ("docker", "env", "uv"),
-                        context=context,
-                        elapsed_ms=build.evidence.duration_ms,
-                    )
-        finally:
-            elapsed_ms = (
-                result.evidence.duration_ms if result is not None else build.evidence.duration_ms
-            )
-            cleanup = _run_fixed_commands(
-                capability,
+        elapsed_ms = inspected.evidence.duration_ms
+        if inspected.evidence.status is not RunStatus.PASS:
+            failure = inspected
+            continue
+        assert command is not None
+        if not command.completed.stdout.strip():
+            continue
+        removed = _run_fixed_commands(
+            capability,
+            (
                 (
                     (
-                        (*docker_prefix, "docker", "image", "rm", image_tag),
-                        context.repo_root,
+                        *docker_prefix,
+                        "docker",
+                        kind,
+                        "rm",
+                        *(("--force",) if kind == "container" else ()),
+                        identity,
                     ),
+                    context.repo_root,
                 ),
-                environment,
-                ("docker", "env"),
-                context=context,
-                elapsed_ms=elapsed_ms,
-            )
-        if cleanup.evidence.status is not RunStatus.PASS:
-            return _release_artifact_setup_result(
-                cleanup,
-                "candidate worker image cleanup",
-            )
-        assert result is not None
-        return CapabilityResult(
-            replace(result.evidence, duration_ms=cleanup.evidence.duration_ms),
-            result.detail,
+            ),
+            environment,
+            ("docker", "env"),
+            context=context,
+            elapsed_ms=elapsed_ms,
         )
+        elapsed_ms = removed.evidence.duration_ms
+        if removed.evidence.status is not RunStatus.PASS:
+            failure = removed
+    if failure is not None:
+        return CapabilityResult(replace(failure.evidence, duration_ms=elapsed_ms), failure.detail)
+    return _result(capability, RunStatus.PASS, elapsed_ms, "candidate backend images removed")
 
 
 def _run_component(

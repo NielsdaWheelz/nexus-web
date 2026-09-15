@@ -7,6 +7,7 @@ from nexus_test_control.model import (
     PRIORITY_RISK_FLOOR,
     WORKFLOW_REGISTRY,
     Capability,
+    CapabilityRequirement,
     RunStatus,
     Selection,
     SelectionReason,
@@ -54,6 +55,10 @@ def test_registry_is_exhaustive_and_keeps_specialized_cadence_out_of_pr() -> Non
     }
     assert Capability.ANDROID_DEVICE in release_capabilities
     assert Capability.ANDROID_RELEASE in release_capabilities
+    assert WORKFLOW_REGISTRY[Workflow.BACKEND_IMAGES].requirements == (
+        CapabilityRequirement(Capability.RELEASE_ARTIFACT, SelectionScope.COMPLETE),
+    )
+    assert Capability.RELEASE_ARTIFACT not in pr_capabilities
 
 
 def test_confidence_keeps_real_stack_affected_and_skips_build_and_journeys() -> None:

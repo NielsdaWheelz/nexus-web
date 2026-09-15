@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from nexus_test_control.services import EmbeddingPeer, ProviderApiPeer
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+_CANDIDATE_API_IMAGE_ID = "sha256:" + "b" * 64
 _CANDIDATE_WORKER_IMAGE_ID = "sha256:" + "c" * 64
 _CANDIDATE_SHA = "a" * 40
 _GENERATION_CUTOVER_PRESENT = find_spec("nexus.services.generation_catalog") is not None
@@ -1258,7 +1259,7 @@ def test_exact_provider_protocol_proof_runs_only_its_local_contract_node(
     ]
 
 
-def test_exact_release_artifact_proof_materializes_an_owned_worker_image(
+def test_exact_release_artifact_proof_materializes_only_owned_backend_images(
     tmp_path: Path,
 ) -> None:
     repo_root = tmp_path / "nexus"
@@ -1295,28 +1296,39 @@ def test_exact_release_artifact_proof_materializes_an_owned_worker_image(
     assert result.evidence.status is RunStatus.FAIL
     assert result.detail.startswith("proof_result=behavioral_assertion_failure|")
     commands = _commands(repo_root)
-    assert [command["tool"] for command in commands] == ["git", "docker", "uv", "docker"]
-    build = commands[1]
-    assert build["argv"][:12] == [
-        "buildx",
-        "build",
-        "--load",
-        "--file",
-        "./docker/Dockerfile.backend",
-        "--target",
-        "worker",
-        "--build-arg",
-        f"SOURCE_SHA={'a' * 40}",
-        "--tag",
-        build["argv"][10],
-        "--iidfile",
+    assert [command["tool"] for command in commands] == [
+        "git",
+        "docker",
+        "docker",
+        "uv",
+        "docker",
+        "docker",
+        "docker",
+        "docker",
+        "docker",
     ]
-    assert str(build["argv"][10]).startswith("nexus-test-worker-")
-    iidfile = Path(str(build["argv"][12]))
-    assert iidfile.name == "worker.iid"
-    assert build["argv"][13] == "."
-    assert not iidfile.exists()
-    proof = commands[2]
+    for build, target in zip(commands[1:3], ("api", "worker"), strict=True):
+        assert build["argv"][:12] == [
+            "buildx",
+            "build",
+            "--builder",
+            "default",
+            "--load",
+            "--file",
+            "./docker/Dockerfile.backend",
+            "--target",
+            target,
+            "--build-arg",
+            f"SOURCE_SHA={'a' * 40}",
+            "--tag",
+        ]
+        assert str(build["argv"][12]).startswith(f"nexus-test-{target}-")
+        assert build["argv"][13] == "--iidfile"
+        iidfile = Path(str(build["argv"][14]))
+        assert iidfile.name == f"{target}.iid"
+        assert build["argv"][15] == "."
+        assert not iidfile.exists()
+    proof = commands[3]
     assert proof["argv"] == [
         "run",
         "--frozen",
@@ -1327,20 +1339,53 @@ def test_exact_release_artifact_proof_materializes_an_owned_worker_image(
         "no:randomly",
         "tests/release_artifact/test_image_binding.py::test_image_binding",
     ]
+    assert proof["candidate_api_image"] == _CANDIDATE_API_IMAGE_ID
     assert proof["candidate_worker_image"] == _CANDIDATE_WORKER_IMAGE_ID
     assert proof["candidate_worker_image"] != ambient_image
     assert proof["docker_host"] == "unix:///test/docker.sock"
     assert proof["docker_context"] == "default"
-    assert commands[3]["argv"] == ["image", "rm", build["argv"][10]]
+    assert commands[4]["argv"][:2] == ["container", "ls"]
+    assert commands[6]["argv"] == ["image", "rm", commands[2]["argv"][12]]
+    assert commands[8]["argv"] == ["image", "rm", commands[1]["argv"][12]]
     recorded = run_context.evidence().fixed_commands
-    assert (recorded[0].argv[3], recorded[1].argv[4], recorded[2].argv[3]) == (
-        "docker",
-        "uv",
-        "docker",
+    assert recorded[2].argv[3:5] == (
+        f"NEXUS_TEST_CANDIDATE_API_IMAGE={_CANDIDATE_API_IMAGE_ID}",
+        f"NEXUS_TEST_CANDIDATE_WORKER_IMAGE={_CANDIDATE_WORKER_IMAGE_ID}",
     )
-    assert recorded[1].argv[3] == (
-        f"NEXUS_TEST_CANDIDATE_WORKER_IMAGE={_CANDIDATE_WORKER_IMAGE_ID}"
+
+
+def test_backend_images_builds_both_targets_without_android_staging_or_publication(
+    tmp_path: Path,
+) -> None:
+    proof_path = "python/tests/release_artifact/test_image_binding.py"
+    _write(tmp_path / proof_path, "def test_image_binding():\n    assert True\n")
+    (tmp_path / "python/.venv").mkdir(parents=True)
+    environment = _stub_tools(tmp_path, "uv", git_stdout="a" * 40)
+    _write_passthrough_env(tmp_path / "bin/env")
+    _write_release_artifact_docker(tmp_path / "bin/docker", orphaned_container=True)
+    result = run_workflow(
+        CapabilityContext(tmp_path, Workflow.BACKEND_IMAGES, ()),
+        StringIO(),
+        environment,
+        run_id="0123456789abcdef",
+        _ports=_LocalDockerPorts(),
+        _available_memory=lambda: 8192,
+        _available_storage=lambda _root, _docker: 16384,
     )
+    assert len(result.capabilities) == 1
+    assert result.capabilities[0].id is Capability.RELEASE_ARTIFACT
+    assert result.capabilities[0].status is RunStatus.PASS
+    commands = _commands(tmp_path)
+    builds = [row for row in commands if row["argv"][:2] == ["buildx", "build"]]
+    assert [row["argv"][8] for row in builds] == ["api", "worker"]
+    assert all("--load" in row["argv"] and "--push" not in row["argv"] for row in builds)
+    assert {row["tool"] for row in commands} == {"git", "docker", "uv"}
+    container_removals = [row for row in commands if row["argv"][:2] == ["container", "rm"]]
+    assert len(container_removals) == 1
+    assert container_removals[0]["argv"][2] == "--force"
+    assert str(container_removals[0]["argv"][3]).endswith("-0123456789abcdef")
+    assert not (tmp_path / "test-results/runs/0123456789abcdef/release").exists()
+    assert json.loads((tmp_path / "images.json").read_text()) == {}
 
 
 def test_successful_owned_memory_measurement_survives_output_truncation(tmp_path: Path) -> None:
@@ -1367,7 +1412,6 @@ def test_successful_owned_memory_measurement_survives_output_truncation(tmp_path
     receipt = (tmp_path / result.evidence.artifacts[0]).read_text()
     assert marker in receipt
     assert "unretained" not in receipt
-
 
 
 def test_release_artifact_runs_its_python_proofs_before_staging_android_evidence(
@@ -1467,8 +1511,10 @@ def test_release_artifact_runs_its_python_proofs_before_staging_android_evidence
     assert (staged / "release-manifest.json").is_file()
 
 
-def test_release_artifact_image_build_failure_is_setup_and_skips_pytest(
+@pytest.mark.parametrize("failed_target", ["api", "worker"])
+def test_release_artifact_image_build_failure_cleans_prior_images_and_skips_pytest(
     tmp_path: Path,
+    failed_target: str,
 ) -> None:
     repo_root = tmp_path / "nexus"
     proof_path = "python/tests/release_artifact/test_image_binding.py"
@@ -1479,7 +1525,8 @@ def test_release_artifact_image_build_failure_is_setup_and_skips_pytest(
     _write_release_artifact_docker(
         repo_root / "bin/docker",
         build_exit_status=17,
-        diagnostic="worker image build failed",
+        failed_target=failed_target,
+        diagnostic=f"{failed_target} image build failed",
     )
 
     result = run_proof(
@@ -1493,7 +1540,14 @@ def test_release_artifact_image_build_failure_is_setup_and_skips_pytest(
 
     assert result.evidence.status is RunStatus.FAIL
     assert result.detail.startswith("proof_result=setup_or_execution_failure|")
-    assert [command["tool"] for command in _commands(repo_root)] == ["git", "docker"]
+    commands = _commands(repo_root)
+    assert "uv" not in {command["tool"] for command in commands}
+    builds = [command for command in commands if command["argv"][:2] == ["buildx", "build"]]
+    assert builds[-1]["argv"][8] == failed_target
+    images = repo_root / "images.json"
+    assert not images.exists() or json.loads(images.read_text()) == {}
+    if failed_target == "worker":
+        assert commands[-1]["argv"] == ["image", "rm", builds[0]["argv"][12]]
 
 
 def test_android_host_discovers_the_sdk_and_uses_the_fixed_host_contract(
@@ -4898,6 +4952,7 @@ def _write_executable(
         "    'cwd': os.getcwd(),\n"
         "    'environment': sorted(os.environ),\n"
         "    'google_client_id': os.environ.get('NEXUS_GOOGLE_WEB_CLIENT_ID'),\n"
+        "    'candidate_api_image': os.environ.get('NEXUS_TEST_CANDIDATE_API_IMAGE'),\n"
         "    'candidate_worker_image': "
         "os.environ.get('NEXUS_TEST_CANDIDATE_WORKER_IMAGE'),\n"
         "    'docker_host': os.environ.get('DOCKER_HOST'),\n"
@@ -4936,6 +4991,8 @@ def _write_release_artifact_docker(
     path: Path,
     *,
     build_exit_status: int = 0,
+    failed_target: str | None = None,
+    orphaned_container: bool = False,
     cleanup_exit_status: int = 0,
     diagnostic: str = "",
 ) -> None:
@@ -4952,6 +5009,7 @@ def _write_release_artifact_docker(
         "    'argv': arguments,\n"
         "    'cwd': os.getcwd(),\n"
         "    'environment': sorted(os.environ),\n"
+        "    'candidate_api_image': os.environ.get('NEXUS_TEST_CANDIDATE_API_IMAGE'),\n"
         "    'candidate_worker_image': "
         "os.environ.get('NEXUS_TEST_CANDIDATE_WORKER_IMAGE'),\n"
         "    'docker_host': os.environ.get('DOCKER_HOST'),\n"
@@ -4959,13 +5017,32 @@ def _write_release_artifact_docker(
         "}\n"
         "with (Path(os.environ['HOME']) / 'commands.jsonl').open('a') as handle:\n"
         "    handle.write(json.dumps(record, sort_keys=True) + '\\n')\n"
+        "state_path = Path(os.environ['HOME']) / 'images.json'\n"
+        "images = json.loads(state_path.read_text()) if state_path.exists() else {}\n"
         "if arguments[:2] == ['buildx', 'build']:\n"
+        "    target = arguments[arguments.index('--target') + 1]\n"
+        f"    status = {build_exit_status} if {failed_target!r} in (None, target) else 0\n"
         f"    print({diagnostic!r}, file=sys.stderr)\n"
-        f"    if {build_exit_status} == 0:\n"
+        "    if status == 0:\n"
         "        iidfile = Path(arguments[arguments.index('--iidfile') + 1])\n"
-        f"        iidfile.write_text({_CANDIDATE_WORKER_IMAGE_ID!r} + '\\n')\n"
-        f"    raise SystemExit({build_exit_status})\n"
+        f"        image_id = ({_CANDIDATE_API_IMAGE_ID!r} if target == 'api' "
+        f"else {_CANDIDATE_WORKER_IMAGE_ID!r})\n"
+        "        iidfile.write_text(image_id + '\\n')\n"
+        "        images[arguments[arguments.index('--tag') + 1]] = image_id\n"
+        "        state_path.write_text(json.dumps(images))\n"
+        "    raise SystemExit(status)\n"
+        "if arguments[:2] == ['container', 'ls']:\n"
+        f"    print('owned-container' if {orphaned_container} else '')\n"
+        "    raise SystemExit(0)\n"
+        "if arguments[:2] == ['container', 'rm']:\n"
+        f"    raise SystemExit({cleanup_exit_status})\n"
+        "if arguments[:2] == ['image', 'ls']:\n"
+        "    tag = arguments[-1].removeprefix('reference=')\n"
+        "    print(images.get(tag, ''))\n"
+        "    raise SystemExit(0)\n"
         "if arguments[:2] == ['image', 'rm']:\n"
+        "    del images[arguments[-1]]\n"
+        "    state_path.write_text(json.dumps(images))\n"
         f"    raise SystemExit({cleanup_exit_status})\n"
         "raise SystemExit(99)\n",
     )
