@@ -67,8 +67,7 @@ timeout --foreground 3m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
 
 # The installed controller owns candidate identity, AppArmor preparation,
 # cgroup/service observation, sanitized evidence, and the named v4 canary.
-# Full target-set and MCP coverage belong to the protected nightly. Do not append
-# deployment, migration, or frontend commands after this call.
+# Do not append deployment, migration, or frontend commands after this call.
 timeout --foreground 12m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
   timeout --foreground 11m sudo env PYTHONDONTWRITEBYTECODE=1 \
   "PYTHONPATH=${REMOTE_BUNDLE}/python" \

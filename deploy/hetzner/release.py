@@ -485,6 +485,16 @@ _BUNDLE_FILES = frozenset(
         _ANDROID_PLAYER_PROTOCOL_CORPUS.as_posix(),
     }
 )
+_DB0215_BUNDLE_FILES = frozenset(
+    {
+        "Caddyfile",
+        "candidate-manifest.json",
+        "docker-compose.yml",
+        "release.py",
+        "python/nexus/__init__.py",
+        "python/nexus/release_artifact.py",
+    }
+)
 # justify-retry-schedule: release provider/host effects retry exactly once under
 # the same durable semantic checkpoint before retry exhaustion defects.
 _EXTERNAL_ATTEMPTS = 2
@@ -2693,6 +2703,30 @@ def _bundle_files(path: Path) -> frozenset[str]:
     return frozenset(files)
 
 
+def _validate_installed_bundle_shape(
+    files: frozenset[str],
+    candidate: CandidateManifest,
+    *,
+    current_record: ReleaseRecord | None,
+    manifest_sha256: str,
+) -> None:
+    if files == _BUNDLE_FILES:
+        return
+    if (
+        files != _DB0215_BUNDLE_FILES
+        or current_record is None
+        or candidate.source_sha != current_record.source_sha
+        or candidate.expected_database_revision != "0215"
+        or current_record.database_revision != "0215"
+        or manifest_sha256 != current_record.manifest_sha256
+        or candidate.images.api != current_record.api_image
+        or candidate.images.worker != current_record.worker_image
+        or candidate.expected_oracle_manifest_digest
+        != current_record.expected_oracle_manifest_digest
+    ):
+        raise ReleaseDefect("installed release bundle shape differs from its recorded contract")
+
+
 def _install_immutable_bundle(
     source: Path,
     paths: ReleasePaths,
@@ -2860,9 +2894,8 @@ class HostRelease:
     def bundle(self, source_sha: str) -> Path:
         _require_match("bundle source SHA", source_sha, _SHA)
         bundle = self.paths.bundle_root / source_sha
-        if _bundle_files(bundle) != _BUNDLE_FILES:
-            raise ReleaseDefect("installed release bundle has unsupported or missing files")
-        for relative in _BUNDLE_FILES:
+        files = _bundle_files(bundle)
+        for relative in files:
             item = bundle / relative
             metadata = item.stat()
             if metadata.st_uid != 0 or metadata.st_mode & 0o222:
@@ -2872,6 +2905,14 @@ class HostRelease:
         candidate = load_candidate_manifest(bundle / "candidate-manifest.json")
         if candidate.source_sha != source_sha:
             raise ReleaseDefect("bundle path and candidate source SHA differ")
+        _validate_installed_bundle_shape(
+            files,
+            candidate,
+            current_record=(
+                self.store.require_current_record() if files == _DB0215_BUNDLE_FILES else None
+            ),
+            manifest_sha256=_sha256(bundle / "candidate-manifest.json"),
+        )
         return bundle
 
     def _require_codex_isolated_gateway_support(self) -> None:
@@ -7934,12 +7975,11 @@ class HostRelease:
         if _requires_codex_agent_host(candidate):
             self._prove_public_mcp_mount(Path(attempt.config_path))
         web, web_headers = self._fetch_json(f"https://{attempt.production_host}/version")
-        expected_web = {
-            "source_sha": candidate.source_sha,
-            "player_protocol": android_player_protocol_identity(
+        expected_web: dict[str, Any] = {"source_sha": candidate.source_sha}
+        if _bundle_files(bundle) != _DB0215_BUNDLE_FILES:
+            expected_web["player_protocol"] = android_player_protocol_identity(
                 bundle / _ANDROID_PLAYER_PROTOCOL_CORPUS
-            ).as_json(),
-        }
+            ).as_json()
         if web != expected_web:
             raise ReleaseBlocked("authoritative frontend does not serve the bound candidate")
         if web_headers.get("cache-control") != "no-store":
