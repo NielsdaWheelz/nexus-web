@@ -96,6 +96,15 @@ allocations; its former 256 MiB ceiling was insufficient. The extra 64 MiB is
 possible worker demand within the existing server, not a server resize. Exact
 image and combined host qualification still apply.
 
+The API image proxy retains at most 16 MiB of cached bodies and runs at most two
+fetches at once; further requests wait before thread/client allocation. It
+checks response headers before reading and caps each streamed image at 10 MiB.
+An upstream ignoring `Accept-Encoding: identity` is rejected. Smaller caches
+mean more refetching, and image bursts may load more slowly. These bound cache
+retention and fetch work; completed responses and socket buffers still consume
+memory until delivery. Representative simultaneous reader use remains necessary
+for API capacity qualification.
+
 The host contract is cgroup v2 with the memory controller, at least 1 GiB
 swap, at least 512 MiB free under `/var/lib/nexus/parser-tmp`, and no running
 container outside the exact `nexus` Compose project. Existing hosts must be

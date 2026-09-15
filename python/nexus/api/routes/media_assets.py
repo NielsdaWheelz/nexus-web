@@ -8,6 +8,7 @@ registered before the `media` router (see create_api_router).
 from typing import Annotated
 from uuid import UUID
 
+from anyio import CapacityLimiter, to_thread
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 
@@ -16,10 +17,11 @@ from nexus.db.session import get_session_factory
 from nexus.services import epub_assets, image_proxy
 
 router = APIRouter(tags=["media"])
+_image_fetch_slots = CapacityLimiter(2)
 
 
 @router.get("/media/image")
-def get_proxied_image(
+async def get_proxied_image(
     url: str,
     request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
@@ -37,7 +39,13 @@ def get_proxied_image(
         E_IMAGE_TOO_LARGE (413): Image exceeds 10MB or 4096x4096 dimensions.
         E_INVALID_REQUEST (400): Malformed URL or invalid image content.
     """
-    result = image_proxy.fetch_image(url, if_none_match=request.headers.get("If-None-Match"))
+    # Queue before thread/client allocation; two tabs must not start dozens of fetches.
+    result = await to_thread.run_sync(
+        image_proxy.fetch_image,
+        url,
+        request.headers.get("If-None-Match"),
+        limiter=_image_fetch_slots,
+    )
     if result.not_modified:
         return Response(status_code=304, headers={"ETag": result.etag})
     return Response(

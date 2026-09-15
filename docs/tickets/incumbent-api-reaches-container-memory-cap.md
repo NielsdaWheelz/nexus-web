@@ -16,6 +16,28 @@ private mac receipts: `/tmp/nexus-release-255/incumbent-api-oom-163626-kernel.lo
 and `incumbent-api-oom-163626-receipt.json`. docker's current `OOMKilled=false`
 after recovery does not invalidate the retained kernel event.
 
+the user identified opening “shadow & claw” and “how to unclench” together as
+the trigger. the api log confirms their reader requests and six concurrent svg
+image rejections immediately before the kill. response sizes were not logged;
+the image path is implicated, not proven to be the sole cause. the same image
+code survives restoration: eager downloads precede the byte/type checks, cache
+retention permits 128 mib, and cache misses have no concurrency bound.
+
+the current article is titled “the pain of clenching” at `howtounclench.com`,
+created at 16:30:35 utc after the rehearsal snapshot. its 110,641-byte html
+contains 35 distinct proxied images without lazy-loading attributes. the
+requested book chapter is only 18,278 html bytes with no image tags. exact
+`3ee6a9b5` api import on `dev-server` peaked at 217.59 mib without loading
+provider runtime; this measured no lifespan or requests.
+
+the image fix limits cache retention to 16 mib and active fetches to two,
+queues before thread/client allocation, and checks headers plus actual streamed
+bytes before retaining a body. upstreams ignoring `accept-encoding: identity`
+are rejected. smaller caches cause more refetching and queued images can load
+more slowly. completed responses and socket buffers can outlive the fetch slot;
+these changes do not prove a total process-memory bound. keep this ticket open
+until the exact restored api passes the two-document check.
+
 ## next action and acceptance
 
 inspect the restored api's actual composition and health footprint, then verify

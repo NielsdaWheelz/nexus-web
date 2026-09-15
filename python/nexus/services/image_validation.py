@@ -382,62 +382,65 @@ def fetch_with_redirect(
         ApiError: On fetch failure or redirect violation.
     """
     try:
-        # First request (no redirect following)
-        response = client.get(
-            url,
-            headers={"User-Agent": USER_AGENT, "Accept": "image/*,*/*;q=0.8"},
-            follow_redirects=False,
-        )
-
-        # Check for redirect
-        if response.status_code in REDIRECT_STATUS_CODES:
-            location = response.headers.get("location")
-            if not location:
-                raise ApiError(
-                    ApiErrorCode.E_IMAGE_FETCH_FAILED,
-                    "Redirect without Location header",
-                )
-
-            # Compute absolute redirect URL
-            redirect_url = urljoin(url, location)
-
-            # Validate redirect URL (full SSRF checks)
-            _, redirect_hostname, _ = validate_url(redirect_url)
-            check_hostname_denylist(redirect_hostname)
-            validate_dns_resolution(redirect_hostname)
-
-            # Second request
-            response = client.get(
-                redirect_url,
-                headers={"User-Agent": USER_AGENT, "Accept": "image/*,*/*;q=0.8"},
+        for hop in range(2):
+            with client.stream(
+                "GET",
+                url,
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept": "image/*,*/*;q=0.8",
+                    "Accept-Encoding": "identity",
+                },
                 follow_redirects=False,
-            )
+            ) as response:
+                if response.status_code in REDIRECT_STATUS_CODES:
+                    if hop == 1:
+                        raise ApiError(
+                            ApiErrorCode.E_IMAGE_FETCH_FAILED,
+                            "Too many redirects (max 1 allowed)",
+                        )
+                    location = response.headers.get("location")
+                    if not location:
+                        raise ApiError(
+                            ApiErrorCode.E_IMAGE_FETCH_FAILED,
+                            "Redirect without Location header",
+                        )
+                    redirect_url = urljoin(url, location)
+                    _, redirect_hostname, _ = validate_url(redirect_url)
+                    check_hostname_denylist(redirect_hostname)
+                    validate_dns_resolution(redirect_hostname)
+                    url = redirect_url
+                    continue
 
-            # If second response is also a redirect, reject
-            if response.status_code in REDIRECT_STATUS_CODES:
-                raise ApiError(
-                    ApiErrorCode.E_IMAGE_FETCH_FAILED,
-                    "Too many redirects (max 1 allowed)",
-                )
+                if response.status_code >= 400:
+                    raise ApiError(
+                        ApiErrorCode.E_IMAGE_FETCH_FAILED,
+                        f"Upstream returned status {response.status_code}",
+                    )
 
-        # Check for error status
-        if response.status_code >= 400:
-            raise ApiError(
-                ApiErrorCode.E_IMAGE_FETCH_FAILED,
-                f"Upstream returned status {response.status_code}",
-            )
+                content_type = response.headers.get("content-type")
+                validate_content_type(content_type)
+                # HTTP decompression can allocate beyond the image byte limit
+                # before yielding a chunk. Accept only the requested identity body.
+                if response.headers.get("content-encoding", "").strip().lower() not in {
+                    "",
+                    "identity",
+                }:
+                    raise ApiError(
+                        ApiErrorCode.E_INVALID_REQUEST,
+                        "Image content encoding must be identity",
+                    )
+                data = bytearray()
+                for chunk in response.iter_raw(chunk_size=64 * 1024):
+                    if len(data) + len(chunk) > MAX_IMAGE_BYTES:
+                        raise ApiError(
+                            ApiErrorCode.E_IMAGE_TOO_LARGE,
+                            f"Image exceeds maximum size of {MAX_IMAGE_BYTES // (1024 * 1024)} MB",
+                        )
+                    data.extend(chunk)
+                return bytes(data), content_type
 
-        content_type = response.headers.get("content-type")
-        data = response.content
-
-        # Enforce size limit
-        if len(data) > MAX_IMAGE_BYTES:
-            raise ApiError(
-                ApiErrorCode.E_IMAGE_TOO_LARGE,
-                f"Image exceeds maximum size of {MAX_IMAGE_BYTES // (1024 * 1024)} MB",
-            )
-
-        return data, content_type
+        raise AssertionError("image redirect loop ended without a response")
 
     except httpx.TimeoutException as e:
         raise ApiError(ApiErrorCode.E_INGEST_TIMEOUT, "Image fetch timed out") from e
@@ -468,7 +471,6 @@ def fetch_validated_image(url: str, client: httpx.Client) -> ValidatedImage:
     check_hostname_denylist(hostname)
     validate_dns_resolution(hostname)
     data, upstream_content_type = fetch_with_redirect(url, hostname, client)
-    validate_content_type(upstream_content_type)
     sniff_magic_bytes(data)
     content_type, width, height = validate_and_decode_image(data, upstream_content_type)
     return ValidatedImage(
