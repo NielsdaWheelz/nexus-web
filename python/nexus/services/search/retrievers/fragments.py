@@ -46,7 +46,7 @@ def _search_fragments(
             SELECT
                 f.id,
                 f.idx,
-                f.canonical_text,
+                char_length(f.canonical_text),
                 f.t_start_ms,
                 f.t_end_ms,
                 m.id AS media_id,
@@ -55,15 +55,9 @@ def _search_fragments(
                 m.original_published_date,
                 mcc.contributor_credits,
                 ts_rank_cd(
-                    to_tsvector('english', f.canonical_text),
+                    f.canonical_text_tsv,
                     websearch_to_tsquery('english', :query)
-                ) AS score,
-                ts_headline(
-                    'english',
-                    f.canonical_text,
-                    websearch_to_tsquery('english', :query),
-                    'MaxWords=50, MinWords=10, MaxFragments=1'
-                ) AS snippet
+                ) AS score
             FROM fragments f
             JOIN media m ON m.id = f.media_id
             JOIN visible_media vm ON vm.media_id = f.media_id
@@ -71,7 +65,7 @@ def _search_fragments(
                 AND mcis.owner_id = f.media_id
                 AND mcis.status = 'ready'
             LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
-            WHERE to_tsvector('english', f.canonical_text) @@ websearch_to_tsquery('english', :query)
+            WHERE f.canonical_text_tsv @@ websearch_to_tsquery('english', :query)
             {scope_filter}
             ORDER BY score DESC, f.idx ASC, f.id ASC
             LIMIT :limit
@@ -81,28 +75,22 @@ def _search_fragments(
     ).fetchall()
     results: list[InternalSearchResult] = []
     for row in rows:
-        locator = _direct_fragment_locator(
-            media_id=row[5],
-            media_kind=str(row[6] or ""),
-            fragment_id=row[0],
-            text_value=str(row[2] or ""),
-            start_offset=0,
-            end_offset=len(str(row[2] or "")),
-            exact=str(row[2] or ""),
-            t_start_ms=int(row[3]) if row[3] is not None else None,
-            t_end_ms=int(row[4]) if row[4] is not None else None,
-        )
-        if locator is None:
+        # Match locator admission using metadata; bodies and excerpts belong
+        # only to the selected response page, after cross-type ranking.
+        if not row[2]:
+            continue
+        if row[3] is not None and row[4] is not None:
+            if not 0 <= row[3] < row[4]:
+                continue
+        elif row[6] == "pdf":
             continue
         results.append(
             _RankedFragmentResult(
                 id=row[0],
                 idx=int(row[1]),
-                snippet=_truncate_snippet(str(row[11] or row[2] or "")),
+                query=q,
                 source=_build_search_source(row[5], row[6], row[7], row[9], row[8]),
                 score=_build_search_score(row[10]),
-                citation_label=f"fragment {int(row[1]) + 1}",
-                locator=locator,
             )
         )
     return results
@@ -125,7 +113,7 @@ def resolve_fragment_search_result(
             SELECT
                 f.id,
                 f.idx,
-                f.canonical_text,
+                char_length(f.canonical_text),
                 f.t_start_ms,
                 f.t_end_ms,
                 m.id,
@@ -147,25 +135,55 @@ def resolve_fragment_search_result(
     ).first()
     if row is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-    locator = _direct_fragment_locator(
-        media_id=row[5],
-        media_kind=str(row[6] or ""),
-        fragment_id=row[0],
-        text_value=str(row[2] or ""),
-        start_offset=0,
-        end_offset=len(str(row[2] or "")),
-        exact=str(row[2] or ""),
-        t_start_ms=int(row[3]) if row[3] is not None else None,
-        t_end_ms=int(row[4]) if row[4] is not None else None,
-    )
-    if locator is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
     return _RankedFragmentResult(
         id=row[0],
         idx=int(row[1]),
-        snippet=_truncate_snippet(str(row[2] or "")),
+        query=None,
         source=_build_search_source(row[5], row[6], row[7], row[9], row[8]),
         score=score,
-        citation_label=f"fragment {int(row[1]) + 1}",
-        locator=locator,
     )
+
+
+def read_fragment_search_content(
+    db: Session, *, viewer_id: UUID, result: _RankedFragmentResult
+) -> tuple[str, dict[str, Any]]:
+    """Read a selected fragment's original excerpt and complete locator."""
+    row = db.execute(
+        text(
+            f"""
+            WITH visible_media AS ({visible_media_ids_cte_sql()})
+            SELECT f.canonical_text, f.t_start_ms, f.t_end_ms, m.id, m.kind,
+                CASE WHEN CAST(:query AS text) IS NULL THEN NULL
+                ELSE ts_headline(
+                    'english', f.canonical_text,
+                    websearch_to_tsquery('english', :query),
+                    'MaxWords=50, MinWords=10, MaxFragments=1'
+                ) END AS snippet
+            FROM fragments f
+            JOIN media m ON m.id = f.media_id
+            JOIN visible_media vm ON vm.media_id = f.media_id
+            JOIN content_index_states mcis ON mcis.owner_kind = 'media'
+                AND mcis.owner_id = f.media_id AND mcis.status = 'ready'
+            WHERE f.id = :id
+            """
+        ),
+        {"viewer_id": viewer_id, "id": result.id, "query": result.query},
+    ).first()
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+    body = str(row[0] or "")
+    locator = _direct_fragment_locator(
+        media_id=row[3],
+        media_kind=str(row[4] or ""),
+        fragment_id=result.id,
+        text_value=body,
+        start_offset=0,
+        end_offset=len(body),
+        exact=body,
+        t_start_ms=int(row[1]) if row[1] is not None else None,
+        t_end_ms=int(row[2]) if row[2] is not None else None,
+    )
+    if locator is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
+    snippet = str(row[5] or body) if result.query is not None else body
+    return _truncate_snippet(snippet), locator

@@ -139,8 +139,10 @@ def _search_content_chunks(
             LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
             ORDER BY ranked.raw_score DESC, ranked.id ASC
         """
+    # Allow branch filters and index lookups to reach the source instead of
+    # materializing every visible chunk's text vector for all three CTE reads.
     eligible_chunks = f"""
-                eligible_chunks AS (
+                eligible_chunks AS NOT MATERIALIZED (
                     SELECT
                         cc.id,
                         cc.created_at,

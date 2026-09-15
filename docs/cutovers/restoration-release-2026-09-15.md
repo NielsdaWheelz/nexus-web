@@ -1,3 +1,13 @@
+## pending pr #270: semantic search memory and retrieval
+
+production remains69583dc3/db0229. live profiling established an embedding
+import crash; native diagnosis also found200 discarded fragment bodies retained
+before pagination and full-text query timeouts. pr #270 isolates generation
+imports, keeps fragment candidates as metadata until selection, uses existing
+query indexes and adds the missing evidence-span GIN index as db0230. the owned
+backup waiver remains required. no prior migration is rerun. native exact-image
+qualification, sole green check, release and manual acceptance remain pending.
+
 # restoration production release — 2026-09-15
 
 status: 69583dc3 deployed; later book opening oom-killed api; memory issue reopened

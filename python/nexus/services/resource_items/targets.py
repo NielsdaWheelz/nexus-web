@@ -22,6 +22,7 @@ from sqlalchemy import and_, or_, select, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import PassageAnchor, ResourceEdge
+from nexus.errors import NotFoundError
 from nexus.schemas.resource_targets import (
     ResourceTargetOut,
     ResourceTargetPassageOut,
@@ -47,6 +48,8 @@ from nexus.services.search.candidates import (
 from nexus.services.search.constants import CANDIDATES_PER_TYPE, MIN_QUERY_LENGTH
 from nexus.services.search.cursor import decode_search_cursor, encode_search_cursor
 from nexus.services.search.projection import _truncate_snippet
+from nexus.services.search.results import _RankedFragmentResult
+from nexus.services.search.retrievers.fragments import read_fragment_search_content
 from nexus.services.text_quote import QuoteStatus
 
 # Initial per-source retrieval caps; the refill loop doubles them while the
@@ -205,11 +208,18 @@ def _project(
 ) -> ResourceTargetOut | None:
     ref = candidate_resource_ref(candidate)
     if _policy_for(ref).user_link_target == "materialize_passage":
+        if isinstance(candidate, _RankedFragmentResult):
+            try:
+                excerpt = read_fragment_search_content(db, viewer_id=viewer_id, result=candidate)[0]
+            except NotFoundError:
+                return None
+        else:
+            excerpt = candidate.snippet
         return _passage_target(
             db,
             viewer_id=viewer_id,
             candidate_ref=ref,
-            excerpt=candidate.snippet,
+            excerpt=excerpt,
             source_ref=source_ref,
         )
     item = resource_item_out(db, viewer_id=viewer_id, ref=ref)
