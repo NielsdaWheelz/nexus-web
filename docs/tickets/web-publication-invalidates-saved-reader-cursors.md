@@ -30,3 +30,12 @@ changed content never fabricates a match; unresolved positions permit deliberate
 recovery. Concurrent writes retain revision correctness. Recovery preserves
 engagement and completion history. Use deterministic owner regressions and a
 manual publication/reader check within the existing test contract.
+
+## current-item recovery
+
+on 2026-09-15 the user chose reset progress for “this living hand”. a read-only
+production check at 13:31:02 utc confirmed an empty cursor at revision 3; the
+published fragment and canonical-text hash were unchanged. the prepared narrow
+operator reset was never executed. this resolves the current migration input,
+while the publication defect remains open. the fresh db0215 archive captured at
+13:32:06–13:33:28 utc includes the deliberate user recovery.
