@@ -281,3 +281,5 @@ unexpected timeouts. See
 - [open] metadata verification · 2026-09-14 implementation · live research judgments and external query contents still need smoke inspection: [ticket](tickets/metadata-live-research-smoke-unverified.md).
 - [open] resource actions · 2026-09-14 highlight popup verification · mobile parity journey finds the prior browse pane after reader navigation: [ticket](tickets/resource-action-parity-mobile-pane-readiness.md).
 - [open] agent tools · 2026-09-14 pr #246 memory review · resource reads load full bodies before enforcing their output limit: [ticket](tickets/resource-reader-loads-full-body-before-limit.md).
+- [open] oi-107 · release operator inputs · 2026-09-14 pr #255 qualification · p1 · reconcile the preserved local auth input with the verified two-origin production contract before future sync: [ticket](tickets/local-production-auth-input-retains-obsolete-preview-origin.md).
+- [open] oi-109 · local s3 development · 2026-09-15 pr #255 qualification · p2 · the pinned minio image pull failed on the devbox; establish supported access and prove a fresh pull: [ticket](tickets/local-minio-image-pull-fails-on-devbox.md).

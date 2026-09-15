@@ -577,6 +577,32 @@ describe("Imports transport decoders", () => {
     expect(indexRetry.nextAttemptAt).toBe("2026-09-08T12:07:00Z");
   });
 
+  it("preserves the historical provider rejection in a failed baseline", () => {
+    const page = decodeImportHistoryPage({
+      data: {
+        entries: [
+          historyEntry(
+            {
+              kind: "SourceHistoryBaseline",
+              source_attempt_id: ATTEMPT_ID,
+              attempt_no: 1,
+              outcome: { kind: "Failed", failure_code: "E_LLM_BAD_REQUEST" },
+            },
+            1,
+          ),
+        ],
+        next_cursor: { kind: "Absent" },
+      },
+    });
+
+    expect(page.entries[0].facts).toEqual({
+      kind: "SourceHistoryBaseline",
+      sourceAttemptId: ATTEMPT_ID,
+      attemptNo: 1,
+      outcome: { kind: "Failed", failureCode: "E_LLM_BAD_REQUEST" },
+    });
+  });
+
   it("decodes the nested recovery and baseline outcomes a history entry can carry", () => {
     const page = decodeImportHistoryPage({
       data: {

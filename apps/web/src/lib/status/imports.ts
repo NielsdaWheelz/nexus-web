@@ -139,6 +139,12 @@ export const IMPORT_FAILURE_COPY: Readonly<
     explanation: "Start a new import from the source you want.",
     recovery: "None",
   },
+  E_LLM_BAD_REQUEST: {
+    reason: "Model provider rejected the import request",
+    title: "The model provider rejected this import request.",
+    explanation: "This failure was recorded during an earlier import attempt.",
+    recovery: "SameSource",
+  },
   E_MEDIA_NOT_FOUND: {
     reason: "Import no longer exists",
     title: "This import is no longer available.",

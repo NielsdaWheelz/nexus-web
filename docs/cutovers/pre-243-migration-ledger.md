@@ -78,3 +78,37 @@ against db0229.
 
 `deployment.md` now correctly names reader-publication revision 0219 instead of
 0216. the release-preparation ticket is closed; migration source is unchanged.
+
+## fresh production-snapshot rehearsal after merge
+
+on 2026-09-15, `dev-server` captured the live db0215 database from
+`nexus-api-worker` using the exact postgres image
+`pgvector/pgvector@sha256:7f5681e45237acdf546cf7cdc0dfc0ed7752ede857fda6e54f6ea21b936f8742`.
+the 1,845,051,825-byte custom archive has sha256
+`987055772dee146671df15b5cc2aec3ab608fcc9dc2ce7fcc9110f6620b7e467`.
+a complete isolated restore succeeded; all 272 referenced source objects
+(534,214,739 bytes) were copied with stable observed etags and verified sizes,
+signatures and sha256 values. the isolated migration credential cannot write
+the mirrored object store. this online database/object capture is not atomic.
+
+the exact merged candidate `634206213c50f9cdfcecfae8c8f7efc331ddec48`, api image
+`ghcr.io/nielsdawheelz/nexus-api@sha256:032713a74d7b40281c52b72e011836c4eef2c6a2d78ff8afd29d94495003e8d8`,
+failed at 0227 after 43.129 seconds: `E_LLM_BAD_REQUEST` was absent from the
+import history catalog. two failed epub source attempts from 2026-07-22 carry
+this historical outcome. the shared history vocabulary must retain that exact
+code through baseline storage, browser decoding and reader explanation;
+rewriting it to a generic failure or bypassing migration admission loses meaning.
+the migration files themselves remain unchanged.
+
+the observed migration cgroup peak was 484,134,912 bytes under the 512 mib cap,
+with zero observed oom events and no oom kill. this is failed-run capacity
+evidence, not a passing migration proof. 0221's autocommit retained source
+digests while the revision returned to 0220. a corrected candidate must replay
+from a fresh restore of the original archive. detailed private logs and retained
+content fingerprints remain under `/home/niels/.cache/nexus-release-255` on
+`dev-server`; these are operator records, not an additional automated test gate.
+
+production application identity, database revision and custom domain were not
+changed by this rehearsal. irreversible loss acceptance, exact candidate
+qualification and the stopped-writer production backup remain release
+prerequisites.
