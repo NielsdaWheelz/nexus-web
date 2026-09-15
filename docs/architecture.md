@@ -1700,10 +1700,8 @@ they open over Resume and never become panes.
   the previously active pane.
 - **Measurement loop.** `nexus:web-vitals` → `WebVitalsReporter` subscriber →
   `sendBeacon` → BFF `/api/telemetry/web-vitals` → FastAPI `/telemetry/web-vitals` →
-  structlog `rum.web_vital` (request-id-correlated). The measured **First Load JS
-  budget** remains ≤ 115 kB gz against the ~104 kB baseline; measure it manually
-  from a production build when performance-sensitive code changes. Kept
-  constraints: nonce-CSP + **streaming only** — no PPR, no `next/dynamic`, no
+  structlog `rum.web_vital` (request-id-correlated). Kept constraints:
+  nonce-CSP + **streaming only** — no PPR, no `next/dynamic`, no
   server-emitted `modulepreload` (chunk URLs are unknown server-side); `React.lazy` +
   runtime `preloadPane` (warming all restored visible panes) stays the splitting
   mechanism. The standard `nexus_auth`, `nexus_openables`, `nexus_api`, and

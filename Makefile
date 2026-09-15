@@ -49,7 +49,7 @@ help:
 	@echo ""
 	@echo "Build:"
 	@echo "  make build              - Build the web application"
-	@echo "  make build-android      - Build Android debug and instrumentation APKs"
+	@echo "  make build-android      - Build the Android debug APK"
 	@echo "  make build-android-release - Build signed Android release APK"
 	@echo "  make build-icons        - Regenerate icons from apps/web/public/brand/asterism.svg"
 	@echo "  make generate-resource-capabilities - Regenerate the browser resource-capability projection from the backend table"
@@ -214,7 +214,7 @@ build:
 	cd apps/web && bun run build
 
 build-android:
-	cd apps/android && ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+	cd apps/android && ./gradlew :app:assembleDebug
 
 build-android-release:
 	cd apps/android && ./gradlew :app:lintRelease :app:assembleRelease

@@ -64,7 +64,9 @@ the test suite, workflow policy, or repository policy.
 Browser/component automation, end-to-end journeys, real-service integration,
 hosted canaries, randomized/property audits, Android device automation, and
 release certification are not part of this repository's automated portfolio.
-Validate those boundaries manually when a change materially touches them.
+Do not retain test sources, fixtures, dependencies, or commands for those
+excluded tiers. Validate their boundaries manually when a change materially
+touches them.
 
 This is a conscious confidence tradeoff for a one-user prototype: PR feedback is
 fast and bounded, while cross-process, browser, provider, and device regressions

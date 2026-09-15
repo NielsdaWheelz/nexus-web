@@ -3,8 +3,6 @@
 Provides:
 - TokenVerifier: Protocol for token verification
 - SupabaseJwksVerifier: Verifier using Supabase JWKS (used in all environments)
-
-Note: The test-owned verifier is in tests/testkit/auth.py.
 """
 
 import logging
