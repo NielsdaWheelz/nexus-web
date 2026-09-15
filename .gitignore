@@ -46,9 +46,6 @@ htmlcov/
 .tox/
 .nox/
 coverage/
-test-results/
-.vitest-attachments/
-/.nexus-test/
 
 # Linting
 .ruff_cache/

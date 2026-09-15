@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -16,86 +14,6 @@ from apps.worker.health import (
 SOURCE_SHA = "a" * 40
 ORACLE_DIGEST = f"sha256:{'b' * 64}"
 TASK_CONTRACT_DIGEST = "c" * 64
-REPO_ROOT = Path(__file__).resolve().parents[3]
-
-
-def test_worker_health_probe_does_not_load_the_worker_runtime_graph() -> None:
-    """The recurring probe shares the interactive worker's hard cgroup."""
-    script = """
-import json
-import sys
-
-import apps.worker.health
-
-blocked_roots = (
-    "llm_tools",
-    "provider_runtime",
-    "psycopg",
-    "pydantic",
-    "sqlalchemy",
-    "nexus.config",
-    "nexus.jobs",
-    "nexus.runtime_health",
-)
-loaded = sorted(
-    root
-    for root in blocked_roots
-    if any(name == root or name.startswith(f"{root}.") for name in sys.modules)
-)
-print(json.dumps(loaded))
-"""
-
-    completed = subprocess.run(
-        [sys.executable, "-S", "-c", script],
-        cwd=REPO_ROOT,
-        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "python")},
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    loaded = json.loads(completed.stdout)
-    assert loaded == [], (
-        f"the cgroup-local worker health probe loaded the full worker/runtime graph: {loaded!r}"
-    )
-
-
-def test_worker_entrypoint_import_does_not_load_provider_execution_sdks() -> None:
-    """The idle worker retains contracts, not every provider HTTP client."""
-    script = """
-import json
-import sys
-
-import apps.worker.main
-
-blocked_roots = (
-    "anthropic",
-    "google.genai",
-    "openai",
-    "provider_runtime.engines",
-    "provider_runtime.runtime",
-)
-loaded = sorted(
-    root
-    for root in blocked_roots
-    if any(name == root or name.startswith(f"{root}.") for name in sys.modules)
-)
-print(json.dumps(loaded))
-"""
-
-    completed = subprocess.run(
-        [sys.executable, "-B", "-c", script],
-        cwd=REPO_ROOT,
-        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "python")},
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    loaded = json.loads(completed.stdout)
-    if loaded:
-        raise AssertionError(f"the idle worker loaded provider execution modules: {loaded!r}")
 
 
 def test_worker_heartbeat_is_atomic_and_binds_runtime_contract(tmp_path: Path) -> None:

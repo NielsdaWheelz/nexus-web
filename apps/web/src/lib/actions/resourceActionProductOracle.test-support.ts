@@ -2,9 +2,9 @@
  * Product-owned oracle for the canonical resource-action hard cut.
  *
  * This file deliberately imports no production catalog, planner, snapshot, or
- * presenter. Journey tests compare the running product with these reviewed
- * literals so one shared implementation cannot make every surface agree on the
- * same wrong menu.
+ * presenter. Unit tests compare product behavior with these reviewed literals
+ * so one shared implementation cannot make every surface agree on the same
+ * wrong menu.
  */
 
 export const RESOURCE_SCHEMES = [

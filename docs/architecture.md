@@ -147,10 +147,10 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
 
 - Default request path is **Browser → Next.js BFF → FastAPI → Postgres**.
   SSE is the documented exception (**Browser → FastAPI `/stream/*`**).
-- One full Git SHA identifies a release vector. Successful exact-`main` CI
-  publishes one strict manifest containing immutable API/worker image digests,
-  expected schema, and expected Oracle manifest. The host pulls those digests;
-  it never builds application images.
+- One full Git SHA identifies a release vector. Each `main` push publishes one
+  strict manifest containing immutable API/worker image digests, expected
+  schema, and expected Oracle manifest. The host pulls those digests; it never
+  builds application images.
 - `deploy/hetzner/deploy.sh <source-sha>` is the sole application release
   and resume entrypoint. It captures the exact current content-addressed VPS
   config path and digest, activates only API/workers, proves them, promotes the
@@ -1700,16 +1700,13 @@ they open over Resume and never become panes.
   the previously active pane.
 - **Measurement loop.** `nexus:web-vitals` → `WebVitalsReporter` subscriber →
   `sendBeacon` → BFF `/api/telemetry/web-vitals` → FastAPI `/telemetry/web-vitals` →
-  structlog `rum.web_vital` (request-id-correlated). A CI **First Load JS budget**
-  (typed `bundle` capability, ≤ 115 kB gz vs ~104 kB measured) runs in the
-  strict-CSP standalone build. Kept
-  constraints: nonce-CSP + **streaming only** — no PPR, no `next/dynamic`, no
+  structlog `rum.web_vital` (request-id-correlated). Kept constraints:
+  nonce-CSP + **streaming only** — no PPR, no `next/dynamic`, no
   server-emitted `modulepreload` (chunk URLs are unknown server-side); `React.lazy` +
   runtime `preloadPane` (warming all restored visible panes) stays the splitting
-  mechanism. Interaction-budget browser tests also consume the standard
-  `nexus_auth`, `nexus_openables`, `nexus_api`, and `nexus_bff` Server-Timing
-  phases, separating auth, service, remaining API, BFF, response-transfer, and
-  client-commit time before an owner is optimized.
+  mechanism. The standard `nexus_auth`, `nexus_openables`, `nexus_api`, and
+  `nexus_bff` Server-Timing phases separate auth, service, remaining API, BFF,
+  response-transfer, and client-commit time during manual diagnosis.
 - **BFF / proxy / auth / SSE** (`lib/api/*`, `lib/auth/*`, `lib/supabase/*`): covered
   in §5. The browser holds **no** Supabase client and no tokens; `lib/auth/dal.ts`
   `verifySession()` is the one verified-session boundary for protected pages/
@@ -1769,7 +1766,7 @@ pipeline.
 
 The `Makefile` owns product setup, development, build, migration, smoke, and
 deployment helpers; `make help` is canonical for those operations. Testing has
-one separate typed entrypoint, `./scripts/test`.
+one separate entrypoint, `./scripts/test`.
 
 - **Setup / dev loop**: `make setup`, `make dev` (Docker Compose Postgres + MinIO +
   Supabase-local Auth), then `make api`, `make web`,
@@ -1780,8 +1777,8 @@ one separate typed entrypoint, `./scripts/test`.
 - **Build**: `make build` (Next.js), `make build-android[-release]`.
 - **Smoke**: `make smoke`, `make smoke-auth`.
 
-**Deploy** ([`deployment.md`](../deployment.md), sole runbook): successful exact
-`main` CI triggers one backend publisher. It builds API/worker targets once,
+**Deploy** ([`deployment.md`](../deployment.md), sole runbook): each exact
+`main` push triggers one backend publisher. It builds API/worker targets once,
 publishes their GHCR digests and strict manifest, and supplies the immutable host
 bundle. Vercel builds the exact SHA as an unaliased production-target candidate.
 `deploy/hetzner/deploy.sh <source-sha>` validates both lineages, captures current
@@ -1797,11 +1794,10 @@ untracked, `.example` tracked). Permanent R2 policy is applied via
 `deploy/supabase/verify-auth-config.sh`.
 
 **Migrations** are hand-written Alembic files (`migrations/alembic/versions/`,
-linear `NNNN_*` numbering, no autogenerate). Dev: `make migrate`. Test: the
-controller creates a disposable `nexus_migration_<run-id>` database when that
-capability is selected. Production applies the candidate's one baked head only
-inside the release controller, after stopped-writer backup proof and before app
-activation.
+linear `NNNN_*` numbering, no autogenerate). Dev: `make migrate`. The PR check
+requires one canonical Alembic head without starting a database. Production
+applies the candidate's baked head only inside the release controller, after
+stopped-writer backup proof and before app activation.
 
 **Environment**: `.env.example` is the source of truth for every variable
 ([`rules/codebase.md`](rules/codebase.md)); `make setup` generates local
@@ -1810,41 +1806,29 @@ Auth (issuer/JWKS/audiences), internal secret, encryption key, LLM providers +
 flags + rate limits, Brave Browse/chat search, streaming (token signing key + base URL +
 CORS), podcasts, browse providers, worker schedules, Stripe. Worker lanes are
 Compose-owned rather than stored in the merged production env.
-One lineage-wide test invocation may own one workspace-local PostgreSQL/MinIO
-and Supabase Auth stack, per-run database/bucket state, and per-scenario users.
-The controller clears stale runtime state before work and retires the stack at
-the invocation boundary. It passes the Supabase admin key only to
-controller-owned user lifecycle code; Next.js, FastAPI, worker, and migration
-processes receive only their explicit test allowlists.
+The automated check starts no application services and reads no credentials.
 
-**CI**: `.github/workflows/ci.yml` invokes only `./scripts/test pr` and retains
-the same-run summary even on failure. Protected manual/scheduled workflows own
-`nightly` and `release`; paid providers and signed release proof never run in
-ordinary PR CI.
+**CI**: `.github/workflows/ci.yml` is a pull-request-only, self-hosted devbox
+job. It installs locked dependencies and invokes only `./scripts/test`, with a
+hard five-minute timeout. There are no scheduled, optional, browser, device, or
+release verification workflows. Backend image publication after a `main` push
+is an artifact operation, not a test or release gate.
 
 ---
 
 ## 12. Testing strategy
 
 [`local-rules/testing-standards.md`](local-rules/testing-standards.md) is the
-authoritative contract. `./scripts/test` owns selection, static policy, local
-runtime, runners, cleanup, memory/cost bounds, and versioned evidence.
+authoritative contract. `./scripts/test` is a fixed deterministic sequence:
+workflow and shell lint, Python format/lint/type checking, web lint/type
+checking, fast Python kernel tests, Node-environment Vitest units, and a cheap
+single-head Alembic graph check.
 
-The portfolio is outcome-heavy: comprehensive preventive/static proof; a small
-semantic kernel; a dominant middle of real-PostgreSQL service and real-Chromium
-component proof; ten thin product journeys; and separately scheduled
-provider/device/release proof. Owned Nexus behavior is not mocked. Only an
-external boundary may use a small fake or protocol fixture.
-
-Local services are reused only within one serialized invocation, but every
-workflow receives a template-cloned database, MinIO bucket, run ledger, and
-scenario-local users. All ordinary proof is external-network denied.
-Sensitivity retires every isolated red-revision runtime before starting its
-current-revision green phase, so two service stacks never coexist.
-Playwright has one config under `apps/web/e2e/`, one worker, zero retries,
-strict CSP, fresh contexts, and no shared seed/auth state. Priority risks and
-the canonical cross-language corpus are machine-owned by
-`testdata/proofs.json` and `testdata/manifest.json`.
+The suite has no selector, planner, service runtime, browser, hosted provider,
+device, policy engine, receipts, replay, or sensitivity machinery. This keeps
+the complete pull-request check below two minutes on the devbox. Browser,
+cross-process, provider, device, and production behavior therefore require
+manual validation when touched.
 
 ---
 
@@ -1925,7 +1909,7 @@ The things most likely to bite you, distilled:
 | Android shell                                                     | `apps/android/app/src/main/`                                                                                                                                                                           |
 | Browser extension                                                 | `apps/extension/`                                                                                                                                                                                      |
 | Build / run / deploy                                              | `Makefile`, `deployment.md`, `deploy/`                                                                                                                                                                 |
-| Tests                                                             | `docs/local-rules/testing-standards.md`, `python/nexus_test_control/`, `python/tests/`, `apps/web/e2e/`, `apps/web/vitest.config.ts`, `testdata/`                                                        |
+| Tests                                                             | `docs/local-rules/testing-standards.md`, `scripts/test`, `python/tests/kernel/`, `apps/web/src/**/*.test.ts(x)`, `apps/web/vitest.config.ts`                                                           |
 
 ---
 

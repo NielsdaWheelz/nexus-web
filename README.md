@@ -52,21 +52,15 @@ Open `http://localhost:3000`.
 ## Daily Commands
 
 Use `make help` for product build/run operations. `./scripts/test` is the sole
-test and verification API.
+test and verification command.
 
 ```bash
-./scripts/test changed
-./scripts/test confidence
-./scripts/test pr
-./scripts/test full
-./scripts/test doctor
+./scripts/test
 ```
 
-Scheduled/operator workflows additionally own `nightly` and `release`.
-`./scripts/test clean` deletes exact ledger-owned run resources, stops the
-recorded workspace-local Supabase/Compose projects, removes their test-only
-volumes, and deletes `.nexus-test/`. It preserves every unrecorded resource.
-Use `./scripts/test list --json` for the machine-readable capability registry.
+The same fixed, deterministic check runs on pull requests on the self-hosted
+devbox. It does not start services, browsers, emulators, or hosted-provider
+checks.
 
 Product operations remain Make targets:
 
@@ -83,12 +77,9 @@ make smoke
 - `.env.example` is the source of truth for environment variables and defaults.
 - `make setup` generates local `.env` and `apps/web/.env.local`.
 - `make dev` writes the live Supabase Auth public URL and anon key to `.dev-ports`.
-- The test controller owns one persistent workspace-local
-  PostgreSQL/MinIO/Supabase-test stack and records it under `.nexus-test/`.
-  Each run gets its own database, bucket, users, and app processes. It rejects
-  caller-supplied or production-shaped resource configuration before contact.
-- Direct runner commands are debugging tools only. Repository confidence and
-  cleanup claims use `./scripts/test`.
+- Tests are deterministic and unprivileged. They do not own a local service
+  stack or consume ambient credentials.
+- Repository confidence claims use only `./scripts/test`.
 - Android builds require `NEXUS_GOOGLE_WEB_CLIENT_ID`; `.env.example` owns the
   contract, and local/CI environment owns the value.
 
@@ -109,11 +100,10 @@ link to the stable latest-release assets:
 - `https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk`
 - `https://github.com/<owner>/<repo>/releases/latest/download/nexus-android.apk.sha256`
 
-Create an existing `android-v*` tag, run the Protected release verification workflow for
-that tag, install the APK from the draft release on a physical device, verify
-App Links and login, then rerun the workflow with `publish_stable=true`. The
-workflow uploads stable assets for `/android` plus versioned assets such as
-`nexus-android-v0.1.0.apk` for tag `android-v0.1.0`.
+Build the signed APK with `make build-android-release`, record its SHA-256, and
+install that exact APK on a physical device. Verify App Links and login before
+manually creating the `android-v*` GitHub release and attaching stable and
+versioned asset names. There is no automated Android release gate.
 
 ## Repository Map
 

@@ -32,8 +32,8 @@ e-ink presentation contract and a proper display HAL.
   progress/resume semantics.
 - The Android WebView shell is the precedent: native code owns shell mechanics,
   while Nexus product behavior remains web-owned.
-- The authenticated initial-route bundle measured 103.1 kB gzip against the
-  115 kB budget on 2026-07-17; bundle size is not the first constraint.
+- The authenticated initial-route bundle measured 103.1 kB gzip on 2026-07-17;
+  display and input constraints dominate this prototype.
 
 Current gaps:
 

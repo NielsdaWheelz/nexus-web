@@ -49,13 +49,13 @@ help:
 	@echo ""
 	@echo "Build:"
 	@echo "  make build              - Build the web application"
-	@echo "  make build-android      - Build Android debug and instrumentation APKs"
+	@echo "  make build-android      - Build the Android debug APK"
 	@echo "  make build-android-release - Build signed Android release APK"
 	@echo "  make build-icons        - Regenerate icons from apps/web/public/brand/asterism.svg"
 	@echo "  make generate-resource-capabilities - Regenerate the browser resource-capability projection from the backend table"
 	@echo ""
 	@echo "Testing:"
-	@echo "  ./scripts/test --help   - List the sole test and verification API"
+	@echo "  ./scripts/test          - Run the complete deterministic check"
 	@echo "  make smoke              - Post-deploy auth smoke check against production URLs"
 	@echo "  make smoke-auth         - Full hosted Auth configuration and production smoke gate"
 	@echo ""
@@ -214,7 +214,7 @@ build:
 	cd apps/web && bun run build
 
 build-android:
-	cd apps/android && ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+	cd apps/android && ./gradlew :app:assembleDebug
 
 build-android-release:
 	cd apps/android && ./gradlew :app:lintRelease :app:assembleRelease

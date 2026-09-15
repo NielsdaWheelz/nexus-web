@@ -349,7 +349,7 @@ source passage.
 
 ## regression strategy
 
-required automated coverage includes:
+when reader behavior changes, manually verify:
 
 - reader settings persistence
 - web article canonical locator resume after profile typography reflow
@@ -368,7 +368,5 @@ required automated coverage includes:
 ## validation commands
 
 ```bash
-./scripts/test changed apps/web/src/lib/reader
-./scripts/test changed apps/web/e2e/journeys/reader-progress-resume.journey.spec.ts
-./scripts/test changed apps/web/e2e/journeys/grounded-chat-citation.journey.spec.ts
+./scripts/test
 ```

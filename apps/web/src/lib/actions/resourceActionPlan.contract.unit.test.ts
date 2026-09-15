@@ -10,7 +10,7 @@ import type { LocalAvailability } from "@/lib/offlineMedia/contract";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 
 // Product oracle: the approved hard-cut spec plus the independently reviewed
-// dotted IDs in apps/web/e2e/resourceActionProductOracle.ts. This file imports
+// dotted IDs in the product action contract. This file imports
 // no production catalog or renderer; the local target shape keeps this contract
 // independent from the production plan type.
 

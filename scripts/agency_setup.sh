@@ -17,11 +17,10 @@ require_tool bun
 require_tool docker
 require_tool supabase
 
-uv sync --all-extras --locked --directory "$repo_root/python"
+uv sync --extra dev --locked --directory "$repo_root/python"
 bun install --frozen-lockfile --cwd "$repo_root/apps/web"
 bun install --frozen-lockfile --cwd "$repo_root/node/ingest"
 
-# The typed test controller is the sole owner of test services and writable
-# test state. Setup must not start a dev stack, migrate a shared database, seed
-# shared data, or write product .env files before verification.
-echo "Agency dependencies are ready; ./scripts/test owns test runtime startup."
+# Setup installs locked dependencies only. It must not start services, migrate a
+# shared database, seed data, or write product environment files.
+echo "Agency dependencies are ready; run ./scripts/test."

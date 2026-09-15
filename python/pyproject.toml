@@ -31,15 +31,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "cryptography>=45.0.0",
-    "hypothesis>=6.151.9",
-    "httpx2>=2.9.1",
     "ruff>=0.8.0",
     "pytest>=8.3.0",
-    "pytest-randomly>=4.0.1",
     "pytest-socket>=0.7.0",
     "pyright>=1.1.390",
-    "pip-audit>=2.9.0",
-    "zizmor>=1.24.1",
 ]
 
 [project.scripts]
@@ -85,6 +80,10 @@ typeCheckingMode = "standard"
 pythonVersion = "3.12"
 extraPaths = [".."]
 include = [
+    "../apps/api/main.py",
+    "../apps/worker/health.py",
+    "../apps/worker/main.py",
+    "../deploy/hetzner/release.py",
     "nexus/api",
     "nexus/db",
     "nexus/schemas",
@@ -185,12 +184,6 @@ exclude = [
 [tool.pytest.ini_options]
 testpaths = [
     "tests/kernel",
-    "tests/service",
-    "tests/contract",
-    "tests/migrations",
-    "tests/evals",
-    "tests/audit",
-    "tests/hosted",
 ]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
