@@ -49,6 +49,7 @@ def _assert_process_absent(pid_path: Path) -> int:
 def test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child(
     engine: Engine,
     tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Risk: one hostile document must not kill, retry, or outlive its supervisor."""
     viewer_id = uuid4()
@@ -176,6 +177,19 @@ def test_kernel_oom_and_timeout_are_terminally_fenced_before_next_fresh_child(
     )
 
     supervisor_state = json.loads(supervisor_state_path.read_text(encoding="ascii"))
+    with capsys.disabled():
+        print(
+            "nexus-memory-measurement="
+            + json.dumps(
+                {
+                    "owner": "background-worker-supervisor",
+                    "resident_kib": supervisor_state["resident_kib"],
+                    "limit_kib": SUPERVISOR_RESIDENT_KIB_LIMIT,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
     supervisor_pid = int(supervisor_state["pid"])
     with pytest.raises(ProcessLookupError):
         os.kill(supervisor_pid, 0)

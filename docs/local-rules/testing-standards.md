@@ -562,6 +562,11 @@ The command table above, CI routes, and deferred-owner map are explicit,
 policy-checked projections that MUST change with it; they are not generated
 from the registry.
 
+The existing worker supervisor and parser memory proofs retain their measured
+values in the owning service capability's log artifacts, including successful
+runs. These are process RSS measurements under the existing budgets; they do
+not measure an image build's shared Docker daemon or BuildKit cache.
+
 <!-- nexus-test-routing-sha256: 16be00b8b3dea025d985dacb2bc676ac278d12736120c133ef2593ebd896d864 -->
 
 When changed-file routing names a capability later than the invoked workflow,

@@ -203,6 +203,7 @@ _SAFE_CHILD_ENV = (
     "XDG_CACHE_HOME",
 )
 _RELEASE_ARTIFACT_WORKER_IMAGE_ENV = "NEXUS_TEST_CANDIDATE_WORKER_IMAGE"
+_MEMORY_MEASUREMENT_MARKER = "nexus-memory-measurement="
 _LOCAL_IMAGE_ID_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _PYTHON_POLICY_DIRS = (
     "python/tests/kernel",
@@ -3294,6 +3295,7 @@ def _run_owned_commands(
     if missing:
         return _not_run(capability, f"required tools are absent: {', '.join(missing)}")
     started = time.monotonic_ns()
+    artifacts: list[str] = []
     for index, (argv, cwd) in enumerate(commands, start=1):
         argv = _fail_fast_command(argv)
         if context is not None and context.run_context is not None:
@@ -3311,6 +3313,7 @@ def _run_owned_commands(
                 env=dict(child_environment),
                 capture_output=True,
                 check=False,
+                retain_stdout_markers=(_MEMORY_MEASUREMENT_MARKER,),
             )
         except OSError as error:
             duration_ms = (time.monotonic_ns() - started) // 1_000_000
@@ -3328,7 +3331,7 @@ def _run_owned_commands(
                 _command_result_detail(index, completed, interrupted_by),
                 environment_secrets(child_environment),
             )
-            artifacts = _failure_artifacts(
+            failure_artifacts = _command_output_artifacts(
                 capability,
                 index,
                 argv,
@@ -3340,7 +3343,22 @@ def _run_owned_commands(
                 status,
                 duration_ms,
                 detail,
-                artifacts=artifacts,
+                artifacts=(*artifacts, *failure_artifacts),
+            )
+        measurements = "\n".join(
+            line
+            for line in (completed.stdout or "").splitlines()
+            if _MEMORY_MEASUREMENT_MARKER in line
+        )
+        if measurements:
+            artifacts.extend(
+                _command_output_artifacts(
+                    capability,
+                    index,
+                    argv,
+                    subprocess.CompletedProcess(argv, 0, measurements, ""),
+                    child_environment,
+                )
             )
     duration_ms = (time.monotonic_ns() - started) // 1_000_000
     return _result(
@@ -3348,6 +3366,7 @@ def _run_owned_commands(
         RunStatus.PASS,
         duration_ms,
         f"{len(commands)} fixed command{'s' if len(commands) != 1 else ''} passed",
+        artifacts=tuple(artifacts),
     )
 
 
@@ -6185,7 +6204,7 @@ def _run_fixed_commands_observed(
             )
         if completed.returncode != 0:
             duration_ms = elapsed_ms + (time.monotonic_ns() - started) // 1_000_000
-            artifacts = _failure_artifacts(
+            artifacts = _command_output_artifacts(
                 capability,
                 index,
                 argv,
@@ -6505,7 +6524,7 @@ def _bounded_android_device_output(value: str, secrets: Iterable[str]) -> str:
     return prefix + redacted[-(_ANDROID_DEVICE_OUTPUT_LIMIT - len(prefix)) :]
 
 
-def _failure_artifacts(
+def _command_output_artifacts(
     capability: Capability,
     index: int,
     argv: tuple[str, ...],

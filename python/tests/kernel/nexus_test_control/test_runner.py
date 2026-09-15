@@ -1343,6 +1343,33 @@ def test_exact_release_artifact_proof_materializes_an_owned_worker_image(
     )
 
 
+def test_successful_owned_memory_measurement_survives_output_truncation(tmp_path: Path) -> None:
+    marker = 'nexus-memory-measurement={"owner":"supervisor","resident_kib":42000}'
+    environment = _stub_tools(tmp_path, "uv")
+    _write_executable(tmp_path / "bin/uv", stdout=marker + "\n" + "unretained\n" * 10000)
+    run_id = "0123456789abcdef"
+    results = tmp_path / "test-results/runs" / run_id
+    results.mkdir(parents=True)
+    result = runner._run_owned_commands(
+        Capability.SERVICE,
+        ((("uv", "run", "proof"), tmp_path),),
+        {
+            **environment,
+            "NEXUS_ENV": "test",
+            "NEXUS_TEST_RESULTS_DIR": str(results),
+            "NEXUS_TEST_EVIDENCE_RUN_ID": run_id,
+        },
+        ("uv",),
+        context=None,
+    )
+    assert result.evidence.status is RunStatus.PASS
+    assert result.evidence.artifacts == (f"test-results/runs/{run_id}/service-1.log",)
+    receipt = (tmp_path / result.evidence.artifacts[0]).read_text()
+    assert marker in receipt
+    assert "unretained" not in receipt
+
+
+
 def test_release_artifact_runs_its_python_proofs_before_staging_android_evidence(
     tmp_path: Path,
 ) -> None:

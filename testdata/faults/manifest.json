@@ -714,7 +714,7 @@
       ],
       "expected_failure": "resource-limited source settlement lost its exact dimension",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "ceac20dbd48dae933cb35ce446c73551b84faf05c6c764b51dc6d161defab4ba"
+      "changed_owner_sha256": "355b03f6e48967802c2ca0a4db7b024738fb64e79f47efa9422b71072af81171"
     },
     {
       "id": "document-import-parser-dimension-bypass",
@@ -725,7 +725,7 @@
       ],
       "expected_failure": "PDF resource-limit projection lost its typed carrier",
       "changed_owner_red": "coherent-fault",
-      "changed_owner_sha256": "5d433b0cb55bbdbc5842f94da8b72b09724b863f85f12cb487f04e81ad95dcad"
+      "changed_owner_sha256": "9947e582577fa37558b977f3927a82bc863781e5bc4814b9da34c83e5b963ec4"
     },
     {
       "id": "document-import-reconciler-readiness-bypass",

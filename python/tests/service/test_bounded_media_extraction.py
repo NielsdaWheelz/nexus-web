@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import multiprocessing
 import stat
 import struct
@@ -2342,7 +2343,9 @@ def test_in_flight_source_progress_reaches_the_media_wire(engine: Engine) -> Non
         db.commit()
 
 
-def test_parser_process_rss_stays_inside_the_background_memory_envelope() -> None:
+def test_parser_process_rss_stays_inside_the_background_memory_envelope(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     measured: dict[str, float] = {}
     details: dict[str, object] = {}
     for case in (
@@ -2357,8 +2360,20 @@ def test_parser_process_rss_stays_inside_the_background_memory_envelope() -> Non
         measured[case] = high_water_rss_mib
         details[case] = detail
 
-    print(f"bounded-parser-high-water-rss-mib={measured!r}")
     parser_budget_mib = 448 - 96
+    with capsys.disabled():
+        print(
+            "nexus-memory-measurement="
+            + json.dumps(
+                {
+                    "owner": "background-worker-parsers",
+                    "high_water_rss_mib": measured,
+                    "limit_mib": parser_budget_mib,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
     assert all(high_water < parser_budget_mib for high_water in measured.values()), (
         "parser plus the 96 MiB supervisor target exceeded the 448 MiB "
         f"background-worker hard limit: {measured!r}; {details!r}"
