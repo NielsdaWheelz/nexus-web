@@ -37,7 +37,9 @@
     "testdata/faults/manifest.json": "reviewed current-architecture migration and linked-port witnesses; central mobile chrome fault",
     "testdata/faults/mobile-highlight-action-lock-bypass.patch": "f7857c4a: falsify the current central chrome owner",
     "testdata/faults/test-linked-runtime-port-reservation-bypass.patch": "1f17317e: falsify allocation exclusion",
-    "testdata/proofs.json": "canonical populated migration and linked-port proof owners"
+    "testdata/proofs.json": "canonical populated migration and linked-port proof owners",
+    "python/nexus_test_control/policy.py": "64de7964: admit exactly the two retained owning-checkout cleanup routes",
+    "python/tests/kernel/nexus_test_control/test_policy.py": "64de7964: prove cleanup route ownership and exact cardinality"
   },
   "required_restoration_docs_and_proofs": {
     "apps/web/src/components/reader/ReaderDocumentMapDetail.browser.test.tsx": "remove one inherited trailing blank, no behavioral change",
@@ -55,6 +57,7 @@
     "python/tests/release_artifact/test_node_ingest_image_binding.py": "verify both restored image targets, immutable identity, unprivileged imports and baked ingest",
     "python/tests/service/test_background_worker_process_containment.py": "retain measured restored supervisor memory in successful proof receipts",
     "python/tests/service/test_bounded_media_extraction.py": "retain parser process memory in successful proof receipts",
-    "docs/cutovers/pre-243-pr-sensitivity-matrix.md": "source-audited exact-target comparison limitations and existing issue ownership"
+    "docs/cutovers/pre-243-pr-sensitivity-matrix.md": "source-audited exact-target comparison limitations and existing issue ownership",
+    "docs/tickets/ci-gate-time-budget.md": "record observed restoration selection cost and retained exact-gate limits"
   }
 }

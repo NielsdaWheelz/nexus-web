@@ -109,3 +109,7 @@ its own git identity into itself.
 - successful worker/parser proofs retain their existing memory assertions and
   add durable measurements to the controller receipts. this adds observability,
   not a substitute budget or a legacy provider implementation.
+- the large restoration diff exposes repeated glob compilation during pr
+  selection. the first planning-only attempt was interrupted after 6m36.82s
+  to validate the candidate first. the final exact pr comparison remains
+  required; the existing gate-budget ticket owns performance changes.

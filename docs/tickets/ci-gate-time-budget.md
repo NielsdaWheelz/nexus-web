@@ -66,3 +66,71 @@ proportionally shorter.
   same capability set and sensitivity evidence.
 - testing-standards section 7 budget row for `pr` is either met or restated
   with the measured number.
+
+## restoration selection planning, 2026-09-14
+
+candidate `eb07b3851085a060bade1e282ce7683e65b0d3b0`, exact pr target
+`a1f59a755c91bdc22e77e33c12b93dde829a8e6e`, on `dev-server` with python
+3.12.13: the controller allocated its run directory, then spent several minutes
+at approximately one cpu core and 97 mib before proof output or result artifacts.
+a read-only `py-spy` sample showed:
+
+```text
+_compile -> fullmatch -> _glob_matches -> for_path -> select_changed
+```
+
+the planning-only attempt was then deliberately interrupted after 6m36.82s
+so candidate validation could run before the costly final comparison. run
+`f71661431470ba78` records `controller_execution_failure` from `SIGINT`; no
+product proof ran. peak process rss was 103,440 kib. this is an interrupted
+attempt, not a measured total planning duration or a behavioral red.
+
+source inspection at that candidate explains the workload:
+
+- `selection.py::load_selection_index` constructs 11,722 priority source/proof
+  route pairs, 56 direct static-platform routes, and 200 journey routes:
+  11,978 total. repeated source globs remain separate routes for their owners.
+- `select_changed` scans the complete index for 1,434 paths in the expanded
+  restoration diff. that is 17,176,452 `_glob_matches` calls, a lower bound on
+  total planning work. the 1,797 expanded changes include the old-path deletion
+  for each rename; changed executable tests use their direct owner instead.
+- `_glob_matches` rebuilds the regex character by character for every pair and
+  calls `re.fullmatch`. there is no invocation-local pattern/index reuse.
+  the route list contains only 625 distinct source globs before adding the
+  direct static-platform routes. the stack sample confirms this source path.
+- `cli.py::_execute_workflow` claims the run directory before `_selection`,
+  canonicalization, and sensitivity. it writes the workflow summary afterward;
+  those planning functions emit no progress record. an allocated empty run
+  directory is therefore consistent with this finite computation.
+
+there is also later repeated work, not the sampled hotspot:
+`_canonical_selection` calls `declared_fault_for_proof` for unchanged whole-file
+identities; that function validates the entire fault manifest on every call.
+`workflow_sensitivity_request` and `fault_definition` repeat that validation.
+each pass checks 136 patches with `git apply --check` and re-hashes 46 coherent
+owners, approximately one mib of source. this work has finite input bounds;
+its time has not been separately measured here.
+
+retain this as follow-up performance work. first measure selection,
+canonicalization, manifest validation, and execution separately. any later
+optimization must preserve the same selected owners, canonical identities,
+fault applicability and digest checks, and exact behavioral sensitivity.
+this restoration leaves the controller source unchanged for this issue; it
+introduces no gate waiver or policy redesign. the rare large restoration diff
+exposes planning cost that ordinary small diffs may conceal.
+
+source-only reproduction starts with the exact candidate and target above:
+
+```sh
+git diff --name-status --find-renames a1f59a755c91bdc22e77e33c12b93dde829a8e6e
+rg -n 'def load_selection_index|def select_changed|def _glob_matches|def for_path' python/nexus_test_control/selection.py
+rg -n 'def _execute_workflow|def _canonical_selection' python/nexus_test_control/cli.py
+rg -n 'def declared_fault_for_proof|def workflow_sensitivity_request|def fault_definition' python/nexus_test_control/sensitivity.py
+rg -n 'def fault_manifest_violations|def _fault_patch_applies' python/nexus_test_control/policy.py
+```
+
+count route pairs directly from `testdata/proofs.json`: for each priority risk,
+multiply `source_globs` by `proofs`, add each `source_globs` entry for a declared
+`static-platform` capability, then add journey `source_globs`. count index scans
+using `select_changed`'s deletion/rename expansion and direct-test branches;
+no proof execution is required to establish the bound.
