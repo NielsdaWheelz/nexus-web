@@ -3,9 +3,19 @@
 status: open · origin: 2026-09-16 utc pr #270 manual acceptance · area: api memory · oi-137
 
 the d23063e4 pillow-book plus shadow/claw reproduction remained usable, with
-no oom/restart. a later00:05:58 verification-overlap oom reopens oi-116. capacity beyond the
-bounded reader interval remains unproved. see that ticket for the new kernel
-evidence and probe overhead.
+no oom/restart during that interval. a later00:05:58 verification-overlap oom
+reopened oi-116. pr #271 removes probe overhead; its final7965 paired-reader
+manual check passed and closes that specific issue. the
+[release chronology](../cutovers/restoration-release-2026-09-15.md) retains the
+kernel evidence. capacity beyond bounded reader intervals remains unproved.
+
+pr #271 deployed7965f7cd with smaller health and host-side release probes.
+through00:36:58 utc2026-09-16 production api peak was312.484/320 mib, zero
+limit/oom/swap events and restarts, leaving7.516 mib observed peak margin.
+host available floor485.238 mib does not remove the api cgroup ceiling.
+`production-7965f7cd-memory-closeout-start.json` records this interval. the
+native exact-image probe peaked289.395 mib; neither short interval proves
+sustained capacity or timely semantic search. this issue remains open.
 
 production api reached its 320-mib ceiling and 31 limit/reclaim events through
 00:02:02 utc, zero oom/swap/restarts. at 00:02:26, current 306.5625 mib included
