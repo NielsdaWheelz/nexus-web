@@ -1,3 +1,13 @@
+## latest correction: api oom during overlapping verification
+
+after the reported reader/manual passes, d230 api was oom-killed at00:05:58
+utc2026-09-16 while health and operator identity verification overlapped.
+kernel names runc INIT as the allocating task; the extra operator exec likely
+provided the final allocation, not a newly observed browser crash. api restarted
+and public health recovered by00:06:13. oi-116 remains open; do not claim the
+restoration's sustained capacity complete. details and raw evidence are in
+[the reopened ticket](../tickets/pillow-book-opening-api-oom.md).
+
 ## pr #270: exact-image evidence and production release
 
 pr #270 merged as `d23063e41ebca65fd66403691373736f6c4396b6`. it isolates
@@ -67,8 +77,8 @@ interactive 189.234/320, background 207/448, codex 275.895/448; all five new
 services recorded zero max/oom/swap/restarts. this precedes renewed manual use.
 
 the user reported the requested pillow-book plus shadow/claw interval stayed
-usable after reload/search/open. oi-116's actual crash reproduction is resolved;
-its ticket/registry entry are deleted. this is bounded manual acceptance.
+usable after reload/search/open. this was bounded manual acceptance. a later verification-overlap oom at
+00:05:58 reopens oi-116; see the new evidence below.
 through 00:02:02 utc 2026-09-16, all five new services had zero oom/swap/restarts.
 api reached 320/320 mib with 31 reclaim/limit events, background 276.086/448,
 interactive 189.660/320,codex 275.895/448. host available floor 343.641 mib,

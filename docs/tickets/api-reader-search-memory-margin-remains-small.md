@@ -3,8 +3,9 @@
 status: open · origin: 2026-09-16 utc pr #270 manual acceptance · area: api memory · oi-137
 
 the d23063e4 pillow-book plus shadow/claw reproduction remained usable, with
-no oom/restart. this closes the observed oi-116 crash after the import and
-fragment-projection fixes. capacity beyond that bounded use is unproved.
+no oom/restart. a later00:05:58 verification-overlap oom reopens oi-116. capacity beyond the
+bounded reader interval remains unproved. see that ticket for the new kernel
+evidence and probe overhead.
 
 production api reached its 320-mib ceiling and 31 limit/reclaim events through
 00:02:02 utc, zero oom/swap/restarts. at 00:02:26, current 306.5625 mib included

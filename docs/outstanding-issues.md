@@ -313,3 +313,4 @@ unexpected timeouts. See
 - [open] oi-135 · search memory · 2026-09-15 pr #270 review · p2 · selected result pages still retain complete fragment quotes without an aggregate byte bound: [ticket](tickets/search-result-pages-retain-full-fragment-quotes.md).
 - [open] oi-136 · search performance · 2026-09-15 pr #270 diagnosis · p2 · semantic ranking still scans/sorts the embedding corpus and spills substantial temporary data: [ticket](tickets/semantic-ranking-still-scans-embedding-corpus.md).
 - [open] oi-137 · api memory · 2026-09-16 utc pr #270 manual acceptance · p2 · paired readers stayed usable but reached the 320-mib cap; sustained margin remains unproved: [ticket](tickets/api-reader-search-memory-margin-remains-small.md).
+- [open] oi-116 · api memory · 2026-09-16 utc d230 manual follow-up · p1 · bounded paired-reader use passed, then overlapping health/operator verification oom-killed the api: [ticket](tickets/pillow-book-opening-api-oom.md).
