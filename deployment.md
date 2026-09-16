@@ -128,6 +128,17 @@ allocator contention and more mapping/system calls for less retained memory;
 it does not bound live allocations or increase the 320 MiB container cap.
 See the [glibc allocation contract](https://sourceware.org/glibc/manual/latest/html_node/Malloc-Tunable-Parameters.html).
 
+The API healthcheck uses a direct curl process. Release HTTP proofs run on the
+host against the API's inspected private address; they never start another
+Python interpreter inside its cgroup. This also proves older predecessor images
+without requiring curl in them. The host retains exact version/readiness JSON
+checks, bounded responses and transport failures. Malformed readiness JSON is a
+permanent contract failure; a valid non-ready body remains an external failure.
+Optional operator identity reads use the inspected process's root filesystem
+from the host instead of `docker exec`. Probe overhead counts against the same
+320 MiB budget as application work; removing it does not bound reader/search
+allocations.
+
 The host contract is cgroup v2 with the memory controller, at least 1 GiB
 swap, at least 512 MiB free under `/var/lib/nexus/parser-tmp`, and no running
 container outside the exact `nexus` Compose project. Existing hosts must be

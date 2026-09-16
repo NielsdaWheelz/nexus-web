@@ -87,3 +87,30 @@ reassess the api ceiling against measured combined host demand; do not resize
 or weaken capacity proof merely to obtain a pass.
 close only after exact replacement-image evidence and the actual pillow-book
 opening sequence remain usable without oom/restarts.
+
+## d230 successor: bounded manual pass, later probe-overlap oom
+
+pr #270 deployed d23063e4 at23:56:16 utc, db0230. user reports pillow plus
+shadow stayed usable, and android reader navigation/reopen, imports/history and
+playback/offline passed. those bounded product reports remain true.
+
+api991a1d30 was oom-killed at00:05:58 utc2026-09-16 and automatically restarted.
+kernel CONSTRAINT_MEMCG names runc INIT as the allocating task, uvicorn
+anon307092 kib, concurrent health Python anon13200 kib and runc anon3220 kib.
+operator runtime capture also issued `docker exec cat /app/runtime-identity.json`
+at that time. overlapping verification likely supplied the final allocation;
+the kernel does not identify which exec launched runc. no user workspace crash
+was reported for this event. normal Compose health launches Python/urllib every
+5s; owned backend proof launches two more Python/urllib processes sequentially,
+each able to overlap health. inspect the overhead before changing caps.
+
+private evidence: `kernel-d23063e4-late-restart.log`,
+`production-d23063e4-memory.jsonl`, `api-d23063e4-late-restart.log`,
+`runtime-d23063e4-late-restart.json`. the earlier snapshot at00:05:58 preceded
+the kill; public checks at00:06:13 occurred after automatic recovery. later
+zero cgroup counters do not erase the kill. `production-d23063e4-memory-final.json`
+naively subtracts counters across the restart; use the raw per-lifetime data.
+
+reduce unavoidable health/release probe overhead and avoid optional in-container
+operator processes under pressure. keep the existing service/host limits and
+prove the exact replacement plus representative workload. issue remains open.
