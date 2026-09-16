@@ -31,7 +31,8 @@ source, query and score during ranking. original full locators and query
 excerpts are read after selection for discovery and link-target results.
 reopening keeps its original prefix snippet. permissions and readiness are
 rechecked at projection, and post-limit locator admission remains unchanged.
-latest source-overlay allocation and sole check are pending.
+the native evidence and complete sole check are recorded below and in the
+release notes.
 
 metadata-only fragment projection held three overlapping searches below276 mib
 without oom. the next timeout belongs to `_search_evidence_spans`: its full-text
@@ -46,3 +47,17 @@ preparatory evidence, not exact published-image or production acceptance;
 latency is close to the30-second web deadline. the clone index build took
 58.366s and added84975616 bytes. postgres touched its512-mib ceiling with2368
 reclaim/limit events, zero oom/swap;32 mib was not a total-memory bound.
+
+exact published d23063e4 repeats ordinary search, fragment reopening, selected
+link targets, all23 pillow fragments and30 assets:92 GET responses200 plus
+the target POST200; retained api peak290.176/320 mib, zero max/oom events.
+requests took21.277s cold and17.122/27.682/30.701s concurrently. the final
+request exceeds the30-second web deadline, so this issue remains open.
+source-overlay evidence above is preparatory only; exact-image evidence is
+`pillow-d23063e4-exact/`. production/manual deadline acceptance remains open.
+
+production d23063e4 api logged response-header200 for `/search` at23:59:36 utc
+in37.174s and30.954s, both beyond the web deadline. lexical openables requests
+completed in0.248–2.543s. api header logs do not prove browser receipt/body
+completion; user search outcome remains unconfirmed. evidence:
+`api-d23063e4-first-manual.log`. this is now a production latency observation.

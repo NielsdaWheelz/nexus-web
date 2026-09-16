@@ -1,16 +1,103 @@
-## pending pr #270: semantic search memory and retrieval
+## pr #270: exact-image evidence and production release
 
-production remains69583dc3/db0229. live profiling established an embedding
-import crash; native diagnosis also found200 discarded fragment bodies retained
-before pagination and full-text query timeouts. pr #270 isolates generation
-imports, keeps fragment candidates as metadata until selection, uses existing
-query indexes and adds the missing evidence-span GIN index as db0230. the owned
-backup waiver remains required. no prior migration is rerun. native exact-image
-qualification, sole green check, release and manual acceptance remain pending.
+pr #270 merged as `d23063e41ebca65fd66403691373736f6c4396b6`. it isolates
+generation-engine imports from embeddings, ranks fragment metadata before
+reading selected quotes, uses existing query indexes, and adds the missing
+evidence-span GIN index as db0230. the 233 existing migration files are
+unchanged from production 695. no 0215→0229 migration reruns.
+
+[the sole devbox check](https://github.com/NielsdaWheelz/nexus-web/actions/runs/35036419445)
+passed 564 python, 1061 vitest/125 files, one ingest, format/lint/types and head 0230
+on the clean `nexus-dev-server-2` runner. head
+`aeb0cc15cf693a1640ff4369c2a10c20d255d5c2`, checked
+`81112f437251d0a91ea9122ccf3ff612cf9cf4a5` and merge share tree
+`b5874a144c1703ae14230fc170da580343f93806`. tree equality was verified after
+merge, before deployment: the first local log parser selected an action SHA
+and its comparison failed. the check itself was green before merge.
+[the red check](https://github.com/NielsdaWheelz/nexus-web/actions/runs/35034195481)
+first reproduced the embedding import defect; two bounded independent reviews
+found no source blocker. [exact publication](https://github.com/NielsdaWheelz/nexus-web/actions/runs/35036653552)
+passed; eight bundle payloads byte-match frozen source.
+
+exact-image db0229→0230 rehearsal completed in 69.993s, retaining identical
+media/fragment/evidence-span row counts and a valid ready 81.039-mib clone index.
+migration retained observed peak 126.738/512 mib, no max/oom/swap events; its
+cgroup disappeared before the final sample, so the full final peak interval is
+unknown. final container exit 0/OOMKilled=false was captured. postgres touched
+512/512 mib and added 3994 observed limit/reclaim events (4046 cumulative), no oom/container swap.
+the 32-mib maintenance workspace is not a total postgres memory bound.
+devbox host retained pre-existing swap, decreasing during observation.
+
+exact published api, 320 mib, completed 92 gets and the selected link-target
+post 200, including ordinary semantic search, full-quote fragment reopening,
+all 23 pillow fragments and 30 assets. retained peak 290.176 mib, zero max/oom
+events. cold search 21.277s; three concurrent searches 17.122/27.682/30.701s.
+the final request exceeds the 30-second web deadline; the diagnostic allowed 60s.
+oi-134/136 remain open. no memory-cap change is claimed.
+
+this diagnostic used a private auth verifier and snapshotted catalog/health
+transport with the real app, retained db0230 clone, real embeddings and R2,
+external slow TCP reads and health subprocesses. clone readiness 503 is expected
+without a fresh reconciler; this is not a release-health or browser/device pass.
+selected full fragment quotes remain unbounded in aggregate (oi-135).
+maintenance provider/kernel pins remain outside upstream main (oi-133).
+
+the owned release ran 23:52:25–23:56:17 utc and settled `Succeeded` at 23:56:16,
+exit 0 with `--no-database-backup`. actual database/current record are 0230.
+api `sha256:f5303942bd74d50a2aaaf1fa420cfc19f9f923e4f93b19e251059411fb05021c`;
+worker/codex/policy `sha256:1817afd0dcb998e183f0dcb46915d7e7a5ebb695770f20e5eccbc936af5d7de2`;
+manifest `d7003311006d249f81d1cdca1fbb653c5e09fabd0749d4f893eb82173f9c22ec`.
+owned promotion bound `dpl_89KPBjXe5tByjLGbfdTd6P1ACkd4`; custom-domain
+auto-assignment remains false. original postgres/caddy and config are retained.
+no fresh backup, resize, reboot or manual promotion.
+
+all five replacement services were healthy at exact identities with zero
+restarts. owned backend/mcp and pre/post-alias auth proofs passed. public
+verification at 23:56:41 proved exact web/api source, livez/readyz 200, no-store
+and bodyless mcp 401 without redirect/cookie. no actual model tool call or new
+three-turn qualification is claimed for this ordinary successor.
+
+production migration retained observed peak 129.117/512 mib with zero max/oom/
+swap events; final cgroup removal limits the last peak interval. through 23:57:35,
+postgres added 2875 reclaim events and caddy 135, with no oom/restarts. these
+retained containers' peak counters predate this release. host available floor
+481.113 mib, pressure some 0.92/full 0.69; host retained swap 117207040 bytes,
+all observed service cgroups had zero swap. new api peak 217.098/320 mib,
+interactive 189.234/320, background 207/448, codex 275.895/448; all five new
+services recorded zero max/oom/swap/restarts. this precedes renewed manual use.
+
+the user reported the requested pillow-book plus shadow/claw interval stayed
+usable after reload/search/open. oi-116's actual crash reproduction is resolved;
+its ticket/registry entry are deleted. this is bounded manual acceptance.
+through 00:02:02 utc 2026-09-16, all five new services had zero oom/swap/restarts.
+api reached 320/320 mib with 31 reclaim/limit events, background 276.086/448,
+interactive 189.660/320,codex 275.895/448. host available floor 343.641 mib,
+pressure some 3.34/full 2.74; postgres added 48921 limit/reclaim events since
+observation began, no oom. api anonymous memory was 300.176 mib at 00:02:26.
+oi-137 records the remaining sustained-capacity margin; this is not a general
+no-crash guarantee. production semantic searches emitted 200 headers after
+37.174/30.954s, both beyond the web deadline. oi-134/136 remain open.
+
+manual evidence: `manual-d23063e4-paired-reader.json`,
+`production-d23063e4-memory-paired-reader.json`,
+`api-d23063e4-manual-memory-stat.json`.
+theme switching/persistence previously passed. the user then reported all
+remaining checks passed: android reader navigation/leave/reopen, imports/history
+and playback/offline if used. this is manual user evidence, not an automated
+device/browser suite. `manual-d23063e4-remaining.json` retains the exact report.
+chat remains the explicitly accepted deferred failure (oi-128); successful
+shared-agent/tool recovery is not claimed. no old draft was resent or uncertain
+dispatch reset.
+
+private evidence: `pr270-ci-receipt.json`, `publisher-d23063e4-receipt.json`,
+`bundle-d23063e4-source-receipt.json`, `source-comparison-d23063e4.json`,
+`migration-d23063e4/`, `pillow-d23063e4-exact/`. all nine task-owned devbox
+diagnostic containers were removed after retaining evidence; clone databases,
+volumes, networks, images and existing archives remain.
 
 # restoration production release — 2026-09-15
 
-status: 69583dc3 deployed; later book opening oom-killed api; memory issue reopened
+status: historical release chronology; current d23063e4 evidence is above
 origin: restoration pr #255, forward recovery pr #262
 
 ## later book-opening failure
@@ -20,9 +107,9 @@ confessions with the pillow book while shadow & claw was open; pillow alone
 also crashes. oi-116 is reopened. the earlier bounded reader/theme passes
 remain truthful but do not establish general book-opening capacity. theme
 switching remains verified; chat remains explicitly deferred. see the
-[active memory ticket](../tickets/pillow-book-opening-api-oom.md).
+[remaining memory-margin ticket](../tickets/api-reader-search-memory-margin-remains-small.md).
 
-## current release: 69583dc3
+## historical release: 69583dc3
 
 pr #268 merged as `69583dc3075730dc98e2ba33ffb2553335d0b813` and the owned
 release succeeded at22:15:13 utc. deploy ran22:12:35–22:15:14 with
