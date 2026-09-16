@@ -1,14 +1,128 @@
-## latest correction: api oom during overlapping verification
+# restoration release: current production 7965f7cd, db0230
+
+pr #271 deployed `7965f7cd88865dac03be672c2164ef58235840fd` on the existing
+2-gib host. the owned entrypoint ran 00:28:43–00:31:16 utc on 2026-09-16 with
+`--no-database-backup`, exit 0; durable phase became `Succeeded` at 00:31:15.
+actual database and current record are 0230. all 234 migration files are
+unchanged from d230; no migration, fresh backup, resize or reboot occurred.
+the original postgres/caddy containers and configuration are retained.
+
+## final change and exact-source check
+
+the api healthcheck now uses direct curl instead of a Python/urllib process.
+release version/readiness requests run from the host against the inspected
+private api address. exact identity/readiness validation remains; stable logical
+operation names retain retry accounting if the address changes. the probes also
+work against the predecessor image without curl. malformed readiness JSON now
+fails permanently; a valid non-ready response remains an external failure.
+optional operator identity reads use the inspected host process root, with its
+pid rechecked. no extra api process is started for this verification.
+
+[the behavioral red](https://github.com/NielsdaWheelz/nexus-web/actions/runs/35039003666)
+reproduced the in-container HTTP proof. [the complete fixed-head devbox check](https://github.com/NielsdaWheelz/nexus-web/actions/runs/35039330125)
+passed 566 python, 1061 vitest/125 files, one ingest, format/lint/types and
+head0230 on `nexus-dev-server-2`. reviewed head
+`3fc6a0f37fa889c994930b26144f6a8d527ff134`, checked merge
+`5ac920670dcf945b6358dbec28b3efb60a26e851` and release main share tree
+`77ab6491a35d272676c71034bd0f4eb49d2a0990`. head/check equality was verified
+before merge. bounded independent review found no remaining source blocker.
+[immutable publication](https://github.com/NielsdaWheelz/nexus-web/actions/runs/35039570652)
+passed on the exact main sha; eight bundle payloads match frozen source.
+
+- api: `sha256:4a901d2207f851204130f9ae4f7fd689873c0f3a4c6df4de4eef5b53585d5f05`.
+- worker/codex/policy: `sha256:7b8491a641915e7f42fb6e187144ed1af975945ec10a2f00a9f3b72db36c55f0`.
+- manifest: `b2633c90f76c6b0600956660cf10c177a76c563174e4a00b0eb582850d9ecb2c`.
+- config: `23aa3deeee2016ba7c62c557b273988b1af27609452bf5f601695682d32f3b68`.
+- frontend: `dpl_GEcpdAvzEeXrUEFXos2nQLo1hZUd`, exact ready source and owned
+  alias promotion; automatic custom-domain assignment remains false.
+
+## exact-image native observation and limits
+
+the published api at 320 mib completed 175 GET200 responses and the selected
+target POST200, including all 23 pillow fragments/30 assets and concurrent
+traversal of 79 shadow/claw fragments. retained peak was 289.395 mib, zero
+max/oom events, client exit 0 and container running/not oom-killed before owned
+stop. this includes workspace warmup, lexical/semantic searches, full-quote
+reopening, real embeddings/R2 and delayed 16-kib TCP reads.
+
+the private auth verifier, snapshotted catalog/health transport and retained
+db0230 clone exclude live JWT, browser/device and worker acceptance. clone
+readiness503 is expected without a fresh reconciler. the diagnostic uses an
+exec-shell trampoline for curl; production uses direct CMD. container swap was
+disabled at creation but not sampled. two searches took 30.155/31.942s, beyond
+the web's 30-second deadline; the diagnostic allows 60s. this is neither a
+production-health pass nor proof of acceptable search latency.
+
+## production and manual acceptance
+
+all five replacement services have exact source/image identity and healthy
+state. owned backend/mcp and pre/post-alias auth proofs passed. public web/api
+versions match 7965; livez/readyz return 200 with no-store. the exact mcp mount
+returns bodyless401 without redirect/cookie mutation. this verifies network
+and authentication rejection, not a model tool call. no new three-turn canary
+is claimed for this ordinary successor.
+
+through 00:36:58 utc, api retained peak was 312.484/320 mib, interactive
+189.398/320, background207.637/448, codex270.199/448 and policy39.613/64.
+all five new services recorded zero limit/oom/swap events and zero restarts,
+one observed lifetime each. host available floor was485.238 mib; pressure
+maxima some0.83/full0.82. postgres added1731 limit/reclaim events and caddy157,
+without observed oom/restart; their retained lifetime peaks predate this release.
+the kernel read after this interval found no new oom since release success.
+only7.516 mib api peak margin remains: oi-137 stays open. one-second samples
+can miss terminal counters; restart counts and kernel evidence are separate.
+
+manual user reports remain bound to their observed versions:
+
+- d230: pillow book plus shadow/claw stayed usable; android reader navigation
+  and leave/reopen, imports/history, playback/offline if used all passed.
+- earlier releases: android/web page loading, scrollbar, solar, repeated
+  solar/dark switching and theme persistence passed.
+- 7965: after reloading and using pillow book alongside shadow/claw for the
+  requested interval, the user reports "stayed usable". this completes the
+  specific opening/probe-overlap acceptance; oi-116's ticket/register entry
+  are deleted. sustained capacity remains oi-137.
+- chat failed and is explicitly deferred (oi-128); actual tool/shared-agent
+  recovery remains unproved. no retry, old-draft resend or dispatch reset.
+
+slow semantic search (oi-134/136), selected full quotes (oi-135), upstream
+maintenance pins (oi-133), sustained memory margin (oi-137), and successful
+interactive/background workload qualification (oi-113/131) remain open.
+existing backup/loss limitations remain unchanged. both dirty primary worktrees
+and retained archives are preserved. task-owned native diagnostic containers
+were removed; the retained clone is stopped and its volume/network preserved.
+
+private receipts: `pr271-probe-ci-receipt.json`,
+`publisher-7965f7cd-receipt.json`, `bundle-7965f7cd-source-receipt.json`,
+`pillow-7965f7cd-health-exact/`, `deploy-7965f7cd-operator-receipt.json`,
+`deploy-7965f7cd-{attempt,record}.json`, `runtime-after-7965f7cd-final-start.json`,
+`public-7965f7cd-final-verification.json`, `provider-7965f7cd-promoted.json`,
+`production-7965f7cd-memory-closeout-start.json`,
+`production-7965f7cd-memory.jsonl`, and `kernel-7965f7cd-closeout-followup.log`
+plus `manual-7965f7cd-paired-reader.json` under `/tmp/nexus-release-255/`.
+documentation follow-up commits are not deployed
+source. raw runtime/configuration observations remain private.
+
+## historical d230 correction: api oom during overlapping verification
 
 after the reported reader/manual passes, d230 api was oom-killed at00:05:58
 utc2026-09-16 while health and operator identity verification overlapped.
 kernel names runc INIT as the allocating task; the extra operator exec likely
 provided the final allocation, not a newly observed browser crash. api restarted
-and public health recovered by00:06:13. oi-116 remains open; do not claim the
-restoration's sustained capacity complete. details and raw evidence are in
-[the reopened ticket](../tickets/pillow-book-opening-api-oom.md).
+and public health recovered by00:06:13. oi-116 was reopened at that checkpoint;
+the final 7965 fix/acceptance is above. sustained capacity remains unproved.
+`kernel-d23063e4-late-restart.log` and `runtime-d23063e4-late-restart.json`
+retain this failure. kernel CONSTRAINT_MEMCG reports uvicorn anon307092 kib,
+concurrent health Python anon13200 kib and runc anon3220 kib.
 
-## pr #270: exact-image evidence and production release
+the corrected summary groups by container id and restart count: the first
+api lifetime retained320.004 mib and100 sampled limit events; the restarted
+lifetime peaked217.730 mib. sampled oom counters missed the terminal kill;
+kernel evidence proves it. use `production-d23063e4-memory-final-corrected.json`
+and its correction note. the original cross-restart summary is retained as an
+incorrect historical artifact, not a zero-oom result.
+
+## historical pr #270: exact-image evidence and production release
 
 pr #270 merged as `d23063e41ebca65fd66403691373736f6c4396b6`. it isolates
 generation-engine imports from embeddings, ranks fragment metadata before
@@ -107,7 +221,7 @@ volumes, networks, images and existing archives remain.
 
 # restoration production release — 2026-09-15
 
-status: historical release chronology; current d23063e4 evidence is above
+status: historical release chronology; current 7965f7cd evidence is above
 origin: restoration pr #255, forward recovery pr #262
 
 ## later book-opening failure
@@ -118,6 +232,15 @@ also crashes. oi-116 is reopened. the earlier bounded reader/theme passes
 remain truthful but do not establish general book-opening capacity. theme
 switching remains verified; chat remains explicitly deferred. see the
 [remaining memory-margin ticket](../tickets/api-reader-search-memory-margin-remains-small.md).
+
+the fifth reproduction at23:00:56 was sampled live: ordinary semantic search
+entered the embedding provider and imported unrelated Anthropic/Gemini generation
+engines. api anonymous memory reached317 mib before the kill. the native
+reader-only probes had omitted ordinary semantic search; lexical openables
+did not reproduce it. `production-695-pillow-stacks-followup/` and
+`production-695-pillow-stack-memory-followup.jsonl` retain the sampled trigger.
+pr #270's provider fix and query allocation changes address it; pr #271 removes
+the later probe overhead. these separate causes explain the staged recovery.
 
 ## historical release: 69583dc3
 
@@ -446,7 +569,7 @@ wire contract (oi-122). solar,
 imports and chat were blocked, not passed. the successful release/qualification
 above remains historical evidence of its narrower workload.
 
-## limits and manual checks
+## historical first-forward-release limits and manual checks
 
 - android reader/navigation/reopen and applicable playback/offline: pending.
 - simultaneous “shadow & claw” and “the pain of clenching”: passed on ecbe; oi-116 resolved.
