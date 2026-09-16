@@ -82,8 +82,19 @@ services:
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=5).read()\"",
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "--show-error",
+          "--location",
+          "--max-redirs",
+          "10",
+          "--max-time",
+          "5",
+          "--output",
+          "/dev/null",
+          "http://127.0.0.1:8000/readyz",
         ]
       interval: 5s
       timeout: 3s

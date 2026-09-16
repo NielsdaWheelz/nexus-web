@@ -79,6 +79,10 @@ LABEL org.opencontainers.image.revision=$SOURCE_SHA
 
 FROM backend-runtime AS api
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Return freed large buffers instead of raising glibc's retention thresholds.
 # This trades allocator contention and mmap calls for lower resident memory.
 ENV MALLOC_ARENA_MAX=2 \

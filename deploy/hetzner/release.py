@@ -4799,23 +4799,9 @@ class HostRelease:
         require_codex_agent_host: bool,
     ) -> tuple[str, str, str]:
         config_path = Path(attempt.config_path)
-        version = self._compose(
-            bundle=bundle,
-            candidate=candidate,
-            config_path=config_path,
-            arguments=(
-                "exec",
-                "-T",
-                "api",
-                "python",
-                "-c",
-                "import json,urllib.request;"
-                "print(json.dumps(json.load(urllib.request.urlopen("
-                "'http://127.0.0.1:8000/version',timeout=5)),sort_keys=True))",
-            ),
-        ).stdout
+        address = self._service_ipv4_address(bundle, candidate, config_path, "api")
+        value, _ = self._fetch_json(f"http://{address}:8000/version", operation="api-http:version")
         try:
-            value = _mapping(_read_json_output(version, "API version"), "API version")
             data = _mapping(value.get("data"), "API version data")
         except ReleaseDefect as exc:
             raise PermanentReleaseFailure("API version contract is malformed") from exc
@@ -4835,22 +4821,12 @@ class HostRelease:
             raise PermanentReleaseFailure("API task contract digest is malformed")
         task_digest = task_digest_value
 
-        self._compose(
-            bundle=bundle,
-            candidate=candidate,
-            config_path=config_path,
-            arguments=(
-                "exec",
-                "-T",
-                "api",
-                "python",
-                "-c",
-                "import json,urllib.request;"
-                "value=json.load(urllib.request.urlopen("
-                "'http://127.0.0.1:8000/readyz',timeout=5));"
-                "raise SystemExit(0 if value=={'data':{'status':'ready'}} else 12)",
-            ),
-        )
+        readiness_url = f"http://{address}:8000/readyz"
+        readiness, _ = self._fetch_json(readiness_url, operation="api-http:readyz")
+        if readiness != {"data": {"status": "ready"}}:
+            raise ExternalCommandFailed(
+                "API readiness contract differs", operation="api-http:readyz"
+            )
         if require_codex_agent_host:
             self._prove_api_generation_surface(
                 bundle=bundle,
@@ -8122,8 +8098,11 @@ class HostRelease:
                 operation=operation,
             ) from exc
 
-    def _fetch_json(self, url: str) -> tuple[dict[str, Any], dict[str, str]]:
-        operation = f"public-http:{url}"
+    def _fetch_json(
+        self, url: str, *, operation: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        if operation is None:
+            operation = f"public-http:{url}"
         request = urllib.request.Request(url, headers={"Accept": "application/json"})
         opener = urllib.request.build_opener(_RejectRedirects())
         try:

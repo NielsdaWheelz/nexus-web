@@ -39,11 +39,13 @@ def test_backend_http_proof_runs_on_host_and_preserves_contract_failures(
     }
     calls: list[str] = []
 
-    def fetch(url: str) -> tuple[dict[str, object], dict[str, str]]:
+    def fetch(url: str, *, operation: str) -> tuple[dict[str, object], dict[str, str]]:
         calls.append(url)
         if url == "http://172.18.0.4:8000/version":
+            assert operation == "api-http:version"
             return version, {}
         assert url == "http://172.18.0.4:8000/readyz"
+        assert operation == "api-http:readyz"
         return {"data": {"status": "not-ready"}}, {}
 
     monkeypatch.setattr(host, "_fetch_json", fetch)
