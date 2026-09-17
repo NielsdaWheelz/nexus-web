@@ -81,10 +81,7 @@ class AnchorNeedle:
 
 @dataclass(frozen=True)
 class OracleCorpusSeedResult:
-    work_key: str
     media_id: UUID
-    created_media: bool
-    anchor_count: int
 
 
 @dataclass(frozen=True)
@@ -312,12 +309,7 @@ def ensure_oracle_corpus_media(
                 )
             )
     db.flush()
-    return OracleCorpusSeedResult(
-        work_key=work.work_key,
-        media_id=source.media_id,
-        created_media=created,
-        anchor_count=len(work.passage_anchors),
-    )
+    return OracleCorpusSeedResult(media_id=source.media_id)
 
 
 def _manifest_anchor_selector(anchor: OracleCorpusManifestAnchor) -> dict[str, object]:
@@ -1072,8 +1064,6 @@ def _anchor_token_window_matches(
         return False
     selector_window_size = min(len(selector_tokens), _ANCHOR_TOKEN_PREFIX_TOKENS)
     selector_window = selector_tokens[:selector_window_size]
-    if len(chunk_tokens) < _ANCHOR_MIN_TOKEN_WINDOW_TOKENS:
-        return False
     min_match_count = _anchor_min_token_matches(selector_window_size)
     min_window_size = max(
         _ANCHOR_MIN_TOKEN_WINDOW_TOKENS,

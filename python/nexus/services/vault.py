@@ -40,8 +40,9 @@ from nexus.services.highlights import (
     map_integrity_error,
     validate_offsets_or_400,
 )
+from nexus.services.note_bodies import pm_doc_from_markdown_projection
 from nexus.services.note_indexing import enqueue_note_reindex
-from nexus.services.notes import delete_page_in_current_transaction, pm_doc_from_markdown_projection
+from nexus.services.notes import delete_page_in_current_transaction
 from nexus.services.resource_graph import adjacency as graph_adjacency
 from nexus.services.resource_graph import highlight_notes as graph_highlight_notes
 from nexus.services.resource_graph.refs import ResourceRef

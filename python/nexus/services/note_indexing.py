@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -67,36 +66,15 @@ def rebuild_note_content_index(
     )
 
 
-def enqueue_note_reindex(db: Session, *, note_block_id: UUID, reason: str) -> UUID:
+def enqueue_note_reindex(db: Session, *, note_block_id: UUID, reason: str) -> None:
     mark_content_index_pending(db, owner=IndexOwner("note_block", note_block_id), reason=reason)
     try:
         with db.begin_nested():
-            return enqueue_job(
+            enqueue_job(
                 db,
                 kind="note_reindex_job",
                 payload={"note_block_id": str(note_block_id), "reason": reason},
-            ).id
+            )
     except IntegrityError as exc:
         if integrity_constraint_name(exc) != "uq_note_reindex_job_inflight":
             raise
-        job_id = _inflight_note_reindex_job_id(db, note_block_id=note_block_id)
-        if job_id is None:
-            raise
-        return job_id
-
-
-def _inflight_note_reindex_job_id(db: Session, *, note_block_id: UUID) -> UUID | None:
-    return db.scalar(
-        text(
-            """
-            SELECT id
-            FROM background_jobs
-            WHERE kind = 'note_reindex_job'
-              AND payload->>'note_block_id' = :note_block_id
-              AND status NOT IN ('succeeded', 'dead')
-            ORDER BY created_at ASC, id ASC
-            LIMIT 1
-            """
-        ),
-        {"note_block_id": str(note_block_id)},
-    )

@@ -33,11 +33,12 @@ from sqlalchemy.orm import Session
 from nexus.db.models import Conversation, MessageToolCall
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.notes import DailyCaptureRequest
-from nexus.services import highlights, library_entries, notes, text_quote, users
+from nexus.services import highlights, library_entries, note_bodies, notes, text_quote, users
 from nexus.services.chat_run_tools import (
     decode_persisted_tool_record,
 )
 from nexus.services.consumption import service as consumption_service
+from nexus.services.passage_anchors import normalize_quote_text
 from nexus.services.resource_graph.edges import create_edge, delete_edge
 from nexus.services.resource_graph.refs import (
     ResourceRef,
@@ -228,7 +229,7 @@ def create_note(
     args: dict[str, Any],
 ) -> WriteEffect:
     markdown = _require_str(args, "markdown")
-    body_pm_json = notes.pm_doc_from_markdown_projection(markdown)
+    body_pm_json = note_bodies.pm_doc_from_markdown_projection(markdown)
     note_id = _effect_uuid(effect_id, "nexus.note.create:note_block")
     page_uri = _optional_str(args, "page_uri")
     if page_uri:
@@ -278,16 +279,21 @@ def create_highlight(
     suffix = _optional_str(args, "suffix")
     color = _optional_str(args, "color") or "yellow"
 
-    resolution = text_quote.resolve(
-        db, media_id=media_ref.id, exact=exact, prefix=prefix, suffix=suffix
+    match = text_quote.resolve_owner_quote(
+        db,
+        owner_scheme="media",
+        owner_id=media_ref.id,
+        exact=normalize_quote_text(exact),
+        prefix=normalize_quote_text(prefix or ""),
+        suffix=normalize_quote_text(suffix or ""),
     )
-    if resolution.status is not text_quote.QuoteStatus.unique:
+    if match.status is not text_quote.QuoteStatus.unique:
         raise WriteToolRefusal(
             {
                 text_quote.QuoteStatus.ambiguous: "quote_ambiguous",
                 text_quote.QuoteStatus.no_match: "quote_not_found",
                 text_quote.QuoteStatus.empty_exact: "invalid_arguments",
-            }[resolution.status],
+            }[match.status],
             {
                 text_quote.QuoteStatus.ambiguous: (
                     "That passage appears more than once; add prefix/suffix (the text "
@@ -297,19 +303,19 @@ def create_highlight(
                     "That exact passage was not found in the document; quote it verbatim."
                 ),
                 text_quote.QuoteStatus.empty_exact: "exact must be non-empty.",
-            }[resolution.status],
+            }[match.status],
         )
 
-    assert resolution.fragment_id is not None
-    assert resolution.start_offset is not None
-    assert resolution.end_offset is not None
+    assert match.fragment_id is not None
+    assert match.raw_start is not None
+    assert match.raw_end is not None
     highlight = highlights.create_fragment_highlight_in_txn(
         db,
         viewer_id=viewer_id,
         highlight_id=_effect_uuid(effect_id, "nexus.highlight.create:highlight"),
-        fragment_id=resolution.fragment_id,
-        start_offset=resolution.start_offset,
-        end_offset=resolution.end_offset,
+        fragment_id=match.fragment_id,
+        start_offset=match.raw_start,
+        end_offset=match.raw_end,
         color=color,
     )
     created_refs: list[dict[str, Any]] = [
@@ -322,7 +328,7 @@ def create_highlight(
             viewer_id,
             highlight_id=highlight.id,
             block_id=_effect_uuid(effect_id, "nexus.highlight.create:note_block"),
-            body_pm_json=notes.pm_doc_from_markdown_projection(note),
+            body_pm_json=note_bodies.pm_doc_from_markdown_projection(note),
             client_mutation_id=(
                 f"assistant:{_effect_uuid(effect_id, 'nexus.highlight.create:note_mutation')}"
             ),
