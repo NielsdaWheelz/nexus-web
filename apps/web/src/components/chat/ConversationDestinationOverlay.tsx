@@ -19,7 +19,7 @@ const OVERLAY_TITLE = "Ask in existing chat";
 const PAGE_SIZE = 25;
 const SEARCH_DEBOUNCE_MS = 200;
 
-export interface ConversationDestinationOverlayProps {
+interface ConversationDestinationOverlayProps {
   /** Mount-gate; keep the component mounted and drive open/close with this. */
   open: boolean;
   /** Escape / backdrop / Back / close button — dismiss, returning focus to the reader. */

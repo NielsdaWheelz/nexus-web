@@ -13,7 +13,7 @@ interface ForkTreeViewProps {
   nodes: ConversationForkNode[];
   focusedId: string | null;
   expandedIds: Set<string>;
-  switchableLeafIds?: Set<string>;
+  switchableLeafIds: Set<string>;
   activeLeafMessageId?: string | null;
   selectedPathMessageIds: Set<string>;
   searchQuery: string;

@@ -113,15 +113,15 @@ caller.
 
 `messageUpdateReducer` (`lib/conversations/messageUpdateReducer.ts`) is the single,
 pure owner of every transcript transition. Each change to the rendered `messages[]`
-is one named, total action (`set_all` / `prepend_older` / `seed_optimistic` /
+is one named, total action (`set_all` / `seed_optimistic` /
 `swap_meta_ids` / `fold_text_delta` / `apply_tool_call` / `apply_tool_result` /
 `apply_citation_index` / `apply_context_ref` / `finalize_done` / `merge_run_pair`);
 the fold layer (`useChatMessageUpdates`) and the run-tail orchestrator
 (`useChatRunTail`) dispatch actions and never mutate the list directly.
 
 `PerRunStreamContext` (`components/chat/perRunStreamContext.ts`) is the single
-per-run stream-lifecycle owner — supersession token, abort handle, and first-delta
-latch in one record per run (`abort === null` ⇔ not streaming). `createRunVisibility`
+per-run stream-lifecycle owner — supersession token and abort handle in one
+record per run (`abort === null` ⇔ not streaming). `createRunVisibility`
 (`lib/conversations/runVisibility.ts`) is the single run-visibility factory
 (`canStart` / `isVisible`) replacing the prior five scattered predicates.
 
@@ -354,10 +354,12 @@ no separate retry/resend pair or key mode.
 
 **Run again** (failed turn), **Regenerate** (completed answer), **Reconnect**
 (dropped stream), suspended (operator recovery), and **Fork** (branch) stay
-distinct. `AssistantMessage` renders **Regenerate this answer** only when
-`can_regenerate` is true; `useConversation` owns both mutations through one
-candidate action that retains an idempotency key per source across a network
-loss (an explicit retry replays it) and mints a fresh key otherwise.
+distinct. `AssistantMessage` renders **Regenerate this answer** only for a
+completed assistant message, and the menu entry follows the resource-action
+snapshot's `regenerate_applicable`, the sole read-side authority;
+`useConversation` owns both mutations through one candidate action that retains
+an idempotency key per source across a network loss (an explicit retry replays
+it) and mints a fresh key otherwise.
 
 ## Connection lost, status unknown
 

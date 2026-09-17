@@ -15,15 +15,12 @@ export default function ForkStrip({
   onSelectFork,
 }: {
   forks: ForkOption[];
-  switchableLeafIds?: Set<string>;
+  switchableLeafIds: Set<string>;
   onSelectFork: (fork: ForkOption) => void;
 }) {
   const display = useRenderEnvironment();
   const visibleForks = useMemo(
-    () =>
-      switchableLeafIds
-        ? forks.filter((fork) => switchableLeafIds.has(fork.leaf_message_id))
-        : forks,
+    () => forks.filter((fork) => switchableLeafIds.has(fork.leaf_message_id)),
     [forks, switchableLeafIds],
   );
   const initialIndex = Math.max(

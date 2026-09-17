@@ -39,7 +39,7 @@ export default function AssistantDetails({
   onCitationActivate,
 }: {
   trustTrail: AssistantTrustTrail;
-  onCitationActivate?: (
+  onCitationActivate: (
     activation: ResourceActivation,
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
@@ -249,26 +249,18 @@ export default function AssistantDetails({
                   <li key={item.citation_edge_id}>
                     <div className={styles.trustLine}>
                       <Search size={13} aria-hidden="true" />
-                      {onCitationActivate ? (
-                        <button
-                          type="button"
-                          onClick={(event) =>
-                            onCitationActivate(
-                              citation.activation,
-                              citation.target,
-                              event,
-                            )
-                          }
-                        >
-                          [{item.ordinal}]{" "}
-                          {citation.preview.title || "Citation"}
-                        </button>
-                      ) : (
-                        <span>
-                          [{item.ordinal}]{" "}
-                          {citation.preview.title || "Citation"}
-                        </span>
-                      )}
+                      <button
+                        type="button"
+                        onClick={(event) =>
+                          onCitationActivate(
+                            citation.activation,
+                            citation.target,
+                            event,
+                          )
+                        }
+                      >
+                        [{item.ordinal}] {citation.preview.title || "Citation"}
+                      </button>
                     </div>
                     <div className={styles.trustCode}>
                       edge {shortId(item.citation_edge_id)}

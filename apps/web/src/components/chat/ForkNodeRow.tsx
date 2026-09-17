@@ -24,7 +24,7 @@ interface ForkNodeRowProps {
   parentId?: string | null;
   focusedId: string | null;
   expandedIds: Set<string>;
-  switchableLeafIds?: Set<string>;
+  switchableLeafIds: Set<string>;
   activeLeafMessageId?: string | null;
   selectedPathMessageIds: Set<string>;
   searchQuery: string;
@@ -73,7 +73,7 @@ export default function ForkNodeRow({
   const title = node.title || truncateText(node.preview, 90);
   const expanded = expandedIds.has(node.id);
   const hasChildren = node.children.length > 0;
-  const switchable = !switchableLeafIds || switchableLeafIds.has(node.leaf_message_id);
+  const switchable = switchableLeafIds.has(node.leaf_message_id);
   const matchesSearch = searchQuery ? forkSearchText(node).includes(searchQuery) : false;
   const deleteDescriptionId = `${treeItemDomId(node.id)}-delete-description`;
   const editing = editingId === node.id;

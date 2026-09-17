@@ -42,7 +42,7 @@ export interface ChatScrollHandle {
   clearFindPresentation: () => void;
 }
 
-export type ChatFindPreviewSettlement =
+type ChatFindPreviewSettlement =
   | { readonly kind: "Revealed" }
   | { readonly kind: "Cancelled" };
 

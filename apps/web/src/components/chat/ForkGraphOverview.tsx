@@ -21,7 +21,7 @@ export default function ForkGraphOverview({
 }: {
   graph: BranchGraph;
   searchQuery: string;
-  switchableLeafIds?: Set<string>;
+  switchableLeafIds: Set<string>;
   onSelectLeaf: (leafMessageId: string) => void;
 }) {
   const display = useRenderEnvironment();
@@ -62,8 +62,7 @@ export default function ForkGraphOverview({
 
         {nodes.map((node) => {
           const switchable =
-            node.leaf &&
-            (!switchableLeafIds || switchableLeafIds.has(node.leaf_message_id));
+            node.leaf && switchableLeafIds.has(node.leaf_message_id);
           const label = graphNodeLabel(node, display);
           const matched = query ? graphNodeSearchText(node).includes(query) : false;
           const style = {

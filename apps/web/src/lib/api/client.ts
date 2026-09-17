@@ -19,7 +19,7 @@ const TOOL_PROJECTION_PATHS = [
   /^\/api\/chat-runs$/,
   /^\/api\/chat-runs\/[^/]+$/,
   /^\/api\/chat-runs\/[^/]+\/cancel$/,
-  /^\/api\/conversations\/[^/]+\/(?:messages|tree|active-path)$/,
+  /^\/api\/conversations\/[^/]+\/(?:tree|active-path)$/,
   /^\/api\/conversations\/[^/]+\/tool-calls\/[^/]+\/undo$/,
   /^\/api\/messages\/[^/]+\/(?:rerun|regenerate)$/,
 ] as const;

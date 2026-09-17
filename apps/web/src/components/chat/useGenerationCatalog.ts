@@ -22,12 +22,6 @@ function notifyListeners(): void {
   for (const listener of listeners) listener();
 }
 
-export function invalidateGenerationCatalogCache(): void {
-  cachedCatalog = null;
-  catalogRequest = null;
-  notifyListeners();
-}
-
 export function loadGenerationCatalog(input?: {
   readonly refresh?: boolean;
 }): Promise<GenerationCatalog> {
@@ -54,7 +48,7 @@ export function loadGenerationCatalog(input?: {
   return catalogRequest;
 }
 
-export interface UseGenerationCatalog {
+interface UseGenerationCatalog {
   readonly catalog: GenerationCatalog | null;
   readonly loading: boolean;
   readonly refreshing: boolean;

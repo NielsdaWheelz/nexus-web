@@ -38,7 +38,6 @@ from nexus.services.conversations import (
     get_conversation_for_owner_write_or_404,
     get_conversation_for_visible_read_or_404,
     message_to_out,
-    regeneratable_assistant_message_ids,
     rerunnable_assistant_message_ids,
 )
 from nexus.services.generation_catalog import GenerationCatalogSnapshot
@@ -1140,11 +1139,6 @@ def _message_outs_by_id(
         viewer_id=viewer_id,
         assistant_message_ids=message_ids,
     )
-    regeneratable_message_ids = regeneratable_assistant_message_ids(
-        db,
-        viewer_id=viewer_id,
-        assistant_message_ids=message_ids,
-    )
     trust_trails = build_assistant_trust_trails(
         db,
         viewer_id=viewer_id,
@@ -1161,7 +1155,6 @@ def _message_outs_by_id(
             message,
             viewer_id=viewer_id,
             can_rerun=message.id in rerunnable_message_ids,
-            can_regenerate=message.id in regeneratable_message_ids,
             trust_trail=trust_trail,
             citations=(
                 [trust_citation.citation for trust_citation in trust_trail.citations]

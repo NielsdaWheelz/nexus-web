@@ -71,7 +71,6 @@ export type ToolCallPatch =
 
 export type MessageUpdateAction =
   | { type: "set_all"; messages: ConversationMessage[] }
-  | { type: "prepend_older"; messages: ConversationMessage[] }
   | {
       type: "seed_optimistic";
       user: ConversationMessage;
@@ -466,11 +465,6 @@ export function messageUpdateReducer(
   switch (action.type) {
     case "set_all":
       return action.messages;
-    case "prepend_older": {
-      const existingIds = new Set(state.map((m) => m.id));
-      const next = action.messages.filter((m) => !existingIds.has(m.id));
-      return [...next, ...state];
-    }
     case "seed_optimistic":
       return [action.user, action.assistant];
     case "swap_meta_ids":

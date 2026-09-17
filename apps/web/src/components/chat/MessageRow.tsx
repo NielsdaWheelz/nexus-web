@@ -30,39 +30,39 @@ import UserMessage from "./UserMessage";
 interface MessageRowProps {
   message: ConversationMessage;
   messageOrdinal: number;
-  forkOptions?: ForkOption[];
-  switchableLeafIds?: Set<string>;
-  onSelectFork?: (fork: ForkOption) => void;
-  onReplyToAssistant?: (draft: BranchDraft) => void;
+  forkOptions: ForkOption[];
+  switchableLeafIds: Set<string>;
+  onSelectFork: (fork: ForkOption) => void;
+  onReplyToAssistant: (draft: BranchDraft) => void;
   /** One durable rerun from the failed assistant turn (replaces retry/resend). */
-  onRerunAssistantResponse?: (
+  onRerunAssistantResponse: (
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
-  rerunning?: boolean;
-  onRerunAssistantResponseWithSelection?: (
+  rerunning: boolean;
+  onRerunAssistantResponseWithSelection: (
     assistantMessageId: string,
     selection: GenerationSelectionSpec,
     catalogDefinitionRevision: string,
   ) => Promise<MessageActionMutationOutcome>;
   /** One durable regeneration from an eligible completed assistant answer. */
-  onRegenerateAssistantResponse?: (
+  onRegenerateAssistantResponse: (
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
-  onRegenerateAssistantResponseWithSelection?: (
+  onRegenerateAssistantResponseWithSelection: (
     assistantMessageId: string,
     selection: GenerationSelectionSpec,
     catalogDefinitionRevision: string,
   ) => Promise<MessageActionMutationOutcome>;
-  onDeleteMessage?: DeleteMessageMutation;
+  onDeleteMessage: DeleteMessageMutation;
   /** Client-only recovery for this assistant's interrupted live tail. */
   connectionRecovery?: ChatConnectionRecovery;
-  onReconnectAssistant?: (assistantMessageId: string) => void;
-  onReaderSourceActivate?: (
+  onReconnectAssistant: (assistantMessageId: string) => void;
+  onReaderSourceActivate: (
     activation: ResourceActivation,
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
   ) => void;
-  onStartWalk?: (citations: CitationOut[], text: string) => void;
+  onStartWalk: (citations: CitationOut[], text: string) => void;
 }
 
 // Memoized so a streaming text delta — which replaces only the streaming
@@ -71,12 +71,12 @@ interface MessageRowProps {
 export const MessageRow = memo(function MessageRow({
   message,
   messageOrdinal,
-  forkOptions = [],
+  forkOptions,
   switchableLeafIds,
   onSelectFork,
   onReplyToAssistant,
   onRerunAssistantResponse,
-  rerunning = false,
+  rerunning,
   onRerunAssistantResponseWithSelection,
   onRegenerateAssistantResponse,
   onRegenerateAssistantResponseWithSelection,
@@ -87,16 +87,6 @@ export const MessageRow = memo(function MessageRow({
   onStartWalk,
 }: MessageRowProps) {
   const display = useRenderEnvironment();
-  const activateTarget = useCallback(
-    (
-      activation: ResourceActivation,
-      target: ReaderSourceTarget | null,
-      event?: React.MouseEvent,
-    ) => {
-      onReaderSourceActivate?.(activation, target, event);
-    },
-    [onReaderSourceActivate],
-  );
 
   const timestampLabel =
     formatDisplayDate(message.created_at, display, {
@@ -107,15 +97,14 @@ export const MessageRow = memo(function MessageRow({
   const acceptActionIntent = useCallback(
     (intent: MessageActionIntent) => {
       const settle = (
-        mutation: (() => Promise<MessageActionMutationOutcome>) | undefined,
+        mutation: () => Promise<MessageActionMutationOutcome>,
       ) => {
-        if (!mutation || !("onCommitted" in intent)) return false;
+        if (!("onCommitted" in intent)) return;
         void settleMessageActionMutation(intent, mutation);
-        return true;
       };
       switch (intent.kind) {
         case "ForkMessage":
-          if (message.role !== "assistant" || !onReplyToAssistant) return false;
+          if (message.role !== "assistant") return false;
           onReplyToAssistant({
             parentMessageId: message.id,
             parentMessageSeq: message.seq,
@@ -126,7 +115,6 @@ export const MessageRow = memo(function MessageRow({
         case "WalkMessageSources":
           if (
             message.role !== "assistant" ||
-            !onStartWalk ||
             !message.citations ||
             message.citations.length < 2
           ) {
@@ -136,22 +124,13 @@ export const MessageRow = memo(function MessageRow({
           return true;
         case "RerunMessage":
           if (message.role !== "assistant") return false;
-          void settle(
-            onRerunAssistantResponse
-              ? () => onRerunAssistantResponse(message.id)
-              : undefined,
-          );
-          return Boolean(onRerunAssistantResponse);
+          settle(() => onRerunAssistantResponse(message.id));
+          return true;
         case "RegenerateMessage":
           if (message.role !== "assistant") return false;
-          void settle(
-            onRegenerateAssistantResponse
-              ? () => onRegenerateAssistantResponse(message.id)
-              : undefined,
-          );
-          return Boolean(onRegenerateAssistantResponse);
+          settle(() => onRegenerateAssistantResponse(message.id));
+          return true;
         case "DeleteMessage":
-          if (!onDeleteMessage) return false;
           void onDeleteMessage(
             message.id,
             (command, projectCommitted) =>
@@ -177,13 +156,7 @@ export const MessageRow = memo(function MessageRow({
   useMessageActionIntentOwner(actionRef, acceptActionIntent);
 
   const rerunFromFailureCard = useCallback(() => {
-    if (
-      message.role !== "assistant" ||
-      !message.can_rerun ||
-      !onRerunAssistantResponse
-    ) {
-      return;
-    }
+    if (message.role !== "assistant" || !message.can_rerun) return;
     void onRerunAssistantResponse(message.id);
   }, [
     message.can_rerun,
@@ -199,7 +172,7 @@ export const MessageRow = memo(function MessageRow({
           message={message}
           messageOrdinal={messageOrdinal}
           timestampLabel={timestampLabel}
-          onReaderSourceActivate={activateTarget}
+          onReaderSourceActivate={onReaderSourceActivate}
         />
       );
     case "assistant":
@@ -211,34 +184,24 @@ export const MessageRow = memo(function MessageRow({
           switchableLeafIds={switchableLeafIds}
           onSelectFork={onSelectFork}
           onReplyToAssistant={onReplyToAssistant}
-          onCitationActivate={activateTarget}
+          onCitationActivate={onReaderSourceActivate}
           connectionRecovery={connectionRecovery}
           onReconnectAssistant={onReconnectAssistant}
-          onRerun={
-            message.can_rerun && onRerunAssistantResponse
-              ? rerunFromFailureCard
-              : undefined
-          }
+          onRerun={message.can_rerun ? rerunFromFailureCard : undefined}
           rerunning={rerunning}
-          onRerunWithSelection={
-            onRerunAssistantResponseWithSelection
-              ? async (selection, revision) =>
-                  (await onRerunAssistantResponseWithSelection(
-                    message.id,
-                    selection,
-                    revision,
-                  )) === "Committed"
-              : undefined
+          onRerunWithSelection={async (selection, revision) =>
+            (await onRerunAssistantResponseWithSelection(
+              message.id,
+              selection,
+              revision,
+            )) === "Committed"
           }
-          onRegenerateWithSelection={
-            onRegenerateAssistantResponseWithSelection
-              ? async (selection, revision) =>
-                  (await onRegenerateAssistantResponseWithSelection(
-                    message.id,
-                    selection,
-                    revision,
-                  )) === "Committed"
-              : undefined
+          onRegenerateWithSelection={async (selection, revision) =>
+            (await onRegenerateAssistantResponseWithSelection(
+              message.id,
+              selection,
+              revision,
+            )) === "Committed"
           }
           timestampLabel={timestampLabel}
         />
