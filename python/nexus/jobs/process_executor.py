@@ -33,10 +33,8 @@ from nexus.logging import get_logger
 
 logger = get_logger(__name__)
 
-_PROTOCOL_VERSION = 3
 _INPUT_KEYS = frozenset(
     {
-        "version",
         "handler_path",
         "payload",
         "context",
@@ -46,10 +44,10 @@ _INPUT_KEYS = frozenset(
     }
 )
 _RESULT_KEYS = {
-    "Succeeded": frozenset({"version", "kind", "payload"}),
-    "Reschedule": frozenset({"version", "kind", "schedule", "payload"}),
-    "ModeledFailure": frozenset({"version", "kind", "error_code", "message", "resource_dimension"}),
-    "Defect": frozenset({"version", "kind", "error_type", "message"}),
+    "Succeeded": frozenset({"kind", "payload"}),
+    "Reschedule": frozenset({"kind", "schedule", "payload"}),
+    "ModeledFailure": frozenset({"kind", "error_code", "message", "resource_dimension"}),
+    "Defect": frozenset({"kind", "error_type", "message"}),
 }
 _CONTEXT_KEYS = frozenset({"job_id", "worker_id", "attempt_no", "resource_class", "execution_id"})
 _PRESENCE_ABSENT_KEYS = frozenset({"kind"})
@@ -87,7 +85,6 @@ class ValidatedCgroup:
     """Cgroup v2 facts required for safe child OOM selection."""
 
     directory: Path
-    memory_limit_bytes: int
 
     @classmethod
     def open(cls, directory: Path, *, expected_memory_limit_bytes: int) -> ValidatedCgroup:
@@ -115,7 +112,7 @@ class ValidatedCgroup:
             raise BackgroundProcessProtocolDefect(
                 "background cgroup memory.oom.group must be 0 so one child is killable"
             )
-        return cls(directory=directory, memory_limit_bytes=expected)
+        return cls(directory=directory)
 
     @classmethod
     def for_current_process(
@@ -479,7 +476,6 @@ def _encode_request(
     runtime: Literal["Base", "Llm"],
 ) -> bytes:
     value = {
-        "version": _PROTOCOL_VERSION,
         "handler_path": handler_path,
         "payload": dict(payload),
         "context": {
@@ -506,7 +502,6 @@ def _encode_request(
 
 def _decode_result(encoded: bytes) -> ChildExecutionResult:
     value = _decode_json_object(encoded, boundary="result")
-    _require_protocol_version(value)
     kind = value.get("kind")
     if not isinstance(kind, str) or kind not in _RESULT_KEYS:
         raise BackgroundProcessProtocolDefect("background child returned an unknown result kind")
@@ -654,7 +649,6 @@ def _child_result(request: dict[str, object]) -> dict[str, object]:
         if modeled is not None:
             return modeled
         return {
-            "version": _PROTOCOL_VERSION,
             "kind": "Defect",
             "error_type": type(exc).__name__,
             "message": str(exc)[:_MESSAGE_MAX_LENGTH],
@@ -674,7 +668,6 @@ def _encode_handler_result(
             case _ as unreachable:
                 assert_never(unreachable)
         return {
-            "version": _PROTOCOL_VERSION,
             "kind": "Reschedule",
             "schedule": schedule,
             "payload": (
@@ -689,12 +682,11 @@ def _encode_handler_result(
         payload_result = dict(result)
     else:
         return {
-            "version": _PROTOCOL_VERSION,
             "kind": "Defect",
             "error_type": "InvalidHandlerResult",
             "message": "Background job handler returned a non-object result.",
         }
-    return {"version": _PROTOCOL_VERSION, "kind": "Succeeded", "payload": payload_result}
+    return {"kind": "Succeeded", "payload": payload_result}
 
 
 def _prune_stale_parser_temp(
@@ -751,7 +743,6 @@ def _modeled_failure(exc: Exception) -> dict[str, object] | None:
         return None
     dimension = exc.dimension if isinstance(exc, ResourceLimitError) else None
     return {
-        "version": _PROTOCOL_VERSION,
         "kind": "ModeledFailure",
         "error_code": exc.code.value,
         "message": exc.message[:_MESSAGE_MAX_LENGTH],
@@ -828,7 +819,6 @@ def _run_child(*, request_fd: int, result_fd: int, liveness_fd: int, supervisor_
         )
         encoded = _read_all(request_fd)
         request = _decode_json_object(encoded, boundary="input")
-        _require_protocol_version(request)
         if request.keys() != _INPUT_KEYS:
             raise BackgroundProcessProtocolDefect("background child input has an invalid shape")
         requested_result_max_bytes = _require_int(
@@ -845,7 +835,6 @@ def _run_child(*, request_fd: int, result_fd: int, liveness_fd: int, supervisor_
         traceback.print_exc()
         result_bytes = _bounded_result_bytes(
             {
-                "version": _PROTOCOL_VERSION,
                 "kind": "Defect",
                 "error_type": type(exc).__name__,
                 "message": str(exc)[:_MESSAGE_MAX_LENGTH],
@@ -878,7 +867,6 @@ def _bounded_result_bytes(result: Mapping[str, object], *, result_max_bytes: int
         message = "Background child result exceeded its closed protocol limit."
     defect = json.dumps(
         {
-            "version": _PROTOCOL_VERSION,
             "kind": "Defect",
             "error_type": error_type,
             "message": message,
@@ -919,11 +907,6 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 def _reject_json_constant(_value: str) -> None:
     raise BackgroundProcessProtocolDefect("background child JSON contains a non-JSON constant")
-
-
-def _require_protocol_version(value: Mapping[str, object]) -> None:
-    if type(value.get("version")) is not int or value["version"] != _PROTOCOL_VERSION:
-        raise BackgroundProcessProtocolDefect("background child protocol version is unsupported")
 
 
 def _require_str(value: object, *, label: str) -> str:

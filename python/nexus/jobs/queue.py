@@ -101,7 +101,6 @@ class JobRow:
     kind: str
     payload: dict[str, Any]
     status: str
-    priority: int
     attempts: int
     max_attempts: int
     available_at: datetime
@@ -113,7 +112,6 @@ class JobRow:
     last_error: str | None
     result: dict[str, Any] | None
     started_at: datetime | None
-    finished_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -607,7 +605,6 @@ def _validate_periodic_scheduler_row(
     kind: str,
     interval_seconds: int,
     checkpoint_keys: Collection[str],
-    expected_dedupe_key: str | None = None,
 ) -> None:
     interval = int(interval_seconds)
     if interval <= 0:
@@ -632,7 +629,6 @@ def _validate_periodic_scheduler_row(
         str(row["kind"]) != kind
         or not isinstance(dedupe_key, str)
         or not dedupe_key.startswith(prefix)
-        or (expected_dedupe_key is not None and dedupe_key != expected_dedupe_key)
         or not _PERIODIC_IDENTITY_PAYLOAD_KEYS.issubset(payload)
         or not set(payload).issubset(allowed_payload_keys)
         or request_id != dedupe_key
@@ -652,68 +648,6 @@ def _validate_periodic_scheduler_row(
         or int(slot_start.timestamp()) % interval != 0
     ):
         raise RuntimeError("Periodic scheduler target does not match the exact operation")
-
-
-def reconcile_periodic_job_priority(
-    db: Session,
-    *,
-    job_id: UUID,
-    kind: str,
-    dedupe_key: str,
-    interval_seconds: int,
-    priority: int,
-    checkpoint_keys: Collection[str],
-) -> JobRow:
-    """Apply current scheduler priority to one exact persisted periodic row.
-
-    Periodic dedupe spans worker restarts and deployments, so an existing row
-    can carry the priority policy that admitted it. The scheduler alone owns
-    this narrow reconciliation: it validates the closed periodic identity and
-    registry-declared checkpoint envelope, then changes no execution, retry,
-    lease, availability, payload, or timestamp state. Terminal rows remain
-    immutable history.
-    """
-    row = (
-        db.execute(
-            text("SELECT * FROM background_jobs WHERE id = :job_id FOR UPDATE"),
-            {"job_id": job_id},
-        )
-        .mappings()
-        .one_or_none()
-    )
-    if row is None:
-        raise RuntimeError("Periodic scheduler target is missing")
-
-    _validate_periodic_scheduler_row(
-        row,
-        kind=kind,
-        interval_seconds=interval_seconds,
-        checkpoint_keys=checkpoint_keys,
-        expected_dedupe_key=dedupe_key,
-    )
-
-    status = str(row["status"])
-    if status in TERMINAL_STATUSES or int(row["priority"]) == int(priority):
-        return _row_to_job(row)
-    if status not in {PENDING, FAILED, RUNNING}:
-        raise RuntimeError("Periodic scheduler target has an unknown lifecycle state")
-
-    updated = (
-        db.execute(
-            text(
-                """
-                UPDATE background_jobs
-                SET priority = :priority
-                WHERE id = :job_id
-                RETURNING *
-                """
-            ),
-            {"job_id": job_id, "priority": int(priority)},
-        )
-        .mappings()
-        .one()
-    )
-    return _row_to_job(updated)
 
 
 def reconcile_periodic_job_priorities(
@@ -798,16 +732,14 @@ def claim_next_job(
     worker_id: str,
     lease_seconds: int,
     heavy_kinds: Sequence[str],
-    allowed_kinds: Sequence[str] | None = None,
+    allowed_kinds: Sequence[str],
 ) -> ClaimedJob | None:
     """Claim the first due capacity-eligible job in canonical queue order."""
-    if allowed_kinds is not None and len(allowed_kinds) == 0:
-        return None
     heavy_kind_set = frozenset(heavy_kinds)
     # A lane that admits no Heavy kind never needs the capacity row, and must not
     # lock it: doing so couples the interactive lane's claim loop to background
     # capacity state it can neither hold nor release.
-    lane_admits_heavy = allowed_kinds is None or bool(heavy_kind_set & set(allowed_kinds))
+    lane_admits_heavy = bool(heavy_kind_set & set(allowed_kinds))
     capacity_available = (
         _heavy_capacity_appears_available(_read_heavy_capacity(db)) if lane_admits_heavy else False
     )
@@ -825,7 +757,7 @@ def claim_next_job(
                      AND lease_expires_at <= clock_timestamp()
                      AND attempts < max_attempts)
                 )
-                  AND (:all_kinds OR kind = ANY(CAST(:allowed_kinds AS text[])))
+                  AND kind = ANY(CAST(:allowed_kinds AS text[]))
                   AND (
                       :capacity_available
                       OR NOT (kind = ANY(CAST(:heavy_kinds AS text[])))
@@ -843,8 +775,7 @@ def claim_next_job(
                 """
             ),
             {
-                "all_kinds": allowed_kinds is None,
-                "allowed_kinds": list(allowed_kinds or ()),
+                "allowed_kinds": list(allowed_kinds),
                 "capacity_available": capacity_available,
                 "heavy_kinds": list(heavy_kind_set),
             },
@@ -870,16 +801,14 @@ def claim_job(
     worker_id: str,
     lease_seconds: int,
     heavy_kinds: Sequence[str],
-    allowed_kinds: Sequence[str] | None = None,
+    allowed_kinds: Sequence[str],
 ) -> ClaimedJob | None:
     """Claim one exact due operation through the canonical queue transition.
 
     Normal workers use :func:`claim_next_job`; exact-operation drivers such as
-    deterministic seed/test drainers use this doorway so unrelated due work is
-    never claimed as a side effect.
+    the Oracle reconciler use this doorway so unrelated due work is never
+    claimed as a side effect.
     """
-    if allowed_kinds is not None and len(allowed_kinds) == 0:
-        return None
     heavy_kind_set = frozenset(heavy_kinds)
     candidate = (
         db.execute(
@@ -888,7 +817,7 @@ def claim_job(
                 SELECT *
                 FROM background_jobs
                 WHERE id = :job_id
-                  AND (:all_kinds OR kind = ANY(CAST(:allowed_kinds AS text[])))
+                  AND kind = ANY(CAST(:allowed_kinds AS text[]))
                   AND (
                       (status IN ('pending', 'failed') AND available_at <= clock_timestamp())
                       OR
@@ -902,8 +831,7 @@ def claim_job(
             ),
             {
                 "job_id": job_id,
-                "all_kinds": allowed_kinds is None,
-                "allowed_kinds": list(allowed_kinds or ()),
+                "allowed_kinds": list(allowed_kinds),
             },
         )
         .mappings()
@@ -923,7 +851,7 @@ def claim_job(
 def dead_letter_expired_job(
     db: Session,
     *,
-    allowed_kinds: Sequence[str] | None = None,
+    allowed_kinds: Sequence[str],
 ) -> JobRow | None:
     """Mark one exhausted, expired running job dead and return it.
 
@@ -931,78 +859,41 @@ def dead_letter_expired_job(
     kind-specific dead-letter side effects in the same transaction that moves
     the queue row to dead.
     """
-    if allowed_kinds is not None and len(allowed_kinds) == 0:
-        return None
-    if allowed_kinds is None:
-        row = (
-            db.execute(
-                text(
-                    """
-                    WITH candidate AS (
-                        SELECT id
-                        FROM background_jobs
-                        WHERE status = 'running'
-                          AND lease_expires_at IS NOT NULL
-                          AND lease_expires_at <= now()
-                          AND attempts >= max_attempts
-                        ORDER BY lease_expires_at ASC, created_at ASC, id ASC
-                        LIMIT 1
-                        FOR UPDATE SKIP LOCKED
-                    )
-                    UPDATE background_jobs j
-                    SET
-                        status = 'dead',
-                        lease_expires_at = NULL,
-                        claimed_by = NULL,
-                        finished_at = now(),
-                        error_code = 'E_WORKER_INTERRUPTED',
-                        last_error = 'Worker lease expired after max attempts.',
-                        updated_at = now()
-                    FROM candidate
-                    WHERE j.id = candidate.id
-                    RETURNING j.*
-                    """
+    row = (
+        db.execute(
+            text(
+                """
+                WITH candidate AS (
+                    SELECT id
+                    FROM background_jobs
+                    WHERE status = 'running'
+                      AND lease_expires_at IS NOT NULL
+                      AND lease_expires_at <= now()
+                      AND attempts >= max_attempts
+                      AND kind = ANY(:allowed_kinds)
+                    ORDER BY lease_expires_at ASC, created_at ASC, id ASC
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
                 )
-            )
-            .mappings()
-            .first()
+                UPDATE background_jobs j
+                SET
+                    status = 'dead',
+                    lease_expires_at = NULL,
+                    claimed_by = NULL,
+                    finished_at = now(),
+                    error_code = 'E_WORKER_INTERRUPTED',
+                    last_error = 'Worker lease expired after max attempts.',
+                    updated_at = now()
+                FROM candidate
+                WHERE j.id = candidate.id
+                RETURNING j.*
+                """
+            ),
+            {"allowed_kinds": list(allowed_kinds)},
         )
-    else:
-        row = (
-            db.execute(
-                text(
-                    """
-                    WITH candidate AS (
-                        SELECT id
-                        FROM background_jobs
-                        WHERE status = 'running'
-                          AND lease_expires_at IS NOT NULL
-                          AND lease_expires_at <= now()
-                          AND attempts >= max_attempts
-                          AND kind = ANY(:allowed_kinds)
-                        ORDER BY lease_expires_at ASC, created_at ASC, id ASC
-                        LIMIT 1
-                        FOR UPDATE SKIP LOCKED
-                    )
-                    UPDATE background_jobs j
-                    SET
-                        status = 'dead',
-                        lease_expires_at = NULL,
-                        claimed_by = NULL,
-                        finished_at = now(),
-                        error_code = 'E_WORKER_INTERRUPTED',
-                        last_error = 'Worker lease expired after max attempts.',
-                        updated_at = now()
-                    FROM candidate
-                    WHERE j.id = candidate.id
-                    RETURNING j.*
-                    """
-                ),
-                {"allowed_kinds": list(allowed_kinds)},
-            )
-            .mappings()
-            .first()
-        )
+        .mappings()
+        .first()
+    )
 
     if row is None:
         return None
@@ -1360,7 +1251,7 @@ def running_job_claim_is_current(
     )
 
 
-def _lock_running_job_attempt(
+def lock_running_job_attempt(
     db: Session,
     *,
     job_id: UUID,
@@ -1402,7 +1293,7 @@ def lock_running_job_claim(db: Session, *, context: JobExecutionContext) -> bool
     wait until that transaction commits or rolls back.
     """
     return (
-        _lock_running_job_attempt(
+        lock_running_job_attempt(
             db,
             job_id=context.job_id,
             worker_id=context.worker_id,
@@ -2098,7 +1989,7 @@ def complete_job(
     result_payload: Mapping[str, Any] | None = None,
 ) -> bool:
     """Mark one exact, live running attempt as succeeded."""
-    owned = _lock_running_job_attempt(
+    owned = lock_running_job_attempt(
         db,
         job_id=job_id,
         worker_id=worker_id,
@@ -2151,7 +2042,7 @@ def fail_job(
     result_payload: Mapping[str, Any] | None = None,
 ) -> JobFailureTransition | None:
     """Apply retry/dead transition for one exact, live running attempt."""
-    row = _lock_running_job_attempt(
+    row = lock_running_job_attempt(
         db,
         job_id=job_id,
         worker_id=worker_id,
@@ -2282,7 +2173,6 @@ def _row_to_job(row: Mapping[Any, Any]) -> JobRow:
         kind=str(row["kind"]),
         payload=dict(row["payload"] or {}),
         status=str(row["status"]),
-        priority=int(row["priority"]),
         attempts=int(row["attempts"]),
         max_attempts=int(row["max_attempts"]),
         available_at=row["available_at"],
@@ -2294,7 +2184,6 @@ def _row_to_job(row: Mapping[Any, Any]) -> JobRow:
         last_error=row["last_error"],
         result=dict(row["result"]) if row["result"] is not None else None,
         started_at=row["started_at"],
-        finished_at=row["finished_at"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

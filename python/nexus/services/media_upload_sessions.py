@@ -86,7 +86,6 @@ from nexus.storage.paths import (
 from nexus.tasks.storage_object_cleanup import (
     StoragePathCleanupInFlight,
     finalize_upload_session_storage_object_write,
-    reserve_upload_session_storage_object_write,
     reserve_upload_session_storage_object_write_in_current_transaction,
 )
 
@@ -1035,12 +1034,13 @@ def _reserve_candidate_bytes(
         seconds=get_settings().storage_object_cleanup_write_window_seconds
     )
     try:
-        reserve_upload_session_storage_object_write(
-            db,
-            upload_session_id=session_id,
-            storage_path=candidate_path,
-            retain_until=retain_until,
-        )
+        with transaction(db):
+            reserve_upload_session_storage_object_write_in_current_transaction(
+                db,
+                upload_session_id=session_id,
+                storage_path=candidate_path,
+                retain_until=retain_until,
+            )
     except StoragePathCleanupInFlight as exc:
         # The sweep for this exact token-fenced candidate is already deleting it, so
         # the copied bytes are gone. Nothing deterministic was rejected: the confirm

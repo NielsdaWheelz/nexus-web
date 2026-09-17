@@ -40,8 +40,6 @@ from nexus.tasks.storage_object_cleanup import (
 
 logger = get_logger(__name__)
 
-STORAGE_ORPHAN_SWEEP_JOB_KIND = "storage_orphan_sweep"
-
 # Canonical media object prefix (spec §3.1). ``uploads/`` staging is covered by the
 # R2 lifecycle rule; final artifacts all live under ``media/``.
 _MEDIA_PREFIX = "media/"

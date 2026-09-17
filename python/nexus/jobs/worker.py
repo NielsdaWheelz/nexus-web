@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -55,8 +54,8 @@ from nexus.jobs.queue import (
     fail_job,
     get_job,
     heartbeat_job,
+    lock_running_job_attempt,
     reconcile_periodic_job_priorities,
-    reconcile_periodic_job_priority,
     reschedule_running_job,
 )
 from nexus.jobs.registry import (
@@ -97,7 +96,7 @@ class JobWorker:
         default_lease_seconds: int = 300,
         db_failure_backoff_seconds: float = 60.0,
         db_failure_backoff_max_seconds: float = 900.0,
-        allowed_kinds: tuple[str, ...] | None = None,
+        allowed_kinds: tuple[str, ...],
         successful_cycle_callback: Callable[[], None] | None = None,
         successful_cycle_interval_seconds: float | None = None,
         process_executor: BackgroundProcessExecutor | None = None,
@@ -113,17 +112,13 @@ class JobWorker:
                 if definition.resource_class == "Heavy"
             )
         )
-        self.poll_interval_seconds = float(max(poll_interval_seconds, 0.1))
-        self.idle_backoff_max_seconds = float(
-            max(idle_backoff_max_seconds, self.poll_interval_seconds)
-        )
-        self.scheduler_interval_seconds = float(max(scheduler_interval_seconds, 1.0))
-        self.heartbeat_interval_seconds = float(max(heartbeat_interval_seconds, 1.0))
-        self.default_lease_seconds = int(max(default_lease_seconds, 1))
-        self.db_failure_backoff_seconds = float(max(db_failure_backoff_seconds, 0.1))
-        self.db_failure_backoff_max_seconds = float(
-            max(db_failure_backoff_max_seconds, self.db_failure_backoff_seconds)
-        )
+        self.poll_interval_seconds = poll_interval_seconds
+        self.idle_backoff_max_seconds = idle_backoff_max_seconds
+        self.scheduler_interval_seconds = scheduler_interval_seconds
+        self.heartbeat_interval_seconds = heartbeat_interval_seconds
+        self.default_lease_seconds = default_lease_seconds
+        self.db_failure_backoff_seconds = db_failure_backoff_seconds
+        self.db_failure_backoff_max_seconds = db_failure_backoff_max_seconds
         self.allowed_kinds = allowed_kinds
         self.process_executor = process_executor
         # One shutdown signal per worker: the loop observes it between jobs and the
@@ -131,38 +126,22 @@ class JobWorker:
         self._shutdown = threading.Event() if stop_event is None else stop_event
         if (successful_cycle_callback is None) != (successful_cycle_interval_seconds is None):
             raise ValueError("successful cycle callback and interval must be configured together")
-        if successful_cycle_callback is not None and allowed_kinds == ():
-            raise ValueError("successful cycle health requires a database-backed lane")
         self._successful_cycle_callback = successful_cycle_callback
-        if successful_cycle_interval_seconds is None:
-            self._successful_cycle_interval_seconds = None
-        else:
-            interval = float(successful_cycle_interval_seconds)
-            if not math.isfinite(interval) or interval <= 0:
-                raise ValueError("successful cycle interval must be finite and positive")
-            self._successful_cycle_interval_seconds = interval
+        self._successful_cycle_interval_seconds = successful_cycle_interval_seconds
 
     def run_once(self) -> bool:
         """Claim and execute exactly one due job row."""
         with self.session_factory() as db:
             dead_job = dead_letter_expired_job(db, allowed_kinds=self.allowed_kinds)
             if dead_job is not None:
-                definition = self.registry.get(dead_job.kind)
-                if definition is None:
-                    logger.error(
-                        "worker_unknown_dead_letter_job_kind",
-                        worker_id=self.worker_id,
-                        job_id=str(dead_job.id),
-                        kind=dead_job.kind,
-                    )
-                else:
-                    self._handle_dead_letter(db, definition, dead_job)
-                    self._record_history(
-                        db,
-                        definition,
-                        dead_job,
-                        Interrupted(execution_id=dead_job.execution_id, terminal=True),
-                    )
+                definition = self.registry[dead_job.kind]
+                self._handle_dead_letter(db, definition, dead_job)
+                self._record_history(
+                    db,
+                    definition,
+                    dead_job,
+                    Interrupted(execution_id=dead_job.execution_id, terminal=True),
+                )
                 db.commit()
                 return True
 
@@ -249,27 +228,7 @@ class JobWorker:
                 assert_never(unreachable)
 
     def _execute_claimed(self, claimed: JobRow) -> bool:
-        definition = self.registry.get(claimed.kind)
-        if definition is None:
-            logger.error(
-                "worker_unknown_job_kind",
-                worker_id=self.worker_id,
-                job_id=str(claimed.id),
-                kind=claimed.kind,
-            )
-            with self.session_factory() as db:
-                fail_job(
-                    db,
-                    job_id=claimed.id,
-                    worker_id=self.worker_id,
-                    attempt_no=claimed.attempts,
-                    error_code="E_JOB_KIND_UNKNOWN",
-                    error_message=f"Unsupported job kind: {claimed.kind}",
-                    retry_delays_seconds=(),
-                )
-                db.commit()
-            return True
-
+        definition = self.registry[claimed.kind]
         if claimed.execution_id is None:
             # justify-defect: every claim UPDATE allocates the execution identity.
             raise AssertionError("claimed job has no execution identity")
@@ -549,15 +508,15 @@ class JobWorker:
         job: JobRow,
     ) -> None:
         """Apply the kind's closed dead-letter projection inside the queue transition."""
-        if definition.dead_letter_projection == "None":
-            return
-        apply_dead_letter_projection(db, projection=definition.dead_letter_projection, job=job)
+        if definition.dead_letter_projection != "None":
+            apply_dead_letter_projection(db, projection=definition.dead_letter_projection, job=job)
         logger.warning(
             "worker_job_dead_letter_handled",
             worker_id=self.worker_id,
             job_id=str(job.id),
             kind=job.kind,
             error_code=job.error_code,
+            payload=job.payload,
         )
 
     def _record_rescheduled(self, db: Session, definition: JobDefinition, job_id: UUID) -> None:
@@ -611,7 +570,7 @@ class JobWorker:
     ) -> None:
         """Publish one terminal resource failure under the exact live claim."""
         with self.session_factory() as db:
-            settlement = _terminal_resource_failure(
+            settlement = _settle_abnormal_child_outcome(
                 db,
                 claimed=claimed,
                 worker_id=self.worker_id,
@@ -692,7 +651,7 @@ class JobWorker:
             interval_seconds = definition.periodic_interval_seconds
             if interval_seconds is None or interval_seconds <= 0:
                 continue
-            if self.allowed_kinds is not None and definition.kind not in self.allowed_kinds:
+            if definition.kind not in self.allowed_kinds:
                 continue
             definitions.append(definition)
 
@@ -714,7 +673,7 @@ class JobWorker:
                         slot_start=slot_start,
                     )
 
-                    scheduled, was_inserted = enqueue_unique_job(
+                    _scheduled, was_inserted = enqueue_unique_job(
                         db,
                         kind=definition.kind,
                         payload={
@@ -728,16 +687,6 @@ class JobWorker:
                     )
                     if was_inserted:
                         inserted += 1
-                    else:
-                        reconcile_periodic_job_priority(
-                            db,
-                            job_id=scheduled.id,
-                            kind=definition.kind,
-                            dedupe_key=dedupe_key,
-                            interval_seconds=int(definition.periodic_interval_seconds or 0),
-                            priority=definition.periodic_priority,
-                            checkpoint_keys=definition.periodic_checkpoint_keys,
-                        )
                     reconcile_periodic_job_priorities(
                         db,
                         kind=definition.kind,
@@ -833,159 +782,85 @@ class JobWorker:
                 db.execute(text("LISTEN nexus_background_jobs"))
 
                 try:
-                    if self.allowed_kinds is None:
-                        wait_state = (
-                            db.execute(
-                                text(
-                                    f"""
-                                    WITH next_wait AS (
-                                        SELECT
-                                            (
-                                                SELECT available_at
-                                                FROM background_jobs
-                                                WHERE status IN ('pending', 'failed')
-                                                  AND available_at > now()
-                                                ORDER BY available_at ASC, id ASC
-                                                LIMIT 1
-                                            ) AS next_available_at,
-                                            (
-                                                SELECT lease_expires_at
-                                                FROM background_jobs
-                                                WHERE status = 'running'
-                                                  AND lease_expires_at IS NOT NULL
-                                                  AND lease_expires_at > now()
-                                                ORDER BY lease_expires_at ASC, id ASC
-                                                LIMIT 1
-                                            ) AS next_lease_expires_at
-                                    )
+                    wait_state = (
+                        db.execute(
+                            text(
+                                f"""
+                                WITH next_wait AS (
                                     SELECT
                                         (
-                                            EXISTS (
-                                                SELECT 1
-                                                FROM background_jobs
-                                                WHERE status IN ('pending', 'failed')
-                                                  AND available_at <= now()
-                                                  AND (
-                                                      NOT kind = ANY(
-                                                          CAST(:heavy_kinds AS text[])
-                                                      )
-                                                      OR NOT {HEAVY_CAPACITY_OCCUPIED_SQL}
-                                                  )
-                                            )
-                                            OR EXISTS (
-                                                SELECT 1
-                                                FROM background_jobs
-                                                WHERE status = 'running'
-                                                  AND lease_expires_at IS NOT NULL
-                                                  AND lease_expires_at <= now()
-                                                  AND (
-                                                      NOT kind = ANY(
-                                                          CAST(:heavy_kinds AS text[])
-                                                      )
-                                                      OR NOT {HEAVY_CAPACITY_OCCUPIED_SQL}
-                                                  )
-                                            )
-                                        ) AS has_due_job,
-                                        CASE
-                                            WHEN next_available_at IS NULL
-                                              AND next_lease_expires_at IS NULL
-                                            THEN NULL
-                                            WHEN next_available_at IS NULL
-                                            THEN EXTRACT(EPOCH FROM (next_lease_expires_at - now()))
-                                            WHEN next_lease_expires_at IS NULL
-                                            THEN EXTRACT(EPOCH FROM (next_available_at - now()))
-                                            WHEN next_available_at <= next_lease_expires_at
-                                            THEN EXTRACT(EPOCH FROM (next_available_at - now()))
-                                            ELSE EXTRACT(EPOCH FROM (next_lease_expires_at - now()))
-                                        END AS seconds_until_next_job
-                                    FROM next_wait
-                                    """
-                                ),
-                                {"heavy_kinds": list(self.heavy_kinds)},
-                            )
-                            .mappings()
-                            .one()
-                        )
-                    else:
-                        wait_state = (
-                            db.execute(
-                                text(
-                                    f"""
-                                    WITH next_wait AS (
-                                        SELECT
-                                            (
-                                                SELECT available_at
-                                                FROM background_jobs
-                                                WHERE status IN ('pending', 'failed')
-                                                  AND kind = ANY(:allowed_kinds)
-                                                  AND available_at > now()
-                                                ORDER BY available_at ASC, id ASC
-                                                LIMIT 1
-                                            ) AS next_available_at,
-                                            (
-                                                SELECT lease_expires_at
-                                                FROM background_jobs
-                                                WHERE status = 'running'
-                                                  AND lease_expires_at IS NOT NULL
-                                                  AND kind = ANY(:allowed_kinds)
-                                                  AND lease_expires_at > now()
-                                                ORDER BY lease_expires_at ASC, id ASC
-                                                LIMIT 1
-                                            ) AS next_lease_expires_at
-                                    )
-                                    SELECT
+                                            SELECT available_at
+                                            FROM background_jobs
+                                            WHERE status IN ('pending', 'failed')
+                                              AND kind = ANY(:allowed_kinds)
+                                              AND available_at > now()
+                                            ORDER BY available_at ASC, id ASC
+                                            LIMIT 1
+                                        ) AS next_available_at,
                                         (
-                                            EXISTS (
-                                                SELECT 1
-                                                FROM background_jobs
-                                                WHERE status IN ('pending', 'failed')
-                                                  AND kind = ANY(:allowed_kinds)
-                                                  AND available_at <= now()
-                                                  AND (
-                                                      NOT kind = ANY(
-                                                          CAST(:heavy_kinds AS text[])
-                                                      )
-                                                      OR NOT {HEAVY_CAPACITY_OCCUPIED_SQL}
+                                            SELECT lease_expires_at
+                                            FROM background_jobs
+                                            WHERE status = 'running'
+                                              AND lease_expires_at IS NOT NULL
+                                              AND kind = ANY(:allowed_kinds)
+                                              AND lease_expires_at > now()
+                                            ORDER BY lease_expires_at ASC, id ASC
+                                            LIMIT 1
+                                        ) AS next_lease_expires_at
+                                )
+                                SELECT
+                                    (
+                                        EXISTS (
+                                            SELECT 1
+                                            FROM background_jobs
+                                            WHERE status IN ('pending', 'failed')
+                                              AND kind = ANY(:allowed_kinds)
+                                              AND available_at <= now()
+                                              AND (
+                                                  NOT kind = ANY(
+                                                      CAST(:heavy_kinds AS text[])
                                                   )
-                                            )
-                                            OR EXISTS (
-                                                SELECT 1
-                                                FROM background_jobs
-                                                WHERE status = 'running'
-                                                  AND lease_expires_at IS NOT NULL
-                                                  AND kind = ANY(:allowed_kinds)
-                                                  AND lease_expires_at <= now()
-                                                  AND (
-                                                      NOT kind = ANY(
-                                                          CAST(:heavy_kinds AS text[])
-                                                      )
-                                                      OR NOT {HEAVY_CAPACITY_OCCUPIED_SQL}
+                                                  OR NOT {HEAVY_CAPACITY_OCCUPIED_SQL}
+                                              )
+                                        )
+                                        OR EXISTS (
+                                            SELECT 1
+                                            FROM background_jobs
+                                            WHERE status = 'running'
+                                              AND lease_expires_at IS NOT NULL
+                                              AND kind = ANY(:allowed_kinds)
+                                              AND lease_expires_at <= now()
+                                              AND (
+                                                  NOT kind = ANY(
+                                                      CAST(:heavy_kinds AS text[])
                                                   )
-                                            )
-                                        ) AS has_due_job,
-                                        CASE
-                                            WHEN next_available_at IS NULL
-                                              AND next_lease_expires_at IS NULL
-                                            THEN NULL
-                                            WHEN next_available_at IS NULL
-                                            THEN EXTRACT(EPOCH FROM (next_lease_expires_at - now()))
-                                            WHEN next_lease_expires_at IS NULL
-                                            THEN EXTRACT(EPOCH FROM (next_available_at - now()))
-                                            WHEN next_available_at <= next_lease_expires_at
-                                            THEN EXTRACT(EPOCH FROM (next_available_at - now()))
-                                            ELSE EXTRACT(EPOCH FROM (next_lease_expires_at - now()))
-                                        END AS seconds_until_next_job
-                                    FROM next_wait
-                                    """
-                                ),
-                                {
-                                    "allowed_kinds": list(self.allowed_kinds),
-                                    "heavy_kinds": list(self.heavy_kinds),
-                                },
-                            )
-                            .mappings()
-                            .one()
+                                                  OR NOT {HEAVY_CAPACITY_OCCUPIED_SQL}
+                                              )
+                                        )
+                                    ) AS has_due_job,
+                                    CASE
+                                        WHEN next_available_at IS NULL
+                                          AND next_lease_expires_at IS NULL
+                                        THEN NULL
+                                        WHEN next_available_at IS NULL
+                                        THEN EXTRACT(EPOCH FROM (next_lease_expires_at - now()))
+                                        WHEN next_lease_expires_at IS NULL
+                                        THEN EXTRACT(EPOCH FROM (next_available_at - now()))
+                                        WHEN next_available_at <= next_lease_expires_at
+                                        THEN EXTRACT(EPOCH FROM (next_available_at - now()))
+                                        ELSE EXTRACT(EPOCH FROM (next_lease_expires_at - now()))
+                                    END AS seconds_until_next_job
+                                FROM next_wait
+                                """
+                            ),
+                            {
+                                "allowed_kinds": list(self.allowed_kinds),
+                                "heavy_kinds": list(self.heavy_kinds),
+                            },
                         )
+                        .mappings()
+                        .one()
+                    )
                     if wait_state["has_due_job"]:
                         return
 
@@ -1003,10 +878,7 @@ class JobWorker:
                             timeout=min(remaining, 1.0),
                             stop_after=1,
                         ):
-                            if (
-                                self.allowed_kinds is not None
-                                and notification.payload not in self.allowed_kinds
-                            ):
+                            if notification.payload not in self.allowed_kinds:
                                 continue
                             return
                 finally:
@@ -1088,24 +960,6 @@ class _ChildFailure(RuntimeError):
         self.error_code = error_code
 
 
-def _terminal_resource_failure(
-    db: Session,
-    *,
-    claimed: JobRow,
-    worker_id: str,
-    projection: ResourceFailureProjection,
-    dimension: ResourceFailureDimension,
-) -> str | None:
-    """Atomically fail the exact child-owned domain projection and queue row."""
-    return _settle_abnormal_child_outcome(
-        db,
-        claimed=claimed,
-        worker_id=worker_id,
-        projection=projection,
-        dimension=dimension,
-    )
-
-
 def _settle_abnormal_child_outcome(
     db: Session,
     *,
@@ -1115,26 +969,15 @@ def _settle_abnormal_child_outcome(
     dimension: ResourceFailureDimension | None,
 ) -> str | None:
     """Fence one abnormal child outcome; durable source success is authoritative."""
-    job = db.execute(
-        text(
-            """
-                SELECT id
-                FROM background_jobs
-                WHERE id = :job_id
-                  AND status = 'running'
-                  AND claimed_by = :worker_id
-                  AND attempts = :attempt_no
-                  AND lease_expires_at > clock_timestamp()
-                FOR UPDATE
-                """
-        ),
-        {
-            "job_id": claimed.id,
-            "worker_id": worker_id,
-            "attempt_no": claimed.attempts,
-        },
-    ).one_or_none()
-    if job is None:
+    if (
+        lock_running_job_attempt(
+            db,
+            job_id=claimed.id,
+            worker_id=worker_id,
+            attempt_no=claimed.attempts,
+        )
+        is None
+    ):
         return None
     capacity = (
         db.execute(
