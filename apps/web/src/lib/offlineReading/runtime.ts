@@ -8,7 +8,6 @@ import {
 } from "./contract";
 import type { ReaderResumeState } from "@/lib/reader/types";
 import type { ReaderProgressView } from "@/lib/reader/ReaderProgressPort";
-export type { OfflineReadingTransport } from "./transport";
 import type { OfflineReadingTransport } from "./transport";
 
 type ReadingRequest =
@@ -77,7 +76,6 @@ export interface OfflineReadingControllerOptions {
    * bound to any other account is refused instead of rendered.
    */
   readonly expectedAccountId?: string;
-  readonly mintRequestId?: () => string;
 }
 
 export class OfflineReadingControllerRuntime {
@@ -86,7 +84,6 @@ export class OfflineReadingControllerRuntime {
   readonly #openRequestListeners = new Set<(mediaId: string) => void>();
   readonly #defectListeners = new Set<(error: Error) => void>();
   readonly #expectedAccountId: string | null;
-  readonly #mintRequestId: () => string;
   #snapshot: ReadingSnapshot | null = null;
   #defect: Error | null = null;
   #stop: (() => void) | null = null;
@@ -97,7 +94,6 @@ export class OfflineReadingControllerRuntime {
     options: OfflineReadingControllerOptions = {},
   ) {
     this.#expectedAccountId = options.expectedAccountId ?? null;
-    this.#mintRequestId = options.mintRequestId ?? (() => crypto.randomUUID());
   }
 
   readonly getSnapshot = (): ReadingSnapshot | null => this.#snapshot;
@@ -246,7 +242,7 @@ export class OfflineReadingControllerRuntime {
   #request(command: ReadingRequest): Promise<ReadingReplyOutcome> {
     if (this.#disposed) return Promise.reject(new Error("Offline reading session ended"));
     if (this.#defect !== null) return Promise.reject(this.#defect);
-    const requestId = this.#mintRequestId();
+    const requestId = crypto.randomUUID();
     const wire = {
       ...command,
       requestId,

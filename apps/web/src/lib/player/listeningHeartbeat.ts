@@ -28,6 +28,7 @@ import {
   type MediaId,
 } from "@/lib/lectern/contract";
 import type { OverlayEntry } from "@/lib/player/playerSession";
+import { expectInteger, expectString } from "@/lib/validation";
 
 /** Per-request browser deadline; a slow PUT/GET is aborted and treated as an
  * ambiguous outcome (spec §5.4 "named 20-second browser deadline"). */
@@ -93,18 +94,6 @@ interface HeartbeatResult {
 
 // --- Strict decoders (same-system: any shape violation is a defect) ---------
 
-function asString(raw: unknown, ctx: string): string {
-  if (typeof raw !== "string") throw new Error(`Invalid ${ctx}: expected a string, got ${typeof raw}`);
-  return raw;
-}
-
-function asInt(raw: unknown, ctx: string): number {
-  if (typeof raw !== "number" || !Number.isInteger(raw)) {
-    throw new Error(`Invalid ${ctx}: expected an integer, got ${JSON.stringify(raw)}`);
-  }
-  return raw;
-}
-
 function unwrapDataEnvelope(raw: unknown, ctx: string): unknown {
   const rec = asRecord(raw, ctx);
   exactKeys(rec, ["data"], ctx);
@@ -123,8 +112,8 @@ function decodeHeartbeatResult(raw: unknown): HeartbeatResult {
   exactKeys(data, ["listeningState", "heartbeatGeneration", "heartbeatSequence"], "ListeningHeartbeatResult");
   return {
     listeningState: decodeListeningState(data.listeningState),
-    heartbeatGeneration: asString(data.heartbeatGeneration, "ListeningHeartbeatResult.heartbeatGeneration"),
-    heartbeatSequence: asInt(data.heartbeatSequence, "ListeningHeartbeatResult.heartbeatSequence"),
+    heartbeatGeneration: expectString(data.heartbeatGeneration, "ListeningHeartbeatResult.heartbeatGeneration"),
+    heartbeatSequence: expectInteger(data.heartbeatSequence, "ListeningHeartbeatResult.heartbeatSequence"),
   };
 }
 

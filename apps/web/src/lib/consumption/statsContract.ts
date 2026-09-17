@@ -1,4 +1,5 @@
-import { expectExactRecord, isRecord } from "@/lib/validation";
+import { decodePresence, type Presence } from "@/lib/api/presence";
+import { expectExactRecord, expectRecord } from "@/lib/validation";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { tryParseContributorHandle } from "@/lib/contributors/handle";
 import {
@@ -30,8 +31,6 @@ export interface Metrics {
   forwardWordPosition: number;
   forwardMediaPositionMs: number;
 }
-
-export type Presence<T> = { kind: "Absent" } | { kind: "Present"; value: T };
 
 export interface StatsTimelineRow extends Metrics {
   start: string;
@@ -449,37 +448,11 @@ function activityExclusionHandleAt(
   }
 }
 
-function presenceAt<T>(
-  input: unknown,
-  name: string,
-  decode: (raw: unknown) => T,
-): Presence<T> {
-  if (
-    !isRecord(input) ||
-    (input.kind !== "Absent" && input.kind !== "Present")
-  ) {
-    throw new Error(`Invalid Stats response: ${name}`);
-  }
-  if (input.kind === "Absent") {
-    if (Object.keys(input).length !== 1) {
-      throw new Error(`Invalid Stats response: ${name}`);
-    }
-    return { kind: "Absent" };
-  }
-  if (Object.keys(input).length !== 2) {
-    throw new Error(`Invalid Stats response: ${name}`);
-  }
-  return { kind: "Present", value: decode(input.value) };
-}
-
 function deviceSummaryAt(value: unknown, name: string): DeviceSummary {
-  expectExactRecord(value, ["deviceHandle", "label"], name);
-  if (!isRecord(value)) {
-    throw new Error(`Invalid Stats response: ${name}`);
-  }
+  const record = expectExactRecord(value, ["deviceHandle", "label"], name);
   return {
-    deviceHandle: deviceHandleAt(value.deviceHandle, `${name}.deviceHandle`),
-    label: stringAt(value.label, `${name}.label`),
+    deviceHandle: deviceHandleAt(record.deviceHandle, `${name}.deviceHandle`),
+    label: stringAt(record.label, `${name}.label`),
   };
 }
 
@@ -521,8 +494,7 @@ function isLocalDate(raw: string): boolean {
   );
 }
 
-function metrics(value: unknown, name: string): Metrics {
-  if (!isRecord(value)) throw new Error(`Invalid Stats response: ${name}`);
+function metrics(value: Record<string, unknown>, name: string): Metrics {
   return {
     activeMs: numberAt(value.activeMs, `${name}.activeMs`),
     forwardWordPosition: numberAt(
@@ -537,7 +509,7 @@ function metrics(value: unknown, name: string): Metrics {
 }
 
 function statsSessionAt(input: unknown, name: string): StatsSession {
-  expectExactRecord(
+  const record = expectExactRecord(
     input,
     [
       "mediaRef",
@@ -556,40 +528,33 @@ function statsSessionAt(input: unknown, name: string): StatsSession {
     ],
     name,
   );
-  if (!isRecord(input)) {
-    throw new Error(`Invalid Stats response: ${name}`);
-  }
-  const modality = stringAt(input.modality, `${name}.modality`);
+  const modality = stringAt(record.modality, `${name}.modality`);
   if (!MODALITIES.has(modality as ActivityModality)) {
     throw new Error(`Invalid Stats response: ${name}.modality`);
   }
   if (
-    typeof input.continuesBeforeRange !== "boolean" ||
-    typeof input.continuesAfterRange !== "boolean"
+    typeof record.continuesBeforeRange !== "boolean" ||
+    typeof record.continuesAfterRange !== "boolean"
   ) {
     throw new Error(`Invalid Stats response: ${name}.continues`);
   }
   return {
-    ...metrics(input, name),
-    mediaRef: mediaRefAt(input.mediaRef, `${name}.mediaRef`),
-    title: stringAt(input.title, `${name}.title`),
+    ...metrics(record, name),
+    mediaRef: mediaRefAt(record.mediaRef, `${name}.mediaRef`),
+    title: stringAt(record.title, `${name}.title`),
     modality: modality as ActivityModality,
-    device: deviceSummaryAt(input.device, `${name}.device`),
-    startedAt: instantAt(input.startedAt, `${name}.startedAt`),
-    endedAt: instantAt(input.endedAt, `${name}.endedAt`),
-    activeMs: numberAt(input.activeMs, `${name}.activeMs`),
-    firstProgress: presenceAt(
-      input.firstProgress,
-      `${name}.firstProgress`,
-      (raw) => numberAt(raw, `${name}.firstProgress.value`),
+    device: deviceSummaryAt(record.device, `${name}.device`),
+    startedAt: instantAt(record.startedAt, `${name}.startedAt`),
+    endedAt: instantAt(record.endedAt, `${name}.endedAt`),
+    activeMs: numberAt(record.activeMs, `${name}.activeMs`),
+    firstProgress: decodePresence(record.firstProgress, (raw) =>
+      numberAt(raw, `${name}.firstProgress.value`),
     ),
-    lastProgress: presenceAt(
-      input.lastProgress,
-      `${name}.lastProgress`,
-      (raw) => numberAt(raw, `${name}.lastProgress.value`),
+    lastProgress: decodePresence(record.lastProgress, (raw) =>
+      numberAt(raw, `${name}.lastProgress.value`),
     ),
-    continuesBeforeRange: input.continuesBeforeRange,
-    continuesAfterRange: input.continuesAfterRange,
+    continuesBeforeRange: record.continuesBeforeRange,
+    continuesAfterRange: record.continuesAfterRange,
   };
 }
 
@@ -599,29 +564,17 @@ function array(value: unknown, name: string): unknown[] {
 }
 
 function dataEnvelope(value: unknown, name: string): unknown {
-  if (!isRecord(value)) throw new Error(`Invalid Stats response: ${name}`);
-  expectExactRecord(value, ["data"], name);
-  return value.data;
+  return expectExactRecord(value, ["data"], name).data;
 }
 
 export function decodeConsumptionStats(value: unknown): ConsumptionStats {
-  const root = dataEnvelope(value, "Stats response");
-  if (
-    !isRecord(root) ||
-    !isRecord(root.activity) ||
-    !isRecord(root.completion) ||
-    !isRecord(root.retainedArtifacts)
-  ) {
-    throw new Error("Invalid Stats response");
-  }
-  const activity = root.activity;
-  expectExactRecord(
-    root,
+  const root = expectExactRecord(
+    dataEnvelope(value, "Stats response"),
     ["activity", "completion", "retainedArtifacts"],
     "Stats",
   );
-  expectExactRecord(
-    activity,
+  const activity = expectExactRecord(
+    root.activity,
     [
       "appliedFilters",
       "inapplicableFilters",
@@ -650,10 +603,7 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
       `${name}.inapplicableFilters`,
     ).map((item) => stringAt(item, `${name}.inapplicableFilters[]`)),
   });
-  const totals = metrics(activity.totals, "activity.totals");
-  if (!isRecord(activity.totals))
-    throw new Error("Invalid Stats response: activity.totals");
-  expectExactRecord(
+  const totals = expectExactRecord(
     activity.totals,
     [
       "activeMs",
@@ -668,42 +618,46 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
     ],
     "activity.totals",
   );
-  const mediaRows = array(
-    activity.media && isRecord(activity.media)
-      ? activity.media.rows
-      : undefined,
-    "activity.media.rows",
-  ).map((row, index): MediaStatsRow => {
-    if (!isRecord(row))
-      throw new Error(`Invalid Stats response: activity.media.rows[${index}]`);
-    expectExactRecord(
-      row,
-      [
-        "mediaRef",
-        "title",
-        "activeMs",
-        "forwardWordPosition",
-        "forwardMediaPositionMs",
-      ],
-      `activity.media.rows[${index}]`,
-    );
-    return {
-      ...metrics(row, `activity.media.rows[${index}]`),
-      mediaRef: mediaRefAt(row.mediaRef, "activity.media.rows.mediaRef"),
-      title: stringAt(row.title, "activity.media.rows.title"),
-    };
-  });
+  const media = expectExactRecord(
+    activity.media,
+    ["rows", "otherActiveMs"],
+    "activity.media",
+  );
+  const mediaRows = array(media.rows, "activity.media.rows").map(
+    (row, index): MediaStatsRow => {
+      const name = `activity.media.rows[${index}]`;
+      const record = expectExactRecord(
+        row,
+        [
+          "mediaRef",
+          "title",
+          "activeMs",
+          "forwardWordPosition",
+          "forwardMediaPositionMs",
+        ],
+        name,
+      );
+      return {
+        ...metrics(record, name),
+        mediaRef: mediaRefAt(record.mediaRef, "activity.media.rows.mediaRef"),
+        title: stringAt(record.title, "activity.media.rows.title"),
+      };
+    },
+  );
+  const contributors = expectExactRecord(
+    activity.contributors,
+    ["rows", "otherActiveMs", "nonAdditive"],
+    "activity.contributors",
+  );
+  if (contributors.nonAdditive !== true) {
+    throw new Error("Invalid Stats response: activity.contributors");
+  }
   const contributorRows = array(
-    activity.contributors && isRecord(activity.contributors)
-      ? activity.contributors.rows
-      : undefined,
+    contributors.rows,
     "activity.contributors.rows",
   ).map((row, index): ContributorStatsRow => {
-    if (!isRecord(row))
-      throw new Error(
-        `Invalid Stats response: activity.contributors.rows[${index}]`,
-      );
-    expectExactRecord(
+    const name = `activity.contributors.rows[${index}]`;
+    const record = expectExactRecord(
       row,
       [
         "contributorHandle",
@@ -713,28 +667,26 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
         "forwardWordPosition",
         "forwardMediaPositionMs",
       ],
-      `activity.contributors.rows[${index}]`,
+      name,
     );
     return {
-      ...metrics(row, `activity.contributors.rows[${index}]`),
+      ...metrics(record, name),
       contributorHandle: contributorHandleAt(
-        row.contributorHandle,
+        record.contributorHandle,
         "activity.contributors.contributorHandle",
       ),
       displayName: stringAt(
-        row.displayName,
+        record.displayName,
         "activity.contributors.displayName",
       ),
-      roles: array(row.roles, "activity.contributors.roles").map((role) =>
+      roles: array(record.roles, "activity.contributors.roles").map((role) =>
         stringAt(role, "activity.contributors.roles[]"),
       ),
     };
   });
   const devices = array(activity.devices, "activity.devices").map(
     (row, index): DeviceStatsRow => {
-      if (!isRecord(row))
-        throw new Error(`Invalid Stats response: activity.devices[${index}]`);
-      expectExactRecord(
+      const record = expectExactRecord(
         row,
         [
           "deviceHandle",
@@ -748,40 +700,39 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
         `activity.devices[${index}]`,
       );
       const deviceClasses = array(
-        row.deviceClasses,
+        record.deviceClasses,
         "activity.devices.deviceClasses",
       ).map((item) => stringAt(item, "activity.devices.deviceClasses[]"));
       if (deviceClasses.some((item) => item !== "Desktop" && item !== "Mobile"))
         throw new Error(
           "Invalid Stats response: activity.devices.deviceClasses",
         );
-      if (typeof row.isCurrent !== "boolean")
+      if (typeof record.isCurrent !== "boolean")
         throw new Error("Invalid Stats response: activity.devices.isCurrent");
       return {
         deviceHandle: deviceHandleAt(
-          row.deviceHandle,
+          record.deviceHandle,
           "activity.devices.deviceHandle",
         ),
-        label: stringAt(row.label, "activity.devices.label"),
+        label: stringAt(record.label, "activity.devices.label"),
         firstObservedAt: instantAt(
-          row.firstObservedAt,
+          record.firstObservedAt,
           "activity.devices.firstObservedAt",
         ),
         lastObservedAt: instantAt(
-          row.lastObservedAt,
+          record.lastObservedAt,
           "activity.devices.lastObservedAt",
         ),
         deviceClasses: deviceClasses as ("Desktop" | "Mobile")[],
-        isCurrent: row.isCurrent,
-        activeMs: numberAt(row.activeMs, "activity.devices.activeMs"),
+        isCurrent: record.isCurrent,
+        activeMs: numberAt(record.activeMs, "activity.devices.activeMs"),
       };
     },
   );
   const timeline = array(activity.timeline, "activity.timeline").map(
     (row, index) => {
-      if (!isRecord(row))
-        throw new Error(`Invalid Stats response: timeline[${index}]`);
-      expectExactRecord(
+      const name = `timeline[${index}]`;
+      const record = expectExactRecord(
         row,
         [
           "start",
@@ -795,54 +746,39 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
           "forwardWordPosition",
           "forwardMediaPositionMs",
         ],
-        `timeline[${index}]`,
+        name,
       );
       return {
-        ...metrics(row, `timeline[${index}]`),
-        start: instantAt(row.start, "timeline.start"),
-        end: instantAt(row.end, "timeline.end"),
-        localLabel: stringAt(row.localLabel, "timeline.localLabel"),
+        ...metrics(record, name),
+        start: instantAt(record.start, "timeline.start"),
+        end: instantAt(record.end, "timeline.end"),
+        localLabel: stringAt(record.localLabel, "timeline.localLabel"),
         utcOffsetMinutes: signedOffsetMinutes(
-          row.utcOffsetMinutes,
+          record.utcOffsetMinutes,
           "timeline.utcOffsetMinutes",
         ),
         readingActiveMs: numberAt(
-          row.readingActiveMs,
+          record.readingActiveMs,
           "timeline.readingActiveMs",
         ),
         listeningActiveMs: numberAt(
-          row.listeningActiveMs,
+          record.listeningActiveMs,
           "timeline.listeningActiveMs",
         ),
         viewingActiveMs: numberAt(
-          row.viewingActiveMs,
+          record.viewingActiveMs,
           "timeline.viewingActiveMs",
         ),
       };
     },
   );
-  const retained = root.retainedArtifacts;
-  const byModality = root.completion.byModality;
-  if (!isRecord(byModality))
-    throw new Error("Invalid Stats response: completion.byModality");
-  const completion = root.completion;
-  expectExactRecord(
-    activity.media,
-    ["rows", "otherActiveMs"],
-    "activity.media",
-  );
-  expectExactRecord(
-    activity.contributors,
-    ["rows", "otherActiveMs", "nonAdditive"],
-    "activity.contributors",
-  );
-  expectExactRecord(
+  const sessions = expectExactRecord(
     activity.sessions,
     ["rows", "nextCursor"],
     "activity.sessions",
   );
-  expectExactRecord(
-    completion,
+  const completion = expectExactRecord(
+    root.completion,
     [
       "appliedFilters",
       "inapplicableFilters",
@@ -855,8 +791,12 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
     ],
     "completion",
   );
-  expectExactRecord(
-    retained,
+  const byModality = expectRecord(
+    completion.byModality,
+    "completion.byModality",
+  );
+  const retained = expectExactRecord(
+    root.retainedArtifacts,
     [
       "appliedFilters",
       "inapplicableFilters",
@@ -867,110 +807,90 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
     ],
     "retainedArtifacts",
   );
+  if (retained.periodWide !== true) {
+    throw new Error("Invalid Stats response: retainedArtifacts.periodWide");
+  }
   return {
     activity: {
       ...scoped(activity, "activity"),
       totals: {
-        ...totals,
+        ...metrics(totals, "activity.totals"),
         recordedActiveMs: numberAt(
-          activity.totals.recordedActiveMs,
+          totals.recordedActiveMs,
           "totals.recordedActiveMs",
         ),
         excludedActiveMs: numberAt(
-          activity.totals.excludedActiveMs,
+          totals.excludedActiveMs,
           "totals.excludedActiveMs",
         ),
-        activeDays: numberAt(activity.totals.activeDays, "totals.activeDays"),
-        streak: numberAt(activity.totals.streak, "totals.streak"),
-        longestStreak: numberAt(
-          activity.totals.longestStreak,
-          "totals.longestStreak",
-        ),
-        sessionCount: numberAt(
-          activity.totals.sessionCount,
-          "totals.sessionCount",
-        ),
+        activeDays: numberAt(totals.activeDays, "totals.activeDays"),
+        streak: numberAt(totals.streak, "totals.streak"),
+        longestStreak: numberAt(totals.longestStreak, "totals.longestStreak"),
+        sessionCount: numberAt(totals.sessionCount, "totals.sessionCount"),
       },
       timeline,
       localDays: array(activity.localDays, "activity.localDays").map((row) => {
-        if (!isRecord(row))
-          throw new Error("Invalid Stats response: localDays");
-        expectExactRecord(row, ["date", "activeMs"], "activity.localDays[]");
+        const record = expectExactRecord(
+          row,
+          ["date", "activeMs"],
+          "activity.localDays[]",
+        );
         return {
-          date: localDateAt(row.date, "localDays.date"),
-          activeMs: numberAt(row.activeMs, "localDays.activeMs"),
+          date: localDateAt(record.date, "localDays.date"),
+          activeMs: numberAt(record.activeMs, "localDays.activeMs"),
         };
       }),
       localHours: array(activity.localHours, "activity.localHours").map(
         (row) => {
-          if (!isRecord(row))
-            throw new Error("Invalid Stats response: localHours");
-          expectExactRecord(row, ["hour", "activeMs"], "activity.localHours[]");
-          if (
-            !Number.isInteger(row.hour) ||
-            (row.hour as number) < 0 ||
-            (row.hour as number) > 23
-          )
+          const record = expectExactRecord(
+            row,
+            ["hour", "activeMs"],
+            "activity.localHours[]",
+          );
+          const hour = numberAt(record.hour, "localHours.hour");
+          if (!Number.isInteger(hour) || hour > 23) {
             throw new Error("Invalid Stats response: localHours.hour");
+          }
           return {
-            hour: numberAt(row.hour, "localHours.hour"),
-            activeMs: numberAt(row.activeMs, "localHours.activeMs"),
+            hour,
+            activeMs: numberAt(record.activeMs, "localHours.activeMs"),
           };
         },
       ),
-      media: (() => {
-        if (!isRecord(activity.media))
-          throw new Error("Invalid Stats response: activity.media");
-        return {
-          rows: mediaRows,
-          otherActiveMs: numberAt(
-            activity.media.otherActiveMs,
-            "activity.media.otherActiveMs",
-          ),
-        };
-      })(),
-      contributors: (() => {
-        if (
-          !isRecord(activity.contributors) ||
-          activity.contributors.nonAdditive !== true
-        )
-          throw new Error("Invalid Stats response: activity.contributors");
-        return {
-          rows: contributorRows,
-          otherActiveMs: numberAt(
-            activity.contributors.otherActiveMs,
-            "activity.contributors.otherActiveMs",
-          ),
-          nonAdditive: true as const,
-        };
-      })(),
+      media: {
+        rows: mediaRows,
+        otherActiveMs: numberAt(
+          media.otherActiveMs,
+          "activity.media.otherActiveMs",
+        ),
+      },
+      contributors: {
+        rows: contributorRows,
+        otherActiveMs: numberAt(
+          contributors.otherActiveMs,
+          "activity.contributors.otherActiveMs",
+        ),
+        nonAdditive: true as const,
+      },
       devices,
-      sessions: (() => {
-        if (!isRecord(activity.sessions))
-          throw new Error("Invalid Stats response: activity.sessions");
-        return {
-          rows: array(activity.sessions.rows, "activity.sessions.rows").map(
-            (item, index) =>
-              statsSessionAt(item, `activity.sessions.rows[${index}]`),
-          ),
-          nextCursor: presenceAt(
-            activity.sessions.nextCursor,
-            "activity.sessions.nextCursor",
-            (raw) => stringAt(raw, "activity.sessions.nextCursor.value"),
-          ),
-        };
-      })(),
-      longestSession: presenceAt(
-        activity.longestSession,
-        "activity.longestSession",
-        (raw) => statsSessionAt(raw, "activity.longestSession.value"),
+      sessions: {
+        rows: array(sessions.rows, "activity.sessions.rows").map(
+          (item, index) =>
+            statsSessionAt(item, `activity.sessions.rows[${index}]`),
+        ),
+        nextCursor: decodePresence(sessions.nextCursor, (raw) =>
+          stringAt(raw, "activity.sessions.nextCursor.value"),
+        ),
+      },
+      longestSession: decodePresence(activity.longestSession, (raw) =>
+        statsSessionAt(raw, "activity.longestSession.value"),
       ),
       activeExclusions: array(
         activity.activeExclusions,
         "activity.activeExclusions",
       ).map((item, index): ActiveExclusion => {
         const name = `activity.activeExclusions[${index}]`;
-        expectExactRecord(
+        const record = expectExactRecord(
           item,
           [
             "exclusionHandle",
@@ -984,26 +904,23 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
           ],
           name,
         );
-        if (!isRecord(item)) {
-          throw new Error(`Invalid Stats response: ${name}`);
-        }
-        const modality = stringAt(item.modality, `${name}.modality`);
+        const modality = stringAt(record.modality, `${name}.modality`);
         if (!MODALITIES.has(modality as ActivityModality)) {
           throw new Error(`Invalid Stats response: ${name}.modality`);
         }
         return {
           exclusionHandle: activityExclusionHandleAt(
-            item.exclusionHandle,
+            record.exclusionHandle,
             `${name}.exclusionHandle`,
           ),
-          mediaRef: mediaRefAt(item.mediaRef, `${name}.mediaRef`),
-          title: stringAt(item.title, `${name}.title`),
+          mediaRef: mediaRefAt(record.mediaRef, `${name}.mediaRef`),
+          title: stringAt(record.title, `${name}.title`),
           modality: modality as ActivityModality,
-          device: deviceSummaryAt(item.device, `${name}.device`),
-          startedAt: instantAt(item.startedAt, `${name}.startedAt`),
-          endedAt: instantAt(item.endedAt, `${name}.endedAt`),
+          device: deviceSummaryAt(record.device, `${name}.device`),
+          startedAt: instantAt(record.startedAt, `${name}.startedAt`),
+          endedAt: instantAt(record.endedAt, `${name}.endedAt`),
           excludedActiveMs: numberAt(
-            item.excludedActiveMs,
+            record.excludedActiveMs,
             `${name}.excludedActiveMs`,
           ),
         };
@@ -1013,72 +930,68 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
       ...scoped(completion, "completion"),
       total: numberAt(completion.total, "completion.total"),
       dates: array(completion.dates, "completion.dates").map((item) => {
-        if (!isRecord(item))
-          throw new Error("Invalid Stats response: completion.dates");
-        expectExactRecord(item, ["date", "total"], "completion.dates[]");
+        const record = expectExactRecord(
+          item,
+          ["date", "total"],
+          "completion.dates[]",
+        );
         return {
-          date: localDateAt(item.date, "completion.dates.date"),
-          total: numberAt(item.total, "completion.dates.total"),
+          date: localDateAt(record.date, "completion.dates.date"),
+          total: numberAt(record.total, "completion.dates.total"),
         };
       }),
       timeline: array(completion.timeline, "completion.timeline").map(
         (item) => {
-          if (!isRecord(item))
-            throw new Error("Invalid Stats response: completion.timeline");
-          expectExactRecord(
+          const record = expectExactRecord(
             item,
             ["start", "end", "localLabel", "total"],
             "completion.timeline[]",
           );
           return {
-            start: instantAt(item.start, "completion.timeline.start"),
-            end: instantAt(item.end, "completion.timeline.end"),
+            start: instantAt(record.start, "completion.timeline.start"),
+            end: instantAt(record.end, "completion.timeline.end"),
             localLabel: stringAt(
-              item.localLabel,
+              record.localLabel,
               "completion.timeline.localLabel",
             ),
-            total: numberAt(item.total, "completion.timeline.total"),
+            total: numberAt(record.total, "completion.timeline.total"),
           };
         },
       ),
       media: array(completion.media, "completion.media").map((item) => {
-        if (!isRecord(item))
-          throw new Error("Invalid Stats response: completion.media");
-        expectExactRecord(
+        const record = expectExactRecord(
           item,
           ["mediaRef", "title", "total"],
           "completion.media[]",
         );
         return {
-          mediaRef: mediaRefAt(item.mediaRef, "completion.media.mediaRef"),
-          title: stringAt(item.title, "completion.media.title"),
-          total: numberAt(item.total, "completion.media.total"),
+          mediaRef: mediaRefAt(record.mediaRef, "completion.media.mediaRef"),
+          title: stringAt(record.title, "completion.media.title"),
+          total: numberAt(record.total, "completion.media.total"),
         };
       }),
       contributors: array(
         completion.contributors,
         "completion.contributors",
       ).map((item) => {
-        if (!isRecord(item))
-          throw new Error("Invalid Stats response: completion.contributors");
-        expectExactRecord(
+        const record = expectExactRecord(
           item,
           ["contributorHandle", "displayName", "roles", "total"],
           "completion.contributors[]",
         );
         return {
           contributorHandle: contributorHandleAt(
-            item.contributorHandle,
+            record.contributorHandle,
             "completion.contributors.contributorHandle",
           ),
           displayName: stringAt(
-            item.displayName,
+            record.displayName,
             "completion.contributors.displayName",
           ),
-          roles: array(item.roles, "completion.contributors.roles").map(
+          roles: array(record.roles, "completion.contributors.roles").map(
             (role) => stringAt(role, "completion.contributors.roles[]"),
           ),
-          total: numberAt(item.total, "completion.contributors.total"),
+          total: numberAt(record.total, "completion.contributors.total"),
         };
       }),
       byModality: {
@@ -1092,14 +1005,7 @@ export function decodeConsumptionStats(value: unknown): ConsumptionStats {
     },
     retainedArtifacts: {
       ...scoped(retained, "retainedArtifacts"),
-      periodWide:
-        retained.periodWide === true
-          ? true
-          : (() => {
-              throw new Error(
-                "Invalid Stats response: retainedArtifacts.periodWide",
-              );
-            })(),
+      periodWide: true,
       highlights: numberAt(retained.highlights, "retainedArtifacts.highlights"),
       noteBlocks: numberAt(retained.noteBlocks, "retainedArtifacts.noteBlocks"),
       neutralLinks: numberAt(
@@ -1115,14 +1021,16 @@ export function decodeActivitySessionPage(value: unknown): {
   sessions: StatsSession[];
   nextCursor: Presence<string>;
 } {
-  const page = dataEnvelope(value, "session page response");
-  if (!isRecord(page)) throw new Error("Invalid session page");
-  expectExactRecord(page, ["sessions", "nextCursor"], "session page");
+  const page = expectExactRecord(
+    dataEnvelope(value, "session page response"),
+    ["sessions", "nextCursor"],
+    "session page",
+  );
   return {
     sessions: array(page.sessions, "sessions").map((item, index) =>
       statsSessionAt(item, `sessions[${index}]`),
     ),
-    nextCursor: presenceAt(page.nextCursor, "nextCursor", (raw) =>
+    nextCursor: decodePresence(page.nextCursor, (raw) =>
       stringAt(raw, "nextCursor.value"),
     ),
   };

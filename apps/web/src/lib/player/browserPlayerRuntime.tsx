@@ -520,10 +520,6 @@ export function BrowserPlayerRuntimeProvider({
     mediaId: MediaId;
     unregister: () => void;
   } | null>(null);
-  const commandsImplementationRef = useRef<PlayerCommandsCapability | null>(
-    null,
-  );
-
   const latestSnapshot = useCallback((): LecternSnapshot => {
     const resource = lecternRef.current.resource;
     return resource.status === "ready"
@@ -2558,65 +2554,50 @@ export function BrowserPlayerRuntimeProvider({
     [nextPreview, persistence, publicState],
   );
 
-  commandsImplementationRef.current = {
-    playAudio,
-    playPreviewAudio,
-    stopPreviewAudio,
-    dismiss,
-    resume,
-    pause,
-    seekTo,
-    skipBy,
-    previous,
-    next,
-    setVolume,
-    setPlaybackRate,
-    toggleTemporaryNormalRate,
-    useInheritedPlaybackRate,
-    rememberPlaybackRateForPodcast,
-    setOutputEffects,
-    setSessionPauseShorteningMode: () => {},
-    clearSessionPauseShorteningMode: () => {},
-    rememberPauseShorteningForPodcast: () => {},
-    setDeviceDefaultPauseShorteningMode: () => {},
-  };
-  const commands = useMemo<PlayerCommandsCapability>(() => {
-    const current = (): PlayerCommandsCapability => {
-      const implementation = commandsImplementationRef.current;
-      if (implementation === null) {
-        throw new Error("Player commands invoked before provider initialization.");
-      }
-      return implementation;
-    };
-    return {
-      playAudio: (input) => current().playAudio(input),
-      playPreviewAudio: (input) => current().playPreviewAudio(input),
-      stopPreviewAudio: (target) => current().stopPreviewAudio(target),
-      dismiss: () => current().dismiss(),
-      resume: () => current().resume(),
-      pause: () => current().pause(),
-      seekTo: (positionMs) => current().seekTo(positionMs),
-      skipBy: (deltaMs) => current().skipBy(deltaMs),
-      previous: () => current().previous(),
-      next: () => current().next(),
-      setVolume: (nextVolume) => current().setVolume(nextVolume),
-      setPlaybackRate: (rate) => current().setPlaybackRate(rate),
-      toggleTemporaryNormalRate: () =>
-        current().toggleTemporaryNormalRate(),
-      useInheritedPlaybackRate: () => current().useInheritedPlaybackRate(),
-      rememberPlaybackRateForPodcast: () =>
-        current().rememberPlaybackRateForPodcast(),
-      setOutputEffects: (patch) => current().setOutputEffects(patch),
-      setSessionPauseShorteningMode: (mode) =>
-        current().setSessionPauseShorteningMode(mode),
-      clearSessionPauseShorteningMode: () =>
-        current().clearSessionPauseShorteningMode(),
-      rememberPauseShorteningForPodcast: () =>
-        current().rememberPauseShorteningForPodcast(),
-      setDeviceDefaultPauseShorteningMode: (mode) =>
-        current().setDeviceDefaultPauseShorteningMode(mode),
-    };
-  }, []);
+  // Every dep below must be identity-stable: PlayerCommandsContext has 14
+  // consumers, and a churning `commands` identity re-renders all of them.
+  const commands = useMemo<PlayerCommandsCapability>(
+    () => ({
+      playAudio,
+      playPreviewAudio,
+      stopPreviewAudio,
+      dismiss,
+      resume,
+      pause,
+      seekTo,
+      skipBy,
+      previous,
+      next,
+      setVolume,
+      setPlaybackRate,
+      toggleTemporaryNormalRate,
+      useInheritedPlaybackRate,
+      rememberPlaybackRateForPodcast,
+      setOutputEffects,
+      setSessionPauseShorteningMode: () => {},
+      clearSessionPauseShorteningMode: () => {},
+      rememberPauseShorteningForPodcast: () => {},
+      setDeviceDefaultPauseShorteningMode: () => {},
+    }),
+    [
+      dismiss,
+      next,
+      pause,
+      playAudio,
+      playPreviewAudio,
+      previous,
+      rememberPlaybackRateForPodcast,
+      resume,
+      seekTo,
+      setOutputEffects,
+      setPlaybackRate,
+      setVolume,
+      skipBy,
+      stopPreviewAudio,
+      toggleTemporaryNormalRate,
+      useInheritedPlaybackRate,
+    ],
+  );
 
   const capabilities = useMemo<PlayerRuntimeCapabilities>(
     () => ({ commands, session, settings, timeline }),

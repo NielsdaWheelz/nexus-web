@@ -37,20 +37,6 @@ export function chapterAtPositionMs(
   return active;
 }
 
-/** 0-based ordinal of the active chapter at a position, or -1 when none. */
-export function chapterIndexAtPositionMs(
-  chapters: readonly ChapterOut[],
-  positionMs: number,
-): number {
-  const clamped = Math.max(0, positionMs);
-  let index = -1;
-  for (let i = 0; i < chapters.length; i += 1) {
-    if (chapters[i].startMs > clamped) break;
-    index = i;
-  }
-  return index;
-}
-
 /** Seek-track tick markers positioned by `startMs` against a known duration. */
 export function chapterMarkers(
   chapters: readonly ChapterOut[],

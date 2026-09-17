@@ -179,6 +179,12 @@ export function expectNonnegativeInteger(raw: unknown, name: string): number {
   return raw;
 }
 
+export function expectPositiveInteger(raw: unknown, name: string): number {
+  const value = expectNonnegativeInteger(raw, name);
+  if (value === 0) throw new TypeError(`${name} must be positive`);
+  return value;
+}
+
 export function expectNullableInteger(
   raw: unknown,
   name: string,

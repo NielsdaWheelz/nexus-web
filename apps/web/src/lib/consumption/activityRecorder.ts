@@ -41,7 +41,7 @@ export type ActivityLifecycleReason =
   | "PageHide"
   | "ShellUnmount";
 
-export type ActivityDiagnostic = "duplicate-observer" | "recorder-defect";
+type ActivityDiagnostic = "duplicate-observer" | "recorder-defect";
 
 interface Observer extends ActivityObservation {
   key: string;
@@ -61,11 +61,8 @@ interface Lane {
 }
 
 interface ActivityRecorderOptions {
-  now?: () => number;
-  wallNow?: () => number;
-  closedSpan?: (span: ClosedActivitySpan) => void;
-  recordingChanged?: (recording: boolean) => void;
-  diagnostic?: (kind: ActivityDiagnostic) => void;
+  closedSpan: (span: ClosedActivitySpan) => void;
+  recordingChanged: (recording: boolean) => void;
 }
 
 function groupKey(
@@ -201,11 +198,8 @@ function closedSpan(
  * Closed spans leave immediately through the one injected durable sink.
  */
 export class ActivityRecorder {
-  private readonly now: () => number;
-  private readonly wallNow: () => number;
   private readonly emitClosedSpan: (span: ClosedActivitySpan) => void;
   private readonly recordingChanged: (recording: boolean) => void;
-  private readonly diagnostic: (kind: ActivityDiagnostic) => void;
   private readonly observers = new Map<string, Observer>();
   private readonly lanes = new Map<string, Lane>();
   private readonly ambiguousGroups = new Set<string>();
@@ -213,16 +207,13 @@ export class ActivityRecorder {
   private recording = false;
   private wakeTimer: number | undefined;
 
-  constructor(options: ActivityRecorderOptions = {}) {
-    this.now = options.now ?? (() => performance.now());
-    this.wallNow = options.wallNow ?? Date.now;
-    this.emitClosedSpan = options.closedSpan ?? (() => undefined);
-    this.recordingChanged = options.recordingChanged ?? (() => undefined);
-    this.diagnostic =
-      options.diagnostic ??
-      ((kind) => {
-        console.warn({ event: "consumption_capture_diagnostic", kind });
-      });
+  constructor(options: ActivityRecorderOptions) {
+    this.emitClosedSpan = options.closedSpan;
+    this.recordingChanged = options.recordingChanged;
+  }
+
+  private diagnostic(kind: ActivityDiagnostic): void {
+    console.warn({ event: "consumption_capture_diagnostic", kind });
   }
 
   setCaptureReady(ready: boolean): void {
@@ -279,7 +270,7 @@ export class ActivityRecorder {
   }
 
   private eligibleObservers(key: string): Observer[] {
-    const now = this.now();
+    const now = performance.now();
     return [...this.observers.values()].filter(
       (observer) =>
         groupKey(observer) === key &&
@@ -319,9 +310,9 @@ export class ActivityRecorder {
         this.closeLane(
           active,
           false,
-          deadline !== undefined && deadline <= this.now()
+          deadline !== undefined && deadline <= performance.now()
             ? deadline
-            : this.now(),
+            : performance.now(),
         );
       }
       return;
@@ -346,30 +337,34 @@ export class ActivityRecorder {
         mediaRef: observer.mediaRef,
         modality: observer.modality,
         deviceClass: observer.deviceClass,
-        startedMono: this.now(),
-        startedWall: this.wallNow(),
+        startedMono: performance.now(),
+        startedWall: Date.now(),
         startedMeasurement: observer.measurement,
         accruing: true,
       });
     } else if (!existing.accruing) {
       existing.observerKey = observer.key;
-      existing.startedMono = this.now();
-      existing.startedWall = this.wallNow();
+      existing.startedMono = performance.now();
+      existing.startedWall = Date.now();
       existing.startedMeasurement = observer.measurement;
       existing.accruing = true;
     }
   }
 
-  private closeLane(lane: Lane, reopen: boolean, endMono = this.now()): void {
+  private closeLane(
+    lane: Lane,
+    reopen: boolean,
+    endMono = performance.now(),
+  ): void {
     if (!lane.accruing) return;
-    const now = this.now();
+    const now = performance.now();
     const closedAtMono = Math.max(lane.startedMono, Math.min(now, endMono));
     const elapsed = closedAtMono - lane.startedMono;
     const observer = this.observers.get(lane.observerKey);
     if (elapsed > ACTIVITY_SPAN_MAX_MS) {
       const suspensionGap = elapsed > ACTIVITY_SUSPENSION_AFTER_MS;
       lane.startedMono = closedAtMono;
-      lane.startedWall = this.wallNow();
+      lane.startedWall = Date.now();
       lane.startedMeasurement = observer?.measurement;
       lane.accruing = reopen;
       if (suspensionGap) this.diagnostic("recorder-defect");
@@ -397,7 +392,7 @@ export class ActivityRecorder {
       }
     }
     lane.startedMono = closedAtMono;
-    lane.startedWall = this.wallNow();
+    lane.startedWall = Date.now();
     lane.startedMeasurement = observer?.measurement;
     lane.accruing = reopen;
     if (!reopen) this.removeDormant(lane);
@@ -409,7 +404,7 @@ export class ActivityRecorder {
 
   private checkpoint(): void {
     this.reconcileAll();
-    const now = this.now();
+    const now = performance.now();
     for (const lane of [...this.lanes.values()]) {
       if (!lane.accruing) continue;
       const observer = this.observers.get(lane.observerKey);
@@ -431,7 +426,7 @@ export class ActivityRecorder {
       this.wakeTimer = undefined;
     }
     if (!this.captureReady && this.lanes.size === 0) return;
-    const now = this.now();
+    const now = performance.now();
     let delay = ACTIVITY_CHECKPOINT_MS;
     for (const lane of this.lanes.values()) {
       const observer = this.observers.get(lane.observerKey);

@@ -38,7 +38,14 @@ import {
   parsePauseShorteningMode,
   type PauseShorteningMode,
 } from "@/lib/player/pauseShortening";
-import { expectIsoInstant, isCanonicalUuid } from "@/lib/validation";
+import {
+  expectBoolean,
+  expectFiniteNumber,
+  expectIsoInstant,
+  expectOneOf,
+  expectString,
+  isCanonicalUuid,
+} from "@/lib/validation";
 import { MEDIA_KINDS, type MediaKind } from "@/lib/media/kind";
 import { normalizeWorkspaceHref } from "@/lib/workspace/workspaceHref";
 
@@ -337,29 +344,8 @@ const INT32_MAX = 2_147_483_647;
 
 // --- Scalar decoders ---------------------------------------------------------
 
-function asString(raw: unknown, ctx: string): string {
-  if (typeof raw !== "string") {
-    throw new Error(`Invalid ${ctx}: expected a string, got ${typeof raw}`);
-  }
-  return raw;
-}
-
-function asFiniteNumber(raw: unknown, ctx: string): number {
-  if (typeof raw !== "number" || !Number.isFinite(raw)) {
-    throw new Error(`Invalid ${ctx}: expected a finite number, got ${JSON.stringify(raw)}`);
-  }
-  return raw;
-}
-
-function asBoolean(raw: unknown, ctx: string): boolean {
-  if (typeof raw !== "boolean") {
-    throw new Error(`Invalid ${ctx}: expected a boolean, got ${typeof raw}`);
-  }
-  return raw;
-}
-
 function asNonNegativeInt32(raw: unknown, ctx: string): number {
-  const value = asFiniteNumber(raw, ctx);
+  const value = expectFiniteNumber(raw, ctx);
   if (!Number.isInteger(value) || value < 0 || value > INT32_MAX) {
     throw new Error(
       `Invalid ${ctx}: expected a non-negative signed 32-bit integer, got ${value}`,
@@ -369,7 +355,7 @@ function asNonNegativeInt32(raw: unknown, ctx: string): number {
 }
 
 function asFraction(raw: unknown, ctx: string): number {
-  const value = asFiniteNumber(raw, ctx);
+  const value = expectFiniteNumber(raw, ctx);
   if (value < 0 || value > 1) {
     throw new Error(`Invalid ${ctx}: expected a fraction in 0..1, got ${value}`);
   }
@@ -383,33 +369,24 @@ function asArray(raw: unknown, ctx: string): unknown[] {
   return raw;
 }
 
-function asLiteral<T extends string>(raw: unknown, allowed: readonly T[], ctx: string): T {
-  if (typeof raw !== "string" || !(allowed as readonly string[]).includes(raw)) {
-    throw new Error(
-      `Invalid ${ctx}: expected one of [${allowed.join(", ")}], got ${JSON.stringify(raw)}`,
-    );
-  }
-  return raw as T;
-}
-
 function decodeMediaId(raw: unknown): MediaId {
-  return parseMediaId(asString(raw, "MediaId"));
+  return parseMediaId(expectString(raw, "MediaId"));
 }
 
 function decodeLecternItemId(raw: unknown): LecternItemId {
-  return parseLecternItemId(asString(raw, "LecternItemId"));
+  return parseLecternItemId(expectString(raw, "LecternItemId"));
 }
 
 function decodeCompletionHandle(raw: unknown): CompletionHandle {
-  return parseCompletionHandle(asString(raw, "CompletionHandle"));
+  return parseCompletionHandle(expectString(raw, "CompletionHandle"));
 }
 
 function decodeAppHref(raw: unknown): AppHref {
-  return assumeAppHref(asString(raw, "AppHref"));
+  return assumeAppHref(expectString(raw, "AppHref"));
 }
 
 function decodeUuidString(raw: unknown, context: string): string {
-  const value = asString(raw, context);
+  const value = expectString(raw, context);
   if (!isCanonicalUuid(value)) {
     throw new Error(`Invalid ${context}: expected a canonical UUID.`);
   }
@@ -425,7 +402,7 @@ function decodePlaybackRateResolution(raw: unknown): PlaybackRateResolution {
     ["value", "source", "podcastPreference"],
     "PlaybackRateResolution",
   );
-  const source = asLiteral(
+  const source = expectOneOf(
     rec.source,
     ["Episode", "Podcast", "Product"] as const,
     "PlaybackRateResolution.source",
@@ -486,7 +463,7 @@ function decodePlaybackRateResolution(raw: unknown): PlaybackRateResolution {
 export function decodeChapter(raw: unknown): ChapterOut {
   const rec = asRecord(raw, "ChapterOut");
   exactKeys(rec, ["title", "startMs", "endMs"], "ChapterOut");
-  const title = asString(rec.title, "ChapterOut.title");
+  const title = expectString(rec.title, "ChapterOut.title");
   if (title.length < 1 || title.length > MAX_CHAPTER_TITLE) {
     throw new Error(
       `Invalid ChapterOut.title: length must be 1..${MAX_CHAPTER_TITLE}, got ${title.length}`,
@@ -505,15 +482,15 @@ function decodeConsumption(raw: unknown): ConsumptionInfo {
   const rec = asRecord(raw, "consumption");
   exactKeys(rec, ["state", "progress", "progressResettable"], "consumption");
   return {
-    state: asLiteral(rec.state, ["Unread", "InProgress", "Finished"] as const, "consumption.state"),
+    state: expectOneOf(rec.state, ["Unread", "InProgress", "Finished"] as const, "consumption.state"),
     progress: decodePresence(rec.progress, (v) => asFraction(v, "consumption.progress")),
-    progressResettable: asBoolean(rec.progressResettable, "consumption.progressResettable"),
+    progressResettable: expectBoolean(rec.progressResettable, "consumption.progressResettable"),
   };
 }
 
 export function decodeActivation(raw: unknown): Activation {
   const rec = asRecord(raw, "activation");
-  const kind = asLiteral(rec.kind, ["FooterAudio", "Readable", "OpenPane"] as const, "activation.kind");
+  const kind = expectOneOf(rec.kind, ["FooterAudio", "Readable", "OpenPane"] as const, "activation.kind");
   switch (kind) {
     case "FooterAudio": {
       exactKeys(
@@ -542,8 +519,8 @@ export function decodeActivation(raw: unknown): Activation {
       }
       return {
         kind: "FooterAudio",
-        streamUrl: asString(rec.streamUrl, "FooterAudioActivation.streamUrl"),
-        sourceUrl: asString(rec.sourceUrl, "FooterAudioActivation.sourceUrl"),
+        streamUrl: expectString(rec.streamUrl, "FooterAudioActivation.streamUrl"),
+        sourceUrl: expectString(rec.sourceUrl, "FooterAudioActivation.sourceUrl"),
         positionMs: asNonNegativeInt32(
           rec.positionMs,
           "FooterAudioActivation.positionMs",
@@ -577,7 +554,7 @@ export function decodeActivation(raw: unknown): Activation {
           asNonNegativeInt32(v, "FooterAudioActivation.durationMs"),
         ),
         artworkUrl: decodePresence(rec.artworkUrl, (v) =>
-          asString(v, "FooterAudioActivation.artworkUrl"),
+          expectString(v, "FooterAudioActivation.artworkUrl"),
         ),
         chapters: chapters.map(decodeChapter),
       };
@@ -615,9 +592,9 @@ export function decodeLecternItem(raw: unknown): LecternItem {
   return {
     itemId: decodeLecternItemId(rec.itemId),
     mediaId,
-    kind: asLiteral(rec.kind, MEDIA_KINDS, "LecternItemOut.kind"),
-    title: asString(rec.title, "LecternItemOut.title"),
-    subtitle: decodePresence(rec.subtitle, (v) => asString(v, "LecternItemOut.subtitle")),
+    kind: expectOneOf(rec.kind, MEDIA_KINDS, "LecternItemOut.kind"),
+    title: expectString(rec.title, "LecternItemOut.title"),
+    subtitle: decodePresence(rec.subtitle, (v) => expectString(v, "LecternItemOut.subtitle")),
     href,
     addedAt: expectIsoInstant(rec.addedAt, "LecternItemOut.addedAt"),
     consumption: decodeConsumption(rec.consumption),
@@ -645,15 +622,10 @@ export function decodePlayerDescriptor(raw: unknown): PlayerDescriptor {
   }
   return {
     mediaId: decodeMediaId(rec.mediaId),
-    title: asString(rec.title, "PlayerDescriptor.title"),
-    subtitle: decodePresence(rec.subtitle, (v) => asString(v, "PlayerDescriptor.subtitle")),
+    title: expectString(rec.title, "PlayerDescriptor.title"),
+    subtitle: decodePresence(rec.subtitle, (v) => expectString(v, "PlayerDescriptor.subtitle")),
     activation,
   };
-}
-
-/** Decode the `Presence<PlayerDescriptor>` a media/episode DTO exposes. */
-export function decodePresentPlayerDescriptor(raw: unknown): Presence<PlayerDescriptor> {
-  return decodePresence(raw, decodePlayerDescriptor);
 }
 
 export function decodeLecternSnapshot(raw: unknown): LecternSnapshot {
@@ -709,7 +681,7 @@ function decodeMediaProgressState(raw: unknown): MediaProgressState {
 
 function decodeLecternOutcome(raw: unknown): LecternOutcome {
   const rec = asRecord(raw, "LecternOutcome");
-  const kind = asLiteral(rec.kind, ["Placed", "Removed", "Ordered"] as const, "LecternOutcome.kind");
+  const kind = expectOneOf(rec.kind, ["Placed", "Removed", "Ordered"] as const, "LecternOutcome.kind");
   switch (kind) {
     case "Placed": {
       exactKeys(rec, ["kind", "itemIds"], "LecternOutcome.Placed");
@@ -737,7 +709,7 @@ export function decodeLecternResult(raw: unknown): LecternResult {
 
 function decodeConsumptionOutcome(raw: unknown): ConsumptionOutcome {
   const rec = asRecord(raw, "ConsumptionOutcome");
-  const kind = asLiteral(
+  const kind = expectOneOf(
     rec.kind,
     [
       "StateOnly",

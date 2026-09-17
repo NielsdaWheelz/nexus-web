@@ -1,6 +1,10 @@
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { isCanonicalUuid, isRecord } from "@/lib/validation";
+import {
+  expectExactRecord,
+  isCanonicalUuid,
+  isRecord,
+} from "@/lib/validation";
 
 export type ActivityModality = "Reading" | "Listening" | "Viewing";
 export type ActivityDeviceClass = "Desktop" | "Mobile";
@@ -104,22 +108,6 @@ export type ActivityUploadOutcome =
   | { kind: "AuthenticationLost" }
   | { kind: "Defect" };
 
-function exact(
-  value: Record<string, unknown>,
-  keys: readonly string[],
-  name: string,
-): void {
-  const actual = Object.keys(value);
-  if (actual.length !== keys.length || !keys.every((key) => key in value)) {
-    throw new Error(`${name} has an invalid shape`);
-  }
-}
-
-function object(value: unknown, name: string): Record<string, unknown> {
-  if (!isRecord(value)) throw new Error(`${name} must be an object`);
-  return value;
-}
-
 function number(
   value: unknown,
   name: string,
@@ -180,9 +168,8 @@ function spanBase(
 }
 
 function decodeReadingSpan(raw: unknown): ReadingActivitySpan {
-  const value = object(raw, "ReadingSpan");
-  exact(
-    value,
+  const value = expectExactRecord(
+    raw,
     [
       "captureKey",
       "occurredAt",
@@ -226,9 +213,8 @@ function decodeReadingSpan(raw: unknown): ReadingActivitySpan {
 }
 
 function decodeListeningSpan(raw: unknown): ListeningActivitySpan {
-  const value = object(raw, "ListeningSpan");
-  exact(
-    value,
+  const value = expectExactRecord(
+    raw,
     [
       "captureKey",
       "occurredAt",
@@ -272,16 +258,18 @@ function decodeListeningSpan(raw: unknown): ListeningActivitySpan {
 }
 
 function decodeViewingSpan(raw: unknown): ViewingActivitySpan {
-  const value = object(raw, "ViewingSpan");
-  exact(value, ["captureKey", "occurredAt", "durationMs"], "ViewingSpan");
+  const value = expectExactRecord(
+    raw,
+    ["captureKey", "occurredAt", "durationMs"],
+    "ViewingSpan",
+  );
   return spanBase(value);
 }
 
 /** Strict request decoder shared by the browser transport and BFF ingress. */
 export function decodeActivityRequest(raw: unknown): ActivityRequest {
-  const value = object(raw, "ActivityRequest");
-  exact(
-    value,
+  const value = expectExactRecord(
+    raw,
     ["clientMutationId", "mediaRef", "deviceClass", "batch"],
     "ActivityRequest",
   );
@@ -294,8 +282,11 @@ export function decodeActivityRequest(raw: unknown): ActivityRequest {
   ) {
     throw new Error("deviceClass is invalid");
   }
-  const batch = object(value.batch, "ActivityBatch");
-  exact(batch, ["modality", "spans"], "ActivityBatch");
+  const batch = expectExactRecord(
+    value.batch,
+    ["modality", "spans"],
+    "ActivityBatch",
+  );
   if (
     !Array.isArray(batch.spans) ||
     batch.spans.length < 1 ||
