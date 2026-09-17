@@ -30,14 +30,8 @@ function response(status: number, effect: SessionEffect): NextResponse {
   return finalizeSessionResponse(new NextResponse(null, { status }), effect);
 }
 
-export interface SessionResolutionDeps {
-  readonly verifySession: typeof getSessionVerification;
-  readonly refreshSession: typeof refreshSession;
-}
-
-export async function postSessionResolutionWithDeps(
+export async function postSessionResolution(
   request: Request,
-  deps: SessionResolutionDeps,
 ): Promise<NextResponse> {
   const expectedOrigin = resolveSessionRequestOrigin(request);
   if (!expectedOrigin) {
@@ -48,7 +42,7 @@ export async function postSessionResolutionWithDeps(
   }
 
   try {
-    const verification = await deps.verifySession();
+    const verification = await getSessionVerification();
     switch (verification.kind) {
       case "Verified":
         return response(204, { kind: "Preserve" });
@@ -62,7 +56,7 @@ export async function postSessionResolutionWithDeps(
         });
       case "RefreshRequired": {
         try {
-          const refreshed = await deps.refreshSession();
+          const refreshed = await refreshSession();
           switch (refreshed.kind) {
             case "Refreshed":
               return response(204, {
@@ -98,13 +92,4 @@ export async function postSessionResolutionWithDeps(
     }
     return response(500, { kind: "Preserve" });
   }
-}
-
-export async function postSessionResolution(
-  request: Request,
-): Promise<NextResponse> {
-  return postSessionResolutionWithDeps(request, {
-    verifySession: getSessionVerification,
-    refreshSession,
-  });
 }

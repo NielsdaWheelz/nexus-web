@@ -63,7 +63,7 @@ interface CommittedPagesView {
   readonly pages: readonly NotePageSummary[];
 }
 
-export type NotesOperation = "Load" | "CreatePage" | "OpenToday";
+type NotesOperation = "Load" | "CreatePage" | "OpenToday";
 
 interface CreatePageIntent {
   readonly replay: { readonly pageId: string; readonly title: string };
@@ -82,7 +82,7 @@ function notesOperationTitle(operation: NotesOperation): string {
 }
 
 /** Finite Notes-domain copy adapter; contract and unknown failures defect. */
-export function notesErrorMessage(
+function notesErrorMessage(
   error: unknown,
   operation: NotesOperation,
 ): FeedbackContent {

@@ -13,11 +13,6 @@ import { decodeActivityExclusionRequest } from "./activityExclusions";
 
 const ACTIVITY_BATCH_MAX_BYTES = 48_000;
 
-interface ActivityRouteDependencies {
-  readonly deviceId: typeof consumptionDeviceId;
-  readonly proxy: typeof proxyToFastAPI;
-}
-
 function privateJson(
   body: { error: { code: string; message: string } },
   status: number,
@@ -44,7 +39,7 @@ export function activityTooLargeResponse(): Response {
   );
 }
 
-export async function consumptionDeviceId(): Promise<
+async function consumptionDeviceId(): Promise<
   { kind: "Present"; value: string } | { kind: "Defect"; response: Response }
 > {
   const deviceId = readDeviceId(await cookies());
@@ -86,10 +81,7 @@ export async function proxyConsumptionRead(
   );
 }
 
-export async function postActivityWithDependencies(
-  request: Request,
-  dependencies: ActivityRouteDependencies,
-): Promise<Response> {
+export async function postActivity(request: Request): Promise<Response> {
   const raw = await request.text();
   if (new TextEncoder().encode(raw).byteLength > ACTIVITY_BATCH_MAX_BYTES) {
     return activityTooLargeResponse();
@@ -102,7 +94,7 @@ export async function postActivityWithDependencies(
     return invalidConsumptionRequest("Invalid activity batch");
   }
 
-  const device = await dependencies.deviceId();
+  const device = await consumptionDeviceId();
   if (device.kind === "Defect") return device.response;
   const forwarded = new Request(request.url, {
     method: "POST",
@@ -117,13 +109,12 @@ export async function postActivityWithDependencies(
     signal: request.signal,
   });
   return privateNoStoreResponse(
-    await dependencies.proxy(forwarded, "/consumption/activity"),
+    await proxyToFastAPI(forwarded, "/consumption/activity"),
   );
 }
 
-export async function postActivityExclusionWithProxy(
+export async function postActivityExclusion(
   request: Request,
-  proxy: typeof proxyToFastAPI,
 ): Promise<Response> {
   let decoded: ReturnType<typeof decodeActivityExclusionRequest>;
   try {
@@ -138,6 +129,6 @@ export async function postActivityExclusionWithProxy(
     signal: request.signal,
   });
   return privateNoStoreResponse(
-    await proxy(forwarded, "/consumption/activity-exclusions"),
+    await proxyToFastAPI(forwarded, "/consumption/activity-exclusions"),
   );
 }

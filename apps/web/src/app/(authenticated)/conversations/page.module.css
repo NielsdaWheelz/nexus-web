@@ -28,30 +28,3 @@
   overflow: hidden;
   background: var(--surface-2);
 }
-
-.linkedItemsColorSwatch {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border-radius: var(--radius-xs);
-}
-
-.swatch-yellow {
-  background: var(--highlight-yellow);
-}
-
-.swatch-green {
-  background: var(--highlight-green);
-}
-
-.swatch-blue {
-  background: var(--highlight-blue);
-}
-
-.swatch-pink {
-  background: var(--highlight-pink);
-}
-
-.swatch-purple {
-  background: var(--highlight-purple);
-}

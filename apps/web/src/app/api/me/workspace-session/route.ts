@@ -12,11 +12,9 @@ import { isRecord } from "@/lib/validation";
 export const runtime = "nodejs";
 
 // The device id is a server-owned httpOnly cookie (lib/auth/deviceCookie), never trusted from
-// the client. Both verbs inject it from the cookie: GET appends ?device_id=, PUT injects it
-// into the body. The PUT boundary accepts only the exact client-owned `{ state }`
-// envelope, so a client-supplied device id is rejected rather than ignored. The app shell restores on the
-// server (bootstrap.server.ts), so the production client never calls GET; it remains for
-// authenticated read-back and operational debugging.
+// the client: PUT injects it into the body, and the boundary accepts only the exact
+// client-owned `{ state }` envelope, so a client-supplied device id is rejected rather than
+// ignored. Restore happens on the server (bootstrap.server.ts), which calls FastAPI directly.
 
 // The cookie is minted in middleware on the authenticated page load that necessarily precedes
 // any workspace-session call, so its absence on an authenticated request here is a broken
@@ -28,16 +26,6 @@ function deviceCookieMissingDefect(): NextResponse {
     { error: { code: "E_INTERNAL", message: "Device cookie missing" } },
     { status: 500 }
   );
-}
-
-export async function GET(req: Request) {
-  const deviceId = readDeviceId(await cookies());
-  if (!deviceId) {
-    return deviceCookieMissingDefect();
-  }
-  const url = new URL(req.url);
-  url.search = `?device_id=${encodeURIComponent(deviceId)}`;
-  return proxyToFastAPI(new Request(url, { method: "GET", headers: req.headers }), "/me/workspace-session");
 }
 
 function invalidWorkspaceState(message: string): NextResponse {

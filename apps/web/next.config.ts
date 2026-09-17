@@ -44,7 +44,7 @@ const nextConfig: NextConfig = {
     },
   },
 
-  // Static security headers (dynamic CSP + Reporting-Endpoints are set in middleware).
+  // Static security headers (the dynamic CSP is set in middleware).
   // Single source of truth: src/lib/security/headers.ts.
   async headers() {
     return [

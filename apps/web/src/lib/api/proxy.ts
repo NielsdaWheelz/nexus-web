@@ -19,9 +19,7 @@ import { createRandomId } from "@/lib/createRandomId";
 import {
   parseCookieHeader,
   readSupabaseSessionCookie,
-  type SessionState,
 } from "@/lib/auth/session-cookie";
-import type { SessionRefreshOutcome } from "@/lib/auth/refresh";
 import {
   AuthDependencyError,
   finalizeSessionResponse,
@@ -152,18 +150,6 @@ const PUBLIC_RESOURCE_SHARE_SECURITY_HEADERS = {
   "Content-Security-Policy": PUBLIC_API_CONTENT_SECURITY_POLICY,
 } as const;
 
-interface ProxyDeps {
-  readSession: (request: Request) => SessionState;
-  refreshSession: () => Promise<SessionRefreshOutcome>;
-  fetch: typeof fetch;
-  generateRequestId: () => string;
-  appPublicOrigin: string;
-  config: {
-    fastApiBaseUrl: string;
-    internalSecret: string;
-  };
-}
-
 interface AuthenticatedProxyResponsePolicy {
   readonly allowedRequestHeaders: ReadonlySet<string>;
   readonly allowedHeaders: ReadonlySet<string>;
@@ -198,15 +184,12 @@ function isValidRequestId(value: string | null): value is string {
   return Boolean(value && /^[A-Za-z0-9._:-]{1,128}$/.test(value));
 }
 
-function getOrGenerateRequestId(
-  request: Request,
-  generateFn: () => string
-): string {
+function getOrGenerateRequestId(request: Request): string {
   const existing = request.headers.get(REQUEST_ID_HEADER);
   if (isValidRequestId(existing)) {
     return existing;
   }
-  return generateFn();
+  return createRandomId();
 }
 
 function shouldForwardResponseHeader(
@@ -302,26 +285,9 @@ function upstreamUnavailableResponse(requestId: string): NextResponse {
   );
 }
 
-async function createDefaultDeps(): Promise<ProxyDeps> {
-  const env = getEnv();
-  const { refreshSession } = await import("@/lib/auth/refresh");
-  return {
-    readSession: (request) =>
-      readSupabaseSessionCookie(
-        parseCookieHeader(request.headers.get("cookie"))
-      ),
-    refreshSession,
-    fetch: globalThis.fetch,
-    generateRequestId: createRandomId,
-    appPublicOrigin: env.appPublicOrigin,
-    config: env.internalApi,
-  };
-}
-
-async function proxyAuthenticatedToFastAPIWithDeps(
+async function proxyAuthenticatedToFastAPI(
   request: Request,
   path: string,
-  deps: ProxyDeps,
   responsePolicy: AuthenticatedProxyResponsePolicy,
 ): Promise<Response> {
   const proxyStartedAt = performance.now();
@@ -332,7 +298,8 @@ async function proxyAuthenticatedToFastAPIWithDeps(
     );
   }
 
-  const requestId = getOrGenerateRequestId(request, deps.generateRequestId);
+  const requestId = getOrGenerateRequestId(request);
+  const { appPublicOrigin, internalApi } = getEnv();
 
   const finalize = (response: NextResponse, effect: SessionEffect) =>
     finalizeSessionResponse(response, effect);
@@ -357,9 +324,8 @@ async function proxyAuthenticatedToFastAPIWithDeps(
       effect,
     );
 
-  // Validate the injected config (the DI seam), not getEnv(): a base URL is required, and a
-  // missing internal secret is tolerated only outside deployed envs.
-  if (!deps.config.fastApiBaseUrl || (isDeployed() && !deps.config.internalSecret)) {
+  // A base URL is required; a missing internal secret is tolerated only outside deployed envs.
+  if (!internalApi.fastApiBaseUrl || (isDeployed() && !internalApi.internalSecret)) {
     return errorResponse(
       500,
       "E_INTERNAL",
@@ -377,7 +343,7 @@ async function proxyAuthenticatedToFastAPIWithDeps(
   // configured public Origin; request.url may reflect an internal proxy host.
   if (
     STATE_CHANGING_METHODS.has(request.method) &&
-    request.headers.get("origin") !== deps.appPublicOrigin
+    request.headers.get("origin") !== appPublicOrigin
   ) {
     return errorResponse(
       403,
@@ -387,7 +353,9 @@ async function proxyAuthenticatedToFastAPIWithDeps(
     );
   }
 
-  const session = deps.readSession(request);
+  const session = readSupabaseSessionCookie(
+    parseCookieHeader(request.headers.get("cookie"))
+  );
 
   let accessToken: string;
   let sessionEffect: SessionEffect = { kind: "Preserve" };
@@ -396,9 +364,10 @@ async function proxyAuthenticatedToFastAPIWithDeps(
       accessToken = session.accessToken;
       break;
     case "refreshable": {
+      const { refreshSession } = await import("@/lib/auth/refresh");
       let refreshed;
       try {
-        refreshed = await deps.refreshSession();
+        refreshed = await refreshSession();
       } catch (error) {
         if (error instanceof AuthDependencyError) {
           return errorResponse(
@@ -491,7 +460,7 @@ async function proxyAuthenticatedToFastAPIWithDeps(
     }
 
   // Build the FastAPI URL with query string
-  const url = `${deps.config.fastApiBaseUrl}${path}${queryString}`;
+  const url = `${internalApi.fastApiBaseUrl}${path}${queryString}`;
 
   // Build headers for FastAPI request
   const headers = new Headers();
@@ -508,8 +477,8 @@ async function proxyAuthenticatedToFastAPIWithDeps(
   headers.set(REQUEST_ID_HEADER, requestId);
 
   // Add internal header if configured
-  if (deps.config.internalSecret) {
-    headers.set("X-Nexus-Internal", deps.config.internalSecret);
+  if (internalApi.internalSecret) {
+    headers.set("X-Nexus-Internal", internalApi.internalSecret);
   }
   if (responsePolicy.requireIdentityEncoding) {
     // The lane forwards byte-count and range metadata, so the upstream
@@ -532,7 +501,7 @@ async function proxyAuthenticatedToFastAPIWithDeps(
       body = await request.arrayBuffer();
     }
 
-    const response = await deps.fetch(url, {
+    const response = await fetch(url, {
       method: request.method,
       headers,
       body,
@@ -615,32 +584,16 @@ export async function proxyToFastAPI(
   request: Request,
   path: string
 ): Promise<Response> {
-  const deps = await createDefaultDeps();
-  return proxyToFastAPIWithDeps(request, path, deps);
-}
-
-export async function proxyToFastAPIWithDeps(
-  request: Request,
-  path: string,
-  deps: ProxyDeps,
-): Promise<Response> {
-  return proxyAuthenticatedToFastAPIWithDeps(
-    request,
-    path,
-    deps,
-    STRUCTURED_RESPONSE_POLICY,
-  );
+  return proxyAuthenticatedToFastAPI(request, path, STRUCTURED_RESPONSE_POLICY);
 }
 
 export async function proxyMediaAssetToFastAPI(
   request: Request,
   path: string,
 ): Promise<Response> {
-  const deps = await createDefaultDeps();
-  return proxyAuthenticatedToFastAPIWithDeps(
+  return proxyAuthenticatedToFastAPI(
     request,
     path,
-    deps,
     MEDIA_ASSET_RESPONSE_POLICY,
   );
 }
@@ -649,19 +602,9 @@ export async function proxyOfflineReaderProgressToFastAPI(
   request: Request,
   path: string,
 ): Promise<Response> {
-  const deps = await createDefaultDeps();
-  return proxyOfflineReaderProgressToFastAPIWithDeps(request, path, deps);
-}
-
-export async function proxyOfflineReaderProgressToFastAPIWithDeps(
-  request: Request,
-  path: string,
-  deps: ProxyDeps,
-): Promise<Response> {
-  return proxyAuthenticatedToFastAPIWithDeps(
+  return proxyAuthenticatedToFastAPI(
     request,
     path,
-    deps,
     OFFLINE_READER_PROGRESS_RESPONSE_POLICY,
   );
 }
@@ -670,23 +613,14 @@ export async function proxyPublicToFastAPI(
   request: Request,
   path: string
 ): Promise<Response> {
-  const deps = await createDefaultDeps();
-  return proxyPublicToFastAPIWithDeps(request, path, deps);
-}
-
-export async function proxyPublicToFastAPIWithDeps(
-  request: Request,
-  path: string,
-  deps: ProxyDeps
-): Promise<Response> {
   if (path.includes("?")) {
     throw new Error(
       "Path must not contain query string. Query params are extracted from request URL."
     );
   }
 
-  const requestId = getOrGenerateRequestId(request, deps.generateRequestId);
-  const { fastApiBaseUrl, internalSecret } = deps.config;
+  const requestId = getOrGenerateRequestId(request);
+  const { fastApiBaseUrl, internalSecret } = getEnv().internalApi;
   if (!fastApiBaseUrl || (isDeployed() && !internalSecret)) {
     return NextResponse.json(
       {
@@ -714,7 +648,7 @@ export async function proxyPublicToFastAPIWithDeps(
 
   const ctl = createTimedFetchController(request.signal, FASTAPI_FETCH_TIMEOUT_MS);
   try {
-    const response = await deps.fetch(`${fastApiBaseUrl}${path}${queryString}`, {
+    const response = await fetch(`${fastApiBaseUrl}${path}${queryString}`, {
       method: "GET",
       headers,
       signal: ctl.signal,
@@ -767,15 +701,6 @@ export async function proxyResourceShareToFastAPI(
   request: Request,
   path: string
 ): Promise<Response> {
-  const deps = await createDefaultDeps();
-  return proxyResourceShareToFastAPIWithDeps(request, path, deps);
-}
-
-export async function proxyResourceShareToFastAPIWithDeps(
-  request: Request,
-  path: string,
-  deps: ProxyDeps
-): Promise<Response> {
   if (
     path.includes("?") ||
     (path !== "/public/resource-share" &&
@@ -783,7 +708,7 @@ export async function proxyResourceShareToFastAPIWithDeps(
   ) {
     throw new Error("Public resource-share proxy received an invalid path");
   }
-  const requestId = getOrGenerateRequestId(request, deps.generateRequestId);
+  const requestId = getOrGenerateRequestId(request);
   if (request.method !== "GET") {
     return securePublicResourceShareResponse(
       NextResponse.json(
@@ -806,7 +731,7 @@ export async function proxyResourceShareToFastAPIWithDeps(
     );
   }
 
-  const { fastApiBaseUrl, internalSecret } = deps.config;
+  const { fastApiBaseUrl, internalSecret } = getEnv().internalApi;
   if (!fastApiBaseUrl || (isDeployed() && !internalSecret)) {
     return securePublicResourceShareResponse(
       NextResponse.json(
@@ -847,7 +772,7 @@ export async function proxyResourceShareToFastAPIWithDeps(
   const queryString = new URL(request.url).search;
   const ctl = createTimedFetchController(request.signal, FASTAPI_FETCH_TIMEOUT_MS);
   try {
-    const response = await deps.fetch(
+    const response = await fetch(
       `${fastApiBaseUrl}${path}${queryString}`,
       {
         method: "GET",
@@ -907,7 +832,7 @@ export async function proxyExtensionToFastAPI(
   path: string,
   options: ExtensionProxyOptions = {}
 ): Promise<Response> {
-  const requestId = getOrGenerateRequestId(request, createRandomId);
+  const requestId = getOrGenerateRequestId(request);
   const authorization = request.headers.get("authorization") || "";
 
   if (!authorization.toLowerCase().startsWith("bearer ")) {

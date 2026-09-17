@@ -9,7 +9,7 @@ import {
 } from "@/lib/panes/paneSearch";
 import type { PaneFindAdapter } from "@/lib/panes/usePaneFind";
 
-export type ArtifactPaneFindError = {
+type ArtifactPaneFindError = {
   readonly kind: "OriginUnavailable";
 };
 

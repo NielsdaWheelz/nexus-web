@@ -69,9 +69,5 @@ export function finalizeSessionResponse<T extends NextResponse>(
   }
 
   noStore(response);
-  response.headers.set("Cache-Control", "private, no-store");
-  response.headers.set("Pragma", "no-cache");
-  response.headers.set("Expires", "0");
-  response.headers.set("Vary", "Cookie");
   return response;
 }
