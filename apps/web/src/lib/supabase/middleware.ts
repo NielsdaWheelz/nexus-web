@@ -24,7 +24,6 @@ const PUBLIC_ROUTES = new Set([
   "/robots.txt",
   "/manifest.webmanifest",
   "/opengraph-image",
-  "/twitter-image",
   "/apple-icon",
   "/login",
   "/forgot-password",

@@ -3,7 +3,6 @@ import {
   buildPublicApiContentSecurityPolicy,
   buildContentSecurityPolicy,
   buildPublicReaderContentSecurityPolicy,
-  buildReportingEndpoints,
   generateNonce,
 } from "@/lib/security/csp";
 import { getEnv, isDevBuild } from "@/lib/env";
@@ -33,14 +32,8 @@ export function middleware(request: NextRequest) {
   const response = updateSession(request, nonce, csp);
 
   response.headers.set("Content-Security-Policy", csp);
-  response.headers.set(
-    "Reporting-Endpoints",
-    buildReportingEndpoints(request.nextUrl.origin),
-  );
   if (isAuthResponsePath(request.nextUrl.pathname)) {
     response.headers.set("Cache-Control", "private, no-store");
-    response.headers.set("Pragma", "no-cache");
-    response.headers.set("Expires", "0");
     response.headers.set("Vary", "Cookie");
     response.headers.set("X-Robots-Tag", "noindex, nofollow");
   }

@@ -2,9 +2,8 @@
  * Static HTTP security headers for the Next.js frontend.
  *
  * Applied to every response (`/:path*`, incl. `_next/static`) by `next.config.ts`'s
- * `headers()`. These carry no per-request data — the dynamic CSP and Reporting-Endpoints
- * live in `middleware.ts` via `./csp.ts`. Dependency-free so `next.config.ts` can import
- * it directly. See docs/cutovers/csp-and-security-headers-hardening.md.
+ * `headers()`. These carry no per-request data — the dynamic CSP lives in `middleware.ts`
+ * via `./csp.ts`. Dependency-free so `next.config.ts` can import it directly.
  *
  * `X-Frame-Options` is intentionally absent: clickjacking is owned solely by the CSP
  * `frame-ancestors 'none'` directive, which cannot be disabled in production.

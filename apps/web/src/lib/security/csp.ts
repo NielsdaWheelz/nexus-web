@@ -4,40 +4,13 @@
  * The policy is defined here as data and assembled by `buildContentSecurityPolicy`.
  * It is applied per-request in `middleware.ts` (the nonce and connect origins are
  * dynamic); the static header suite lives in `./headers.ts`. Nothing else may inline a
- * CSP string — see docs/cutovers/csp-and-security-headers-hardening.md.
+ * CSP string.
  *
  * Runtime-agnostic: no Node-only APIs (Web Crypto + btoa only), so it runs in both the
  * edge and node runtimes.
  */
 
 import { YOUTUBE_EMBED_ORIGINS } from "./youtube";
-
-export const CSP_REPORT_PATH = "/api/csp-report";
-
-const SAFE_CSP_REPORT_URL_KEYWORDS = new Set([
-  "eval",
-  "inline",
-  "self",
-  "wasm-eval",
-]);
-
-export function sanitizeCspReportUrl(
-  rawUrl: string | undefined,
-): string | undefined {
-  if (!rawUrl) return undefined;
-  if (SAFE_CSP_REPORT_URL_KEYWORDS.has(rawUrl)) return rawUrl;
-
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return undefined;
-  }
-  if (url.protocol === "http:" || url.protocol === "https:") {
-    return `${url.origin}${url.pathname}`;
-  }
-  return url.protocol;
-}
 
 const NONCE_PLACEHOLDER = "{NONCE}";
 
@@ -47,8 +20,6 @@ const NONCE_PLACEHOLDER = "{NONCE}";
  * - `connect-src`: external connect origins (+ dev websocket origins) are appended.
  * - `upgrade-insecure-requests`: emitted only for HTTPS document requests (handled in
  *   the builder, not stored here).
- *
- * This object is the assertion target for `csp.test.ts` and the CSP-Evaluator gate.
  */
 export const CSP_DIRECTIVES = {
   "default-src": ["'self'"],
@@ -65,8 +36,6 @@ export const CSP_DIRECTIVES = {
   "base-uri": ["'none'"],
   "form-action": ["'self'"],
   "frame-ancestors": ["'none'"],
-  "report-to": ["csp"],
-  "report-uri": [CSP_REPORT_PATH],
 } as const satisfies Record<string, readonly string[]>;
 
 export const PUBLIC_READER_CSP_DIRECTIVES = {
@@ -84,17 +53,12 @@ export const PUBLIC_READER_CSP_DIRECTIVES = {
   "base-uri": ["'none'"],
   "form-action": ["'none'"],
   "frame-ancestors": ["'none'"],
-  "report-to": ["csp"],
-  "report-uri": [CSP_REPORT_PATH],
 } as const satisfies Record<string, readonly string[]>;
 
 export const PUBLIC_API_CONTENT_SECURITY_POLICY =
   "default-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
-/**
- * Deterministic emission order. `upgrade-insecure-requests` is value-less and inserted
- * (when applicable) just before the reporting directives.
- */
+/** Deterministic emission order. `upgrade-insecure-requests` is value-less. */
 const DIRECTIVE_ORDER = [
   "default-src",
   "script-src",
@@ -111,8 +75,6 @@ const DIRECTIVE_ORDER = [
   "form-action",
   "frame-ancestors",
   "upgrade-insecure-requests",
-  "report-to",
-  "report-uri",
 ] as const;
 
 export interface CspBuildOptions {
@@ -132,8 +94,7 @@ export interface CspBuildOptions {
 
 /**
  * Serialize `CSP_DIRECTIVES` into a header string with the nonce/dev/connect values
- * applied. Always includes `report-to csp` and `report-uri /api/csp-report`. Pure and
- * deterministic given its options.
+ * applied. Pure and deterministic given its options.
  */
 export function buildContentSecurityPolicy(opts: CspBuildOptions): string {
   const {
@@ -219,9 +180,4 @@ export function generateNonce(): string {
     binary += String.fromCharCode(byte);
   }
   return btoa(binary);
-}
-
-/** `Reporting-Endpoints` header value (absolute, same-origin sink). */
-export function buildReportingEndpoints(origin: string): string {
-  return `csp="${origin}${CSP_REPORT_PATH}"`;
 }
