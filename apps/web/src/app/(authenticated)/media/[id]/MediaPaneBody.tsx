@@ -45,7 +45,6 @@ import {
   toTextAnchoredReaderRow,
 } from "@/components/reader/toAnchoredHighlightRow";
 import type { AnchoredReaderRow } from "@/components/reader/useAnchoredReaderProjection";
-import { DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX } from "@/lib/workspace/fixedPrimaryChrome";
 import PdfReader, {
   type PdfHighlightNavigationRequest,
   type PdfReaderIntrinsicWidthState,
@@ -390,6 +389,7 @@ interface ActiveContent {
   documentEmbeds: DocumentEmbed[];
 }
 
+const DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX = 52;
 const READER_POSITION_BUCKET_CP = 1024;
 const READER_APPARATUS_FOCUS_CLASS = "reader-apparatus-focused";
 const READER_APPARATUS_HOVER_CLASS = "reader-apparatus-hover";

@@ -12,9 +12,6 @@ import {
 } from "react";
 import type { PaneVisitId } from "@/lib/workspace/schema";
 
-export const MAX_PANE_VISIT_DATA_BYTES = 2 * 1024 * 1024;
-export const MAX_PANE_RETURN_DATA_BYTES = 16 * 1024 * 1024;
-
 export type PaneNavigationModality = "Keyboard" | "Pointer" | "Programmatic";
 
 export interface ReturnAnchorKey {
@@ -133,7 +130,6 @@ interface VisitDataSlot {
 interface VisitDataRecord {
   readonly routeKey: string;
   readonly slots: Map<symbol, VisitDataSlot>;
-  readonly bytes: number;
 }
 
 interface PendingRestore extends VisitScope {
@@ -143,13 +139,6 @@ interface PendingRestore extends VisitScope {
   finalizeFrame: number | null;
   observer: ResizeObserver | null;
   removeIntentListeners: (() => void) | null;
-}
-
-interface VisitTopologyPosition {
-  readonly historical: boolean;
-  readonly nonActive: boolean;
-  readonly distance: number;
-  readonly paneOrder: number;
 }
 
 interface RuntimeState {
@@ -163,8 +152,6 @@ interface RuntimeState {
   readonly blockedCaptureVisits: Set<PaneVisitId>;
   readonly readiness: Map<string, Map<symbol, ReadinessRegistration>>;
   readonly pendingRestores: Map<string, PendingRestore>;
-  topology: PaneReturnVisitTopology | null;
-  visitDataBytes: number;
 }
 
 interface PaneReturnMementoService extends PaneReturnMementoCommands {
@@ -358,116 +345,6 @@ function focusAfterRestore(
   (anchorControl ?? paneLandmark)?.focus({ preventScroll: true });
 }
 
-function assertJsonSafe(value: unknown, stack = new Set<object>()): void {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "boolean"
-  ) {
-    return;
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) {
-      throw new Error("Pane visit data contains a non-finite number");
-    }
-    return;
-  }
-  if (typeof value !== "object") {
-    throw new Error(`Pane visit data contains unsupported ${typeof value}`);
-  }
-  if (stack.has(value)) {
-    throw new Error("Pane visit data contains a cycle");
-  }
-  stack.add(value);
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      assertJsonSafe(item, stack);
-    }
-  } else {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw new Error("Pane visit data contains a non-plain object");
-    }
-    for (const item of Object.values(value)) {
-      assertJsonSafe(item, stack);
-    }
-  }
-  stack.delete(value);
-}
-
-function jsonBytes(value: unknown): number {
-  assertJsonSafe(value);
-  const encoded = JSON.stringify(value);
-  if (encoded === undefined) {
-    throw new Error("Pane visit data is not JSON encodable");
-  }
-  return new TextEncoder().encode(encoded).byteLength;
-}
-
-function topologyPositions(
-  topology: PaneReturnVisitTopology | null,
-): Map<PaneVisitId, VisitTopologyPosition> {
-  const positions = new Map<PaneVisitId, VisitTopologyPosition>();
-  topology?.panes.forEach((pane, paneOrder) => {
-    const nonActive = pane.paneId !== topology.activePaneId;
-    positions.set(pane.currentVisitId, {
-      historical: false,
-      nonActive,
-      distance: 0,
-      paneOrder,
-    });
-    pane.backVisitIds.forEach((visitId, index) => {
-      positions.set(visitId, {
-        historical: true,
-        nonActive,
-        distance: pane.backVisitIds.length - index,
-        paneOrder,
-      });
-    });
-    pane.forwardVisitIds.forEach((visitId, index) => {
-      positions.set(visitId, {
-        historical: true,
-        nonActive,
-        distance: index + 1,
-        paneOrder,
-      });
-    });
-  });
-  return positions;
-}
-
-function compareEvictionPriority(
-  left: {
-    readonly visitId: PaneVisitId;
-    readonly position: VisitTopologyPosition | null;
-  },
-  right: {
-    readonly visitId: PaneVisitId;
-    readonly position: VisitTopologyPosition | null;
-  },
-): number {
-  const leftPosition = left.position;
-  const rightPosition = right.position;
-  if (leftPosition === null || rightPosition === null) {
-    if (leftPosition === null && rightPosition !== null) return -1;
-    if (leftPosition !== null && rightPosition === null) return 1;
-    return left.visitId.localeCompare(right.visitId);
-  }
-  if (leftPosition.historical !== rightPosition.historical) {
-    return leftPosition.historical ? -1 : 1;
-  }
-  if (leftPosition.nonActive !== rightPosition.nonActive) {
-    return leftPosition.nonActive ? -1 : 1;
-  }
-  if (leftPosition.distance !== rightPosition.distance) {
-    return rightPosition.distance - leftPosition.distance;
-  }
-  if (leftPosition.paneOrder !== rightPosition.paneOrder) {
-    return leftPosition.paneOrder - rightPosition.paneOrder;
-  }
-  return left.visitId.localeCompare(right.visitId);
-}
-
 export function PaneReturnMementoProvider({
   children,
 }: {
@@ -481,39 +358,7 @@ export function PaneReturnMementoProvider({
     blockedCaptureVisits: new Set(),
     readiness: new Map(),
     pendingRestores: new Map(),
-    topology: null,
-    visitDataBytes: 0,
   });
-
-  const removeVisitData = useCallback((visitId: PaneVisitId) => {
-    const state = stateRef.current;
-    const record = state.visitData.get(visitId);
-    if (!record) {
-      return;
-    }
-    state.visitData.delete(visitId);
-    state.visitDataBytes -= record.bytes;
-  }, []);
-
-  const enforceVisitDataBudget = useCallback(() => {
-    const state = stateRef.current;
-    if (state.visitDataBytes <= MAX_PANE_RETURN_DATA_BYTES) {
-      return;
-    }
-    const positions = topologyPositions(state.topology);
-    const candidates = Array.from(state.visitData.keys())
-      .map((visitId) => ({
-        visitId,
-        position: positions.get(visitId) ?? null,
-      }))
-      .sort(compareEvictionPriority);
-    for (const candidate of candidates) {
-      removeVisitData(candidate.visitId);
-      if (state.visitDataBytes <= MAX_PANE_RETURN_DATA_BYTES) {
-        break;
-      }
-    }
-  }, [removeVisitData]);
 
   const publishVisitData = useCallback(
     <T,>(input: {
@@ -534,26 +379,18 @@ export function PaneReturnMementoProvider({
       if (input.value === null) {
         slots.delete(keyIdentity);
       } else {
-        jsonBytes(input.value);
         slots.set(keyIdentity, { value: input.value });
       }
-      let bytes = 0;
-      for (const slot of slots.values()) {
-        bytes += jsonBytes(slot.value);
-      }
-      removeVisitData(input.visitId);
-      if (slots.size === 0 || bytes > MAX_PANE_VISIT_DATA_BYTES) {
+      if (slots.size === 0) {
+        state.visitData.delete(input.visitId);
         return;
       }
       state.visitData.set(input.visitId, {
         routeKey: input.routeKey,
         slots,
-        bytes,
       });
-      state.visitDataBytes += bytes;
-      enforceVisitDataBudget();
     },
-    [enforceVisitDataBudget, removeVisitData],
+    [],
   );
 
   const routeIsReady = useCallback(
@@ -791,7 +628,6 @@ export function PaneReturnMementoProvider({
         return;
       }
       const slots = new Map<symbol, VisitDataSlot>();
-      let bytes = 0;
       for (const registration of registrations.values()) {
         if (registration.routeKey !== routeKey) {
           continue;
@@ -800,23 +636,15 @@ export function PaneReturnMementoProvider({
         if (value === null) {
           continue;
         }
-        const slotBytes = jsonBytes(value);
-        bytes += slotBytes;
         slots.set(registration.keyIdentity, { value });
       }
-      removeVisitData(visitId);
-      if (slots.size === 0 || bytes > MAX_PANE_VISIT_DATA_BYTES) {
+      if (slots.size === 0) {
+        state.visitData.delete(visitId);
         return;
       }
-      state.visitData.set(visitId, { routeKey, slots, bytes });
-      state.visitDataBytes += bytes;
-      enforceVisitDataBudget();
+      state.visitData.set(visitId, { routeKey, slots });
     },
-    [
-      enforceVisitDataBudget,
-      removeVisitData,
-      routeIsReady,
-    ],
+    [routeIsReady],
   );
 
   const capturePane = useCallback(
@@ -883,7 +711,7 @@ export function PaneReturnMementoProvider({
     (visitId: PaneVisitId) => {
       const state = stateRef.current;
       state.mementos.delete(visitId);
-      removeVisitData(visitId);
+      state.visitData.delete(visitId);
       state.captureGetters.delete(visitId);
       state.blockedCaptureVisits.delete(visitId);
       for (const [key, registrations] of state.readiness) {
@@ -906,13 +734,12 @@ export function PaneReturnMementoProvider({
         }
       }
     },
-    [finishPendingRestore, removeVisitData],
+    [finishPendingRestore],
   );
 
   const clearAllVisitData = useCallback((originVisitId: PaneVisitId) => {
     const state = stateRef.current;
     state.visitData.clear();
-    state.visitDataBytes = 0;
     state.blockedCaptureVisits.delete(originVisitId);
     for (const visitId of state.captureGetters.keys()) {
       if (visitId !== originVisitId) {
@@ -924,7 +751,6 @@ export function PaneReturnMementoProvider({
   const reconcileVisitTopology = useCallback(
     (input: PaneReturnVisitTopology) => {
       const state = stateRef.current;
-      state.topology = input;
       const reachable = new Set<PaneVisitId>();
       for (const pane of input.panes) {
         reachable.add(pane.currentVisitId);
@@ -938,7 +764,7 @@ export function PaneReturnMementoProvider({
       }
       for (const visitId of state.visitData.keys()) {
         if (!reachable.has(visitId)) {
-          removeVisitData(visitId);
+          state.visitData.delete(visitId);
         }
       }
       for (const visitId of state.captureGetters.keys()) {
@@ -956,13 +782,8 @@ export function PaneReturnMementoProvider({
           finishPendingRestore(pending, false);
         }
       }
-      enforceVisitDataBudget();
     },
-    [
-      enforceVisitDataBudget,
-      finishPendingRestore,
-      removeVisitData,
-    ],
+    [finishPendingRestore],
   );
 
   const registerScrollport = useCallback(

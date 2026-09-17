@@ -18,7 +18,7 @@ import {
   isLibraryContractDefect,
   type LibraryOut,
 } from "@/lib/libraries/contract";
-import { requestWorkspaceTargetActivation } from "@/lib/workspace/workspaceTargetActivationIngress";
+import { useWorkspaceStore } from "@/lib/workspace/store";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import {
   createLinkShare,
@@ -273,6 +273,7 @@ function SharePanel({
   const [libraryCapability, setLibraryCapability] =
     useState<LibraryCapabilityState>({ kind: "Idle" });
   const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
+  const workspace = useWorkspaceStore();
   const reportDefect = useCallback((error: unknown) => {
     setAsyncDefect({ error });
   }, []);
@@ -441,7 +442,8 @@ function SharePanel({
 
   const handleManageMembers = useCallback(() => {
     if (!snapshot || snapshot.sharing !== "LibraryMembership") return;
-    const accepted = requestWorkspaceTargetActivation({
+    const result = workspace.activateWorkspaceTarget({
+      originPaneId: workspace.state.activePrimaryPaneId,
       target: {
         href: snapshot.authenticatedHref,
         secondaryActivation: {
@@ -452,7 +454,7 @@ function SharePanel({
       disposition: { kind: "Follow" },
       modality: "Programmatic",
     });
-    if (accepted) {
+    if (result.kind !== "Rejected") {
       onClose();
       return;
     }
@@ -461,7 +463,7 @@ function SharePanel({
       tone: "Danger",
       title: "Members could not be opened. Try again.",
     });
-  }, [onClose, snapshot]);
+  }, [onClose, snapshot, workspace]);
 
   if (asyncDefect !== null) throw asyncDefect.error;
 

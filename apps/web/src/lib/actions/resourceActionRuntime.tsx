@@ -45,7 +45,6 @@ import {
   createResourceActionSnapshotCache,
   type ResourceActionReconciliationScope,
   type ResourceActionSnapshotCache,
-  type SnapshotCacheEntry,
 } from "@/lib/actions/resourceActionSnapshotCache";
 import {
   createResourceActionMutationBoundary,
@@ -544,6 +543,34 @@ async function activateAndAwaitMountedAction(input: {
   }
 }
 
+async function runMountedMutation(input: {
+  readonly ref: CanonicalResourceRef;
+  readonly activation: ResourceActivation;
+  readonly ports: RuntimePorts;
+  readonly scope?: ResourceActionReconciliationScope;
+  readonly makeRequest: (
+    completion: MountedMutationCompletion,
+  ) => MountedActionRequest;
+}): Promise<void> {
+  const completion = createMountedMutationCompletion(
+    input.ref,
+    input.ports,
+    input.scope,
+  );
+  const request = input.makeRequest(completion);
+  if (
+    !(await activateAndAwaitMountedAction({
+      request,
+      activation: input.activation,
+      ports: input.ports,
+      completion,
+    }))
+  ) {
+    return;
+  }
+  await completion.promise;
+}
+
 /** Execute one intent against its existing owning domain client. */
 async function runResourceActionEffect(
   intent: ResourceActionIntent,
@@ -861,81 +888,59 @@ async function runResourceActionEffect(
         ports.createOverlayMutationBoundary(target.ref, actionId),
       );
       return;
-    case "RefreshPodcast": {
-      const completion = createMountedMutationCompletion(target.ref, ports);
-      const request = requestPodcastActionIntent({
-        kind: intent.kind,
+    case "RefreshPodcast":
+      await runMountedMutation({
         ref: target.ref,
         activation,
-        onCommitted: completion.onCommitted,
-        onAborted: completion.onAborted,
+        ports,
+        makeRequest: (completion) =>
+          requestPodcastActionIntent({
+            kind: intent.kind,
+            ref: target.ref,
+            activation,
+            onCommitted: completion.onCommitted,
+            onAborted: completion.onAborted,
+          }),
       });
-      if (
-        !(await activateAndAwaitMountedAction({
-          request,
-          activation,
-          ports,
-          completion,
-        }))
-      ) {
-        return;
-      }
-      await completion.promise;
       return;
-    }
     case "RetryPodcastBackfill":
       await retryPodcastSubscriptionBackfill(requireRefId(target));
       return;
     case "RerunMessage":
-    case "RegenerateMessage": {
-      const completion = createMountedMutationCompletion(target.ref, ports);
-      const request = requestMessageActionIntent({
-        kind: intent.kind,
+    case "RegenerateMessage":
+      await runMountedMutation({
         ref: target.ref,
         activation,
-        onCommitted: completion.onCommitted,
-        onAborted: completion.onAborted,
+        ports,
+        makeRequest: (completion) =>
+          requestMessageActionIntent({
+            kind: intent.kind,
+            ref: target.ref,
+            activation,
+            onCommitted: completion.onCommitted,
+            onAborted: completion.onAborted,
+          }),
       });
-      if (
-        !(await activateAndAwaitMountedAction({
-          request,
-          activation,
-          ports,
-          completion,
-        }))
-      ) {
-        return;
-      }
-      await completion.promise;
       return;
-    }
-    case "DeleteMessage": {
-      const completion = createMountedMutationCompletion(target.ref, ports, {
-        kind: "AllRetained",
-      });
-      const request = requestMessageActionIntent({
-        kind: intent.kind,
+    case "DeleteMessage":
+      await runMountedMutation({
         ref: target.ref,
         activation,
-        settleDeletionCommand: (command) =>
-          settleMountedDeletionCommand({ command, ref: target.ref, ports }),
-        settleDeletedConversation: ports.settleDeletedMessageConversation,
-        onCommitted: completion.onCommitted,
-        onAborted: completion.onAborted,
+        ports,
+        scope: { kind: "AllRetained" },
+        makeRequest: (completion) =>
+          requestMessageActionIntent({
+            kind: intent.kind,
+            ref: target.ref,
+            activation,
+            settleDeletionCommand: (command) =>
+              settleMountedDeletionCommand({ command, ref: target.ref, ports }),
+            settleDeletedConversation: ports.settleDeletedMessageConversation,
+            onCommitted: completion.onCommitted,
+            onAborted: completion.onAborted,
+          }),
       });
-      if (
-        !(await activateAndAwaitMountedAction({
-          request,
-          activation,
-          ports,
-          completion,
-        }))
-      ) {
-        return;
-      }
-      await completion.promise;
       return;
-    }
     case "LearnHighlight": {
       const outcome = await learnDossierFromHighlight({
         highlightRef: target.ref,
@@ -966,77 +971,55 @@ async function runResourceActionEffect(
     case "EditHighlight":
     case "AddHighlightNote":
     case "LinkHighlight":
-    case "EditHighlightBounds": {
-      const completion = createMountedMutationCompletion(target.ref, ports);
-      const request = requestHighlightActionIntent({
-        kind: intent.kind,
+    case "EditHighlightBounds":
+      await runMountedMutation({
         ref: target.ref,
         activation,
-        onCommitted: completion.onCommitted,
-        onAborted: completion.onAborted,
+        ports,
+        makeRequest: (completion) =>
+          requestHighlightActionIntent({
+            kind: intent.kind,
+            ref: target.ref,
+            activation,
+            onCommitted: completion.onCommitted,
+            onAborted: completion.onAborted,
+          }),
       });
-      if (
-        !(await activateAndAwaitMountedAction({
-          request,
-          activation,
-          ports,
-          completion,
-        }))
-      ) {
-        return;
-      }
-      await completion.promise;
       return;
-    }
-    case "DeleteHighlight": {
-      const completion = createMountedMutationCompletion(target.ref, ports, {
-        kind: "AllRetained",
-      });
-      const request = requestHighlightActionIntent({
-        kind: intent.kind,
+    case "DeleteHighlight":
+      await runMountedMutation({
         ref: target.ref,
         activation,
-        settleDeletionCommand: (command) =>
-          settleMountedDeletionCommand({ command, ref: target.ref, ports }),
-        onCommitted: completion.onCommitted,
-        onAborted: completion.onAborted,
+        ports,
+        scope: { kind: "AllRetained" },
+        makeRequest: (completion) =>
+          requestHighlightActionIntent({
+            kind: intent.kind,
+            ref: target.ref,
+            activation,
+            settleDeletionCommand: (command) =>
+              settleMountedDeletionCommand({ command, ref: target.ref, ports }),
+            onCommitted: completion.onCommitted,
+            onAborted: completion.onAborted,
+          }),
       });
-      if (
-        !(await activateAndAwaitMountedAction({
-          request,
-          activation,
-          ports,
-          completion,
-        }))
-      ) {
-        return;
-      }
-      await completion.promise;
       return;
-    }
-    case "EditHighlightNote": {
-      const completion = createMountedMutationCompletion(target.ref, ports);
-      const request = requestHighlightActionIntent({
-        kind: intent.kind,
+    case "EditHighlightNote":
+      await runMountedMutation({
         ref: target.ref,
         activation,
-        noteBlockId: intent.noteBlockId,
-        onCommitted: completion.onCommitted,
-        onAborted: completion.onAborted,
+        ports,
+        makeRequest: (completion) =>
+          requestHighlightActionIntent({
+            kind: intent.kind,
+            ref: target.ref,
+            activation,
+            noteBlockId: intent.noteBlockId,
+            onCommitted: completion.onCommitted,
+            onAborted: completion.onAborted,
+          }),
       });
-      if (
-        !(await activateAndAwaitMountedAction({
-          request,
-          activation,
-          ports,
-          completion,
-        }))
-      ) {
-        return;
-      }
-      await completion.promise;
       return;
-    }
     case "ForkMessage":
     case "WalkMessageSources": {
       const request = requestMessageActionIntent({
@@ -1047,98 +1030,69 @@ async function runResourceActionEffect(
       await activateAndAwaitMountedAction({ request, activation, ports });
       return;
     }
-    case "EditPageTitle": {
-      const completion = createMountedMutationCompletion(target.ref, ports);
-      const request = requestPageActionIntent({
-        kind: intent.kind,
+    case "EditPageTitle":
+      await runMountedMutation({
         ref: target.ref,
         activation,
-        onCommitted: completion.onCommitted,
-        onAborted: completion.onAborted,
+        ports,
+        makeRequest: (completion) =>
+          requestPageActionIntent({
+            kind: intent.kind,
+            ref: target.ref,
+            activation,
+            onCommitted: completion.onCommitted,
+            onAborted: completion.onAborted,
+          }),
       });
-      if (
-        !(await activateAndAwaitMountedAction({
-          request,
-          activation,
-          ports,
-          completion,
-        }))
-      ) {
-        return;
-      }
-      await completion.promise;
       return;
-    }
-    case "DeletePage": {
-      const completion = createMountedMutationCompletion(target.ref, ports, {
-        kind: "AllRetained",
-      });
-      const request = requestPageActionIntent({
-        kind: intent.kind,
+    case "DeletePage":
+      await runMountedMutation({
         ref: target.ref,
         activation,
-        settleDeletionCommand: (command) =>
-          settleMountedDeletionCommand({ command, ref: target.ref, ports }),
-        onCommitted: completion.onCommitted,
-        onAborted: completion.onAborted,
+        ports,
+        scope: { kind: "AllRetained" },
+        makeRequest: (completion) =>
+          requestPageActionIntent({
+            kind: intent.kind,
+            ref: target.ref,
+            activation,
+            settleDeletionCommand: (command) =>
+              settleMountedDeletionCommand({ command, ref: target.ref, ports }),
+            onCommitted: completion.onCommitted,
+            onAborted: completion.onAborted,
+          }),
       });
-      if (
-        !(await activateAndAwaitMountedAction({
-          request,
-          activation,
-          ports,
-          completion,
-        }))
-      ) {
-        return;
-      }
-      await completion.promise;
       return;
-    }
-    case "EditNoteBody": {
-      const completion = createMountedMutationCompletion(target.ref, ports);
-      const request = requestNoteBlockActionIntent({
-        kind: intent.kind,
+    case "EditNoteBody":
+      await runMountedMutation({
         ref: target.ref,
         activation,
-        onCommitted: completion.onCommitted,
-        onAborted: completion.onAborted,
+        ports,
+        makeRequest: (completion) =>
+          requestNoteBlockActionIntent({
+            kind: intent.kind,
+            ref: target.ref,
+            activation,
+            onCommitted: completion.onCommitted,
+            onAborted: completion.onAborted,
+          }),
       });
-      if (
-        !(await activateAndAwaitMountedAction({
-          request,
-          activation,
-          ports,
-          completion,
-        }))
-      ) {
-        return;
-      }
-      await completion.promise;
       return;
-    }
-    case "RenameContributor": {
-      const completion = createMountedMutationCompletion(target.ref, ports);
-      const request = requestContributorActionIntent({
-        kind: intent.kind,
+    case "RenameContributor":
+      await runMountedMutation({
         ref: target.ref,
         activation,
-        onCommitted: completion.onCommitted,
-        onAborted: completion.onAborted,
+        ports,
+        makeRequest: (completion) =>
+          requestContributorActionIntent({
+            kind: intent.kind,
+            ref: target.ref,
+            activation,
+            onCommitted: completion.onCommitted,
+            onAborted: completion.onAborted,
+          }),
       });
-      if (
-        !(await activateAndAwaitMountedAction({
-          request,
-          activation,
-          ports,
-          completion,
-        }))
-      ) {
-        return;
-      }
-      await completion.promise;
       return;
-    }
     default: {
       const exhaustive: never = intent;
       // justify-defect: the intent union is closed; a new variant must add a
@@ -1814,37 +1768,6 @@ export function useResourceActionCompletionUndo(): (
   return useRuntimeContext().offerCompletionUndo;
 }
 
-/**
- * Register a ref for deduplicated batch prefetch and read its cache state. The
- * trigger stays unavailable until this returns a Ready entry, so opening a
- * menu performs no request.
- */
-function useResourceActionSnapshotFromCache(
-  ref: CanonicalResourceRef | null,
-  cache: ResourceActionSnapshotCache | null,
-): SnapshotCacheEntry | undefined {
-  useEffect(() => {
-    if (ref === null || cache === null) return;
-    return cache.retain(ref);
-  }, [ref, cache]);
-  const subscribe = useCallback(
-    (listener: () => void) =>
-      cache === null ? () => undefined : cache.subscribe(listener),
-    [cache],
-  );
-  const getSnapshot = useCallback(
-    () => (ref === null || cache === null ? undefined : cache.peek(ref)),
-    [ref, cache],
-  );
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-}
-
-export function useResourceActionSnapshot(
-  ref: CanonicalResourceRef | null,
-): SnapshotCacheEntry | undefined {
-  return useResourceActionSnapshotFromCache(ref, useRuntimeContext().cache);
-}
-
 function descriptorsForPlan(
   plan: readonly PlannedResourceAction[],
   target: ResourceActionSubject,
@@ -1872,7 +1795,28 @@ function useCanonicalResourceActionModel(
   const environment = useContext(EnvironmentContext);
   const cache = target === null ? null : (runtime?.cache ?? null);
   const busyStore = target === null ? null : (runtime?.busyStore ?? null);
-  const entry = useResourceActionSnapshotFromCache(target?.ref ?? null, cache);
+  // Register the ref for deduplicated batch prefetch and read its cache state.
+  // The trigger stays unavailable until this is a Ready entry, so opening a
+  // menu performs no request.
+  const ref = target?.ref ?? null;
+  useEffect(() => {
+    if (ref === null || cache === null) return;
+    return cache.retain(ref);
+  }, [ref, cache]);
+  const subscribeSnapshot = useCallback(
+    (listener: () => void) =>
+      cache === null ? () => undefined : cache.subscribe(listener),
+    [cache],
+  );
+  const getSnapshotEntry = useCallback(
+    () => (ref === null || cache === null ? undefined : cache.peek(ref)),
+    [ref, cache],
+  );
+  const entry = useSyncExternalStore(
+    subscribeSnapshot,
+    getSnapshotEntry,
+    getSnapshotEntry,
+  );
   const subscribeBusy = useCallback(
     (listener: () => void) =>
       busyStore === null ? () => undefined : busyStore.subscribe(listener),

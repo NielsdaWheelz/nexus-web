@@ -14,6 +14,4 @@ export interface RenderEnvironment {
   displayLocale: string;
   displayTimeZone: string;
   currentInstant: string;
-  currentLocalDate: string;
-  initialViewport: ViewportKind;
 }

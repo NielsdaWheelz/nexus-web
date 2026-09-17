@@ -531,27 +531,28 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
     [refreshReaderGeometry],
   );
 
+  const pinChrome = useCallback(() => {
+    cancelFrame();
+    cancelScrollIdleTimer();
+    invalidateSettle();
+    commit(reduceMobileChromeMotion(motionRef.current, { kind: "Pin" }));
+  }, [cancelFrame, cancelScrollIdleTimer, commit, invalidateSettle]);
+
+  const releasePin = useCallback(() => {
+    if (!hasPin()) rebaselineReader();
+  }, [hasPin, rebaselineReader]);
+
   const setChromeFocusLock = useCallback(
     (locked: boolean) => {
       if (chromeFocusLockRef.current === locked) return;
       chromeFocusLockRef.current = locked;
       if (locked) {
-        cancelFrame();
-        cancelScrollIdleTimer();
-        invalidateSettle();
-        commit(reduceMobileChromeMotion(motionRef.current, { kind: "Pin" }));
+        pinChrome();
         return;
       }
-      if (!hasPin()) rebaselineReader();
+      releasePin();
     },
-    [
-      cancelFrame,
-      cancelScrollIdleTimer,
-      commit,
-      hasPin,
-      invalidateSettle,
-      rebaselineReader,
-    ],
+    [pinChrome, releasePin],
   );
 
   const reconcileChromeFocus = useCallback(() => {
@@ -571,28 +572,16 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
     (reason: VisibleLockReason) => {
       const lockId = (nextLockIdRef.current += 1);
       visibleLocksRef.current.set(lockId, reason);
-      if (isMobileRef.current) {
-        cancelFrame();
-        cancelScrollIdleTimer();
-        invalidateSettle();
-        commit(reduceMobileChromeMotion(motionRef.current, { kind: "Pin" }));
-      }
+      if (isMobileRef.current) pinChrome();
       let released = false;
       return () => {
         if (released) return;
         released = true;
         visibleLocksRef.current.delete(lockId);
-        if (!hasPin()) rebaselineReader();
+        releasePin();
       };
     },
-    [
-      cancelFrame,
-      cancelScrollIdleTimer,
-      commit,
-      hasPin,
-      invalidateSettle,
-      rebaselineReader,
-    ],
+    [pinChrome, releasePin],
   );
 
   const acquirePublicLock = useCallback(
@@ -769,8 +758,13 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const handleTransitionEnd = useCallback(
-    (registration: MobileChromeSurfaceRegistration, event: TransitionEvent) => {
+  // The surface's own collapse transition, still owned by the live settle
+  // generation; claiming it consumes that generation exactly once.
+  const claimSettleGeneration = useCallback(
+    (
+      registration: MobileChromeSurfaceRegistration,
+      event: TransitionEvent,
+    ): number | null => {
       const generation = registration.settleGeneration;
       if (
         event.target !== registration.surface ||
@@ -779,27 +773,26 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
         generation === null ||
         generation !== settleGenerationRef.current
       ) {
-        return;
+        return null;
       }
       registration.settleGeneration = null;
+      return generation;
+    },
+    [],
+  );
+
+  const handleTransitionEnd = useCallback(
+    (registration: MobileChromeSurfaceRegistration, event: TransitionEvent) => {
+      const generation = claimSettleGeneration(registration, event);
+      if (generation === null) return;
       finishSettle(generation);
     },
-    [finishSettle],
+    [claimSettleGeneration, finishSettle],
   );
 
   const handleTransitionCancel = useCallback(
     (registration: MobileChromeSurfaceRegistration, event: TransitionEvent) => {
-      const generation = registration.settleGeneration;
-      if (
-        event.target !== registration.surface ||
-        event.propertyName !== COLLAPSE_PROPERTY ||
-        motionRef.current.phase.kind !== "Settling" ||
-        generation === null ||
-        generation !== settleGenerationRef.current
-      ) {
-        return;
-      }
-      registration.settleGeneration = null;
+      if (claimSettleGeneration(registration, event) === null) return;
       const sampled = interruptSettle(registration.surface);
       if (
         sampled.phase.kind === "Tracking" &&
@@ -809,7 +802,7 @@ export function MobileChromeProvider({ children }: { children: ReactNode }) {
         beginSettle();
       }
     },
-    [beginSettle, interruptSettle],
+    [beginSettle, claimSettleGeneration, interruptSettle],
   );
 
   const registerSurface = useCallback(
@@ -1077,13 +1070,11 @@ export function useMobileChrome(): VolatileChromeState &
   return { ...volatile, setPaneChrome: stable.setPaneChrome };
 }
 
-function useVisibleLocks(
-  stable: StableController | null,
-): MobileChromeVisibleLocks {
+export function useMobileChromeVisibleLocks(): MobileChromeVisibleLocks {
+  const stable = useStableController("useMobileChromeVisibleLocks");
   const releasesRef = useRef(new Set<() => void>());
   const acquire = useCallback(
     (reason: MobileChromeVisibleLockReason) => {
-      if (!stable) return () => undefined;
       const releaseProviderLock = stable.acquire(reason);
       let released = false;
       const release = () => {
@@ -1106,44 +1097,11 @@ function useVisibleLocks(
   return useMemo(() => ({ acquire }), [acquire]);
 }
 
-export function useMobileChromeVisibleLocks(): MobileChromeVisibleLocks {
-  return useVisibleLocks(
-    useStableController("useMobileChromeVisibleLocks"),
-  );
-}
-
-/**
- * Collection primitives also render where no mobile chrome exists. They may
- * discover this capability without creating a second chrome owner; when the
- * authenticated shell is present, the returned locks are the provider's real
- * locks.
- */
-export function useOptionalMobileChromeVisibleLocks(): MobileChromeVisibleLocks {
-  return useVisibleLocks(useContext(StableControllerContext));
-}
-
 export function usePaneChromeFocusReturn(): PaneChromeFocusReturn {
   const stable = useStableController("usePaneChromeFocusReturn");
   return useMemo(
     () => ({ focus: stable.focusPaneChrome }),
     [stable.focusPaneChrome],
-  );
-}
-
-/**
- * Reusable pane content and global player surfaces also render in desktop-only
- * harnesses where mobile chrome is not mounted. They may discover the focus
- * capability without manufacturing another chrome owner.
- */
-export function useOptionalPaneChromeFocusReturn(): PaneChromeFocusReturn {
-  const stable = useContext(StableControllerContext);
-  return useMemo(
-    () => ({
-      focus:
-        stable?.focusPaneChrome ??
-        (async (_paneId: string): Promise<void> => undefined),
-    }),
-    [stable?.focusPaneChrome],
   );
 }
 

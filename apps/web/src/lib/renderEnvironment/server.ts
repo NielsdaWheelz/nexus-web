@@ -2,7 +2,6 @@ import "server-only";
 
 import { headers } from "next/headers";
 import { isAndroidShellUserAgent } from "@/lib/androidShell";
-import { formatLocalDateInTimeZone } from "@/lib/localDate";
 import type { PlatformKind, RenderEnvironment } from "./types";
 
 function platformFromUserAgent(userAgent: string): PlatformKind {
@@ -25,7 +24,5 @@ export async function loadRenderEnvironment(): Promise<RenderEnvironment> {
     displayLocale,
     displayTimeZone,
     currentInstant: now.toISOString(),
-    currentLocalDate: formatLocalDateInTimeZone(now, displayTimeZone),
-    initialViewport: "desktop",
   };
 }

@@ -4,9 +4,8 @@ import { useSyncExternalStore } from "react";
 
 /**
  * Client owner for network reachability. Reads `navigator.onLine` and tracks
- * the window `online`/`offline` events through `useSyncExternalStore`. Framework
- * absence (SSR, or a client without `navigator`) normalizes to "Online" at the
- * boundary so every reader sees a total two-state value.
+ * the window `online`/`offline` events through `useSyncExternalStore`; SSR
+ * reads "Online".
  */
 
 function subscribe(onStoreChange: () => void): () => void {
@@ -19,22 +18,8 @@ function subscribe(onStoreChange: () => void): () => void {
   };
 }
 
-/**
- * Normalize a (possibly SSR-partial) navigator to a total connectivity value.
- * A missing navigator or a navigator whose `onLine` is not a boolean (Node ≥21
- * exposes a `navigator` global without `onLine`) reads as "Online".
- */
-export function connectivityFromNavigator(
-  nav: Navigator | undefined,
-): "Online" | "Offline" {
-  if (nav === undefined || typeof nav.onLine !== "boolean") return "Online";
-  return nav.onLine ? "Online" : "Offline";
-}
-
 function getSnapshot(): "Online" | "Offline" {
-  return connectivityFromNavigator(
-    typeof navigator === "undefined" ? undefined : navigator,
-  );
+  return navigator.onLine ? "Online" : "Offline";
 }
 
 function getServerSnapshot(): "Online" | "Offline" {

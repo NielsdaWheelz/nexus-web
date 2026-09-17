@@ -24,6 +24,7 @@ import {
   normalizePaneLabel,
   restoreClosedPaneSnapshot,
   type ClosedPaneSnapshot,
+  type WorkspaceAttachedSecondaryPaneState,
   type WorkspacePrimaryPaneState,
   type WorkspaceState,
 } from "@/lib/workspace/schema";
@@ -34,6 +35,7 @@ import {
   getAttachedSecondaryPane,
   traversePaneHistory,
   trimAndEnsureActivePaneId,
+  type PaneHistoryDirection,
   type PaneVisitTransition,
 } from "@/lib/workspace/workspaceRestore";
 import {
@@ -46,21 +48,14 @@ import {
 } from "@/lib/workspace/workspaceHref";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 import {
-  consumePendingWorkspaceTargetActivationRequests,
-  parseWorkspaceTargetActivationEvent,
-  parseWorkspaceTargetActivationMessage,
-  setWorkspaceTargetActivationReceiverReady,
-  WORKSPACE_TARGET_ACTIVATION_EVENT,
-} from "@/lib/workspace/workspaceTargetActivationIngress";
-import {
   hasSamePaneResource,
   resolvePaneRouteIdentity,
 } from "@/lib/panes/paneIdentity";
 import {
-  resolvePaneRoute,
-  type ResolvedPaneRoute,
-} from "@/lib/panes/paneRouteTable";
-import { paneRouteAllowsSecondaryGroup } from "@/lib/panes/paneRouteModel";
+  paneRouteAllowsSecondaryGroup,
+  resolvePaneRouteModel,
+  type ResolvedPaneRouteModel,
+} from "@/lib/panes/paneRouteModel";
 import {
   getSecondaryGroupForSurface,
   getSecondaryWidthPolicy,
@@ -99,8 +94,11 @@ type WorkspaceAction =
       activate: boolean;
       transition: PaneVisitTransition;
     }
-  | { type: "go_back_pane"; paneId: string }
-  | { type: "go_forward_pane"; paneId: string }
+  | {
+      type: "traverse_pane_history";
+      paneId: string;
+      direction: PaneHistoryDirection;
+    }
   | {
       type: "close_pane";
       paneId: string;
@@ -143,6 +141,32 @@ function paneReturnTopology(state: WorkspaceState): PaneReturnVisitTopology {
       forwardVisitIds: pane.history.forward.map((visit) => visit.id),
     })),
   };
+}
+
+function patchSecondaryPane(
+  state: WorkspaceState,
+  secondaryPaneId: string,
+  patch: (
+    pane: WorkspaceAttachedSecondaryPaneState,
+  ) => Partial<WorkspaceAttachedSecondaryPaneState> | null,
+): WorkspaceState {
+  const secondaryPane = state.secondaryPanesById[secondaryPaneId];
+  if (!secondaryPane) {
+    return state;
+  }
+  const fields = patch(secondaryPane);
+  if (!fields) {
+    return state;
+  }
+  return createWorkspaceState({
+    previousState: state,
+    primaryPanes: getWorkspacePrimaryPanes(state),
+    activePrimaryPaneId: state.activePrimaryPaneId,
+    secondaryPanesById: {
+      ...state.secondaryPanesById,
+      [secondaryPane.id]: { ...secondaryPane, ...fields },
+    },
+  });
 }
 
 function workspaceReducer(
@@ -231,7 +255,7 @@ function workspaceReducer(
       );
     }
 
-    case "go_back_pane": {
+    case "traverse_pane_history": {
       const panes = getWorkspacePrimaryPanes(state);
       const pane = panes.find((p) => p.id === action.paneId);
       if (!pane) {
@@ -239,54 +263,20 @@ function workspaceReducer(
       }
       const traversed = traversePaneHistory(
         pane,
-        "Back",
+        action.direction,
         workspacePrimaryMetrics,
         getAttachedSecondaryPane(state, pane),
       );
       if (!traversed) {
         return state;
       }
-      const nextPanes = panes.map((p) => {
-        if (p.id !== action.paneId) {
-          return p;
-        }
-        return traversed;
-      });
       return trimAndEnsureActivePaneId(
         createWorkspaceState({
           previousState: state,
           activePrimaryPaneId: action.paneId,
-          primaryPanes: nextPanes,
-        }),
-      );
-    }
-
-    case "go_forward_pane": {
-      const panes = getWorkspacePrimaryPanes(state);
-      const pane = panes.find((p) => p.id === action.paneId);
-      if (!pane) {
-        return state;
-      }
-      const traversed = traversePaneHistory(
-        pane,
-        "Forward",
-        workspacePrimaryMetrics,
-        getAttachedSecondaryPane(state, pane),
-      );
-      if (!traversed) {
-        return state;
-      }
-      const nextPanes = panes.map((p) => {
-        if (p.id !== action.paneId) {
-          return p;
-        }
-        return traversed;
-      });
-      return trimAndEnsureActivePaneId(
-        createWorkspaceState({
-          previousState: state,
-          activePrimaryPaneId: action.paneId,
-          primaryPanes: nextPanes,
+          primaryPanes: panes.map((p) =>
+            p.id === action.paneId ? traversed : p,
+          ),
         }),
       );
     }
@@ -405,24 +395,10 @@ function workspaceReducer(
       });
     }
 
-    case "close_secondary_pane": {
-      const secondaryPane = state.secondaryPanesById[action.secondaryPaneId];
-      if (!secondaryPane) {
-        return state;
-      }
-      return createWorkspaceState({
-        previousState: state,
-        primaryPanes: getWorkspacePrimaryPanes(state),
-        activePrimaryPaneId: state.activePrimaryPaneId,
-        secondaryPanesById: {
-          ...state.secondaryPanesById,
-          [secondaryPane.id]: {
-            ...secondaryPane,
-            visibility: "collapsed",
-          },
-        },
-      });
-    }
+    case "close_secondary_pane":
+      return patchSecondaryPane(state, action.secondaryPaneId, () => ({
+        visibility: "collapsed",
+      }));
 
     case "drop_secondary_pane": {
       const secondaryPane = state.secondaryPanesById[action.secondaryPaneId];
@@ -443,51 +419,20 @@ function workspaceReducer(
       });
     }
 
-    case "set_secondary_surface": {
-      const secondaryPane = state.secondaryPanesById[action.secondaryPaneId];
-      if (!secondaryPane) {
-        return state;
-      }
-      const groupId = getSecondaryGroupForSurface(action.surfaceId);
-      if (groupId !== secondaryPane.groupId) {
-        return state;
-      }
-      return createWorkspaceState({
-        previousState: state,
-        primaryPanes: getWorkspacePrimaryPanes(state),
-        activePrimaryPaneId: state.activePrimaryPaneId,
-        secondaryPanesById: {
-          ...state.secondaryPanesById,
-          [secondaryPane.id]: {
-            ...secondaryPane,
-            activeSurfaceId: action.surfaceId,
-            visibility: "visible",
-          },
-        },
-      });
-    }
+    case "set_secondary_surface":
+      return patchSecondaryPane(state, action.secondaryPaneId, (pane) =>
+        getSecondaryGroupForSurface(action.surfaceId) === pane.groupId
+          ? { activeSurfaceId: action.surfaceId, visibility: "visible" }
+          : null,
+      );
 
-    case "resize_secondary_pane": {
-      const secondaryPane = state.secondaryPanesById[action.secondaryPaneId];
-      if (!secondaryPane) {
-        return state;
-      }
-      return createWorkspaceState({
-        previousState: state,
-        primaryPanes: getWorkspacePrimaryPanes(state),
-        activePrimaryPaneId: state.activePrimaryPaneId,
-        secondaryPanesById: {
-          ...state.secondaryPanesById,
-          [secondaryPane.id]: {
-            ...secondaryPane,
-            widthPx: resolveEffectiveSecondarySizing({
-              storedWidthPx: action.widthPx,
-              policy: getSecondaryWidthPolicy(secondaryPane.groupId),
-            }).widthPx,
-          },
-        },
-      });
-    }
+    case "resize_secondary_pane":
+      return patchSecondaryPane(state, action.secondaryPaneId, (pane) => ({
+        widthPx: resolveEffectiveSecondarySizing({
+          storedWidthPx: action.widthPx,
+          policy: getSecondaryWidthPolicy(pane.groupId),
+        }).widthPx,
+      }));
 
     case "minimize_pane": {
       const panes = getWorkspacePrimaryPanes(state);
@@ -674,7 +619,7 @@ export interface WorkspacePaneLabelRecord {
 
 export interface WorkspacePaneLabelDescriptor {
   routeKey: string;
-  route: ResolvedPaneRoute;
+  route: ResolvedPaneRouteModel;
   label: string;
   labelState: "resolved" | "pending";
   labelSource: WorkspacePaneLabelSource | "static" | "fallback";
@@ -684,7 +629,7 @@ export function resolveWorkspacePaneLabel(
   pane: WorkspacePaneLabelInput,
   runtimeLabelByPaneId: ReadonlyMap<string, WorkspacePaneLabelRecord>,
 ): WorkspacePaneLabelDescriptor {
-  const route = resolvePaneRoute(pane.currentVisit.href);
+  const route = resolvePaneRouteModel(pane.currentVisit.href);
   const routeKey = resolvePaneRouteKey(pane.currentVisit.href);
   const labelRecord = runtimeLabelByPaneId.get(pane.id);
   if (labelRecord?.routeKey === routeKey) {
@@ -1501,80 +1446,23 @@ export function WorkspaceStoreProvider({
     ],
   );
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const activateIngressRequest = (request: Omit<WorkspaceTargetActivationRequest, "originPaneId">) => {
-      activateWorkspaceTarget({
-        ...request,
-        originPaneId: stateRef.current.activePrimaryPaneId,
-      });
-    };
-    const handleEvent = (event: Event) => {
-      const request = parseWorkspaceTargetActivationEvent(event);
-      if (request) {
-        activateIngressRequest(request);
-      }
-    };
-    const handleMessage = (event: MessageEvent<unknown>) => {
-      if (event.origin !== window.location.origin) {
-        return;
-      }
-      const request = parseWorkspaceTargetActivationMessage(event.data);
-      if (request) {
-        activateIngressRequest(request);
-      }
-    };
-
-    window.addEventListener(WORKSPACE_TARGET_ACTIVATION_EVENT, handleEvent);
-    window.addEventListener("message", handleMessage);
-    setWorkspaceTargetActivationReceiverReady(true);
-    for (const request of consumePendingWorkspaceTargetActivationRequests()) {
-      activateIngressRequest(request);
-    }
-    return () => {
-      window.removeEventListener(WORKSPACE_TARGET_ACTIVATION_EVENT, handleEvent);
-      window.removeEventListener("message", handleMessage);
-      setWorkspaceTargetActivationReceiverReady(false);
-    };
-  }, [activateWorkspaceTarget]);
-
-  const goBackPane = useCallback(
-    (paneId: string, modality: PaneNavigationModality = "Programmatic") => {
+  const traversePaneHistoryInPane = useCallback(
+    (
+      paneId: string,
+      direction: PaneHistoryDirection,
+      modality: PaneNavigationModality = "Programmatic",
+    ) => {
       const pane = getWorkspacePrimaryPane(stateRef.current, paneId);
-      if (!pane || pane.history.back.length === 0) {
+      const stack =
+        direction === "Back" ? pane?.history.back : pane?.history.forward;
+      if (!pane || !stack?.length) {
         return;
       }
-      const action: WorkspaceAction = { type: "go_back_pane", paneId };
-      returnMemento.reconcileVisitTopology(
-        paneReturnTopology(
-          workspaceReducer(
-            stateRef.current,
-            action,
-            workspacePrimaryMetrics,
-          ),
-        ),
-      );
-      returnMemento.capturePane({
+      const action: WorkspaceAction = {
+        type: "traverse_pane_history",
         paneId,
-        visitId: pane.currentVisit.id,
-        routeKey: resolvePaneRouteKey(pane.currentVisit.href),
-        modality,
-      });
-      dispatch(action);
-    },
-    [dispatch, returnMemento, workspacePrimaryMetrics]
-  );
-
-  const goForwardPane = useCallback(
-    (paneId: string, modality: PaneNavigationModality = "Programmatic") => {
-      const pane = getWorkspacePrimaryPane(stateRef.current, paneId);
-      if (!pane || pane.history.forward.length === 0) {
-        return;
-      }
-      const action: WorkspaceAction = { type: "go_forward_pane", paneId };
+        direction,
+      };
       returnMemento.reconcileVisitTopology(
         paneReturnTopology(
           workspaceReducer(
@@ -1817,8 +1705,10 @@ export function WorkspaceStoreProvider({
       acknowledgePendingSecondaryActivation,
       acknowledgePaneEntryDelivery,
       navigatePane,
-      goBackPane,
-      goForwardPane,
+      goBackPane: (paneId, modality) =>
+        traversePaneHistoryInPane(paneId, "Back", modality),
+      goForwardPane: (paneId, modality) =>
+        traversePaneHistoryInPane(paneId, "Forward", modality),
       closePane,
       restoreClosedPane,
       resizePrimaryPane,
@@ -1847,8 +1737,7 @@ export function WorkspaceStoreProvider({
       acknowledgePendingSecondaryActivation,
       acknowledgePaneEntryDelivery,
       navigatePane,
-      goBackPane,
-      goForwardPane,
+      traversePaneHistoryInPane,
       closePane,
       restoreClosedPane,
       resizePrimaryPane,

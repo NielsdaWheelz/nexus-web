@@ -4,7 +4,7 @@
 // resolvePaneRouteModel. Owns the workspace-state algebra (construct/clamp/merge) the reducer
 // also reuses, plus exact session selection and structural equality.
 
-import { isAndroidShellRestrictedHref } from "@/lib/androidShell";
+import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
 import {
   MAX_PANES,
   createDefaultWorkspaceState,
@@ -26,7 +26,10 @@ import {
 import { WORKSPACE_DEFAULT_FALLBACK_HREF } from "@/lib/workspace/workspaceHref";
 import type { WorkspacePrimaryMetrics } from "@/lib/workspace/paneSizing";
 import { hasSamePaneResource, hasSamePaneRoute } from "@/lib/panes/paneIdentity";
-import { paneRouteAllowsSecondaryGroup } from "@/lib/panes/paneRouteModel";
+import {
+  paneRouteAllowsSecondaryGroup,
+  resolvePaneRouteModel,
+} from "@/lib/panes/paneRouteModel";
 import {
   getSecondaryWidthPolicy,
   resolveEffectiveSecondarySizing,
@@ -55,25 +58,11 @@ export function createWorkspaceState(input: {
   activePrimaryPaneId: string;
   secondaryPanesById?: Record<string, WorkspaceAttachedSecondaryPaneState>;
 }): WorkspaceState {
-  const sourceSecondaryPanesById =
-    input.secondaryPanesById ?? input.previousState.secondaryPanesById;
-  const secondaryPanesById: Record<string, WorkspaceAttachedSecondaryPaneState> = {};
-  const primaryPanes = input.primaryPanes.map((pane) => {
-    if (!pane.attachedSecondaryPaneId) {
-      return pane;
-    }
-    const secondaryPane = sourceSecondaryPanesById[pane.attachedSecondaryPaneId];
-    if (!secondaryPane || secondaryPane.parentPrimaryPaneId !== pane.id) {
-      return { ...pane, attachedSecondaryPaneId: null };
-    }
-    secondaryPanesById[secondaryPane.id] = secondaryPane;
-    return pane;
-  });
-
   return createWorkspaceStateFromPrimaryPanes({
     activePrimaryPaneId: input.activePrimaryPaneId,
-    primaryPanes,
-    secondaryPanesById,
+    primaryPanes: input.primaryPanes,
+    secondaryPanesById:
+      input.secondaryPanesById ?? input.previousState.secondaryPanesById,
   });
 }
 
@@ -294,7 +283,9 @@ export function prepareRestoredState(
       (pane) =>
         !(
           androidShell &&
-          isAndroidShellRestrictedHref(pane.currentVisit.href)
+          isAndroidShellRestrictedRouteId(
+            resolvePaneRouteModel(pane.currentVisit.href).id,
+          )
         ),
     )
     .map((pane) => ({
@@ -379,67 +370,4 @@ export function selectRestoredState(
     return elsewhereState;
   }
   return null;
-}
-
-export function workspaceStatesEqual(
-  a: WorkspaceState,
-  b: WorkspaceState
-): boolean {
-  if (a.activePrimaryPaneId !== b.activePrimaryPaneId) {
-    return false;
-  }
-  if (a.primaryPaneOrder.length !== b.primaryPaneOrder.length) {
-    return false;
-  }
-  for (let index = 0; index < a.primaryPaneOrder.length; index += 1) {
-    if (a.primaryPaneOrder[index] !== b.primaryPaneOrder[index]) {
-      return false;
-    }
-    const pane = a.primaryPanesById[a.primaryPaneOrder[index]!];
-    const other = b.primaryPanesById[b.primaryPaneOrder[index]!];
-    if (!pane || !other) {
-      return false;
-    }
-    if (
-      pane.id !== other.id ||
-      pane.currentVisit.id !== other.currentVisit.id ||
-      pane.currentVisit.href !== other.currentVisit.href ||
-      pane.primaryWidthPx !== other.primaryWidthPx ||
-      pane.visibility !== other.visibility ||
-      pane.attachedSecondaryPaneId !== other.attachedSecondaryPaneId ||
-      pane.history.back.length !== other.history.back.length ||
-      pane.history.forward.length !== other.history.forward.length ||
-      !pane.history.back.every(
-        (visit, visitIndex) =>
-          visit.id === other.history.back[visitIndex]?.id &&
-          visit.href === other.history.back[visitIndex]?.href,
-      ) ||
-      !pane.history.forward.every(
-        (visit, visitIndex) =>
-          visit.id === other.history.forward[visitIndex]?.id &&
-          visit.href === other.history.forward[visitIndex]?.href,
-      )
-    ) {
-      return false;
-    }
-  }
-
-  const secondaryPaneIds = Object.keys(a.secondaryPanesById);
-  if (secondaryPaneIds.length !== Object.keys(b.secondaryPanesById).length) {
-    return false;
-  }
-  return secondaryPaneIds.every((secondaryPaneId) => {
-    const pane = a.secondaryPanesById[secondaryPaneId];
-    const other = b.secondaryPanesById[secondaryPaneId];
-    return (
-      pane &&
-      other &&
-      pane.id === other.id &&
-      pane.parentPrimaryPaneId === other.parentPrimaryPaneId &&
-      pane.groupId === other.groupId &&
-      pane.activeSurfaceId === other.activeSurfaceId &&
-      pane.widthPx === other.widthPx &&
-      pane.visibility === other.visibility
-    );
-  });
 }

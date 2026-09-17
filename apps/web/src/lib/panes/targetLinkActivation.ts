@@ -5,7 +5,7 @@ import {
   isWorkspaceSecondarySurfaceId,
   type WorkspaceSecondaryActivation,
 } from "@/lib/panes/paneSecondaryModel";
-import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { preloadPane } from "@/lib/panes/paneRenderRegistry";
 import type {
   WorkspaceTarget,
@@ -80,7 +80,7 @@ export function activateTargetLink(input: {
   if (
     !runtime ||
     !href ||
-    resolvePaneRoute(href).id === "unsupported" ||
+    resolvePaneRouteModel(href).id === "unsupported" ||
     input.event.defaultPrevented ||
     input.event.button !== 0 ||
     input.event.metaKey ||

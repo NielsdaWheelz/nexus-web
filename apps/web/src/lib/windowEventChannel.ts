@@ -10,11 +10,9 @@ export interface WindowEventChannel<T> {
 
 export function createWindowEventChannel<T>({
   eventName,
-  isTarget,
   cancelable,
 }: {
   readonly eventName: string;
-  readonly isTarget: (value: unknown) => value is T;
   readonly cancelable: boolean;
 }): WindowEventChannel<T> {
   function dispatch(target: T): boolean {
@@ -31,10 +29,8 @@ export function createWindowEventChannel<T>({
   ): void {
     useEffect(() => {
       function listener(event: Event) {
-        if (!(event instanceof CustomEvent) || !isTarget(event.detail)) {
-          return;
-        }
-        if (handler(event.detail) === true) {
+        if (!(event instanceof CustomEvent)) return;
+        if (handler((event as CustomEvent<T>).detail) === true) {
           event.preventDefault();
         }
       }

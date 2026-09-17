@@ -4,9 +4,8 @@ import { createWindowEventChannel } from "@/lib/windowEventChannel";
 
 export const PANE_SEARCH_REQUESTED_EVENT = "Pane.SearchRequested";
 
-const paneSearchRequestChannel = createWindowEventChannel({
+const paneSearchRequestChannel = createWindowEventChannel<null>({
   eventName: PANE_SEARCH_REQUESTED_EVENT,
-  isTarget: (detail): detail is null => detail === null,
   cancelable: true,
 });
 

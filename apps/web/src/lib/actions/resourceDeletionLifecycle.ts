@@ -5,14 +5,6 @@ import {
 } from "@/lib/workspace/schema";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 
-export type DeletedResourcePaneEffect =
-  | {
-      readonly kind: "Replace";
-      readonly paneId: string;
-      readonly href: string;
-    }
-  | { readonly kind: "Close"; readonly paneId: string };
-
 export interface DeletedResourceWorkspace {
   readonly state: WorkspaceState;
   readonly navigatePane: (
@@ -28,17 +20,20 @@ export interface DeletedResourceWorkspace {
 }
 
 /**
- * Plan the deterministic workspace settlement after a resource becomes
- * unreadable. The active deleted-resource pane adopts the owning collection;
- * duplicate inactive panes close. When deletion starts from an index or other
- * resource, that active pane stays put and every stale resource pane closes.
+ * Settle the workspace after a resource becomes unreadable. The active
+ * deleted-resource pane adopts the owning collection; duplicate inactive panes
+ * close. When deletion starts from an index or other resource, that active pane
+ * stays put and every stale resource pane closes.
  */
-export function planDeletedResourcePaneEffects(input: {
-  readonly state: WorkspaceState;
+export function settleDeletedResourcePanes(input: {
+  readonly workspace: DeletedResourceWorkspace;
   readonly deletedRef: CanonicalResourceRef;
   readonly fallbackHref: string;
-}): readonly DeletedResourcePaneEffect[] {
-  const matchingPaneIds = getWorkspacePrimaryPanes(input.state)
+}): void {
+  const state = input.workspace.state;
+  // Materialize the matching panes before acting: navigatePane/closePane
+  // dispatch into the store, so a live projection would shift under iteration.
+  const matchingPaneIds = getWorkspacePrimaryPanes(state)
     .filter((pane) => {
       const locator = resolvePaneRouteIdentity(
         pane.currentVisit.href,
@@ -48,45 +43,16 @@ export function planDeletedResourcePaneEffects(input: {
       );
     })
     .map((pane) => pane.id);
-  if (matchingPaneIds.length === 0) return [];
 
-  const activeMatches = matchingPaneIds.includes(
-    input.state.activePrimaryPaneId,
-  );
-  return matchingPaneIds.map((paneId) =>
-    activeMatches && paneId === input.state.activePrimaryPaneId
-      ? {
-          kind: "Replace" as const,
-          paneId,
-          href: input.fallbackHref,
-        }
-      : { kind: "Close" as const, paneId },
-  );
-}
-
-/** Execute the pure settlement plan against the latest workspace snapshot. */
-export function settleDeletedResourcePanes(input: {
-  readonly workspace: DeletedResourceWorkspace;
-  readonly deletedRef: CanonicalResourceRef;
-  readonly fallbackHref: string;
-}): void {
-  const effects = planDeletedResourcePaneEffects({
-    state: input.workspace.state,
-    deletedRef: input.deletedRef,
-    fallbackHref: input.fallbackHref,
-  });
-  for (const effect of effects) {
-    switch (effect.kind) {
-      case "Replace":
-        input.workspace.navigatePane(effect.paneId, effect.href, {
-          replace: true,
-          activate: effect.paneId === input.workspace.state.activePrimaryPaneId,
-          modality: "Programmatic",
-        });
-        break;
-      case "Close":
-        input.workspace.closePane(effect.paneId);
-        break;
+  for (const paneId of matchingPaneIds) {
+    if (paneId === state.activePrimaryPaneId) {
+      input.workspace.navigatePane(paneId, input.fallbackHref, {
+        replace: true,
+        activate: true,
+        modality: "Programmatic",
+      });
+    } else {
+      input.workspace.closePane(paneId);
     }
   }
 }

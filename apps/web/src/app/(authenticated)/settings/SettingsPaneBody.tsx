@@ -2,7 +2,8 @@
 
 import CollectionView from "@/components/collections/CollectionView";
 import { presentSettingsRow } from "@/lib/collections/presenters/settings";
-import { isAndroidShellRestrictedHref } from "@/lib/androidShell";
+import { isAndroidShellRestrictedRouteId } from "@/lib/androidShell";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 
@@ -51,7 +52,7 @@ export default function SettingsPaneBody() {
     if (!androidShell) {
       return true;
     }
-    return !isAndroidShellRestrictedHref(href);
+    return !isAndroidShellRestrictedRouteId(resolvePaneRouteModel(href).id);
   });
 
   return (

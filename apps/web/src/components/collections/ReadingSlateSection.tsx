@@ -23,7 +23,7 @@ import {
   type ReadingSlateState,
 } from "@/lib/resonance/useReadingSlate";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
-import { useOptionalPaneChromeFocusReturn } from "@/lib/workspace/mobileChrome";
+import { usePaneChromeFocusReturn } from "@/lib/workspace/mobileChrome";
 import { findPaneChromeFocusTarget } from "@/lib/workspace/paneDom";
 import { assertNever } from "@/lib/assertNever";
 import styles from "./ReadingSlateSection.module.css";
@@ -142,7 +142,7 @@ export default function ReadingSlateSection({
   const sectionId = `reading-slate-${reactId.replaceAll(":", "")}`;
   const controller = useReadingSlate({ destination, isActive, accept });
   const isMobile = useIsMobileViewport();
-  const { focus: returnPaneChromeFocus } = useOptionalPaneChromeFocusReturn();
+  const { focus: returnPaneChromeFocus } = usePaneChromeFocusReturn();
   const { state } = controller;
   const returnReadyRootRef = useRef<HTMLDivElement>(null);
   usePaneReturnDescendantReady({
