@@ -27,7 +27,6 @@ import { useStringIdSet } from "@/lib/useStringIdSet";
 import EpisodeControls from "./EpisodeControls";
 import {
   EPISODE_WIDE_COMMAND_LABELS,
-  deriveEpisodeState,
   decodeEpisodeTimingFacts,
   shouldPollTranscriptProvisioningForEpisode,
   type PodcastEpisodeMedia,
@@ -118,7 +117,7 @@ export default function PodcastEpisodeList({
       processing_status: requireDocumentProcessingStatus(
         episode.processing_status,
       ),
-      episode_state: deriveEpisodeState(episode),
+      episode_state: episode.episode_state,
       canonical_source_url: episode.canonical_source_url,
       offline_download_eligible: episode.offline_download_eligible,
       contributors: episode.contributors,

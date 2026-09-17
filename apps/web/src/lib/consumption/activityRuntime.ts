@@ -22,10 +22,6 @@ import {
   type ActivityUploadOutcome,
   type ClosedActivitySpan,
 } from "./activityContract";
-import {
-  emitActivityDiagnostic,
-  type ActivityDiagnosticEmitter,
-} from "./activityDiagnostics";
 
 const ACTIVITY_BATCH_MAX_SPANS = 120;
 const ACTIVITY_BATCH_MAX_BYTES = 48_000;
@@ -92,7 +88,6 @@ interface RuntimeOptions {
     signal?: AbortSignal,
   ) => Promise<ActivityUploadOutcome>;
   readonly wait?: (delayMs: number) => Promise<void>;
-  readonly activityDiagnostic?: ActivityDiagnosticEmitter;
 }
 
 const INITIAL_SNAPSHOT: ActivityRuntimeSnapshot = {
@@ -277,7 +272,6 @@ class BrowserActivityRuntime implements ActivityRuntime {
     signal?: AbortSignal,
   ) => Promise<ActivityUploadOutcome>;
   private readonly wait: (delayMs: number) => Promise<void>;
-  private readonly activityDiagnostic: ActivityDiagnosticEmitter;
   private readonly listeners = new Set<() => void>();
   private current = INITIAL_SNAPSHOT;
   private accountId: string | undefined;
@@ -306,8 +300,6 @@ class BrowserActivityRuntime implements ActivityRuntime {
     this.now = options.now ?? Date.now;
     this.upload = options.upload ?? postActivityBatch;
     this.wait = options.wait ?? waitFor;
-    this.activityDiagnostic =
-      options.activityDiagnostic ?? emitActivityDiagnostic;
   }
 
   async open(accountId: string): Promise<void> {
@@ -357,13 +349,6 @@ class BrowserActivityRuntime implements ActivityRuntime {
       );
       await this.refresh(accountId);
       if (outcome === "Enqueued") {
-        this.activityDiagnostic({
-          event: "activity_span_enqueued",
-          platform: "Web",
-          modality: span.modality,
-          count: 1,
-          queueAgeMs: 0,
-        });
         void this.drain("Enqueue");
       }
     } catch {
@@ -639,40 +624,14 @@ class BrowserActivityRuntime implements ActivityRuntime {
     batch: ActivityOutboxBatch,
     signal: AbortSignal,
   ): Promise<ActivityUploadOutcome> {
-    const startedAt = this.now();
-    const queueAgeMs = Math.max(
-      0,
-      startedAt - Math.min(...batch.rows.map((row) => row.createdAt)),
-    );
-    this.activityDiagnostic({
-      event: "activity_upload_attempted",
-      platform: "Web",
-      modality: batch.modality,
-      count: batch.rows.length,
-      queueAgeMs,
-    });
     const outcome = await this.upload(body, signal);
-    const latencyMs = Math.max(0, this.now() - startedAt);
-    this.activityDiagnostic(
-      outcome.kind === "Accepted"
-        ? {
-            event: "activity_upload_accepted",
-            platform: "Web",
-            modality: batch.modality,
-            count: batch.rows.length,
-            queueAgeMs,
-            latencyMs,
-          }
-        : {
-            event: "activity_upload_rejected",
-            platform: "Web",
-            modality: batch.modality,
-            count: batch.rows.length,
-            queueAgeMs,
-            latencyMs,
-            reason: outcome.kind,
-          },
-    );
+    if (outcome.kind !== "Accepted") {
+      console.warn("consumption_activity_upload_rejected", {
+        modality: batch.modality,
+        count: batch.rows.length,
+        reason: outcome.kind,
+      });
+    }
     return outcome;
   }
 

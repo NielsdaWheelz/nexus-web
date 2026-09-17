@@ -344,20 +344,19 @@ def _atlas_dedupe_key(user_id: UUID) -> str:
     return f"atlas_project:{user_id}"
 
 
-def try_enqueue_atlas_project(db: Session, *, user_id: UUID, force: bool = False) -> bool:
+def try_enqueue_atlas_project(db: Session, *, user_id: UUID) -> bool:
     """Soft-enqueue one projection for ``user_id``; never breaks the host write.
 
     Rides the caller's transaction (flush-only) behind a SAVEPOINT so a queue
-    defect cannot fail an ingest/promote commit. When ``force`` is False, only
-    enqueues once the unpositioned backlog exceeds the trigger threshold (§S1.5),
-    so a single ingest does not re-project the whole map. Returns True only when
+    defect cannot fail an ingest/promote commit. Only enqueues once the
+    unpositioned backlog exceeds the trigger threshold, so a single ingest does
+    not re-project the whole map. Returns True only when
     a new job row was inserted.
     """
     try:
         with db.begin_nested():
-            if not force:
-                if count_unpositioned(db, user_id) <= ATLAS_REPROJECT_TRIGGER_MIN_UNPOSITIONED:
-                    return False
+            if count_unpositioned(db, user_id) <= ATLAS_REPROJECT_TRIGGER_MIN_UNPOSITIONED:
+                return False
             dedupe_key = _atlas_dedupe_key(user_id)
             db.execute(
                 text(

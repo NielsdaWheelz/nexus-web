@@ -1,8 +1,7 @@
 /**
  * Episode + transcript types, constants, and pure-state helpers shared by
- * the podcast-detail pane. Owns the episode-state derivation
- * (unplayed/in_progress/played), transcript request/forecast/batch payload
- * shapes, and the polling / can-request / progress / summary helpers.
+ * the podcast-detail pane. Owns the transcript request/forecast/batch
+ * payload shapes and the polling / can-request / progress / summary helpers.
  */
 
 import { decodePresence, type Presence } from "@/lib/api/presence";
@@ -59,7 +58,7 @@ export const EPISODE_WIDE_COMMAND_LABELS = {
   { readonly transcript: string; readonly markPlayed: string }
 >;
 
-export interface PodcastEpisodeListPlayerDescriptor {
+interface PodcastEpisodeListPlayerDescriptor {
   kind: "FooterAudio";
   mediaId: string;
 }
@@ -294,27 +293,7 @@ export interface TranscriptRequestForecastState {
   source: "forecast" | "request";
 }
 
-export function deriveEpisodeState(episode: PodcastEpisodeMedia): EpisodeState {
-  switch (episode.episode_state) {
-    case "unplayed":
-    case "in_progress":
-    case "played":
-      return episode.episode_state;
-    default: {
-      const invalid: never = episode.episode_state;
-      throw new TypeError(`Unsupported episode_state: ${String(invalid)}`);
-    }
-  }
-}
-
-export function episodeMatchesFilter(
-  episodeState: EpisodeState,
-  filter: EpisodeStateFilter,
-): boolean {
-  return filter === "all" || episodeState === filter;
-}
-
-export interface EpisodeActivityFacts {
+interface EpisodeActivityFacts {
   totalMinutes: Presence<PositiveMinutes>;
   fraction: Presence<ProgressFraction>;
   remainingMinutes: Presence<PositiveMinutes>;
@@ -379,20 +358,6 @@ export function shouldPollTranscriptProvisioningForEpisode(
   episode: PodcastEpisodeMedia,
 ): boolean {
   return shouldPollTranscriptProvisioning(episode.transcript_state);
-}
-
-export function applyTranscriptResponseToEpisode(
-  episode: PodcastEpisodeMedia,
-  response: Pick<
-    TranscriptRequestResult,
-    "transcript_state" | "transcript_coverage"
-  >,
-): PodcastEpisodeMedia {
-  return {
-    ...episode,
-    transcript_state: response.transcript_state,
-    transcript_coverage: response.transcript_coverage,
-  };
 }
 
 export function toTranscriptForecastState(

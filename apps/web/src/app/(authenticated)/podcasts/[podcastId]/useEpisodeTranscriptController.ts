@@ -13,7 +13,6 @@ import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import { useStringIdSet } from "@/lib/useStringIdSet";
 import {
   TRANSCRIPT_PROVISIONING_POLL_INTERVAL_MS,
-  applyTranscriptResponseToEpisode,
   shouldPollTranscriptProvisioningForEpisode,
   toTranscriptForecastState,
   type PodcastEpisodeMedia,
@@ -317,7 +316,11 @@ export function useEpisodeTranscriptController({
         setEpisodes((prev) =>
           prev.map((episode) =>
             episode.id === mediaId
-              ? applyTranscriptResponseToEpisode(episode, payload)
+              ? {
+                  ...episode,
+                  transcript_state: payload.transcript_state,
+                  transcript_coverage: payload.transcript_coverage,
+                }
               : episode,
           ),
         );

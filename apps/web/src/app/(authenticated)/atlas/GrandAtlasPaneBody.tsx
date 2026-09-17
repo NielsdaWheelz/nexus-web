@@ -22,6 +22,7 @@ import styles from "./atlas.module.css";
 import AtlasConcordancePeerLoader from "./AtlasConcordancePeerLoader";
 import {
   ALTITUDE_SPAN,
+  HASH_NORMALIZER,
   HORIZON_RIM_MARGIN,
   ZENITH_MARGIN,
   celestialPosition,
@@ -99,7 +100,6 @@ function atlasReadingsErrorMessage(error: unknown): FeedbackContent {
 
 const IDLE_ROTATION_RAD_PER_SEC = (0.5 * Math.PI) / 180;
 const STAR_HIT_RADIUS_PX = 22;
-const HASH_NORMALIZER = 0xffffffff;
 /** Readings stars glow 1.5× brighter so they stand apart from corpus stars. */
 const READINGS_GLOW_BOOST = 1.5;
 

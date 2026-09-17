@@ -33,18 +33,6 @@
   font-size: var(--text-sm);
 }
 
-.worksFooter {
-  margin-top: var(--space-4);
-}
-
-.worksError {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
-  margin-top: var(--space-4);
-}
-
 /* Rename dialog */
 .renameForm {
   display: flex;

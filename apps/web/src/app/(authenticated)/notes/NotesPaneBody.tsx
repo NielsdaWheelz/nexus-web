@@ -13,7 +13,11 @@ import CollectionView from "@/components/collections/CollectionView";
 import SelectField from "@/components/ui/SelectField";
 import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { notePagesResource } from "@/lib/api/resource";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import {
+  isApiError,
+  isInvalidViewError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -57,12 +61,6 @@ const EMPTY_NOTE_PAGES: readonly NotePageSummary[] = [];
 interface CommittedPagesView {
   readonly view: UpdatedTitleIndexView;
   readonly pages: readonly NotePageSummary[];
-}
-
-// The one code that turns a request failure into the "Invalid pages view"
-// terminal state: the backend rejects a view it does not advertise with it.
-function isInvalidViewError(error: unknown): boolean {
-  return isApiError(error) && error.code === "E_INVALID_REQUEST";
 }
 
 export type NotesOperation = "Load" | "CreatePage" | "OpenToday";

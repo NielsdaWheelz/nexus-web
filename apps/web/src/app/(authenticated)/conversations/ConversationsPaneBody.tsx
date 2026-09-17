@@ -9,13 +9,12 @@ import {
   useRef,
   useState,
 } from "react";
-import { isApiError, type ApiError } from "@/lib/api/client";
+import { isInvalidViewError, type ApiError } from "@/lib/api/client";
 import {
-  type CollectionCursor,
   type CollectionPage,
-  type CollectionRevision,
+  NO_CURSOR,
+  ZERO_REVISION,
 } from "@/lib/api/collectionPage";
-import type { Presence } from "@/lib/api/presence";
 import { conversationsInitialResource } from "@/lib/api/resource";
 import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { useResource } from "@/lib/api/useResource";
@@ -70,8 +69,6 @@ interface CommittedChatsView extends ConversationsPaneSeed {
 const CONVERSATIONS_VISIT_DATA = definePaneVisitDataKey<CommittedChatsView>(
   "Conversations.Pagination",
 );
-const NO_CURSOR: Presence<CollectionCursor> = { kind: "Absent" };
-const ZERO_REVISION = 0 as CollectionRevision;
 // Module-level so the published descriptor keeps one identity: the chrome
 // republishes whenever an action's icon element changes.
 const NEW_CHAT_ACTIONS: readonly PaneHeaderAction[] = [
@@ -113,15 +110,6 @@ function seedFromPage(
     nextCursor: page.nextCursor,
     exhaustion: page.nextCursor.kind === "Absent" ? "Complete" : "Partial",
   };
-}
-
-// The one code that turns a first-page failure into the "Invalid chats view"
-// terminal state: the backend rejects a bad view/cursor with these codes.
-function isInvalidViewError(error: unknown): boolean {
-  return (
-    isApiError(error) &&
-    (error.code === "E_INVALID_REQUEST" || error.code === "E_INVALID_CURSOR")
-  );
 }
 
 export default function ConversationsPaneBody() {

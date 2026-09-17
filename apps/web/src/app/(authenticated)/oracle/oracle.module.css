@@ -105,12 +105,6 @@
   cursor: not-allowed;
 }
 
-.askError {
-  font-family: var(--font-oracle-display);
-  color: var(--oracle-maroon);
-  font-style: italic;
-}
-
 .askCount {
   font-family: var(--font-oracle-display);
   font-style: italic;
@@ -315,18 +309,6 @@
   margin: 0 auto;
   line-height: 1.6;
   text-wrap: pretty;
-}
-
-.argumentPending {
-  color: var(--oracle-marginalia-fg);
-}
-
-.readingLabel {
-  font-family: var(--font-oracle-display);
-  text-transform: uppercase;
-  letter-spacing: 0.25em;
-  font-size: 0.75rem;
-  color: var(--oracle-marginalia-fg);
 }
 
 .readingQuestion {
@@ -563,38 +545,6 @@
   background: rgba(107, 42, 42, 0.15);
   padding: 1rem 1.25rem;
   font-family: var(--font-oracle-display);
-}
-
-.oracleFeedback {
-  --color-border: var(--oracle-maroon);
-  --color-error: var(--oracle-maroon);
-  --color-text: var(--oracle-maroon);
-  --color-text-secondary: var(--oracle-fg-muted);
-  --color-text-muted: var(--oracle-marginalia-fg);
-  --color-bg-secondary: transparent;
-  border-radius: 0;
-  font-family: var(--font-oracle-display);
-}
-
-.errorPanel .oracleFeedback {
-  border: none;
-  background: transparent;
-  padding: 0;
-}
-
-.errorPanel .oracleFeedback + .oracleFeedback {
-  margin-top: 0.75rem;
-}
-
-.errorLabel {
-  color: var(--oracle-maroon);
-  font-style: italic;
-  margin-bottom: 0.25rem;
-}
-
-.errorMessage {
-  color: var(--oracle-fg-muted);
-  margin-top: 0.25rem;
 }
 
 .errorAction {

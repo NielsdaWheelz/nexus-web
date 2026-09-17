@@ -109,12 +109,6 @@ const EPISODES_PAGE_SIZE = 100;
 type PodcastDetailOperation =
   | "Load"
   | "Backfill"
-  | "RetryProcessing"
-  | "RefreshSource"
-  | "RetryMetadata"
-  | "DeleteEpisode"
-  | "MarkPlayed"
-  | "ResetProgress"
   | "LoadNotes"
   | "MarkAllPlayed"
   | "PaneRefresh"
@@ -126,18 +120,6 @@ function podcastDetailErrorTitle(operation: PodcastDetailOperation): string {
       return "Podcast details couldn’t be loaded";
     case "Backfill":
       return "Podcast backlog retry wasn’t started";
-    case "RetryProcessing":
-      return "Episode processing retry wasn’t started";
-    case "RefreshSource":
-      return "Episode source refresh wasn’t started";
-    case "RetryMetadata":
-      return "Episode metadata enrichment wasn’t started";
-    case "DeleteEpisode":
-      return "Episode wasn’t removed";
-    case "MarkPlayed":
-      return "Episode state wasn’t changed";
-    case "ResetProgress":
-      return "Episode progress wasn’t reset";
     case "LoadNotes":
       return "Episode notes couldn’t be loaded";
     case "MarkAllPlayed":
@@ -184,36 +166,6 @@ function podcastDetailErrorMessage(
         tone: "Danger",
         title,
         message: "This episode is still preparing. Wait for it to settle, then retry.",
-        requestId,
-      };
-    case "E_RETRY_INVALID_STATE":
-      if (
-        operation !== "RetryProcessing" &&
-        operation !== "RefreshSource" &&
-        operation !== "RetryMetadata"
-      ) {
-        throw error;
-      }
-      return {
-        tone: "Danger",
-        title,
-        message:
-          operation === "RetryMetadata"
-            ? "Metadata can be retried only after this episode is ready to read."
-            : "The source state changed. Review its current status before trying again.",
-        requestId,
-      };
-    case "E_RETRY_NOT_ALLOWED":
-      if (operation !== "RetryProcessing" && operation !== "RefreshSource") {
-        throw error;
-      }
-      return {
-        tone: "Danger",
-        title,
-        message:
-          operation === "RetryProcessing"
-            ? "This source can’t be retried. Add a new source instead."
-            : "This source can’t be refreshed. Add a new source instead.",
         requestId,
       };
     case "E_FORBIDDEN":

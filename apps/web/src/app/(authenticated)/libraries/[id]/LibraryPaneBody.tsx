@@ -15,6 +15,7 @@ import {
   ApiError,
   apiFetch,
   isApiError,
+  isInvalidViewError,
 } from "@/lib/api/client";
 import { present, type Presence } from "@/lib/api/presence";
 import {
@@ -22,6 +23,8 @@ import {
   type CollectionCursor,
   type CollectionPage,
   type CollectionRevision,
+  NO_CURSOR,
+  ZERO_REVISION,
 } from "@/lib/api/collectionPage";
 import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -179,7 +182,7 @@ interface PendingLibraryRevalidation {
   readonly removeAbortListener: () => void;
 }
 
-type EntryMutationEffect = "SafePatch" | "SafeRebase" | "Unknown";
+type EntryMutationEffect = "SafeRebase" | "Unknown";
 
 interface LibraryEntryPageResult {
   requestKey: string;
@@ -235,29 +238,19 @@ type LibraryEntriesState =
 const LIBRARY_VISIT_DATA =
   definePaneVisitDataKey<LibrarySnapshot>("Library.Entries");
 const EMPTY_LIBRARY_ENTRIES: LibraryEntry[] = [];
-const NO_COLLECTION_CURSOR: Presence<CollectionCursor> = { kind: "Absent" };
-const ZERO_COLLECTION_REVISION = 0 as CollectionRevision;
 
 function libraryTargetId(entry: LibraryEntry): string {
   return entry.kind === "media" ? entry.media.id : entry.podcast.id;
 }
 
-function libraryRowKey(
-  entry: LibraryEntry,
-  _isDefaultLibrary: boolean,
-): string {
-  return libraryTargetId(entry);
-}
-
 function appendUniqueEntries(
   current: LibraryEntry[],
   next: readonly LibraryEntry[],
-  keyOf: (entry: LibraryEntry) => string = libraryTargetId,
 ): LibraryEntry[] {
-  const seen = new Set(current.map(keyOf));
+  const seen = new Set(current.map(libraryTargetId));
   const merged = [...current];
   for (const entry of next) {
-    const key = keyOf(entry);
+    const key = libraryTargetId(entry);
     if (seen.has(key)) continue;
     seen.add(key);
     merged.push(entry);
@@ -303,15 +296,6 @@ function libraryEntryFilterFields(entry: LibraryEntry): readonly string[] {
 function viewIsConsumptionSensitive(view: LibraryEntryView): boolean {
   return (
     view.projection.kind === "InProgress" || completionOf(view) === "unfinished"
-  );
-}
-
-// The one code that turns an entry fetch error into the "Invalid library view"
-// terminal state: the backend rejects a bad request/cursor with these codes.
-function isInvalidViewError(error: unknown): boolean {
-  return (
-    isApiError(error) &&
-    (error.code === "E_INVALID_REQUEST" || error.code === "E_INVALID_CURSOR")
   );
 }
 
@@ -423,7 +407,7 @@ export default function LibraryPaneBody() {
         : [...controller.entries.entries],
     [controller],
   );
-  const entryCursor = controller?.entries.nextCursor ?? NO_COLLECTION_CURSOR;
+  const entryCursor = controller?.entries.nextCursor ?? NO_CURSOR;
   const setLibrary: Dispatch<SetStateAction<Library | null>> = useCallback(
     (update) => {
       setController((current) => {
@@ -947,11 +931,6 @@ export default function LibraryPaneBody() {
         return;
       }
       if (effect === "SafeRebase") {
-        clearAllVisitData();
-        return;
-      }
-      if (effect === "SafePatch" && current.entries.exhaustion === "Complete") {
-        committedSnapshotRef.current = null;
         clearAllVisitData();
         return;
       }
@@ -1520,7 +1499,6 @@ export default function LibraryPaneBody() {
       const merged = appendUniqueEntries(
         [...current.entries.entries],
         page.items,
-        (entry) => libraryRowKey(entry, current.library.isDefault),
       );
       const next: LibrarySnapshot = {
         ...current,
@@ -1545,12 +1523,12 @@ export default function LibraryPaneBody() {
     chainKey: [
       id,
       committedViewKey ?? "uncommitted",
-      controller?.entries.collectionRevision ?? ZERO_COLLECTION_REVISION,
+      controller?.entries.collectionRevision ?? ZERO_REVISION,
       chainEpoch,
     ].join(":"),
     cursor: entryCursor,
     collectionRevision:
-      controller?.entries.collectionRevision ?? ZERO_COLLECTION_REVISION,
+      controller?.entries.collectionRevision ?? ZERO_REVISION,
     itemCount: entries.length,
     loadPage: loadEntryPage,
     commitPage: commitEntryPage,
@@ -2191,7 +2169,7 @@ export default function LibraryPaneBody() {
       );
       return {
         ...row,
-        id: libraryRowKey(item, isDefaultLibrary),
+        id: libraryTargetId(item),
         context: showAdded ? addedContext(item) : row.context,
       };
     }
@@ -2200,7 +2178,7 @@ export default function LibraryPaneBody() {
     });
     return {
       ...row,
-      id: libraryRowKey(item, isDefaultLibrary),
+      id: libraryTargetId(item),
       context: showAdded ? addedContext(item) : row.context,
     };
   };
@@ -2323,7 +2301,7 @@ export default function LibraryPaneBody() {
               onReorder: (nextRows) => {
                 const byEntryId = new Map(
                   filteredEntries.map((entry) => [
-                    libraryRowKey(entry, isDefaultLibrary),
+                    libraryTargetId(entry),
                     entry,
                   ]),
                 );
