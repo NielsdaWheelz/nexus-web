@@ -19,9 +19,8 @@ written: `source_success`
 
 `operator_repair` has no producer, at this revision or at `origin/main`: repair
 requeues the *existing* dead job, which keeps the reason its enqueue wrote, so
-no repair path has ever minted a payload with this reason. at discovery, the only other references were a now-deleted fixture and the
-wire documentation in
-`docs/cutovers/media-pipeline-reliability-hard-cutover.md:442`.
+no repair path has ever minted a payload with this reason. at discovery, the
+only other reference was a now-deleted fixture.
 
 This surfaced while reverting an undirected `mark_content_index_pending(...,
 reason="operator_repair")` write out of `repair_dead_media_reindex` — that write

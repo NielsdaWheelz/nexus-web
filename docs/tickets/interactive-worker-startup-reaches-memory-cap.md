@@ -61,7 +61,7 @@ peaked at 185.289 mib under its revised 320 mib cap, with no observed limit,
 oom, swap or restart events during deployment. the owned codex qualifier
 completed three real turns on the separate credential host. that does not prove
 representative interactive-worker execution; keep this ticket open for the
-ordinary tool-using chat check. see the [release evidence](../cutovers/restoration-release-2026-09-15.md).
+ordinary tool-using chat check.
 
 ## memory successor
 

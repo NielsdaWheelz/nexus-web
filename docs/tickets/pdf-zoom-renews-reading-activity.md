@@ -9,8 +9,7 @@ reader viewport eligible for reading time without a page or prose gesture.
 paths are under `apps/web/src/app/(authenticated)/media/[id]/` and
 `apps/web/src/components/`, respectively.
 
-prerequisite: retain ordinary page-turn intent, explicitly supported by
-`docs/cutovers/reader-progress-continuity-hard-cutover.md:387`. separate zoom's
+prerequisite: retain ordinary page-turn intent. separate zoom's
 layout change from page-turn input in the existing control owner. do not add a
 second activity recorder or infer reading from resulting programmatic movement.
 
