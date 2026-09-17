@@ -115,47 +115,12 @@ function compareEvents(a: Event, b: Event): number {
 // =============================================================================
 
 /**
- * Check if a value is a valid non-negative integer.
- */
-function isNonNegativeInteger(value: unknown): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isInteger(value) &&
-    value >= 0 &&
-    Number.isFinite(value)
-  );
-}
-
-/**
- * Check if a highlight is valid given the text length.
- * Returns true if valid, false if should be dropped.
+ * Persisted offsets measured against the freshly built canonical text: a
+ * highlight that no longer fits the rendered document is dropped rather than
+ * painted at a wrong location.
  */
 function isValidHighlight(h: NormalizedHighlight, textLen: number): boolean {
-  // Check start is non-negative integer
-  if (!isNonNegativeInteger(h.start)) {
-    return false;
-  }
-  // Check end is integer
-  if (typeof h.end !== "number" || !Number.isInteger(h.end)) {
-    return false;
-  }
-  // Check start < end (non-empty range)
-  if (h.end <= h.start) {
-    return false;
-  }
-  // Check end within bounds
-  if (h.end > textLen) {
-    return false;
-  }
-  // Check created_at_ms is not NaN
-  if (typeof h.created_at_ms !== "number" || Number.isNaN(h.created_at_ms)) {
-    return false;
-  }
-  // Check color is in palette
-  if (!HIGHLIGHT_COLORS.includes(h.color)) {
-    return false;
-  }
-  return true;
+  return h.start >= 0 && h.end > h.start && h.end <= textLen;
 }
 
 // =============================================================================
@@ -191,15 +156,6 @@ export function segmentHighlights(
   textLen: number,
   highlights: NormalizedHighlight[]
 ): SegmentResult {
-  // Validate textLen
-  if (!isNonNegativeInteger(textLen)) {
-    // Return empty result with all highlights dropped if textLen is invalid
-    return {
-      segments: [],
-      droppedIds: highlights.map((h) => h.id),
-    };
-  }
-
   // Partition valid and invalid highlights
   const validHighlights: NormalizedHighlight[] = [];
   const droppedIds: string[] = [];

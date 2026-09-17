@@ -35,18 +35,6 @@ export function requestHighlightActionIntent(
   return handoff.request(intent);
 }
 
-export function useHighlightActionIntentOwner(
-  ref: CanonicalResourceRef | null,
-  accept: (intent: HighlightActionIntent) => boolean,
-): void {
-  useEffect(() => {
-    if (ref === null) return;
-    return handoff.subscribe(ref, (intent) =>
-      accept(intent) ? MOUNTED_ACTION_ACCEPTED : MOUNTED_ACTION_DEFERRED,
-    );
-  }, [accept, ref]);
-}
-
 export function notifyHighlightActionIntentOwnerReady(
   ref: CanonicalResourceRef,
 ): void {

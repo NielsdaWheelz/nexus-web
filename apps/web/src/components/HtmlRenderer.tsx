@@ -78,7 +78,6 @@ function projectHtmlHeadingLevels(
  * const { html } = applyHighlightsToHtml(
  *   fragment.html_sanitized,
  *   fragment.canonical_text,
- *   fragment.id,
  *   highlights
  * );
  * <HtmlRenderer htmlSanitized={html} />

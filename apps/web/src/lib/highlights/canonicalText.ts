@@ -2,29 +2,17 @@
  * Canonical-text whitespace primitives and raw-codepoint <-> canonical-
  * codepoint offset mapping.
  *
- * The DOM walker in canonicalCursor.ts uses normalizeWhitespace + isWsCp to
- * collapse runs of Unicode whitespace into single ASCII spaces, matching
- * the backend canonicalize.py. The offset conversion functions invert that
- * mapping so that highlight offsets stored in canonical space can be
- * applied back to the raw DOM text.
+ * The DOM walker in domTextCursor.ts uses isWsCp to collapse runs of
+ * Unicode whitespace into single ASCII spaces, matching the backend
+ * canonicalize.py. The offset conversion functions invert that mapping so
+ * that highlight offsets stored in canonical space can be applied back to
+ * the raw DOM text.
  */
-
-/**
- * Normalize whitespace in text: map all Unicode whitespace (including nbsp)
- * to space, collapse consecutive spaces to single space.
- *
- * Note: This DOES NOT trim — trimming happens at the final string level.
- */
-export function normalizeWhitespace(text: string): string {
-  if (!text) return "";
-  // Python's \s includes U+001C..U+001F and U+0085; JavaScript's \s does not.
-  // to match backend canonicalize.py exactly.
-  return text.replace(/[\s -]+/g, " ");
-}
 
 /**
  * Test whether a codepoint is whitespace (including non-breaking space).
- * Must match the regex used in normalizeWhitespace: /[\s ]+/g
+ * Python's \s includes U+001C..U+001F and U+0085; JavaScript's \s does not,
+ * so the class is spelled out to match the backend canonicalize.py exactly.
  */
 export function isWsCp(cp: string): boolean {
   return /[\s -]/.test(cp);
@@ -36,7 +24,7 @@ export function isWsCp(cp: string): boolean {
  * mapped range.
  *
  * This walks the raw text character-by-character, simulating the same
- * whitespace collapsing that normalizeWhitespace performs, so that
+ * whitespace collapsing the canonical text performs, so that
  * internal runs of whitespace (e.g. "Hello   world" → "Hello world")
  * are correctly accounted for — not just leading whitespace.
  *

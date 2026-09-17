@@ -133,10 +133,6 @@ export class OfflineReaderSource implements ReaderDocumentSource {
       expiresAtMs: null,
     };
   }
-
-  resolveAsset(ref: string): string {
-    return siblingEntryUrl(this.opened.readerUrl, ref);
-  }
 }
 
 export class OfflineReaderProgressPort implements ReaderProgressPort {

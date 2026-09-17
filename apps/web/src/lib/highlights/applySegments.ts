@@ -387,14 +387,12 @@ function applySegmentsToDom(
  *
  * @param htmlSanitized - The sanitized HTML from the fragment
  * @param canonicalText - The canonical text from the fragment
- * @param fragmentId - The fragment ID (for logging)
  * @param highlights - The highlights to render
  * @returns The result with transformed HTML
  */
 export function applyHighlightsToHtml(
   htmlSanitized: string,
   canonicalText: string,
-  fragmentId: string,
   highlights: HighlightInput[]
 ): ApplyHighlightsResult {
   // If no highlights, return original HTML
@@ -415,10 +413,6 @@ export function applyHighlightsToHtml(
   const root = doc.getElementById("__highlight_root__");
 
   if (!root) {
-    console.warn("highlight_render_failed", {
-      fragmentId,
-      reason: "Failed to parse HTML",
-    });
     return {
       html: htmlSanitized,
       failedIds: highlights.map((h) => h.id),
@@ -428,11 +422,7 @@ export function applyHighlightsToHtml(
 
   // Build canonical cursor and validate.
   const cursorResult = buildCanonicalCursor(root);
-  const validationPassed = validateCanonicalText(
-    cursorResult,
-    canonicalText,
-    fragmentId
-  );
+  const validationPassed = validateCanonicalText(cursorResult, canonicalText);
 
   if (!validationPassed) {
     // Abort highlight rendering, return original HTML
@@ -460,17 +450,6 @@ export function applyHighlightsToHtml(
       .filter((h) => !renderedIds.has(h.id) && !droppedIds.includes(h.id))
       .map((h) => h.id),
   ];
-
-  // Log any failed highlights
-  for (const id of failedIds) {
-    if (!droppedIds.includes(id)) {
-      console.warn("highlight_render_failed", {
-        highlightId: id,
-        fragmentId,
-        reason: "Could not apply to DOM",
-      });
-    }
-  }
 
   // Serialize back to HTML
   const html = root.innerHTML;

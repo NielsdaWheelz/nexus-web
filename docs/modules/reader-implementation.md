@@ -310,7 +310,7 @@ skins.
   Evidence, so composer-written notes appear there with no extra
   wiring.
 
-the `n` chord is reader-local: `useHighlightNoteChord` fires on bare `n`
+the `n` chord is reader-local: `useReaderKeyChord` fires on bare `n`
 (no modifiers), guarded by `isEditableTarget`, dispatched where the selection
 state lives (`MediaPaneBody` and `PdfReader`). it is deliberately not a
 keybindings-registry entry — that registry is app-global and cannot capture
@@ -551,7 +551,7 @@ separate from source-authored apparatus.
 
 - `readerProfileSync.ts` is the one pure reducer: strict wire decode, per-field
   patch merge/equality, and the `acknowledged`/`local`
-  (`Clean | Deferred | Saving | SaveFailed | Forbidden`) state machine.
+  (`Clean | Deferred | Saving | SaveFailed`) state machine.
   `useReaderProfile.ts` is the one impure coordinator: timers, fetches, the
   attempt watchdog, lifecycle listeners, and revalidation generations.
   Together they are the only client write owner — there is no other save
@@ -567,24 +567,23 @@ separate from source-authored apparatus.
   converts it to `SaveFailed(AttemptDeadlineExceeded)`, ignoring late
   settlement. Restore never auto-starts a replacement PATCH.
 - hidden `visibilitychange`, `pagehide`, and provider teardown flush deferred
-  or `SaveFailed` work only when no logical PATCH is in flight; `Forbidden`
-  is never promoted, and `beforeunload`/`unload` are not used.
+  or `SaveFailed` work only when no logical PATCH is in flight, and
+  `beforeunload`/`unload` are not used.
 - clean-tab resume (`visibilitychange`, `focus`, `pageshow`, `online`)
   coalesces to one no-store GET, only from `Clean`, and adopts the response
   only if an `intentGeneration` captured at request time is still
   unchanged — any intervening local intent outranks the background read.
 - `ReaderProvider`/`useReaderContext` expose the public capability: `profile`
   (the optimistic desired projection), `persistence`
-  (`Clean | Pending | SaveFailed | Forbidden`), semantic setters
+  (`Clean | Pending | SaveFailed`), semantic setters
   (`setTheme`, `setFontFamily`, `setFocusMode`, `setHyphenation`,
   `setFontSize`, `setLineHeight`, `setColumnWidth`), and `retrySave()`. There
   is no generic `save(Partial<ReaderProfile>)`; calling `useReaderContext`
   outside its provider throws rather than returning a no-op default.
-- controls stay interactive in `Pending` and `SaveFailed`; `Forbidden`
-  disables persistence controls and has no Retry until a fresh bootstrap.
+- controls stay interactive in `Pending` and `SaveFailed`.
 - one keyed Feedback presentation (`reader-profile-save`, owned by
   `ReaderProfileSaveFeedback.tsx`) is the save-failure UX: a persistent global
-  toast with Retry for `SaveFailed`, one without for `Forbidden`. While the
+  toast with Retry for `SaveFailed`. While the
   Settings reader pane is active it holds a `suppressDedupeKey` lease on that
   key — the global toast is hidden and `SettingsReaderPaneBody` renders the
   same failure inline — and releases the lease on deactivation/unmount,

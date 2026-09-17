@@ -396,10 +396,7 @@ export default function NotesPaneBody() {
           : { ...current, pages: [page, ...current.pages] },
       );
       setTitle("");
-      setPendingNoteFocus({
-        pageId: page.id,
-        target: intent.focusTarget,
-      });
+      setPendingNoteFocus(page.id, intent.focusTarget);
       activateTarget({
         target: { href: `/pages/${page.id}`, labelHint: page.title },
         disposition: { kind: "Follow" },

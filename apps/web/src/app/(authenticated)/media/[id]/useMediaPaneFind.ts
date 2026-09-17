@@ -178,7 +178,7 @@ function assertRenderedFragment(
   if (
     !fragment ||
     rendered.canonicalText !== fragment.canonicalText ||
-    !validateCanonicalText(rendered.cursor, fragment.canonicalText, fragment.id)
+    !validateCanonicalText(rendered.cursor, fragment.canonicalText)
   ) {
     throw new Error("Web Find canonical DOM mismatch.");
   }

@@ -1,39 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
-import { isEditableTarget } from "@/lib/ui/isEditableTarget";
+import { useCallback } from "react";
 import { deleteStance, putStance } from "@/lib/resourceGraph/stances";
 
 export type StanceKind = "supports" | "contradicts";
-
-/**
- * A reader-local single-key chord, parameterized on the key — the modal
- * "focus-a-passage + one dedicated key" stance shape (D-11), mirroring
- * useHighlightNoteChord. Fires only while enabled (a passage is focused), never
- * inside an editable target, never with a modifier.
- */
-export function useReaderKeyChord(args: {
-  enabled: boolean;
-  key: string;
-  onTrigger: () => void;
-}): void {
-  const onTriggerRef = useRef(args.onTrigger);
-  onTriggerRef.current = args.onTrigger;
-
-  useEffect(() => {
-    if (!args.enabled) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== args.key) return;
-      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey)
-        return;
-      if (isEditableTarget(event.target)) return;
-      event.preventDefault();
-      onTriggerRef.current();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [args.enabled, args.key]);
-}
 
 export interface StanceEdgeRef {
   sourceHighlightId: string;

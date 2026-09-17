@@ -37,7 +37,6 @@ import {
   sendableReaderProfilePatch,
   type ReaderProfilePatch,
   type ReaderProfilePersistence,
-  type ReaderProfileSaveFailure,
   type ReaderProfileSyncEvent,
   type ReaderProfileSyncState,
 } from "./readerProfileSync";
@@ -173,17 +172,12 @@ export function useReaderProfile(initialProfile: ReaderProfile): UseReaderProfil
       if (handleUnauthenticatedApiError(err)) {
         return;
       }
-      let failure: ReaderProfileSaveFailure;
       try {
-        failure = classifyReaderProfileSaveError(err);
+        // Classification rethrows anything unclassifiable: a defective read is
+        // a contract regression, not a transient failure.
+        classifyReaderProfileSaveError(err);
       } catch (caughtDefect) {
         setDefect({ error: caughtDefect });
-        return;
-      }
-      if (failure.kind === "Forbidden") {
-        // A forbidden read is an authorization contract regression, not a
-        // save failure; defect loudly.
-        setDefect({ error: err });
         return;
       }
       // justify-ignore-error: classified transient revalidation failure
@@ -196,7 +190,7 @@ export function useReaderProfile(initialProfile: ReaderProfile): UseReaderProfil
 
   /**
    * Lifecycle capture: flush deferred or retryable-failed work only when no
-   * logical PATCH is in flight. Forbidden is never promoted.
+   * logical PATCH is in flight.
    */
   const lifecycleFlush = useCallback(() => {
     const status = stateRef.current.local.status;

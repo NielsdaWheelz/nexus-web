@@ -545,7 +545,7 @@ function OfflineTextReader({ document, session, initialLocator, onSave }: {
     const viewport = viewportRef.current;
     if (!root || !viewport) return;
     const cursor = buildCanonicalCursor(root);
-    if (!validateCanonicalText(cursor, body.text, body.id)) {
+    if (!validateCanonicalText(cursor, body.text)) {
       cursorRef.current = null;
       setError("This copy's rendered text does not match its source. Exact navigation is unavailable.");
       return;

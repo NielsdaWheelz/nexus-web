@@ -70,9 +70,6 @@ type PersistedSessionOptions = {
   onSourceBodyMutationStarted?: () => MountedEditorMutationLease | null;
 };
 
-export function useResourceSurfaceSession(input: PersistedSessionOptions): ResourceSurfaceSession;
-export function useResourceSurfaceSession(input: DailySurfaceSessionOptions): DailyResourceSurfaceSession;
-export function useResourceSurfaceSession(input: PersistedSessionOptions | DailySurfaceSessionOptions): ResourceSurfaceSession | DailyResourceSurfaceSession;
 export function useResourceSurfaceSession(input: PersistedSessionOptions | DailySurfaceSessionOptions): ResourceSurfaceSession | DailyResourceSurfaceSession {
   const daily = "daily" in input ? input.daily : null;
   const sessionKey = "daily" in input ? input.sessionKey : input.sourceRef;

@@ -294,8 +294,6 @@ export type CanonicalTextAnchor = {
   rawUtf16Offset: number;
 };
 
-export type CanonicalTextAnchorAffinity = "Forward" | "Backward";
-
 function firstSourceAnchor(
   cursor: CanonicalCursorResult,
   startIndex: number,
@@ -326,7 +324,6 @@ function lastSourceAnchor(
 export function resolveCanonicalTextAnchor(
   cursor: CanonicalCursorResult,
   canonicalOffset: number,
-  affinity: CanonicalTextAnchorAffinity,
 ): CanonicalTextAnchor | null {
   if (
     !Number.isInteger(canonicalOffset) ||
@@ -336,15 +333,9 @@ export function resolveCanonicalTextAnchor(
     return null;
   }
 
-  if (affinity === "Forward") {
-    return (
-      firstSourceAnchor(cursor, canonicalOffset) ??
-      lastSourceAnchor(cursor, canonicalOffset - 1)
-    );
-  }
   return (
-    lastSourceAnchor(cursor, canonicalOffset - 1) ??
-    firstSourceAnchor(cursor, canonicalOffset)
+    firstSourceAnchor(cursor, canonicalOffset) ??
+    lastSourceAnchor(cursor, canonicalOffset - 1)
   );
 }
 
@@ -423,7 +414,7 @@ export function measureCanonicalTextAnchorViewportDelta(
   cursor: CanonicalCursorResult,
   canonicalOffset: number,
 ): number | null {
-  const anchor = resolveCanonicalTextAnchor(cursor, canonicalOffset, "Forward");
+  const anchor = resolveCanonicalTextAnchor(cursor, canonicalOffset);
   if (!anchor) return null;
   const rect = anchorRect(anchor);
   if (rect.width === 0 && rect.height === 0) return null;
@@ -469,7 +460,7 @@ export function scrollToExactCanonicalTextAnchor(
   cursor: CanonicalCursorResult,
   canonicalOffset: number,
 ): boolean {
-  const anchor = resolveCanonicalTextAnchor(cursor, canonicalOffset, "Forward");
+  const anchor = resolveCanonicalTextAnchor(cursor, canonicalOffset);
   if (!anchor) {
     return false;
   }
@@ -498,7 +489,7 @@ export function isCanonicalTextAnchorVisible(
   cursor: CanonicalCursorResult,
   canonicalOffset: number,
 ): boolean {
-  const anchor = resolveCanonicalTextAnchor(cursor, canonicalOffset, "Forward");
+  const anchor = resolveCanonicalTextAnchor(cursor, canonicalOffset);
   if (!anchor) {
     return false;
   }
