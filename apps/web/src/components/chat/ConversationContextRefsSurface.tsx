@@ -23,7 +23,6 @@ function contextActionErrorMessage(error: ApiError, title: string): FeedbackCont
         requestId: error.requestId,
       };
     case "E_INVALID_REQUEST":
-    case "E_BAD_REQUEST":
     case "E_FORBIDDEN":
     case "E_NOT_FOUND":
       return { tone: "Danger", title, requestId: error.requestId };

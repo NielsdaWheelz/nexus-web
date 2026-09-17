@@ -31,7 +31,7 @@ export function vercelSourceSha(): string {
 }
 
 /** The deployment env from NEXUS_ENV. Unset → "local" (backend default). Unknown → throws. */
-export function nexusEnv(): NexusEnv {
+function nexusEnv(): NexusEnv {
   const raw = process.env.NEXUS_ENV?.trim();
   if (!raw) return "local";
   if (raw === "local" || raw === "test" || raw === "staging" || raw === "prod") {
@@ -47,7 +47,11 @@ export const isDeployed = (): boolean => {
 };
 
 interface ResolvedEnv {
-  readonly nexusEnv: NexusEnv;
+  /** Supabase project the server-side auth clients talk to. */
+  readonly supabase: {
+    readonly url: string;
+    readonly anonKey: string;
+  };
   /** Canonical browser origin used for absolute metadata URLs. */
   readonly appPublicOrigin: string;
   /** FastAPI/SSE origin + presigned R2 origin. Origin-only, deduped, validated. */
@@ -87,8 +91,16 @@ export function getEnv(): ResolvedEnv {
     process.env.FASTAPI_BASE_URL?.trim() || (deployed ? "" : "http://localhost:8000");
   const appPublicOrigin = resolveAppPublicOrigin(deployed);
 
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? "";
+  if (deployed && (!supabaseUrl || !supabaseAnonKey)) {
+    throw new Error(
+      "NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required in staging/prod",
+    );
+  }
+
   resolved = Object.freeze({
-    nexusEnv: env,
+    supabase: Object.freeze({ url: supabaseUrl, anonKey: supabaseAnonKey }),
     appPublicOrigin,
     connectOrigins,
     mediaOrigins,

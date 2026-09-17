@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Presence } from "@/lib/api/presence";
-import { hasExactKeys } from "@/lib/api/exact";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import {
   machineDocumentStyles,
@@ -12,7 +11,10 @@ import {
   DOSSIER_DOCUMENT_FIND_STYLES,
   DOSSIER_DOCUMENT_RUNTIME,
 } from "@/components/dossier/dossierDocumentRuntime";
-import { isRecord } from "@/lib/validation";
+import {
+  hasExactKeys,
+  isRecord,
+} from "@/lib/validation";
 import styles from "./DossierDocumentFrame.module.css";
 
 const QUERY_MAX_CODEPOINTS = 256;

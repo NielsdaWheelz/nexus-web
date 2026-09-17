@@ -20,14 +20,12 @@ const DEFAULT_BACKOFF: SseBackoffConfig = {
 
 export type SseReconnectDecision = "continue" | "stop" | { after: string };
 
-export interface SseInitialConnection {
+interface SseConnection {
   url: string;
   token: string;
 }
 
 interface SseClientDirectCommon<TEvent> {
-  /** Token source override; defaults to the stream-token POST. */
-  streamToken?: () => Promise<string>;
   /** Browser-authored same-system contract headers for the direct request. */
   requestHeaders?: HeadersInit;
   decode: (type: string, data: unknown, id: string) => TEvent;
@@ -35,7 +33,6 @@ interface SseClientDirectCommon<TEvent> {
   onEvent: (event: TEvent) => void;
   onError: (err: Error) => void;
   onComplete?: (terminalEventSeen: boolean) => void;
-  onLastEventId?: (id: string) => void;
   /** Fired before each reconnect backoff; may return a durable cursor to resume after. */
   onReconnect?: (attempt: number) => Promise<SseReconnectDecision>;
   signal?: AbortSignal;
@@ -45,20 +42,12 @@ interface SseClientDirectCommon<TEvent> {
   backoff?: SseBackoffConfig;
 }
 
-/** Exactly one bootstrap mode: a known URL (optionally with its first token),
- * or a lazy URL/token pair acquired inside the reconnect loop. */
+/** Exactly one bootstrap mode: a known URL, or a lazy URL/token pair acquired
+ * inside the reconnect loop. */
 export type SseClientDirectArgs<TEvent> = SseClientDirectCommon<TEvent> &
   (
-    | {
-        url: string;
-        initialConnection?: never;
-        initialToken?: string;
-      }
-    | {
-        url?: never;
-        initialConnection: () => Promise<SseInitialConnection>;
-        initialToken?: never;
-      }
+    | { url: string; initialConnection?: never }
+    | { url?: never; initialConnection: () => Promise<SseConnection> }
   );
 
 /**
@@ -67,11 +56,10 @@ export type SseClientDirectArgs<TEvent> = SseClientDirectCommon<TEvent> &
  * supplies the URL and a typed event decoder.
  *
  * Token flow: stream tokens are single-use JTI — reusing one returns
- * E_STREAM_TOKEN_REPLAYED — so every connect needs a fresh token. The client
- * mints them itself via `fetchStreamToken`; callers with a known URL may hand
- * over `initialToken`, while callers that need the deployment-selected stream
- * base URL use `initialConnection` so that first token mint is also covered by
- * the bounded reconnect loop.
+ * E_STREAM_TOKEN_REPLAYED — so every connect needs a fresh token, minted via
+ * `fetchStreamToken`. Callers that need the deployment-selected stream base URL
+ * use `initialConnection` so that first token mint is also covered by the
+ * bounded reconnect loop.
  *
  * Reconnect policy: network failures, HTTP 401/5xx, mid-stream interruptions,
  * and a clean EOF without a terminal event all reconnect with backoff, capped
@@ -86,15 +74,12 @@ export function sseClientDirect<TEvent>(
   const {
     url,
     initialConnection,
-    initialToken,
-    streamToken = async () => (await fetchStreamToken()).token,
     requestHeaders,
     decode,
     isTerminal,
     onEvent,
     onError,
     onComplete,
-    onLastEventId,
     onReconnect,
     signal,
     initialAfter,
@@ -102,9 +87,6 @@ export function sseClientDirect<TEvent>(
     maxReconnects = 8,
     backoff = DEFAULT_BACKOFF,
   } = args;
-  if (url === undefined && initialConnection === undefined) {
-    throw new Error("SSE requires url or initialConnection");
-  }
 
   const controller = new AbortController();
   const combinedSignal = signal
@@ -116,21 +98,15 @@ export function sseClientDirect<TEvent>(
   let reconnectBaseMs = backoff.baseMs;
   let reconnectDelayMs = reconnectBaseMs;
   let reconnects = 0;
-  let pendingInitialToken = initialToken ?? null;
   let streamUrl = url ?? null;
 
-  const nextConnection = async (): Promise<SseInitialConnection> => {
+  const nextConnection = async (): Promise<SseConnection> => {
     if (streamUrl === null) {
       const connection = await initialConnection!();
       streamUrl = connection.url;
       return connection;
     }
-    if (pendingInitialToken !== null) {
-      const token = pendingInitialToken;
-      pendingInitialToken = null;
-      return { url: streamUrl, token };
-    }
-    return { url: streamUrl, token: await streamToken() };
+    return { url: streamUrl, token: (await fetchStreamToken()).token };
   };
 
   (async () => {
@@ -245,7 +221,6 @@ export function sseClientDirect<TEvent>(
             if (jsonEvent.id) {
               lastEventId = jsonEvent.id;
               nextAfter = "";
-              onLastEventId?.(lastEventId);
             }
             reconnects = 0;
             reconnectDelayMs = reconnectBaseMs;

@@ -34,12 +34,6 @@ class ResourceGraphModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class AddContextRefRequest(ResourceGraphModel):
-    """Body for POST /conversations/{id}/context-refs."""
-
-    resource_ref: str
-
-
 class ResolveRefsRequest(ResourceGraphModel):
     """Body for POST /resource-graph/resolve."""
 
@@ -62,18 +56,6 @@ class ConnectionQueryRequest(ResourceGraphModel):
     filters: ConnectionFiltersRequest = Field(default_factory=ConnectionFiltersRequest)
     limit: int = Field(default=100, ge=1, le=100)
     cursor: str | None = None
-
-
-class ConnectionSummaryRequest(ResourceGraphModel):
-    """Body for POST /resource-graph/connections/summary.
-
-    ``origins`` defaults (when omitted) to ``LIST_CONNECTION_ORIGINS`` in the
-    service: the AI-free collection-surface allowlist. The Literal element type
-    rejects unknown origin values at the boundary with 400.
-    """
-
-    refs: list[str] = Field(min_length=1, max_length=200)
-    origins: list[EdgeOrigin] | None = None
 
 
 class ConnectionEndpointOut(ResourceGraphModel):
@@ -135,26 +117,6 @@ class ConnectionOut(ResourceGraphModel):
 class ConnectionPageOut(ResourceGraphModel):
     items: list[ConnectionOut]
     next_cursor: str | None
-
-
-class ConnectionSummaryOut(ResourceGraphModel):
-    """Per-ref connection aggregate for the collection surface (spec S4).
-
-    ``by_kind`` is keyed by edge kind; ``dominant_kind`` is the highest-count kind
-    (ties broken deterministically). ``top_peers`` carry live label + href, and a
-    deleted/forbidden peer comes back ``missing`` (never leaked).
-    """
-
-    ref: str
-    total: int
-    by_kind: dict[str, int]
-    last_connected_at: datetime | None
-    dominant_kind: str | None
-    top_peers: list[ConnectionEndpointOut]
-
-
-class ConnectionSummaryPageOut(ResourceGraphModel):
-    summaries: list[ConnectionSummaryOut]
 
 
 class RelatedMediaOut(ResourceGraphModel):

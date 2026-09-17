@@ -1,9 +1,9 @@
+import { expectExactRecord } from "@/lib/validation";
 import { apiFetch } from "@/lib/api/client";
 import {
   decodeCollectionRevision,
   type CollectionRevision,
 } from "@/lib/api/collectionPage";
-import { asRecord, exactKeys } from "@/lib/api/exact";
 import type { Presence } from "@/lib/api/presence";
 import type { DiscoveryTargetHandle } from "@/lib/browse/contract";
 import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
@@ -72,15 +72,13 @@ function nonnegative(raw: unknown, context: string): number {
 function decodePodcastSubscriptionResult(
   raw: unknown,
 ): PodcastSubscriptionResult {
-  const envelope = asRecord(raw, "PodcastSubscriptionResult envelope");
-  exactKeys(
-    envelope,
+  const envelope = expectExactRecord(
+    raw,
     ["data"],
     "PodcastSubscriptionResult envelope",
   );
-  const value = asRecord(envelope.data, "PodcastSubscriptionResult");
-  exactKeys(
-    value,
+  const value = expectExactRecord(
+    envelope.data,
     [
       "href",
       "podcastId",
@@ -97,12 +95,8 @@ function decodePodcastSubscriptionResult(
       "PodcastSubscriptionResult.destinations must be an array",
     );
   }
-  const backfill = asRecord(
+  const backfill = expectExactRecord(
     value.backfill,
-    "PodcastSubscriptionResult.backfill",
-  );
-  exactKeys(
-    backfill,
     ["id", "state", "processedCount", "addedCount"],
     "PodcastSubscriptionResult.backfill",
   );
@@ -118,12 +112,8 @@ function decodePodcastSubscriptionResult(
       "PodcastSubscriptionResult.outcome",
     ),
     destinations: value.destinations.map((rawDestination, index) => {
-      const destination = asRecord(
+      const destination = expectExactRecord(
         rawDestination,
-        `PodcastSubscriptionResult.destinations[${index}]`,
-      );
-      exactKeys(
-        destination,
         ["libraryId", "outcome"],
         `PodcastSubscriptionResult.destinations[${index}]`,
       );

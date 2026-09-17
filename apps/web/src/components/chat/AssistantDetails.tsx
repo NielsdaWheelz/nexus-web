@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, Search, Wrench } from "lucide-react";
-import { toReaderCitationData } from "@/lib/conversations/citations";
+import { toReaderCitationData } from "@/lib/resourceGraph/citations";
 import {
   selectionStateExplanation,
   type GenerationSelectionState,

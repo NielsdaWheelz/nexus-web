@@ -10,7 +10,6 @@ import { parsePasswordUpdateForm } from "@/lib/auth/form-fields";
 import { updatePasswordFlow } from "@/lib/auth/password-flow";
 import { refreshSession } from "@/lib/auth/refresh";
 import {
-  authReturnTargetToHref,
   isDefaultAuthReturnTarget,
   parseAuthReturnTarget,
 } from "@/lib/auth/redirects";
@@ -34,7 +33,7 @@ function buildPasswordSurfaceUrl(
     url.searchParams.set("saved", "1");
   }
   if (!isDefaultAuthReturnTarget(target)) {
-    url.searchParams.set("next", authReturnTargetToHref(target));
+    url.searchParams.set("next", target);
   }
   return url;
 }

@@ -124,7 +124,6 @@ function conversationOperationErrorMessage(
         title: "You don’t have access to this chat.",
         requestId: error.requestId,
       };
-    case "E_BAD_REQUEST":
     case "E_BRANCH_PATH_INVALID":
     case "E_UPSTREAM":
     case "E_UPSTREAM_TIMEOUT":

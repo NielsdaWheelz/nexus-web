@@ -5,6 +5,7 @@
  * from client components to the BFF API routes.
  */
 
+import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isAbortError } from "@/lib/errors";
 import { compareStableString } from "@/lib/display/format";
 import { isRecord } from "@/lib/validation";
@@ -98,6 +99,37 @@ export function isSameSystemApiDefect(
       error.code === "E_UNKNOWN" ||
       error.code === "E_INTERNAL")
   );
+}
+
+/**
+ * Shared copy for the transport-level failures every command adapter answers
+ * the same way. Returns null when the code is not a transport failure, so the
+ * caller's own switch owns the domain arms.
+ */
+export function apiTransportFeedback(
+  error: ApiError,
+  title: string,
+): FeedbackContent | null {
+  switch (error.code) {
+    case "E_NETWORK":
+      return {
+        tone: "Danger",
+        title,
+        message: "Check your connection and try again.",
+        requestId: error.requestId,
+      };
+    case "E_UPSTREAM":
+    case "E_UPSTREAM_TIMEOUT":
+    case "E_RATE_LIMITED":
+      return {
+        tone: "Danger",
+        title,
+        message: "Please wait a moment, then try again.",
+        requestId: error.requestId,
+      };
+    default:
+      return null;
+  }
 }
 
 export function isUnauthenticatedApiError(error: unknown): error is ApiError {
@@ -357,18 +389,6 @@ export async function apiCommand204(
       `API command returned status ${response.status}; expected 204`,
     );
   }
-}
-
-export async function apiPostFormData<T>(
-  path: ApiPath,
-  formData: FormData,
-): Promise<T> {
-  const response = await fetchApiResponse(path, {
-    method: "POST",
-    body: formData,
-  });
-
-  return parseApiResponse<T>(response);
 }
 
 export async function apiKeepaliveJson(

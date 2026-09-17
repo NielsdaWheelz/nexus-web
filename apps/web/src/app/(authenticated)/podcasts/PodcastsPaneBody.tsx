@@ -112,7 +112,6 @@ function podcastsLoadErrorMessage(
       };
     case "E_RATE_LIMITED":
       return { tone: "Danger", title, message: "Wait a moment, then retry.", requestId };
-    case "E_BAD_REQUEST":
     case "E_INVALID_REQUEST":
       if (operation !== "Revalidate") throw error;
       return {
@@ -813,17 +812,14 @@ export default function PodcastsPaneBody() {
   }
 
   const collectionRows = visibleRows.map((row) =>
-    presentPodcast(
-      {
-        id: row.podcast_id,
-        title: row.title,
-        contributors: row.contributors,
-        unplayedCount: row.unplayedCount,
-        publicationDate: row.publicationDate,
-        syncStatus: row.syncStatus,
-      },
-      {},
-    ),
+    presentPodcast({
+      id: row.podcast_id,
+      title: row.title,
+      contributors: row.contributors,
+      unplayedCount: row.unplayedCount,
+      publicationDate: row.publicationDate,
+      syncStatus: row.syncStatus,
+    }),
   );
 
   return (

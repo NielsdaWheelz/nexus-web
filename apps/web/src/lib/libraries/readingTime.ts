@@ -18,14 +18,6 @@ import {
 } from "@/lib/validation";
 
 const INT32_MAX = 2_147_483_647;
-const PROCESSING_STATUSES = [
-  "pending",
-  "extracting",
-  "ready_for_reading",
-  "failed",
-  "suspended",
-] as const;
-const READ_STATES = ["unread", "in_progress", "finished"] as const;
 
 export interface ReadingTimeEstimate {
   totalMinutes: PositiveMinutes;
@@ -85,14 +77,6 @@ function decodeEstimate(raw: unknown): ReadingTimeEstimate {
       ),
     }),
   );
-  if (
-    remainingMinutes.kind === "Present" &&
-    remainingMinutes.value.value > totalMinutes.value
-  ) {
-    throw new TypeError(
-      "remaining reading time must not exceed total reading time",
-    );
-  }
   return { totalMinutes, remainingMinutes };
 }
 
@@ -118,12 +102,6 @@ export function decodeLibraryReadingTimeEntry(
   raw: object,
 ): object & { readingTimeEstimate: ReadingTimeEstimatePresence } {
   const entry = expectRecord(raw, "Library entry");
-  if ("reading_time_estimate" in entry) {
-    throw new TypeError("Library entry must not contain reading_time_estimate");
-  }
-  if ("read_state" in entry || "progress_fraction" in entry) {
-    throw new TypeError("Library entry consumption belongs to nested media");
-  }
   const entryKind = expectOneOf(
     entry.kind,
     ["media", "podcast"] as const,
@@ -132,9 +110,6 @@ export function decodeLibraryReadingTimeEntry(
   const estimate = decodePresence(entry.readingTimeEstimate, decodeEstimate);
 
   if (entryKind === "podcast") {
-    if (estimate.kind === "Present") {
-      throw new TypeError("Podcast Library entries cannot carry reading time");
-    }
     const decoded = {
       ...raw,
       readingTimeEstimate: estimate,
@@ -149,16 +124,6 @@ export function decodeLibraryReadingTimeEntry(
     "Library media kind",
   );
   const sourceHost = decodeSourceHost(mediaKind, media.canonical_source_url);
-  const processingStatus = expectOneOf(
-    media.processing_status,
-    PROCESSING_STATUSES,
-    "Library media processing_status",
-  );
-  const readState = expectOneOf(
-    media.read_state,
-    READ_STATES,
-    "Library media read_state",
-  );
   expectBoolean(
     media.progress_resettable,
     "Library media progress_resettable",
@@ -182,44 +147,6 @@ export function decodeLibraryReadingTimeEntry(
     progressFraction === null
       ? { kind: "Absent" }
       : { kind: "Present", value: { value: progressFraction } };
-  const capabilities = expectRecord(
-    media.capabilities,
-    "Library media capabilities",
-  );
-  const canQuote = expectBoolean(
-    capabilities.can_quote,
-    "Library media capabilities.can_quote",
-  );
-
-  if (estimate.kind === "Present") {
-    if (
-      !(
-        mediaKind === "web_article" ||
-        mediaKind === "epub" ||
-        mediaKind === "pdf"
-      ) ||
-      processingStatus !== "ready_for_reading" ||
-      !canQuote
-    ) {
-      throw new TypeError("Reading time requires a ready, quotable document");
-    }
-
-    const hasRemaining = estimate.value.remainingMinutes.kind === "Present";
-    if (mediaKind === "pdf") {
-      if (hasRemaining) {
-        throw new TypeError("PDF reading time cannot carry remaining time");
-      }
-    } else {
-      const requiresRemaining =
-        readState === "in_progress" && progressFraction !== null;
-      if (hasRemaining !== requiresRemaining) {
-        throw new TypeError(
-          "Web and EPUB remaining time must match in-progress whole-document progression",
-        );
-      }
-    }
-  }
-
   const decoded = {
     ...raw,
     media: {

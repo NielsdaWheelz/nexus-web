@@ -1,7 +1,6 @@
 /** Pure semantic projection for one Library media row. */
 
 import { absent, present, type Presence } from "@/lib/api/presence";
-import { connectionsFromSummary } from "@/lib/collections/connectionSummary";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import {
   readActivity,
@@ -11,12 +10,13 @@ import {
 import type {
   CollectionRowView,
   ConsumptionModality,
-  ExceptionalStatus,
 } from "@/lib/collections/types";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { ContributorCredit } from "@/lib/contributors/types";
-import type { ConnectionSummaryOut } from "@/lib/resourceGraph/connections";
-import type { MediaProcessingStatus } from "@/lib/status/mediaProcessing";
+import {
+  exceptionalStatus,
+  type MediaProcessingStatus,
+} from "@/lib/status/mediaProcessing";
 import type { MediaKind } from "@/lib/media/kind";
 import type { ReadingTimeEstimatePresence } from "@/lib/libraries/readingTime";
 
@@ -40,7 +40,6 @@ export interface MediaPresenterItem extends ReadStateFields {
 }
 
 export interface MediaPresenterContext {
-  readonly connectionSummary?: ConnectionSummaryOut;
   readonly readingTimeEstimate: ReadingTimeEstimatePresence;
 }
 
@@ -62,14 +61,6 @@ function readingTime(
   };
 }
 
-function exceptionalStatus(
-  status: MediaProcessingStatus,
-): Presence<ExceptionalStatus> {
-  return status === "ready_for_reading"
-    ? absent()
-    : present({ kind: "MediaProcessing", status });
-}
-
 function webSourceContext(item: MediaPresenterItem): CollectionRowView["context"] {
   return item.sourceHost.kind === "Present"
     ? present({ kind: "Text", text: item.sourceHost.value })
@@ -80,7 +71,7 @@ export function presentMedia(
   item: MediaPresenterItem,
   ctx: MediaPresenterContext,
 ): CollectionRowView {
-  const { connectionSummary, readingTimeEstimate } = ctx;
+  const { readingTimeEstimate } = ctx;
   const href = `/media/${item.id}`;
 
   return {
@@ -103,7 +94,7 @@ export function presentMedia(
     ),
     exceptionalStatus: exceptionalStatus(item.processing_status),
     localAvailability: absent(),
-    connections: connectionsFromSummary(connectionSummary),
+    connections: absent(),
     relatedMediaId: present(item.id),
     actionSubject: {
       ref: canonicalResourceRef({ scheme: "media", id: item.id }),

@@ -184,11 +184,7 @@ function podcastDetailErrorMessage(
         message: "The episode changed. Refresh the pane, then retry.",
         requestId,
       };
-    case "E_BAD_REQUEST":
     case "E_INVALID_REQUEST":
-      if (error.code === "E_BAD_REQUEST" && operation !== "PaneRefresh") {
-        throw error;
-      }
       return {
         tone: "Danger",
         title,

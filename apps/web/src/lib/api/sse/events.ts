@@ -77,7 +77,7 @@ interface SSEAssistantActivityEvent {
   };
 }
 
-export interface SSEExecutionAdvisoryEvent {
+interface SSEExecutionAdvisoryEvent {
   type: "ExecutionAdvisory";
   data: DurableExecution;
 }
@@ -154,7 +154,7 @@ export interface SSEToolResultEvent {
 }
 
 /** One citation edge carrying the backend-built citation read model. */
-export interface SSECitationIndexItem {
+interface SSECitationIndexItem {
   citation_edge_id: string;
   citation: CitationOut;
 }

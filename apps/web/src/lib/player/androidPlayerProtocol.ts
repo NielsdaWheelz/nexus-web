@@ -1,4 +1,3 @@
-import { asRecord, exactKeys } from "@/lib/api/exact";
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import {
   decodePreviewAudioDescriptor,
@@ -25,6 +24,7 @@ import {
   expectNonnegativeInteger,
   expectOneOf,
   expectPositiveInteger,
+  expectRecord,
   expectString,
 } from "@/lib/validation";
 
@@ -363,17 +363,17 @@ function decodePlayerError(raw: unknown): PlayerError {
 }
 
 function decodePersistence(raw: unknown): AndroidPlayerPersistence {
-  const value = asRecord(raw, "AndroidPlayerPersistence");
+  const value = expectRecord(raw, "AndroidPlayerPersistence");
   const kind = expectOneOf(
     value.kind,
     ["Ready", "Suspended"] as const,
     "AndroidPlayerPersistence.kind",
   );
   if (kind === "Ready") {
-    exactKeys(value, ["kind"], "AndroidPlayerPersistence.Ready");
+    expectExactRecord(value, ["kind"], "AndroidPlayerPersistence.Ready");
     return { kind };
   }
-  exactKeys(
+  expectExactRecord(
     value,
     ["kind", "reason", "message"],
     "AndroidPlayerPersistence.Suspended",
@@ -446,7 +446,7 @@ function decodeAudioSession(raw: unknown): AudioSession {
     ["descriptor", "origin"],
     "AudioSession",
   );
-  const origin = asRecord(value.origin, "AudioSession.origin");
+  const origin = expectRecord(value.origin, "AudioSession.origin");
   const kind = expectOneOf(
     origin.kind,
     ["Direct", "Lectern"] as const,
@@ -456,9 +456,9 @@ function decodeAudioSession(raw: unknown): AudioSession {
     descriptor: decodePlayerDescriptor(value.descriptor),
     origin:
       kind === "Direct"
-        ? (exactKeys(origin, ["kind"], "AudioSession.origin.Direct"),
+        ? (expectExactRecord(origin, ["kind"], "AudioSession.origin.Direct"),
           { kind: "Direct" })
-        : (exactKeys(
+        : (expectExactRecord(
             origin,
             ["kind", "itemId"],
             "AudioSession.origin.Lectern",
@@ -517,14 +517,14 @@ function decodeSnapshotBase(
 export function decodeAndroidPlayerSnapshot(
   raw: unknown,
 ): AndroidPlayerSnapshot {
-  const value = asRecord(raw, "PlayerSnapshot");
+  const value = expectRecord(raw, "PlayerSnapshot");
   const kind = expectOneOf(
     value.kind,
     ["Absent", "Canonical", "Preview"] as const,
     "PlayerSnapshot.kind",
   );
   if (kind === "Absent") {
-    exactKeys(
+    expectExactRecord(
       value,
       [
         "kind",
@@ -563,7 +563,7 @@ export function decodeAndroidPlayerSnapshot(
     "activitySync",
   ] as const;
   if (kind === "Canonical") {
-    exactKeys(value, [...baseKeys, "session"], "PlayerSnapshot.Canonical");
+    expectExactRecord(value, [...baseKeys, "session"], "PlayerSnapshot.Canonical");
     const base = decodeSnapshotBase(value);
     if (base.rateState.kind !== "Canonical") {
       throw new TypeError(
@@ -577,7 +577,7 @@ export function decodeAndroidPlayerSnapshot(
       session: decodeAudioSession(value.session),
     };
   }
-  exactKeys(value, [...baseKeys, "descriptor"], "PlayerSnapshot.Preview");
+  expectExactRecord(value, [...baseKeys, "descriptor"], "PlayerSnapshot.Preview");
   const base = decodeSnapshotBase(value);
   if (base.rateState.kind !== "Preview") {
     throw new TypeError("PlayerSnapshot.Preview requires preview rateState");
@@ -596,7 +596,7 @@ function decodeActivitySync(raw: unknown): AndroidActivitySyncSnapshot {
     ["capture", "sync", "acceptedRevision"],
     "AndroidActivitySyncSnapshot",
   );
-  const capture = asRecord(value.capture, "AndroidActivitySyncSnapshot.capture");
+  const capture = expectRecord(value.capture, "AndroidActivitySyncSnapshot.capture");
   const captureKind = expectOneOf(
     capture.kind,
     ["Recording", "Idle", "Paused", "Blocked"] as const,
@@ -604,7 +604,7 @@ function decodeActivitySync(raw: unknown): AndroidActivitySyncSnapshot {
   );
   const decodedCapture =
     captureKind === "Blocked"
-      ? (exactKeys(capture, ["kind", "reason"], "AndroidActivitySyncSnapshot.capture.Blocked"), {
+      ? (expectExactRecord(capture, ["kind", "reason"], "AndroidActivitySyncSnapshot.capture.Blocked"), {
           kind: captureKind,
           reason: expectOneOf(
             capture.reason,
@@ -612,9 +612,9 @@ function decodeActivitySync(raw: unknown): AndroidActivitySyncSnapshot {
             "AndroidActivitySyncSnapshot.capture.Blocked.reason",
           ),
         } as const)
-      : (exactKeys(capture, ["kind"], `AndroidActivitySyncSnapshot.capture.${captureKind}`),
+      : (expectExactRecord(capture, ["kind"], `AndroidActivitySyncSnapshot.capture.${captureKind}`),
         { kind: captureKind } as const);
-  const sync = asRecord(value.sync, "AndroidActivitySyncSnapshot.sync");
+  const sync = expectRecord(value.sync, "AndroidActivitySyncSnapshot.sync");
   const syncKind = expectOneOf(
     sync.kind,
     ["Synced", "Pending", "Failed"] as const,
@@ -622,11 +622,11 @@ function decodeActivitySync(raw: unknown): AndroidActivitySyncSnapshot {
   );
   const decodedSync =
     syncKind === "Synced"
-      ? (exactKeys(sync, ["kind"], "AndroidActivitySyncSnapshot.sync.Synced"), {
+      ? (expectExactRecord(sync, ["kind"], "AndroidActivitySyncSnapshot.sync.Synced"), {
           kind: syncKind,
         } as const)
       : syncKind === "Pending"
-        ? (exactKeys(sync, ["kind", "count", "oldestAt"], "AndroidActivitySyncSnapshot.sync.Pending"), {
+        ? (expectExactRecord(sync, ["kind", "count", "oldestAt"], "AndroidActivitySyncSnapshot.sync.Pending"), {
             kind: syncKind,
             count: expectPositiveInteger(
               sync.count,
@@ -637,7 +637,7 @@ function decodeActivitySync(raw: unknown): AndroidActivitySyncSnapshot {
               "AndroidActivitySyncSnapshot.sync.Pending.oldestAt",
             ),
           } as const)
-        : (exactKeys(sync, ["kind", "count"], "AndroidActivitySyncSnapshot.sync.Failed"), {
+        : (expectExactRecord(sync, ["kind", "count"], "AndroidActivitySyncSnapshot.sync.Failed"), {
             kind: syncKind,
             count: expectPositiveInteger(
               sync.count,
@@ -663,13 +663,13 @@ function expectNonnegativeSafeInteger(raw: unknown, name: string): number {
 }
 
 function decodePlaybackRateState(raw: unknown): AndroidPlaybackRateState {
-  const value = asRecord(raw, "AndroidPlaybackRateState");
+  const value = expectRecord(raw, "AndroidPlaybackRateState");
   const kind = expectOneOf(
     value.kind,
     ["Canonical", "Preview"] as const,
     "AndroidPlaybackRateState.kind",
   );
-  exactKeys(
+  expectExactRecord(
     value,
     kind === "Canonical"
       ? [
@@ -823,7 +823,7 @@ export function decodePendingNaturalEnd(raw: unknown): PendingNaturalEnd {
     ],
     "PendingNaturalEnd",
   );
-  const origin = asRecord(value.origin, "PendingNaturalEnd.origin");
+  const origin = expectRecord(value.origin, "PendingNaturalEnd.origin");
   const originKind = expectOneOf(
     origin.kind,
     ["Direct", "Lectern"] as const,
@@ -840,9 +840,9 @@ export function decodePendingNaturalEnd(raw: unknown): PendingNaturalEnd {
     ),
     origin:
       originKind === "Direct"
-        ? (exactKeys(origin, ["kind"], "PendingNaturalEnd.origin.Direct"),
+        ? (expectExactRecord(origin, ["kind"], "PendingNaturalEnd.origin.Direct"),
           { kind: "Direct" })
-        : (exactKeys(
+        : (expectExactRecord(
             origin,
             ["kind", "itemId"],
             "PendingNaturalEnd.origin.Lectern",
@@ -875,7 +875,7 @@ export function decodePendingNaturalEnd(raw: unknown): PendingNaturalEnd {
 export function decodeAndroidPlayerMessage(
   raw: unknown,
 ): AndroidPlayerReply | AndroidPlayerEvent {
-  const value = asRecord(raw, "AndroidPlayerMessage");
+  const value = expectRecord(raw, "AndroidPlayerMessage");
   // Identity is deliberately classified before the discriminant or body. A
   // released noncurrent peer is actionable version skew; a current peer with
   // malformed data remains a same-system defect below.
@@ -894,7 +894,7 @@ export function decodeAndroidPlayerMessage(
     "AndroidPlayerMessage.kind",
   );
   if (kind === "SnapshotChanged") {
-    exactKeys(
+    expectExactRecord(
       value,
       ["kind", "protocolVersion", "protocolContractSha256", "snapshot"],
       "SnapshotChanged",
@@ -906,7 +906,7 @@ export function decodeAndroidPlayerMessage(
     };
   }
   if (kind === "NaturalEndPending") {
-    exactKeys(
+    expectExactRecord(
       value,
       ["kind", "protocolVersion", "protocolContractSha256", "receipt"],
       "NaturalEndPending",
@@ -918,7 +918,7 @@ export function decodeAndroidPlayerMessage(
     };
   }
   if (kind === "ControllerReconnected") {
-    exactKeys(
+    expectExactRecord(
       value,
       [
         "kind",
@@ -941,7 +941,7 @@ export function decodeAndroidPlayerMessage(
   }
   const requestId = canonicalUuid(value.requestId, `${kind}.requestId`);
   if (kind === "Accepted") {
-    exactKeys(
+    expectExactRecord(
       value,
       ["kind", "requestId", "protocolVersion", "protocolContractSha256"],
       "Accepted",
@@ -949,7 +949,7 @@ export function decodeAndroidPlayerMessage(
     return { kind, requestId, ...identity };
   }
   if (kind === "Rejected") {
-    exactKeys(
+    expectExactRecord(
       value,
       [
         "kind",
@@ -978,7 +978,7 @@ export function decodeAndroidPlayerMessage(
       ),
     };
   }
-  exactKeys(
+  expectExactRecord(
     value,
     [
       "kind",

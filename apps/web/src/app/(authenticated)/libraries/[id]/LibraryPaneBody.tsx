@@ -2156,17 +2156,14 @@ export default function LibraryPaneBody() {
   const entryRowView = (item: LibraryEntry): CollectionRowView => {
     const showAdded = committedView?.order.kind === "Added";
     if (item.kind === "podcast") {
-      const row = presentPodcast(
-        {
-          id: item.podcast.id,
-          title: item.podcast.title,
-          contributors: item.podcast.contributors,
-          unplayedCount: item.podcast.unplayedCount,
-          publicationDate: item.podcast.publicationDate,
-          syncStatus: item.podcast.syncStatus,
-        },
-        {},
-      );
+      const row = presentPodcast({
+        id: item.podcast.id,
+        title: item.podcast.title,
+        contributors: item.podcast.contributors,
+        unplayedCount: item.podcast.unplayedCount,
+        publicationDate: item.podcast.publicationDate,
+        syncStatus: item.podcast.syncStatus,
+      });
       return {
         ...row,
         id: libraryTargetId(item),

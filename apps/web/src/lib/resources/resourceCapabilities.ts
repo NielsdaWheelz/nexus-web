@@ -54,7 +54,7 @@ export type ResourceInspectorLinkedItemsSurface =
   "MediaEvidence" | "ConversationContext" | "ResourceConnections";
 
 // Only Conversation ever carries a Forks surface.
-export type ResourceInspectorForksSurface = "ConversationForks";
+type ResourceInspectorForksSurface = "ConversationForks";
 
 export interface ResourceInspectorResourcePolicy {
   linkedItems: ResourceInspectorLinkedItemsSurface;
@@ -485,12 +485,6 @@ export const RESOURCE_CAPABILITIES = {
     adjacencyTarget: true,
   },
 } as const satisfies Record<ResourceScheme, ResourceCapabilityProjection>;
-
-export function resourceCapabilityForScheme(
-  scheme: ResourceScheme,
-): ResourceCapabilityProjection {
-  return RESOURCE_CAPABILITIES[scheme];
-}
 
 /** Whether `scheme` can be the target of a durable, direct-endpoint Link or
  * note reference. `materialize_passage` targets are raw material a search hit

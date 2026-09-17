@@ -1,13 +1,14 @@
 /** Pure semantic projection for one Lectern row. */
 
-import { absent, present, type Presence } from "@/lib/api/presence";
+import { absent, present } from "@/lib/api/presence";
+import { readActivity, type ReadStatus } from "@/lib/collections/readState";
 import type {
-  CollectionActivity,
   CollectionRowView,
   ConsumptionModality,
 } from "@/lib/collections/types";
 import type {
   ConsumptionInfo,
+  ConsumptionState,
   LecternActivityFacts,
   LecternItem,
 } from "@/lib/lectern/contract";
@@ -18,42 +19,11 @@ function modalityFor(item: LecternItem): ConsumptionModality {
   return "Read";
 }
 
-function presentActivity(
-  item: LecternItem,
-  facts: LecternActivityFacts,
-): Presence<CollectionActivity> {
-  const modality = modalityFor(item);
-  switch (item.consumption.state) {
-    case "Unread":
-      return present({ kind: "Unread", modality, totalMinutes: facts.totalMinutes });
-    case "InProgress": {
-      const fraction = facts.fraction;
-      if (fraction.kind === "Present") {
-        return present({
-          kind: "InProgress",
-          modality,
-          fraction,
-          remainingMinutes: facts.remainingMinutes,
-        });
-      }
-      if (facts.remainingMinutes.kind === "Absent") {
-        return absent();
-      }
-      return present({
-        kind: "InProgress",
-        modality,
-        fraction,
-        remainingMinutes: facts.remainingMinutes,
-      });
-    }
-    case "Finished":
-      return present({ kind: "Finished", modality });
-    default: {
-      const exhaustive: never = item.consumption.state;
-      throw new Error(`Unsupported Lectern consumption state: ${exhaustive}`);
-    }
-  }
-}
+const LECTERN_READ_STATE: Record<ConsumptionState, ReadStatus> = {
+  Unread: "unread",
+  InProgress: "in_progress",
+  Finished: "finished",
+};
 
 export function playbackVerb(consumption: ConsumptionInfo): "Play" | "Replay" | "Resume" {
   if (consumption.state === "InProgress") return "Resume";
@@ -76,7 +46,14 @@ export function presentLecternItem(
       item.subtitle.kind === "Present"
         ? present({ kind: "Text", text: item.subtitle.value })
         : absent(),
-    activity: presentActivity(item, activityFacts),
+    activity: readActivity(
+      {
+        read_state: LECTERN_READ_STATE[item.consumption.state],
+        progressFraction: activityFacts.fraction,
+      },
+      modalityFor(item),
+      activityFacts,
+    ),
     exceptionalStatus: absent(),
     localAvailability: absent(),
     connections: absent(),

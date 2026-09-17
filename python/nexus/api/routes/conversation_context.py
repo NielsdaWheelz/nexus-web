@@ -5,7 +5,6 @@ semantics live in ``nexus.services.resource_graph.context``.
 
 Routes:
 - GET    /conversations/{conversation_id}/context-refs
-- POST   /conversations/{conversation_id}/context-refs
 - DELETE /conversations/{conversation_id}/context-refs/{edge_id}
 
 (`GET /conversations?has_context_ref=` lives with the conversations routes.)
@@ -19,24 +18,11 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok
-from nexus.schemas.resource_graph import AddContextRefRequest, ContextRefOut
+from nexus.schemas.resource_graph import ContextRefOut
 from nexus.services.resource_graph import context as context_service
-from nexus.services.resource_graph import refs as refs_service
-from nexus.services.resource_graph.refs import ResourceRef
 
 router = APIRouter(tags=["conversation-context"])
-
-
-def _parse_ref_or_400(raw: str) -> ResourceRef:
-    parsed = refs_service.parse_resource_ref(raw)
-    if isinstance(parsed, refs_service.ResourceRefParseFailure):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Invalid resource ref: {raw!r}. Expected '<scheme>:<uuid>'.",
-        )
-    return parsed
 
 
 def _context_ref_out(row: context_service.ContextRefOut) -> ContextRefOut:
@@ -67,32 +53,6 @@ def list_context_refs(
         db, viewer_id=viewer.user_id, conversation_id=conversation_id
     )
     return ok([_context_ref_out(row) for row in rows])
-
-
-@router.post("/conversations/{conversation_id}/context-refs", status_code=201)
-def add_context_ref(
-    conversation_id: UUID,
-    body: AddContextRefRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Attach a resource to the conversation context. Idempotent per pair.
-
-    Errors:
-        E_CONVERSATION_NOT_FOUND (404): conversation doesn't exist or viewer is not owner.
-        E_INVALID_REQUEST (400): resource_ref is malformed.
-        E_NOT_FOUND (404): the resource does not exist or is not visible.
-    """
-    target = _parse_ref_or_400(body.resource_ref)
-    row = context_service.add_context_ref_without_commit(
-        db,
-        viewer_id=viewer.user_id,
-        conversation_id=conversation_id,
-        target=target,
-        origin="user",
-    )
-    db.commit()
-    return ok(_context_ref_out(row))
 
 
 @router.delete("/conversations/{conversation_id}/context-refs/{edge_id}", status_code=204)

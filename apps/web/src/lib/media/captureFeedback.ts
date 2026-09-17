@@ -138,7 +138,6 @@ export function mediaCaptureErrorMessage(
         message: "This file type isn’t supported. Use a PDF or EPUB.",
         requestId,
       };
-    case "E_BAD_REQUEST":
     case "E_INVALID_REQUEST":
       return {
         tone,

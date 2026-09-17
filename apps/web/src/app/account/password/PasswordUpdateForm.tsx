@@ -14,7 +14,6 @@ import Input from "@/components/ui/Input";
 import { decodePasswordUpdateOutcome } from "@/lib/auth/form-outcomes";
 import type { PasswordUpdateOutcome } from "@/lib/auth/password-flow";
 import {
-  authReturnTargetToHref,
   buildLoginUrl,
   isDefaultAuthReturnTarget,
   type AuthReturnTarget,
@@ -194,7 +193,7 @@ export default function PasswordUpdateForm({
           announcement="Polite"
         />
         <Button asChild variant="primary" size="lg">
-          <Link href={authReturnTargetToHref(nextPath)}>Continue</Link>
+          <Link href={nextPath}>Continue</Link>
         </Button>
       </div>
     );

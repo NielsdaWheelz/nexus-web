@@ -115,7 +115,7 @@ export type ResourceInspectorLinkedItemsSurface =
   "MediaEvidence" | "ConversationContext" | "ResourceConnections";
 
 // Only Conversation ever carries a Forks surface.
-export type ResourceInspectorForksSurface = "ConversationForks";
+type ResourceInspectorForksSurface = "ConversationForks";
 
 export interface ResourceInspectorResourcePolicy {
   linkedItems: ResourceInspectorLinkedItemsSurface;
@@ -160,13 +160,7 @@ export const SYNAPSE_SOURCE_SCHEMES = [
 ] as const satisfies readonly ResourceScheme[];
 """
 
-_SUFFIX = """export function resourceCapabilityForScheme(
-  scheme: ResourceScheme,
-): ResourceCapabilityProjection {
-  return RESOURCE_CAPABILITIES[scheme];
-}
-
-/** Whether `scheme` can be the target of a durable, direct-endpoint Link or
+_SUFFIX = """/** Whether `scheme` can be the target of a durable, direct-endpoint Link or
  * note reference. `materialize_passage` targets are raw material a search hit
  * must convert into a `passage_anchor` first (Invariant 4); they are never
  * themselves a direct edge/reference endpoint. Mirrors backend

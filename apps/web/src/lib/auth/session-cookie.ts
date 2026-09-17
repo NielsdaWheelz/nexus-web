@@ -1,4 +1,5 @@
 import type { NextResponse } from "next/server";
+import { getEnv } from "@/lib/env";
 import { isRecord } from "@/lib/validation";
 
 // A token within this many seconds of expiry is classified `refreshable` so a
@@ -35,9 +36,7 @@ interface SupabaseSessionPayload {
 
 function getSupabaseAuthCookieName(): string | null {
   try {
-    const hostname = new URL(
-      process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""
-    ).hostname;
+    const hostname = new URL(getEnv().supabase.url).hostname;
     const projectRef = hostname.split(".")[0];
     return projectRef ? `sb-${projectRef}-auth-token` : null;
   } catch (error) {

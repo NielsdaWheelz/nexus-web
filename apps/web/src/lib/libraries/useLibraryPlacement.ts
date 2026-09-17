@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import {
+  apiTransportFeedback,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { isAbortError } from "@/lib/errors";
 import { createLibrary } from "@/lib/libraries/client";
@@ -158,23 +162,9 @@ function libraryPlacementErrorMessage(
 
   const title = placementFailureTitle(request);
   const requestId = error.requestId;
+  const transport = apiTransportFeedback(error, title);
+  if (transport) return transport;
   switch (error.code) {
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title,
-        message: "Check your connection and try again.",
-        requestId,
-      };
-    case "E_UPSTREAM":
-    case "E_UPSTREAM_TIMEOUT":
-    case "E_RATE_LIMITED":
-      return {
-        tone: "Danger",
-        title,
-        message: "Please wait a moment, then try again.",
-        requestId,
-      };
     case "E_MEDIA_NOT_FOUND":
     case "E_NOT_FOUND":
       return { tone: "Danger", title, message: UNAVAILABLE_MESSAGE, requestId };

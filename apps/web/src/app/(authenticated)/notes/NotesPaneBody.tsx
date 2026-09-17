@@ -116,7 +116,6 @@ function notesErrorMessage(
         message: "Wait a moment, then retry.",
         requestId,
       };
-    case "E_BAD_REQUEST":
     case "E_INVALID_REQUEST":
       if (operation !== "CreatePage") throw error;
       return {
