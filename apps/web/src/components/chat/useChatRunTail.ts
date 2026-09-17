@@ -123,9 +123,6 @@ function mergeStreamToolCalls(
 export function useChatRunTail({
   dispatch,
   setForkOptionsByParentId,
-  onRunFinished,
-  onFirstDelta,
-  onRunDone,
   onContextRefAdded,
   onProjectionReloadRequired,
   onDefect,
@@ -136,9 +133,6 @@ export function useChatRunTail({
   setForkOptionsByParentId?: Dispatch<
     SetStateAction<Record<string, ForkOption[]>>
   >;
-  onRunFinished?: (runId: string) => void;
-  onFirstDelta?: (runId: string) => void;
-  onRunDone?: (runId: string, status: TerminalRunStatus) => void;
   onContextRefAdded?: (data: SSEContextRefAddedEvent["data"]) => void;
   onProjectionReloadRequired?: (error: ApiError) => void;
   onDefect?: (error: unknown) => void;
@@ -314,7 +308,6 @@ export function useChatRunTail({
       const originalAssistantId = runData.assistant_message.id;
       let currentUserId = originalUserId;
       let currentAssistantId = originalAssistantId;
-      let doneNotified = false;
       let finished = false;
       let streamDoneSeen = false;
       const token = streamCtx.currentToken(runId) + 1;
@@ -373,12 +366,6 @@ export function useChatRunTail({
       // is superseded (abortAll) or finished mid-token-mint.
       const streamAbort = new AbortController();
 
-      const notifyDone = (status: TerminalRunStatus) => {
-        if (doneNotified) return;
-        doneNotified = true;
-        onRunDone?.(runId, status);
-      };
-
       // The auto-reconnect budget is spent and the run is not confirmed
       // terminal. Keep partial text + pending status and surface recovery.
       const markConnectionLost = (lastCursor: string) => {
@@ -399,14 +386,12 @@ export function useChatRunTail({
         streamAbort.abort();
         streamCtx.endStream(runId);
         setActiveRunId((current) => (current === runId ? null : current));
-        onRunFinished?.(runId);
       };
 
       if (isTerminalRunStatus(runData.run.status)) {
         if (currentVisible()) {
           handleDone(runData.assistant_message.id, runData.run.status);
         }
-        notifyDone(runData.run.status);
         finishRun();
         return true;
       }
@@ -443,7 +428,6 @@ export function useChatRunTail({
             if (currentVisible()) {
               handleDone(currentAssistantId, persisted.run.status);
             }
-            notifyDone(persisted.run.status);
             finishRun();
           }
           return persisted;
@@ -497,9 +481,6 @@ export function useChatRunTail({
                   flushDeltas();
                   break;
                 case "assistant_text_delta":
-                  if (currentVisible() && streamCtx.latchFirstDelta(runId)) {
-                    onFirstDelta?.(runId);
-                  }
                   if (!currentVisible()) break;
                   handleDelta(currentAssistantId, event.data.text);
                   break;
@@ -533,7 +514,6 @@ export function useChatRunTail({
                   if (currentVisible()) {
                     handleDone(currentAssistantId, event.data.status);
                   }
-                  notifyDone(event.data.status);
                   break;
                 default: {
                   const _exhaustive: never = event;
@@ -651,9 +631,6 @@ export function useChatRunTail({
       flushDeltas,
       shouldFoldEvent,
       mergeRunMessages,
-      onFirstDelta,
-      onRunDone,
-      onRunFinished,
       onDefect,
       reportProjectionReload,
     ],

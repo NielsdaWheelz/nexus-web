@@ -30,7 +30,7 @@ interface UseForkTreeKeyNav {
 export function useForkTreeKeyNav(input: {
   visibleRows: VisibleForkRow[];
   expandedIds: StringIdSet;
-  switchableLeafIds?: Set<string>;
+  switchableLeafIds: Set<string>;
   editingId: string | null;
   pendingDeleteId: string | null;
   setFocusedId: (id: string) => void;
@@ -114,7 +114,7 @@ export function useForkTreeKeyNav(input: {
         case " ":
           event.preventDefault();
           event.stopPropagation();
-          if (!switchableLeafIds || switchableLeafIds.has(row.node.leaf_message_id)) {
+          if (switchableLeafIds.has(row.node.leaf_message_id)) {
             onSelectFork(toForkOption(row.node));
           }
           break;

@@ -14,7 +14,6 @@ import styles from "./ConversationForksPanel.module.css";
 
 export default function ConversationForksPanel({
   conversationId,
-  forkOptionsByParentId,
   branchGraph,
   switchableLeafIds,
   activeLeafMessageId,
@@ -24,9 +23,8 @@ export default function ConversationForksPanel({
   onForksChanged,
 }: {
   conversationId: string;
-  forkOptionsByParentId: Record<string, ForkOption[]>;
   branchGraph: BranchGraph;
-  switchableLeafIds?: Set<string>;
+  switchableLeafIds: Set<string>;
   activeLeafMessageId?: string | null;
   selectedPathMessageIds: Set<string>;
   onSelectFork: (fork: ForkOption) => void;
@@ -35,7 +33,6 @@ export default function ConversationForksPanel({
 }) {
   const panel = useForkPanel({
     conversationId,
-    forkOptionsByParentId,
     branchGraph,
     activeLeafMessageId,
     selectedPathMessageIds,

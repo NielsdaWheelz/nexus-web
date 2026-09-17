@@ -16,7 +16,6 @@ import type { ConversationForkNode } from "@/lib/conversations/forkTree";
 import type {
   ConversationForksResponse,
   BranchGraph,
-  ForkOption,
 } from "@/lib/conversations/types";
 
 interface UseForkPanel {
@@ -41,7 +40,6 @@ interface UseForkPanel {
 
 export function useForkPanel(input: {
   conversationId: string;
-  forkOptionsByParentId: Record<string, ForkOption[]>;
   branchGraph: BranchGraph;
   activeLeafMessageId?: string | null;
   selectedPathMessageIds: Set<string>;
@@ -49,20 +47,15 @@ export function useForkPanel(input: {
 }): UseForkPanel {
   const {
     conversationId,
-    forkOptionsByParentId,
     branchGraph,
     activeLeafMessageId,
     selectedPathMessageIds,
     onForksChanged,
   } = input;
 
-  const fallbackNodes = useMemo(
-    () => buildForkTree(Object.values(forkOptionsByParentId).flat(), branchGraph),
-    [branchGraph, forkOptionsByParentId],
-  );
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
-  const [nodes, setNodes] = useState<ConversationForkNode[]>(fallbackNodes);
+  const [nodes, setNodes] = useState<ConversationForkNode[]>([]);
   const [error, setError] = useState<string | null>(null);
   const expandedIds = useStringIdSet();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -78,10 +71,6 @@ export function useForkPanel(input: {
     cacheKey: forksPath,
     path: (path) => path as ApiPath,
   });
-
-  useEffect(() => {
-    setNodes(fallbackNodes);
-  }, [fallbackNodes]);
 
   const { replace: replaceExpandedIds } = expandedIds;
   useEffect(() => {
@@ -101,9 +90,8 @@ export function useForkPanel(input: {
     if (forksResource.status === "error") {
       console.error("Failed to load forks:", forksResource.error);
       setError("Fork search is unavailable.");
-      setNodes(fallbackNodes);
     }
-  }, [branchGraph, fallbackNodes, forksResource]);
+  }, [branchGraph, forksResource]);
 
   const submitQuery = useCallback(() => {
     setSubmittedQuery(query.trim());

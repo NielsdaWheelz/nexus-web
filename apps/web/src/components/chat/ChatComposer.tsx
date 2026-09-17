@@ -86,10 +86,6 @@ interface ChatComposerProps {
   viewIdentity: string;
   /** The originating pane must still be active to restore composer focus. */
   isPaneActive: boolean;
-  /** Called after message sent (for refreshing lists). */
-  onMessageSent?: () => void;
-  /** Called when a valid send begins. */
-  onSendStarted?: () => void;
   /** Request focus once for this view/key; inactive panes discard the request. */
   autoFocus?: boolean;
   /** Stable key used to refocus the composer for a newly attached quote. */
@@ -202,8 +198,6 @@ export default function ChatComposer({
   onAdmitted,
   viewIdentity,
   isPaneActive,
-  onMessageSent,
-  onSendStarted,
   autoFocus = false,
   focusKey,
   initialContent = "",
@@ -406,7 +400,6 @@ export default function ChatComposer({
       const view = activeView.current;
       const isCurrent = () => view !== null && activeView.current === view;
       setError(null);
-      onSendStarted?.();
       try {
         const receipt = await store.submit(command);
         if (!isCurrent()) return;
@@ -465,7 +458,6 @@ export default function ChatComposer({
     },
     [
       store,
-      onSendStarted,
       onRetryHydration,
       onConversationRefresh,
       retryCatalog,
@@ -522,7 +514,6 @@ export default function ChatComposer({
         setPickerOpen(false);
         setWriteAnnouncement("Writes are off for the next reply.");
         restoreFocusAfterSendRef.current = true;
-        onMessageSent?.();
         onClearBranchDraft?.();
       } catch (err) {
         if (!isCurrent()) return;
@@ -583,7 +574,6 @@ export default function ChatComposer({
       recoveredFromAnotherDraft,
       recoveryConflict,
       onAdmitted,
-      onMessageSent,
       onClearBranchDraft,
     ],
   );

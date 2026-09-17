@@ -19,7 +19,7 @@ export default function AssistantAnswer({
   messageOrdinal: number;
   citations: ReaderCitationData[];
   answerRef?: Ref<HTMLDivElement>;
-  onCitationActivate?: (
+  onCitationActivate: (
     activation: ResourceActivation,
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,

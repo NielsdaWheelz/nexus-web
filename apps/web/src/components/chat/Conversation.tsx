@@ -146,11 +146,7 @@ export default function Conversation() {
     [],
   );
 
-  const convo = useConversation({
-    conversationId,
-    branching: true,
-    onContextRefAdded,
-  });
+  const convo = useConversation({ conversationId, onContextRefAdded });
   activeConversationIdRef.current = convo.conversationId;
   const routeTargetKey = initialTargetMessageId
     ? `${conversationId ?? "new"}:${initialTargetMessageId}`
@@ -171,7 +167,6 @@ export default function Conversation() {
   const revealRouteTarget = useCallback(
     (targetKey: string, messageId: string) => {
       if (
-        !convo.branch ||
         revealedRouteTargetRef.current === targetKey ||
         failedRouteTargetRef.current === targetKey ||
         revealingRouteTargetsRef.current.has(targetKey) ||
@@ -231,8 +226,7 @@ export default function Conversation() {
 
   const retryRouteTarget = useCallback(async () => {
     const targetKey = routeTargetKey;
-    const branch = convo.branch;
-    if (!targetKey || !branch || retryingRouteTargetRef.current === targetKey) {
+    if (!targetKey || retryingRouteTargetRef.current === targetKey) {
       return;
     }
 
@@ -242,7 +236,7 @@ export default function Conversation() {
       // Refresh the complete branch cache before retrying. This makes Retry
       // meaningful both for a transient active-path POST failure and for a
       // message that was absent from the previously loaded tree.
-      const reloaded = await branch.reload();
+      const reloaded = await convo.branch.reload();
       if (reloaded && currentRouteTargetKeyRef.current === targetKey) {
         failedRouteTargetRef.current = null;
         setFailedRouteTarget(null);
@@ -260,7 +254,7 @@ export default function Conversation() {
   const branch = convo.branch;
   const paneFind = useConversationPaneFind({
     conversationId: convo.conversationId,
-    activeLeafMessageId: branch?.activeLeafMessageId ?? null,
+    activeLeafMessageId: branch.activeLeafMessageId,
     messages: convo.messages,
     scrollRef: convo.scrollRef,
   });
@@ -275,7 +269,7 @@ export default function Conversation() {
 
   const activeReplyParentMessageId = convo.replyParentMessageId;
 
-  const branchDraft = branch?.branchDraft ?? null;
+  const branchDraft = branch.branchDraft;
   // The structured draft key: a new-chat destination is keyed by the current
   // pane visit (never route text), an existing conversation by its active
   // leaf/reply parent, a branch reply by its anchor.
@@ -289,14 +283,14 @@ export default function Conversation() {
       : chatDraftKeyFor({
           kind: "Path",
           targetId:
-            branch?.activeLeafMessageId ??
+            branch.activeLeafMessageId ??
             activeReplyParentMessageId ??
             convo.conversationId,
         });
 
   const handleReplyToAssistant = useCallback(
     (nextDraft: BranchDraft) => {
-      branch?.setBranchDraft(nextDraft);
+      branch.setBranchDraft(nextDraft);
       setBranchFocusKey(
         `${nextDraft.parentMessageId}:${nextDraft.anchor.kind}:${Date.now()}`,
       );
@@ -309,7 +303,7 @@ export default function Conversation() {
   // switch handler.
   const handleSelectFork = useCallback(
     (fork: ForkOption) => {
-      void branch?.switchToFork(fork);
+      void branch.switchToFork(fork);
     },
     [branch],
   );
@@ -433,7 +427,7 @@ export default function Conversation() {
   );
 
   const handleRefreshConversation = useCallback(() => {
-    void convo.branch?.reload();
+    void convo.branch.reload();
   }, [convo.branch]);
 
   // The composer consumes a ready quote's focus request in its current view.
@@ -463,10 +457,9 @@ export default function Conversation() {
   const forksBody = useMemo(
     () => (
       <div className={styles.chatSecondaryBody}>
-        {branch && convo.conversationId ? (
+        {convo.conversationId ? (
           <ConversationForksPanel
             conversationId={convo.conversationId}
-            forkOptionsByParentId={branch.forkOptionsByParentId}
             branchGraph={branch.branchGraph}
             switchableLeafIds={branch.switchableLeafIds}
             activeLeafMessageId={branch.activeLeafMessageId}
@@ -694,10 +687,10 @@ export default function Conversation() {
             }
             onStartWalk={startWalk}
             onReaderSourceActivate={handleReaderSourceActivate}
-            forkOptionsByParentId={branch?.forkOptionsByParentId}
-            switchableLeafIds={branch?.switchableLeafIds}
-            onSelectFork={branch ? handleSelectFork : undefined}
-            onReplyToAssistant={branch ? handleReplyToAssistant : undefined}
+            forkOptionsByParentId={branch.forkOptionsByParentId}
+            switchableLeafIds={branch.switchableLeafIds}
+            onSelectFork={handleSelectFork}
+            onReplyToAssistant={handleReplyToAssistant}
             onRerunAssistantResponse={convo.rerunAssistantResponse}
             onRerunAssistantResponseWithSelection={
               convo.rerunAssistantResponseWithSelection
@@ -725,9 +718,7 @@ export default function Conversation() {
                 onAdmitted={handleAdmitted}
                 viewIdentity={`${paneRuntime.visitId}:${paneRuntime.href}`}
                 isPaneActive={isPaneActive}
-                onClearBranchDraft={
-                  branch ? () => branch.setBranchDraft(null) : undefined
-                }
+                onClearBranchDraft={() => branch.setBranchDraft(null)}
                 onJumpToBranchParent={jumpToMessage}
                 pendingContext={pendingContext}
                 onRemovePendingContext={handleRemovePendingContext}

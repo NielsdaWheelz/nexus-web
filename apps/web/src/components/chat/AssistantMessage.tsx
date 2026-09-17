@@ -49,26 +49,26 @@ export default function AssistantMessage({
   message: ConversationMessage;
   messageOrdinal: number;
   forkOptions: ForkOption[];
-  switchableLeafIds?: Set<string>;
-  onSelectFork?: (fork: ForkOption) => void;
-  onReplyToAssistant?: (draft: BranchDraft) => void;
-  onCitationActivate?: (
+  switchableLeafIds: Set<string>;
+  onSelectFork: (fork: ForkOption) => void;
+  onReplyToAssistant: (draft: BranchDraft) => void;
+  onCitationActivate: (
     activation: ResourceActivation,
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
   ) => void;
   connectionRecovery?: ChatConnectionRecovery;
-  onReconnectAssistant?: (assistantMessageId: string) => void;
+  onReconnectAssistant: (assistantMessageId: string) => void;
   onRerun?: () => void;
-  onRerunWithSelection?: (
+  onRerunWithSelection: (
     selection: GenerationSelectionSpec,
     catalogDefinitionRevision: string,
   ) => Promise<boolean>;
-  onRegenerateWithSelection?: (
+  onRegenerateWithSelection: (
     selection: GenerationSelectionSpec,
     catalogDefinitionRevision: string,
   ) => Promise<boolean>;
-  rerunning?: boolean;
+  rerunning: boolean;
   timestampLabel: string;
 }) {
   const toolCalls = message.trust_trail?.tool_calls ?? [];
@@ -77,8 +77,7 @@ export default function AssistantMessage({
     () => (message.citations ?? []).map(toReaderCitationData),
     [message.citations],
   );
-  const canBranchFromAssistant =
-    message.status === "complete" && Boolean(onReplyToAssistant);
+  const canBranchFromAssistant = message.status === "complete";
   // The one card-bearing failure read: the failure folds onto the run inside the
   // trust trail (null when no representable failure is stored → the generic
   // card). A terminal message status is what shows the card; any rehydrated
@@ -197,14 +196,14 @@ export default function AssistantMessage({
         <ChatFailureCard
           mode="reconnect"
           recovery={connectionRecovery}
-          onReconnect={() => onReconnectAssistant?.(message.id)}
+          onReconnect={() => onReconnectAssistant(message.id)}
         />
       ) : null}
       {message.status !== "pending" ? (
         <div className={styles.messageActions}>
           {trustRun?.run_selection &&
-          ((isTerminalFailure && message.can_rerun && onRerunWithSelection) ||
-            (message.status === "complete" && onRegenerateWithSelection)) ? (
+          ((isTerminalFailure && message.can_rerun) ||
+            message.status === "complete") ? (
             <CandidateGenerationPicker
               operation={isTerminalFailure ? "Rerun" : "Regenerate"}
               runSelection={trustRun.run_selection}
@@ -212,12 +211,12 @@ export default function AssistantMessage({
               openRequestVersion={replacementOpenRequestVersion}
               onConfirm={(selection, catalogDefinitionRevision) => {
                 if (isTerminalFailure) {
-                  return onRerunWithSelection!(
+                  return onRerunWithSelection(
                     selection,
                     catalogDefinitionRevision,
                   );
                 }
-                return onRegenerateWithSelection!(
+                return onRegenerateWithSelection(
                   selection,
                   catalogDefinitionRevision,
                 );
@@ -231,13 +230,11 @@ export default function AssistantMessage({
           />
         </div>
       ) : null}
-      {onSelectFork ? (
-        <ForkStrip
-          forks={forkOptions}
-          switchableLeafIds={switchableLeafIds}
-          onSelectFork={onSelectFork}
-        />
-      ) : null}
+      <ForkStrip
+        forks={forkOptions}
+        switchableLeafIds={switchableLeafIds}
+        onSelectFork={onSelectFork}
+      />
       <time className={styles.timestamp} dateTime={message.created_at}>
         {timestampLabel}
       </time>

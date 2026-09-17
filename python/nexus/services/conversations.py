@@ -17,11 +17,9 @@ Service functions correspond 1:1 with route handlers.
 Routes are transport-only and call exactly one service function.
 """
 
-import base64
-import json
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, assert_never, cast
+from typing import assert_never, cast
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, text
@@ -59,7 +57,6 @@ from nexus.schemas.conversation import (
     MessageDeleteOut,
     MessageDocument,
     MessageOut,
-    MessagePageInfo,
     PageInfo,
 )
 from nexus.schemas.presence import Presence, absent, present
@@ -85,8 +82,6 @@ from nexus.services.collection_revisions import (
     read_collection_revision,
     require_collection_revision,
 )
-from nexus.services.generation_catalog import GenerationCatalogSnapshot
-from nexus.services.message_trust_trails import build_assistant_trust_trails
 from nexus.services.resource_graph import cleanup as graph_cleanup
 from nexus.services.resource_graph import context as context_service
 from nexus.services.resource_graph.citations import citation_counts_for_sources
@@ -117,44 +112,6 @@ DEFAULT_CONVERSATION_TITLE = "Chat"
 MAX_CONVERSATION_TITLE_LENGTH = 120
 # Defensive upper bound on the destination-picker title-search query.
 MAX_CONVERSATION_SEARCH_QUERY = 200
-
-
-# =============================================================================
-# Cursor Encoding/Decoding
-# =============================================================================
-
-
-def _encode_cursor(payload: dict[str, object]) -> str:
-    """Encode a cursor payload as base64url without padding."""
-    json_bytes = json.dumps(payload).encode("utf-8")
-    return base64.urlsafe_b64encode(json_bytes).decode("ascii").rstrip("=")
-
-
-def _decode_cursor[T](cursor: str, extract: Callable[[dict[str, Any]], T]) -> T:
-    """Decode a base64url cursor and project it with `extract`.
-
-    Raises InvalidRequestError on any decode/projection failure.
-    """
-    try:
-        padding = 4 - len(cursor) % 4
-        if padding != 4:
-            cursor += "=" * padding
-        json_bytes = base64.urlsafe_b64decode(cursor)
-        payload = json.loads(json_bytes.decode("utf-8"))
-        return extract(payload)
-    except (ValueError, KeyError, TypeError):
-        # justify-ignore-error: expected malformed-cursor failures from the
-        # base64url/JSON decode path and from `extract` parsing primitive
-        # fields (int/UUID/datetime). Other exceptions propagate.
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
-
-
-def encode_message_cursor(seq: int, id: UUID) -> str:
-    return _encode_cursor({"seq": seq, "id": str(id)})
-
-
-def decode_message_cursor(cursor: str) -> tuple[int, UUID]:
-    return _decode_cursor(cursor, lambda p: (int(p["seq"]), UUID(p["id"])))
 
 
 # =============================================================================
@@ -255,7 +212,6 @@ def message_to_out(
     *,
     viewer_id: UUID,
     can_rerun: bool = False,
-    can_regenerate: bool = False,
     citations: list[CitationOut] | None = None,
     trust_trail: AssistantTrustTrailOut | None = None,
 ) -> MessageOut:
@@ -293,7 +249,6 @@ def message_to_out(
         branch_anchor=branch_anchor,
         status=message.status,
         can_rerun=can_rerun,
-        can_regenerate=can_regenerate,
         reader_selection=reader_selection,
         created_at=message.created_at,
         updated_at=message.updated_at,
@@ -334,39 +289,6 @@ def rerunnable_assistant_message_ids(
         ):
             rerunnable.add(message_id)
     return rerunnable
-
-
-def regeneratable_assistant_message_ids(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    assistant_message_ids: Sequence[UUID],
-) -> set[UUID]:
-    """The subset of ``assistant_message_ids`` that are currently regeneratable:
-    a completed assistant answer whose single owning `ChatRun` is complete.
-    Exact source selection availability is projected separately in
-    ``RunSelectionOut`` because the user may choose a replacement. Exactly one complete run is
-    expected per assistant message — this never orders-by-latest. Non-assistant
-    ids simply match no owning run and are excluded.
-
-    This is the advisory read projection; the regenerate mutation re-evaluates
-    the same facts transactionally and is the sole authority (Law 9)."""
-    if not assistant_message_ids:
-        return set()
-
-    runs = (
-        db.execute(
-            select(ChatRun).where(
-                ChatRun.owner_user_id == viewer_id,
-                ChatRun.assistant_message_id.in_(assistant_message_ids),
-                ChatRun.status == "complete",
-            )
-        )
-        .scalars()
-        .all()
-    )
-    run_by_message_id: dict[UUID, ChatRun] = {run.assistant_message_id: run for run in runs}
-    return set(run_by_message_id)
 
 
 # =============================================================================
@@ -1067,196 +989,6 @@ def delete_conversation(
         return CollectionRevisionOut(collectionRevision=revision)
 
     return retry_read_committed(db, "delete_conversation", attempt)
-
-
-def list_messages(
-    db: Session,
-    viewer_id: UUID,
-    conversation_id: UUID,
-    *,
-    catalog_snapshot: GenerationCatalogSnapshot,
-    limit: int = DEFAULT_LIMIT,
-    cursor: str | None = None,
-    before_cursor: str | None = None,
-    window: str | None = None,
-) -> tuple[list[MessageOut], MessagePageInfo]:
-    """List messages in a conversation.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        conversation_id: The ID of the conversation.
-        limit: Maximum number of results (clamped to 1-100).
-        cursor: Opaque forward pagination cursor.
-        before_cursor: Opaque older-history pagination cursor.
-        window: "start" (default) for the oldest page, or "latest" for the
-            newest window.
-
-    Returns:
-        Tuple of (messages, page_info).
-
-    Raises:
-        NotFoundError(E_CONVERSATION_NOT_FOUND): If conversation doesn't exist
-            or viewer is not the owner.
-        InvalidRequestError(E_INVALID_REQUEST): If pagination mode args conflict.
-        InvalidRequestError(E_INVALID_CURSOR): If cursor is malformed.
-    """
-    if cursor is not None and before_cursor is not None:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "cursor and before_cursor cannot be used together",
-        )
-    window = window if window is not None else "start"
-    if window not in ("start", "latest"):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "window must be one of: start, latest",
-        )
-    if cursor is not None and window == "latest":
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "window=latest cannot be used with cursor",
-        )
-
-    # Verify read visibility (shared readers can list messages too)
-    get_conversation_for_visible_read_or_404(db, viewer_id, conversation_id)
-
-    limit = clamp_limit(limit)
-
-    rows = _selected_path_message_rows(db, viewer_id, conversation_id)
-    if cursor:
-        cursor_seq, cursor_id = decode_message_cursor(cursor)
-        rows = [row for row in rows if (row[1], row[0]) > (cursor_seq, cursor_id)]
-
-    next_cursor = None
-    before_cursor_out = None
-    has_older = False
-    if before_cursor:
-        cursor_seq, cursor_id = decode_message_cursor(before_cursor)
-        rows = [row for row in rows if (row[1], row[0]) < (cursor_seq, cursor_id)]
-        has_older = len(rows) > limit
-        if has_older:
-            rows = rows[-limit:]
-    elif window == "latest":
-        has_older = len(rows) > limit
-        if has_older:
-            rows = rows[-limit:]
-    else:
-        # Existing forward-pagination mode for callers that page oldest → newest.
-        has_more = len(rows) > limit
-        if has_more:
-            rows = rows[:limit]
-        if has_more and rows:
-            last = rows[-1]
-            next_cursor = encode_message_cursor(last[1], last[0])
-
-    message_ids = [row[0] for row in rows]
-    assistant_message_ids = [row[0] for row in rows if row[2] == "assistant"]
-    trust_trails = build_assistant_trust_trails(
-        db,
-        viewer_id=viewer_id,
-        assistant_message_ids=assistant_message_ids,
-        catalog_snapshot=catalog_snapshot,
-    )
-    rerunnable_message_ids = rerunnable_assistant_message_ids(
-        db,
-        viewer_id=viewer_id,
-        assistant_message_ids=message_ids,
-    )
-    regeneratable_message_ids = regeneratable_assistant_message_ids(
-        db,
-        viewer_id=viewer_id,
-        assistant_message_ids=message_ids,
-    )
-    # Project through the single message projector: load the ORM rows for this
-    # already-paginated/ordered window (which carry the reader_selection_snapshot
-    # the raw row tuple omits) and preserve the row order.
-    messages_by_id = {
-        message.id: message
-        for message in db.execute(select(Message).where(Message.id.in_(message_ids))).scalars()
-    }
-    messages: list[MessageOut] = []
-    for message_id in message_ids:
-        message = messages_by_id[message_id]
-        trust_trail = trust_trails[message_id] if message.role == "assistant" else None
-        messages.append(
-            message_to_out(
-                db,
-                message,
-                viewer_id=viewer_id,
-                can_rerun=message_id in rerunnable_message_ids,
-                can_regenerate=message_id in regeneratable_message_ids,
-                trust_trail=trust_trail,
-                citations=(
-                    [trust_citation.citation for trust_citation in trust_trail.citations]
-                    if trust_trail is not None
-                    else []
-                ),
-            )
-        )
-
-    if before_cursor or window == "latest":
-        if has_older and messages:
-            first = messages[0]
-            before_cursor_out = encode_message_cursor(first.seq, first.id)
-
-    return messages, MessagePageInfo(
-        next_cursor=next_cursor,
-        before_cursor=before_cursor_out,
-    )
-
-
-def _selected_path_message_rows(db: Session, viewer_id: UUID, conversation_id: UUID) -> list:
-    active_leaf_id = db.scalar(
-        text(
-            """
-            SELECT cap.active_leaf_message_id
-            FROM conversation_active_paths cap
-            JOIN messages active_message ON active_message.id = cap.active_leaf_message_id
-            WHERE cap.conversation_id = :conversation_id
-              AND cap.viewer_user_id = :viewer_id
-              AND active_message.conversation_id = :conversation_id
-            """
-        ),
-        {"conversation_id": conversation_id, "viewer_id": viewer_id},
-    )
-    if active_leaf_id is None:
-        active_leaf_id = db.scalar(
-            select(Message.id)
-            .where(Message.conversation_id == conversation_id)
-            .order_by(Message.seq.desc(), Message.id.desc())
-            .limit(1)
-        )
-    if active_leaf_id is None:
-        return []
-
-    return list(
-        db.execute(
-            text(
-                """
-                WITH RECURSIVE path AS (
-                    SELECT id, parent_message_id
-                    FROM messages
-                    WHERE conversation_id = :conversation_id
-                      AND id = :active_leaf_id
-                    UNION ALL
-                    SELECT parent.id, parent.parent_message_id
-                    FROM messages parent
-                    JOIN path child ON child.parent_message_id = parent.id
-                    WHERE parent.conversation_id = :conversation_id
-                )
-                SELECT m.id, m.seq, m.role, m.content, m.status,
-                       m.created_at, m.updated_at, m.parent_message_id,
-                       m.branch_root_message_id, m.branch_anchor_kind, m.branch_anchor,
-                       m.message_document
-                FROM messages m
-                JOIN path ON path.id = m.id
-                ORDER BY m.seq ASC, m.id ASC
-                """
-            ),
-            {"conversation_id": conversation_id, "active_leaf_id": active_leaf_id},
-        ).fetchall()
-    )
 
 
 def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> MessageDeleteOut:

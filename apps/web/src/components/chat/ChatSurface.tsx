@@ -36,39 +36,37 @@ interface ChatSurfaceProps {
   messages: ConversationMessage[];
   composer: ReactNode;
   /** Docent HUD: rendered before {composer} inside the composerSlot. */
-  docentOverlay?: ReactNode;
+  docentOverlay: ReactNode;
   /** Forwarded to each MessageRow for the Walk-the-sources entry verb. */
-  onStartWalk?: (citations: CitationOut[], text: string) => void;
-  historyLoading?: boolean;
-  initialTargetMessageId?: string | null;
-  olderCursor?: string | null;
-  onLoadOlder?: () => void;
-  emptyState?: ReactNode;
-  forkOptionsByParentId?: Record<string, ForkOption[]>;
-  switchableLeafIds?: Set<string>;
-  onSelectFork?: (fork: ForkOption) => void;
-  onReplyToAssistant?: (draft: BranchDraft) => void;
-  onRerunAssistantResponse?: (
+  onStartWalk: (citations: CitationOut[], text: string) => void;
+  historyLoading: boolean;
+  initialTargetMessageId: string | null;
+  emptyState: ReactNode;
+  forkOptionsByParentId: Record<string, ForkOption[]>;
+  switchableLeafIds: Set<string>;
+  onSelectFork: (fork: ForkOption) => void;
+  onReplyToAssistant: (draft: BranchDraft) => void;
+  onRerunAssistantResponse: (
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
-  rerunningAssistantMessageIds?: ReadonlySet<string>;
-  onRerunAssistantResponseWithSelection?: (
+  rerunningAssistantMessageIds: ReadonlySet<string>;
+  onRerunAssistantResponseWithSelection: (
     assistantMessageId: string,
     selection: GenerationSelectionSpec,
     catalogDefinitionRevision: string,
   ) => Promise<MessageActionMutationOutcome>;
-  onRegenerateAssistantResponse?: (
+  onRegenerateAssistantResponse: (
     assistantMessageId: string,
   ) => Promise<MessageActionMutationOutcome>;
-  onRegenerateAssistantResponseWithSelection?: (
+  onRegenerateAssistantResponseWithSelection: (
     assistantMessageId: string,
     selection: GenerationSelectionSpec,
     catalogDefinitionRevision: string,
   ) => Promise<MessageActionMutationOutcome>;
-  onDeleteMessage?: DeleteMessageMutation;
-  connectionRecoveries?: ChatConnectionRecoveries;
-  onReconnectAssistant?: (assistantMessageId: string) => void;
-  onReaderSourceActivate?: (
+  onDeleteMessage: DeleteMessageMutation;
+  connectionRecoveries: ChatConnectionRecoveries;
+  onReconnectAssistant: (assistantMessageId: string) => void;
+  onReaderSourceActivate: (
     activation: ResourceActivation,
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
@@ -82,12 +80,10 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
       composer,
       docentOverlay,
       onStartWalk,
-      historyLoading = false,
-      initialTargetMessageId = null,
-      olderCursor,
-      onLoadOlder,
+      historyLoading,
+      initialTargetMessageId,
       emptyState,
-      forkOptionsByParentId = {},
+      forkOptionsByParentId,
       switchableLeafIds,
       onSelectFork,
       onReplyToAssistant,
@@ -197,17 +193,6 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
             role="log"
             aria-label="Chat messages"
           >
-            {olderCursor && onLoadOlder ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label="Load older messages"
-                onClick={onLoadOlder}
-              >
-                Load older messages
-              </Button>
-            ) : null}
-
             {messages.length === 0 && emptyState ? (
               <div className={styles.emptyState}>{emptyState}</div>
             ) : null}
@@ -222,7 +207,7 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
                 onSelectFork={onSelectFork}
                 onReplyToAssistant={onReplyToAssistant}
                 onRerunAssistantResponse={onRerunAssistantResponse}
-                rerunning={rerunningAssistantMessageIds?.has(msg.id) === true}
+                rerunning={rerunningAssistantMessageIds.has(msg.id)}
                 onRerunAssistantResponseWithSelection={
                   onRerunAssistantResponseWithSelection
                 }
@@ -231,7 +216,7 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
                   onRegenerateAssistantResponseWithSelection
                 }
                 onDeleteMessage={onDeleteMessage}
-                connectionRecovery={connectionRecoveries?.[msg.id]}
+                connectionRecovery={connectionRecoveries[msg.id]}
                 onReconnectAssistant={onReconnectAssistant}
                 onReaderSourceActivate={onReaderSourceActivate}
                 onStartWalk={onStartWalk}

@@ -119,7 +119,7 @@ export default function MessageSourcesDisclosure({
   onCitationActivate,
 }: {
   citations: ReaderCitationData[];
-  onCitationActivate?: (
+  onCitationActivate: (
     activation: ResourceActivation,
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
@@ -127,15 +127,13 @@ export default function MessageSourcesDisclosure({
 }) {
   if (citations.length === 0) return null;
 
-  const handleActivate = onCitationActivate ?? (() => undefined);
-
   return (
     <details className={styles.sources}>
       <summary>Sources ({citations.length})</summary>
       <ol className={styles.sourceList} aria-label="Sources">
         {citations.map((citation) => (
           <li key={citation.index} className={styles.sourceEntry}>
-            <SourceLink citation={citation} onActivate={handleActivate} />
+            <SourceLink citation={citation} onActivate={onCitationActivate} />
           </li>
         ))}
       </ol>

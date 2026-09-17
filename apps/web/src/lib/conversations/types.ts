@@ -317,9 +317,6 @@ export interface ConversationMessage {
   reader_selection: Presence<ReaderSelectionOut>;
   status: "pending" | "complete" | "error" | "cancelled";
   can_rerun: boolean;
-  /** True only for a currently-eligible completed assistant message; false for
-   *  every other role/state. Drives the Regenerate action. */
-  can_regenerate: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -331,14 +328,6 @@ export function conversationMessageText(
     .filter((block) => block.type === "text")
     .map((block) => block.text)
     .join("\n\n");
-}
-
-export interface ConversationMessagesResponse {
-  data: ConversationMessage[];
-  page: {
-    next_cursor?: string | null;
-    before_cursor?: string | null;
-  };
 }
 
 type BranchAnchorKind = "none" | "assistant_message" | "assistant_selection";

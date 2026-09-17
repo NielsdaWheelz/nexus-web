@@ -25,7 +25,7 @@ export default function UserMessage({
   message: ConversationMessage;
   messageOrdinal: number;
   timestampLabel: string;
-  onReaderSourceActivate?: (
+  onReaderSourceActivate: (
     activation: ResourceActivation,
     target: ReaderSourceTarget | null,
     event?: React.MouseEvent,
@@ -47,7 +47,7 @@ export default function UserMessage({
 
   const handleActivateSource = useCallback(
     (selection: ReaderSelectionOut) => {
-      onReaderSourceActivate?.(
+      onReaderSourceActivate(
         selection.activation,
         readerTargetFromReaderSelection(selection),
       );
