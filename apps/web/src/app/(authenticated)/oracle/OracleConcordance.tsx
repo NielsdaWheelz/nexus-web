@@ -6,7 +6,7 @@ import { useResource } from "@/lib/api/useResource";
 import { toRoman } from "@/lib/toRoman";
 import styles from "./oracle.module.css";
 
-function FleuronBreak() {
+export function FleuronBreak() {
   return (
     <div className={styles.fleuronBreak} aria-hidden="true">
       <span className={styles.fleuronBreakGlyph}>❦</span>

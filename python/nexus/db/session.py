@@ -7,6 +7,7 @@ Provides:
 
 from collections.abc import Generator
 from contextlib import contextmanager
+from functools import lru_cache
 from typing import Annotated, Any
 
 from fastapi import Depends, Request
@@ -18,36 +19,20 @@ from nexus.db.engine import get_engine
 REQUEST_DB_SESSIONS_STATE_KEY = "_nexus_request_db_sessions"
 
 
-def create_session_factory(engine: Any = None) -> sessionmaker[Session]:
-    """Create a session factory bound to an engine.
-
-    Args:
-        engine: SQLAlchemy engine. If None, uses the default engine.
-
-    Returns:
-        Configured sessionmaker instance.
-    """
-    if engine is None:
-        engine = get_engine()
-
+def create_session_factory() -> sessionmaker[Session]:
+    """Create a session factory bound to the application engine."""
     return sessionmaker(
-        bind=engine,
+        bind=get_engine(),
         autocommit=False,
         autoflush=False,
         expire_on_commit=False,
     )
 
 
-# Default session factory - created lazily
-_SessionLocal: sessionmaker[Session] | None = None
-
-
+@lru_cache
 def get_session_factory() -> sessionmaker[Session]:
-    """Get or create the default session factory."""
-    global _SessionLocal
-    if _SessionLocal is None:
-        _SessionLocal = create_session_factory()
-    return _SessionLocal
+    """The process-wide session factory."""
+    return create_session_factory()
 
 
 def get_db(request: Request) -> Generator[Session, None, None]:
@@ -75,9 +60,7 @@ def get_repeatable_read_db(
 ) -> Session:
     """Start one strict read-only snapshot on a fresh request session."""
 
-    bind = db.get_bind()
-    in_outer_transaction = bool(getattr(bind, "in_transaction", lambda: False)())
-    if db.in_transaction() or in_outer_transaction:
+    if db.in_transaction():
         raise RuntimeError("repeatable-read dependency requires a fresh session")
     db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
     db.execute(text("SET TRANSACTION READ ONLY"))
@@ -93,39 +76,28 @@ def track_request_db_session(request: Request, db: Session) -> None:
     sessions.append(db)
 
 
-def release_connection(db: Session) -> None:
-    """Return a request session's checked-out connection before response transfer."""
-    if db.in_transaction():
-        db.rollback()
-    db.close()
-
-
-def release_tracked_request_db_sessions(scope_state: Any) -> None:
+def release_tracked_request_db_sessions(scope_state: dict[str, Any]) -> None:
     """Release all DB sessions tracked for one ASGI request scope."""
-    if not isinstance(scope_state, dict):
-        return
-
     sessions = scope_state.get(REQUEST_DB_SESSIONS_STATE_KEY)
     if not sessions:
         return
 
     scope_state[REQUEST_DB_SESSIONS_STATE_KEY] = []
     for db in sessions:
-        release_connection(db)
+        if db.in_transaction():
+            db.rollback()
+        db.close()
 
 
-def use_serializable_if_available(db: Session) -> None:
-    bind = db.get_bind()
-    in_outer_transaction = bool(getattr(bind, "in_transaction", lambda: False)())
-    if not db.in_transaction() and not in_outer_transaction:
+def use_serializable(db: Session) -> None:
+    """Select SERIALIZABLE before an attempt opens its transaction."""
+    if not db.in_transaction():
         db.connection(execution_options={"isolation_level": "SERIALIZABLE"})
 
 
-def use_read_committed_if_available(db: Session) -> None:
+def use_read_committed(db: Session) -> None:
     """Select READ COMMITTED before an attempt opens its transaction."""
-    bind = db.get_bind()
-    in_outer_transaction = bool(getattr(bind, "in_transaction", lambda: False)())
-    if not db.in_transaction() and not in_outer_transaction:
+    if not db.in_transaction():
         db.connection(execution_options={"isolation_level": "READ COMMITTED"})
 
 

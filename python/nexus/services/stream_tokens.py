@@ -298,7 +298,4 @@ def _claim_jti_once_transaction(db, *, jti: str, user_id: UUID, expires_at: date
 
 
 def _is_jti_primary_key_conflict(exc: IntegrityError) -> bool:
-    constraint_name = integrity_constraint_name(exc)
-    if constraint_name:
-        return constraint_name == "stream_token_jti_claims_pkey"
-    return "stream_token_jti_claims_pkey" in str(exc.orig)
+    return integrity_constraint_name(exc) == "stream_token_jti_claims_pkey"

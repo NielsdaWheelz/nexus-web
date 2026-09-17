@@ -25,18 +25,21 @@ import {
   FieldFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import {
+  isApiError,
+  isInvalidViewError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import {
   AUTHOR_WORKS_LIMIT,
   contributorResource,
   contributorWorksResource,
 } from "@/lib/api/resource";
-import type {
-  CollectionCursor,
-  CollectionPage,
-  CollectionRevision,
+import {
+  type CollectionPage,
+  NO_CURSOR,
+  ZERO_REVISION,
 } from "@/lib/api/collectionPage";
-import type { Presence } from "@/lib/api/presence";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { useResource } from "@/lib/api/useResource";
@@ -112,17 +115,6 @@ interface CommittedAuthorWorks extends AuthorPaneSeed {
 
 const AUTHOR_VISIT_DATA =
   definePaneVisitDataKey<CommittedAuthorWorks>("Author.Works");
-const NO_CURSOR: Presence<CollectionCursor> = { kind: "Absent" };
-const ZERO_REVISION = 0 as CollectionRevision;
-
-// The one code that turns a works fetch failure into the "Invalid works view"
-// terminal state: the backend rejects a bad view/cursor with these codes.
-function isInvalidViewError(error: unknown): boolean {
-  return (
-    isApiError(error) &&
-    (error.code === "E_INVALID_REQUEST" || error.code === "E_INVALID_CURSOR")
-  );
-}
 
 function authorLoadErrorMessage(error: unknown): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;

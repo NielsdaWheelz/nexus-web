@@ -1,7 +1,6 @@
-"""Grand atlas read model + on-demand projection trigger (grand-atlas §6).
+"""Grand atlas read model (grand-atlas §6).
 
 - GET  /atlas          the celestial chart read model, ETag-cacheable
-- POST /atlas/project  enqueue an atlas_project_job for the requesting user
 
 The route builds the read model with user-scoped queries; the spatial
 substrate and projection live in ``services/atlas_projection.py``.
@@ -36,7 +35,6 @@ from nexus.schemas.atlas import (
     ConstellationOut,
     StarOut,
 )
-from nexus.services.atlas_projection import try_enqueue_atlas_project
 from nexus.services.library_entries import library_media_ids_cte_sql
 
 router = APIRouter(prefix="/atlas", tags=["atlas"])
@@ -189,14 +187,3 @@ def read_atlas(
 
     response.headers["ETag"] = f'"{etag}"'
     return ok(AtlasOut(stars=stars, constellations=constellations, edges=edges))
-
-
-@router.post("/project", status_code=202)
-def request_projection(
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Enqueue an on-demand projection for the requesting user (202)."""
-    queued = try_enqueue_atlas_project(db, user_id=viewer.user_id, force=True)
-    db.commit()
-    return {"queued": queued}

@@ -21,7 +21,7 @@ from fastapi import Request
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from nexus.db.listen import StreamNotificationListener, open_stream_listener
+from nexus.db.listen import PostgresStreamListener, open_stream_listener
 from nexus.errors import ApiError, ApiErrorCode
 
 STREAM_IDLE_TTL_SECONDS = 45.0
@@ -51,7 +51,7 @@ def format_sse_event(
     return f"{head}event: {event_type}\ndata: {data}\n\n"
 
 
-async def open_sse_listener(channel: str, key: str) -> StreamNotificationListener:
+async def open_sse_listener(channel: str, key: str) -> PostgresStreamListener:
     """Open the shared LISTEN resource at the SSE keepalive cadence."""
     return await open_stream_listener(channel, key, KEEPALIVE_INTERVAL_SECONDS)
 
@@ -59,7 +59,7 @@ async def open_sse_listener(channel: str, key: str) -> StreamNotificationListene
 async def tail_cursor_stream(
     *,
     request: Request,
-    listener: StreamNotificationListener,
+    listener: PostgresStreamListener,
     after: int,
     read_after: Callable[[int], tuple[Sequence[Any], bool]],
     read_advisory: Callable[[], tuple[str, dict[str, Any]] | None] | None = None,
@@ -118,7 +118,7 @@ async def tail_cursor_stream(
 async def tail_snapshot_stream(
     *,
     request: Request,
-    listener: StreamNotificationListener,
+    listener: PostgresStreamListener,
     read_snapshot: Callable[[], tuple[dict[str, Any], bool]],
 ) -> AsyncIterator[str]:
     """Snapshot/diff SSE. ``read_snapshot()`` returns (payload, terminal). Emits a

@@ -74,6 +74,17 @@ export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
 
+/**
+ * The codes that turn a collection fetch failure into an "invalid view"
+ * terminal state: the backend rejects a bad view or cursor with them.
+ */
+export function isInvalidViewError(error: unknown): boolean {
+  return (
+    isApiError(error) &&
+    (error.code === "E_INVALID_REQUEST" || error.code === "E_INVALID_CURSOR")
+  );
+}
+
 export type SameSystemApiDefect = ApiError & {
   readonly code: "E_INVALID_RESPONSE" | "E_UNKNOWN" | "E_INTERNAL";
 };

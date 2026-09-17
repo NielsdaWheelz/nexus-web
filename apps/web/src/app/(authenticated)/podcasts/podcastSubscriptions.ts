@@ -1,8 +1,4 @@
 import { apiFetch } from "@/lib/api/client";
-import {
-  decodeCollectionRevision,
-  type CollectionRevision,
-} from "@/lib/api/collectionPage";
 import { decodeContributorCredit } from "@/lib/contributors/credit";
 import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
 import type { ContributorCredit } from "@/lib/contributors/types";
@@ -20,8 +16,6 @@ import {
   publishPodcastSubscriptionUnsubscribed,
   runPodcastSubscriptionSettingsMutation,
 } from "@/lib/podcasts/subscriptionSettings";
-import type { LibraryPlacementOption } from "@/lib/libraries/libraryPlacement";
-import { pluralize } from "@/lib/text/pluralize";
 import {
   decodePodcastBackfillState,
   decodePodcastSyncStatus,
@@ -51,7 +45,7 @@ export type PodcastBackfill = {
   addedCount: number;
 };
 
-export type PodcastSummary = {
+type PodcastSummary = {
   id: string;
   provider: string;
   provider_podcast_id: string;
@@ -65,7 +59,7 @@ export type PodcastSummary = {
   updated_at: string;
 };
 
-export type PodcastSubscriptionRecord = {
+type PodcastSubscriptionRecord = {
   podcast_id: string;
   default_playback_speed: Presence<number>;
   pause_shortening_mode: Presence<PauseShorteningMode>;
@@ -258,7 +252,7 @@ export function decodePodcastDetailResponse(
   };
 }
 
-export type PodcastSubscriptionListItemWire = {
+type PodcastSubscriptionListItemWire = {
   podcast_id: string;
   title: string;
   contributors: ContributorCredit[];
@@ -351,27 +345,11 @@ export function decodePodcastSubscriptionListItem(
   };
 }
 
-export type PodcastBackfillRetryResult = {
+type PodcastBackfillRetryResult = {
   podcastId: string;
   outcome: "Retried" | "NotEligible";
   backfill: PodcastBackfill;
 };
-
-export type PodcastUnsubscribeResult =
-  | {
-      readonly outcome: "Unsubscribed";
-      readonly podcast_id: string;
-      readonly removed_placement_count: number;
-      readonly retained_shared_count: number;
-      readonly collectionRevision: CollectionRevision;
-      readonly libraryEntriesCollectionRevision: CollectionRevision;
-    }
-  | {
-      readonly outcome: "AlreadyUnsubscribed";
-      readonly podcast_id: string;
-      readonly collectionRevision: CollectionRevision;
-      readonly libraryEntriesCollectionRevision: CollectionRevision;
-    };
 
 function decodePodcastBackfill(raw: unknown, context: string): PodcastBackfill {
   const value = expectExactRecord(
@@ -426,101 +404,13 @@ export async function retryPodcastSubscriptionBackfill(
   );
 }
 
-export async function unsubscribeFromPodcast(
-  podcastId: string,
-): Promise<PodcastUnsubscribeResult> {
+export async function unsubscribeFromPodcast(podcastId: string): Promise<void> {
   return runPodcastSubscriptionSettingsMutation(async () => {
-    const response = await apiFetch<unknown>(
-      `/api/podcasts/subscriptions/${podcastId}`,
-      {
-        method: "DELETE",
-        headers: { "Idempotency-Key": crypto.randomUUID() },
-      },
-    );
-    const envelope = expectExactRecord(
-      response,
-      ["data"],
-      "PodcastUnsubscribeResult",
-    );
-    const data = expectExactRecord(
-      envelope.data,
-      Object.prototype.hasOwnProperty.call(
-        envelope.data,
-        "removed_placement_count",
-      )
-        ? [
-            "outcome",
-            "podcast_id",
-            "removed_placement_count",
-            "retained_shared_count",
-            "collectionRevision",
-            "libraryEntriesCollectionRevision",
-          ]
-        : [
-            "outcome",
-            "podcast_id",
-            "collectionRevision",
-            "libraryEntriesCollectionRevision",
-          ],
-      "PodcastUnsubscribeResult.data",
-    );
-    const outcome = expectString(data.outcome, "outcome");
-    const common = {
-      podcast_id: expectString(data.podcast_id, "podcast_id"),
-      collectionRevision: decodeCollectionRevision(data.collectionRevision),
-      libraryEntriesCollectionRevision: decodeCollectionRevision(
-        data.libraryEntriesCollectionRevision,
-      ),
-    };
-    const result: PodcastUnsubscribeResult =
-      outcome === "Unsubscribed"
-        ? {
-            outcome,
-            ...common,
-            removed_placement_count: expectNonnegativeInteger(
-              data.removed_placement_count,
-              "removed_placement_count",
-            ),
-            retained_shared_count: expectNonnegativeInteger(
-              data.retained_shared_count,
-              "retained_shared_count",
-            ),
-          }
-        : outcome === "AlreadyUnsubscribed"
-          ? { outcome, ...common }
-          : (() => {
-              throw new TypeError("Podcast unsubscribe outcome is invalid");
-            })();
+    await apiFetch<unknown>(`/api/podcasts/subscriptions/${podcastId}`, {
+      method: "DELETE",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+    });
     publishLibraryPlacementChange("Unknown");
     await publishPodcastSubscriptionUnsubscribed(podcastId);
-    return result;
   });
-}
-
-export function buildPodcastUnsubscribeConfirmation(
-  title: string,
-  libraries: readonly LibraryPlacementOption[],
-): string {
-  const removableLibraries = libraries.filter(
-    (placement) =>
-      placement.relation.kind === "Direct" &&
-      placement.availability.kind === "Available",
-  );
-  const retainedLibraries = libraries.filter(
-    (placement) =>
-      placement.relation.kind !== "Absent" &&
-      !removableLibraries.includes(placement),
-  );
-  const confirmationLines = [
-    `Unsubscribe from "${title}"?`,
-    removableLibraries.length === 0
-      ? "This podcast is not in any libraries you can change."
-      : `This will remove the podcast from ${pluralize(removableLibraries.length, "library", "libraries")}.`,
-  ];
-  if (retainedLibraries.length > 0) {
-    confirmationLines.push(
-      `It will remain in ${pluralize(retainedLibraries.length, "shared library", "shared libraries")} you cannot administer.`,
-    );
-  }
-  return confirmationLines.join("\n\n");
 }

@@ -349,12 +349,13 @@ epoch and viewer before it can cross the stream.
 
 ## 6. The data model: schema domain map
 
-PostgreSQL is the single source of truth. The schema lives in
-`python/nexus/db/models.py` (~100 tables, ~6,400 lines) plus the
-**`background_jobs`** table which is defined only in raw SQL in
-`python/nexus/jobs/`. Migrations are **hand-written** Alembic files
+PostgreSQL is the single source of truth. The schema of record is the live
+database (`pg_dump --schema-only`) plus the **hand-written** Alembic migrations
 (`migrations/alembic/versions/NNNN_*.py`, ~125 of them, linear chain, no
-autogenerate).
+autogenerate). `python/nexus/db/models.py` holds only the ~90 classes the code
+queries through the ORM — it mirrors no constraints or indexes — and many live
+tables are reached only from raw SQL, among them **`background_jobs`**, defined
+in `python/nexus/jobs/`.
 
 Conventions throughout: UUID `id` PKs (`gen_random_uuid()`), `timestamptz` with
 `now()` defaults, heavy `CHECK`/`UNIQUE`/partial indexes encoding business rules,
@@ -407,7 +408,7 @@ APK ([`deployment.md`](../deployment.md)). Offline packages and device
 availability are not server rows.
 
 **Retrieval index** — `content_blocks`, `evidence_spans`, `content_chunks`,
-`content_chunk_parts`, `content_embeddings` (PGVector 256),
+`content_chunk_parts`, `content_embeddings` (pgvector, 256 dims),
 `content_index_states(owner_kind, owner_id)`, `media_transcript_states`.
 The index is owner-polymorphic: media-owned content and note-owned bodies share
 the same chunk/span/embedding pipeline; notes no longer have a parallel
@@ -560,10 +561,11 @@ deterministic over tags/phase hints), `oracle_readings`, `oracle_reading_folios`
 publication marker: it binds the reviewed manifest digest and active embedding
 provider/model after exact DB/selector/R2 support proof.
 
-> Two things to know when reasoning about the schema: (1) `background_jobs` is
-> invisible if you only read `models.py` — it's raw SQL. (2) Because migrations
-> are hand-written with `target_metadata = None`, `models.py` and the live DB can
-> drift silently; there is no autogenerate diff to catch a forgotten migration.
+> `models.py` maps only the tables the code queries through the ORM; the
+> raw-SQL tables (`background_jobs` and roughly thirty others) never appear
+> there. The schema of record is the live database (`pg_dump --schema-only`)
+> plus the hand-written migrations; there is no autogenerate, so a forgotten
+> migration is caught only by a failing query.
 
 ---
 
@@ -587,7 +589,7 @@ discipline (this is the single most important backend invariant):
   lazy-load relationships while streaming.
 - **Server-side prepared statements are disabled** (`prepare_threshold=None`) for
   pooler safety.
-- **SERIALIZABLE** isolation is opt-in via `use_serializable_if_available()` for
+- **SERIALIZABLE** isolation is opt-in via `use_serializable()` for
   transactions needing sequential equivalence; serialization failures (SQLSTATE
   `40001`) are detected and retried by callers. No `SELECT FOR UPDATE` is layered
   on top except where genuinely required (e.g. PDF advisory locks).
@@ -2265,8 +2267,9 @@ The things most likely to bite you, distilled:
     before semantic search should depend on them.
 14. **Frontend routing is the pane system, not `children`.** Behavior lives in
     `*PaneBody.tsx`; the URL is a projection of the active pane.
-15. **Migrations are hand-written**; `models.py` and the live DB can drift —
-    there's no autogenerate safety net.
+15. **Migrations are hand-written**; the live database and `migrations/` are the
+    schema of record, `models.py` maps only what the ORM queries, and there is no
+    autogenerate diff.
 
 ---
 
@@ -2278,7 +2281,7 @@ The things most likely to bite you, distilled:
 | Reader behavior contract                                          | [`modules/reader-implementation.md`](modules/reader-implementation.md), [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md)                                                     |
 | FastAPI bootstrap / middleware / lifecycle                        | `python/nexus/app.py`, `python/nexus/middleware/`, `python/nexus/auth/`                                                                                                                                |
 | DB layer / sessions / LISTEN-NOTIFY                               | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`)                                                                                                                                            |
-| The schema                                                        | `python/nexus/db/models.py` (+ `migrations/alembic/versions/`)                                                                                                                                         |
+| The schema                                                        | `migrations/alembic/versions/` + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
 | Generation backends                                               | `python/nexus/services/{generation_catalog,generation_policy,generation_service,generation_spec,generation_backend,provider_generation_backend,codex_generation_client,llm_execution,llm_ledger,tool_authority}.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md) |
 | Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_failure_projection.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |

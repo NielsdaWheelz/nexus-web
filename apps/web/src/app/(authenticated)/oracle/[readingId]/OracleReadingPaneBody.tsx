@@ -47,7 +47,7 @@ import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import BorderFrame from "../BorderFrame";
 import IlluminatedCapital from "../IlluminatedCapital";
-import OracleConcordance from "../OracleConcordance";
+import OracleConcordance, { FleuronBreak } from "../OracleConcordance";
 import OracleThemeWrapper from "../OracleThemeWrapper";
 import Sidenote from "./Sidenote";
 import styles from "../oracle.module.css";
@@ -63,7 +63,6 @@ const PHASE_LABEL: Record<Phase, string> = {
 };
 
 type PassagePayload = OraclePassagePayload;
-export type ReadingDetail = OracleReadingDetail;
 
 interface ReadingState {
   question: string;
@@ -149,7 +148,7 @@ const initialState = (): ReadingState => ({
   cursor: 0,
 });
 
-function stateFromDetail(detail: ReadingDetail): ReadingState {
+function stateFromDetail(detail: OracleReadingDetail): ReadingState {
   let next: ReadingState = {
     ...initialState(),
     question: detail.question_text,
@@ -247,7 +246,7 @@ function applyEvent(
 async function loadReadingDetail(
   readingId: string,
   signal: AbortSignal,
-): Promise<ReadingDetail> {
+): Promise<OracleReadingDetail> {
   const detail = await apiFetch<unknown>(
     `/api/oracle/readings/${readingId}`,
     { signal },
@@ -305,17 +304,7 @@ function ordinalEnglish(day: number): string {
   return `${tens}-${ORDINAL_ONES[day % 10]!}`;
 }
 
-function FleuronBreak() {
-  return (
-    <div className={styles.fleuronBreak} aria-hidden="true">
-      <span className={styles.fleuronBreakGlyph}>❦</span>
-    </div>
-  );
-}
-
-export type OracleGenerationFailureCode = ReadOracleReadingFailureCode;
-
-export function oracleFailureFeedback(
+function oracleFailureFeedback(
   errorCode: ReadOracleReadingFailureCode | null,
 ): FeedbackContent {
   if (errorCode === null) {
@@ -439,7 +428,7 @@ export default function OracleReadingPaneBody() {
   const [retryNonce, setRetryNonce] = useState(0);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const streamCursorRef = useRef({ readingId, cursor: 0 });
-  const detailResource = useResource<ReadingDetail>({
+  const detailResource = useResource<OracleReadingDetail>({
     cacheKey: `${readingId}:${retryNonce}`,
     load: (signal) => loadReadingDetail(readingId, signal),
   });

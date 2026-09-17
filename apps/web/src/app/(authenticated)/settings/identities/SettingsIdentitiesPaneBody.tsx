@@ -66,9 +66,7 @@ export default function SettingsIdentitiesPaneBody() {
   });
   const [identities, setIdentities] = useState<LinkedIdentity[]>([]);
   const [error, setError] = useState<FeedbackContent | null>(null);
-  const [loadFailure, setLoadFailure] = useState<"Initial" | "Refresh" | null>(
-    null,
-  );
+  const [loadFailure, setLoadFailure] = useState(false);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const [unlinkingIdentityId, setUnlinkingIdentityId] = useState<string | null>(
     null
@@ -86,14 +84,14 @@ export default function SettingsIdentitiesPaneBody() {
       const result = await loadLinkedIdentities();
       if (!result.ok) {
         setError({ tone: "Danger", title: LOAD_FAILED_MESSAGE });
-        setLoadFailure("Refresh");
+        setLoadFailure(true);
         setIdentities([]);
         return;
       }
 
       setIdentities(result.identities);
       setError(null);
-      setLoadFailure(null);
+      setLoadFailure(false);
     } catch (caughtDefect) {
       setDefect({ error: caughtDefect });
     }
@@ -104,10 +102,10 @@ export default function SettingsIdentitiesPaneBody() {
     if (initialIdentities.data.ok) {
       setIdentities(initialIdentities.data.identities);
       setError(null);
-      setLoadFailure(null);
+      setLoadFailure(false);
     } else {
       setError({ tone: "Danger", title: LOAD_FAILED_MESSAGE });
-      setLoadFailure("Initial");
+      setLoadFailure(true);
       setIdentities([]);
     }
   }, [initialIdentities]);
@@ -121,12 +119,12 @@ export default function SettingsIdentitiesPaneBody() {
     async (identity: LinkedIdentity) => {
       if (!mayUnlinkIdentity(identities, identity.id)) {
         setError({ tone: "Danger", title: KEEP_ONE_IDENTITY_MESSAGE });
-        setLoadFailure(null);
+        setLoadFailure(false);
         return;
       }
 
       setError(null);
-      setLoadFailure(null);
+      setLoadFailure(false);
       setUnlinkingIdentityId(identity.id);
 
       try {
@@ -136,7 +134,7 @@ export default function SettingsIdentitiesPaneBody() {
         );
         if (!result.ok) {
           setError({ tone: "Danger", title: UNLINK_FAILED_MESSAGE });
-          setLoadFailure(null);
+          setLoadFailure(false);
           return;
         }
 
@@ -165,19 +163,19 @@ export default function SettingsIdentitiesPaneBody() {
             content={error}
             announcement="Assertive"
             actions={
-              loadFailure === null
-                ? undefined
-                : [
+              loadFailure
+                ? [
                     {
                       label: "Retry",
                       onClick: () => void loadIdentities(),
                     },
                   ]
+                : undefined
             }
           />
         ) : null}
 
-        {!loading && loadFailure === null && identities.length === 0 && (
+        {!loading && !loadFailure && identities.length === 0 && (
           <FeedbackNotice
             content={{
               tone: "Neutral",
@@ -187,7 +185,7 @@ export default function SettingsIdentitiesPaneBody() {
           />
         )}
 
-        {!loading && loadFailure === null && identities.length > 0 && (
+        {!loading && !loadFailure && identities.length > 0 && (
           <CollectionView
             returnScope="Settings.Identities.Linked"
             rows={identities.map((identity) => {
@@ -218,7 +216,7 @@ export default function SettingsIdentitiesPaneBody() {
           />
         )}
 
-        {loadFailure !== null ? null : connectableProviders.length === 0 ? (
+        {loadFailure ? null : connectableProviders.length === 0 ? (
           <FeedbackNotice
             content={{
               tone: "Neutral",

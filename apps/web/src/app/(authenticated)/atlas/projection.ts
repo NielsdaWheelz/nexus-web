@@ -32,7 +32,7 @@ export interface CelestialPosition {
   readonly altitude: number;
 }
 
-export interface ScreenPosition {
+interface ScreenPosition {
   readonly x: number;
   readonly y: number;
   /** Radius from center, 0..radius. Useful for fade-by-radius effects. */
@@ -52,7 +52,7 @@ export const HORIZON_RIM_MARGIN = (Math.PI / 2) * 0.1;
 /** Effective altitude span, [ZENITH_MARGIN, π/2 - HORIZON_RIM_MARGIN]. */
 export const ALTITUDE_SPAN = Math.PI / 2 - ZENITH_MARGIN - HORIZON_RIM_MARGIN;
 /** Hash space normalizer — keeps the math in [0, 1). */
-const HASH_NORMALIZER = 0xffffffff;
+export const HASH_NORMALIZER = 0xffffffff;
 
 /**
  * 32-bit FNV-1a — fast, stable, no deps. Not cryptographic;
@@ -122,16 +122,6 @@ export function projectToScreen(
   const x = centerX + r * Math.sin(theta);
   const y = centerY - r * Math.cos(theta);
   return { x, y, r, theta };
-}
-
-/**
- * Attach a celestial position to each folio. Pure derivation, no I/O.
- */
-export function placeFolios(folios: readonly FolioStarInput[]): readonly FolioStar[] {
-  return folios.map((folio) => ({
-    ...folio,
-    celestial: celestialPosition(folio),
-  }));
 }
 
 /**

@@ -201,17 +201,6 @@
   list-style: none;
 }
 
-.atlasFeedback {
-  --color-border: var(--oracle-maroon);
-  --color-error: var(--oracle-maroon);
-  --color-text: var(--oracle-maroon);
-  --color-text-secondary: var(--oracle-fg-muted);
-  --color-text-muted: var(--oracle-marginalia-fg);
-  --color-bg-secondary: transparent;
-  border-radius: 0;
-  font-family: var(--font-oracle-display);
-}
-
 @keyframes atlas-fade-in {
   from {
     opacity: 0;

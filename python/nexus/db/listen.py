@@ -20,13 +20,12 @@ from __future__ import annotations
 
 import threading
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from time import monotonic
-from typing import Protocol, cast
 from uuid import uuid4
 
 import psycopg
 from psycopg import sql
+from psycopg.rows import TupleRow
 
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
@@ -47,48 +46,12 @@ class StreamListenCapacityError(ApiError):
         )
 
 
-class StreamNotificationListener(Protocol):
-    """Resource returned by the shared stream LISTEN layer."""
-
-    def notifications(self) -> AsyncIterator[None]:
-        """Yield an initial tick, then ticks for relevant notifications/timeouts."""
-        ...
-
-    async def close(self, *, reason: str = "closed") -> None:
-        """Close the underlying LISTEN connection and release capacity."""
-        ...
-
-
-class _Notification(Protocol):
-    payload: str
-
-
-class _ListenConnection(Protocol):
-    async def execute(self, query: object) -> object: ...
-
-    def notifies(self, *, timeout: float) -> AsyncIterator[_Notification]: ...
-
-    async def close(self) -> None: ...
-
-
-@dataclass(frozen=True)
-class StreamListenStats:
-    active: int
-    capacity: int
-
-
-@dataclass(frozen=True)
-class _ListenSlot:
-    listener_id: str
-    active_after_acquire: int
-
-
 class PostgresStreamListener:
     def __init__(
         self,
         *,
         manager: PostgresListenManager,
-        conn: _ListenConnection,
+        conn: psycopg.AsyncConnection[TupleRow],
         listener_id: str,
         channel: str,
         target: str,
@@ -142,15 +105,15 @@ class PostgresStreamListener:
                 error=str(exc),
             )
         finally:
-            stats = self._manager._release()
+            active = self._manager._release()
             logger.info(
                 "stream.listen.close",
                 listener_id=self._listener_id,
                 channel=self._channel,
                 target=self._target,
                 reason=reason,
-                active_listeners=stats.active,
-                max_listeners=stats.capacity,
+                active_listeners=active,
+                max_listeners=STREAM_LISTEN_MAX_CONNECTIONS,
                 duration_seconds=round(monotonic() - self._opened_at, 3),
             )
         if close_error is not None:
@@ -158,21 +121,9 @@ class PostgresStreamListener:
 
 
 class PostgresListenManager:
-    def __init__(
-        self,
-        *,
-        max_connections: int = STREAM_LISTEN_MAX_CONNECTIONS,
-    ) -> None:
-        if max_connections < 1:
-            raise ValueError("max_connections must be >= 1")
-        self._max_connections = max_connections
+    def __init__(self) -> None:
         self._active = 0
         self._lock = threading.Lock()
-
-    @property
-    def stats(self) -> StreamListenStats:
-        with self._lock:
-            return StreamListenStats(active=self._active, capacity=self._max_connections)
 
     async def open(
         self,
@@ -181,87 +132,81 @@ class PostgresListenManager:
         target: str,
         idle_timeout_seconds: float,
     ) -> PostgresStreamListener:
-        slot = self._reserve(channel=channel, target=target)
-        conn: _ListenConnection | None = None
+        listener_id, active_after_acquire = self._reserve(channel=channel, target=target)
+        conn: psycopg.AsyncConnection[TupleRow] | None = None
         try:
             conn = await _connect()
             await conn.execute(sql.SQL("LISTEN {}").format(sql.Identifier(channel)))
         except BaseException:
-            stats = self._release()
+            active = self._release()
             if conn is not None:
                 try:
                     await conn.close()
                 except BaseException as close_exc:
                     logger.warning(
                         "stream.listen.open_cleanup_failed",
-                        listener_id=slot.listener_id,
+                        listener_id=listener_id,
                         channel=channel,
                         target=target,
                         error=str(close_exc),
                     )
             logger.warning(
                 "stream.listen.open_failed",
-                listener_id=slot.listener_id,
+                listener_id=listener_id,
                 channel=channel,
                 target=target,
-                active_listeners=stats.active,
-                max_listeners=stats.capacity,
+                active_listeners=active,
+                max_listeners=STREAM_LISTEN_MAX_CONNECTIONS,
             )
             raise
 
         logger.info(
             "stream.listen.open",
-            listener_id=slot.listener_id,
+            listener_id=listener_id,
             channel=channel,
             target=target,
-            active_listeners=slot.active_after_acquire,
-            max_listeners=self._max_connections,
+            active_listeners=active_after_acquire,
+            max_listeners=STREAM_LISTEN_MAX_CONNECTIONS,
             idle_timeout_seconds=idle_timeout_seconds,
         )
         return PostgresStreamListener(
             manager=self,
             conn=conn,
-            listener_id=slot.listener_id,
+            listener_id=listener_id,
             channel=channel,
             target=target,
             idle_timeout_seconds=idle_timeout_seconds,
             opened_at=monotonic(),
         )
 
-    def _reserve(self, *, channel: str, target: str) -> _ListenSlot:
+    def _reserve(self, *, channel: str, target: str) -> tuple[str, int]:
         with self._lock:
-            if self._active >= self._max_connections:
+            if self._active >= STREAM_LISTEN_MAX_CONNECTIONS:
                 logger.warning(
                     "stream.listen.rejected",
                     channel=channel,
                     target=target,
                     active_listeners=self._active,
-                    max_listeners=self._max_connections,
+                    max_listeners=STREAM_LISTEN_MAX_CONNECTIONS,
                 )
                 raise StreamListenCapacityError()
             self._active += 1
-            return _ListenSlot(
-                listener_id=str(uuid4()),
-                active_after_acquire=self._active,
-            )
+            return str(uuid4()), self._active
 
-    def _release(self) -> StreamListenStats:
+    def _release(self) -> int:
         with self._lock:
             if self._active > 0:
                 self._active -= 1
-            return StreamListenStats(active=self._active, capacity=self._max_connections)
+            return self._active
 
 
 _listen_manager = PostgresListenManager()
 
 
-async def _connect() -> _ListenConnection:
+async def _connect() -> psycopg.AsyncConnection[TupleRow]:
     # psycopg wants the bare libpq URL, not SQLAlchemy's postgresql+psycopg://.
     url = get_settings().database_url.replace("postgresql+psycopg://", "postgresql://", 1)
-    return cast(
-        _ListenConnection,
-        await psycopg.AsyncConnection.connect(url, autocommit=True),
-    )
+    return await psycopg.AsyncConnection.connect(url, autocommit=True)
 
 
 async def open_stream_listener(

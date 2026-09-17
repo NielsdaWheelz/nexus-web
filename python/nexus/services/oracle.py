@@ -288,17 +288,11 @@ def _insert_reading_with_next_folio(
 
 
 def _is_oracle_folio_conflict(exc: IntegrityError) -> bool:
-    constraint_name = integrity_constraint_name(exc)
-    if constraint_name:
-        return constraint_name == "uix_oracle_readings_user_folio"
-    return "uix_oracle_readings_user_folio" in str(exc)
+    return integrity_constraint_name(exc) == "uix_oracle_readings_user_folio"
 
 
 def _is_oracle_idempotency_conflict(exc: IntegrityError) -> bool:
-    constraint_name = integrity_constraint_name(exc)
-    if constraint_name:
-        return constraint_name == "uq_oracle_readings_user_idempotency_key"
-    return "uq_oracle_readings_user_idempotency_key" in str(exc)
+    return integrity_constraint_name(exc) == "uq_oracle_readings_user_idempotency_key"
 
 
 def get_reading_detail(
