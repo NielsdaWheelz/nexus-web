@@ -12,7 +12,7 @@ from nexus.auth.permissions import can_read_media
 from nexus.db.models import Media, MediaKind
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.services.capabilities import is_document_status_ready
-from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
+from nexus.storage.client import StorageClient, StorageError, get_storage_client
 from nexus.storage.read import read_object_checked
 
 _ASSET_KEY_RE = re.compile(r"^[a-zA-Z0-9_./-]+$")
@@ -105,7 +105,7 @@ def get_epub_asset_for_viewer(
     viewer_id: UUID,
     media_id: UUID,
     asset_key: str,
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> EpubAssetOut:
     """Fetch an EPUB internal asset for an authorized viewer."""
     with session_factory() as db:

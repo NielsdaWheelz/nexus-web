@@ -57,7 +57,7 @@ from nexus.services.vault_contracts import (
     parse_editable_vault_path,
     parse_vault_markdown_file,
 )
-from nexus.storage.client import StorageClientBase, get_storage_client
+from nexus.storage.client import StorageClient, get_storage_client
 from nexus.storage.paths import get_file_extension
 
 
@@ -97,7 +97,7 @@ def export_vault(
     viewer_id: UUID,
     vault_dir: Path,
     *,
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> None:
     vault_dir.mkdir(parents=True, exist_ok=True)
     (vault_dir / "Media").mkdir(exist_ok=True)
@@ -122,7 +122,7 @@ def sync_vault(
     viewer_id: UUID,
     vault_dir: Path,
     *,
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> None:
     (vault_dir / "Highlights").mkdir(parents=True, exist_ok=True)
     (vault_dir / "Pages").mkdir(parents=True, exist_ok=True)
@@ -225,7 +225,7 @@ def watch_vault(
     vault_dir: Path,
     *,
     interval_seconds: float,
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> None:
     while True:
         sync_vault(db, viewer_id, vault_dir, storage_client=storage_client)
@@ -1293,7 +1293,7 @@ def _highlight_sort_key(highlight: Highlight) -> tuple[int, int, int]:
 def _write_source_file(
     row: Mapping[Any, Any],
     source_dir: Path,
-    storage_client: StorageClientBase | None,
+    storage_client: StorageClient | None,
 ) -> None:
     storage_path = row.get("storage_path")
     if not storage_path:
@@ -1401,7 +1401,7 @@ def _write_source_files(
     db: Session,
     viewer_id: UUID,
     vault_dir: Path,
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
 ) -> None:
     rows = (
         db.execute(

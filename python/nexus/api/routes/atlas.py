@@ -1,7 +1,6 @@
 """Grand atlas read model + on-demand projection trigger (grand-atlas §6).
 
 - GET  /atlas          the celestial chart read model, ETag-cacheable
-- GET  /atlas/status   projection coverage for the "chart is computing" UI
 - POST /atlas/project  enqueue an atlas_project_job for the requesting user
 
 The route builds the read model with user-scoped queries; the spatial
@@ -34,7 +33,6 @@ from nexus.responses import ok
 from nexus.schemas.atlas import (
     AtlasEdgeOut,
     AtlasOut,
-    AtlasStatusOut,
     ConstellationOut,
     StarOut,
 )
@@ -191,44 +189,6 @@ def read_atlas(
 
     response.headers["ETag"] = f'"{etag}"'
     return ok(AtlasOut(stars=stars, constellations=constellations, edges=edges))
-
-
-@router.get("/status")
-def read_atlas_status(
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Projection coverage for the "chart is computing" UI state."""
-    row = db.execute(
-        text(
-            f"""
-            SELECT
-                (SELECT max(p.projection_version)
-                   FROM media_atlas_positions p
-                   JOIN ({_PERSONAL_MEDIA_SQL}) v ON v.media_id = p.media_id) AS projection_version,
-                (SELECT count(DISTINCT v.media_id)
-                   FROM ({_PERSONAL_MEDIA_SQL}) v) AS total_count,
-                (SELECT count(DISTINCT p.media_id)
-                   FROM media_atlas_positions p
-                   JOIN ({_PERSONAL_MEDIA_SQL}) v ON v.media_id = p.media_id) AS positioned_count,
-                (SELECT max(p.computed_at)
-                   FROM media_atlas_positions p
-                   JOIN ({_PERSONAL_MEDIA_SQL}) v ON v.media_id = p.media_id) AS last_run
-            """
-        ),
-        _personal_media_params(viewer),
-    ).one()
-    total = int(row.total_count or 0)
-    positioned = int(row.positioned_count or 0)
-    return ok(
-        AtlasStatusOut(
-            projection_version=row.projection_version,
-            positioned_count=positioned,
-            total_count=total,
-            stale_count=max(0, total - positioned),
-            last_run=row.last_run.isoformat() if row.last_run is not None else None,
-        )
-    )
 
 
 @router.post("/project", status_code=202)

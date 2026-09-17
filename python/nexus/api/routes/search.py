@@ -14,13 +14,12 @@ PostgreSQL full-text search plus vector ANN. Visibility follows canonical predic
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from nexus.api.query_params import parse_comma_list
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.schemas.search import SearchResponse
 from nexus.services.search.constants import DEFAULT_LIMIT, MAX_LIMIT
 from nexus.services.search.query import build_search_query
@@ -29,23 +28,9 @@ from nexus.services.search.service import search as search_service
 
 router = APIRouter(tags=["search"])
 
-# Params removed by the search intent-model cutover. Stale links carrying any of
-# these must fail loud (400) rather than silently broaden to an all-kinds search.
-_DELETED_SEARCH_PARAMS = (
-    "types",
-    "content_kinds",
-    "contributor_handles",
-    "semantic",
-    "result_types",
-    "storage_kinds",
-    "planned_types",
-    "planned_filters",
-)
-
 
 @router.get("/search", response_model=SearchResponse, response_model_by_alias=True)
 def search(
-    request: Request,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     q: str = Query(default="", min_length=0, description="Search query string"),
@@ -91,19 +76,10 @@ def search(
     - `library:<id>` - Content anchored to media in that library
     - `conversation:<id>` - Messages within that conversation
 
-    Returns 400 for removed legacy params (`types`, `content_kinds`,
-    `contributor_handles`, `semantic`, `result_types`, `storage_kinds`), 404 for
-    unauthorized scope (prevents existence leakage), and 200 with empty results
-    when there is neither a usable full-text query nor a structured filter.
+    Returns 404 for unauthorized scope (prevents existence leakage), and 200 with
+    empty results when there is neither a usable full-text query nor a structured
+    filter.
     """
-    present_deleted = [param for param in _DELETED_SEARCH_PARAMS if param in request.query_params]
-    if present_deleted:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Unsupported search params: {', '.join(present_deleted)}. "
-            "Use kinds/formats/authors/roles.",
-        )
-
     query = build_search_query(
         text=q,
         raw_kinds=parse_comma_list(kinds),

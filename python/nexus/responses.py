@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.exc import TimeoutError as SAQueuePoolTimeout
 from sqlalchemy.pool import QueuePool
+from starlette.requests import ClientDisconnect
 
 from nexus.db.engine import get_engine
 from nexus.errors import ApiError, ApiErrorCode
@@ -128,6 +129,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
     Logs the exception server-side but never leaks details to client.
     """
+    if isinstance(exc, ClientDisconnect):
+        return JSONResponse(
+            status_code=499,
+            content=error_response(ApiErrorCode.E_CLIENT_DISCONNECT, "Client disconnected"),
+        )
     pool = get_engine().pool
     if isinstance(exc, SAQueuePoolTimeout) and isinstance(pool, QueuePool):
         logger.error(

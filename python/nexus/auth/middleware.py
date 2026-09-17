@@ -8,11 +8,10 @@ Provides:
 import asyncio
 import hmac
 import logging
-import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, NoReturn
+from typing import Any
 from uuid import UUID
 
 from fastapi import Request
@@ -34,7 +33,6 @@ logger = logging.getLogger(__name__)
 # Header names
 AUTHORIZATION_HEADER = "authorization"
 INTERNAL_HEADER = "x-nexus-internal"
-BOOTSTRAP_CACHE_MAX_USERS = 1024
 
 # Paths that don't require authentication
 PUBLIC_PATHS = {
@@ -60,11 +58,6 @@ EXTENSION_AUTH_PATHS = {
 INTERNAL_ONLY_PATHS = {
     "/auth/handoff-codes/consume",
 }
-EMAIL_CLAIM_MAX_LENGTH = 254
-EMAIL_CLAIM_LOCAL_PART_MAX_LENGTH = 64
-EMAIL_CLAIM_DOMAIN_MAX_LENGTH = 253
-_EMAIL_CLAIM_LOCAL_PART_RE = re.compile(r"^[a-z0-9!#$%&'*+/=?^_`{|}~.-]+$")
-_EMAIL_CLAIM_DOMAIN_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 @dataclass
@@ -115,50 +108,6 @@ def _extract_viewer_roles(payload: dict[str, Any]) -> frozenset[str]:
     return frozenset(roles)
 
 
-def _reject_email_claim(reason: str) -> NoReturn:
-    logger.warning("auth_failure", extra={"reason": reason})
-    raise ApiError(ApiErrorCode.E_UNAUTHENTICATED, "Invalid token: malformed email claim")
-
-
-def _parse_email_claim(raw_email: Any) -> str | None:
-    """Normalize the optional JWT email claim before it enters owned state."""
-    if raw_email is None:
-        return None
-
-    if not isinstance(raw_email, str):
-        _reject_email_claim("email_claim_not_string")
-
-    email = raw_email.strip().lower()
-    if not email:
-        _reject_email_claim("email_claim_blank")
-    if len(email) > EMAIL_CLAIM_MAX_LENGTH:
-        _reject_email_claim("email_claim_too_long")
-    if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in email):
-        _reject_email_claim("email_claim_invalid_character")
-    if email.count("@") != 1:
-        _reject_email_claim("email_claim_invalid_shape")
-
-    local_part, domain = email.split("@", 1)
-    if not local_part or not domain:
-        _reject_email_claim("email_claim_invalid_shape")
-    if len(local_part) > EMAIL_CLAIM_LOCAL_PART_MAX_LENGTH:
-        _reject_email_claim("email_claim_local_part_too_long")
-    if len(domain) > EMAIL_CLAIM_DOMAIN_MAX_LENGTH:
-        _reject_email_claim("email_claim_domain_too_long")
-    if local_part.startswith(".") or local_part.endswith(".") or ".." in local_part:
-        _reject_email_claim("email_claim_invalid_local_part")
-    if _EMAIL_CLAIM_LOCAL_PART_RE.fullmatch(local_part) is None:
-        _reject_email_claim("email_claim_invalid_local_part")
-
-    labels = domain.split(".")
-    if len(labels) < 2:
-        _reject_email_claim("email_claim_invalid_domain")
-    if any(_EMAIL_CLAIM_DOMAIN_LABEL_RE.fullmatch(label) is None for label in labels):
-        _reject_email_claim("email_claim_invalid_domain")
-
-    return email
-
-
 class AuthMiddleware(BaseHTTPMiddleware):
     """Authentication middleware for FastAPI.
 
@@ -180,19 +129,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self,
         app: ASGIApp,
         verifier: TokenVerifier,
+        bootstrap_callback: Callable[..., UUID],
         requires_internal_header: bool = False,
         internal_secret: str | None = None,
-        bootstrap_callback: Callable[..., UUID] | None = None,
     ):
         """Initialize the auth middleware.
 
         Args:
             app: The ASGI application.
             verifier: TokenVerifier implementation for JWT verification.
-            requires_internal_header: Whether to enforce X-Nexus-Internal header.
-            internal_secret: The expected internal secret value.
             bootstrap_callback: Function(user_id, email=None) -> default_library_id.
                               Called after successful auth to ensure user exists.
+            requires_internal_header: Whether to enforce X-Nexus-Internal header.
+            internal_secret: The expected internal secret value.
         """
         super().__init__(app)
         self.verifier = verifier
@@ -204,9 +153,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # result here so ordinary authenticated requests do not pay a threadpool
         # handoff (or a database checkout) merely to hit a downstream cache.
         # Concurrent cold misses fan into one shielded task per user so one
-        # request cancellation cannot cancel bootstrap for its peers. The LRU
-        # cap bounds completed state; in-flight state exists only while its
-        # owning bootstrap is running.
+        # request cancellation cannot cancel bootstrap for its peers.
         self._default_library_id_by_user: dict[UUID, UUID] = {}
         self._bootstrap_task_by_user: dict[UUID, asyncio.Task[UUID]] = {}
 
@@ -268,41 +215,35 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Step 4: Parse user_id and email from claims
         user_id = UUID(payload["sub"])
-        try:
-            email = _parse_email_claim(payload.get("email"))
-        except ApiError as e:
-            return self._error_json_response(e.code, e.message, e.status_code)
+        raw_email = payload.get("email")
+        email = (raw_email.strip().lower() or None) if isinstance(raw_email, str) else None
         roles = _extract_viewer_roles(payload)
 
-        # Step 5: Bootstrap user/library if callback provided.
+        # Step 5: Bootstrap user/library.
         # bootstrap_callback runs a blocking DB transaction; dispatch is async,
         # so call it off the event loop. Calling it inline blocks the loop on
         # pool checkout under contention, which stalls response flushing and the
         # post-response db.close() of in-flight requests — turning transient pool
         # pressure into a self-sustaining deadlock.
-        if self.bootstrap_callback:
-            default_library_id = self._cached_default_library_id(user_id)
-            if default_library_id is None:
-                bootstrap_task = self._bootstrap_task_by_user.get(user_id)
-                if bootstrap_task is None:
-                    bootstrap_task = asyncio.create_task(
-                        self._bootstrap_and_cache(user_id, email),
-                    )
-                    bootstrap_task.add_done_callback(self._consume_bootstrap_task_result)
-                    self._bootstrap_task_by_user[user_id] = bootstrap_task
-                try:
-                    default_library_id = await asyncio.shield(bootstrap_task)
-                # justify-ignore-error: the shared task logs the bootstrap defect once;
-                # each affected request receives the same generic boundary response.
-                except Exception:
-                    return self._error_json_response(
-                        ApiErrorCode.E_INTERNAL,
-                        "Internal server error",
-                        500,
-                    )
-        else:
-            # No bootstrap callback - use a placeholder (tests may not need it)
-            default_library_id = user_id  # Placeholder
+        default_library_id = self._default_library_id_by_user.get(user_id)
+        if default_library_id is None:
+            bootstrap_task = self._bootstrap_task_by_user.get(user_id)
+            if bootstrap_task is None:
+                bootstrap_task = asyncio.create_task(
+                    self._bootstrap_and_cache(user_id, email),
+                )
+                bootstrap_task.add_done_callback(self._consume_bootstrap_task_result)
+                self._bootstrap_task_by_user[user_id] = bootstrap_task
+            try:
+                default_library_id = await asyncio.shield(bootstrap_task)
+            # justify-ignore-error: the shared task logs the bootstrap defect once;
+            # each affected request receives the same generic boundary response.
+            except Exception:
+                return self._error_json_response(
+                    ApiErrorCode.E_INTERNAL,
+                    "Internal server error",
+                    500,
+                )
 
         # Step 6: Attach viewer to request state
         request.state.viewer = Viewer(
@@ -316,12 +257,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         response.headers.append("Server-Timing", f"nexus_auth;dur={auth_duration_ms:.2f}")
         return response
 
-    def _cached_default_library_id(self, user_id: UUID) -> UUID | None:
-        default_library_id = self._default_library_id_by_user.pop(user_id, None)
-        if default_library_id is not None:
-            self._default_library_id_by_user[user_id] = default_library_id
-        return default_library_id
-
     @staticmethod
     def _consume_bootstrap_task_result(task: asyncio.Task[UUID]) -> None:
         if not task.cancelled():
@@ -330,16 +265,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def _bootstrap_and_cache(self, user_id: UUID, email: str | None) -> UUID:
         current_task = asyncio.current_task()
         try:
-            if self.bootstrap_callback is None:
-                raise AssertionError("bootstrap task requires a configured callback")
             default_library_id = await run_in_threadpool(
                 self.bootstrap_callback,
                 user_id,
                 email=email,
             )
-            while len(self._default_library_id_by_user) >= BOOTSTRAP_CACHE_MAX_USERS:
-                oldest_user_id = next(iter(self._default_library_id_by_user))
-                del self._default_library_id_by_user[oldest_user_id]
             self._default_library_id_by_user[user_id] = default_library_id
             return default_library_id
         # justify-ignore-error: the request boundary returns a generic 500 while

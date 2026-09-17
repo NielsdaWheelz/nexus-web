@@ -113,17 +113,6 @@ def build_upload_session_staging_storage_path(
     return f"uploads/sessions/{session_id}/{generation}/original.{ext}"
 
 
-def build_epub_asset_storage_path(media_id: UUID | str, asset_key: str) -> str:
-    """Build the full storage path for a persisted EPUB resource asset."""
-    if not asset_key:
-        raise ValueError("EPUB asset key must be non-empty.")
-    if asset_key.startswith("/"):
-        raise ValueError("EPUB asset key must not start with a slash.")
-    if any(part in {"", ".", ".."} for part in asset_key.split("/")):
-        raise ValueError("EPUB asset key must not contain empty, dot, or dot-dot path parts.")
-    return f"media/{media_id}/assets/{asset_key}"
-
-
 def build_epub_attempt_asset_storage_path(
     media_id: UUID | str,
     attempt_id: UUID | str,

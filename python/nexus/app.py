@@ -39,7 +39,6 @@ Outbound client lifecycle:
 - Client is closed gracefully at shutdown
 """
 
-import json
 import re
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
@@ -50,7 +49,6 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.requests import ClientDisconnect
 
 from nexus.api.routes import create_api_router
 from nexus.auth.middleware import AuthMiddleware
@@ -92,37 +90,6 @@ PRIVATE_NO_STORE_PATH_RE = re.compile(
     r"|/internal/media/[^/]+/offline-reading-token"
     r"|/me/reader-profile|/consumption/(activity|activity-exclusions|stats|sessions)"
 )
-
-
-async def validate_json_request_body(request: Request) -> JSONResponse | None:
-    """Pre-validate JSON request bodies without treating disconnects as 500s."""
-    if request.method not in ("POST", "PUT", "PATCH"):
-        return None
-    content_type = request.headers.get("content-type", "")
-    if "application/json" not in content_type:
-        return None
-    try:
-        body = await request.body()
-    except ClientDisconnect:
-        logger.info(
-            "request_body_client_disconnected",
-            path=request.url.path,
-            method=request.method,
-        )
-        return JSONResponse(
-            status_code=499,
-            content=error_response(ApiErrorCode.E_CLIENT_DISCONNECT, "Client disconnected"),
-        )
-    if not body:
-        return None
-    try:
-        json.loads(body)
-    except json.JSONDecodeError:
-        return JSONResponse(
-            status_code=400,
-            content=error_response(ApiErrorCode.E_INVALID_REQUEST, "Malformed JSON body"),
-        )
-    return None
 
 
 def create_bootstrap_callback():
@@ -295,15 +262,6 @@ def create_app() -> FastAPI:
             content=error_response(code, "Invalid request body"),
         )
 
-    # Handle JSON decode errors from malformed JSON bodies
-    @app.middleware("http")
-    async def catch_json_decode_errors(request: Request, call_next):
-        """Catch JSON decode errors before they reach route handlers."""
-        body_error_response = await validate_json_request_body(request)
-        if body_error_response is not None:
-            return body_error_response
-        return await call_next(request)
-
     # Include API routes (must be before middleware for correct ordering)
     # Use router factory to avoid import-time settings loading. The factory owns
     # every router, including the browser-callable SSE streams and the BFF
@@ -391,9 +349,9 @@ def create_app() -> FastAPI:
     # Reader-state and reader-profile responses are never cacheable: the
     # cursor is revalidated event-driven and the profile is per-user private
     # state, so a cached snapshot would defeat revision arbitration or leak
-    # across accounts. Registered after every other create_app middleware so
-    # it runs outermost here and stamps every matched response, including
-    # auth failures, validation errors, and exception-handler output; for a
+    # across accounts. Registered after the auth, DB-session, and stream-CORS
+    # middleware so it runs outside them and stamps every matched response,
+    # including auth failures, validation errors, and exception-handler output; for a
     # matched path it also owns the raw-500 stamp by delegating once to the
     # canonical exception handler instead of letting the exception propagate
     # to the outer ServerErrorMiddleware unstamped.
@@ -420,18 +378,8 @@ def create_app() -> FastAPI:
         apply_public_resource_share_headers(response)
         return response
 
+    # Added last so it runs first: every response, including auth failures and
+    # exception-handler output, carries X-Request-ID.
+    app.add_middleware(RequestIDMiddleware)
+
     return app
-
-
-def add_request_id_middleware(app: FastAPI, log_requests: bool = True) -> None:
-    """Add request-id middleware to the app.
-
-    This should be called AFTER all other middleware is added, so it runs FIRST.
-    This ensures every response includes X-Request-ID, including auth failures.
-
-    Args:
-        app: The FastAPI application.
-        log_requests: Whether to log access entries for each request.
-    """
-    app.add_middleware(RequestIDMiddleware, log_requests=log_requests)
-    logger.info("request_id_middleware_enabled")

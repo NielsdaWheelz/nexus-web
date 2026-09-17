@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
-from nexus.errors import ApiError, ApiErrorCode
 from nexus.responses import ok, success_response
 from nexus.schemas.highlights import (
     CreateHighlightRequest,
@@ -23,13 +22,6 @@ from nexus.services import notes as notes_service
 from nexus.services import pdf_highlights as pdf_highlights_service
 
 router = APIRouter(tags=["highlights"])
-
-
-def _parse_mine_only(raw: str) -> bool:
-    """Coerce the `mine_only` query token, 400ing on anything but true/false."""
-    if raw not in ("true", "false"):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "mine_only must be 'true' or 'false'")
-    return raw == "true"
 
 
 # =============================================================================
@@ -59,14 +51,14 @@ def list_highlights(
     fragment_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    mine_only: Annotated[str, Query()] = "true",
+    mine_only: Annotated[bool, Query()] = True,
 ) -> dict:
     """List highlights for a fragment."""
     result = highlights_service.list_highlights_for_fragment(
         db=db,
         viewer_id=viewer.user_id,
         fragment_id=fragment_id,
-        mine_only=_parse_mine_only(mine_only),
+        mine_only=mine_only,
     )
     return success_response({"highlights": [h.model_dump(mode="json") for h in result]})
 
@@ -76,14 +68,14 @@ def list_media_highlights(
     media_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    mine_only: Annotated[str, Query()] = "true",
+    mine_only: Annotated[bool, Query()] = True,
 ) -> dict:
     """List every highlight of a media across all fragments and PDF pages."""
     result = highlights_service.list_highlights_for_media(
         db=db,
         viewer_id=viewer.user_id,
         media_id=media_id,
-        mine_only=_parse_mine_only(mine_only),
+        mine_only=mine_only,
     )
     return success_response({"highlights": [h.model_dump(mode="json") for h in result]})
 
@@ -116,7 +108,7 @@ def list_pdf_highlights(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     page_number: Annotated[int, Query(ge=1, description="1-based PDF page number")],
-    mine_only: Annotated[str, Query()] = "true",
+    mine_only: Annotated[bool, Query()] = True,
 ) -> dict:
     """List PDF highlights for a single page."""
     result = pdf_highlights_service.list_pdf_highlights(
@@ -124,7 +116,7 @@ def list_pdf_highlights(
         viewer_id=viewer.user_id,
         media_id=media_id,
         page_number=page_number,
-        mine_only=_parse_mine_only(mine_only),
+        mine_only=mine_only,
     )
     return success_response(
         {

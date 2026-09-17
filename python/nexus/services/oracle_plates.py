@@ -13,7 +13,7 @@ from nexus import web_paths
 from nexus.db.models import OraclePlate
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
-from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
+from nexus.storage.client import StorageClient, StorageError, get_storage_client
 from nexus.storage.paths import ext_for_content_type
 
 logger = get_logger(__name__)
@@ -51,7 +51,7 @@ class OraclePlateStorageReadiness:
 
 def ensure_oracle_plate_storage_object(
     *,
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
     storage_key: str,
     content_type: str,
     data: bytes,
@@ -166,7 +166,7 @@ def get_oracle_plate_bytes(
     *,
     session_factory: Callable[[], Session],
     image_id: UUID,
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> OraclePlateBytes:
     metadata = get_oracle_plate_metadata(
         session_factory=session_factory,
@@ -178,7 +178,7 @@ def get_oracle_plate_bytes(
 def read_oracle_plate_bytes(
     metadata: OraclePlateMetadata,
     *,
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> OraclePlateBytes:
     sc = storage_client or get_storage_client()
     try:
@@ -230,7 +230,7 @@ def oracle_plate_storage_metadata(db: Session) -> tuple[OraclePlateMetadata, ...
 def validate_oracle_plate_storage_metadata(
     rows: Collection[OraclePlateMetadata],
     *,
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> OraclePlateStorageReadiness:
     """Validate a closed DB metadata snapshot after its transaction has ended."""
     sc = storage_client or get_storage_client()
@@ -247,7 +247,7 @@ def validate_oracle_plate_storage_metadata(
 
 def _oracle_plate_storage_invalid_reason(
     row: OraclePlate | OraclePlateMetadata,
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
 ) -> str | None:
     try:
         _validate_plate_metadata(
@@ -283,7 +283,7 @@ def _plate_image_id(row: OraclePlate | OraclePlateMetadata) -> UUID:
 
 
 def _ensure_plate_object(
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
     *,
     storage_key: str,
     data: bytes,

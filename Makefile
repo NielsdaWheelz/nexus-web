@@ -9,11 +9,6 @@
 -include .dev-ports
 export
 
-override SERVICE_ROLE_KEY :=
-override SUPABASE_DATABASE_URL :=
-override SUPABASE_SERVICE_KEY :=
-override SUPABASE_SERVICE_ROLE_KEY :=
-
 SUPABASE_DB_PORT ?= 54322
 SUPABASE_URL ?= http://127.0.0.1:54321
 AUTH_ALLOWED_REDIRECT_ORIGINS ?= http://localhost:3000,http://127.0.0.1:3000,http://10.0.2.2:3000,http://localhost:3001,http://127.0.0.1:3001

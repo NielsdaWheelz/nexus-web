@@ -45,7 +45,7 @@ from nexus.jobs.queue import (
 )
 from nexus.logging import get_logger
 from nexus.services.source_attempt_artifacts import source_attempt_storage_paths
-from nexus.storage.client import StorageClientBase, get_storage_client
+from nexus.storage.client import StorageClient, get_storage_client
 
 logger = get_logger(__name__)
 
@@ -294,7 +294,7 @@ def finalize_storage_object_write(
     *,
     media_id: UUID,
     storage_path: str,
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> None:
     """Finalize a write whose reservation owner is Media."""
     _finalize_storage_object_write(
@@ -311,7 +311,7 @@ def finalize_upload_session_storage_object_write(
     *,
     upload_session_id: UUID,
     storage_path: str,
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> None:
     """Finalize a candidate write after its published Media owner is visible."""
     _finalize_storage_object_write(
@@ -331,7 +331,7 @@ def _finalize_storage_object_write(
     *,
     owner_match: Mapping[str, str],
     storage_path: str,
-    storage_client: StorageClientBase | None,
+    storage_client: StorageClient | None,
     media_id: UUID | None,
 ) -> None:
     """Recheck after a successful write and mark its reservation Retained.

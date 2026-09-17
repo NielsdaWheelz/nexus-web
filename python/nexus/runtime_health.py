@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 import os
-import threading
 import time
 from collections.abc import Mapping, Sequence
 from functools import lru_cache
@@ -18,7 +17,6 @@ from nexus.release_artifact import RuntimeIdentity, load_runtime_identity
 NONPRODUCTION_RUNTIME_IDENTITY_FILE_ENV = "NEXUS_RUNTIME_IDENTITY_FILE"
 PRODUCTION_RUNTIME_IDENTITY_FILE = Path("/app/runtime-identity.json")
 DATABASE_READINESS_TIMEOUT_SECONDS = 2.0
-_database_readiness_slot = threading.BoundedSemaphore(value=1)
 
 # One canonical persisted-owner invariant shared by production readiness and the
 # operator aggregate. An in-flight source attempt must point at its sole exact
@@ -78,11 +76,6 @@ def get_runtime_identity() -> RuntimeIdentity:
     return load_runtime_identity(path)
 
 
-def clear_runtime_identity_cache() -> None:
-    """Clear process-local identity state for an owned test/runtime restart."""
-    get_runtime_identity.cache_clear()
-
-
 def database_revision_is_ready(observed_revisions: Sequence[str], expected_revision: str) -> bool:
     """Return whether PostgreSQL exposes exactly the baked single Alembic head."""
     return tuple(observed_revisions) == (expected_revision,)
@@ -101,8 +94,6 @@ def is_database_ready(
         raise ValueError("database readiness timeout must be finite and at least two seconds")
     if reconciler_max_age_seconds is not None and reconciler_max_age_seconds < 1:
         raise ValueError("reconciler readiness age must be positive")
-    if not _database_readiness_slot.acquire(blocking=False):
-        return False
     deadline = time.monotonic() + timeout
     connect_timeout_seconds = max(1, math.floor(timeout / 2))
     statement_timeout_ms = max(1, math.floor((timeout - connect_timeout_seconds) * 1000))
@@ -110,53 +101,50 @@ def is_database_ready(
     latest_reconciler: Sequence[object] | None = None
     accepted_source_job_defect_count = 0
     try:
-        try:
-            with psycopg.connect(
-                psycopg_url,
-                autocommit=True,
-                connect_timeout=connect_timeout_seconds,
-                options=f"-c statement_timeout={statement_timeout_ms}",
-                tcp_user_timeout=statement_timeout_ms,
-            ) as connection:
-                if time.monotonic() >= deadline:
+        with psycopg.connect(
+            psycopg_url,
+            autocommit=True,
+            connect_timeout=connect_timeout_seconds,
+            options=f"-c statement_timeout={statement_timeout_ms}",
+            tcp_user_timeout=statement_timeout_ms,
+        ) as connection:
+            if time.monotonic() >= deadline:
+                return False
+            rows = connection.execute(
+                "SELECT version_num FROM alembic_version ORDER BY version_num"
+            ).fetchall()
+            if not database_revision_is_ready(
+                tuple(str(row[0]) for row in rows), expected_revision
+            ):
+                return False
+            if reconciler_max_age_seconds is not None:
+                latest_reconciler = connection.execute(
+                    """
+                    SELECT extract(
+                        epoch FROM clock_timestamp() - finished_at
+                    )
+                    FROM background_jobs
+                    WHERE kind = 'reconcile_stale_ingest_media_job'
+                      AND status = 'succeeded'
+                      AND finished_at IS NOT NULL
+                    ORDER BY finished_at DESC, id DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                defect_row = connection.execute(ACCEPTED_SOURCE_JOB_DEFECT_COUNT_SQL).fetchone()
+                if defect_row is None:
                     return False
-                rows = connection.execute(
-                    "SELECT version_num FROM alembic_version ORDER BY version_num"
-                ).fetchall()
-                if not database_revision_is_ready(
-                    tuple(str(row[0]) for row in rows), expected_revision
-                ):
-                    return False
-                if reconciler_max_age_seconds is not None:
-                    latest_reconciler = connection.execute(
-                        """
-                        SELECT extract(
-                            epoch FROM clock_timestamp() - finished_at
-                        )
-                        FROM background_jobs
-                        WHERE kind = 'reconcile_stale_ingest_media_job'
-                          AND status = 'succeeded'
-                          AND finished_at IS NOT NULL
-                        ORDER BY finished_at DESC, id DESC
-                        LIMIT 1
-                        """
-                    ).fetchone()
-                    defect_row = connection.execute(ACCEPTED_SOURCE_JOB_DEFECT_COUNT_SQL).fetchone()
-                    if defect_row is None:
-                        return False
-                    accepted_source_job_defect_count = int(defect_row[0])
-        except psycopg.Error:
-            return False
-        if reconciler_max_age_seconds is None:
-            return True
-        if latest_reconciler is None:
-            return False
-        if accepted_source_job_defect_count != 0:
-            return False
-        raw_age = latest_reconciler[0]
-        if raw_age is None:
-            return False
-        age_seconds = float(raw_age)
-        return math.isfinite(age_seconds) and 0 <= age_seconds <= reconciler_max_age_seconds
-    finally:
-        _database_readiness_slot.release()
+                accepted_source_job_defect_count = int(defect_row[0])
+    except psycopg.Error:
+        return False
+    if reconciler_max_age_seconds is None:
+        return True
+    if latest_reconciler is None:
+        return False
+    if accepted_source_job_defect_count != 0:
+        return False
+    raw_age = latest_reconciler[0]
+    if raw_age is None:
+        return False
+    age_seconds = float(raw_age)
+    return math.isfinite(age_seconds) and 0 <= age_seconds <= reconciler_max_age_seconds

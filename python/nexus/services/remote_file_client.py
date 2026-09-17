@@ -15,7 +15,7 @@ from nexus.services.image_validation import (
     validate_dns_resolution,
     validate_url,
 )
-from nexus.storage.client import StorageClientBase, StorageError
+from nexus.storage.client import StorageClient, StorageError
 
 REMOTE_FILE_CONTENT_TYPES = {
     "pdf": "application/pdf",
@@ -41,7 +41,7 @@ def fetch_to_storage(
     url: str,
     kind: str,
     storage_path: str,
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
 ) -> RemoteFileFetchResult:
     if kind not in REMOTE_FILE_CONTENT_TYPES:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Remote URL must be a PDF or EPUB.")
@@ -63,7 +63,7 @@ def fetch_binary_to_storage(
     *,
     url: str,
     storage_path: str,
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
     content_type: str,
     max_bytes: int,
     accept: str,
@@ -141,7 +141,7 @@ def _write_response_to_storage(
     content_type: str,
     max_bytes: int,
     storage_path: str,
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
     final_url: str,
     signature_kind: str | None,
 ) -> RemoteFileFetchResult:
