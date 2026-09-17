@@ -7,7 +7,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal, Never
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -79,7 +79,6 @@ class BuildAcceptedLearnRequest:
 @dataclass(frozen=True, slots=True)
 class FailedLearnRequest:
     request_id: UUID
-    error_code: Literal["E_DOSSIER_IDEA_UNRESOLVED"]
 
 
 LearnRequestState = (
@@ -430,17 +429,7 @@ def record_learn_unresolved(
         )
     )
     db.flush()
-    return FailedLearnRequest(
-        request_id=request_id,
-        error_code="E_DOSSIER_IDEA_UNRESOLVED",
-    )
-
-
-def raise_recorded_learn_failure(failure: FailedLearnRequest) -> Never:
-    if failure.error_code == "E_DOSSIER_IDEA_UNRESOLVED":
-        raise DossierIdeaUnresolved()
-    # justify-defect: artifact_learn_failures has one closed application-written code.
-    raise AssertionError(f"unknown Learn failure code {failure.error_code!r}")
+    return FailedLearnRequest(request_id=request_id)
 
 
 def _request_state(
@@ -467,13 +456,7 @@ def _request_state(
         # justify-defect: successful Learn rows are written through the exact union writers.
         raise AssertionError("Learn success row has an invalid outcome shape")
     if failure is not None:
-        if failure.error_code != ApiErrorCode.E_DOSSIER_IDEA_UNRESOLVED.value:
-            # justify-defect: Learn failures have one closed modeled code.
-            raise AssertionError("Learn failure row has an unknown error code")
-        return FailedLearnRequest(
-            request_id=request.id,
-            error_code="E_DOSSIER_IDEA_UNRESOLVED",
-        )
+        return FailedLearnRequest(request_id=request.id)
     return PendingLearnRequest(
         request_id=request.id,
         highlight=context,

@@ -34,10 +34,10 @@ from nexus.schemas.artifact import (
     MediaAbstractStaleOut,
 )
 from nexus.schemas.presence import Presence, present
-from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.artifacts.bindings._shared import (
     Candidate,
     StandardSynthesis,
+    audience_user,
     materialize_standard,
     synthesis_prompt,
     synthesis_user_content,
@@ -147,14 +147,6 @@ def _standard_candidate(candidate: _MediaCandidate) -> Candidate:
     )
 
 
-def _viewer(audience: AudienceScope) -> UUID:
-    if not isinstance(audience, AudienceUser):
-        # justify-defect: media dossiers are always keyed to a User audience (A2);
-        # a Library audience for a media subject is an integrator misconfiguration.
-        raise AssertionError("media dossier audience must be a user audience")
-    return audience.user_id
-
-
 # ---------------------------------------------------------------------------
 # Binding.
 # ---------------------------------------------------------------------------
@@ -211,7 +203,7 @@ class MediaBinding(DossierBindingBase):
         resolved = require_resource_subject(resolved)
         media_id = resolved.subject_id
         media_ref = resolved.ref.uri
-        viewer = _viewer(audience)
+        viewer = audience_user(audience)
         try:
             projection = read_single(db, media_id=media_id, requester_user_id=viewer)
         except NotFoundError:
@@ -325,7 +317,7 @@ class MediaBinding(DossierBindingBase):
         """Authoritative cheap recheck under the head lock: the media is still
         audience-readable, its content fingerprint is unchanged (no reingestion),
         and every offered evidence span still exists. ``False`` ⇒ InputsChanged."""
-        viewer = _viewer(audience)
+        viewer = audience_user(audience)
         if not can_read_media(db, viewer, witness.media_id):
             return False
         if (
@@ -369,7 +361,7 @@ class MediaBinding(DossierBindingBase):
         fingerprint drives the comparison, so the claim count is best-effort."""
         resolved = require_resource_subject(resolved)
         media_id = resolved.subject_id
-        viewer = _viewer(audience)
+        viewer = audience_user(audience)
         fingerprint = current_content_fingerprint(db, media_id=media_id)
         offered = 0
         if can_read_media(db, viewer, media_id):
@@ -451,41 +443,10 @@ class MediaSubjectPolicy:
     def derive_audience(self, resolved: ResolvedSubject, requester_user_id: UUID) -> AudienceScope:
         return AudienceUser(user_id=requester_user_id)
 
-    def collection_viewer(self, resolved: ResolvedSubject, audience: AudienceScope) -> UUID | None:
-        return _viewer(audience)
-
-    def requester_admission(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
-        return requester_user_id
-
     def citation_owner(
         self, db: Session, resolved: ResolvedSubject, audience: AudienceScope
     ) -> UUID:
-        return _viewer(audience)
-
-    def audience_visible_source_intersection(
-        self, db: Session, resolved: ResolvedSubject, audience: AudienceScope
-    ) -> list[ResourceRef]:
-        """The audience-visible candidate sources: the document's own evidence
-        spans (empty when the media is no longer readable)."""
-        viewer = _viewer(audience)
-        if not can_read_media(db, viewer, resolved.subject_id):
-            return []
-        unit = get_current(db, media_id=resolved.subject_id)
-        if not isinstance(unit, MediaUnit):
-            return []
-        return [
-            ResourceRef(scheme="evidence_span", id=claim.evidence_span_id) for claim in unit.claims
-        ]
-
-    def activate(self, db: Session, ref: ResourceRef) -> ResourceActivationOut:
-        """Open the media pane (canonical resource activation; href stays non-None
-        so citations anchored to the document remain routeable, B6)."""
-        return ResourceActivationOut(
-            resource_ref=ref.uri,
-            kind="route",
-            href=f"/media/{ref.id}",
-            unresolved_reason=None,
-        )
+        return audience_user(audience)
 
 
 # ---------------------------------------------------------------------------

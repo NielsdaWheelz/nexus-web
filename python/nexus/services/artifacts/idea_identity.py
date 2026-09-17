@@ -30,8 +30,6 @@ class IdeaKey:
 
 
 def canonicalize_idea_text(value: str) -> CanonicalIdeaText:
-    if not isinstance(value, str):
-        raise InvalidIdeaText("Idea text must be a string")
     normalized = _DEFAULT_IGNORABLE.sub("", value)
     normalized = unicodedata.normalize("NFKC", normalized)
     normalized = normalized.casefold()
@@ -42,8 +40,6 @@ def canonicalize_idea_text(value: str) -> CanonicalIdeaText:
 
 
 def normalize_idea_display(value: str) -> str:
-    if not isinstance(value, str):
-        raise InvalidIdeaText("Idea display text must be a string")
     normalized = _DEFAULT_IGNORABLE.sub("", value)
     normalized = unicodedata.normalize("NFKC", normalized)
     normalized = " ".join(normalized.split())

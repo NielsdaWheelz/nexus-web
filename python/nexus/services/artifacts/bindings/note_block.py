@@ -13,13 +13,13 @@ from sqlalchemy.orm import Session
 
 from nexus.errors import NotFoundError
 from nexus.schemas.presence import present
-from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.artifacts.bindings._notes_shared import (
     one_hop_connection_candidates,
 )
 from nexus.services.artifacts.bindings._shared import (
     Candidate,
     StandardSynthesis,
+    audience_user,
     materialize_standard,
     synthesis_prompt,
     synthesis_user_content,
@@ -190,34 +190,15 @@ class NoteSubjectPolicy:
             raise AssertionError("resolved note must carry its owner")
         return AudienceUser(user_id=owner)
 
-    def collection_viewer(self, resolved: ResolvedSubject, audience: AudienceScope) -> UUID | None:
-        return _audience_user(audience)
-
-    def requester_admission(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
-        return requester_user_id
-
     def citation_owner(
         self, db: Session, resolved: ResolvedSubject, audience: AudienceScope
     ) -> UUID:
-        return _audience_user(audience)
-
-    def audience_visible_source_intersection(
-        self, db: Session, resolved: ResolvedSubject, audience: AudienceScope
-    ) -> list[ResourceRef]:
-        return [candidate.target for candidate in _collect(db, resolved, audience).candidates]
-
-    def activate(self, db: Session, ref: ResourceRef) -> ResourceActivationOut:
-        return ResourceActivationOut(
-            resource_ref=ref.uri,
-            kind="route",
-            href=f"/notes/{ref.id}",
-            unresolved_reason=None,
-        )
+        return audience_user(audience)
 
 
 def _collect(db: Session, resolved: ResolvedSubject, audience: AudienceScope) -> _NoteCollected:
     resolved = require_resource_subject(resolved)
-    viewer_id = _audience_user(audience)
+    viewer_id = audience_user(audience)
     note = (
         db.execute(
             text(
@@ -333,12 +314,6 @@ def _note_owner(db: Session, note_id: UUID) -> UUID:
     if owner is None:
         raise NotFoundError(message="Note not found")
     return UUID(str(owner))
-
-
-def _audience_user(audience: AudienceScope) -> UUID:
-    if not isinstance(audience, AudienceUser):
-        raise AssertionError("note dossier audience must be a user")
-    return audience.user_id
 
 
 BINDING = NoteBinding()

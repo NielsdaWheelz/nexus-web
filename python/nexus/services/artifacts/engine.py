@@ -33,7 +33,6 @@ from pydantic import BaseModel, TypeAdapter
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import is_library_member
 from nexus.db.errors import TransactionRestart
 from nexus.db.models import ArtifactBuild
 from nexus.db.retries import retry_serializable
@@ -75,7 +74,6 @@ from nexus.services.artifacts.coordination import (
     DossierResearchPending,
     ResearchLeaseLost,
 )
-from nexus.services.artifacts.definition import DOSSIER_DEFINITION
 from nexus.services.artifacts.document_html import (
     DocumentHtmlError,
 )
@@ -106,12 +104,14 @@ from nexus.services.artifacts.dossier_types import (
 from nexus.services.artifacts.generation_step import (
     DOCUMENT_REPAIR_STEP_PATH,
     GENERATION_STEP_PATHS,
+    MIN_MATERIALIZED_CITATIONS,
     SYNTHESIS_STEP_PATH,
     ArtifactGenerationCancelled,
     ArtifactGenerationDispatchRequired,
     ArtifactGenerationFailure,
     ArtifactGenerationInputsChanged,
     ArtifactGenerationInvalid,
+    ArtifactGenerationStep,
     ArtifactGenerationUncertain,
     build_artifact_generation_step,
 )
@@ -178,32 +178,8 @@ from nexus.services.tool_runtime.execution import reconcile_uncertain_tool_compl
 
 logger = get_logger(__name__)
 
-# Re-export: CP1 imports ``BuildTicket`` from ``engine`` (it is owned by
-# ``dossier_types``). The create outcome value the engine returns.
-__all__ = [
-    "ArtifactActionCandidate",
-    "ArtifactActionFacts",
-    "BuildTicket",
-    "DossierHeadView",
-    "assert_build_viewer",
-    "artifact_action_candidates",
-    "bootstrap_resource_dossier",
-    "build_execution_phase",
-    "cancel_build",
-    "learn_idea",
-    "lock_cleanup_heads_in_order",
-    "make_current",
-    "on_audience_visibility_changed",
-    "on_subject_deleted",
-    "read_head",
-    "read_artifact_head",
-    "reconcile_uncertain_build",
-    "reconcile_uncertain_idea_resolution",
-    "regenerate_artifact",
-    "run_build",
-]
-
 _MAX_INSTRUCTION_CHARS = 4000
+_JOB_KIND = "dossier_build"
 _IDEA_RESOLUTION_STEP_PATH = "idea-resolution"
 _IDEA_RESOLUTION_CAPACITY_KEY = "generation_capacity_pause"
 _WEB_SEARCH_STEP_PATHS = frozenset(
@@ -280,7 +256,7 @@ def reconcile_uncertain_build(
                     "WHERE kind = :kind AND dedupe_key = :key AND status = 'dead' "
                     "FOR UPDATE"
                 ),
-                {"kind": DOSSIER_DEFINITION.job_kind, "key": _dispatch_key(build_id)},
+                {"kind": _JOB_KIND, "key": _dispatch_key(build_id)},
             )
             .mappings()
             .one_or_none()
@@ -479,6 +455,35 @@ class ArtifactActionCandidate:
     subject_ref: ResourceRef | None
 
 
+# The one head-visibility rule in SQL: the audience the head is keyed by, plus
+# Idea ownership (Python spells the same rule in ``registry.visible_persisted_subject``).
+_AUDIENCE_VISIBLE_SQL = """
+                  AND (
+                      (
+                          artifact.audience_scheme = 'user'
+                          AND artifact.audience_id = :viewer_id_text
+                      )
+                      OR (
+                          artifact.audience_scheme = 'library'
+                          AND EXISTS(
+                              SELECT 1
+                              FROM memberships membership
+                              WHERE membership.library_id::text = artifact.audience_id
+                                AND membership.user_id = :viewer_id
+                          )
+                      )
+                  )
+                  AND (
+                      artifact.subject_scheme != 'idea'
+                      OR EXISTS(
+                          SELECT 1
+                          FROM artifact_idea_subjects idea
+                          WHERE idea.id = artifact.subject_id
+                            AND idea.user_id = :viewer_id
+                      )
+                  )"""
+
+
 def artifact_action_candidates(
     db: Session,
     *,
@@ -500,7 +505,7 @@ def artifact_action_candidates(
     if ordered_artifact_ids:
         rows = db.execute(
             text(
-                """
+                f"""
                 SELECT artifact.id, artifact.subject_scheme, artifact.subject_id,
                        EXISTS(
                            SELECT 1
@@ -521,30 +526,7 @@ def artifact_action_candidates(
                        ) AS has_active_build
                 FROM artifacts artifact
                 WHERE artifact.id = ANY(:artifact_ids)
-                  AND (
-                      (
-                          artifact.audience_scheme = 'user'
-                          AND artifact.audience_id = :viewer_id_text
-                      )
-                      OR (
-                          artifact.audience_scheme = 'library'
-                          AND EXISTS(
-                              SELECT 1
-                              FROM memberships membership
-                              WHERE membership.library_id::text = artifact.audience_id
-                                AND membership.user_id = :viewer_id
-                          )
-                      )
-                  )
-                  AND (
-                      artifact.subject_scheme != 'idea'
-                      OR EXISTS(
-                          SELECT 1
-                          FROM artifact_idea_subjects idea
-                          WHERE idea.id = artifact.subject_id
-                            AND idea.user_id = :viewer_id
-                      )
-                  )
+{_AUDIENCE_VISIBLE_SQL}
                 """
             ),
             {
@@ -566,37 +548,14 @@ def artifact_action_candidates(
     if ordered_revision_ids:
         rows = db.execute(
             text(
-                """
+                f"""
                 SELECT revision.id, artifact.subject_scheme, artifact.subject_id,
                        artifact.current_revision_id = revision.id AS is_current
                 FROM artifact_revisions revision
                 JOIN artifact_builds build ON build.id = revision.build_id
                 JOIN artifacts artifact ON artifact.id = build.artifact_id
                 WHERE revision.id = ANY(:revision_ids)
-                  AND (
-                      (
-                          artifact.audience_scheme = 'user'
-                          AND artifact.audience_id = :viewer_id_text
-                      )
-                      OR (
-                          artifact.audience_scheme = 'library'
-                          AND EXISTS(
-                              SELECT 1
-                              FROM memberships membership
-                              WHERE membership.library_id::text = artifact.audience_id
-                                AND membership.user_id = :viewer_id
-                          )
-                      )
-                  )
-                  AND (
-                      artifact.subject_scheme != 'idea'
-                      OR EXISTS(
-                          SELECT 1
-                          FROM artifact_idea_subjects idea
-                          WHERE idea.id = artifact.subject_id
-                            AND idea.user_id = :viewer_id
-                      )
-                  )
+{_AUDIENCE_VISIBLE_SQL}
                 """
             ),
             {
@@ -703,19 +662,18 @@ def regenerate_artifact(
         head = _head_row(db, artifact_id)
         if head is None:
             raise AssertionError(f"locked Artifact head {artifact_id} disappeared")
-        if not _authorize_audience(
-            db,
-            audience_scheme=head.audience_scheme,
-            audience_id=head.audience_id,
-            viewer_id=requester_user_id,
+        if (
+            visible_persisted_subject(
+                db,
+                subject_scheme=head.subject_scheme,
+                subject_id=head.subject_id,
+                audience_scheme=head.audience_scheme,
+                audience_id=head.audience_id,
+                viewer_id=requester_user_id,
+            )
+            is None
         ):
             raise NotFoundError(ApiErrorCode.E_DOSSIER_NOT_FOUND, "Dossier not found")
-        _authorize_subject_read(
-            db,
-            subject_scheme=head.subject_scheme,
-            subject_id=head.subject_id,
-            viewer_id=requester_user_id,
-        )
         ticket = _ensure_build_locked(
             db,
             artifact_id=artifact_id,
@@ -752,7 +710,7 @@ async def learn_idea(
 
     state = retry_serializable(db, "learn_idea.reserve", reserve)
     if isinstance(state, learn_service.FailedLearnRequest):
-        learn_service.raise_recorded_learn_failure(state)
+        raise learn_service.DossierIdeaUnresolved()
     if isinstance(
         state,
         (learn_service.OpenedLearnRequest, learn_service.BuildAcceptedLearnRequest),
@@ -807,7 +765,7 @@ async def learn_idea(
 
             failed = retry_serializable(db, "learn_idea.unresolved", record_unresolved)
             if isinstance(failed, learn_service.FailedLearnRequest):
-                learn_service.raise_recorded_learn_failure(failed)
+                raise learn_service.DossierIdeaUnresolved()
             if isinstance(
                 failed,
                 (learn_service.OpenedLearnRequest, learn_service.BuildAcceptedLearnRequest),
@@ -888,7 +846,7 @@ async def learn_idea(
 
     outcome = retry_serializable(db, "learn_idea.finalize", finalize)
     if isinstance(outcome, learn_service.FailedLearnRequest):
-        learn_service.raise_recorded_learn_failure(outcome)
+        raise learn_service.DossierIdeaUnresolved()
     if isinstance(
         outcome,
         (learn_service.OpenedLearnRequest, learn_service.BuildAcceptedLearnRequest),
@@ -1112,32 +1070,12 @@ def _unresolved_idea_envelope() -> learn_service.IdeaResolverEnvelope:
 def _idea_envelope_is_semantically_valid(
     envelope: learn_service.IdeaResolverEnvelope,
 ) -> bool:
-    kind = str(envelope.kind)
-    if kind == "Unresolved":
+    if envelope.kind == "Unresolved":
         return (
             envelope.idea_subject_id is None
             and envelope.display_title is None
             and envelope.idea_key is None
         )
-    if kind == "Existing":
-        if (
-            envelope.idea_subject_id is None
-            or envelope.display_title is not None
-            or envelope.idea_key is not None
-        ):
-            return False
-        try:
-            UUID(envelope.idea_subject_id)
-        except ValueError:
-            return False
-        return True
-    if (
-        kind != "New"
-        or envelope.idea_subject_id is not None
-        or envelope.display_title is None
-        or envelope.idea_key is None
-    ):
-        return False
     return not isinstance(
         learn_service.decode_idea_resolver_output(envelope.model_dump_json()),
         learn_service.UnresolvedIdeaResolution,
@@ -1477,61 +1415,6 @@ def _learn_step_state(
     )
 
 
-def _transition_learn_step(
-    db: Session,
-    *,
-    request_id: UUID,
-    expected: step_journal.DispatchPhase | None,
-    next_state: step_journal.StepReplayState,
-) -> tuple[step_journal.StepReplayState, bool]:
-    def op() -> tuple[step_journal.StepReplayState, bool]:
-        _lock_learn_request(db, request_id)
-        current_request = learn_service.load_learn_request(db, request_id=request_id)
-        if not isinstance(current_request, learn_service.PendingLearnRequest):
-            raise AssertionError("terminal Learn request cannot change resolver coordination")
-        current = _learn_step_state(current_request)
-        current_phase = current.dispatch_phase if current is not None else None
-        if current_phase is not expected:
-            db.commit()
-            if current is None:
-                raise AssertionError("Idea-resolution coordination disappeared")
-            return current, False
-        payload = step_journal.payload_with_step_state(
-            {"coordination": current_request.coordination},
-            step_path=_IDEA_RESOLUTION_STEP_PATH,
-            state=next_state,
-        )
-        raw_coordination = payload["coordination"]
-        if not isinstance(raw_coordination, dict):
-            raise AssertionError("Idea-resolution coordination codec returned a non-object")
-        learn_service.checkpoint_learn_coordination(
-            db,
-            request_id=request_id,
-            coordination=raw_coordination,
-        )
-        if next_state.dispatch_phase is step_journal.Uncertain:
-            db.execute(
-                text(
-                    "UPDATE artifact_learn_requests "
-                    "SET resolver_lease_expires_at = now() + interval '15 minutes' "
-                    "WHERE id = :id"
-                ),
-                {"id": request_id},
-            )
-        else:
-            db.execute(
-                text(
-                    "UPDATE artifact_learn_requests "
-                    "SET resolver_lease_expires_at = NULL WHERE id = :id"
-                ),
-                {"id": request_id},
-            )
-        db.commit()
-        return next_state, True
-
-    return retry_serializable(db, "learn_idea.coordination", op)
-
-
 def _assert_learn_step_identity(
     state: step_journal.StepReplayState,
     *,
@@ -1596,7 +1479,7 @@ def _ensure_build_locked(
     )
     enqueue_unique_job(
         db,
-        kind=DOSSIER_DEFINITION.job_kind,
+        kind=_JOB_KIND,
         dedupe_key=_dispatch_key(build_id),
         payload={
             "build_id": str(build_id),
@@ -1667,15 +1550,31 @@ class _DossierDocumentAcceptance:
                 self._terminalize(DossierBuildFailureCode.CitationValidationFailed, str(exc))
                 return None
 
-        repaired = await _run_document_repair_step(
+        repaired = await _run_generation_step(
             self.db,
             build_id=self.build_id,
-            binding=self.binding,
-            collected=self.collected,
-            instruction=self.instruction,
+            step=build_artifact_generation_step(
+                path=DOCUMENT_REPAIR_STEP_PATH,
+                build_id=self.build_id,
+                binding=self.binding,
+                collected=self.collected,
+                witness=self.witness,
+                system_prompt=document_repair_system_prompt(self.binding.system_prompt),
+                user_content=document_repair_user_content(
+                    original_user_content=self.binding.build_user_content(
+                        self.collected, self.instruction
+                    ),
+                    rejected_output=rejected_output,
+                    diagnostic=diagnostic,
+                ),
+            ),
+            progress_payload=ProgressEventPayload(
+                phase="validation",
+                message="Validating lesson document",
+            ),
+            idempotent_once=False,
+            detail_subject="document repair",
             runtime=self.runtime,
-            rejected_output=rejected_output,
-            diagnostic=diagnostic,
             input_recheck=self.input_recheck,
         )
         if isinstance(repaired, RescheduleRequested):
@@ -1708,7 +1607,6 @@ class _DossierDocumentAcceptance:
             build_id=self.build_id,
             code=code,
             detail=detail,
-            support=None,
             ctx=self.runtime.execution_context,
             input_recheck=self.input_recheck,
         )
@@ -1738,7 +1636,7 @@ async def run_build(
     if job is None:
         return
     if (
-        job.kind != DOSSIER_DEFINITION.job_kind
+        job.kind != _JOB_KIND
         or job.dedupe_key != _dispatch_key(build_id)
         or str(job.payload.get("build_id")) != str(build_id)
     ):
@@ -1771,11 +1669,9 @@ async def run_build(
             build_id=build_id,
             code=DossierBuildFailureCode.InputsChanged,
             detail="subject or audience is no longer visible",
-            support=None,
             ctx=ctx,
         )
         return
-    policy.requester_admission(resolved, requester_user_id)
     try:
         policy.authorize_generate(db, resolved, requester_user_id)
     except NotFoundError:
@@ -1785,7 +1681,6 @@ async def run_build(
             build_id=build_id,
             code=DossierBuildFailureCode.InputsChanged,
             detail="subject or audience is no longer visible",
-            support=None,
             ctx=ctx,
         )
         return
@@ -1807,7 +1702,6 @@ async def run_build(
                 build_id=build_id,
                 code=DossierBuildFailureCode.InputsChanged,
                 detail="a frozen research source changed during collection",
-                support=None,
                 ctx=ctx,
             )
             return None
@@ -1823,7 +1717,6 @@ async def run_build(
                 build_id=build_id,
                 code=DossierBuildFailureCode.ContextTooLarge,
                 detail="subject input exceeds the binding budget",
-                support=None,
                 ctx=ctx,
             )
             return None
@@ -1835,7 +1728,6 @@ async def run_build(
                 build_id=build_id,
                 code=pre_dispatch,
                 detail=None,
-                support=None,
                 ctx=ctx,
             )
             return
@@ -1855,7 +1747,6 @@ async def run_build(
                 build_id=build_id,
                 code=DossierBuildFailureCode.InputsChanged,
                 detail="inputs changed before generation dispatch",
-                support=None,
                 ctx=ctx,
             )
             return
@@ -1868,12 +1759,24 @@ async def run_build(
             witness=witness,
             requester_user_id=requester_user_id,
         )
-        decoded = await _run_synthesis_step(
+        decoded = await _run_generation_step(
             db,
             build_id=build_id,
-            instruction=instruction,
-            binding=binding,
-            collected=collected,
+            step=build_artifact_generation_step(
+                path=SYNTHESIS_STEP_PATH,
+                build_id=build_id,
+                binding=binding,
+                collected=collected,
+                witness=witness,
+                system_prompt=binding.system_prompt,
+                user_content=binding.build_user_content(collected, instruction),
+            ),
+            progress_payload=ProgressEventPayload(
+                phase="synthesis",
+                message="Generating dossier",
+            ),
+            idempotent_once=True,
+            detail_subject="generation",
             runtime=runtime,
             input_recheck=input_recheck,
         )
@@ -1897,7 +1800,7 @@ async def run_build(
         if document is None:
             return
         citations = document.citations
-        if len(citations) < DOSSIER_DEFINITION.min_materialized_citations:
+        if len(citations) < MIN_MATERIALIZED_CITATIONS:
             raise AssertionError("strict citation materializer accepted too few citations")
         manifest = binding.input_manifest(collected)
         db.commit()
@@ -1921,28 +1824,24 @@ async def run_build(
             db.rollback()
 
 
-async def _run_synthesis_step(
+async def _run_generation_step(
     db: Session,
     *,
     build_id: UUID,
-    instruction: str | None,
-    binding: DossierBinding,
-    collected: object,
+    step: ArtifactGenerationStep,
+    progress_payload: ProgressEventPayload,
+    idempotent_once: bool,
+    detail_subject: str,
     runtime: DossierBuildRuntime,
     input_recheck: _TerminalInputRecheck,
 ) -> BaseModel | PublishableDossier | ArtifactGenerationInvalid | RescheduleRequested | None:
-    """Run or replay the operation's one exact synthesis generation."""
+    """Run or replay one exact durable generation for the build.
+
+    ``detail_subject`` names the step in the modeled failure details so a repair
+    failure stays distinguishable from a synthesis failure.
+    """
 
     ctx = runtime.execution_context
-    step = build_artifact_generation_step(
-        path=SYNTHESIS_STEP_PATH,
-        build_id=build_id,
-        binding=binding,
-        collected=collected,
-        witness=input_recheck.witness,
-        system_prompt=binding.system_prompt,
-        user_content=binding.build_user_content(collected, instruction),
-    )
     try:
         replay = step.replay(runtime)
     except ArtifactGenerationInputsChanged:
@@ -1950,8 +1849,7 @@ async def _run_synthesis_step(
             db,
             build_id=build_id,
             code=DossierBuildFailureCode.InputsChanged,
-            detail="inputs changed since the generation request was prepared",
-            support=None,
+            detail=f"inputs changed since {detail_subject} was prepared",
             ctx=ctx,
             input_recheck=input_recheck,
         )
@@ -1990,8 +1888,7 @@ async def _run_synthesis_step(
             db,
             build_id=build_id,
             code=DossierBuildFailureCode.InputsChanged,
-            detail="inputs changed while generation admission was frozen",
-            support=None,
+            detail=f"inputs changed while {detail_subject} admission was frozen",
             ctx=ctx,
             input_recheck=input_recheck,
         )
@@ -2008,19 +1905,15 @@ async def _run_synthesis_step(
         ctx=ctx,
         input_recheck=input_recheck,
         event_type=ArtifactBuildEventType.Progress,
-        payload=ProgressEventPayload(
-            phase="synthesis",
-            message="Generating dossier",
-        ).model_dump(mode="json"),
-        idempotent_once=True,
+        payload=progress_payload.model_dump(mode="json"),
+        idempotent_once=idempotent_once,
     )
     if progress_result == "inputs_changed":
         _terminal_failure(
             db,
             build_id=build_id,
             code=DossierBuildFailureCode.InputsChanged,
-            detail="inputs changed before generation dispatch",
-            support=None,
+            detail=f"inputs changed before {detail_subject}",
             ctx=ctx,
             input_recheck=input_recheck,
         )
@@ -2053,8 +1946,7 @@ async def _run_synthesis_step(
             db,
             build_id=build_id,
             code=DossierBuildFailureCode.InputsChanged,
-            detail="generation dispatch was fenced before host acceptance",
-            support=None,
+            detail=f"{detail_subject} dispatch was fenced before host acceptance",
             ctx=ctx,
             input_recheck=input_recheck,
         )
@@ -2069,7 +1961,7 @@ async def _run_synthesis_step(
     if isinstance(execution_result, RescheduleRequested):
         return execution_result
     if not isinstance(execution_result, CompletedGeneration):
-        raise AssertionError("dossier generation result is not exhaustive")
+        raise AssertionError(f"dossier {detail_subject} result is not exhaustive")
     if not _refresh_generation_job_after_landing(db, runtime):
         return None
     if guard.stop_reason == "inputs_changed":
@@ -2077,188 +1969,7 @@ async def _run_synthesis_step(
             db,
             build_id=build_id,
             code=DossierBuildFailureCode.InputsChanged,
-            detail="inputs changed during generation dispatch",
-            support=None,
-            ctx=ctx,
-            input_recheck=input_recheck,
-        )
-        return None
-    if guard.stop_reason == "inactive":
-        return None
-    return _consume_artifact_generation_result(
-        db,
-        build_id=build_id,
-        result=step.decode_result(execution_result.terminal_result),
-        ctx=ctx,
-        input_recheck=input_recheck,
-    )
-
-
-async def _run_document_repair_step(
-    db: Session,
-    *,
-    build_id: UUID,
-    binding: DossierBinding,
-    collected: object,
-    instruction: str | None,
-    runtime: DossierBuildRuntime,
-    rejected_output: str,
-    diagnostic: str,
-    input_recheck: _TerminalInputRecheck,
-) -> BaseModel | PublishableDossier | ArtifactGenerationInvalid | RescheduleRequested | None:
-    """Run or replay the operation's one exact document-repair generation."""
-
-    ctx = runtime.execution_context
-    original_user_content = binding.build_user_content(collected, instruction)
-    step = build_artifact_generation_step(
-        path=DOCUMENT_REPAIR_STEP_PATH,
-        build_id=build_id,
-        binding=binding,
-        collected=collected,
-        witness=input_recheck.witness,
-        system_prompt=document_repair_system_prompt(binding.system_prompt),
-        user_content=document_repair_user_content(
-            original_user_content=original_user_content,
-            rejected_output=rejected_output,
-            diagnostic=diagnostic,
-        ),
-    )
-    try:
-        replay = step.replay(runtime)
-    except ArtifactGenerationInputsChanged:
-        _terminal_failure(
-            db,
-            build_id=build_id,
-            code=DossierBuildFailureCode.InputsChanged,
-            detail="inputs changed since document repair was prepared",
-            support=None,
-            ctx=ctx,
-            input_recheck=input_recheck,
-        )
-        return None
-    except ArtifactGenerationUncertain as error:
-        raise _UncertainReplayDefect(str(error)) from error
-    if not isinstance(replay, ArtifactGenerationDispatchRequired):
-        return _consume_artifact_generation_result(
-            db,
-            build_id=build_id,
-            result=replay,
-            ctx=ctx,
-            input_recheck=input_recheck,
-        )
-    if not _attempt_can_write(db, build_id=build_id, ctx=ctx):
-        db.rollback()
-        return None
-
-    def lock_dispatch(dispatch_db: Session) -> JobRow | None:
-        return _lock_artifact_generation_dispatch(
-            dispatch_db,
-            build_id=build_id,
-            ctx=ctx,
-            input_recheck=input_recheck,
-        )
-
-    try:
-        admission = await step.admit(
-            runtime,
-            requester_user_id=input_recheck.requester_user_id,
-            lock_dispatch=lock_dispatch,
-        )
-    except GenerationAdmissionInputsChanged:
-        db.rollback()
-        _terminal_failure(
-            db,
-            build_id=build_id,
-            code=DossierBuildFailureCode.InputsChanged,
-            detail="inputs changed while document-repair admission was frozen",
-            support=None,
-            ctx=ctx,
-            input_recheck=input_recheck,
-        )
-        return None
-    except GenerationDispatchAborted:
-        db.rollback()
-        return None
-    if not _refresh_generation_job_after_landing(db, runtime):
-        return None
-
-    progress_result = _append_guarded_stream_event(
-        db,
-        build_id=build_id,
-        ctx=ctx,
-        input_recheck=input_recheck,
-        event_type=ArtifactBuildEventType.Progress,
-        payload=ProgressEventPayload(
-            phase="validation",
-            message="Validating lesson document",
-        ).model_dump(mode="json"),
-        idempotent_once=False,
-    )
-    if progress_result == "inputs_changed":
-        _terminal_failure(
-            db,
-            build_id=build_id,
-            code=DossierBuildFailureCode.InputsChanged,
-            detail="inputs changed before document repair",
-            support=None,
-            ctx=ctx,
-            input_recheck=input_recheck,
-        )
-        return None
-    if progress_result == "inactive":
-        return None
-
-    guard = _StreamGuard(cancel_signal=asyncio.Event())
-
-    watcher = asyncio.create_task(
-        _watch_stream_guard(
-            build_id=build_id,
-            ctx=ctx,
-            input_recheck=input_recheck,
-            guard=guard,
-        )
-    )
-    try:
-        execution_result = await execute_generation(
-            admission.request,
-            session_factory=get_session_factory(),
-            runtime=runtime.llm_runtime,
-            encode_terminal=step.encode_terminal,
-            encode_failure=step.encode_failure,
-            cancel_signal=cast(CancellationSignal, guard.cancel_signal),
-            before_terminal=admission.before_terminal,
-        )
-    except GenerationDispatchAborted:
-        _terminal_failure(
-            db,
-            build_id=build_id,
-            code=DossierBuildFailureCode.InputsChanged,
-            detail="document repair dispatch was fenced before host acceptance",
-            support=None,
-            ctx=ctx,
-            input_recheck=input_recheck,
-        )
-        return None
-    except GenerationUncertain as error:
-        raise _UncertainReplayDefect(str(error)) from error
-    finally:
-        await admission.close()
-        watcher.cancel()
-        await asyncio.gather(watcher, return_exceptions=True)
-
-    if isinstance(execution_result, RescheduleRequested):
-        return execution_result
-    if not isinstance(execution_result, CompletedGeneration):
-        raise AssertionError("dossier repair generation result is not exhaustive")
-    if not _refresh_generation_job_after_landing(db, runtime):
-        return None
-    if guard.stop_reason == "inputs_changed":
-        _terminal_failure(
-            db,
-            build_id=build_id,
-            code=DossierBuildFailureCode.InputsChanged,
-            detail="inputs changed during document repair",
-            support=None,
+            detail=f"inputs changed during {detail_subject}",
             ctx=ctx,
             input_recheck=input_recheck,
         )
@@ -2305,7 +2016,7 @@ def _lock_artifact_generation_dispatch(
     job = lock_job(db, ctx.job_id)
     if (
         job is None
-        or job.kind != DOSSIER_DEFINITION.job_kind
+        or job.kind != _JOB_KIND
         or job.dedupe_key != _dispatch_key(build_id)
         or job.payload.get("build_id") != str(build_id)
     ):
@@ -2333,7 +2044,6 @@ def _consume_artifact_generation_result(
             build_id=build_id,
             code=result.code,
             detail=result.detail,
-            support=None,
             ctx=ctx,
             input_recheck=input_recheck,
         )
@@ -2344,7 +2054,6 @@ def _consume_artifact_generation_result(
             build_id=build_id,
             code=DossierBuildFailureCode.RuntimeUnavailable,
             detail="generation was cancelled without a Dossier cancellation",
-            support=None,
             ctx=ctx,
             input_recheck=input_recheck,
         )
@@ -2474,7 +2183,6 @@ def _terminal_failure(
     build_id: UUID,
     code: DossierBuildFailureCode,
     detail: str | None,
-    support: dict | None,
     ctx: JobExecutionContext | None = None,
     input_recheck: _TerminalInputRecheck | None = None,
 ) -> None:
@@ -2502,26 +2210,21 @@ def _terminal_failure(
             return  # RULES 3-5: first committed terminal wins
         effective_code = code
         effective_detail = detail
-        effective_support = support
         if input_recheck is not None and not _terminal_inputs_are_current(
             db,
             input_recheck,
         ):
             effective_code = DossierBuildFailureCode.InputsChanged
             effective_detail = "inputs changed between collection and terminal recheck"
-            effective_support = None
         db.execute(
             text(
-                "INSERT INTO artifact_build_failures (build_id, failure_code, detail, support) "
-                "VALUES (:b, :code, :detail, CAST(:support AS jsonb))"
+                "INSERT INTO artifact_build_failures (build_id, failure_code, detail) "
+                "VALUES (:b, :code, :detail)"
             ),
             {
                 "b": build_id,
                 "code": effective_code.value,
                 "detail": effective_detail,
-                "support": (
-                    json.dumps(effective_support) if effective_support is not None else None
-                ),
             },
         )
         _append_build_event(
@@ -2531,7 +2234,7 @@ def _terminal_failure(
             payload=FailedEventPayload(
                 failure_code=effective_code,
                 detail=(present(effective_detail) if effective_detail is not None else absent()),
-                support=(present(effective_support) if effective_support is not None else absent()),
+                support=absent(),
             ).model_dump(mode="json"),
         )
         db.commit()
@@ -2568,7 +2271,7 @@ def _cancel_prepared_build_generation_in_current_transaction(
                 "WHERE kind = :kind AND dedupe_key = :dedupe_key FOR UPDATE"
             ),
             {
-                "kind": DOSSIER_DEFINITION.job_kind,
+                "kind": _JOB_KIND,
                 "dedupe_key": _dispatch_key(build_id),
             },
         ).scalar_one_or_none()
@@ -2576,7 +2279,7 @@ def _cancel_prepared_build_generation_in_current_transaction(
     if job is None:
         return ctx is None
     if (
-        job.kind != DOSSIER_DEFINITION.job_kind
+        job.kind != _JOB_KIND
         or job.dedupe_key != _dispatch_key(build_id)
         or str(job.payload.get("build_id")) != str(build_id)
     ):
@@ -2805,27 +2508,19 @@ def cancel_build(db: Session, *, build_id: UUID, actor_user_id: UUID) -> None:
             db.rollback()
             raise BuildNotActive()
         head = _head_row(db, head_id)
-        if head is None or not _authorize_audience(
-            db,
-            audience_scheme=head.audience_scheme,
-            audience_id=head.audience_id,
-            viewer_id=actor_user_id,
-        ):
-            db.rollback()
-            raise NotFoundError(ApiErrorCode.E_DOSSIER_NOT_FOUND, "Dossier build not found")
-        try:
-            _authorize_subject_read(
+        if head is None or (
+            visible_persisted_subject(
                 db,
                 subject_scheme=head.subject_scheme,
                 subject_id=head.subject_id,
+                audience_scheme=head.audience_scheme,
+                audience_id=head.audience_id,
                 viewer_id=actor_user_id,
             )
-        except NotFoundError:
+            is None
+        ):
             db.rollback()
-            raise NotFoundError(
-                ApiErrorCode.E_DOSSIER_NOT_FOUND,
-                "Dossier build not found",
-            ) from None
+            raise NotFoundError(ApiErrorCode.E_DOSSIER_NOT_FOUND, "Dossier build not found")
         if not _cancel_prepared_build_generation_in_current_transaction(
             db,
             owner=owner,
@@ -2878,25 +2573,18 @@ def assert_build_viewer(db: Session, *, build_id: UUID, viewer_id: UUID) -> None
         .mappings()
         .first()
     )
-    if row is None or not _authorize_audience(
-        db,
-        audience_scheme=str(row["audience_scheme"]),
-        audience_id=str(row["audience_id"]),
-        viewer_id=viewer_id,
-    ):
-        raise NotFoundError(ApiErrorCode.E_DOSSIER_NOT_FOUND, "Dossier build not found")
-    try:
-        _authorize_subject_read(
+    if row is None or (
+        visible_persisted_subject(
             db,
             subject_scheme=str(row["subject_scheme"]),
             subject_id=UUID(str(row["subject_id"])),
+            audience_scheme=str(row["audience_scheme"]),
+            audience_id=str(row["audience_id"]),
             viewer_id=viewer_id,
         )
-    except NotFoundError:
-        raise NotFoundError(
-            ApiErrorCode.E_DOSSIER_NOT_FOUND,
-            "Dossier build not found",
-        ) from None
+        is None
+    ):
+        raise NotFoundError(ApiErrorCode.E_DOSSIER_NOT_FOUND, "Dossier build not found")
 
 
 def build_execution_phase(
@@ -2932,24 +2620,19 @@ def make_current(db: Session, *, revision_id: UUID, actor_user_id: UUID) -> None
             raise RevisionNotFound()
         head_id = UUID(str(row["artifact_id"]))
         db.execute(text("SELECT id FROM artifacts WHERE id = :h FOR UPDATE"), {"h": head_id})
-        if not _authorize_audience(
-            db,
-            audience_scheme=str(row["audience_scheme"]),
-            audience_id=str(row["audience_id"]),
-            viewer_id=actor_user_id,
-        ):
-            db.rollback()
-            raise RevisionNotOwnedByHead()
-        try:
-            _authorize_subject_read(
+        if (
+            visible_persisted_subject(
                 db,
                 subject_scheme=str(row["subject_scheme"]),
                 subject_id=UUID(str(row["subject_id"])),
+                audience_scheme=str(row["audience_scheme"]),
+                audience_id=str(row["audience_id"]),
                 viewer_id=actor_user_id,
             )
-        except NotFoundError:
+            is None
+        ):
             db.rollback()
-            raise RevisionNotOwnedByHead() from None
+            raise RevisionNotOwnedByHead()
         db.execute(
             text("UPDATE artifacts SET current_revision_id = :r, updated_at = now() WHERE id = :h"),
             {"r": revision_id, "h": head_id},
@@ -3019,12 +2702,7 @@ def read_artifact_head(
 ) -> DossierHeadView:
     """Read one existing Artifact by ref with audience and subject authorization."""
     head = _head_row(db, artifact_id)
-    if head is None or not _authorize_audience(
-        db,
-        audience_scheme=head.audience_scheme,
-        audience_id=head.audience_id,
-        viewer_id=requester_user_id,
-    ):
+    if head is None:
         raise NotFoundError(ApiErrorCode.E_DOSSIER_NOT_FOUND, "Dossier not found")
     resolved = visible_persisted_subject(
         db,
@@ -3250,7 +2928,7 @@ def _lock_dossier_jobs_for_builds_in_order(
                 "ORDER BY id FOR UPDATE"
             ),
             {
-                "kind": DOSSIER_DEFINITION.job_kind,
+                "kind": _JOB_KIND,
                 "dedupe_keys": dedupe_keys,
             },
         ).scalars()
@@ -3266,7 +2944,7 @@ def _lock_dossier_jobs_for_builds_in_order(
             raise AssertionError(f"Dossier job {job.id} has no valid build identity") from exc
         if (
             build_id not in expected_build_ids
-            or job.kind != DOSSIER_DEFINITION.job_kind
+            or job.kind != _JOB_KIND
             or job.dedupe_key != _dispatch_key(build_id)
         ):
             raise AssertionError(f"job {job.id} does not own Dossier build {build_id}")
@@ -3637,7 +3315,7 @@ def _delete_heads(db: Session, head_ids: list[UUID]) -> None:
     if build_ids:
         revoke_jobs_by_dedupe_keys(
             db,
-            kind=DOSSIER_DEFINITION.job_kind,
+            kind=_JOB_KIND,
             dedupe_keys=[_dispatch_key(build_id) for build_id in build_ids],
         )
     # Clear the circular head pointer before deleting revisions.
@@ -3724,7 +3402,7 @@ def _validate_instruction(instruction: str | None) -> str | None:
 
 
 def _dispatch_key(build_id: UUID) -> str:
-    return f"{DOSSIER_DEFINITION.dispatch_dedupe_prefix}:{build_id}"
+    return f"dossier_build:{build_id}"
 
 
 def _running_claim_is_current(db: Session, ctx: JobExecutionContext) -> bool:
@@ -3903,37 +3581,6 @@ def _audience_from_head(head: _HeadRow) -> AudienceScope:
         return AudienceLibrary(library_id=UUID(head.audience_id))
     # justify-defect: the head audience_scheme is a closed two-value column.
     raise AssertionError(f"unknown audience scheme {head.audience_scheme!r}")
-
-
-def _authorize_audience(
-    db: Session, *, audience_scheme: str, audience_id: str, viewer_id: UUID
-) -> bool:
-    if audience_scheme == "user":
-        return UUID(audience_id) == viewer_id
-    if audience_scheme == "library":
-        return is_library_member(db, viewer_id, UUID(audience_id))
-    return False
-
-
-def _authorize_subject_read(
-    db: Session,
-    *,
-    subject_scheme: str,
-    subject_id: UUID,
-    viewer_id: UUID,
-) -> None:
-    if (
-        visible_persisted_subject(
-            db,
-            subject_scheme=subject_scheme,
-            subject_id=subject_id,
-            audience_scheme="user",
-            audience_id=str(viewer_id),
-            viewer_id=viewer_id,
-        )
-        is None
-    ):
-        raise NotFoundError(ApiErrorCode.E_DOSSIER_NOT_FOUND, "Dossier not found")
 
 
 def _job_state(db: Session, build_id: UUID) -> _JobState | None:

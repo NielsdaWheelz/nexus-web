@@ -10,7 +10,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.errors import NotFoundError
-from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.artifacts.bindings._shared import (
     StandardSynthesis,
     materialize_standard,
@@ -32,7 +31,6 @@ from nexus.services.artifacts.dossier_types import (
 )
 from nexus.services.artifacts.idea_seeds import (
     get_idea_subject,
-    list_idea_seed_highlight_ids,
 )
 from nexus.services.artifacts.manifests import (
     IdeaIncludedSource,
@@ -246,25 +244,6 @@ class IdeaSubjectPolicy:
             raise NotFoundError(message="Dossier not found")
         return AudienceUser(user_id=idea.user_id)
 
-    def collection_viewer(
-        self,
-        resolved: ResolvedSubject,
-        audience: AudienceScope,
-    ) -> UUID | None:
-        idea = _require_idea(resolved)
-        _require_idea_audience(idea, audience)
-        return idea.user_id
-
-    def requester_admission(
-        self,
-        resolved: ResolvedSubject,
-        requester_user_id: UUID,
-    ) -> UUID:
-        idea = _require_idea(resolved)
-        if requester_user_id != idea.user_id:
-            raise NotFoundError(message="Dossier not found")
-        return requester_user_id
-
     def citation_owner(
         self,
         db: Session,
@@ -275,26 +254,6 @@ class IdeaSubjectPolicy:
         idea = _require_idea(resolved)
         _require_idea_audience(idea, audience)
         return idea.user_id
-
-    def audience_visible_source_intersection(
-        self,
-        db: Session,
-        resolved: ResolvedSubject,
-        audience: AudienceScope,
-    ) -> list[ResourceRef]:
-        idea = _require_idea(resolved)
-        _require_idea_audience(idea, audience)
-        return [
-            ResourceRef(scheme="highlight", id=highlight_id)
-            for highlight_id in list_idea_seed_highlight_ids(
-                db,
-                artifact_id=_artifact_id(db, idea=idea),
-            )
-        ]
-
-    def activate(self, db: Session, ref: ResourceRef) -> ResourceActivationOut:
-        del db, ref
-        raise AssertionError("Idea subjects have no Resource activation")
 
 
 def _require_idea(resolved: ResolvedSubject) -> ResolvedIdeaSubject:
@@ -309,20 +268,6 @@ def _require_idea_audience(
 ) -> None:
     if not isinstance(audience, AudienceUser) or audience.user_id != resolved.user_id:
         raise AssertionError("Idea Dossier audience must be its owning user")
-
-
-def _artifact_id(db: Session, *, idea: ResolvedIdeaSubject) -> UUID:
-    artifact_id = db.execute(
-        text(
-            "SELECT id FROM artifacts "
-            "WHERE subject_scheme = 'idea' AND subject_id = :subject_id "
-            "AND audience_scheme = 'user' AND audience_id = :audience_id"
-        ),
-        {"subject_id": idea.subject_id, "audience_id": str(idea.user_id)},
-    ).scalar_one_or_none()
-    if artifact_id is None:
-        raise NotFoundError(message="Dossier not found")
-    return UUID(str(artifact_id))
 
 
 def _current_manifest(

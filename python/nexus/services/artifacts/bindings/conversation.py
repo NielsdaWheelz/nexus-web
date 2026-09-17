@@ -13,10 +13,10 @@ from sqlalchemy.orm import Session
 
 from nexus.errors import NotFoundError
 from nexus.schemas.presence import present
-from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.artifacts.bindings._shared import (
     Candidate,
     StandardSynthesis,
+    audience_user,
     materialize_standard,
     synthesis_prompt,
     synthesis_user_content,
@@ -199,37 +199,17 @@ class ConversationSubjectPolicy:
         owner = _conversation_owner_from_resolved(resolved)
         return AudienceUser(user_id=owner)
 
-    def collection_viewer(self, resolved: ResolvedSubject, audience: AudienceScope) -> UUID | None:
-        return _audience_user(audience)
-
-    def requester_admission(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
-        return requester_user_id
-
     def citation_owner(
         self, db: Session, resolved: ResolvedSubject, audience: AudienceScope
     ) -> UUID:
-        return _audience_user(audience)
-
-    def audience_visible_source_intersection(
-        self, db: Session, resolved: ResolvedSubject, audience: AudienceScope
-    ) -> list[ResourceRef]:
-        collected = _collect(db, resolved, audience)
-        return [candidate.target for candidate in collected.candidates]
-
-    def activate(self, db: Session, ref: ResourceRef) -> ResourceActivationOut:
-        return ResourceActivationOut(
-            resource_ref=ref.uri,
-            kind="route",
-            href=f"/conversations/{ref.id}",
-            unresolved_reason=None,
-        )
+        return audience_user(audience)
 
 
 def _collect(
     db: Session, resolved: ResolvedSubject, audience: AudienceScope
 ) -> _ConversationCollected:
     resolved = require_resource_subject(resolved)
-    owner_id = _audience_user(audience)
+    owner_id = audience_user(audience)
     rows = (
         db.execute(
             text(
@@ -338,12 +318,6 @@ def _collect(
             completeness=ConversationComplete(),
         ),
     )
-
-
-def _audience_user(audience: AudienceScope) -> UUID:
-    if not isinstance(audience, AudienceUser):
-        raise AssertionError("conversation dossier audience must be a user")
-    return audience.user_id
 
 
 def _conversation_owner_from_resolved(resolved: ResolvedSubject) -> UUID:

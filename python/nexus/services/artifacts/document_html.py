@@ -73,7 +73,6 @@ _ALLOWED_CLASSES = frozenset(
 )
 _TABLE_ATTRIBUTES = frozenset({"scope", "colspan", "rowspan", "class"})
 _GENERIC_ATTRIBUTES = frozenset({"class"})
-_TRUSTED_ELEMENTS = _ALLOWED_ELEMENTS | {"button", "sup"}
 
 
 class DocumentHtmlError(ValueError):
@@ -158,7 +157,6 @@ def compile_learning_document(
 
     compiled = _serialize(fragment)
     reparsed = _parse_fragment(compiled)
-    _validate_compiled_fragment(reparsed, expected_ordinals=ordinals)
     if _tree_shape(fragment) != _tree_shape(reparsed):
         raise AssertionError("trusted citation controls change shape when reparsed")
     return CompiledLearningDocument(content_html=compiled, content_text=content_text)
@@ -281,61 +279,6 @@ def _validate_model_attributes(
             _POSITIVE_INTEGER.fullmatch(value) is None or not 1 <= int(value) <= 16
         ):
             raise DocumentHtmlError(f"{key} must be a canonical integer from 1 to 16")
-
-
-def _validate_compiled_fragment(
-    fragment: Element,
-    *,
-    expected_ordinals: tuple[int, ...],
-) -> None:
-    article = _only_article(fragment)
-    found: list[int] = []
-    node_count = 0
-    stack = [(article, 1)]
-    while stack:
-        element, depth = stack.pop()
-        node_count += (
-            1 + int(element.text is not None) + int(depth > 1 and element.tail is not None)
-        )
-        if node_count > _MAX_NODES + 2 * _MAX_CITATIONS:
-            raise AssertionError("compiled article exceeds trusted node bound")
-        if depth > _MAX_DEPTH + 1:
-            raise AssertionError("compiled article exceeds trusted depth bound")
-        name = _local_name(element)
-        if name not in _TRUSTED_ELEMENTS:
-            raise AssertionError(f"compiled article contains unexpected {name!r}")
-        if name == "cite":
-            raise AssertionError("compiled article retained a model citation token")
-        if name == "button":
-            if list(element.attrib) != [
-                "type",
-                "class",
-                "data-nexus-citation",
-                "aria-label",
-            ]:
-                raise AssertionError("compiled citation attributes changed")
-            raw_ordinal = element.attrib["data-nexus-citation"]
-            ordinal = int(raw_ordinal)
-            if element.attrib != {
-                "type": "button",
-                "class": "dossier-citation",
-                "data-nexus-citation": raw_ordinal,
-                "aria-label": f"Open citation {ordinal}",
-            }:
-                raise AssertionError("compiled citation control is malformed")
-            children = list(element)
-            if (
-                len(children) != 1
-                or _local_name(children[0]) != "sup"
-                or children[0].attrib
-                or children[0].text != raw_ordinal
-                or list(children[0])
-            ):
-                raise AssertionError("compiled citation superscript is malformed")
-            found.append(ordinal)
-        stack.extend((child, depth + 1) for child in reversed(list(element)))
-    if tuple(found) != expected_ordinals:
-        raise AssertionError("compiled citation order changed")
 
 
 def _only_article(fragment: Element) -> Element:
