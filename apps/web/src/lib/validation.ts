@@ -26,6 +26,17 @@ export function expectExactRecord(
   return value;
 }
 
+export function hasExactKeys(
+  record: Record<string, unknown>,
+  expected: readonly string[],
+): boolean {
+  const actual = Object.keys(record);
+  return (
+    actual.length === expected.length &&
+    actual.every((key) => expected.includes(key))
+  );
+}
+
 export function expectRecord(
   raw: unknown,
   name: string,
@@ -83,7 +94,7 @@ export function expectCanonicalUuid(raw: unknown, name: string): string {
   return value;
 }
 
-export function isCanonicalRfcUuid(raw: unknown): raw is string {
+function isCanonicalRfcUuid(raw: unknown): raw is string {
   return typeof raw === "string" && CANONICAL_RFC_UUID_RE.test(raw);
 }
 
@@ -121,7 +132,7 @@ function isRoundTrippingCalendarDay(day: string): boolean {
  * month, minute, or second but silently rolls a day past the end of its month
  * and accepts hour 24, so the day is round-tripped and the hour bounded here.
  */
-export function isIsoInstant(raw: unknown): raw is string {
+function isIsoInstant(raw: unknown): raw is string {
   if (typeof raw !== "string") return false;
   const match = ISO_INSTANT_RE.exec(raw);
   return (

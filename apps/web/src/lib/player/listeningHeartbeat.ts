@@ -18,7 +18,6 @@
  */
 
 import { ApiError, apiFetch, apiKeepaliveJson, isApiError, type ApiPath } from "@/lib/api/client";
-import { asRecord, exactKeys } from "@/lib/api/exact";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { publishConsumptionProjectionChange } from "@/lib/consumption/projectionRevision";
 import type { Presence } from "@/lib/api/presence";
@@ -28,7 +27,11 @@ import {
   type MediaId,
 } from "@/lib/lectern/contract";
 import type { OverlayEntry } from "@/lib/player/playerSession";
-import { expectInteger, expectString } from "@/lib/validation";
+import {
+  expectExactRecord,
+  expectInteger,
+  expectString,
+} from "@/lib/validation";
 
 /** Per-request browser deadline; a slow PUT/GET is aborted and treated as an
  * ambiguous outcome (spec §5.4 "named 20-second browser deadline"). */
@@ -95,8 +98,7 @@ interface HeartbeatResult {
 // --- Strict decoders (same-system: any shape violation is a defect) ---------
 
 function unwrapDataEnvelope(raw: unknown, ctx: string): unknown {
-  const rec = asRecord(raw, ctx);
-  exactKeys(rec, ["data"], ctx);
+  const rec = expectExactRecord(raw, ["data"], ctx);
   return rec.data;
 }
 
@@ -105,11 +107,11 @@ function decodeListeningStateEnvelope(raw: unknown): ListeningStateOut {
 }
 
 function decodeHeartbeatResult(raw: unknown): HeartbeatResult {
-  const data = asRecord(
+  const data = expectExactRecord(
     unwrapDataEnvelope(raw, "PUT /api/media/{mediaId}/listening-state"),
+    ["listeningState", "heartbeatGeneration", "heartbeatSequence"],
     "ListeningHeartbeatResult",
   );
-  exactKeys(data, ["listeningState", "heartbeatGeneration", "heartbeatSequence"], "ListeningHeartbeatResult");
   return {
     listeningState: decodeListeningState(data.listeningState),
     heartbeatGeneration: expectString(data.heartbeatGeneration, "ListeningHeartbeatResult.heartbeatGeneration"),

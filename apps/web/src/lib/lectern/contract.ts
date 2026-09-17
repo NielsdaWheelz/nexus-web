@@ -18,7 +18,6 @@
  */
 
 import { decodePresence, type Presence } from "@/lib/api/presence";
-import { asRecord, exactKeys } from "@/lib/api/exact";
 import {
   decodeCollectionRevision,
   type CollectionRevision,
@@ -40,9 +39,11 @@ import {
 } from "@/lib/player/pauseShortening";
 import {
   expectBoolean,
+  expectExactRecord,
   expectFiniteNumber,
   expectIsoInstant,
   expectOneOf,
+  expectRecord,
   expectString,
   isCanonicalUuid,
 } from "@/lib/validation";
@@ -396,9 +397,8 @@ function decodeUuidString(raw: unknown, context: string): string {
 // --- Domain decoders ---------------------------------------------------------
 
 function decodePlaybackRateResolution(raw: unknown): PlaybackRateResolution {
-  const rec = asRecord(raw, "PlaybackRateResolution");
-  exactKeys(
-    rec,
+  const rec = expectExactRecord(
+    raw,
     ["value", "source", "podcastPreference"],
     "PlaybackRateResolution",
   );
@@ -408,12 +408,8 @@ function decodePlaybackRateResolution(raw: unknown): PlaybackRateResolution {
     "PlaybackRateResolution.source",
   );
   const podcastPreference = decodePresence(rec.podcastPreference, (rawValue) => {
-    const preference = asRecord(
+    const preference = expectExactRecord(
       rawValue,
-      "PlaybackRateResolution.podcastPreference",
-    );
-    exactKeys(
-      preference,
       ["podcastId", "value"],
       "PlaybackRateResolution.podcastPreference",
     );
@@ -461,8 +457,11 @@ function decodePlaybackRateResolution(raw: unknown): PlaybackRateResolution {
 }
 
 export function decodeChapter(raw: unknown): ChapterOut {
-  const rec = asRecord(raw, "ChapterOut");
-  exactKeys(rec, ["title", "startMs", "endMs"], "ChapterOut");
+  const rec = expectExactRecord(
+    raw,
+    ["title", "startMs", "endMs"],
+    "ChapterOut",
+  );
   const title = expectString(rec.title, "ChapterOut.title");
   if (title.length < 1 || title.length > MAX_CHAPTER_TITLE) {
     throw new Error(
@@ -479,8 +478,11 @@ export function decodeChapter(raw: unknown): ChapterOut {
 }
 
 function decodeConsumption(raw: unknown): ConsumptionInfo {
-  const rec = asRecord(raw, "consumption");
-  exactKeys(rec, ["state", "progress", "progressResettable"], "consumption");
+  const rec = expectExactRecord(
+    raw,
+    ["state", "progress", "progressResettable"],
+    "consumption",
+  );
   return {
     state: expectOneOf(rec.state, ["Unread", "InProgress", "Finished"] as const, "consumption.state"),
     progress: decodePresence(rec.progress, (v) => asFraction(v, "consumption.progress")),
@@ -489,11 +491,11 @@ function decodeConsumption(raw: unknown): ConsumptionInfo {
 }
 
 export function decodeActivation(raw: unknown): Activation {
-  const rec = asRecord(raw, "activation");
+  const rec = expectRecord(raw, "activation");
   const kind = expectOneOf(rec.kind, ["FooterAudio", "Readable", "OpenPane"] as const, "activation.kind");
   switch (kind) {
     case "FooterAudio": {
-      exactKeys(
+      expectExactRecord(
         rec,
         [
           "kind",
@@ -560,20 +562,19 @@ export function decodeActivation(raw: unknown): Activation {
       };
     }
     case "Readable": {
-      exactKeys(rec, ["kind"], "ReadableActivation");
+      expectExactRecord(rec, ["kind"], "ReadableActivation");
       return { kind: "Readable" };
     }
     case "OpenPane": {
-      exactKeys(rec, ["kind"], "OpenPaneActivation");
+      expectExactRecord(rec, ["kind"], "OpenPaneActivation");
       return { kind: "OpenPane" };
     }
   }
 }
 
 export function decodeLecternItem(raw: unknown): LecternItem {
-  const rec = asRecord(raw, "LecternItemOut");
-  exactKeys(
-    rec,
+  const rec = expectExactRecord(
+    raw,
     [
       "itemId",
       "mediaId",
@@ -612,8 +613,11 @@ export function decodeLecternItem(raw: unknown): LecternItem {
  * DTOs). Its activation is `FooterAudio` by contract; any other kind throws.
  */
 export function decodePlayerDescriptor(raw: unknown): PlayerDescriptor {
-  const rec = asRecord(raw, "PlayerDescriptor");
-  exactKeys(rec, ["mediaId", "title", "subtitle", "activation"], "PlayerDescriptor");
+  const rec = expectExactRecord(
+    raw,
+    ["mediaId", "title", "subtitle", "activation"],
+    "PlayerDescriptor",
+  );
   const activation = decodeActivation(rec.activation);
   if (activation.kind !== "FooterAudio") {
     throw new Error(
@@ -629,8 +633,7 @@ export function decodePlayerDescriptor(raw: unknown): PlayerDescriptor {
 }
 
 export function decodeLecternSnapshot(raw: unknown): LecternSnapshot {
-  const rec = asRecord(raw, "LecternSnapshot");
-  exactKeys(rec, ["items"], "LecternSnapshot");
+  const rec = expectExactRecord(raw, ["items"], "LecternSnapshot");
   const items = asArray(rec.items, "LecternSnapshot.items");
   if (items.length > LECTERN_MAX_ITEMS) {
     throw new Error(
@@ -641,9 +644,8 @@ export function decodeLecternSnapshot(raw: unknown): LecternSnapshot {
 }
 
 export function decodeListeningState(raw: unknown): ListeningStateOut {
-  const rec = asRecord(raw, "ListeningStateOut");
-  exactKeys(
-    rec,
+  const rec = expectExactRecord(
+    raw,
     [
       "positionMs",
       "durationMs",
@@ -670,8 +672,11 @@ export function decodeListeningState(raw: unknown): ListeningStateOut {
 }
 
 function decodeMediaProgressState(raw: unknown): MediaProgressState {
-  const rec = asRecord(raw, "MediaProgressState");
-  exactKeys(rec, ["mediaId", "readerCursor", "listeningState"], "MediaProgressState");
+  const rec = expectExactRecord(
+    raw,
+    ["mediaId", "readerCursor", "listeningState"],
+    "MediaProgressState",
+  );
   return {
     mediaId: decodeMediaId(rec.mediaId),
     readerCursor: parseReaderCursorSnapshot(rec.readerCursor),
@@ -680,27 +685,26 @@ function decodeMediaProgressState(raw: unknown): MediaProgressState {
 }
 
 function decodeLecternOutcome(raw: unknown): LecternOutcome {
-  const rec = asRecord(raw, "LecternOutcome");
+  const rec = expectRecord(raw, "LecternOutcome");
   const kind = expectOneOf(rec.kind, ["Placed", "Removed", "Ordered"] as const, "LecternOutcome.kind");
   switch (kind) {
     case "Placed": {
-      exactKeys(rec, ["kind", "itemIds"], "LecternOutcome.Placed");
+      expectExactRecord(rec, ["kind", "itemIds"], "LecternOutcome.Placed");
       return { kind: "Placed", itemIds: asArray(rec.itemIds, "LecternOutcome.itemIds").map(decodeLecternItemId) };
     }
     case "Removed": {
-      exactKeys(rec, ["kind", "itemId"], "LecternOutcome.Removed");
+      expectExactRecord(rec, ["kind", "itemId"], "LecternOutcome.Removed");
       return { kind: "Removed", itemId: decodeLecternItemId(rec.itemId) };
     }
     case "Ordered": {
-      exactKeys(rec, ["kind"], "LecternOutcome.Ordered");
+      expectExactRecord(rec, ["kind"], "LecternOutcome.Ordered");
       return { kind: "Ordered" };
     }
   }
 }
 
 export function decodeLecternResult(raw: unknown): LecternResult {
-  const rec = asRecord(raw, "LecternResult");
-  exactKeys(rec, ["outcome", "lectern"], "LecternResult");
+  const rec = expectExactRecord(raw, ["outcome", "lectern"], "LecternResult");
   return {
     outcome: decodeLecternOutcome(rec.outcome),
     lectern: decodeLecternSnapshot(rec.lectern),
@@ -708,7 +712,7 @@ export function decodeLecternResult(raw: unknown): LecternResult {
 }
 
 function decodeConsumptionOutcome(raw: unknown): ConsumptionOutcome {
-  const rec = asRecord(raw, "ConsumptionOutcome");
+  const rec = expectRecord(raw, "ConsumptionOutcome");
   const kind = expectOneOf(
     rec.kind,
     [
@@ -723,11 +727,11 @@ function decodeConsumptionOutcome(raw: unknown): ConsumptionOutcome {
   );
   switch (kind) {
     case "StateOnly": {
-      exactKeys(rec, ["kind"], "ConsumptionOutcome.StateOnly");
+      expectExactRecord(rec, ["kind"], "ConsumptionOutcome.StateOnly");
       return { kind: "StateOnly" };
     }
     case "Removed": {
-      exactKeys(rec, ["kind", "itemId", "nextItemId"], "ConsumptionOutcome.Removed");
+      expectExactRecord(rec, ["kind", "itemId", "nextItemId"], "ConsumptionOutcome.Removed");
       return {
         kind: "Removed",
         itemId: decodeLecternItemId(rec.itemId),
@@ -738,16 +742,15 @@ function decodeConsumptionOutcome(raw: unknown): ConsumptionOutcome {
     case "CompletedWithoutAdvance":
     case "Superseded":
     case "TargetGone": {
-      exactKeys(rec, ["kind"], `ConsumptionOutcome.${kind}`);
+      expectExactRecord(rec, ["kind"], `ConsumptionOutcome.${kind}`);
       return { kind };
     }
   }
 }
 
 export function decodeConsumptionResult(raw: unknown): ConsumptionResult {
-  const rec = asRecord(raw, "ConsumptionResult");
-  exactKeys(
-    rec,
+  const rec = expectExactRecord(
+    raw,
     [
       "outcome",
       "lectern",
@@ -775,7 +778,6 @@ export function decodeDataEnvelope<T>(
   decodeInner: (value: unknown) => T,
   ctx: string,
 ): T {
-  const rec = asRecord(raw, ctx);
-  exactKeys(rec, ["data"], ctx);
+  const rec = expectExactRecord(raw, ["data"], ctx);
   return decodeInner(rec.data);
 }

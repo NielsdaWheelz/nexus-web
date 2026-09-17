@@ -5,6 +5,7 @@ import {
   getSupabaseAuthCookieNames,
   readSupabaseSessionCookie,
 } from "@/lib/auth/session-cookie";
+import { getEnv } from "@/lib/env";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
@@ -14,18 +15,15 @@ export async function POST(request: Request) {
   const cookieNames = getSupabaseAuthCookieNames(requestCookies);
   const session = readSupabaseSessionCookie(requestCookies);
 
-  if (
-    session.state === "active" &&
-    process.env.NEXT_PUBLIC_SUPABASE_URL &&
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  ) {
+  if (session.state === "active") {
+    const { url, anonKey } = getEnv().supabase;
     try {
       const signOutResponse = await boundedAuthFetch(
-        `${process.env.NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/, "")}/auth/v1/logout?scope=local`,
+        `${url.replace(/\/$/, "")}/auth/v1/logout?scope=local`,
         {
           method: "POST",
           headers: {
-            apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+            apikey: anonKey,
             Authorization: `Bearer ${session.accessToken}`,
           },
         },

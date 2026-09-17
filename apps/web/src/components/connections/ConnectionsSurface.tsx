@@ -201,7 +201,6 @@ export function connectionErrorMessage(
         message: "This account can’t make that change.",
         requestId,
       };
-    case "E_BAD_REQUEST":
     case "E_INVALID_REQUEST":
       return {
         tone: "Danger",

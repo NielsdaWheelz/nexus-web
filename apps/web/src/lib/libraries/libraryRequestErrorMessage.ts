@@ -1,5 +1,6 @@
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import {
+  apiTransportFeedback,
   isApiError,
   isSameSystemApiDefect,
 } from "@/lib/api/client";
@@ -17,71 +18,47 @@ export type LibraryRequest =
   | "LecternMutation"
   | "PodcastMutation";
 
-function isMutation(request: LibraryRequest): boolean {
-  switch (request) {
-    case "LibraryCollectionRead":
-    case "InvitationRead":
-    case "LibraryRead":
-    case "EntryRead":
-      return false;
-    case "LibraryCreate":
-    case "LibraryMutation":
-    case "InvitationMutation":
-    case "EntryMutation":
-    case "PlacementMutation":
-    case "LecternMutation":
-    case "PodcastMutation":
-      return true;
-    default: {
-      const unreachable: never = request;
-      throw new Error(`Unhandled Library request: ${unreachable}`);
-    }
-  }
-}
+const MUTATIONS: Record<LibraryRequest, boolean> = {
+  LibraryCollectionRead: false,
+  InvitationRead: false,
+  LibraryRead: false,
+  EntryRead: false,
+  LibraryCreate: true,
+  LibraryMutation: true,
+  InvitationMutation: true,
+  EntryMutation: true,
+  PlacementMutation: true,
+  LecternMutation: true,
+  PodcastMutation: true,
+};
 
-function isEntryRequest(request: LibraryRequest): boolean {
-  switch (request) {
-    case "EntryRead":
-    case "EntryMutation":
-    case "PlacementMutation":
-    case "LecternMutation":
-    case "PodcastMutation":
-      return true;
-    case "LibraryCollectionRead":
-    case "InvitationRead":
-    case "LibraryRead":
-    case "LibraryCreate":
-    case "LibraryMutation":
-    case "InvitationMutation":
-      return false;
-    default: {
-      const unreachable: never = request;
-      throw new Error(`Unhandled Library request: ${unreachable}`);
-    }
-  }
-}
+const ENTRY_REQUESTS: Record<LibraryRequest, boolean> = {
+  LibraryCollectionRead: false,
+  InvitationRead: false,
+  LibraryRead: false,
+  EntryRead: true,
+  LibraryCreate: false,
+  LibraryMutation: false,
+  InvitationMutation: false,
+  EntryMutation: true,
+  PlacementMutation: true,
+  LecternMutation: true,
+  PodcastMutation: true,
+};
 
-function isLibraryScopedMutation(request: LibraryRequest): boolean {
-  switch (request) {
-    case "LibraryMutation":
-    case "InvitationMutation":
-    case "EntryMutation":
-    case "PlacementMutation":
-    case "PodcastMutation":
-      return true;
-    case "LibraryCollectionRead":
-    case "InvitationRead":
-    case "LibraryRead":
-    case "EntryRead":
-    case "LibraryCreate":
-    case "LecternMutation":
-      return false;
-    default: {
-      const unreachable: never = request;
-      throw new Error(`Unhandled Library request: ${unreachable}`);
-    }
-  }
-}
+const LIBRARY_SCOPED_MUTATIONS: Record<LibraryRequest, boolean> = {
+  LibraryCollectionRead: false,
+  InvitationRead: false,
+  LibraryRead: false,
+  EntryRead: false,
+  LibraryCreate: false,
+  LibraryMutation: true,
+  InvitationMutation: true,
+  EntryMutation: true,
+  PlacementMutation: true,
+  LecternMutation: false,
+  PodcastMutation: true,
+};
 
 /** Finite copy adapter for user-owned Library index/detail requests. */
 export function libraryRequestErrorMessage(
@@ -92,23 +69,9 @@ export function libraryRequestErrorMessage(
 
   const { request, title } = input;
   const requestId = error.requestId;
+  const transport = apiTransportFeedback(error, title);
+  if (transport) return transport;
   switch (error.code) {
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title,
-        message: "Check your connection and try again.",
-        requestId,
-      };
-    case "E_UPSTREAM_TIMEOUT":
-    case "E_UPSTREAM":
-    case "E_RATE_LIMITED":
-      return {
-        tone: "Danger",
-        title,
-        message: "Please wait a moment, then try again.",
-        requestId,
-      };
     case "E_LIBRARY_NOT_FOUND":
       if (request === "LibraryCreate") throw error;
       return {
@@ -119,7 +82,7 @@ export function libraryRequestErrorMessage(
       };
     case "E_MEDIA_NOT_FOUND":
     case "E_NOT_FOUND":
-      if (!isEntryRequest(request)) throw error;
+      if (!ENTRY_REQUESTS[request]) throw error;
       return {
         tone: "Danger",
         title,
@@ -137,7 +100,7 @@ export function libraryRequestErrorMessage(
         requestId,
       };
     case "E_LIBRARY_FORBIDDEN":
-      if (!isLibraryScopedMutation(request)) throw error;
+      if (!LIBRARY_SCOPED_MUTATIONS[request]) throw error;
       return {
         tone: "Danger",
         title,
@@ -145,7 +108,7 @@ export function libraryRequestErrorMessage(
         requestId,
       };
     case "E_FORBIDDEN":
-      if (!isMutation(request)) throw error;
+      if (!MUTATIONS[request]) throw error;
       return {
         tone: "Danger",
         title,
@@ -198,7 +161,7 @@ export function libraryRequestErrorMessage(
         requestId,
       };
     case "E_MEDIA_DELETING":
-      if (!isEntryRequest(request) || request === "EntryRead") throw error;
+      if (!ENTRY_REQUESTS[request] || request === "EntryRead") throw error;
       return {
         tone: "Danger",
         title,
@@ -206,7 +169,7 @@ export function libraryRequestErrorMessage(
         requestId,
       };
     case "E_MEDIA_NOT_READY":
-      if (!isEntryRequest(request) || request === "EntryRead") throw error;
+      if (!ENTRY_REQUESTS[request] || request === "EntryRead") throw error;
       return {
         tone: "Danger",
         title,
@@ -232,8 +195,7 @@ export function libraryRequestErrorMessage(
         requestId,
       };
     case "E_INVALID_REQUEST":
-    case "E_BAD_REQUEST":
-      if (!isMutation(request)) throw error;
+      if (!MUTATIONS[request]) throw error;
       return {
         tone: "Danger",
         title,

@@ -1,4 +1,4 @@
-import { asRecord, exactKeys } from "@/lib/api/exact";
+import { expectExactRecord, expectRecord } from "@/lib/validation";
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import { decodeContributorCredit } from "@/lib/contributors/credit";
 import type { ContributorCredit } from "@/lib/contributors/types";
@@ -199,9 +199,8 @@ export interface PreviewAudioDescriptor {
 export function decodePreviewAudioDescriptor(
   raw: unknown,
 ): PreviewAudioDescriptor {
-  const value = asRecord(raw, "PreviewAudioDescriptor");
-  exactKeys(
-    value,
+  const value = expectExactRecord(
+    raw,
     [
       "target",
       "previewHref",
@@ -384,10 +383,10 @@ function decodeContributors(
 }
 
 function decodeResolution(raw: unknown, context: string): BrowseResolution {
-  const value = asRecord(raw, context);
+  const value = expectRecord(raw, context);
   switch (value.kind) {
     case "InNexus": {
-      exactKeys(value, ["kind", "href", "actionSubjectRef"], context);
+      expectExactRecord(value, ["kind", "href", "actionSubjectRef"], context);
       const href = internalHref(value.href, `${context}.href`);
       const actionSubject = decodeResourceActionSubject(
         { ref: value.actionSubjectRef },
@@ -400,7 +399,7 @@ function decodeResolution(raw: unknown, context: string): BrowseResolution {
       };
     }
     case "Preview":
-      exactKeys(value, ["kind", "target"], context);
+      expectExactRecord(value, ["kind", "target"], context);
       return {
         kind: "Preview",
         target: assumeDiscoveryTargetHandle(
@@ -408,7 +407,7 @@ function decodeResolution(raw: unknown, context: string): BrowseResolution {
         ),
       };
     case "ExternalOnly":
-      exactKeys(value, ["kind", "sourceHref"], context);
+      expectExactRecord(value, ["kind", "sourceHref"], context);
       return {
         kind: "ExternalOnly",
         sourceHref: externalHref(value.sourceHref, `${context}.sourceHref`),
@@ -439,9 +438,8 @@ function decodeCommon(value: Record<string, unknown>, context: string) {
 
 function decodeCandidate(raw: unknown, index: number): BrowseCandidate {
   const context = `BrowsePage.items[${index}]`;
-  const value = asRecord(raw, context);
-  exactKeys(
-    value,
+  const value = expectExactRecord(
+    raw,
     [
       "kind",
       "source",
@@ -462,12 +460,12 @@ function decodeCandidate(raw: unknown, index: number): BrowseCandidate {
     value.resolution,
     `${context}.resolution`,
   );
-  const facts = asRecord(value.kindFacts, `${context}.kindFacts`);
+  const facts = expectRecord(value.kindFacts, `${context}.kindFacts`);
   switch (kind) {
     case "Pdf":
       if (source !== "Nexus")
         throw new TypeError(`${context}.source is invalid`);
-      exactKeys(facts, ["pageCount"], `${context}.kindFacts`);
+      expectExactRecord(facts, ["pageCount"], `${context}.kindFacts`);
       return {
         kind,
         source,
@@ -483,7 +481,7 @@ function decodeCandidate(raw: unknown, index: number): BrowseCandidate {
       if (source !== "Nexus" && source !== "ProjectGutenberg") {
         throw new TypeError(`${context}.source is invalid`);
       }
-      exactKeys(facts, ["ebookRef"], `${context}.kindFacts`);
+      expectExactRecord(facts, ["ebookRef"], `${context}.kindFacts`);
       return {
         kind,
         source,
@@ -499,7 +497,7 @@ function decodeCandidate(raw: unknown, index: number): BrowseCandidate {
       if (source !== "Nexus" && source !== "Brave") {
         throw new TypeError(`${context}.source is invalid`);
       }
-      exactKeys(facts, ["siteName"], `${context}.kindFacts`);
+      expectExactRecord(facts, ["siteName"], `${context}.kindFacts`);
       return {
         kind,
         source,
@@ -515,7 +513,7 @@ function decodeCandidate(raw: unknown, index: number): BrowseCandidate {
       if (source !== "Nexus" && source !== "YouTube") {
         throw new TypeError(`${context}.source is invalid`);
       }
-      exactKeys(facts, ["videoRef", "channelTitle"], `${context}.kindFacts`);
+      expectExactRecord(facts, ["videoRef", "channelTitle"], `${context}.kindFacts`);
       return {
         kind,
         source,
@@ -534,7 +532,7 @@ function decodeCandidate(raw: unknown, index: number): BrowseCandidate {
       if (source !== "PodcastIndex") {
         throw new TypeError(`${context}.source is invalid`);
       }
-      exactKeys(facts, ["podcastRef"], `${context}.kindFacts`);
+      expectExactRecord(facts, ["podcastRef"], `${context}.kindFacts`);
       return {
         kind,
         source,
@@ -551,9 +549,8 @@ function decodeCandidate(raw: unknown, index: number): BrowseCandidate {
 }
 
 export function decodeBrowsePage(raw: unknown): BrowsePage {
-  const value = asRecord(raw, "BrowsePage");
-  exactKeys(
-    value,
+  const value = expectExactRecord(
+    raw,
     ["query", "kind", "source", "sort", "items", "nextCursor"],
     "BrowsePage",
   );
@@ -575,24 +572,23 @@ export function decodeBrowsePage(raw: unknown): BrowsePage {
 }
 
 export function decodeBrowsePageEnvelope(raw: unknown): BrowsePage {
-  const envelope = asRecord(raw, "BrowsePage envelope");
-  exactKeys(envelope, ["data"], "BrowsePage envelope");
+  const envelope = expectExactRecord(raw, ["data"], "BrowsePage envelope");
   return decodeBrowsePage(envelope.data);
 }
 
 export function decodeBrowseSectionFailure(
   error: ApiError,
 ): BrowseSectionFailure {
-  const details = asRecord(error.details, "BrowseSectionFailure");
+  const details = expectRecord(error.details, "BrowseSectionFailure");
   switch (error.code) {
     case "E_BROWSE_PROVIDER_UNAVAILABLE":
-      exactKeys(details, ["kind"], "BrowseSectionFailure.Unavailable");
+      expectExactRecord(details, ["kind"], "BrowseSectionFailure.Unavailable");
       if (details.kind !== "Unavailable") {
         throw new TypeError("BrowseSectionFailure.Unavailable.kind is invalid");
       }
       return { kind: "Unavailable" };
     case "E_BROWSE_PROVIDER_RATE_LIMITED":
-      exactKeys(
+      expectExactRecord(
         details,
         ["kind", "retryAt"],
         "BrowseSectionFailure.RateLimited",
@@ -610,7 +606,7 @@ export function decodeBrowseSectionFailure(
         ),
       };
     case "E_BROWSE_PROVIDER_QUOTA_EXHAUSTED":
-      exactKeys(
+      expectExactRecord(
         details,
         ["kind", "resetAt"],
         "BrowseSectionFailure.QuotaExhausted",
@@ -638,9 +634,8 @@ function decodePreviewEpisodeFacts(
   raw: unknown,
   context: string,
 ): PreviewEpisodeFacts {
-  const value = asRecord(raw, context);
-  exactKeys(
-    value,
+  const value = expectExactRecord(
+    raw,
     [
       "podcastRef",
       "episodeRef",
@@ -666,9 +661,8 @@ function decodePreviewEpisodeItem(
   index: number,
 ): PreviewEpisodeItem {
   const context = `PreviewEpisodePage.items[${index}]`;
-  const value = asRecord(raw, context);
-  exactKeys(
-    value,
+  const value = expectExactRecord(
+    raw,
     [
       "target",
       "title",
@@ -693,8 +687,11 @@ function decodePreviewEpisodeItem(
 }
 
 function decodePreviewEpisodePage(raw: unknown): PreviewEpisodePage {
-  const value = asRecord(raw, "PreviewEpisodePage");
-  exactKeys(value, ["items", "nextCursor"], "PreviewEpisodePage");
+  const value = expectExactRecord(
+    raw,
+    ["items", "nextCursor"],
+    "PreviewEpisodePage",
+  );
   if (!Array.isArray(value.items)) {
     throw new TypeError("PreviewEpisodePage.items must be an array");
   }
@@ -707,13 +704,13 @@ function decodePreviewEpisodePage(raw: unknown): PreviewEpisodePage {
 }
 
 export function decodeBrowsePreview(raw: unknown): BrowsePreview {
-  const value = asRecord(raw, "BrowsePreview");
+  const value = expectRecord(raw, "BrowsePreview");
   const kind = literal(
     value.kind,
     ["Epub", "WebArticle", "Video", "Podcast", "Episode"] as const,
     "BrowsePreview.kind",
   );
-  exactKeys(
+  expectExactRecord(
     value,
     kind === "Podcast"
       ? [
@@ -762,13 +759,13 @@ export function decodeBrowsePreview(raw: unknown): BrowsePreview {
     sourceHref: externalHref(value.sourceHref, "BrowsePreview.sourceHref"),
     resolution,
   };
-  const facts = asRecord(value.kindFacts, "BrowsePreview.kindFacts");
+  const facts = expectRecord(value.kindFacts, "BrowsePreview.kindFacts");
   switch (kind) {
     case "Epub":
       if (source !== "ProjectGutenberg") {
         throw new TypeError("BrowsePreview.source is invalid");
       }
-      exactKeys(facts, ["ebookRef", "importHref"], "BrowsePreview.kindFacts");
+      expectExactRecord(facts, ["ebookRef", "importHref"], "BrowsePreview.kindFacts");
       return {
         kind,
         source,
@@ -785,7 +782,7 @@ export function decodeBrowsePreview(raw: unknown): BrowsePreview {
       if (source !== "Brave") {
         throw new TypeError("BrowsePreview.source is invalid");
       }
-      exactKeys(facts, ["canonicalUrl", "siteName"], "BrowsePreview.kindFacts");
+      expectExactRecord(facts, ["canonicalUrl", "siteName"], "BrowsePreview.kindFacts");
       return {
         kind,
         source,
@@ -804,7 +801,7 @@ export function decodeBrowsePreview(raw: unknown): BrowsePreview {
       if (source !== "YouTube") {
         throw new TypeError("BrowsePreview.source is invalid");
       }
-      exactKeys(
+      expectExactRecord(
         facts,
         ["videoRef", "channelTitle", "embedHref"],
         "BrowsePreview.kindFacts",
@@ -828,7 +825,7 @@ export function decodeBrowsePreview(raw: unknown): BrowsePreview {
       if (source !== "PodcastIndex") {
         throw new TypeError("BrowsePreview.source is invalid");
       }
-      exactKeys(
+      expectExactRecord(
         facts,
         ["podcastRef", "feedHref", "websiteHref"],
         "BrowsePreview.kindFacts",
@@ -866,7 +863,6 @@ export function decodeBrowsePreview(raw: unknown): BrowsePreview {
 }
 
 export function decodeBrowsePreviewEnvelope(raw: unknown): BrowsePreview {
-  const envelope = asRecord(raw, "BrowsePreview envelope");
-  exactKeys(envelope, ["data"], "BrowsePreview envelope");
+  const envelope = expectExactRecord(raw, ["data"], "BrowsePreview envelope");
   return decodeBrowsePreview(envelope.data);
 }

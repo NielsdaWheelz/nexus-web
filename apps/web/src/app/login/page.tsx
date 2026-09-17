@@ -5,7 +5,6 @@ import { isAndroidShellUserAgent } from "@/lib/androidShell";
 import { getSessionVerification } from "@/lib/auth/dal";
 import { planLoginEntry } from "@/lib/auth/login-entry";
 import {
-  authReturnTargetToHref,
   buildAuthSessionRecoveryUrl,
   getFirstSearchParamValue,
   parseAuthReturnTarget,
@@ -38,7 +37,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
 
   switch (entry.kind) {
     case "Target":
-      redirect(authReturnTargetToHref(entry.target));
+      redirect(entry.target);
     case "Recover": {
       const recoveryUrl = buildAuthSessionRecoveryUrl(
         getEnv().appPublicOrigin,

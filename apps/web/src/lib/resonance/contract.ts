@@ -1,7 +1,6 @@
 /** Strict same-system transport contract for Resonance reading slates. */
 
 import { decodePresence, type Presence } from "@/lib/api/presence";
-import { asRecord, exactKeys } from "@/lib/api/exact";
 import type { ProgressFraction } from "@/lib/consumption/activityFacts";
 import {
   decodePublicationDate,
@@ -12,7 +11,11 @@ import { MEDIA_KINDS, type MediaKind } from "@/lib/media/kind";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
-import { expectIsoInstant } from "@/lib/validation";
+import {
+  expectExactRecord,
+  expectIsoInstant,
+  expectRecord,
+} from "@/lib/validation";
 
 const SLATE_LIMIT = 10;
 const RESONANCE_EDGE_ORIGINS = [
@@ -128,8 +131,7 @@ function slateActionSubject(ref: ResourceRefUri): ResourceActionSubject {
 }
 
 function decodeAnchor(raw: unknown): SlateAnchor {
-  const value = asRecord(raw, "SlateAnchorOut");
-  exactKeys(value, ["ref", "label"], "SlateAnchorOut");
+  const value = expectExactRecord(raw, ["ref", "label"], "SlateAnchorOut");
   return {
     ref: decodeResourceRefUri(value.ref, "SlateAnchorOut.ref"),
     label: asString(value.label, "SlateAnchorOut.label"),
@@ -137,14 +139,14 @@ function decodeAnchor(raw: unknown): SlateAnchor {
 }
 
 function decodeTarget(raw: unknown): SlateTarget {
-  const value = asRecord(raw, "SlateTargetOut");
+  const value = expectRecord(raw, "SlateTargetOut");
   const kind = asLiteral(
     value.kind,
     ["Media", "Podcast"] as const,
     "SlateTargetOut.kind",
   );
   if (kind === "Media") {
-    exactKeys(
+    expectExactRecord(
       value,
       ["kind", "ref", "mediaKind", "title", "subtitle", "imageUrl", "href"],
       "SlateTargetOut.Media",
@@ -176,7 +178,7 @@ function decodeTarget(raw: unknown): SlateTarget {
       actionSubject: slateActionSubject(ref),
     };
   }
-  exactKeys(
+  expectExactRecord(
     value,
     ["kind", "ref", "title", "subtitle", "imageUrl", "href"],
     "SlateTargetOut.Podcast",
@@ -205,7 +207,7 @@ function decodeTarget(raw: unknown): SlateTarget {
 }
 
 function decodeReason(raw: unknown): SlateReason {
-  const value = asRecord(raw, "SlateReasonOut");
+  const value = expectRecord(raw, "SlateReasonOut");
   const kind = asLiteral(
     value.kind,
     [
@@ -221,7 +223,7 @@ function decodeReason(raw: unknown): SlateReason {
   );
   switch (kind) {
     case "Continue":
-      exactKeys(
+      expectExactRecord(
         value,
         ["kind", "progress", "lastEngagedAt"],
         "SlateReasonOut.Continue",
@@ -237,7 +239,7 @@ function decodeReason(raw: unknown): SlateReason {
         ),
       };
     case "AddedToNexus":
-      exactKeys(value, ["kind", "addedAt"], "SlateReasonOut.AddedToNexus");
+      expectExactRecord(value, ["kind", "addedAt"], "SlateReasonOut.AddedToNexus");
       return {
         kind,
         addedAt: expectIsoInstant(
@@ -246,7 +248,7 @@ function decodeReason(raw: unknown): SlateReason {
         ),
       };
     case "Published":
-      exactKeys(value, ["kind", "publishedOn"], "SlateReasonOut.Published");
+      expectExactRecord(value, ["kind", "publishedOn"], "SlateReasonOut.Published");
       return {
         kind,
         publishedOn: decodePublicationDate(
@@ -255,7 +257,7 @@ function decodeReason(raw: unknown): SlateReason {
         ),
       };
     case "NewEpisode":
-      exactKeys(value, ["kind", "publishedAt"], "SlateReasonOut.NewEpisode");
+      expectExactRecord(value, ["kind", "publishedAt"], "SlateReasonOut.NewEpisode");
       return {
         kind,
         publishedAt: decodePublicationDate(
@@ -264,7 +266,7 @@ function decodeReason(raw: unknown): SlateReason {
         ),
       };
     case "Connected":
-      exactKeys(
+      expectExactRecord(
         value,
         ["kind", "anchor", "edgeOrigin"],
         "SlateReasonOut.Connected",
@@ -279,7 +281,7 @@ function decodeReason(raw: unknown): SlateReason {
         ),
       };
     case "SharedAuthor":
-      exactKeys(
+      expectExactRecord(
         value,
         ["kind", "anchor", "authorName"],
         "SlateReasonOut.SharedAuthor",
@@ -293,14 +295,13 @@ function decodeReason(raw: unknown): SlateReason {
         ),
       };
     case "Similar":
-      exactKeys(value, ["kind", "anchor"], "SlateReasonOut.Similar");
+      expectExactRecord(value, ["kind", "anchor"], "SlateReasonOut.Similar");
       return { kind, anchor: decodeAnchor(value.anchor) };
   }
 }
 
 function decodeSlateItem(raw: unknown): SlateItem {
-  const value = asRecord(raw, "SlateItemOut");
-  exactKeys(value, ["target", "reason"], "SlateItemOut");
+  const value = expectExactRecord(raw, ["target", "reason"], "SlateItemOut");
   return {
     target: decodeTarget(value.target),
     reason: decodeReason(value.reason),
@@ -308,8 +309,7 @@ function decodeSlateItem(raw: unknown): SlateItem {
 }
 
 export function decodeSlateSnapshot(raw: unknown): SlateSnapshot {
-  const value = asRecord(raw, "SlateOut");
-  exactKeys(value, ["items"], "SlateOut");
+  const value = expectExactRecord(raw, ["items"], "SlateOut");
   if (!Array.isArray(value.items)) {
     throw new Error("Invalid SlateOut.items: expected an array");
   }
@@ -330,8 +330,7 @@ export function decodeSlateSnapshot(raw: unknown): SlateSnapshot {
 }
 
 export function decodeSlateEnvelope(raw: unknown): SlateSnapshot {
-  const value = asRecord(raw, "SlateEnvelope");
-  exactKeys(value, ["data"], "SlateEnvelope");
+  const value = expectExactRecord(raw, ["data"], "SlateEnvelope");
   return decodeSlateSnapshot(value.data);
 }
 

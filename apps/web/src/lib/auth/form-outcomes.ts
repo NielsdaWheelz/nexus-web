@@ -1,4 +1,4 @@
-import { asRecord, exactKeys } from "@/lib/api/exact";
+import { expectExactRecord, expectRecord } from "@/lib/validation";
 import type {
   EmailConfirmationOutcome,
   EmailLinkKind,
@@ -14,7 +14,7 @@ function decodeKindOnly<const Kind extends string>(
   kind: Kind,
   context: string,
 ): { kind: Kind } {
-  exactKeys(record, ["kind"], context);
+  expectExactRecord(record, ["kind"], context);
   return { kind };
 }
 
@@ -27,7 +27,7 @@ function unexpectedKind(context: string): never {
 export function decodePasswordSignInOutcome(
   raw: unknown,
 ): PasswordSignInOutcome {
-  const record = asRecord(raw, "password sign-in outcome");
+  const record = expectRecord(raw, "password sign-in outcome");
   switch (record.kind) {
     case "SignedIn":
       return decodeKindOnly(record, "SignedIn", "SignedIn outcome");
@@ -53,7 +53,7 @@ export function decodePasswordSignInOutcome(
 export function decodePasswordRecoveryOutcome(
   raw: unknown,
 ): PasswordRecoveryOutcome {
-  const record = asRecord(raw, "password recovery outcome");
+  const record = expectRecord(raw, "password recovery outcome");
   switch (record.kind) {
     case "Requested":
       return decodeKindOnly(record, "Requested", "Requested outcome");
@@ -73,12 +73,12 @@ export function decodePasswordRecoveryOutcome(
 export function decodePasswordUpdateOutcome(
   raw: unknown,
 ): PasswordUpdateOutcome {
-  const record = asRecord(raw, "password update outcome");
+  const record = expectRecord(raw, "password update outcome");
   switch (record.kind) {
     case "Saved":
       return decodeKindOnly(record, "Saved", "Saved outcome");
     case "PolicyRejected": {
-      exactKeys(record, ["kind", "reasons"], "PolicyRejected outcome");
+      expectExactRecord(record, ["kind", "reasons"], "PolicyRejected outcome");
       if (
         !Array.isArray(record.reasons) ||
         record.reasons.length !== 1 ||
@@ -109,10 +109,10 @@ export function decodeEmailConfirmationOutcome(
   raw: unknown,
   expectedPurpose: EmailLinkKind,
 ): EmailConfirmationOutcome {
-  const record = asRecord(raw, "email confirmation outcome");
+  const record = expectRecord(raw, "email confirmation outcome");
   switch (record.kind) {
     case "Confirmed":
-      exactKeys(record, ["kind", "purpose"], "Confirmed outcome");
+      expectExactRecord(record, ["kind", "purpose"], "Confirmed outcome");
       if (record.purpose !== expectedPurpose) {
         throw new TypeError(
           "Confirmed outcome purpose does not match the submitted link",

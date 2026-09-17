@@ -34,7 +34,6 @@ function hydrationErrorMessage(error: ApiError): FeedbackContent {
         requestId: error.requestId,
       };
     case "E_NETWORK":
-    case "E_BAD_REQUEST":
     case "E_INVALID_REQUEST":
       return {
         tone: "Danger",

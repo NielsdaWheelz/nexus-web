@@ -1,4 +1,3 @@
-import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import {
   getSupabaseAuthCookieNames,
@@ -12,10 +11,7 @@ import {
   type NonEmptyCookieSet,
 } from "@/lib/auth/session-response";
 import { isAbortError } from "@/lib/errors";
-import {
-  SUPABASE_AUTH_COOKIE_OPTIONS,
-  createSupabaseDeadlineFetch,
-} from "@/lib/supabase/client-config";
+import { createSupabaseServerClient } from "@/lib/supabase/client-config";
 import { type CookieToSet } from "@/lib/supabase/types";
 
 const TERMINAL_CODES = new Set([
@@ -80,25 +76,18 @@ async function runRefresh(
   const cookiesToSet: CookieToSet[] = [];
   let cookieWriteCount = 0;
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  const supabase = createSupabaseServerClient(
     {
-      cookieOptions: SUPABASE_AUTH_COOKIE_OPTIONS,
-      cookies: {
-        getAll() {
-          return providerCookies;
-        },
-        setAll(nextCookies: CookieToSet[]) {
-          cookiesToSet.push(...nextCookies);
-          providerCookies = applyCookieWrites(providerCookies, nextCookies);
-          cookieWriteCount += nextCookies.length;
-        },
+      getAll() {
+        return providerCookies;
       },
-      global: {
-        fetch: createSupabaseDeadlineFetch("Supabase refresh timed out"),
+      setAll(nextCookies: CookieToSet[]) {
+        cookiesToSet.push(...nextCookies);
+        providerCookies = applyCookieWrites(providerCookies, nextCookies);
+        cookieWriteCount += nextCookies.length;
       },
     },
+    "Supabase refresh timed out",
   );
 
   let result: Awaited<ReturnType<typeof supabase.auth.refreshSession>>;

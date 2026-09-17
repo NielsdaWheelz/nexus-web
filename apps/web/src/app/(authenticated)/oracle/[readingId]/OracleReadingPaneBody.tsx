@@ -14,7 +14,7 @@ import {
 } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { useGenerationRun } from "@/lib/api/useGenerationRun";
-import { toReaderCitationData } from "@/lib/conversations/citations";
+import { toReaderCitationData } from "@/lib/resourceGraph/citations";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
 import {

@@ -15,7 +15,6 @@ import CollectionView, {
 import type { ExhaustionState } from "@/lib/api/useExhaustivePagination";
 import {
   presentEpisode,
-  type EpisodePresenterContext,
   type EpisodePresenterItem,
 } from "@/lib/collections/presenters/episode";
 import { absent } from "@/lib/api/presence";
@@ -39,14 +38,8 @@ type EpisodeTranscriptController = ReturnType<
 >;
 
 type StringIdSet = ReturnType<typeof useStringIdSet>;
-type EpisodePresenterBaseContext = Omit<
-  EpisodePresenterContext,
-  "localAvailability"
->;
-
 interface EpisodePresentation {
   readonly item: EpisodePresenterItem;
-  readonly context: EpisodePresenterBaseContext;
 }
 
 function OfflineEpisodeCollectionRow({
@@ -56,7 +49,7 @@ function OfflineEpisodeCollectionRow({
   readonly presentation: EpisodePresentation;
   readonly rowRenderProps: CollectionViewRowRenderProps;
 }) {
-  const { item, context } = presentation;
+  const { item } = presentation;
   const offlineMedia = useOfflineMediaItem(item.id, item.title);
   const offlineReady = offlineMedia.capability.kind === "Ready";
   const localAvailability =
@@ -68,7 +61,7 @@ function OfflineEpisodeCollectionRow({
   return (
     <CollectionRow
       {...rowRenderProps}
-      row={presentEpisode(item, { ...context, localAvailability })}
+      row={presentEpisode(item, { localAvailability })}
     />
   );
 }
@@ -125,7 +118,6 @@ export default function PodcastEpisodeList({
       publicationDate: episode.original_published_date,
       activityFacts: decodeEpisodeTimingFacts(episode.listening_state),
     },
-    context: {},
   }));
   const presentationsByIdRef = useRef(new Map<string, EpisodePresentation>());
   for (const presentation of rowPresentations) {
@@ -133,7 +125,6 @@ export default function PodcastEpisodeList({
   }
   const rows = rowPresentations.map((presentation) =>
     presentEpisode(presentation.item, {
-      ...presentation.context,
       localAvailability: absent<LocalAvailability>(),
     }),
   );

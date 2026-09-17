@@ -42,7 +42,6 @@ function billingAccountErrorMessage(error: ApiError): string {
     case "E_FORBIDDEN":
       return "You don’t have access to billing details.";
     case "E_NOT_FOUND":
-    case "E_BAD_REQUEST":
       return "Billing details couldn’t be loaded.";
     default:
       throw error;

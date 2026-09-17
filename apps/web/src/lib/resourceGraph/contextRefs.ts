@@ -21,7 +21,6 @@ import {
   expectExactRecord,
   expectString,
 } from "@/lib/validation";
-import { formatResourceRef, type ResourceRef } from "./resourceRef";
 
 export interface ContextRefOut {
   id: string;
@@ -97,20 +96,6 @@ export async function listContextRefs(
   return response.data.map((row, index) =>
     decodeContextRef(row, `ContextRef[${index}]`),
   );
-}
-
-export async function addContextRef(
-  conversationId: string,
-  target: ResourceRef,
-): Promise<ContextRefOut> {
-  const response = await apiFetch<{ data: unknown }>(
-    `/api/conversations/${conversationId}/context-refs`,
-    {
-      method: "POST",
-      body: JSON.stringify({ resource_ref: formatResourceRef(target) }),
-    },
-  );
-  return decodeContextRef(response.data);
 }
 
 export async function removeContextRef(

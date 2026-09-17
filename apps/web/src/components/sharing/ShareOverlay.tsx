@@ -121,7 +121,6 @@ function sharingLoadErrorContent(
     case "E_NOT_FOUND":
     case "E_LIBRARY_NOT_FOUND":
     case "E_INVALID_REQUEST":
-    case "E_BAD_REQUEST":
       return {
         tone: "Danger",
         requestId: error.requestId,
@@ -177,7 +176,6 @@ function sharingActionErrorContent(
     case "E_FORBIDDEN":
     case "E_NOT_FOUND":
     case "E_INVALID_REQUEST":
-    case "E_BAD_REQUEST":
       return { tone: "Danger", title, requestId: error.requestId };
     case "E_USER_NOT_FOUND":
       if (operation === "ShareWithPerson") {

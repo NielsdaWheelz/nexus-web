@@ -6,7 +6,6 @@ import {
 import type { ContributorCredit } from "@/lib/contributors/types";
 import { decodePresence } from "@/lib/api/presence";
 import { decodePublicationDateOnly } from "@/lib/dates/publicationDate";
-import { hasLegacyArtifactIdentityKey } from "@/lib/currentArtifactIdentity";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { decodeSnakeCaseResourceActivation } from "@/lib/resources/activation";
 import { decodeResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -309,9 +308,6 @@ function normalizeSearchResultOrNull(result: unknown): SearchApiResult | null {
     return null;
   }
   const contextRef = row.context_ref as Record<string, unknown>;
-  if (hasLegacyArtifactIdentityKey(row)) {
-    return null;
-  }
   if (
     !hasExactKeys(contextRef, [
       "type",

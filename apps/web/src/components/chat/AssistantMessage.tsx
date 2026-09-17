@@ -15,7 +15,7 @@ import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ChatConnectionRecovery } from "@/lib/conversations/chatConnectionRecovery";
 import type { GenerationSelectionSpec } from "@/lib/conversations/generationCatalog";
-import { toReaderCitationData } from "@/lib/conversations/citations";
+import { toReaderCitationData } from "@/lib/resourceGraph/citations";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import AssistantSelectionPopover from "./AssistantSelectionPopover";
 import AssistantAnswer from "./AssistantAnswer";

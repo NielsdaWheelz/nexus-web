@@ -1,7 +1,6 @@
 /** Pure semantic projection for one followed-podcast row. */
 
 import { absent, present, type Presence } from "@/lib/api/presence";
-import { connectionsFromSummary } from "@/lib/collections/connectionSummary";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type {
   CollectionActivity,
@@ -11,7 +10,6 @@ import type {
 import type { PositiveCount } from "@/lib/consumption/activityFacts";
 import type { PublicationDate } from "@/lib/dates/publicationDate";
 import type { ContributorCredit } from "@/lib/contributors/types";
-import type { ConnectionSummaryOut } from "@/lib/resourceGraph/connections";
 import type { PodcastSyncStatus } from "@/lib/podcasts/types";
 
 export interface PodcastPresenterItem {
@@ -21,10 +19,6 @@ export interface PodcastPresenterItem {
   unplayedCount: Presence<PositiveCount>;
   syncStatus: Presence<PodcastSyncStatus>;
   publicationDate: Presence<PublicationDate>;
-}
-
-export interface PodcastPresenterContext {
-  readonly connectionSummary?: ConnectionSummaryOut;
 }
 
 function exceptionalStatus(
@@ -67,11 +61,7 @@ function activity(
     : absent();
 }
 
-export function presentPodcast(
-  item: PodcastPresenterItem,
-  ctx: PodcastPresenterContext,
-): CollectionRowView {
-  const { connectionSummary } = ctx;
+export function presentPodcast(item: PodcastPresenterItem): CollectionRowView {
   const href = `/podcasts/${item.id}`;
 
   return {
@@ -89,7 +79,7 @@ export function presentPodcast(
     activity: activity(item.syncStatus, item.unplayedCount),
     exceptionalStatus: exceptionalStatus(item.syncStatus),
     localAvailability: absent(),
-    connections: connectionsFromSummary(connectionSummary),
+    connections: absent(),
     relatedMediaId: absent(),
     actionSubject: {
       ref: canonicalResourceRef({ scheme: "podcast", id: item.id }),

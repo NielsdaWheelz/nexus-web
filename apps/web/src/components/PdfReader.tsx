@@ -482,7 +482,6 @@ function pdfReaderErrorMessage(error: unknown): string {
       case "E_STORAGE_ERROR":
       case "E_SIGN_DOWNLOAD_FAILED":
         return "Secure file access couldn’t be refreshed. Retry.";
-      case "E_BAD_REQUEST":
       case "E_INVALID_REQUEST":
       case "E_HIGHLIGHT_CONFLICT":
         return "The PDF changed. Refresh the item, then retry.";

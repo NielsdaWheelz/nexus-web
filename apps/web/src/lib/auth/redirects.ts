@@ -43,45 +43,31 @@ function isBlockedAuthPath(pathname: string): boolean {
 export function parseAuthReturnTarget(
   rawValue: string | null | undefined,
 ): AuthReturnTarget {
-  return parseAuthReturnTargetWithFallback(
-    rawValue,
-    DEFAULT_AUTH_RETURN_TARGET,
-  );
-}
-
-export function parseAuthReturnTargetWithFallback(
-  rawValue: string | null | undefined,
-  fallback: AuthReturnTarget,
-): AuthReturnTarget {
   if (!rawValue) {
-    return fallback;
+    return DEFAULT_AUTH_RETURN_TARGET;
   }
 
   const trimmed = rawValue.trim();
   if (!isLocalPathStart(trimmed)) {
-    return fallback;
+    return DEFAULT_AUTH_RETURN_TARGET;
   }
 
   let parsed: URL;
   try {
     parsed = new URL(trimmed, AUTH_RETURN_TARGET_BASE);
   } catch {
-    return fallback;
+    return DEFAULT_AUTH_RETURN_TARGET;
   }
   if (parsed.origin !== AUTH_RETURN_TARGET_BASE) {
-    return fallback;
+    return DEFAULT_AUTH_RETURN_TARGET;
   }
 
   const normalized = `${parsed.pathname}${parsed.search}${parsed.hash}`;
   if (!isLocalPathStart(normalized) || isBlockedAuthPath(parsed.pathname)) {
-    return fallback;
+    return DEFAULT_AUTH_RETURN_TARGET;
   }
 
   return normalized as AuthReturnTarget;
-}
-
-export function authReturnTargetToHref(target: AuthReturnTarget): string {
-  return target;
 }
 
 export function isDefaultAuthReturnTarget(target: AuthReturnTarget): boolean {
@@ -90,7 +76,7 @@ export function isDefaultAuthReturnTarget(target: AuthReturnTarget): boolean {
 
 function setNonDefaultNext(url: URL, target: AuthReturnTarget): void {
   if (!isDefaultAuthReturnTarget(target)) {
-    url.searchParams.set("next", authReturnTargetToHref(target));
+    url.searchParams.set("next", target);
   }
 }
 
@@ -177,5 +163,5 @@ export function buildAuthReturnTargetUrl(
   origin: string,
   target: AuthReturnTarget,
 ): URL {
-  return new URL(authReturnTargetToHref(target), origin);
+  return new URL(target, origin);
 }

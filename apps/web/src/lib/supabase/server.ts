@@ -10,12 +10,8 @@
  * - Session is managed via HTTP-only cookies
  */
 
-import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import {
-  SUPABASE_AUTH_COOKIE_OPTIONS,
-  createSupabaseDeadlineFetch,
-} from "./client-config";
+import { createSupabaseServerClient } from "./client-config";
 import { type CookieToSet } from "./types";
 
 /**
@@ -26,25 +22,18 @@ import { type CookieToSet } from "./types";
  */
 export async function createClient() {
   const cookieStore = await cookies();
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  return createSupabaseServerClient(
     {
-      cookieOptions: SUPABASE_AUTH_COOKIE_OPTIONS,
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet: CookieToSet[]) {
-          cookiesToSet.forEach(({ name, value, options }: CookieToSet) =>
-            cookieStore.set(name, value, options)
-          );
-        },
+      getAll() {
+        return cookieStore.getAll();
       },
-      global: {
-        fetch: createSupabaseDeadlineFetch("Supabase auth operation timed out"),
+      setAll(cookiesToSet: CookieToSet[]) {
+        cookiesToSet.forEach(({ name, value, options }: CookieToSet) =>
+          cookieStore.set(name, value, options),
+        );
       },
-    }
+    },
+    "Supabase auth operation timed out",
   );
 }
 
@@ -58,24 +47,17 @@ export async function createClient() {
  */
 export async function createSessionVerifierClient() {
   const cookieStore = await cookies();
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  return createSupabaseServerClient(
     {
-      cookieOptions: SUPABASE_AUTH_COOKIE_OPTIONS,
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll() {
-          throw new Error(
-            "Server Component session verification attempted to mutate cookies",
-          );
-        },
+      getAll() {
+        return cookieStore.getAll();
       },
-      global: {
-        fetch: createSupabaseDeadlineFetch("Supabase auth operation timed out"),
+      setAll() {
+        throw new Error(
+          "Server Component session verification attempted to mutate cookies",
+        );
       },
     },
+    "Supabase auth operation timed out",
   );
 }

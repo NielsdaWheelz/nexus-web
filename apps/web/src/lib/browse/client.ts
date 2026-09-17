@@ -1,5 +1,5 @@
+import { expectExactRecord, expectRecord } from "@/lib/validation";
 import { apiFetch, type ApiPath } from "@/lib/api/client";
-import { asRecord, exactKeys } from "@/lib/api/exact";
 import {
   decodeCollectionRevision,
   type CollectionRevision,
@@ -48,9 +48,8 @@ function oneOf<T extends string>(
 }
 
 function envelopeData(raw: unknown, context: string): Record<string, unknown> {
-  const envelope = asRecord(raw, `${context} envelope`);
-  exactKeys(envelope, ["data"], `${context} envelope`);
-  return asRecord(envelope.data, context);
+  const envelope = expectExactRecord(raw, ["data"], `${context} envelope`);
+  return expectRecord(envelope.data, context);
 }
 
 export function browsePagePath(input: {
@@ -174,7 +173,7 @@ export async function addEpisodeFromDiscovery(input: {
     }),
     "EpisodeAcquisitionResult",
   );
-  exactKeys(
+  expectExactRecord(
     value,
     ["href", "mediaId", "destinationOutcomes", "collectionRevision"],
     "EpisodeAcquisitionResult",
@@ -188,12 +187,8 @@ export async function addEpisodeFromDiscovery(input: {
     href: nonempty(value.href, "EpisodeAcquisitionResult.href"),
     mediaId: nonempty(value.mediaId, "EpisodeAcquisitionResult.mediaId"),
     destinationOutcomes: value.destinationOutcomes.map((raw, index) => {
-      const outcome = asRecord(
+      const outcome = expectExactRecord(
         raw,
-        `EpisodeAcquisitionResult.destinationOutcomes[${index}]`,
-      );
-      exactKeys(
-        outcome,
         ["libraryId", "outcome"],
         `EpisodeAcquisitionResult.destinationOutcomes[${index}]`,
       );

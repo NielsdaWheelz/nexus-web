@@ -17,7 +17,7 @@ import { GitBranch, RotateCcw, X } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import MachineText from "@/components/ui/MachineText";
-import { toReaderCitationData } from "@/lib/conversations/citations";
+import { toReaderCitationData } from "@/lib/resourceGraph/citations";
 import { dispatchReaderSourceActivation } from "@/lib/conversations/readerSourceActivation";
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { ReaderSourceTarget } from "@/lib/conversations/readerTarget";

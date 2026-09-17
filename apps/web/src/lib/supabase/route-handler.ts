@@ -1,4 +1,3 @@
-import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import {
@@ -6,10 +5,7 @@ import {
   type NonEmptyCookieSet,
   type SessionEffect,
 } from "@/lib/auth/session-response";
-import {
-  SUPABASE_AUTH_COOKIE_OPTIONS,
-  createSupabaseDeadlineFetch,
-} from "./client-config";
+import { createSupabaseServerClient } from "./client-config";
 import { type CookieToSet } from "./types";
 
 function isNextResponse(response: Response): response is NextResponse {
@@ -34,37 +30,30 @@ export async function createRouteHandlerClient(
     effectiveCookies.set(name, value);
   }
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  const supabase = createSupabaseServerClient(
     {
-      cookieOptions: SUPABASE_AUTH_COOKIE_OPTIONS,
-      cookies: {
-        getAll() {
-          return Array.from(effectiveCookies, ([name, value]) => ({
-            name,
-            value,
-          }));
-        },
-        setAll(
-          nextCookiesToSet: CookieToSet[],
-          headers?: Record<string, string>
-        ) {
-          nextCookiesToSet.forEach(({ name, value, options }) => {
-            cookieStore.set(name, value, options);
-            effectiveCookies.set(name, value);
-            cookiesToApply.push({ name, value, options });
-            cookieWriteCount += 1;
-          });
-          if (headers) {
-            Object.assign(headersToApply, headers);
-          }
-        },
+      getAll() {
+        return Array.from(effectiveCookies, ([name, value]) => ({
+          name,
+          value,
+        }));
       },
-      global: {
-        fetch: createSupabaseDeadlineFetch("Supabase auth operation timed out"),
+      setAll(
+        nextCookiesToSet: CookieToSet[],
+        headers?: Record<string, string>,
+      ) {
+        nextCookiesToSet.forEach(({ name, value, options }) => {
+          cookieStore.set(name, value, options);
+          effectiveCookies.set(name, value);
+          cookiesToApply.push({ name, value, options });
+          cookieWriteCount += 1;
+        });
+        if (headers) {
+          Object.assign(headersToApply, headers);
+        }
       },
-    }
+    },
+    "Supabase auth operation timed out",
   );
 
   return {

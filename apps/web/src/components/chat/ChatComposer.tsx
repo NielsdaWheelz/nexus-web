@@ -157,15 +157,6 @@ function chatRunErrorMessage(
             : "This response couldn’t be stopped.",
         message: "Check your connection and try again.",
       };
-    case "E_BAD_REQUEST":
-      return {
-        tone: "Danger",
-        requestId: error.requestId,
-        title:
-          operation === "Start"
-            ? "This message can’t be sent as written."
-            : "This response can’t be stopped right now.",
-      };
     case "E_FORBIDDEN":
       return {
         tone: "Danger",
@@ -675,7 +666,6 @@ export default function ChatComposer({
         return;
       }
       if (
-        err.code !== "E_BAD_REQUEST" &&
         err.code !== "E_FORBIDDEN" &&
         err.code !== "E_NOT_FOUND" &&
         err.code !== "E_NETWORK"

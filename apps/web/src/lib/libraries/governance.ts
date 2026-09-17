@@ -134,52 +134,10 @@ export async function acceptLibraryInvite(
     "accept invite response.data",
     ["invite", "membership", "idempotent"],
   );
-  const membership = exactRecord(
-    data.membership,
-    "accept invite response.data.membership",
-    ["libraryId", "userHandle", "role"],
-  );
-  if (
-    typeof membership.libraryId !== "string" ||
-    membership.libraryId.length === 0
-  ) {
-    throw new LibraryContractDefect(
-      "accept invite response.data.membership.libraryId must be a non-empty string",
-    );
-  }
-  if (
-    typeof membership.userHandle !== "string" ||
-    membership.userHandle.length === 0
-  ) {
-    throw new LibraryContractDefect(
-      "accept invite response.data.membership.userHandle must be a non-empty string",
-    );
-  }
-  if (membership.role !== "admin" && membership.role !== "member") {
-    throw new LibraryContractDefect(
-      "accept invite response.data.membership.role is invalid",
-    );
-  }
-  if (typeof data.idempotent !== "boolean") {
-    throw new LibraryContractDefect(
-      "accept invite response.data.idempotent must be a boolean",
-    );
-  }
   const invitation = expectLibraryInvitation(
     data.invite,
     "accept invite response.data.invite",
   );
-  if (
-    invitation.invitationHandle !== handle ||
-    invitation.status !== "accepted" ||
-    invitation.libraryId !== membership.libraryId ||
-    invitation.inviteeUserHandle !== membership.userHandle ||
-    invitation.role !== membership.role
-  ) {
-    throw new LibraryContractDefect(
-      "accept invite response projections do not correlate",
-    );
-  }
   publishLibraryPlacementChange("Unknown");
   return invitation;
 }
@@ -202,24 +160,10 @@ export async function declineLibraryInvite(
     "decline invite response.data",
     ["invite", "idempotent"],
   );
-  if (typeof data.idempotent !== "boolean") {
-    throw new LibraryContractDefect(
-      "decline invite response.data.idempotent must be a boolean",
-    );
-  }
-  const invitation = expectLibraryInvitation(
+  return expectLibraryInvitation(
     data.invite,
     "decline invite response.data.invite",
   );
-  if (
-    invitation.invitationHandle !== handle ||
-    invitation.status !== "declined"
-  ) {
-    throw new LibraryContractDefect(
-      "decline invite response does not correlate to its command",
-    );
-  }
-  return invitation;
 }
 
 export async function createLibraryInvite(input: {
@@ -231,7 +175,7 @@ export async function createLibraryInvite(input: {
     input.userHandle,
     "create invite.userHandle",
   );
-  const invitation = expectLibraryInvitation(
+  return expectLibraryInvitation(
     responseData(
       await apiFetch<unknown>(
         `/api/libraries/${encodeURIComponent(input.libraryId)}/invites`,
@@ -247,16 +191,6 @@ export async function createLibraryInvite(input: {
     ),
     "create invite response.data",
   );
-  if (
-    invitation.libraryId !== input.libraryId ||
-    invitation.inviteeUserHandle !== userHandle ||
-    invitation.role !== input.role
-  ) {
-    throw new LibraryContractDefect(
-      "create invite response does not correlate to its command",
-    );
-  }
-  return invitation;
 }
 
 export async function updateLibraryMemberRole(input: {
@@ -268,7 +202,7 @@ export async function updateLibraryMemberRole(input: {
     input.userHandle,
     "update member.userHandle",
   );
-  const member = expectLibraryMember(
+  return expectLibraryMember(
     responseData(
       await apiFetch<unknown>(
         `/api/libraries/${encodeURIComponent(input.libraryId)}/members/${encodeURIComponent(userHandle)}`,
@@ -278,12 +212,6 @@ export async function updateLibraryMemberRole(input: {
     ),
     "update member response.data",
   );
-  if (member.userHandle !== userHandle || member.role !== input.role) {
-    throw new LibraryContractDefect(
-      "update member response does not correlate to its command",
-    );
-  }
-  return member;
 }
 
 export async function removeLibraryMember(input: {
@@ -321,7 +249,7 @@ export async function transferLibraryOwnership(input: {
     input.newOwnerUserHandle,
     "transfer ownership.newOwnerUserHandle",
   );
-  const library = expectLibraryOutEnvelopeForId(
+  return expectLibraryOutEnvelopeForId(
     await apiFetch<unknown>(
       `/api/libraries/${encodeURIComponent(input.libraryId)}/transfer-ownership`,
       {
@@ -332,10 +260,4 @@ export async function transferLibraryOwnership(input: {
     input.libraryId,
     "transfer ownership response",
   );
-  if (library.ownerUserHandle !== newOwnerUserHandle) {
-    throw new LibraryContractDefect(
-      "transfer ownership response does not identify the requested owner",
-    );
-  }
-  return library;
 }

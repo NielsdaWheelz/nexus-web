@@ -160,7 +160,6 @@ export function opmlImportErrorMessage(error: unknown): FeedbackContent {
         requestId,
       };
     case "E_INVALID_REQUEST":
-    case "E_BAD_REQUEST":
       return {
         tone: "Danger",
         title,

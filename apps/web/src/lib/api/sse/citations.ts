@@ -3,13 +3,8 @@ import {
   RESULT_TYPE_VALUES,
   type SearchType,
 } from "@/lib/search/types";
-import { hasOnlyKeys, isOptionalString } from "./guards";
-import {
-  isMediaRetrievalLocator,
-  isRetrievalLocator,
-  type MediaRetrievalLocator,
-  type RetrievalLocator,
-} from "./locators";
+import { hasOnlyKeys } from "./guards";
+import type { MediaRetrievalLocator, RetrievalLocator } from "./locators";
 
 export type SearchCitationResultType = Exclude<SearchType, "web_result">;
 
@@ -260,285 +255,23 @@ export type WebCitationEventData = {
 
 export type CitationEventData = SearchCitationEventData | WebCitationEventData;
 
-const SEARCH_CITATION_BASE_KEYS = [
-  "type",
-  "id",
-  "result_type",
-  "source_id",
-  "title",
-  "source_label",
-  "snippet",
-  "deep_link",
-  "citation_target",
-  "citation_label",
-  "context_ref",
-  "evidence_span_id",
-  "locator",
-  "media_id",
-  "media_kind",
-  "score",
-  "selected",
-];
-
 export function isSearchCitationEventData(
   citation: unknown,
 ): citation is SearchCitationEventData {
-  if (!isRecord(citation)) return false;
-  const resultType = citation.result_type;
-  if (
-    typeof resultType !== "string" ||
-    !SEARCH_CITATION_RESULT_TYPES.has(resultType as SearchCitationResultType)
-  ) {
-    return false;
-  }
-
-  switch (resultType) {
-    case "media":
-      return (
-        isSearchCitationBase(citation, "media", "media", ["summary_md"]) &&
-        isOptionalString(citation.summary_md)
-      );
-    case "podcast":
-      return (
-        isSearchCitationBase(citation, "podcast", "podcast", [
-          "contributors",
-        ]) &&
-        Array.isArray(citation.contributors) &&
-        citation.contributors.every(isRecord)
-      );
-    case "episode":
-      return (
-        isSearchCitationBase(citation, "episode", "media", ["summary_md"]) &&
-        isOptionalString(citation.summary_md)
-      );
-    case "video":
-      return (
-        isSearchCitationBase(citation, "video", "media", ["summary_md"]) &&
-        isOptionalString(citation.summary_md)
-      );
-    case "content_chunk":
-      return (
-        isSearchCitationBase(citation, "content_chunk", "content_chunk", [
-          "source_kind",
-          "evidence_span_ids",
-        ]) &&
-        typeof citation.source_kind === "string" &&
-        Array.isArray(citation.evidence_span_ids) &&
-        citation.evidence_span_ids.every((id) => typeof id === "string") &&
-        typeof citation.citation_label === "string"
-      );
-    case "fragment":
-      return isSearchCitationBase(citation, "fragment", "fragment", []);
-    case "page":
-      return isSearchCitationBase(citation, "page", "page", []);
-    case "note_block":
-      return (
-        isSearchCitationBase(citation, "note_block", "note_block", [
-          "body_text",
-          "highlight_excerpt",
-        ]) &&
-        typeof citation.body_text === "string" &&
-        isOptionalString(citation.highlight_excerpt)
-      );
-    case "highlight":
-      return (
-        isSearchCitationBase(citation, "highlight", "highlight", [
-          "color",
-          "exact",
-        ]) &&
-        typeof citation.color === "string" &&
-        typeof citation.exact === "string"
-      );
-    case "message":
-      return (
-        isSearchCitationBase(citation, "message", "message", [
-          "conversation_id",
-          "seq",
-        ]) &&
-        typeof citation.conversation_id === "string" &&
-        typeof citation.seq === "number"
-      );
-    case "contributor":
-      return (
-        isSearchCitationBase(citation, "contributor", "contributor", [
-          "contributor_handle",
-        ]) && typeof citation.contributor_handle === "string"
-      );
-    case "evidence_span":
-      return (
-        isSearchCitationBase(citation, "evidence_span", "evidence_span", []) &&
-        typeof citation.evidence_span_id === "string" &&
-        typeof citation.citation_label === "string" &&
-        typeof citation.media_id === "string"
-      );
-    case "conversation":
-      return isSearchCitationBase(citation, "conversation", "conversation", []);
-    case "artifact":
-      return (
-        isSearchCitationBase(citation, "artifact", "artifact", [
-          "revision_id",
-          "subject_ref",
-        ]) &&
-        typeof citation.revision_id === "string" &&
-        typeof citation.subject_ref === "string"
-      );
-    case "reader_apparatus_item":
-      return (
-        isSearchCitationBase(
-          citation,
-          "reader_apparatus_item",
-          "reader_apparatus_item",
-          ["apparatus_kind"],
-        ) &&
-        typeof citation.apparatus_kind === "string" &&
-        typeof citation.media_id === "string"
-      );
-  }
-  return false;
-}
-
-function isSearchCitationBase(
-  citation: Record<string, unknown>,
-  resultType: SearchCitationResultType,
-  contextType: RetrievalContextRef["type"],
-  variantKeys: string[],
-): boolean {
   return (
-    hasOnlyKeys(citation, [...SEARCH_CITATION_BASE_KEYS, ...variantKeys]) &&
-    citation.type === resultType &&
-    citation.result_type === resultType &&
-    typeof citation.id === "string" &&
-    typeof citation.source_id === "string" &&
-    typeof citation.title === "string" &&
-    (typeof citation.source_label === "string" ||
-      citation.source_label === null) &&
-    typeof citation.snippet === "string" &&
-    typeof citation.deep_link === "string" &&
-    isOptionalString(citation.citation_target) &&
-    isOptionalString(citation.citation_label) &&
-    isRetrievalContextRef(citation.context_ref) &&
-    citation.context_ref.type === contextType &&
-    isOptionalString(citation.evidence_span_id) &&
-    isSearchCitationLocator(resultType, citation.locator) &&
-    (typeof citation.media_id === "string" || citation.media_id === null) &&
-    (typeof citation.media_kind === "string" || citation.media_kind === null) &&
-    (typeof citation.score === "number" || citation.score === null) &&
-    typeof citation.selected === "boolean"
+    isRecord(citation) &&
+    typeof citation.result_type === "string" &&
+    SEARCH_CITATION_RESULT_TYPES.has(
+      citation.result_type as SearchCitationResultType,
+    ) &&
+    citation.type === citation.result_type
   );
-}
-
-function isSearchCitationLocator(
-  resultType: SearchCitationResultType,
-  locator: unknown,
-): boolean {
-  switch (resultType) {
-    case "media":
-    case "podcast":
-    case "episode":
-    case "video":
-    case "page":
-    case "contributor":
-    case "conversation":
-    case "artifact":
-      return locator === null;
-    case "content_chunk":
-    case "evidence_span":
-    case "reader_apparatus_item":
-      return (
-        isRetrievalLocator(locator) &&
-        (isMediaRetrievalLocator(locator) ||
-          locator.type === "note_block_offsets")
-      );
-    case "fragment":
-    case "highlight":
-      return isRetrievalLocator(locator) && isMediaRetrievalLocator(locator);
-    case "note_block":
-      return (
-        isRetrievalLocator(locator) && locator.type === "note_block_offsets"
-      );
-    case "message":
-      return isRetrievalLocator(locator) && locator.type === "message_offsets";
-  }
 }
 
 export function isWebCitationEventData(
   citation: unknown,
 ): citation is WebCitationEventData {
-  return (
-    isRecord(citation) &&
-    hasOnlyKeys(citation, [
-      "assistant_message_id",
-      "tool_call_id",
-      "tool_name",
-      "tool_call_index",
-      "citation_index",
-      "index",
-      "type",
-      "id",
-      "result_ref",
-      "result_type",
-      "source_id",
-      "title",
-      "url",
-      "display_url",
-      "source_name",
-      "deep_link",
-      "citation_target",
-      "snippet",
-      "excerpt",
-      "extra_snippets",
-      "published_at",
-      "provider",
-      "provider_request_id",
-      "rank",
-      "context_ref",
-      "media_id",
-      "media_kind",
-      "score",
-      "selected",
-      "locator",
-    ]) &&
-    citation.type === "web_result" &&
-    typeof citation.id === "string" &&
-    citation.result_type === "web_result" &&
-    typeof citation.result_ref === "string" &&
-    typeof citation.source_id === "string" &&
-    typeof citation.title === "string" &&
-    typeof citation.url === "string" &&
-    (citation.display_url === undefined ||
-      citation.display_url === null ||
-      typeof citation.display_url === "string") &&
-    (citation.source_name === undefined ||
-      citation.source_name === null ||
-      typeof citation.source_name === "string") &&
-    typeof citation.deep_link === "string" &&
-    isOptionalString(citation.citation_target) &&
-    typeof citation.snippet === "string" &&
-    (citation.excerpt === undefined ||
-      citation.excerpt === null ||
-      typeof citation.excerpt === "string") &&
-    (citation.extra_snippets === undefined ||
-      (Array.isArray(citation.extra_snippets) &&
-        citation.extra_snippets.every((item) => typeof item === "string"))) &&
-    (citation.published_at === undefined ||
-      citation.published_at === null ||
-      typeof citation.published_at === "string") &&
-    (citation.provider === undefined ||
-      citation.provider === null ||
-      typeof citation.provider === "string") &&
-    (citation.provider_request_id === undefined ||
-      citation.provider_request_id === null ||
-      typeof citation.provider_request_id === "string") &&
-    (citation.rank === undefined || Number.isInteger(citation.rank)) &&
-    isRetrievalContextRef(citation.context_ref) &&
-    citation.context_ref.type === "web_result" &&
-    isRetrievalLocator(citation.locator) &&
-    citation.locator.type === "external_url" &&
-    citation.media_id === null &&
-    citation.media_kind === null &&
-    (citation.score === null || typeof citation.score === "number") &&
-    typeof citation.selected === "boolean"
-  );
+  return isRecord(citation) && citation.type === "web_result";
 }
 
 export function isCitationEventData(

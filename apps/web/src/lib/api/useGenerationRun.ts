@@ -55,7 +55,7 @@ export async function openGenerationRunStream<TEvent>(
   id: string,
   sseArgs: Omit<
     Parameters<typeof sseClientDirect<TEvent>>[0],
-    "url" | "initialConnection" | "initialToken"
+    "url" | "initialConnection"
   >,
 ): Promise<() => void> {
   return sseClientDirect<TEvent>({
