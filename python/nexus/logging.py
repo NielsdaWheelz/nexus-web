@@ -66,12 +66,8 @@ def add_request_context(logger: logging.Logger, method_name: str, event_dict: di
     return event_dict
 
 
-def configure_logging(json_format: bool = True) -> None:
-    """Configure structlog for the application.
-
-    Args:
-        json_format: If True, output JSON logs. If False, output console-friendly logs.
-    """
+def configure_logging() -> None:
+    """Configure structlog for the application."""
     # Shared processors for both stdlib and structlog loggers
     shared_processors = [
         structlog.stdlib.add_log_level,
@@ -83,12 +79,7 @@ def configure_logging(json_format: bool = True) -> None:
         structlog.processors.UnicodeDecoder(),
     ]
 
-    if json_format:
-        # JSON format for production/structured logging
-        renderer = structlog.processors.JSONRenderer()
-    else:
-        # Console format for development
-        renderer = structlog.dev.ConsoleRenderer()
+    renderer = structlog.processors.JSONRenderer()
 
     structlog.configure(
         processors=shared_processors

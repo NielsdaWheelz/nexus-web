@@ -60,7 +60,7 @@ from nexus.services.source_attempt_artifacts import source_attempt_storage_paths
 from nexus.storage.client import StorageError, get_storage_client
 
 if TYPE_CHECKING:
-    from nexus.storage.client import StorageClientBase
+    from nexus.storage.client import StorageClient
 
 logger = get_logger(__name__)
 
@@ -418,7 +418,7 @@ def _claim_document_media_teardown(db: Session, media_id: UUID) -> list[str]:
 
 def delete_document_storage_objects(
     storage_paths: list[str],
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> None:
     """Best-effort delete of already-unreachable storage objects.
 
@@ -780,7 +780,7 @@ def _delete_viewer_media_state(db: Session, viewer_id: UUID, media_id: UUID) -> 
 
 def _delete_storage_objects(
     storage_paths: list[str],
-    storage_client: StorageClientBase | None,
+    storage_client: StorageClient | None,
 ) -> None:
     if not storage_paths:
         return

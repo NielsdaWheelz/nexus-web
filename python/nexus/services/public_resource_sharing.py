@@ -74,7 +74,7 @@ from nexus.services.public_share_handles import (
 )
 from nexus.services.public_source_urls import current_public_source_url
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
+from nexus.storage.client import StorageClient, StorageError, get_storage_client
 from nexus.storage.read import read_object_checked
 
 _MAX_PAGE_BYTES = 8 * 1024 * 1024
@@ -438,7 +438,7 @@ def get_public_asset(
     raw_token: str,
     raw_asset_handle: str,
     query_items: list[tuple[str, str]] | None = None,
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> PublicAssetBody:
     projection = _resolve_public_projection(db, raw_token=raw_token)
     _require_no_query(query_items)
@@ -477,7 +477,7 @@ def get_public_pdf_file(
     raw_token: str,
     raw_range: str | None,
     query_items: list[tuple[str, str]] | None = None,
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> PublicFileBody:
     """Authorize first, then interpret Range for one private PDF object."""
     projection = _resolve_public_projection(db, raw_token=raw_token)
@@ -855,7 +855,7 @@ def _validated_public_pdf_source(
     db: Session,
     *,
     media_id: UUID,
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
 ) -> MediaFileSource | None:
     """Bind public PDF metadata to an object that exists with the exact stored shape."""
     source = get_media_file_source(db, media_id=media_id)

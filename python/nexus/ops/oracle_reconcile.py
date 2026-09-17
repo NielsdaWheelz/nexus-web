@@ -46,7 +46,7 @@ from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
 )
-from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
+from nexus.storage.client import StorageClient, StorageError, get_storage_client
 from nexus.storage.paths import build_oracle_plate_storage_path, ext_for_content_type
 
 
@@ -91,7 +91,7 @@ def bind_oracle_reconcile_inputs(
 def inspect_current_oracle(
     *,
     session_factory: sessionmaker[Session],
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
     manifest: OracleManifest,
     owner_user_id: UUID,
 ) -> oracle_corpus.OracleCorpusInspection:
@@ -119,7 +119,7 @@ def preflight_oracle_reconcile(
 def reconcile_oracle_support(
     *,
     session_factory: sessionmaker[Session],
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
     manifest: OracleManifest,
     owner_user_id: UUID,
 ) -> dict[str, object]:
@@ -317,7 +317,7 @@ def _resolve_anchors(*, session_factory: sessionmaker[Session]) -> None:
 def _reconcile_plates(
     *,
     session_factory: sessionmaker[Session],
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
     manifest: OracleManifest,
 ) -> int:
     writes = 0
@@ -390,7 +390,7 @@ def _plate_object_is_reusable(
     snapshot: _PlateSnapshot,
     *,
     desired: OraclePlateManifestEntry,
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
 ) -> bool:
     try:
         expected_key = build_oracle_plate_storage_path(

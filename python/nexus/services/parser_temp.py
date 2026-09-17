@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.storage.client import StorageClientBase, StorageError
+from nexus.storage.client import StorageClient, StorageError
 
 
 class StorageObjectIntegrityError(ApiError):
@@ -65,7 +65,7 @@ def parser_attempt_directory(attempt_id: UUID) -> Iterator[Path]:
 
 
 def stream_storage_object_to_file(
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
     *,
     storage_path: str,
     destination: Path,

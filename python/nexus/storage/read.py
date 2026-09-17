@@ -1,10 +1,10 @@
 """Streaming object reads with persisted-size verification."""
 
-from nexus.storage.client import StorageClientBase, StorageError
+from nexus.storage.client import StorageClient, StorageError
 
 
 def read_object_checked(
-    storage: StorageClientBase,
+    storage: StorageClient,
     storage_path: str,
     *,
     expected_size: int,

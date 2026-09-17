@@ -18,7 +18,7 @@ from uuid import UUID
 from sqlalchemy import text
 
 from nexus.db.session import create_session_factory
-from nexus.storage.client import StorageClientBase, get_storage_client
+from nexus.storage.client import StorageClient, get_storage_client
 from nexus.storage.paths import build_oracle_plate_storage_path, ext_for_content_type
 
 
@@ -78,7 +78,7 @@ def _load_rows() -> list[PlateRepairRow]:
     return result
 
 
-def _verify_destination(storage: StorageClientBase, row: PlateRepairRow) -> None:
+def _verify_destination(storage: StorageClient, row: PlateRepairRow) -> None:
     metadata = storage.head_object(row.destination_key)
     if metadata is None:
         raise RuntimeError(f"missing repaired Oracle plate object: {row.destination_key}")

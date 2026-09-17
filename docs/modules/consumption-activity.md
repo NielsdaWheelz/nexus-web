@@ -99,12 +99,6 @@ families through Consumption before deleting the parent media row.
 
 ## Operations
 
-Run `python -m nexus.ops.consumption_activity_counts` with normal server
-database configuration to print global counts for spans, completion facts,
-exclusions, capture-key anomalies, and Consumption replay outcomes. It is
-read-only. Advisory capacity thresholds never make the command fail; query
-failure does.
-
 Stats and session reads emit privacy-safe `activity_projection_read` latency
 and row-count fields. Real-PostgreSQL proof owns replay, exclusions, filtering,
 teardown, and deterministic projection. There is no rollup or cache.

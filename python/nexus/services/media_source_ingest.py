@@ -175,7 +175,7 @@ from nexus.services.x_identity import classify_x_url, is_x_url
 from nexus.services.x_provider_lock import lock_x_provider_identity
 from nexus.services.youtube_identity import classify_youtube_url, is_youtube_url
 from nexus.services.youtube_video_ingest import run_youtube_video_ingest
-from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
+from nexus.storage.client import StorageClient, StorageError, get_storage_client
 from nexus.storage.paths import (
     build_source_artifact_storage_path,
     build_storage_path,
@@ -1781,7 +1781,7 @@ def retry_source_for_viewer(
     client_mutation_id: str,
     expected_attempt_id: UUID,
     request_id: str | None,
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> SourceRetryAdmission:
     """Admit one new source attempt for a terminally failed source (contract D14).
 
@@ -2554,7 +2554,7 @@ def _source_requeue_storage_path(
 
 
 def _verify_source_requeue_storage(
-    db: Session, *, media_id: UUID, attempt_id: UUID, storage_client: StorageClientBase
+    db: Session, *, media_id: UUID, attempt_id: UUID, storage_client: StorageClient
 ) -> None:
     """Perform object-store preflight with no database transaction open."""
     source_path = _source_requeue_storage_path(
@@ -3720,7 +3720,7 @@ def _try_fetch_arxiv_source_package(
     attempt_id: UUID,
     requested_url: str,
     kind: str,
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
 ) -> tuple[PdfSourcePackageArtifact | None, dict[str, object] | None, str | None]:
     if kind != MediaKind.pdf.value:
         return None, None, None

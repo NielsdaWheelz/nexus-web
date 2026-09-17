@@ -152,23 +152,24 @@ class Settings(BaseSettings):
     - DATABASE_URL must not point at Supabase Database in any environment
     - SUPABASE_JWKS_URL, SUPABASE_ISSUER, SUPABASE_AUDIENCES are required in all environments
     - NEXUS_INTERNAL_SECRET is required in staging and prod only
-    - Supabase service-role keys are rejected as app runtime settings
     """
 
     nexus_env: Environment = Field(default=Environment.LOCAL, alias="NEXUS_ENV")
     database_url: Annotated[str, Field(alias="DATABASE_URL")]
-    database_pool_size: int = Field(default=10, alias="DATABASE_POOL_SIZE")
-    database_max_overflow: int = Field(default=20, alias="DATABASE_MAX_OVERFLOW")
+    database_pool_size: int = Field(default=10, alias="DATABASE_POOL_SIZE", ge=1)
+    database_max_overflow: int = Field(default=20, alias="DATABASE_MAX_OVERFLOW", ge=0)
     database_pool_timeout_seconds: float = Field(
-        default=30.0, alias="DATABASE_POOL_TIMEOUT_SECONDS"
+        default=30.0, alias="DATABASE_POOL_TIMEOUT_SECONDS", gt=0
     )
-    database_statement_timeout_ms: int = Field(default=30000, alias="DATABASE_STATEMENT_TIMEOUT_MS")
-    database_lock_timeout_ms: int = Field(default=10000, alias="DATABASE_LOCK_TIMEOUT_MS")
+    database_statement_timeout_ms: int = Field(
+        default=30000, alias="DATABASE_STATEMENT_TIMEOUT_MS", ge=0
+    )
+    database_lock_timeout_ms: int = Field(default=10000, alias="DATABASE_LOCK_TIMEOUT_MS", ge=0)
     # 60s leaves legitimate long transactions room to finish while still
     # reaping leaked transactions (the observed pool-exhaustion deadlock idled
     # for 180s+).
     database_idle_in_tx_timeout_ms: int = Field(
-        default=60000, alias="DATABASE_IDLE_IN_TX_TIMEOUT_MS"
+        default=60000, alias="DATABASE_IDLE_IN_TX_TIMEOUT_MS", ge=0
     )
     nexus_internal_secret: str | None = Field(default=None, alias="NEXUS_INTERNAL_SECRET")
 
@@ -177,77 +178,36 @@ class Settings(BaseSettings):
     supabase_issuer: str | None = Field(default=None, alias="SUPABASE_ISSUER")
     supabase_audiences: str | None = Field(default=None, alias="SUPABASE_AUDIENCES")
 
-    # Rejected Supabase Auth admin settings. Seed scripts must read service-role
-    # keys from script-local env, not the application runtime Settings object.
-    supabase_service_key_rejected: str | None = Field(
-        default=None,
-        alias="SUPABASE_SERVICE_KEY",
-        exclude=True,
-        repr=False,
-    )
-    supabase_service_role_key_rejected: str | None = Field(
-        default=None,
-        alias="SUPABASE_SERVICE_ROLE_KEY",
-        exclude=True,
-        repr=False,
-    )
-    supabase_auth_admin_key_rejected: str | None = Field(
-        default=None,
-        alias="SUPABASE_AUTH_ADMIN_KEY",
-        exclude=True,
-        repr=False,
-    )
-    supabase_database_url_rejected: str | None = Field(
-        default=None,
-        alias="SUPABASE_DATABASE_URL",
-        exclude=True,
-        repr=False,
-    )
-    service_role_key_rejected: str | None = Field(
-        default=None,
-        alias="SERVICE_ROLE_KEY",
-        exclude=True,
-        repr=False,
-    )
-
     # Cloudflare R2 object storage settings.
     r2_s3_api_origin: str | None = Field(default=None, alias="R2_S3_API_ORIGIN")
     r2_access_key_id: str | None = Field(default=None, alias="R2_ACCESS_KEY_ID")
     r2_secret_access_key: str | None = Field(default=None, alias="R2_SECRET_ACCESS_KEY")
     r2_bucket: str | None = Field(default=None, alias="R2_BUCKET")
     r2_region: str = Field(default="auto", alias="R2_REGION")
-    r2_endpoint_url_rejected: str | None = Field(
-        default=None,
-        alias="R2_ENDPOINT_URL",
-        exclude=True,
-        repr=False,
-    )
-    csp_extra_connect_origins_rejected: str | None = Field(
-        default=None,
-        alias="CSP_EXTRA_CONNECT_ORIGINS",
-        exclude=True,
-        repr=False,
-    )
     # Explicit botocore timeouts for the R2 S3-compatible client. Bounded low so a
     # stalled object-store call fails fast instead of holding a worker/request open.
-    r2_connect_timeout_seconds: float = Field(default=5.0, alias="R2_CONNECT_TIMEOUT_SECONDS")
-    r2_read_timeout_seconds: float = Field(default=30.0, alias="R2_READ_TIMEOUT_SECONDS")
+    r2_connect_timeout_seconds: float = Field(
+        default=5.0, alias="R2_CONNECT_TIMEOUT_SECONDS", gt=0, le=10
+    )
+    r2_read_timeout_seconds: float = Field(
+        default=30.0, alias="R2_READ_TIMEOUT_SECONDS", gt=0, le=60
+    )
 
     # Media teardown: durable cleanup timing for the media-deletion job family
     # (media_teardown, storage_object_cleanup, storage_orphan_sweep).
     media_teardown_cleanup_grace_seconds: int = Field(
-        default=60, alias="MEDIA_TEARDOWN_CLEANUP_GRACE_SECONDS"
+        default=60, alias="MEDIA_TEARDOWN_CLEANUP_GRACE_SECONDS", ge=0
     )
     # writeMayLandUntil horizon for a durable final-sweep record. Must exceed
     # both bounded server writes and the browser's direct-upload PUT deadline.
     storage_object_cleanup_write_window_seconds: int = Field(
-        default=300, alias="STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS"
+        default=300, alias="STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS", gt=0
     )
     storage_orphan_sweep_interval_seconds: int = Field(
-        default=21600, alias="STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS"
+        default=21600, alias="STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS", gt=0
     )
     storage_orphan_sweep_min_age_seconds: int = Field(
-        default=86400, alias="STORAGE_ORPHAN_SWEEP_MIN_AGE_SECONDS"
+        default=86400, alias="STORAGE_ORPHAN_SWEEP_MIN_AGE_SECONDS", ge=0
     )
 
     # Storage limits
@@ -257,7 +217,6 @@ class Settings(BaseSettings):
         default=50 * 1024 * 1024,
         alias="MAX_ARXIV_SOURCE_BYTES",
     )
-    ingest_stream_timeout_s: int = Field(default=60, alias="INGEST_STREAM_TIMEOUT_S")
     signed_url_expiry_s: int = Field(default=300, alias="SIGNED_URL_EXPIRY_S")  # 5 minutes
 
     # Podcast discovery and subscription ingestion policy.
@@ -275,14 +234,16 @@ class Settings(BaseSettings):
     )
     x_api_bearer_token: str | None = Field(default=None, alias="X_API_BEARER_TOKEN")
     x_api_base_url: str = Field(default="https://api.x.com/2", alias="X_API_BASE_URL")
-    x_api_timeout_seconds: float = Field(default=10.0, alias="X_API_TIMEOUT_SECONDS")
+    x_api_timeout_seconds: float = Field(default=10.0, alias="X_API_TIMEOUT_SECONDS", gt=0)
     x_api_author_thread_max_posts: int = Field(
         default=1000,
         alias="X_API_AUTHOR_THREAD_MAX_POSTS",
+        ge=1,
     )
     youtube_transcript_timeout_seconds: float = Field(
         default=30.0,
         alias="YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS",
+        gt=0,
     )
     youtube_transcript_proxy_url: str | None = Field(
         default=None,
@@ -293,17 +254,18 @@ class Settings(BaseSettings):
     youtube_transcript_proxy_retries_when_blocked: int = Field(
         default=0,
         alias="YOUTUBE_TRANSCRIPT_PROXY_RETRIES_WHEN_BLOCKED",
+        ge=0,
     )
     deepgram_api_key: str | None = Field(default=None, alias="DEEPGRAM_API_KEY")
     deepgram_base_url: str = Field(default="https://api.deepgram.com", alias="DEEPGRAM_BASE_URL")
     deepgram_model: str = Field(default="nova-3", alias="DEEPGRAM_MODEL")
     podcast_transcription_timeout_seconds: float = Field(
-        default=90.0, alias="PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS"
+        default=90.0, alias="PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS", gt=0
     )
     podcast_refresh_due_schedule_seconds: int = Field(
-        default=900, alias="PODCAST_REFRESH_DUE_SCHEDULE_SECONDS"
+        default=900, alias="PODCAST_REFRESH_DUE_SCHEDULE_SECONDS", ge=1
     )
-    podcast_refresh_due_limit: int = Field(default=100, alias="PODCAST_REFRESH_DUE_LIMIT")
+    podcast_refresh_due_limit: int = Field(default=100, alias="PODCAST_REFRESH_DUE_LIMIT", ge=1)
 
     # Billing / Stripe settings
     app_public_url: str = Field(default="http://localhost:3000", alias="APP_PUBLIC_URL")
@@ -316,27 +278,20 @@ class Settings(BaseSettings):
     billing_ai_plus_transcription_minutes_monthly: int = Field(
         default=300,
         alias="BILLING_AI_PLUS_TRANSCRIPTION_MINUTES_MONTHLY",
+        ge=0,
     )
     billing_ai_pro_transcription_minutes_monthly: int = Field(
         default=1200,
         alias="BILLING_AI_PRO_TRANSCRIPTION_MINUTES_MONTHLY",
+        ge=0,
     )
 
     # Ingest recovery guardrails
     ingest_reconcile_schedule_seconds: int = Field(
-        default=600, alias="INGEST_RECONCILE_SCHEDULE_SECONDS"
+        default=600, alias="INGEST_RECONCILE_SCHEDULE_SECONDS", ge=0
     )
     ingest_stale_extracting_seconds: int = Field(
-        default=1800, alias="INGEST_STALE_EXTRACTING_SECONDS"
-    )
-    ingest_stale_requeue_max_attempts: int = Field(
-        default=3, alias="INGEST_STALE_REQUEUE_MAX_ATTEMPTS"
-    )
-    ingest_semantic_repair_batch_limit: int = Field(
-        default=25, alias="INGEST_SEMANTIC_REPAIR_BATCH_LIMIT"
-    )
-    ingest_semantic_failed_retry_seconds: int = Field(
-        default=1800, alias="INGEST_SEMANTIC_FAILED_RETRY_SECONDS"
+        default=1800, alias="INGEST_STALE_EXTRACTING_SECONDS", ge=1
     )
     parser_temp_root: Path = Field(default=Path("/tmp/nexus-parser-tmp"), alias="PARSER_TEMP_ROOT")
 
@@ -354,19 +309,21 @@ class Settings(BaseSettings):
         default=False,
         alias="NEXUS_ALLOW_WORKER_MAINTENANCE",
     )
-    worker_poll_interval_seconds: float = Field(default=5.0, alias="WORKER_POLL_INTERVAL_SECONDS")
+    worker_poll_interval_seconds: float = Field(
+        default=5.0, alias="WORKER_POLL_INTERVAL_SECONDS", gt=0
+    )
     worker_idle_backoff_max_seconds: float = Field(
         default=300.0, alias="WORKER_IDLE_BACKOFF_MAX_SECONDS"
     )
     worker_scheduler_interval_seconds: float = Field(
-        default=300.0, alias="WORKER_SCHEDULER_INTERVAL_SECONDS"
+        default=300.0, alias="WORKER_SCHEDULER_INTERVAL_SECONDS", gt=0
     )
     worker_heartbeat_interval_seconds: float = Field(
-        default=60.0, alias="WORKER_HEARTBEAT_INTERVAL_SECONDS"
+        default=60.0, alias="WORKER_HEARTBEAT_INTERVAL_SECONDS", gt=0
     )
-    worker_lease_seconds: int = Field(default=300, alias="WORKER_LEASE_SECONDS")
+    worker_lease_seconds: int = Field(default=300, alias="WORKER_LEASE_SECONDS", ge=1)
     worker_db_failure_backoff_seconds: float = Field(
-        default=60.0, alias="WORKER_DB_FAILURE_BACKOFF_SECONDS"
+        default=60.0, alias="WORKER_DB_FAILURE_BACKOFF_SECONDS", gt=0
     )
     worker_db_failure_backoff_max_seconds: float = Field(
         default=900.0, alias="WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS"
@@ -377,64 +334,85 @@ class Settings(BaseSettings):
     background_process_wall_timeout_seconds: float = Field(
         default=900.0,
         alias="BACKGROUND_PROCESS_WALL_TIMEOUT_SECONDS",
+        gt=0,
+        le=900,
     )
     background_process_term_grace_seconds: float = Field(
         default=5.0,
         alias="BACKGROUND_PROCESS_TERM_GRACE_SECONDS",
+        gt=0,
+        le=30,
     )
     background_process_result_max_bytes: int = Field(
         default=1024 * 1024,
         alias="BACKGROUND_PROCESS_RESULT_MAX_BYTES",
+        ge=1024,
+        le=4 * 1024 * 1024,
     )
     background_process_oom_score_adj: int = Field(
         default=750,
         alias="BACKGROUND_PROCESS_OOM_SCORE_ADJ",
+        ge=1,
+        le=1000,
     )
     sync_gutenberg_catalog_schedule_seconds: int = Field(
-        default=0, alias="SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS"
+        default=0, alias="SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS", ge=0
     )
     background_job_prune_schedule_seconds: int = Field(
-        default=0, alias="BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS"
+        default=0, alias="BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS", ge=0
     )
     background_job_prune_succeeded_after_days: int = Field(
-        default=7, alias="BACKGROUND_JOB_PRUNE_SUCCEEDED_AFTER_DAYS"
+        default=7, alias="BACKGROUND_JOB_PRUNE_SUCCEEDED_AFTER_DAYS", ge=1
     )
     background_job_prune_dead_after_days: int = Field(
-        default=30, alias="BACKGROUND_JOB_PRUNE_DEAD_AFTER_DAYS"
+        default=30, alias="BACKGROUND_JOB_PRUNE_DEAD_AFTER_DAYS", ge=1
     )
     background_job_prune_batch_size: int = Field(
-        default=100, alias="BACKGROUND_JOB_PRUNE_BATCH_SIZE"
+        default=100, alias="BACKGROUND_JOB_PRUNE_BATCH_SIZE", ge=1
     )
 
     # EPUB archive safety limits. Runtime values may be stricter, never weaker.
-    max_epub_archive_entries: int = Field(default=10_000, alias="MAX_EPUB_ARCHIVE_ENTRIES")
+    max_epub_archive_entries: int = Field(
+        default=10_000, alias="MAX_EPUB_ARCHIVE_ENTRIES", ge=1, le=10_000
+    )
     max_epub_archive_total_uncompressed_bytes: int = Field(
-        default=536_870_912, alias="MAX_EPUB_ARCHIVE_TOTAL_UNCOMPRESSED_BYTES"
+        default=536_870_912, alias="MAX_EPUB_ARCHIVE_TOTAL_UNCOMPRESSED_BYTES", ge=1, le=536_870_912
     )  # 512 MB
     max_epub_archive_single_entry_uncompressed_bytes: int = Field(
-        default=67_108_864, alias="MAX_EPUB_ARCHIVE_SINGLE_ENTRY_UNCOMPRESSED_BYTES"
+        default=67_108_864,
+        alias="MAX_EPUB_ARCHIVE_SINGLE_ENTRY_UNCOMPRESSED_BYTES",
+        ge=1,
+        le=67_108_864,
     )  # 64 MB
     max_epub_archive_compression_ratio: int = Field(
-        default=100, alias="MAX_EPUB_ARCHIVE_COMPRESSION_RATIO"
+        default=100, alias="MAX_EPUB_ARCHIVE_COMPRESSION_RATIO", ge=1, le=100
     )
     max_epub_archive_parse_time_ms: int = Field(
-        default=30_000, alias="MAX_EPUB_ARCHIVE_PARSE_TIME_MS"
+        default=30_000, alias="MAX_EPUB_ARCHIVE_PARSE_TIME_MS", ge=1, le=30_000
     )
     max_latex_source_archive_entries: int = Field(
         default=10_000,
         alias="MAX_LATEX_SOURCE_ARCHIVE_ENTRIES",
+        ge=1,
+        le=10_000,
     )
     max_latex_source_archive_total_uncompressed_bytes: int = Field(
         default=536_870_912,
         alias="MAX_LATEX_SOURCE_ARCHIVE_TOTAL_UNCOMPRESSED_BYTES",
+        ge=1,
+        le=536_870_912,
     )  # 512 MB
     max_latex_source_archive_single_entry_uncompressed_bytes: int = Field(
         default=134_217_728,
         alias="MAX_LATEX_SOURCE_ARCHIVE_SINGLE_ENTRY_UNCOMPRESSED_BYTES",
+        ge=1,
+        le=134_217_728,
     )  # 128 MB
     max_latex_source_archive_compression_ratio: int = Field(
         default=100,
         alias="MAX_LATEX_SOURCE_ARCHIVE_COMPRESSION_RATIO",
+        ge=1,
+        le=100,
     )
 
     # OpenAI's unqualified key remains embedding-only. Generation credentials
@@ -485,42 +463,6 @@ class Settings(BaseSettings):
         default=None,
         alias="NEXUS_FABLE_RETENTION_ACCEPTED_AT",
     )
-    anthropic_api_key_rejected: SecretStr | None = Field(
-        default=None,
-        alias="ANTHROPIC_API_KEY",
-        exclude=True,
-        repr=False,
-    )
-    gemini_api_key_rejected: SecretStr | None = Field(
-        default=None,
-        alias="GEMINI_API_KEY",
-        exclude=True,
-        repr=False,
-    )
-    moonshot_api_key_rejected: SecretStr | None = Field(
-        default=None,
-        alias="MOONSHOT_API_KEY",
-        exclude=True,
-        repr=False,
-    )
-    openrouter_api_key_rejected: SecretStr | None = Field(
-        default=None,
-        alias="OPENROUTER_API_KEY",
-        exclude=True,
-        repr=False,
-    )
-    deepseek_api_key_rejected: SecretStr | None = Field(
-        default=None,
-        alias="DEEPSEEK_API_KEY",
-        exclude=True,
-        repr=False,
-    )
-    xai_api_key_rejected: SecretStr | None = Field(
-        default=None,
-        alias="XAI_API_KEY",
-        exclude=True,
-        repr=False,
-    )
     agent_tool_grant_signing_key: SecretStr | None = Field(
         default=None,
         alias="AGENT_TOOL_GRANT_SIGNING_KEY",
@@ -539,12 +481,6 @@ class Settings(BaseSettings):
         default=8.0,
         alias="BRAVE_SEARCH_TIMEOUT_SECONDS",
     )
-    brave_search_country: str = Field(default="US", alias="BRAVE_SEARCH_COUNTRY")
-    brave_search_language: str = Field(default="en", alias="BRAVE_SEARCH_LANGUAGE")
-    brave_search_safe_search: Literal["off", "moderate", "strict"] = Field(
-        default="moderate",
-        alias="BRAVE_SEARCH_SAFE_SEARCH",
-    )
     outbound_http_proxy_url: str | None = Field(
         default=None,
         alias="OUTBOUND_HTTP_PROXY_URL",
@@ -562,16 +498,12 @@ class Settings(BaseSettings):
         default=256,
         alias="TRANSCRIPT_EMBEDDING_DIMENSIONS",
     )
-    transcript_embedding_timeout_seconds: float = Field(
-        default=20.0,
-        alias="TRANSCRIPT_EMBEDDING_TIMEOUT_SECONDS",
-    )
 
     # Metadata enrichment settings. The generation-host wire input-byte invariant
     # is owned solely by build_enrichment_user_content's byte clamp; this cap
     # only sizes the sampled text.
     metadata_enrichment_max_content_chars: int = Field(
-        default=2000, alias="METADATA_ENRICHMENT_MAX_CONTENT_CHARS"
+        default=2000, alias="METADATA_ENRICHMENT_MAX_CONTENT_CHARS", ge=1
     )
     codex_agent_socket: Path = Field(
         default=Path("/run/nexus-codex/agent.sock"),
@@ -597,7 +529,9 @@ class Settings(BaseSettings):
     # Grand atlas projection: the nightly PCA re-projection cadence. 0 (default)
     # leaves atlas_project_job unregistered as periodic; the deploy env sets a
     # positive cadence (prod: 86400). The on-demand trigger still fires on ingest.
-    atlas_project_schedule_seconds: int = Field(default=0, alias="ATLAS_PROJECT_SCHEDULE_SECONDS")
+    atlas_project_schedule_seconds: int = Field(
+        default=0, alias="ATLAS_PROJECT_SCHEDULE_SECONDS", ge=0
+    )
 
     # Post Room: private email ingest address (Cloudflare Email Worker → HMAC-signed POST).
     # EMAIL_INGEST_ENABLED gates route registration; when false the endpoint is absent
@@ -624,34 +558,15 @@ class Settings(BaseSettings):
         "extra": "ignore",
     }
 
-    # Maximum accepted EPUB archive safety values.
-    _EPUB_ARCHIVE_CEILINGS = {
-        "max_epub_archive_entries": 10_000,
-        "max_epub_archive_total_uncompressed_bytes": 536_870_912,
-        "max_epub_archive_single_entry_uncompressed_bytes": 67_108_864,
-        "max_epub_archive_compression_ratio": 100,
-        "max_epub_archive_parse_time_ms": 30_000,
-    }
-    _LATEX_SOURCE_ARCHIVE_CEILINGS = {
-        "max_latex_source_archive_entries": 10_000,
-        "max_latex_source_archive_total_uncompressed_bytes": 536_870_912,
-        "max_latex_source_archive_single_entry_uncompressed_bytes": 134_217_728,
-        "max_latex_source_archive_compression_ratio": 100,
-    }
-
     @model_validator(mode="after")
     def validate_required_settings(self) -> "Settings":
         """Ensure required settings are set for all environments."""
         self._validate_supabase_auth()
-        self._validate_retired_supabase_settings()
         self._validate_database_origin()
-        self._validate_retired_storage_settings()
-        self._validate_database_limits()
+        self._validate_deployed_ingest_reconcile()
         self._validate_deployed_storage()
         self._validate_storage_lifecycle()
-        self._validate_archive_safety()
-        self._validate_billing_limits()
-        self._validate_media_provider_limits()
+        self._validate_transcript_embedding_dimensions()
         self._validate_billing_credentials()
         self._validate_email_credentials()
         self._validate_podcast_credentials()
@@ -660,8 +575,7 @@ class Settings(BaseSettings):
         self._validate_ingest_runtime_and_paths()
         self._validate_worker_lane()
         self._validate_worker_intervals()
-        self._validate_background_process_limits()
-        self._validate_maintenance_schedules()
+        self._validate_background_process_cgroup_root()
         return self
 
     def _validate_supabase_auth(self) -> None:
@@ -679,25 +593,6 @@ class Settings(BaseSettings):
                 "Run 'make setup' to configure Supabase local, or set these environment variables."
             )
 
-    def _validate_retired_supabase_settings(self) -> None:
-        rejected_supabase_service_role_settings = [
-            alias
-            for alias, value in (
-                ("SUPABASE_SERVICE_KEY", self.supabase_service_key_rejected),
-                ("SUPABASE_SERVICE_ROLE_KEY", self.supabase_service_role_key_rejected),
-                ("SUPABASE_AUTH_ADMIN_KEY", self.supabase_auth_admin_key_rejected),
-                ("SUPABASE_DATABASE_URL", self.supabase_database_url_rejected),
-                ("SERVICE_ROLE_KEY", self.service_role_key_rejected),
-            )
-            if value
-        ]
-        if rejected_supabase_service_role_settings:
-            raise ValueError(
-                "Supabase admin/database settings are not application runtime settings: "
-                f"{', '.join(rejected_supabase_service_role_settings)}. "
-                "Use script-local environment for seed scripts instead."
-            )
-
     def _validate_database_origin(self) -> None:
         if _database_url_looks_like_supabase(self.database_url):
             raise ValueError(
@@ -710,40 +605,7 @@ class Settings(BaseSettings):
             worker_lane=self.worker_lane,
         )
 
-    def _validate_retired_storage_settings(self) -> None:
-        rejected_storage_origin_settings = [
-            alias
-            for alias, value in (
-                ("R2_ENDPOINT_URL", self.r2_endpoint_url_rejected),
-                (
-                    "CSP_EXTRA_CONNECT_ORIGINS",
-                    self.csp_extra_connect_origins_rejected,
-                ),
-            )
-            if value
-        ]
-        if rejected_storage_origin_settings:
-            raise ValueError(
-                "Removed storage-origin env settings are not supported: "
-                f"{', '.join(rejected_storage_origin_settings)}. "
-                "Use R2_S3_API_ORIGIN."
-            )
-
-    def _validate_database_limits(self) -> None:
-        if self.database_pool_size < 1:
-            raise ValueError("DATABASE_POOL_SIZE must be >= 1.")
-        if self.database_max_overflow < 0:
-            raise ValueError("DATABASE_MAX_OVERFLOW must be >= 0.")
-        if self.database_pool_timeout_seconds <= 0:
-            raise ValueError("DATABASE_POOL_TIMEOUT_SECONDS must be > 0.")
-        if self.database_statement_timeout_ms < 0:
-            raise ValueError("DATABASE_STATEMENT_TIMEOUT_MS must be >= 0.")
-        if self.database_lock_timeout_ms < 0:
-            raise ValueError("DATABASE_LOCK_TIMEOUT_MS must be >= 0.")
-        if self.database_idle_in_tx_timeout_ms < 0:
-            raise ValueError("DATABASE_IDLE_IN_TX_TIMEOUT_MS must be >= 0.")
-        if self.ingest_reconcile_schedule_seconds < 0:
-            raise ValueError("INGEST_RECONCILE_SCHEDULE_SECONDS must be >= 0.")
+    def _validate_deployed_ingest_reconcile(self) -> None:
         if (
             self.nexus_env in (Environment.STAGING, Environment.PROD)
             and self.ingest_reconcile_schedule_seconds == 0
@@ -787,14 +649,6 @@ class Settings(BaseSettings):
             )
 
     def _validate_storage_lifecycle(self) -> None:
-        if self.r2_connect_timeout_seconds <= 0 or self.r2_connect_timeout_seconds > 10:
-            raise ValueError("R2_CONNECT_TIMEOUT_SECONDS must be > 0 and <= 10.")
-        if self.r2_read_timeout_seconds <= 0 or self.r2_read_timeout_seconds > 60:
-            raise ValueError("R2_READ_TIMEOUT_SECONDS must be > 0 and <= 60.")
-        if self.media_teardown_cleanup_grace_seconds < 0:
-            raise ValueError("MEDIA_TEARDOWN_CLEANUP_GRACE_SECONDS must be >= 0.")
-        if self.storage_object_cleanup_write_window_seconds <= 0:
-            raise ValueError("STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS must be > 0.")
         if self.storage_object_cleanup_write_window_seconds <= self.r2_read_timeout_seconds:
             raise ValueError(
                 "STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS must be greater than "
@@ -806,60 +660,13 @@ class Settings(BaseSettings):
                 "STORAGE_OBJECT_CLEANUP_WRITE_WINDOW_SECONDS must be greater than the "
                 f"{DIRECT_UPLOAD_PUT_TIMEOUT_SECONDS}-second browser direct-upload PUT timeout."
             )
-        if self.storage_orphan_sweep_interval_seconds <= 0:
-            raise ValueError("STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS must be > 0.")
-        if self.storage_orphan_sweep_min_age_seconds < 0:
-            raise ValueError("STORAGE_ORPHAN_SWEEP_MIN_AGE_SECONDS must be >= 0.")
 
-    def _validate_archive_safety(self) -> None:
-        for field_name, ceiling in self._EPUB_ARCHIVE_CEILINGS.items():
-            value = getattr(self, field_name)
-            if value > ceiling:
-                raise ValueError(
-                    f"{field_name.upper()}={value} exceeds archive safety ceiling {ceiling}. "
-                    "Runtime values may be stricter (lower) but never weaker."
-                )
-            if value < 1:
-                raise ValueError(f"{field_name.upper()}={value} must be >= 1.")
-
-        for field_name, ceiling in self._LATEX_SOURCE_ARCHIVE_CEILINGS.items():
-            value = getattr(self, field_name)
-            if value > ceiling:
-                raise ValueError(
-                    f"{field_name.upper()}={value} exceeds archive safety ceiling {ceiling}. "
-                    "Runtime values may be stricter (lower) but never weaker."
-                )
-            if value < 1:
-                raise ValueError(f"{field_name.upper()}={value} must be >= 1.")
-
-    def _validate_billing_limits(self) -> None:
-        if self.billing_ai_plus_transcription_minutes_monthly < 0:
-            raise ValueError("BILLING_AI_PLUS_TRANSCRIPTION_MINUTES_MONTHLY must be >= 0.")
-        if self.billing_ai_pro_transcription_minutes_monthly < 0:
-            raise ValueError("BILLING_AI_PRO_TRANSCRIPTION_MINUTES_MONTHLY must be >= 0.")
-
-    def _validate_media_provider_limits(self) -> None:
+    def _validate_transcript_embedding_dimensions(self) -> None:
         if self.transcript_embedding_dimensions != TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS:
             raise ValueError(
                 "TRANSCRIPT_EMBEDDING_DIMENSIONS must equal "
                 f"{TRANSCRIPT_EMBEDDING_SCHEMA_DIMENSIONS} to match the pgvector schema."
             )
-        if self.transcript_embedding_timeout_seconds <= 0:
-            raise ValueError("TRANSCRIPT_EMBEDDING_TIMEOUT_SECONDS must be > 0.")
-        if self.podcast_refresh_due_schedule_seconds < 1:
-            raise ValueError("PODCAST_REFRESH_DUE_SCHEDULE_SECONDS must be >= 1.")
-        if self.podcast_refresh_due_limit < 1:
-            raise ValueError("PODCAST_REFRESH_DUE_LIMIT must be >= 1.")
-        if self.podcast_transcription_timeout_seconds <= 0:
-            raise ValueError("PODCAST_TRANSCRIPTION_TIMEOUT_SECONDS must be > 0.")
-        if self.youtube_transcript_timeout_seconds <= 0:
-            raise ValueError("YOUTUBE_TRANSCRIPT_TIMEOUT_SECONDS must be > 0.")
-        if self.youtube_transcript_proxy_retries_when_blocked < 0:
-            raise ValueError("YOUTUBE_TRANSCRIPT_PROXY_RETRIES_WHEN_BLOCKED must be >= 0.")
-        if self.x_api_timeout_seconds <= 0:
-            raise ValueError("X_API_TIMEOUT_SECONDS must be > 0.")
-        if self.x_api_author_thread_max_posts < 1:
-            raise ValueError("X_API_AUTHOR_THREAD_MAX_POSTS must be >= 1.")
 
     def _validate_billing_credentials(self) -> None:
         if self.nexus_env not in (Environment.STAGING, Environment.PROD):
@@ -927,23 +734,6 @@ class Settings(BaseSettings):
 
     def _validate_deployed_generation_runtime(self) -> None:
         configured = self.generation_api_provider_list
-        rejected = [
-            alias
-            for alias, value in (
-                ("ANTHROPIC_API_KEY", self.anthropic_api_key_rejected),
-                ("GEMINI_API_KEY", self.gemini_api_key_rejected),
-                ("MOONSHOT_API_KEY", self.moonshot_api_key_rejected),
-                ("OPENROUTER_API_KEY", self.openrouter_api_key_rejected),
-                ("DEEPSEEK_API_KEY", self.deepseek_api_key_rejected),
-                ("XAI_API_KEY", self.xai_api_key_rejected),
-            )
-            if value is not None
-        ]
-        if rejected:
-            raise ValueError(
-                "Retired generation credential names are forbidden: " + ", ".join(rejected)
-            )
-
         credential_by_provider: dict[GenerationApiProvider, tuple[str, SecretStr | None]] = {
             "openai": ("OPENAI_GENERATION_API_KEY", self.openai_generation_api_key),
             "anthropic": (
@@ -1033,16 +823,6 @@ class Settings(BaseSettings):
             raise ValueError("AGENT_TOOL_GRANT_SIGNING_KEY is invalid") from exc
 
     def _validate_ingest_runtime_and_paths(self) -> None:
-        if self.ingest_stale_extracting_seconds < 1:
-            raise ValueError("INGEST_STALE_EXTRACTING_SECONDS must be >= 1.")
-        if self.ingest_stale_requeue_max_attempts < 1:
-            raise ValueError("INGEST_STALE_REQUEUE_MAX_ATTEMPTS must be >= 1.")
-        if self.ingest_semantic_repair_batch_limit < 1:
-            raise ValueError("INGEST_SEMANTIC_REPAIR_BATCH_LIMIT must be >= 1.")
-        if self.ingest_semantic_failed_retry_seconds < 1:
-            raise ValueError("INGEST_SEMANTIC_FAILED_RETRY_SECONDS must be >= 1.")
-        if self.metadata_enrichment_max_content_chars < 1:
-            raise ValueError("METADATA_ENRICHMENT_MAX_CONTENT_CHARS must be >= 1.")
         if (
             not self.codex_agent_socket.is_absolute()
             or Path(os.path.normpath(str(self.codex_agent_socket))) != self.codex_agent_socket
@@ -1089,53 +869,19 @@ class Settings(BaseSettings):
             raise ValueError("DATABASE_STATEMENT_TIMEOUT_MS must be bounded for deployed workers.")
 
     def _validate_worker_intervals(self) -> None:
-        if self.worker_poll_interval_seconds <= 0:
-            raise ValueError("WORKER_POLL_INTERVAL_SECONDS must be > 0.")
         if self.worker_idle_backoff_max_seconds < self.worker_poll_interval_seconds:
             raise ValueError(
                 "WORKER_IDLE_BACKOFF_MAX_SECONDS must be >= WORKER_POLL_INTERVAL_SECONDS."
             )
-        if self.worker_scheduler_interval_seconds <= 0:
-            raise ValueError("WORKER_SCHEDULER_INTERVAL_SECONDS must be > 0.")
-        if self.worker_heartbeat_interval_seconds <= 0:
-            raise ValueError("WORKER_HEARTBEAT_INTERVAL_SECONDS must be > 0.")
-        if self.worker_lease_seconds < 1:
-            raise ValueError("WORKER_LEASE_SECONDS must be >= 1.")
-        if self.worker_db_failure_backoff_seconds <= 0:
-            raise ValueError("WORKER_DB_FAILURE_BACKOFF_SECONDS must be > 0.")
         if self.worker_db_failure_backoff_max_seconds < self.worker_db_failure_backoff_seconds:
             raise ValueError(
                 "WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS must be >= "
                 "WORKER_DB_FAILURE_BACKOFF_SECONDS."
             )
 
-    def _validate_background_process_limits(self) -> None:
+    def _validate_background_process_cgroup_root(self) -> None:
         if not self.background_process_cgroup_root.is_absolute():
             raise ValueError("BACKGROUND_PROCESS_CGROUP_ROOT must be an absolute path.")
-        if not 0 < self.background_process_wall_timeout_seconds <= 900:
-            raise ValueError("BACKGROUND_PROCESS_WALL_TIMEOUT_SECONDS must be > 0 and <= 900.")
-        if not 0 < self.background_process_term_grace_seconds <= 30:
-            raise ValueError("BACKGROUND_PROCESS_TERM_GRACE_SECONDS must be > 0 and <= 30.")
-        if not 1024 <= self.background_process_result_max_bytes <= 4 * 1024 * 1024:
-            raise ValueError(
-                "BACKGROUND_PROCESS_RESULT_MAX_BYTES must be between 1024 and 4194304."
-            )
-        if not 1 <= self.background_process_oom_score_adj <= 1000:
-            raise ValueError("BACKGROUND_PROCESS_OOM_SCORE_ADJ must be between 1 and 1000.")
-
-    def _validate_maintenance_schedules(self) -> None:
-        if self.sync_gutenberg_catalog_schedule_seconds < 0:
-            raise ValueError("SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS must be >= 0.")
-        if self.background_job_prune_schedule_seconds < 0:
-            raise ValueError("BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS must be >= 0.")
-        if self.atlas_project_schedule_seconds < 0:
-            raise ValueError("ATLAS_PROJECT_SCHEDULE_SECONDS must be >= 0.")
-        if self.background_job_prune_succeeded_after_days < 1:
-            raise ValueError("BACKGROUND_JOB_PRUNE_SUCCEEDED_AFTER_DAYS must be >= 1.")
-        if self.background_job_prune_dead_after_days < 1:
-            raise ValueError("BACKGROUND_JOB_PRUNE_DEAD_AFTER_DAYS must be >= 1.")
-        if self.background_job_prune_batch_size < 1:
-            raise ValueError("BACKGROUND_JOB_PRUNE_BATCH_SIZE must be >= 1.")
 
     @property
     def requires_internal_header(self) -> bool:

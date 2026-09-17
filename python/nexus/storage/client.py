@@ -1,7 +1,6 @@
 """Cloudflare R2 storage client."""
 
 import time
-from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -51,93 +50,6 @@ class ObjectPage:
     next_continuation_token: str | None
 
 
-class StorageClientBase(ABC):
-    """Storage operations used by services and tasks."""
-
-    @abstractmethod
-    def sign_upload(
-        self,
-        path: str,
-        *,
-        content_type: str,
-        size_bytes: int,
-        expires_in: int = 300,
-    ) -> SignedUpload:
-        """Create a signed URL for browser direct upload."""
-        ...
-
-    @abstractmethod
-    def sign_download(
-        self,
-        path: str,
-        *,
-        expires_in: int = 300,
-    ) -> str:
-        """Create a signed URL for downloading an object."""
-        ...
-
-    @abstractmethod
-    def head_object(self, path: str) -> ObjectMetadata | None:
-        """Return object metadata, or None when the object is missing."""
-        ...
-
-    @abstractmethod
-    def stream_object(self, path: str) -> Iterator[bytes]:
-        """Stream object bytes in chunks."""
-        ...
-
-    @abstractmethod
-    def stream_object_range(
-        self,
-        path: str,
-        *,
-        start: int,
-        end_inclusive: int,
-    ) -> Iterator[bytes]:
-        """Stream one validated inclusive object-byte range."""
-        ...
-
-    @abstractmethod
-    def put_object(
-        self,
-        path: str,
-        content: bytes,
-        content_type: str = "application/octet-stream",
-    ) -> None:
-        """Upload bytes to an object path."""
-        ...
-
-    @abstractmethod
-    def put_object_stream(
-        self,
-        path: str,
-        content: BinaryIO,
-        content_type: str = "application/octet-stream",
-    ) -> None:
-        """Upload streamed bytes to an object path."""
-        ...
-
-    @abstractmethod
-    def copy_object(self, source_path: str, destination_path: str) -> None:
-        """Copy one object to another path inside the same bucket."""
-        ...
-
-    @abstractmethod
-    def delete_object(self, path: str) -> None:
-        """Delete an object path."""
-        ...
-
-    @abstractmethod
-    def list_objects(
-        self,
-        prefix: str,
-        *,
-        continuation_token: str | None = None,
-    ) -> ObjectPage:
-        """List one page of objects under a prefix, in listing order."""
-        ...
-
-
 _PUT_OBJECT_ATTEMPTS = 3
 
 
@@ -150,7 +62,7 @@ class StorageError(Exception):
         self.code = code
 
 
-class StorageClient(StorageClientBase):
+class StorageClient:
     """Cloudflare R2 client using the S3-compatible API."""
 
     def __init__(
@@ -363,12 +275,6 @@ class StorageClient(StorageClientBase):
     ) -> ObjectPage:
         params: dict[str, str] = {"Bucket": self._bucket, "Prefix": prefix}
         if continuation_token is not None:
-            if (
-                not isinstance(continuation_token, str)
-                or not continuation_token
-                or continuation_token != continuation_token.strip()
-            ):
-                raise StorageError("Storage list request has an invalid continuation token")
             params["ContinuationToken"] = continuation_token
         try:
             response = self._client.list_objects_v2(**params)
@@ -397,7 +303,7 @@ class StorageClient(StorageClientBase):
         return ObjectPage(objects=objects, next_continuation_token=next_token)
 
 
-def get_storage_client() -> StorageClientBase:
+def get_storage_client() -> StorageClient:
     settings = get_settings()
     endpoint_url = settings.r2_s3_api_origin
     access_key_id = settings.r2_access_key_id

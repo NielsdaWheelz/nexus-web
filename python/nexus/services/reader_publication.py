@@ -16,7 +16,7 @@ from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundEr
 from nexus.ids import new_uuid7
 from nexus.schemas.media import MediaNavigationOut
 from nexus.schemas.presence import Presence, absent, present
-from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
+from nexus.storage.client import StorageClient, StorageError, get_storage_client
 
 ReaderDocumentKind = Literal["pdf", "epub", "web_article"]
 _ELIGIBLE_KINDS = frozenset({"pdf", "epub", "web_article"})
@@ -116,7 +116,7 @@ class ReaderPublicationObjectReader:
 
     def __init__(
         self,
-        storage_client: StorageClientBase,
+        storage_client: StorageClient,
         references: tuple[ReaderPublicationObjectReference, ...],
     ) -> None:
         self._storage_client = storage_client
@@ -370,7 +370,7 @@ def capture_current[T](
     *,
     media_id: UUID,
     assemble: Callable[[ReaderPublicationProjection, ReaderPublicationObjectReader], T],
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> CapturedReaderPublication[T]:
     """Capture one coherent projection, restarting once when its seqlock changes."""
     objects = storage_client or get_storage_client()

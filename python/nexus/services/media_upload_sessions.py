@@ -77,7 +77,7 @@ from nexus.services.sealed_handles import (
     seal_upload_session,
     unseal_upload_session,
 )
-from nexus.storage.client import StorageClientBase, StorageError, get_storage_client
+from nexus.storage.client import StorageClient, StorageError, get_storage_client
 from nexus.storage.paths import (
     build_upload_session_staging_storage_path,
     build_upload_verification_candidate_storage_path,
@@ -468,7 +468,7 @@ def _signed_upload_required(
     *,
     outcome: Literal["Created", "Reused"],
     expires_in: int,
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
 ) -> UploadRequired:
     try:
         signed = storage_client.sign_upload(
@@ -498,7 +498,7 @@ def create_upload_session(
     request: CreateUploadSessionRequest,
     request_id: str | None,
     idempotency_key: str | None,
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> UploadSessionResponse:
     """Accept one upload intent and mint the capability for its current generation.
 
@@ -699,7 +699,7 @@ def retry_upload_session(
     viewer_id: UUID,
     session_handle: str,
     request: RetryUploadSessionRequest,
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> UploadRequired | NeedsAttention:
     """Admit one new upload generation for the inspected one, exactly once per
     ``client_mutation_id``; a replay re-mints the admitted generation for its
@@ -824,7 +824,7 @@ def _storage_error(exc: StorageError) -> ApiError:
 
 
 def _measure_source(
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
     *,
     storage_path: str,
     kind: str,
@@ -1111,7 +1111,7 @@ def confirm_upload_session(
     session_handle: str,
     generation: int,
     request_id: str | None,
-    storage_client: StorageClientBase | None = None,
+    storage_client: StorageClient | None = None,
 ) -> Published:
     claim = _claim_verification(
         db,

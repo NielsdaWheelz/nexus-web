@@ -49,7 +49,7 @@ from nexus.services.semantic_chunks import (
     current_transcript_embedding_model,
     current_transcript_embedding_provider,
 )
-from nexus.storage.client import StorageClientBase
+from nexus.storage.client import StorageClient
 from nexus.storage.paths import build_oracle_plate_storage_path, ext_for_content_type
 
 ORACLE_CORPUS_KEY = "oracle"
@@ -689,7 +689,7 @@ def inspect_oracle_corpus_database(
 def complete_oracle_corpus_inspection(
     database: OracleCorpusDatabaseInspection,
     *,
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
 ) -> OracleCorpusInspection:
     """Add pure R2 proof only after the caller has closed the PostgreSQL transaction."""
     plate_storage = oracle_plates.validate_oracle_plate_storage_metadata(

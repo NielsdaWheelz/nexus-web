@@ -84,7 +84,7 @@ from nexus.storage.paths import build_epub_attempt_asset_storage_path
 from nexus.tasks.storage_object_cleanup import reserve_storage_object_write
 
 if TYPE_CHECKING:
-    from nexus.storage.client import StorageClientBase
+    from nexus.storage.client import StorageClient
 
 logger = logging.getLogger(__name__)
 
@@ -538,7 +538,7 @@ def build_epub_extraction_plan(
     storage_path: str,
     source_size_bytes: int,
     expected_source_sha256: str,
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
     now: datetime | None = None,
 ) -> EpubExtractionPlan | EpubExtractionError:
@@ -620,7 +620,7 @@ def _build_epub_extraction_plan_from_file(
     attempt_id: UUID,
     storage_path: str,
     source_size_bytes: int,
-    storage_client: StorageClientBase,
+    storage_client: StorageClient,
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
     epub_path: Path,
     attempt_directory: Path,
