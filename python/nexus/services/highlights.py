@@ -16,6 +16,7 @@ from nexus.auth.permissions import (
     highlight_visibility_filter,
     visible_media_ids_cte_sql,
 )
+from nexus.db.errors import integrity_constraint_name
 from nexus.db.models import (
     Fragment,
     Highlight,
@@ -44,9 +45,7 @@ from nexus.services.capabilities import is_text_document_ready
 from nexus.services.highlight_access import (
     get_highlight_for_author_write_or_404,
     get_highlight_for_visible_read_or_404,
-)
-from nexus.services.highlight_access import (
-    require_typed_highlight_or_404 as _require_typed_highlight_or_404,
+    require_typed_highlight_or_404,
 )
 from nexus.services.passage_anchors import normalize_quote_text
 from nexus.services.resource_graph.cleanup import (
@@ -277,35 +276,17 @@ def derive_exact_prefix_suffix(canonical_text: str, start: int, end: int) -> tup
 
 def map_integrity_error(e: IntegrityError) -> ApiError:
     """Map IntegrityError to appropriate ApiError based on constraint name."""
-    constraint_name = None
-
-    # Try to get constraint name from psycopg diag
-    diag = getattr(e.orig, "diag", None)
-    if diag is not None and hasattr(diag, "constraint_name"):
-        constraint_name = diag.constraint_name
-    else:
-        # Fallback: search exception message
-        msg = str(e.orig) if e.orig else str(e)
-        for name in (
-            "ck_highlights_color",
-            "ck_hfa_offsets_valid",
-        ):
-            if name in msg:
-                constraint_name = name
-                break
-
-    if constraint_name in ("ck_highlights_color", "ck_hfa_offsets_valid"):
+    name = integrity_constraint_name(e)
+    if name in {"ck_highlights_color", "ck_hfa_offsets_valid"}:
         return ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid highlight data")
-
-    # Unknown constraint — internal error
-    logger.error("unknown_integrity_error", constraint=constraint_name, error=str(e))
+    logger.error("unknown_integrity_error", constraint=name, error=str(e))
     return ApiError(ApiErrorCode.E_INTERNAL, "Database constraint violation")
 
 
 def _require_fragment_highlight_or_404(highlight: Highlight) -> HighlightFragmentAnchor:
     """Require a highlight to be a canonical fragment highlight."""
 
-    _require_typed_highlight_or_404(highlight)
+    require_typed_highlight_or_404(highlight)
     if highlight.anchor_kind != "fragment_offsets" or highlight.fragment_anchor is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     return highlight.fragment_anchor
@@ -314,7 +295,7 @@ def _require_fragment_highlight_or_404(highlight: Highlight) -> HighlightFragmen
 def _require_pdf_highlight_or_404(highlight: Highlight):
     """Require a highlight to be a canonical PDF highlight."""
 
-    _require_typed_highlight_or_404(highlight)
+    require_typed_highlight_or_404(highlight)
     if highlight.anchor_kind != "pdf_page_geometry" or highlight.pdf_anchor is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
     return highlight.pdf_anchor
@@ -323,7 +304,7 @@ def _require_pdf_highlight_or_404(highlight: Highlight):
 def _require_media_readable_for_existing_highlight(db: Session, highlight: Highlight) -> None:
     """Resolve media for a highlight and check document readability."""
 
-    _require_typed_highlight_or_404(highlight)
+    require_typed_highlight_or_404(highlight)
     media_id = highlight.anchor_media_id
     if media_id is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
@@ -373,7 +354,7 @@ def _batch_linked_note_blocks(
 
 def project_highlight(highlight: Highlight, viewer_id: UUID) -> TypedHighlightOut:
     """Convert Highlight ORM model to anchor-discriminated TypedHighlightOut."""
-    _require_typed_highlight_or_404(highlight)
+    require_typed_highlight_or_404(highlight)
 
     if highlight.anchor_kind == "pdf_page_geometry":
         pdf_anchor = _require_pdf_highlight_or_404(highlight)
@@ -443,12 +424,6 @@ def project_highlights_with_links(
         )
         for highlight in highlights
     ]
-
-
-def project_highlight_with_links(
-    db: Session, viewer_id: UUID, highlight: Highlight
-) -> TypedHighlightOut:
-    return project_highlights_with_links(db, viewer_id, [highlight])[0]
 
 
 def _fragment_highlight_span_conflict_exists(
@@ -869,7 +844,7 @@ def get_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> TypedHigh
         TypedHighlightOut with anchor discriminator for both fragment and PDF highlights.
     """
     highlight = get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
-    return project_highlight_with_links(db, viewer_id, highlight)
+    return project_highlights_with_links(db, viewer_id, [highlight])[0]
 
 
 def get_highlight_reader_target(

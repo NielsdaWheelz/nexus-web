@@ -312,7 +312,6 @@ def _resolve_media_evidence_span(
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
 
     selector: dict[str, Any] = row["selector"] if isinstance(row["selector"], dict) else {}
-    _assert_no_legacy_selector_identity(selector)
     resolver_kind = str(row["resolver_kind"])
     params: dict[str, str] = {"evidence": str(evidence_span_id)}
     raw_text_quote = selector.get("text_quote")
@@ -395,8 +394,6 @@ def _resolve_note_evidence_span(
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
 
     selector: dict[str, Any] = row["selector"] if isinstance(row["selector"], dict) else {}
-    _assert_no_legacy_selector_identity(selector)
-
     resolution = _resolve_note_selector(
         selector,
         evidence_span_id=evidence_span_id,
@@ -798,27 +795,6 @@ def _evidence_span_snapshot_matches(
     return reconstructed == span_text and span_text == exact
 
 
-_LEGACY_SELECTOR_IDENTITY_KEYS = frozenset(
-    {
-        "content_hash",
-        "content_sha256",
-        "file_sha256",
-        "fingerprint",
-        "geometry_fingerprint",
-        "geometry_version",
-        "hash",
-        "manifest_sha256",
-        "sha256",
-        "source_fingerprint",
-        "source_sha256",
-        "source_version",
-        "sourceVersion",
-        "transcript_version_id",
-        "version",
-    }
-)
-
-
 def _transcript_selector_time_range_valid(*, selector: dict[str, Any]) -> bool:
     t_start_ms = selector.get("t_start_ms")
     t_end_ms = selector.get("t_end_ms")
@@ -831,19 +807,3 @@ def _transcript_selector_time_range_valid(*, selector: dict[str, Any]) -> bool:
         return False
 
     return True
-
-
-def _assert_no_legacy_selector_identity(selector: dict[str, Any]) -> None:
-    if _contains_legacy_selector_identity(selector):
-        raise RuntimeError("Evidence selector includes legacy artifact identity")
-
-
-def _contains_legacy_selector_identity(value: Any) -> bool:
-    if isinstance(value, dict):
-        return any(
-            key in _LEGACY_SELECTOR_IDENTITY_KEYS or _contains_legacy_selector_identity(child)
-            for key, child in value.items()
-        )
-    if isinstance(value, list):
-        return any(_contains_legacy_selector_identity(child) for child in value)
-    return False

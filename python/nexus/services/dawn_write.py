@@ -352,9 +352,7 @@ class _CompletedDawnWriteFailure(BaseModel):
 type DawnWriteSkipReason = Literal[
     "disabled",
     "no_signals",
-    "llm_rejected",
     "already_exists",
-    "signals_changed",
     "pre_dispatch_aborted",
 ]
 

@@ -62,10 +62,6 @@ from nexus.services.resource_mutation_replay import (
     record_replay,
 )
 
-pm_doc_from_text = note_bodies.pm_doc_from_text
-pm_doc_from_markdown_projection = note_bodies.pm_doc_from_markdown_projection
-text_from_pm_json = note_bodies.text_from_pm_json
-
 
 @dataclass(frozen=True, slots=True)
 class RecentNoteAnchorFact:
@@ -284,7 +280,7 @@ def update_page(
     if page.title != request.title:
         page.title = request.title
         page.updated_at = func.now()
-        _bump_version(db, viewer_id, _page_ref(page.id), "title")
+        versions.bump_version(db, viewer_id=viewer_id, ref=_page_ref(page.id), lane="title")
     db.commit()
     db.refresh(page)
     return _page_out(db, viewer_id, page)
@@ -391,7 +387,7 @@ def _capture_daily_page_note_in_transaction(
     request: DailyCaptureRequest,
     page_id_candidate: UUID,
 ) -> DailyCaptureResult:
-    if not text_from_pm_json(request.body_pm_json).strip():
+    if not note_bodies.text_from_pm_json(request.body_pm_json).strip():
         raise InvalidRequestError(
             ApiErrorCode.E_EMPTY_NOTE_BODY,
             "Daily capture requires a meaningful note body",
@@ -516,7 +512,12 @@ def get_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockOut
 def upsert_note_body_without_commit(
     db: Session, viewer_id: UUID, block_id: UUID, body_pm_json: dict[str, Any]
 ) -> NoteBlock:
-    return _upsert_note_body(db, viewer_id, block_id, body_pm_json)
+    return note_bodies.upsert_note_body(
+        db,
+        viewer_id=viewer_id,
+        block_id=block_id,
+        body_pm_json=body_pm_json,
+    )
 
 
 def remove_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> None:
@@ -629,7 +630,12 @@ def _set_highlight_note_in_transaction(
     if existing is not None and existing.id != block_id:
         raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight note block id mismatch")
 
-    block = _upsert_note_body(db, viewer_id, block_id, body_pm_json)
+    block = note_bodies.upsert_note_body(
+        db,
+        viewer_id=viewer_id,
+        block_id=block_id,
+        body_pm_json=body_pm_json,
+    )
     enqueue_note_reindex(db, note_block_id=block.id, reason="highlight_note")
     if existing is None:
         create_edge(
@@ -709,17 +715,6 @@ def delete_highlight_note_in_current_transaction(
     return True
 
 
-def _upsert_note_body(
-    db: Session, viewer_id: UUID, block_id: UUID, body_pm_json: dict[str, Any]
-) -> NoteBlock:
-    return note_bodies.upsert_note_body(
-        db,
-        viewer_id=viewer_id,
-        block_id=block_id,
-        body_pm_json=body_pm_json,
-    )
-
-
 def _create_daily_page_binding_without_commit(
     db: Session,
     *,
@@ -783,21 +778,9 @@ def _default_daily_page_title(local_date: date) -> str:
     return f"{local_date.strftime('%B')} {local_date.day}, {local_date.year}"
 
 
-def _append_text(content: list[dict[str, Any]], text_value: str) -> None:
-    for index, line in enumerate(text_value.split("\n")):
-        if index > 0:
-            content.append({"type": "hard_break"})
-        if line:
-            content.append({"type": "text", "text": line})
-
-
 def _page_ref(page_id: UUID) -> ResourceRef:
     return ResourceRef(scheme="page", id=page_id)
 
 
 def _note_ref(block_id: UUID) -> ResourceRef:
     return ResourceRef(scheme="note_block", id=block_id)
-
-
-def _bump_version(db: Session, viewer_id: UUID, ref: ResourceRef, lane: str) -> None:
-    versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane=lane)

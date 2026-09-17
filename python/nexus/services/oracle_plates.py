@@ -162,19 +162,6 @@ def get_oracle_plate_metadata(
     )
 
 
-def get_oracle_plate_bytes(
-    *,
-    session_factory: Callable[[], Session],
-    image_id: UUID,
-    storage_client: StorageClient | None = None,
-) -> OraclePlateBytes:
-    metadata = get_oracle_plate_metadata(
-        session_factory=session_factory,
-        image_id=image_id,
-    )
-    return read_oracle_plate_bytes(metadata, storage_client=storage_client)
-
-
 def read_oracle_plate_bytes(
     metadata: OraclePlateMetadata,
     *,
@@ -246,12 +233,12 @@ def validate_oracle_plate_storage_metadata(
 
 
 def _oracle_plate_storage_invalid_reason(
-    row: OraclePlate | OraclePlateMetadata,
+    row: OraclePlateMetadata,
     storage_client: StorageClient,
 ) -> str | None:
     try:
         _validate_plate_metadata(
-            image_id=_plate_image_id(row),
+            image_id=row.image_id,
             storage_key=row.storage_key,
             byte_size=row.byte_size,
             content_type=row.content_type,
@@ -274,12 +261,6 @@ def _oracle_plate_storage_invalid_reason(
             f"({object_content_type} != {row.content_type})"
         )
     return None
-
-
-def _plate_image_id(row: OraclePlate | OraclePlateMetadata) -> UUID:
-    if isinstance(row, OraclePlateMetadata):
-        return row.image_id
-    return row.id
 
 
 def _ensure_plate_object(

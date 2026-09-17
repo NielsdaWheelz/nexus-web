@@ -24,14 +24,6 @@ _OBJECT_REF_MARKDOWN_RE = re.compile(
 )
 
 
-def pm_doc_from_text(text: str) -> dict[str, Any]:
-    return (
-        {"type": "paragraph", "content": [{"type": "text", "text": text}]}
-        if text
-        else {"type": "paragraph"}
-    )
-
-
 def pm_doc_from_markdown_projection(markdown: str) -> dict[str, Any]:
     content: list[dict[str, Any]] = []
     position = 0

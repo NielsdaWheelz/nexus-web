@@ -272,10 +272,10 @@ def _canonicalize_target_href(href: str) -> str:
 
     if segments[0] == "settings" and len(segments) == 2:
         if segments[1] in {
+            "account",
             "billing",
             "reader",
             "appearance",
-            "keys",
             "local-vault",
             "identities",
             "keybindings",

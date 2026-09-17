@@ -1067,7 +1067,7 @@ def _apply_completed_oracle(
     return retry_serializable(db, "oracle.publish", publish)
 
 
-def _stage_oracle_terminal_without_dispatch(
+def _finish_oracle_terminal_without_dispatch(
     db: Session,
     *,
     reading_id: UUID,
@@ -1075,8 +1075,8 @@ def _stage_oracle_terminal_without_dispatch(
     reason: str,
     error_code: OracleReadingFailureCode | None = None,
     error_detail: str | None = None,
-) -> dict[str, Any] | None:
-    """Stage Oracle's journal, ledger, and domain terminal; caller commits."""
+) -> dict[str, Any]:
+    """Commit Oracle's journal, ledger, and domain terminal without dispatching."""
 
     owner = LlmCallOwner(kind="oracle_reading", id=reading_id)
     lock_generation_owner_in_current_transaction(db, owner)
@@ -1086,7 +1086,9 @@ def _stage_oracle_terminal_without_dispatch(
     if reading is None:
         raise ApiError(ApiErrorCode.E_NOT_FOUND, "Oracle reading not found")
     if not lock_running_job_claim(db, context=context):
-        return None
+        lost_claim_status = reading.status
+        db.rollback()
+        return {"status": lost_claim_status, "noop": True}
     job = get_job(db, context.job_id)
     if (
         job is None
@@ -1097,6 +1099,7 @@ def _stage_oracle_terminal_without_dispatch(
 
     if reading.status == "pending":
         if error_code is None:
+            db.commit()
             return {"status": "pending", "noop": True}
         completed: _CompletedOracle = _CompletedOracleFailure(
             error_code=error_code,
@@ -1146,6 +1149,7 @@ def _stage_oracle_terminal_without_dispatch(
                 completed.error_detail[:1000] if completed.error_detail is not None else None
             ),
         )
+    db.commit()
     return result
 
 
@@ -1185,19 +1189,13 @@ async def execute_reading(
 
     reading = _get_reading_or_fail(db, reading_id)
     if reading.status != "pending":
-        observed_status = reading.status
         db.rollback()
-        result = _stage_oracle_terminal_without_dispatch(
+        return _finish_oracle_terminal_without_dispatch(
             db,
             reading_id=reading_id,
             context=context,
             reason="oracle reading became terminal before dispatch",
         )
-        if result is None:
-            db.rollback()
-            return {"status": observed_status, "noop": True}
-        db.commit()
-        return result
 
     question = reading.question_text
     viewer_id = reading.user_id
@@ -1211,7 +1209,7 @@ async def execute_reading(
             f"{readiness.ready_plate_count}/{readiness.plate_count} plates"
         )
         db.rollback()
-        result = _stage_oracle_terminal_without_dispatch(
+        return _finish_oracle_terminal_without_dispatch(
             db,
             reading_id=reading_id,
             context=context,
@@ -1219,11 +1217,6 @@ async def execute_reading(
             error_code=oracle_reading_failure_code(E_ORACLE_CORPUS_NOT_READY),
             error_detail=detail,
         )
-        if result is None:
-            db.rollback()
-            return {"status": "pending", "noop": True}
-        db.commit()
-        return result
 
     # Embedding construction performs external I/O; the readiness snapshot
     # is complete and no database transaction may cross that boundary.
@@ -1261,7 +1254,7 @@ async def execute_reading(
         if exc.code is not ApiErrorCode.E_APP_SEARCH_FAILED:
             raise
         db.rollback()
-        result = _stage_oracle_terminal_without_dispatch(
+        return _finish_oracle_terminal_without_dispatch(
             db,
             reading_id=reading_id,
             context=context,
@@ -1269,11 +1262,6 @@ async def execute_reading(
             error_code=oracle_reading_failure_code(exc.code.value),
             error_detail=exc.message,
         )
-        if result is None:
-            db.rollback()
-            return {"status": "pending", "noop": True}
-        db.commit()
-        return result
 
     if len(candidates) < 3:
         db.rollback()
@@ -1284,7 +1272,7 @@ async def execute_reading(
     if requires_user_content and not _candidate_set_includes_user_media(candidates):
         detail = "user content is searchable but yielded no user_media candidate"
         db.rollback()
-        result = _stage_oracle_terminal_without_dispatch(
+        return _finish_oracle_terminal_without_dispatch(
             db,
             reading_id=reading_id,
             context=context,
@@ -1292,11 +1280,6 @@ async def execute_reading(
             error_code=oracle_reading_failure_code(ApiErrorCode.E_APP_SEARCH_FAILED.value),
             error_detail=detail,
         )
-        if result is None:
-            db.rollback()
-            return {"status": "pending", "noop": True}
-        db.commit()
-        return result
 
     user_content = _build_oracle_user_content(question=question, candidates=candidates)
     intent = _oracle_intent(user_content=user_content)
@@ -1355,7 +1338,7 @@ async def execute_reading(
         )
     except GenerationAdmissionInputsChanged:
         db.rollback()
-        result = _stage_oracle_terminal_without_dispatch(
+        return _finish_oracle_terminal_without_dispatch(
             db,
             reading_id=reading_id,
             context=context,
@@ -1363,23 +1346,13 @@ async def execute_reading(
             error_code=oracle_reading_failure_code(ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value),
             error_detail="Oracle input changed after the generation was prepared",
         )
-        if result is None:
-            db.rollback()
-            return {"status": "pending", "noop": True}
-        db.commit()
-        return result
     except GenerationDispatchAborted:
-        result = _stage_oracle_terminal_without_dispatch(
+        return _finish_oracle_terminal_without_dispatch(
             db,
             reading_id=reading_id,
             context=context,
             reason="oracle dispatch invalidated before acceptance",
         )
-        if result is None:
-            db.rollback()
-            return {"status": "pending", "noop": True}
-        db.commit()
-        return result
     if isinstance(execution_result, RescheduleRequested):
         return execution_result
     if not isinstance(execution_result, CompletedGeneration):
