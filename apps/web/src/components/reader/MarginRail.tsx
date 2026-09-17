@@ -30,7 +30,7 @@ const ROW_GAP = 6;
 const ROW_HEIGHT = 72;
 const CHAPTER_OPENER = elvishInscriptions.elenSila;
 
-export interface MarginRailProps {
+interface MarginRailProps {
   items: MarginItem[];
   contentRef: RefObject<HTMLElement | null>;
   measureKey: string | number;
@@ -83,7 +83,6 @@ export default function MarginRail({
       contentRef,
       rows: wideEnough && !isMobile ? anchoredRows : [],
       measureKey,
-      missingTargetLogName: "reader_margin_target_missing",
     });
 
   // Breakpoint: measure the pane (contentRef's scroll parent) against a hidden
@@ -204,11 +203,7 @@ export default function MarginRail({
   const remaining = overflowCount + hiddenByCap;
 
   return (
-    <aside
-      className={styles.rail}
-      aria-label="Margin"
-      data-testid="margin-rail"
-    >
+    <aside className={styles.rail} aria-label="Margin">
       {probe}
       {/* The chapter opener's plaque (direction §5.2, §8.4): one verified
           inscription in the margin, never inside the text measure, resting at
@@ -260,7 +255,6 @@ export default function MarginRail({
         <button
           type="button"
           className={styles.overflowFoot}
-          data-testid="margin-overflow-foot"
           onClick={onOpenSidecar}
         >
           +{remaining} more
@@ -270,7 +264,7 @@ export default function MarginRail({
   );
 }
 
-export function MarginItemBody({
+function MarginItemBody({
   item,
   onActivateItem,
   onDismissSynapse,

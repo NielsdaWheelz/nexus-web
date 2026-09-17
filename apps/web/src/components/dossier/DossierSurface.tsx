@@ -119,7 +119,7 @@ export default function DossierSurface({
   };
 
   return (
-    <div className={styles.surface} data-testid="resource-dossier-surface">
+    <div className={styles.surface}>
       <div className={styles.statusRegion} role="status" aria-live="polite">
         {vm.statusMessage}
       </div>

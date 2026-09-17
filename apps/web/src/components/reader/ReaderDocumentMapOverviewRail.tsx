@@ -141,34 +141,33 @@ export default function ReaderDocumentMapOverviewRail({
   }
 
   return (
-    <div className={styles.rail} data-testid="reader-document-map-overview-rail" role="region" aria-label="Document Map overview">
+    <div className={styles.rail} role="region" aria-label="Document Map overview">
       {onOpenDetail ? <button type="button" className={styles.openDetail} onClick={onOpenDetail} aria-label="Open document map">≡</button> : null}
       <div ref={trackRef} className={styles.track} role="toolbar" aria-orientation="vertical" aria-label="Document Map destinations">
         {boundaries.map((position) => (
           <span key={position} className={styles.boundary} aria-hidden="true" style={{ top: `${((position - scope.start) / (scope.end - scope.start)) * 100}%` }} />
         ))}
         {band.kind === "Present" ? (
-          <div className={styles.band} data-testid="reader-document-map-band" aria-hidden="true" style={{ top: `${band.value.start * 100}%`, height: `${(band.value.end - band.value.start) * 100}%` }} />
+          <div className={styles.band} aria-hidden="true" style={{ top: `${band.value.start * 100}%`, height: `${(band.value.end - band.value.start) * 100}%` }} />
         ) : null}
         {markers.map((marker) => {
           if (marker.kind === "Contents" || marker.end_position.kind === "Absent") return null;
           const range = projectReaderLocalRange({ scope, range: { start: marker.position, end: marker.end_position.value }, documentLength: 1 });
           return range.kind === "Present" ? (
-            <span key={marker.id} className={styles.evidenceRange} data-testid="reader-evidence-range" aria-hidden="true" style={{ top: `${range.value.start * 100}%`, height: `${(range.value.end - range.value.start) * 100}%`, "--marker-color": markerColor(marker) } as CSSProperties} />
+            <span key={marker.id} className={styles.evidenceRange} aria-hidden="true" style={{ top: `${range.value.start * 100}%`, height: `${(range.value.end - range.value.start) * 100}%`, "--marker-color": markerColor(marker) } as CSSProperties} />
           ) : null;
         })}
         {projected.map(({ marker, position }) => (
           <span
             key={marker.id}
             className={cx(styles.exactMarker, marker.kind === "Contents" ? styles.structureLane : styles.evidenceLane)}
-            data-testid={marker.kind === "Contents" ? "reader-section-tick" : "reader-evidence-mark"}
             aria-hidden="true"
             style={{ top: `${position * 100}%` }}
           >
             <MarkerGlyph marker={marker} />
           </span>
         ))}
-        {current.kind === "Present" ? <span className={styles.current} data-testid="reader-current-position" aria-hidden="true" style={{ top: `${current.value * 100}%` }} /> : null}
+        {current.kind === "Present" ? <span className={styles.current} aria-hidden="true" style={{ top: `${current.value * 100}%` }} /> : null}
         {groups.map((group, index) => {
           const expanded = group.key === openGroup?.key;
           return (

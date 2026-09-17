@@ -14,9 +14,9 @@ import type {
   PdfViewerLike,
 } from "@/components/pdfReaderRuntime";
 
-export const PDF_FIND_MATCH_THRESHOLD = 2_000;
+const PDF_FIND_MATCH_THRESHOLD = 2_000;
 export const PDF_FIND_STALL_TIMEOUT_MS = 30_000;
-export const PDF_FIND_SOURCE_ACCESS_REFRESH_ABORT_MESSAGE =
+const PDF_FIND_SOURCE_ACCESS_REFRESH_ABORT_MESSAGE =
   "PDF Find source access is refreshing.";
 
 export function pdfFindSourceAccessRefreshAbort(): DOMException {
@@ -41,7 +41,7 @@ export type PdfFindError =
   | { readonly kind: "TextUnavailable"; readonly scope: "EntirePdf" }
   | { readonly kind: "RuntimeUnavailable" };
 
-export interface PdfFindSource {
+interface PdfFindSource {
   readonly mediaId: string;
   readonly fingerprints: readonly (string | null)[];
   readonly numPages: number;
@@ -70,7 +70,7 @@ export type PdfFindOriginCapture =
   | { readonly kind: "Captured"; readonly value: PdfFindOrigin }
   | { readonly kind: "Unavailable" };
 
-export interface PdfRuntimeFindRequest {
+interface PdfRuntimeFindRequest {
   readonly generation: number;
   readonly query: string;
   readonly scope: PdfFindScope;
@@ -79,7 +79,7 @@ export interface PdfRuntimeFindRequest {
   readonly signal: AbortSignal;
 }
 
-export interface PdfRuntimeFindOccurrence {
+interface PdfRuntimeFindOccurrence {
   readonly locator: PdfFindLocator;
   readonly snippet: readonly EmphasisSegment[];
 }
@@ -108,7 +108,7 @@ export interface PdfFindRuntime {
   clearPresentation(): void;
 }
 
-export interface CreatePdfFindRuntimeOptions {
+interface CreatePdfFindRuntimeOptions {
   readonly mediaId: string;
   readonly viewerModule: PdfJsViewerLike;
   readonly eventBus: PdfEventBusLike;
@@ -124,7 +124,7 @@ export interface CreatePdfFindRuntimeOptions {
   ) => Promise<void>;
 }
 
-export interface PdfFindRuntimeBinding {
+interface PdfFindRuntimeBinding {
   readonly findController: PdfFindControllerLike;
   readonly findLinkService: PdfLinkServiceLike;
   setViewer(viewer: PdfViewerLike): void;
@@ -231,37 +231,8 @@ async function runDocumentCommand<T>({
   }
 }
 
-function assertCurrentScope(scope: PdfFindScope, numPages: number): void {
-  switch (scope.kind) {
-    case "EntirePdf":
-      return;
-    case "Page":
-      if (
-        !Number.isSafeInteger(scope.pageNumber) ||
-        scope.pageNumber < 1 ||
-        scope.pageNumber > numPages
-      ) {
-        throw new Error("PDF Find page scope is outside the loaded document.");
-      }
-      return;
-    default: {
-      const exhaustive: never = scope;
-      throw new Error(`Unknown PDF Find scope: ${String(exhaustive)}`);
-    }
-  }
-}
-
 function pageIsInScope(scope: PdfFindScope, pageIndex: number): boolean {
-  switch (scope.kind) {
-    case "EntirePdf":
-      return true;
-    case "Page":
-      return pageIndex === scope.pageNumber - 1;
-    default: {
-      const exhaustive: never = scope;
-      throw new Error(`Unknown PDF Find scope: ${String(exhaustive)}`);
-    }
-  }
+  return scope.kind === "EntirePdf" || pageIndex === scope.pageNumber - 1;
 }
 
 function finalPageMatches(
@@ -857,9 +828,6 @@ export function createPdfFindRuntime({
   captureOrigin,
   restoreOrigin,
 }: CreatePdfFindRuntimeOptions): PdfFindRuntimeBinding {
-  if (mediaId.length === 0) {
-    throw new Error("PDF Find requires a media identity.");
-  }
   const {
     NexusPdfFindLinkService,
     NexusPdfFindController,
@@ -873,7 +841,6 @@ export function createPdfFindRuntime({
   });
 
   let documentLifetime: DocumentLifetime | null = null;
-  let viewerAttached = false;
   let disposed = false;
 
   const detachDocument = () => {
@@ -889,24 +856,14 @@ export function createPdfFindRuntime({
     findController,
     findLinkService,
     setViewer(viewer) {
-      if (disposed) {
-        throw new Error("Cannot attach a disposed PDF Find runtime.");
-      }
       findLinkService.setViewer(viewer);
-      viewerAttached = true;
     },
     setDocument: ((
       nextDocument: PdfDocumentLike | null,
     ): PdfFindRuntime | null => {
-      if (disposed) {
-        throw new Error("Cannot bind a disposed PDF Find runtime.");
-      }
       detachDocument();
       if (nextDocument === null) {
         return null;
-      }
-      if (!viewerAttached) {
-        throw new Error("PDF Find viewer must be attached before its document.");
       }
       if (
         !Number.isSafeInteger(nextDocument.numPages) ||
@@ -936,13 +893,14 @@ export function createPdfFindRuntime({
             throw abortError();
           }
           if (
-            !Number.isSafeInteger(request.generation) ||
-            Array.from(request.query).length < 1 ||
-            Array.from(request.query).length > 256
+            request.scope.kind === "Page" &&
+            (request.scope.pageNumber < 1 ||
+              request.scope.pageNumber > source.numPages)
           ) {
-            throw new Error("PDF Find request is malformed.");
+            throw new Error(
+              "PDF Find page scope is outside the loaded document.",
+            );
           }
-          assertCurrentScope(request.scope, source.numPages);
           const queryState: PdfFindEventState = {
             type: "nexus-query",
             query: request.query,

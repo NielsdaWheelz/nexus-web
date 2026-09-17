@@ -23,9 +23,9 @@ const MATCH_THRESHOLD = 2_000;
 const SNIPPET_MAX_CODEPOINTS =
   QUERY_MAX_CODEPOINTS + 2 * 64;
 
-export const DOSSIER_FIND_TRANSPORT_TIMEOUT_MS = 2_000;
+const DOSSIER_FIND_TRANSPORT_TIMEOUT_MS = 2_000;
 
-export interface DossierDocumentFindSectionInfo {
+interface DossierDocumentFindSectionInfo {
   readonly id: string;
   readonly title: string;
 }
@@ -37,7 +37,7 @@ export type DossierDocumentFindScope =
       readonly sectionId: string;
     };
 
-export interface DossierDocumentFindOccurrence {
+interface DossierDocumentFindOccurrence {
   readonly ordinal: number;
   readonly startCp: number;
   readonly endCp: number;
@@ -45,7 +45,7 @@ export interface DossierDocumentFindOccurrence {
   readonly section: Presence<DossierDocumentFindSectionInfo>;
 }
 
-export type DossierDocumentFindResult =
+type DossierDocumentFindResult =
   | {
       readonly kind: "Ready";
       readonly occurrences: readonly DossierDocumentFindOccurrence[];
@@ -56,14 +56,14 @@ export type DossierDocumentFindResult =
       readonly threshold: 2_000;
     };
 
-export type DossierDocumentFindActivation =
+type DossierDocumentFindActivation =
   | { readonly kind: "Activated"; readonly ordinal: number }
   | {
       readonly kind: "Rejected";
       readonly reason: "OriginUnavailable";
     };
 
-export type DossierDocumentFindReturn =
+type DossierDocumentFindReturn =
   | { readonly kind: "Returned" }
   | {
       readonly kind: "Rejected";
@@ -143,7 +143,7 @@ function currentTheme(): MachineDocumentTheme {
   if (explicit === "light" || explicit === "dark") return explicit;
   // The sealed document knows only day and night; the Solar is a dark room.
   if (explicit === "elvish") return "dark";
-  return window.matchMedia?.("(prefers-color-scheme: light)").matches
+  return window.matchMedia("(prefers-color-scheme: light)").matches
     ? "light"
     : "dark";
 }
@@ -151,24 +151,24 @@ function currentTheme(): MachineDocumentTheme {
 function useNexusDocumentTheme(): MachineDocumentTheme {
   const [theme, setTheme] = useState<MachineDocumentTheme>(currentTheme);
   useEffect(() => {
-    const media = window.matchMedia?.("(prefers-color-scheme: light)") ?? null;
+    const media = window.matchMedia("(prefers-color-scheme: light)");
     const update = () => setTheme(currentTheme());
     const observer = new MutationObserver(update);
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
     });
-    media?.addEventListener?.("change", update);
+    media.addEventListener("change", update);
     update();
     return () => {
       observer.disconnect();
-      media?.removeEventListener?.("change", update);
+      media.removeEventListener("change", update);
     };
   }, []);
   return theme;
 }
 
-export function buildDossierFrameDocument(input: {
+function buildDossierFrameDocument(input: {
   title: string;
   contentHtml: string;
   theme: MachineDocumentTheme;

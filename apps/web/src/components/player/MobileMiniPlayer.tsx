@@ -1,18 +1,9 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
-import {
-  Ellipsis,
-  Gauge,
-  List,
-  Mic,
-  SkipBack,
-  SkipForward,
-  X,
-} from "lucide-react";
+import { Ellipsis, Gauge, SkipBack, SkipForward, X } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import {
   useMobileViewport,
   useRootTextEntryFocused,
@@ -29,10 +20,14 @@ import {
   PlayerCaptureButton,
   PlayerIdentity,
   PlayerMiniProgress,
+  PlayerRecordingActionsMenu,
   PlayerStatus,
   PlayerTransport,
-  playerMediaActionSubject,
-  playerSourceHref,
+  playerCaptureAction,
+  playerContentsAction,
+  playerOpenLecternAction,
+  playerPreviewActions,
+  playerReviewCapturesAction,
   playerTitle,
   type PresentPlayerChrome,
 } from "./PlayerControls";
@@ -69,10 +64,6 @@ export default function MobileMiniPlayer({
   const [captureInMenu, setCaptureInMenu] = useState(false);
   const hidden = suspended || rootTextEntryFocused;
   const locked = playerTransportLocked(model);
-  const chapters =
-    model.kind === "Canonical"
-      ? model.state.session.descriptor.activation.chapters
-      : [];
 
   useLayoutEffect(() => {
     if (hidden || playerRef.current === null) return;
@@ -87,34 +78,8 @@ export default function MobileMiniPlayer({
   }, []);
 
   const options: ActionDescriptor[] = [
-    ...(model.kind === "Canonical" && captureInMenu
-      ? [
-          {
-            id: "Player.Capture",
-            kind: "custom" as const,
-            label: "Capture this moment",
-            icon: <Mic aria-hidden="true" />,
-            render: ({ closeMenu }: { closeMenu: () => void }) => (
-              <PlayerCaptureButton
-                model={model}
-                capture={capture}
-                afterCapture={closeMenu}
-              />
-            ),
-          },
-        ]
-      : []),
-    ...(model.kind === "Canonical"
-      ? [
-          {
-            id: "Player.ReviewCaptures",
-            kind: "command" as const,
-            label: `Review captures (${capture.waypointCount})`,
-            icon: <Mic aria-hidden="true" />,
-            onSelect: capture.openReview,
-          },
-        ]
-      : []),
+    ...(captureInMenu ? playerCaptureAction(model, capture) : []),
+    ...playerReviewCapturesAction(model, capture),
     {
       id: "Player.Playback",
       kind: "command",
@@ -144,46 +109,9 @@ export default function MobileMiniPlayer({
           },
         ]
       : []),
-    // A canonical recording's open/source/media actions are the shared resource
-    // dropdown (rendered separately below); a Preview is a transient resource
-    // and keeps its own plain open/source controls.
-    ...(model.kind === "Preview"
-      ? [
-          {
-            id: "OccurrenceAction.PlayerPreview.Open",
-            kind: "command" as const,
-            label: "Open preview",
-            onSelect: onOpenTarget,
-          },
-          {
-            id: "OccurrenceAction.PlayerPreview.OpenSource",
-            kind: "link" as const,
-            label: "Open source",
-            href: playerSourceHref(model),
-          },
-        ]
-      : []),
-    ...(model.kind === "Canonical" && chapters.length > 0
-      ? [
-          {
-            id: "Player.Contents",
-            kind: "command" as const,
-            label: "Contents",
-            icon: <List aria-hidden="true" />,
-            onSelect: onOpenContents,
-          },
-        ]
-      : []),
-    ...(model.kind === "Canonical"
-      ? [
-          {
-            id: "Player.OpenLectern",
-            kind: "command" as const,
-            label: "Open Lectern",
-            onSelect: onOpenLectern,
-          },
-        ]
-      : []),
+    ...playerPreviewActions(model, onOpenTarget),
+    ...playerContentsAction(model, onOpenContents),
+    ...playerOpenLecternAction(model, onOpenLectern),
     {
       id: "Player.Close",
       kind: "command",
@@ -218,24 +146,20 @@ export default function MobileMiniPlayer({
           <PlayerCaptureButton model={model} capture={capture} />
         ) : null}
         <PlayerTransport model={model} compact />
-        {model.kind === "Canonical" ? (
-          <ResourceActionMenu
-            actionSubject={playerMediaActionSubject(model)}
-            label="Recording actions"
-            placement="above"
-            renderTrigger={(props) => (
-              <Button
-                {...props}
-                variant="ghost"
-                size="lg"
-                iconOnly
-                className={styles.more}
-              >
-                <Ellipsis aria-hidden="true" />
-              </Button>
-            )}
-          />
-        ) : null}
+        <PlayerRecordingActionsMenu
+          model={model}
+          renderTrigger={(props) => (
+            <Button
+              {...props}
+              variant="ghost"
+              size="lg"
+              iconOnly
+              className={styles.more}
+            >
+              <Ellipsis aria-hidden="true" />
+            </Button>
+          )}
+        />
         <ActionMenu
           options={options}
           label="More player controls"

@@ -37,7 +37,7 @@ function sameRate(left: number, right: number): boolean {
   return Math.abs(left - right) < 0.0001;
 }
 
-export function playbackRateAccessibleName(rate: number): string {
+function playbackRateAccessibleName(rate: number): string {
   return sameRate(rate, 1)
     ? "Playback speed, normal"
     : `Playback speed, ${rateText(rate)} times`;
