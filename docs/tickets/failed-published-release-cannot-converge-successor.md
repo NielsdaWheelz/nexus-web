@@ -6,8 +6,8 @@ status: open · origin: 2026-09-15, restoration forward-recovery review · area:
 
 `deploy/hetzner/release.py:_finalize_once` creates the immutable record and sets
 `current` before completing the attempt as `Succeeded`. a crash can leave the
-current candidate in `FrontendPromoted`. if its resumed backend/public proof or
-capacity refresh then fails permanently, `_record_permanent_failure` settles
+current candidate in `FrontendPromoted`. if its resumed backend/public checks
+then fail permanently, `_record_permanent_failure` settles
 that same attempt to `ForwardFixRequired` without undoing the published record.
 
 the next fresh candidate reaches `_converge_resource_limits`, which rejects
@@ -21,10 +21,9 @@ failure: that failure left the succeeded a1 predecessor as current.
 after the current restoration, reconcile the convergence owner's identity
 authority with committed publication and forward-fix state. preserve exact
 immutable current-record and infrastructure bindings, stopped writers, and
-the prohibition on restarting failed code. do not weaken capacity qualification
-or manufacture a succeeded attempt.
+the prohibition on restarting failed code. do not manufacture a succeeded
+attempt.
 
-prove that a failed published-prefix candidate permits its fresh successor's
-owned preflight while invalid record/attempt combinations remain refused. keep
-pure phase/identity regressions in `./scripts/test`; do not recreate a release
-simulation harness.
+accept when a failed published-prefix candidate permits its fresh successor's
+owned preflight while invalid record/attempt combinations remain refused.
+manually verify the affected recovery path; do not recreate a release harness.

@@ -14,7 +14,6 @@ from nexus.services.content_indexing import (
     MEDIA_CONTENT_REINDEX_REASONS,
     IndexOwner,
     MediaContentReindexWork,
-    TextEmbeddingBatch,
     build_spooled_content_index_plan,
     prepare_media_content_reindex,
     publish_media_content_reindex,
@@ -28,19 +27,7 @@ def media_content_reindex_job(
     payload: Mapping[str, Any],
     context: JobExecutionContext,
 ) -> dict[str, object]:
-    return run_media_content_reindex(
-        payload=payload, context=context, embed_texts=build_text_embeddings
-    )
-
-
-def run_media_content_reindex(
-    *,
-    payload: Mapping[str, Any],
-    context: JobExecutionContext,
-    embed_texts: TextEmbeddingBatch,
-) -> dict[str, object]:
-    """The three fenced phases of one reindex execution, with the embedding
-    provider as the one explicit external dependency."""
+    """Run the three fenced phases of one reindex execution."""
     media_id, revision, reason = _parse_payload(payload)
 
     from nexus.jobs.registry import get_default_registry
@@ -82,7 +69,7 @@ def run_media_content_reindex(
             source_kind=work.source_kind,
             blocks=work.blocks,
             spool_path=attempt_directory / "content-index.jsonl",
-            embed_texts=embed_texts,
+            embed_texts=build_text_embeddings,
         )
 
         publish_db = get_session_factory()()

@@ -32,9 +32,8 @@ will read wrong the moment a label is put in it.
 ## Evidence
 
 Computed from `apps/web/src/app/globals.css` through each rule's own mix with the
-WCAG 2.1 relative-luminance formula — the same computation the browser case
-`ImportsWorkspace.browser.test.tsx` ("paints every status pill label at AA
-contrast over its own tinted fill") runs against the rendered DOM. Below 4.5:1:
+WCAG 2.1 relative-luminance formula, also used by the former browser contrast
+check against the rendered dom. Below 4.5:1:
 
 | Rule | Palette | Ground | Ratio |
 |---|---|---|---|
@@ -64,6 +63,6 @@ fix remeasures rather than assuming the step carries.
 
 ## Acceptance
 
-A browser case owned by the media pane (and one by the PDF reader) computes the
-WCAG ratio from the rendered `color` and the composited effective background of
-the banner and fails below 4.5:1, in the light, dark and elvish palettes.
+manual measurements show at least 4.5:1 between banner text and the composited
+effective background in the media pane and pdf reader, across light, dark, and
+elvish palettes.

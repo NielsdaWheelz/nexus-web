@@ -13,12 +13,11 @@ technology-ownership, import, and module-boundary model.
 - `apps/android/` — Android shell app.
 - `apps/api/` — FastAPI ASGI entrypoint.
 - `apps/extension/` — browser extension.
-- `apps/web/` — Next.js frontend/BFF and Node-environment unit tests.
+- `apps/web/` — Next.js frontend/BFF.
 - `apps/worker/` — worker entrypoint.
-- `python/` — backend package and Python unit tests.
+- `python/` — backend package.
 - `migrations/` — Alembic migrations.
 - `supabase/` — Supabase local configuration.
-- `testdata/` — cross-language deterministic test corpora.
 
 ## Imports
 

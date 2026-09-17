@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import sys
@@ -115,7 +114,7 @@ class RuntimeIdentity:
 
 @dataclass(frozen=True, slots=True)
 class AndroidPlayerProtocolIdentity:
-    """The exact web/native player compatibility identity: v2 plus the corpus digest."""
+    """The published web/native player compatibility identity."""
 
     version: int
     contract_sha256: str
@@ -139,18 +138,10 @@ class AndroidPlayerProtocolIdentity:
         return cls(version=version, contract_sha256=contract_sha256)
 
     @classmethod
-    def of_corpus(cls, corpus: Path) -> AndroidPlayerProtocolIdentity:
-        """Hash the raw corpus bytes; nothing decodes or re-serializes them."""
-        try:
-            raw = corpus.read_bytes()
-        except OSError as exc:
-            raise BackendArtifactDefect(
-                "Android player protocol corpus is absent or unreadable"
-            ) from exc
-        return cls(
-            version=ANDROID_PLAYER_PROTOCOL_VERSION,
-            contract_sha256=hashlib.sha256(raw).hexdigest(),
-        )
+    def from_contract(cls, path: Path) -> AndroidPlayerProtocolIdentity:
+        """Load the declared identity without changing installed-client compatibility."""
+        value, _ = _load_closed_json(path)
+        return cls.from_json(value)
 
 
 @dataclass(frozen=True, slots=True)

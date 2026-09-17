@@ -15,13 +15,11 @@ release state, or Vercel aliases outside the owners named here.
 | Authentication | Supabase Auth only |
 | API TLS | Caddy on the Hetzner host |
 
-Authentication is released as one hard contract. Before any release mutation,
-`deploy/supabase/verify-auth-config.sh` proves hosted refresh rotation is
-enabled with a ten-second reuse interval. After the exact production alias is
-bound, `deploy/smoke/auth-smoke.sh` proves recovery, terminal clearing, BFF
-unauthenticated behavior, OAuth callback identity, stale-cookie rejection, and
-private no-store headers. Durable `finalize` is unreachable until that smoke
-passes; failure settles the bound frontend for a forward fix.
+authentication configuration remains a deployment invariant. before release
+mutation, `deploy/supabase/verify-auth-config.sh` checks hosted refresh rotation
+and its ten-second reuse interval. synthetic auth smoke and capacity canaries
+are removed; release admission retains runtime health, readiness, identity,
+resource limits, and migration backup checks.
 
 Current public hosts are `nexus.nielseriknandal.com` and
 `api.nexus.nielseriknandal.com`. The VPS is `nexus-api-worker` at
@@ -35,15 +33,6 @@ expected Oracle manifest digest, task contract, and captured VPS config.
 
 - `deploy/hetzner/deploy.sh <source-sha> [--no-database-backup]` is the only
   application release entrypoint. Rerun it unchanged to resume.
-- `deploy/hetzner/prove-codex-capacity.sh <source-sha>` owns standalone first-cut
-  qualification against healthy incumbents. After a committed forward failure,
-  `deploy.sh` owns the same exact qualification against the activated successor.
-  Standalone qualification never applies an application release.
-- A planned retained-swap maintenance restart is the sole exception to those
-  two entrypoints. It is authorized only after qualification has corrected the
-  exact incumbent cgroup limits, blocked before candidate startup, and reported
-  a full container ID as retaining forbidden swap. It never recreates a
-  container or changes release state.
 - Release only a clean checkout where `HEAD == origin/main == source-sha` and
   the exact SHA's immutable backend bundle exists.
 - The post-merge publisher builds each backend target once. Production pulls
@@ -94,8 +83,8 @@ coordinate is a reviewed infrastructure change, not a release flag.
 The interactive worker has a 320 MiB memory ceiling and 128 MiB reservation,
 with no swap. Restored generation composition measured about 246 MiB before job
 allocations; its former 256 MiB ceiling was insufficient. The extra 64 MiB is
-possible worker demand within the existing server, not a server resize. Exact
-image and combined host qualification still apply.
+possible worker demand within the existing server, not a server resize.
+observe representative work manually when investigating memory demand.
 
 The API image proxy retains at most 16 MiB of cached bodies and runs at most two
 fetch-and-transfer operations at once; further requests wait before thread/client allocation. It
@@ -104,8 +93,8 @@ An upstream ignoring `Accept-Encoding: identity` is rejected. Smaller caches
 mean more refetching, and slow image consumers delay queued images. Each operation
 keeps its slot through response transfer and sends at most 64 KiB per write, so
 socket backpressure applies between chunks. These bounds do not cover every API
-allocation. Representative simultaneous reader use remains necessary
-for API capacity qualification. Viewer lookup runs on the event loop; it does
+allocation. manually observe simultaneous reader use when investigating api
+memory demand. Viewer lookup runs on the event loop; it does
 not dispatch an otherwise empty worker thread for every image. Image clients
 share the verified TLS trust store, while cookies and connection pools remain
 per fetch. Image metadata and integrity use one explicitly closed decoder.
@@ -186,7 +175,8 @@ identity is equal, pushes public GHCR digests, and uploads
 
 The strict bundle contains the candidate manifest, production Compose file,
 Caddy comparison input, host controller, its manifest decoder, the Android
-player protocol corpus, and the Codex AppArmor and capacity entrypoint inputs.
+player compatibility contract (`contracts/android-player-protocol.json`), and
+the codex apparmor inputs.
 The manifest binds repository, source SHA, both image digests, one expected database
 revision, and one expected Oracle manifest digest. The resolver requires one
 unexpired exact-name repository artifact whose owning workflow run records the
@@ -238,89 +228,32 @@ published source SHA.
 
 ## Release
 
-After backend publication and the staged Vercel build for the exact `main` SHA
-are ready, qualify a candidate that carries the Codex agent host. The passing
-candidate-bound evidence must have been measured on the production host within
-the preceding 72 hours:
-
-```bash
-SOURCE_SHA="$(git rev-parse HEAD)"
-./deploy/hetzner/prove-codex-capacity.sh "$SOURCE_SHA"
-```
-
-This bounded preflight runs the subscription-authenticated cold/warm canary in
-the candidate worker image and measures its real production cgroup, host
-headroom, pressure, swap, OOM counters, and the unchanged long-lived services.
-It does not call `apply`, stop writers, migrate data, or promote Vercel. An
-absent, stale, retriable, or subscription-blocked result is not release
-evidence; diagnose it and rerun the unchanged qualification command. A measured
-candidate cgroup or exact-contract breach permanently disqualifies the candidate
-SHA. Host admission uses observed available memory (at least 128 MiB) and
-`some avg10 <= 10`; `full avg10` is diagnostic. This smaller operating margin
-accepts less room for unrelated allocations and more reclaim latency on the
-single-user host. It is a measured workload policy, not a guarantee against
-host-wide exhaustion. It does not reserve the entire
-possible Codex cgroup growth in advance. A host-pressure or headroom refusal is
-retryable even after startup; it cannot hide an observed candidate OOM or other
-cgroup breach. Container ceilings, one-turn concurrency and health proofs remain
-unchanged.
-
-On a host first crossing into the enforced no-service-swap contract,
-qualification may instead correct every exact incumbent's kernel limits and
-then block because pages swapped under the old policy remain charged. This is
-infrastructure settlement, not candidate evidence. Announce a no-use window,
-prove no application or Oracle attempt and no active generation job, then
-restart only each full container ID reported by the controller with
-`docker restart --timeout 30 <full-container-id>`. Use the order Postgres, API,
-interactive worker, background worker, Caddy; wait for the restarted service's
-ordinary health proof before continuing. Re-inspect the same ID and require
-`memory.swap.max == 0` and `memory.swap.current == 0`. Abort on an identity,
-health, or cgroup discrepancy, and rerun the unchanged qualification only after
-all five incumbents are healthy. Never restart by service name, recreate a
-container, clear caches, or automate this one-time database-and-writer outage
-inside qualification.
-
-After qualification passes, announce the no-use window and close clients. Then
-run:
+after backend publication and the staged vercel build for the exact `main` sha
+are ready, announce the no-use window and close clients. run:
 
 ```bash
 SOURCE_SHA="$(git rev-parse HEAD)"
 ./deploy/hetzner/deploy.sh "$SOURCE_SHA"
 ```
 
-If an earlier candidate committed database changes and ended
+if an earlier candidate committed database changes and ended
 `ForwardFixRequired`, keep the no-use window open and release a fresh published
-SHA through `deploy.sh`. Do not run standalone qualification or restart the old
-predecessor against the migrated database. The controller first proves the
-stopped-writer recovery state, then activates the exact successor and proves its
-backend and MCP path. Before frontend promotion, it runs the same three-turn
-capacity qualification with all five long-lived services healthy. The active
-attempt owns its captured config and image identities; qualification keeps its
-Codex host running on success and removes only the canary and temporary input.
+sha through `deploy.sh`. never restart the old predecessor against the migrated
+database. the controller checks stopped-writer recovery state, activates the
+exact successor, and verifies its runtime before frontend promotion.
 
-A transient activation or qualification refusal stops candidate writers and
-the Codex runtime while retaining the replayable phase. Rerun the same release
-command. Fresh passing evidence is reused only for the same SHA and image;
-absent or expired evidence is measured again, including promotion/finalize
-recovery. Failed evidence remains immutable. A measured permanent breach uses
-ordinary forward-failure settlement. Candidate activation exposes the API and
-starts background workers before qualification completes: closed clients and
-the continuing no-use window are operational requirements, not a technical
-traffic barrier. The host sampler begins after active-backend proof; retained
-candidate cgroup peak/OOM counters still cover startup, while host pressure
-before that sampling window is not part of the qualification measurement.
+rerun the same command after a transient activation refusal; it resumes the
+durable phase. candidate activation exposes the api and starts background
+workers before release completion, so closed clients and the continuing no-use
+window are operational requirements. there is no synthetic workload
+qualification or expiring capacity evidence.
 
-Automatic expiry refresh covers activated phases. An ordinary first-cut attempt
-paused beyond 72 hours in `WritersStopped`, `BackupVerified`, or
-`DataMutationStarted` still has an unresolved replay limit
-([oi-120](docs/tickets/capacity-expiry-blocks-stopped-first-cut-replay.md)); do not
-restart its predecessor to bypass the refusal. A permanent failure after
-publishing `current` but before final success has a separate convergence limit
+a permanent failure after publishing `current` but before final success has a
+separate convergence limit
 ([oi-119](docs/tickets/failed-published-release-cannot-converge-successor.md)).
-Replay also applies an existing `FrontendPromoted` candidate before public auth
-smoke. Apply restores and proves the bound backend without regressing its phase,
-including after `current` publication but before `Succeeded`. Auth smoke still
-precedes finalization.
+replay restores and verifies an existing `FrontendPromoted` candidate's bound
+backend without regressing its phase, including after `current` publication
+but before `Succeeded`. finalization checks the bound public release identity.
 
 Database backups are required by default. An operator who accepts losing the
 fresh stopped-writer recovery point can explicitly waive it:
@@ -374,9 +307,7 @@ to force migration admission.
 
 The command performs the complete protocol:
 
-1. validates Git, bundle, manifest, staged Vercel identity, and first-cut
-   capacity evidence before mutation; a forward-fix successor qualifies after
-   its exact backend is activated, before promotion;
+1. validates git, bundle, manifest, and staged vercel identity before mutation;
 2. installs the immutable bundle and inspects durable host state;
 3. before the first hard-cut attempt, proves exact predecessor identity, host
    capacity, foreign-container absence, and current memory/PID use; when an
@@ -396,8 +327,7 @@ The command performs the complete protocol:
 7. records `BackendActivationStarted`, activates app images by digest, and
    waits boundedly for Compose health before proving exact API/readiness bodies,
    workers, shared task-contract digest, schema, config, images, and unchanged
-   infra; measures or reuses the exact fresh first-Codex qualification before
-   leaving activation;
+   infra;
 8. promotes only the bound Vercel deployment, explicitly binds the committed
    custom domain to it, proves the provider alias and public web/API vector,
    writes one immutable record, and atomically publishes current SHA.
@@ -407,8 +337,8 @@ envelope. It is safe to replay after process death, skips already exact
 containers, never recreates Postgres or Caddy, and has no manual or legacy
 alternative.
 
-Success ends the no-use window. No separate migration, Compose, smoke, or
-promotion command is part of the normal path.
+success ends the no-use window. no separate migration, compose, or promotion
+command is part of the normal path.
 
 ## Durable state and replay
 

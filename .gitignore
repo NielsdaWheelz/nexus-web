@@ -39,14 +39,6 @@ ENV/
 *.swo
 *~
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
-coverage/
-
 # Linting
 .ruff_cache/
 .mypy_cache/

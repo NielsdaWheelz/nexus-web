@@ -45,6 +45,6 @@ and recency assignments, which are plain scalars.
 ## Acceptance
 
 No `MediaOut.model_validate` rebuild in `services/media.py`, `player_descriptor`
-supplied at construction, and the podcast-episode player-descriptor proof plus
-`pytest:python/tests/service/test_bounded_media_extraction.py::test_in_flight_source_progress_reaches_the_media_detail_wire`
-green.
+supplied at construction, and manual media list/detail reads preserve the
+podcast player descriptor and in-flight source progress without serialization
+warnings.

@@ -12,19 +12,18 @@ case when establishing the complete unicode resource envelope.
 
 evidence: `python/nexus/services/parser_temp.py:133` counts encoded bytes;
 `python/nexus/services/epub_ingest.py:692` retains sanitized chapters and the
-canonicalization loop retains fragment bodies. the resource fixture at
-`python/tests/service/test_bounded_media_extraction.py:619` covers ascii and
+canonicalization loop retains fragment bodies. the former resource fixture
+at `python/tests/service/test_bounded_media_extraction.py:619` covered ascii and
 decomposed accents, not astral widening. this is a storage lower-bound finding;
 the specific astral parser case has not yet been run. ci receipt
 `8ae128f42e7dc7eb` instead measures the separate transient-copy failure.
 
 prerequisite: define the accepted-output contract independently of in-process
-string representation. add one astral-widening case to the existing resource
-owner, then bound retained-output memory through staged publication or another
-explicit storage design. do not raise the worker limit or silently shrink the
-document contract to make the proof pass.
+string representation. measure an astral-widening input manually, then bound
+retained-output memory through staged publication or another explicit storage
+design. do not raise the worker limit or silently shrink the document contract.
 
 acceptance: a near-limit mixed ascii/astral epub publishes exact text and
 structure within the unchanged worker envelope; oversized input returns the
-typed resource failure within that envelope. prove sensitivity at the existing
-resource owner and retain current source/export proofs.
+typed resource failure within that envelope. record manual memory and
+source/export checks for the affected ingestion path.

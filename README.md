@@ -51,16 +51,17 @@ Open `http://localhost:3000`.
 
 ## Daily Commands
 
-Use `make help` for product build/run operations. `./scripts/test` is the sole
-test and verification command.
+use `make help` for product build/run operations. `./scripts/test` is the sole
+automated verification command; it runs static checks only.
 
 ```bash
 ./scripts/test
 ```
 
-The same fixed, deterministic check runs on pull requests on the self-hosted
-devbox. It does not start services, browsers, emulators, or hosted-provider
-checks.
+the same fixed check runs on pull requests on the self-hosted devbox. there
+is no automated test suite. manually verify affected behavior according to
+failure risk and recovery cost; see
+[the verification contract](docs/local-rules/testing-standards.md).
 
 Product operations remain Make targets:
 
@@ -69,7 +70,6 @@ make setup
 make dev
 make build
 make build-android
-make smoke
 ```
 
 ## Environment
@@ -77,9 +77,10 @@ make smoke
 - `.env.example` is the source of truth for environment variables and defaults.
 - `make setup` generates local `.env` and `apps/web/.env.local`.
 - `make dev` writes the live Supabase Auth public URL and anon key to `.dev-ports`.
-- Tests are deterministic and unprivileged. They do not own a local service
-  stack or consume ambient credentials.
-- Repository confidence claims use only `./scripts/test`.
+- static checks are deterministic and unprivileged; they start no services and
+  consume no ambient credentials.
+- a passing `./scripts/test` establishes static consistency, not working user
+  journeys.
 - Android builds require `NEXUS_GOOGLE_WEB_CLIENT_ID`; `.env.example` owns the
   contract, and local/CI environment owns the value.
 
@@ -113,7 +114,7 @@ versioned asset names. There is no automated Android release gate.
 - `apps/android/` -> Android shell app. Debug builds default to `http://10.0.2.2:3000`; native auth uses the environment-agnostic `nexus://auth/handoff` flow plus native Google bootstrap. Release APKs require explicit hosted and direct-API origins, version, release keystore, and release certificate fingerprint inputs. `NEXUS_ANDROID_RELEASE_API_ORIGIN` must exactly equal the backend `STREAM_BASE_URL` origin. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
 - `apps/web/` -> frontend + BFF: see `apps/web/README.md`
 - `apps/extension/` -> browser extension for article, PDF/EPUB, and supported video capture
-- `python/` -> backend package + tests: see `python/README.md`
+- `python/` -> backend package: see `python/README.md`
 - `apps/worker/` -> worker entrypoint: see `apps/worker/README.md`
 - `docs/architecture.md` -> system architecture & orientation guide: start here to learn how everything fits together
 - `deployment.md` -> sole production release and recovery runbook

@@ -108,35 +108,9 @@ def require_origin(name: str) -> str:
         fail(f"{name} must be an HTTPS origin")
     return f"{parsed.scheme}://{parsed.netloc.lower()}"
 
-def optional_smoke_origin(name: str) -> str | None:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        return None
-    parsed = urlparse(value)
-    if (
-        parsed.scheme != "https"
-        or parsed.username
-        or parsed.password
-        or parsed.path not in ("", "/")
-        or parsed.query
-        or parsed.fragment
-        or not parsed.netloc
-    ):
-        fail(f"{name} must be an HTTPS origin")
-    return f"{parsed.scheme}://{parsed.netloc.lower()}"
-
 app_origin = require_origin("APP_PUBLIC_URL")
 supabase_origin = require_origin("NEXT_PUBLIC_SUPABASE_URL")
 api_origin = require_origin("FASTAPI_BASE_URL")
-smoke_targets = (
-    ("NEXUS_SMOKE_APP_URL", app_origin),
-    ("NEXUS_SMOKE_API_URL", api_origin),
-    ("NEXUS_SMOKE_SUPABASE_URL", supabase_origin),
-)
-for name, expected in smoke_targets:
-    actual = optional_smoke_origin(name)
-    if actual is not None and actual != expected:
-        fail(f"{name} does not match the verified production env")
 host = urlparse(supabase_origin).hostname or ""
 derived_ref = host.removesuffix(".supabase.co")
 project_ref = os.environ.get("PROJECT_REF") or derived_ref

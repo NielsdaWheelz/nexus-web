@@ -106,7 +106,7 @@ from nexus.services._contributor_credit_writes import (
 # Internal-use helpers are bound to underscored names: the facade is the only
 # public author surface, and a plain re-export would mint a second write path
 # (e.g. calling the credit writer with a job session, bypassing the fresh-session
-# + retry_serializable discipline). Gated in test_contributor_ownership_guards.
+# + retry_serializable discipline).
 from nexus.services._contributor_credit_writes import (
     replace_role_slices as _replace_role_slices,
 )

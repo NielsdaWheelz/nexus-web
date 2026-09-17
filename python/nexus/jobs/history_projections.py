@@ -10,8 +10,7 @@ the next attempt time -- and reads the owner's row for the stage it was at.
 Import discipline matches ``dead_letter_projections``: SQLAlchemy, the history
 schema, and the source-history leaf at module scope, never the ORM, a parser, a
 provider, or a storage client -- the supervisor imports this module through the
-registry and stays slim (`tests/testkit/background_process_containment_probe.py`
-names what it may not load). Every branch is total:
+registry and must stay slim. Every branch is total:
 ``queue_failure_code`` maps any code, and a missing owner row (the media was
 torn down under a dying job) records nothing rather than aborting the transition.
 """

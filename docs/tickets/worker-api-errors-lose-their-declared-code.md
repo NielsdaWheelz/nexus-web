@@ -19,6 +19,6 @@ retaining the explicit generic code for unclassified exceptions. review the
 current child-process error boundary and import-history catalog together;
 do not change retry or source-terminalization policy as a diagnostic repair.
 
-acceptance: a narrow deterministic regression proves the declared api code
-survives the actual queue failure boundary; an ordinary exception retains the
-generic code. run the sole `./scripts/test` contract on the devbox.
+acceptance: a manual failure through the actual queue boundary preserves the
+declared api code; an ordinary exception retains the generic code. run
+`./scripts/test` for static verification.

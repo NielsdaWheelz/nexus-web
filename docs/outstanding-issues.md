@@ -5,8 +5,8 @@ refactors deferred because they were too much churn, and things that warrant a
 closer look later. **Add entries as they surface; delete them once resolved (record
 the fix in the commit/PR). This doc tracks only outstanding work, never history.**
 
-It is **not** a checklist for routine verification (running test / e2e / CSP
-suites), release process (commit / PR / merge), or already-settled design decisions
+It is **not** a checklist for routine static or manual verification, release
+process (commit / PR / merge), or already-settled design decisions
 — those belong in CI, the PR, or the relevant spec/memory.
 
 The register is repo-wide: tag each entry with an `area`.
@@ -51,12 +51,6 @@ an untracked file in a stale worktree; decide whether to archive it in the repo
 or drop it. See
 [docs/tickets/adversarial-review-artifact-disposition.md](tickets/adversarial-review-artifact-disposition.md).
 
-### [OPEN] OI-009 — Dispatch-error HUD copy has no cross-subject proof
-frontend · opened 2026-09-08 by Claude (imports cutover, Track E) · P3
-The imports-scoped `E_RESOURCE_CONFLICT` branch in the shared dispatch-error
-owner is correct but unproved for every other subject. See
-[docs/tickets/dispatch-error-copy-has-no-cross-subject-proof.md](tickets/dispatch-error-copy-has-no-cross-subject-proof.md).
-
 ### [OPEN] OI-012 — Import history collapses three queue execution codes
 backend · opened 2026-09-08 by Claude (imports cutover, Track A) · P3
 `queue_failure_code` maps three distinct queue execution codes onto
@@ -66,26 +60,8 @@ backend · opened 2026-09-08 by Claude (imports cutover, Track A) · P3
 ### [OPEN] OI-013 — `E_PDF_TEXT_UNAVAILABLE` is a catalogued code that names no failure
 backend · opened 2026-09-08 by Claude (imports cutover, Track A) · P3
 The safe-code catalog carries a PDF text warning as if it were a failure; the
-copy owner half is done, the emission assertion is not. See
+browser copy is corrected, but warnings still share the failure vocabulary. See
 [docs/tickets/import-history-pdf-text-warning-is-not-a-failure.md](tickets/import-history-pdf-text-warning-is-not-a-failure.md).
-
-### [OPEN] OI-014 — The browser failure-code catalog has no drift proof
-frontend · opened 2026-09-08 by Claude (imports cutover, Track D1) · P2
-`lib/imports/importRef.ts` mirrors the Python `SafeFailureCode` catalog by hand;
-the cross-language equality proof that stops it drifting is still missing. See
-[docs/tickets/imports-browser-failure-code-catalog.md](tickets/imports-browser-failure-code-catalog.md).
-
-### [OPEN] OI-015 — History date bounds require an explicit offset the date control cannot give
-backend · opened 2026-09-08 by Claude (imports cutover, Track C1) · P3
-`GET /imports` accepts only explicit-offset instants; the codec side is resolved
-and the pane-level proof of the calendar-day contract is still owed. See
-[docs/tickets/imports-history-date-bounds-require-an-explicit-offset.md](tickets/imports-history-date-bounds-require-an-explicit-offset.md).
-
-### [OPEN] OI-017 — The Imports page read runs two statements under one snapshot
-backend · opened 2026-09-08 by Claude (imports cutover, Track C2) · P3
-`read_import_page` runs its CTE twice under the route's REPEATABLE READ
-snapshot, and the service fixture cannot prove that isolation. See
-[docs/tickets/imports-page-read-runs-two-statements-under-one-snapshot.md](tickets/imports-page-read-runs-two-statements-under-one-snapshot.md).
 
 ### [OPEN] OI-019 — The media-kind Literal has no single owner
 backend · opened 2026-09-08 by Claude (imports cutover, Track C1) · P3
@@ -93,23 +69,11 @@ The media-kind literal is re-listed in several wire schemas instead of being
 owned once. See
 [docs/tickets/media-kind-literal-has-no-owner.md](tickets/media-kind-literal-has-no-owner.md).
 
-### [OPEN] OI-020 — The reindex embedding seam serves only the index proof
-backend · opened 2026-09-08 by Claude (imports cutover, Track B) · P3
-`run_media_content_reindex(embed_texts=...)` exists only so the index-recovery
-proof can run without an embedding peer; accepted until a loopback peer exists. See
-[docs/tickets/media-reindex-embedding-seam-serves-only-the-index-proof.md](tickets/media-reindex-embedding-seam-serves-only-the-index-proof.md).
-
 ### [OPEN] OI-021 — `media_source_attempts.status = 'superseded'` has no writer
 backend · opened 2026-09-08 by Claude (imports cutover, Track A) · P3
 The status CHECK admits a value nothing writes; migration 0227 is fail-closed
 against it, so the allowed value is dead vocabulary. See
 [docs/tickets/media-source-attempt-superseded-status-has-no-writer.md](tickets/media-source-attempt-superseded-status-has-no-writer.md).
-
-### [OPEN] OI-022 — URL-source reuse joining an in-flight attempt has no proof
-backend · opened 2026-09-08 by Claude (imports cutover, Track B) · P2
-The behavior is fixed; the named case that keeps a second URL acceptance joining
-the in-flight attempt is missing. See
-[docs/tickets/url-source-in-flight-join-has-no-proof.md](tickets/url-source-in-flight-join-has-no-proof.md).
 
 ### [OPEN] OI-023 — X-post quote completion defects when its ingest job is not running
 backend · opened 2026-09-08 by Claude (imports cutover, Track B) · P2
@@ -123,11 +87,11 @@ backend · opened 2026-09-08 by Claude (imports cutover, Track C2) · P3
 requeues the existing job and keeps its original reason. See
 [docs/tickets/media-reindex-operator-repair-reason-has-no-producer.md](tickets/media-reindex-operator-repair-reason-has-no-producer.md).
 
-### [OPEN] OI-030 — The source-refusal sentence is duplicated in Python with no mirror
+### [OPEN] OI-030 — the source-refusal sentence duplicates browser copy
 backend · opened 2026-09-09 by Claude (imports cutover, Track C2) · P3
 The repairable-state refusal in `media_source_ingest.py` now repeats, word for
-word, the copy `mediaErrorMessage.ts` composes from the action catalog, and
-nothing compares the two. See
+word, the copy `mediaErrorMessage.ts` composes from the action catalog; make the
+server message diagnostic to remove that duplicate responsibility. See
 [docs/tickets/server-refusal-copy-duplicates-the-browser-owner-with-no-mirror.md](tickets/server-refusal-copy-duplicates-the-browser-owner-with-no-mirror.md).
 
 ### [OPEN] OI-031 — The counted unit recorded at a source failure is free text on the wire
@@ -151,34 +115,12 @@ menu reads as an unsubstituted template variable rather than the platform name;
 the row and inspector copy, where the source is on screen, reads correctly. See
 [docs/tickets/imports-reason-filter-x-options-read-as-a-placeholder.md](tickets/imports-reason-filter-x-options-read-as-a-placeholder.md).
 
-### [OPEN] OI-037 — The label-hidden badge case is subsumed by the collapsed-rail proof
-frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W2) · P3
-`ImportsWorkspace.browser.test.tsx` still renders `ImportsBadge` alone to prove
-its label-hidden branch; `NavRail.browser.test.tsx` now proves that branch in the
-collapsed rail it exists for, with the chip geometry as well. See
-[docs/tickets/label-hidden-badge-case-is-subsumed-by-the-rail-proof.md](tickets/label-hidden-badge-case-is-subsumed-by-the-rail-proof.md).
-
-### [OPEN] OI-038 — The Imports pane's wrapping geometry has no automated gate
-frontend · opened 2026-09-09 by Claude (imports cutover, chain W1) · P3
-`Refresh`'s fixed slot and the row separator's adjacency are both layout facts
-the browser proof cannot reach: `setViewportWidth` only redefines
-`window.innerWidth`, so no toolbar row re-wraps and no container query changes
-branch. The D15 recapture is their only gate. See
-[docs/tickets/imports-toolbar-wrapping-geometry-has-no-automated-gate.md](tickets/imports-toolbar-wrapping-geometry-has-no-automated-gate.md).
-
 ### [OPEN] OI-040 — The narrow `ResourceRow` state layout is unreviewed for Collections
 frontend · opened 2026-09-09 by Claude (imports cutover, chain W1) · P3
 Closing the Imports rows' orphaned `·` stopped the shared supporting cell from
 growing, which also moves `CollectionRow`'s narrow state block off the trailing
 edge; no proof or capture covers that second consumer. See
 [docs/tickets/resource-row-narrow-state-layout-is-unreviewed-for-collections.md](tickets/resource-row-narrow-state-layout-is-unreviewed-for-collections.md).
-
-### [OPEN] OI-041 — The mobile switchboard's Account-menu host has no proof
-frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W2) · P3
-`NavRail.browser.test.tsx` proves the shared Account menu's `Imports` item, but
-nothing renders `SwitchboardTask` or asserts it hands the switchboard pages an
-Account menu with the utilities and the active utility id. See
-[docs/tickets/mobile-switchboard-account-menu-host-has-no-proof.md](tickets/mobile-switchboard-account-menu-host-has-no-proof.md).
 
 ### [OPEN] OI-043 — The collapsed count chip scales out of its fixed-width rail
 frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W2) · P3
@@ -234,12 +176,11 @@ measure 4.20:1 to 4.47:1 on their worst ground — under WCAG AA for `--text-sm`
 body copy. Sibling of OI-047, which owns the two remaining `Pill` tones. See
 [docs/tickets/tone-text-on-its-own-tint-fails-aa-outside-pill.md](tickets/tone-text-on-its-own-tint-fails-aa-outside-pill.md).
 
-### [OPEN] OI-053 — The durable activity outbox suite fails in the imports runner container
+### [OPEN] OI-053 — durable activity storage needs a browser check
 frontend · opened 2026-09-10 by Claude (imports cutover, Phase 7 chain Z2) · P2
-`activityRuntime.browser.test.ts` fails 8 of 13 cases deterministically in the
-cutover's Linux runner, with every failure reading as an IndexedDB write that
-never landed. `lib/consumption/**` is untouched by this cutover, but any change
-broad enough to select that suite inherits the failure. See
+the removed browser suite observed missing durable writes in its linux
+container. manually distinguish a product storage defect from a runner-only
+capability problem. See
 [docs/tickets/durable-activity-outbox-suite-fails-in-the-imports-runner.md](tickets/durable-activity-outbox-suite-fails-in-the-imports-runner.md).
 
 ### [OPEN] OI-054 — Docker Desktop VM crashes block trustworthy database/process verification
@@ -249,13 +190,11 @@ verification; recover the shared engine, then clean only owned interrupted
 resources and repeat the blocked checks. See
 [docs/tickets/docker-desktop-virtualization-crash.md](tickets/docker-desktop-virtualization-crash.md).
 
-### [OPEN] OI-055 — The supervisor residency limit is 19 MiB looser than the supervisor it guards
+### [OPEN] OI-055 — supervisor imports retain unexplained memory growth
 backend · opened 2026-09-10 by Claude (imports cutover, Phase 9) · P2
-`SUPERVISOR_RESIDENT_KIB_LIMIT` (96 MiB) is asserted once, after a real
-eight-job run, while main's supervisor imports at 73 MiB; a 19 MiB import leak
-(the ORM reached the supervisor through the history projections) surfaced only
-as a marginal run-time overshoot. Assert the import-only residency in a cheap
-kernel case at the boundary that owns it. See
+the imports cutover fixed a large import leak but left 4 mib of additional
+retention unexamined. inspect current supervisor imports and explain or remove
+avoidable coupling; the old automated memory gate is retired. See
 [docs/tickets/supervisor-residency-limit-hides-import-growth.md](tickets/supervisor-residency-limit-hides-import-growth.md).
 
 ### [OPEN] OI-060 — Production synapse scans repeatedly time out
@@ -275,11 +214,10 @@ unexpected timeouts. See
 - [open] oi-085 · epub extraction · 2026-09-12 memory review · utf-8 output caps do not bound retained unicode string memory: [ticket](tickets/epub-utf8-output-cap-does-not-bound-resident-text.md).
 - [open] oi-086 · client telemetry · 2026-09-12 reader verification · defect reports fail at next request forwarding with a private-member branding exception: [ticket](tickets/client-defect-telemetry-request-branding-failure.md).
 - [open] oi-087 · ci actions · 2026-09-12 reader publication · the pinned buildx action targets a deprecated node runtime: [ticket](tickets/ci-buildx-action-deprecated-node-runtime.md).
-- [open] oi-088 · ci cache · 2026-09-12 reader publication · go setup requests module caching without a module owner: [ticket](tickets/ci-go-cache-has-no-module-owner.md).
 
 - [open] oi-106 · generation policy · 2026-09-14 spec review · p2 · background context-token budget is recorded without enforcement: [ticket](tickets/background-generation-context-budget-is-not-enforced.md).
 - [open] metadata verification · 2026-09-14 implementation · live research judgments and external query contents still need smoke inspection: [ticket](tickets/metadata-live-research-smoke-unverified.md).
-- [open] resource actions · 2026-09-14 highlight popup verification · mobile parity journey finds the prior browse pane after reader navigation: [ticket](tickets/resource-action-parity-mobile-pane-readiness.md).
+- [open] resource actions · 2026-09-14 highlight popup verification · manual follow-up must distinguish a mobile navigation defect from the removed journey's readiness race: [ticket](tickets/resource-action-parity-mobile-pane-readiness.md).
 - [open] agent tools · 2026-09-14 pr #246 memory review · resource reads load full bodies before enforcing their output limit: [ticket](tickets/resource-reader-loads-full-body-before-limit.md).
 - [open] oi-107 · release operator inputs · 2026-09-14 pr #255 qualification · p1 · reconcile the preserved local auth input with the verified two-origin production contract before future sync: [ticket](tickets/local-production-auth-input-retains-obsolete-preview-origin.md).
 - [open] oi-109 · local s3 development · 2026-09-15 pr #255 qualification · p2 · the pinned minio image pull failed on the devbox; establish supported access and prove a fresh pull: [ticket](tickets/local-minio-image-pull-fails-on-devbox.md).
@@ -287,17 +225,14 @@ unexpected timeouts. See
 - [open] oi-111 · reader publication · 2026-09-15 restoration rehearsal · p2 · web replacement can retain a cursor for a deleted fragment: [ticket](tickets/web-publication-invalidates-saved-reader-cursors.md).
 - [open] oi-113 · interactive worker · 2026-09-15 pr #255 qualification · p2 · exact-image startup is oom-killed at 256 mib; isolate provider imports and qualify real execution demand: [ticket](tickets/interactive-worker-startup-reaches-memory-cap.md).
 
-- [open] oi-114 · capacity qualification · 2026-09-15 release review · p2 · a service-health read failure can mask malformed passed-turn evidence: [ticket](tickets/capacity-service-read-can-mask-malformed-turns.md).
 
 - [open] oi-115 · api availability · 2026-09-15 memory review · p2 · api startup requires codex catalogue availability despite its independent-readiness contract: [ticket](tickets/api-startup-requires-codex-catalog-availability.md).
 
 
-- [open] oi-117 · deployment inputs · 2026-09-15 pr #261 release · p2 · raw env extraction passes quoted urls to auth smoke after verification accepts them: [ticket](tickets/deploy-auth-smoke-misparses-quoted-env-urls.md).
 
 - [open] oi-118 · release operations · 2026-09-15 restoration cutover · p2 · generic command errors and removed one-off logs obscure failure causes: [ticket](tickets/release-command-failures-lose-diagnostics.md).
 
 - [open] oi-119 · release recovery · 2026-09-15 source review · p2 · a permanently failed current publication prefix blocks successor resource convergence: [ticket](tickets/failed-published-release-cannot-converge-successor.md).
-- [open] oi-120 · release qualification · 2026-09-15 source review · p2 · capacity expiry blocks ordinary first-cut replay while writers are stopped before activation: [ticket](tickets/capacity-expiry-blocks-stopped-first-cut-replay.md).
 
 - [open] oi-123 · reader quote resolution · 2026-09-15 source review · p2 · normalized quote spans allocate Python objects per character across the whole book: [ticket](tickets/normalized-quote-spans-amplify-whole-book-text.md).
 - [open] oi-125 · epub assets · 2026-09-15 source review · p2 · complete asset bodies, broad media reads and per-request storage clients lack an aggregate allocation budget: [ticket](tickets/epub-asset-response-allocation-and-client-lifetime.md).

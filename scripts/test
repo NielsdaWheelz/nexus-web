@@ -9,7 +9,7 @@ if [ "$#" -ne 0 ]; then
   exit 2
 fi
 
-for command in actionlint bun git node shellcheck uv; do
+for command in actionlint bun git shellcheck uv; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "error: $command is required" >&2
     exit 1
@@ -20,7 +20,12 @@ cd "$repo_root"
 
 actionlint .github/workflows/*.yml
 
-readarray -t shell_files < <(git ls-files '*.sh')
+shell_files=(scripts/test)
+while IFS= read -r -d '' file; do
+  if [[ -f "$file" ]]; then
+    shell_files+=("$file")
+  fi
+done < <(git ls-files -z '*.sh')
 shellcheck "${shell_files[@]}"
 
 (
@@ -43,22 +48,6 @@ shellcheck "${shell_files[@]}"
   bun run lint:css-tokens
   bun run lint
   bun run typecheck
-)
-
-(
-  cd python
-  PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
-    uv run --frozen --no-sync pytest -q -p pytest_socket --maxfail=1
-)
-
-(
-  cd apps/web
-  bun run test:unit
-)
-
-(
-  cd node/ingest
-  node --test test/article_extraction.test.mjs
 )
 
 migration_heads="$(

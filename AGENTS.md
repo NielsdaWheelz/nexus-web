@@ -2,8 +2,10 @@
 
 Read [docs/local-rules/index.md](docs/local-rules/index.md) (repository rules)
 and [docs/rules/index.md](docs/rules/index.md) (shared engineering standards)
-before changing this repository. Testing runs only through `./scripts/test`;
-see [docs/local-rules/testing-standards.md](docs/local-rules/testing-standards.md).
+before changing this repository. automated verification runs only through
+`./scripts/test`, which performs static checks; there is no automated test suite.
+[docs/local-rules/testing-standards.md](docs/local-rules/testing-standards.md)
+overrides older test requirements and owns manual verification and future tests.
 
 ## Record what you find
 

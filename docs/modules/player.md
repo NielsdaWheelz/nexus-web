@@ -247,9 +247,10 @@ Lectern pane is the sole full-list editor).
   replacement native controller re-handshakes the account and pushes one
   authoritative full snapshot plus pending-receipt Presence; stale web state
   never drives the replacement service.
-- Every Android player command, reply, and event carries protocol v2 plus the
-  SHA-256 of `testdata/android/player-protocol.json`. Web and native decode the
-  body only after exact identity match. Skew is a non-retryable **Update Nexus
+- every android player command, reply, and event carries protocol v2 plus the
+  explicit compatibility identity in `contracts/android-player-protocol.json`.
+  web and native decode the body only after exact identity match. update that
+  shared identity when the wire contract changes. Skew is a non-retryable **Update Nexus
   for Android** state; matching-identity corruption remains a defect. The
   signed APK embeds the same identity, and production release fails before
   mutation unless the latest stable signed manifest matches it.

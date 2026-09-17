@@ -16,9 +16,7 @@ upload-verification alias, the two new upload codes, and every
 `E_WORKER_CHILD_DEFECT` and `E_WORKER_TASK_FAILED` to
 `background_jobs.error_code`. D5 does not list them, so the queue seam's total
 `queue_failure_code` maps all three to `E_WORKER_HANDLER_FAILED`
-(`schemas/import_history.py`, proved by
-`python/tests/kernel/test_import_history_schema.py::
-test_queue_failure_code_is_total_and_assume_defects_on_an_uncatalogued_code`).
+(`schemas/import_history.py`).
 
 Consequence: an import whose execution died from an unknown job kind, a child
 defect, or a task-level failure shows the generic execution failure in the
@@ -33,12 +31,10 @@ new codes reach the browser with no copy.
 ## Proposed fix
 
 Add `E_JOB_KIND_UNKNOWN`, `E_WORKER_CHILD_DEFECT` and `E_WORKER_TASK_FAILED`
-to the `SafeFailureCode` literal, extend the kernel catalog scan to cover
-`nexus/jobs/worker.py` and `nexus/jobs/queue.py` the way it covers
-`nexus/storage/client.py`, and add the three copy templates.
+to the `SafeFailureCode` literal and browser catalog, then add the three
+copy templates.
 
 ## Acceptance
 
-A dead job carrying one of the three codes shows that code in the inspector,
-and adding a new `E_*` literal to `jobs/worker.py` without adding it to the
-catalog fails `test_safe_failure_code_catalog_names_every_owner_failure_code`.
+a dead job carrying one of the three codes shows that code and its specific
+explanation in a manual inspector check. server and browser catalogs agree.

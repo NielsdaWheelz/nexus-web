@@ -235,23 +235,7 @@ interface PendingRequest<TIntent> {
   pending: boolean;
 }
 
-export const MOUNTED_ACTION_DELIVERY_TIMEOUT_MS = 15_000;
-
-interface MountedActionHandoffOptions {
-  /** External clock boundary; tests drive it directly without sleeping. */
-  readonly scheduleExpiry?: (
-    expire: () => void,
-    timeoutMs: number,
-  ) => () => void;
-}
-
-function scheduleMountedActionExpiry(
-  expire: () => void,
-  timeoutMs: number,
-): () => void {
-  const timeout = globalThis.setTimeout(expire, timeoutMs);
-  return () => globalThis.clearTimeout(timeout);
-}
+const MOUNTED_ACTION_DELIVERY_TIMEOUT_MS = 15_000;
 
 /**
  * A one-shot, in-memory handoff between a global action and its mounted domain
@@ -260,9 +244,7 @@ function scheduleMountedActionExpiry(
  */
 export function createMountedActionHandoff<
   TIntent extends MountedActionIntentBase,
->(
-  options: MountedActionHandoffOptions = {},
-): {
+>(): {
   request(intent: TIntent): MountedActionRequest;
   subscribe(
     ref: CanonicalResourceRef,
@@ -271,7 +253,6 @@ export function createMountedActionHandoff<
   /** Re-offer a deferred head request after an owner becomes available. */
   notifyReady(ref: CanonicalResourceRef): void;
 } {
-  const scheduleExpiry = options.scheduleExpiry ?? scheduleMountedActionExpiry;
   const pendingByRef = new Map<
     CanonicalResourceRef,
     PendingRequest<TIntent>[]
@@ -355,15 +336,12 @@ export function createMountedActionHandoff<
       const pending = pendingByRef.get(intent.ref) ?? [];
       pending.push(request);
       pendingByRef.set(intent.ref, pending);
-      const expire = () => {
+      const timeout = globalThis.setTimeout(() => {
         if (!removePending(intent.ref, request)) return;
         request.settle({ kind: "Expired" });
         drain(intent.ref);
-      };
-      request.cancelExpiry = scheduleExpiry(
-        expire,
-        MOUNTED_ACTION_DELIVERY_TIMEOUT_MS,
-      );
+      }, MOUNTED_ACTION_DELIVERY_TIMEOUT_MS);
+      request.cancelExpiry = () => globalThis.clearTimeout(timeout);
       drain(intent.ref);
       return {
         outcome,

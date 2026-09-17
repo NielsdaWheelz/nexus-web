@@ -1635,10 +1635,7 @@ def _pick_plate(db: Session, *, question: str, candidates: Sequence[_Candidate])
 # ---------- internal: prompt ------------------------------------------------
 
 
-# The byte-exact decomposition of the legacy `_ORACLE_SYSTEM_PROMPT` literal
-# through `build_synthesis_prompt`; test_structured_synthesis_contract.py pins the
-# reassembled bytes against an independent golden copy (N9: verbatim, no
-# rewrites).
+# The legacy oracle prompt is composed through `build_synthesis_prompt`.
 
 _ORACLE_PERSONA = (
     "You are the Black Forest Oracle. You speak in the register of Romantic and "

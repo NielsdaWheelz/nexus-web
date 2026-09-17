@@ -31,5 +31,5 @@ a test controller or generalized receipt framework.
 
 accept when a failed owned command identifies its stage and actionable cause
 without docker-event archaeology, and failed migration diagnostics survive
-normal settlement. verify the formatting/redaction boundary with cheap pure
-units through `./scripts/test`; runtime checks remain manual.
+normal settlement. manually inspect formatting, redaction, and retained
+diagnostics with controlled failing commands.

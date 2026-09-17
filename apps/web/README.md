@@ -80,7 +80,7 @@ Repository-wide rule owners:
 - `docs/local-rules/codebase.md` (nexus-web structure and module ownership)
 - `docs/rules/errors.md`
 
-## Testing
+## verification
 
 From the repository root:
 
@@ -88,9 +88,10 @@ From the repository root:
 ./scripts/test
 ```
 
-The fixed repository check runs ESLint, CSS-token lint, TypeScript, and fast
-Node-environment Vitest unit tests. Browser and end-to-end automation are not
-part of the automated portfolio. Never pass the Supabase admin key to Next.js.
+the fixed repository command runs eslint, css-token lint, typescript, and the
+other static checks. no automated tests remain. manually verify affected
+browser behavior under [the verification contract](../../docs/local-rules/testing-standards.md).
+never pass the supabase admin key to next.js.
 
 ## Highlight Libraries
 

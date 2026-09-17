@@ -1478,8 +1478,7 @@ class MediaUnitSynthesis(BaseModel):
     claims: list[MediaUnitClaimOut]
 
 
-# Prompt decomposition for the shared synthesis scaffold; the assembled bytes
-# are pinned (golden) in tests/kernel/test_structured_synthesis_contract.py.
+# Prompt decomposition for the shared synthesis scaffold.
 _MEDIA_UNIT_PERSONA = (
     "You are a careful research assistant building a reusable unit for one "
     "document: a concise summary plus a set of atomic, grounded claims."

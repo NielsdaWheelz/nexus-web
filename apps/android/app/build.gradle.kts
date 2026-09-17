@@ -1,3 +1,4 @@
+import groovy.json.JsonSlurper
 import java.io.File
 import java.net.URI
 import java.security.MessageDigest
@@ -49,26 +50,17 @@ val debugApiUri = URI(debugApiOrigin)
 val releaseApiUri = URI(releaseApiOrigin)
 val assetLinksText = rootProject.file("../web/public/.well-known/assetlinks.json").readText()
 val assetLinksTextForFingerprintMatch = assetLinksText.replace(":", "").uppercase()
-val playerProtocolFile = rootProject.file("../../testdata/android/player-protocol.json")
-val playerProtocolBytes = playerProtocolFile.readBytes()
-require(playerProtocolBytes.toString(Charsets.UTF_8).toByteArray(Charsets.UTF_8).contentEquals(playerProtocolBytes)) {
-    "Android player protocol corpus must be UTF-8."
-}
-require(
-    !(playerProtocolBytes.size >= 3 &&
-        playerProtocolBytes[0] == 0xef.toByte() &&
-        playerProtocolBytes[1] == 0xbb.toByte() &&
-        playerProtocolBytes[2] == 0xbf.toByte()) &&
-        !playerProtocolBytes.contains('\r'.code.toByte()) &&
-        playerProtocolBytes.lastOrNull() == '\n'.code.toByte() &&
-        (playerProtocolBytes.size == 1 || playerProtocolBytes[playerProtocolBytes.lastIndex - 1] != '\n'.code.toByte())
-) {
-    "Android player protocol corpus must have no BOM, LF line endings, and one trailing LF."
+val playerProtocolContract = JsonSlurper().parse(
+    rootProject.file("../../contracts/android-player-protocol.json"),
+) as Map<*, *>
+require(playerProtocolContract.keys == setOf("version", "contract_sha256") && playerProtocolContract["version"] == 2) {
+    "Android player protocol contract version is unsupported."
 }
 val playerProtocolVersion = 2
-val playerProtocolContractSha256 = MessageDigest.getInstance("SHA-256")
-    .digest(playerProtocolBytes)
-    .joinToString("") { "%02x".format(it) }
+val playerProtocolContractSha256 = playerProtocolContract["contract_sha256"] as String
+require(playerProtocolContractSha256.matches(Regex("[0-9a-f]{64}"))) {
+    "Android player protocol contract identity is invalid."
+}
 
 require(debugUri.host == debugOwnedHost) {
     "nexusAndroidDebugBaseUrl host must match nexusAndroidDebugOwnedHost."

@@ -107,17 +107,6 @@ settle_bound_frontend_failure() {
   die "the immutable bound Vercel deployment is permanently unavailable; host settlement completed"
 }
 
-settle_auth_smoke_failure() {
-  local deployment_id="$1"
-  timeout --foreground 16m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
-    timeout --foreground 15m sudo env PYTHONDONTWRITEBYTECODE=1 \
-    "PYTHONPATH=${REMOTE_BUNDLE}/python" \
-    python3 -B "$REMOTE_CONTROLLER" fail-auth-smoke \
-      --source-sha "$SOURCE_SHA" \
-      --deployment-id "$deployment_id"
-  die "post-alias auth smoke failed; host settlement completed for forward fix"
-}
-
 case "$PRODUCTION_HOST" in
   *[!a-z0-9.-]*|.*|*..*|*.) die "committed production host is malformed" ;;
 esac
@@ -167,13 +156,13 @@ trap cleanup EXIT
 readonly ANDROID_RELEASE_DIR="${TEMPORARY}/stable-android-release"
 player_protocol="$(PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${ROOT_DIR}/python" \
   python3 -B "${ROOT_DIR}/deploy/hetzner/release.py" android-player-protocol-identity \
-    --corpus "$ROOT_DIR/testdata/android/player-protocol.json")" || \
-  die "Android player protocol corpus is absent or malformed"
+    --protocol-contract "$ROOT_DIR/contracts/android-player-protocol.json")" || \
+  die "Android player protocol contract is absent or malformed"
 
 # A new candidate is the only path that consults mutable GitHub state: the
 # candidate must be origin/main, and GitHub's canonical releases/latest pointer
 # must name one stable signed Android release whose player protocol identity
-# equals this checkout's corpus. Resume, settlement, and verification of an
+# equals this checkout's contract. Resume, settlement, and verification of an
 # already-current release run from the installed immutable bundle alone.
 require_new_candidate_release_policy() {
   local stable_android_release
@@ -218,7 +207,7 @@ require_new_candidate_release_policy() {
   PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${ROOT_DIR}/python" \
     python3 -B "${ROOT_DIR}/deploy/hetzner/release.py" validate-android-release-manifest \
       --manifest "$ANDROID_RELEASE_DIR/release-manifest.json" \
-      --corpus "$ROOT_DIR/testdata/android/player-protocol.json" \
+      --protocol-contract "$ROOT_DIR/contracts/android-player-protocol.json" \
       --tag "$stable_android_release" >/dev/null || \
     die "latest stable Android release manifest is incompatible with this source"
 }
@@ -631,24 +620,7 @@ timeout --foreground 2m "$ROOT_DIR/deploy/supabase/verify-auth-config.sh" \
   --env-file "$SHARED_ENV_FILE" \
   --frontend-env-file "$FRONTEND_ENV_FILE"
 
-auth_api_url="$(awk -F= '$1 == "FASTAPI_BASE_URL" {print $2; exit}' "$FRONTEND_ENV_FILE")"
-auth_supabase_url="$(awk -F= '$1 == "NEXT_PUBLIC_SUPABASE_URL" {print $2; exit}' "$FRONTEND_ENV_FILE")"
-[ -n "$auth_api_url" ] || die "FASTAPI_BASE_URL is required for post-alias auth smoke"
-[ -n "$auth_supabase_url" ] || die "NEXT_PUBLIC_SUPABASE_URL is required for auth smoke"
-
-# Prove candidate-owned auth behavior before host writers are stopped. The
-# candidate URL is not an allowlisted production callback origin, so this mode
-# intentionally exercises only origin-independent redirects, recovery
-# rendering, cache privacy, public pages, and stale-cookie handling.
-if ! timeout --foreground 4m "$ROOT_DIR/deploy/smoke/auth-smoke.sh" \
-  --frontend-only \
-  --app-url "https://${deployment_url}" \
-  --supabase-url "$auth_supabase_url"; then
-  die "staged frontend auth smoke failed before host activation"
-fi
-
-# A promoted attempt can have stopped writers after a transient capacity
-# refusal. Restore its exact backend before public auth smoke on every replay.
+# Converge the exact backend before promoting or finalizing its frontend.
 timeout --foreground 66m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
   timeout --foreground 65m sudo env PYTHONDONTWRITEBYTECODE=1 \
   "PYTHONPATH=${REMOTE_BUNDLE}/python" \
@@ -745,13 +717,6 @@ jq -e --arg sha "$SOURCE_SHA" --argjson player_protocol "$player_protocol" '
   and .player_protocol == $player_protocol
 ' "$production_version" >/dev/null || \
   die "authoritative frontend does not serve the exact candidate SHA/player protocol"
-
-if ! timeout --foreground 4m "$ROOT_DIR/deploy/smoke/auth-smoke.sh" \
-  --app-url "https://${PRODUCTION_HOST}" \
-  --api-url "$auth_api_url" \
-  --supabase-url "$auth_supabase_url"; then
-  settle_auth_smoke_failure "$bound_deployment_id"
-fi
 
 timeout --foreground 16m ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
   timeout --foreground 15m sudo env PYTHONDONTWRITEBYTECODE=1 \

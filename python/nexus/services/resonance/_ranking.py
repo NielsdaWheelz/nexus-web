@@ -35,8 +35,7 @@ class SemanticCalibration:
     min_similarity: float
 
 
-# Human-reviewed production evidence is frozen in the test-only calibration
-# fixture. Runtime owns only this literal tuple and never reads test data.
+# Human-reviewed production calibration for this embedding model.
 SLATE_SEMANTIC_CALIBRATION = SemanticCalibration(
     provider="openai",
     model="openai_text_embedding_3_small_256_v1",

@@ -9,8 +9,7 @@
  * Component, which would bundle the secret-owning module. The NODE_ENV build-mode helpers a
  * client needs live in the client-safe ./build-mode (re-exported below for server ergonomics).
  * env.ts is not marked `import "server-only"` because next.config.ts imports it (a Node build
- * context, where server-only throws); the client boundary is enforced by a guard test
- * (env.test.ts).
+ * context, where server-only throws).
  *
  * Two orthogonal axes, never conflated:
  *   - Deployment env (NEXUS_ENV):  local | test | staging | prod

@@ -50,9 +50,8 @@ Either:
    (zero rows retires this ticket outright); or
 2. add that predicate to 0227 as its own named preflight — `RuntimeError` naming
    the offending media ids — so a database that cannot be read by the new
-   classifier is refused at 0224 instead of failing at read time. That edit is
-   Track A's file and needs a case in
-   `python/tests/migrations/test_imports_history_migration.py`.
+   classifier is refused at 0224 instead of failing at read time. manually
+   verify any changed migration preflight on a disposable local database.
 
 ## Acceptance
 

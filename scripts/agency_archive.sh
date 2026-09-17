@@ -29,7 +29,6 @@ echo ""
 # Clean Python artifacts
 echo "Cleaning Python artifacts..."
 find "$PROJECT_ROOT" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-find "$PROJECT_ROOT" -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
 find "$PROJECT_ROOT" -type d -name .ruff_cache -exec rm -rf {} + 2>/dev/null || true
 find "$PROJECT_ROOT" -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
 find "$PROJECT_ROOT" -type f -name "*.pyc" -delete 2>/dev/null || true

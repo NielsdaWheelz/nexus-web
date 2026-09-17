@@ -1,6 +1,6 @@
 # reader map needs operator accessibility acceptance
 
-status: open; software controls implemented and browser proofs pass
+status: open; software controls implemented, manual device review pending
 origin: 2026-09-11 reader-map council; acceptance audit 2026-09-12
 area: reader interaction / accessibility
 
@@ -10,12 +10,12 @@ implemented. hosted sensitivity `8b0b983d002cd181`, rail sensitivity
 `933ea7a501a0bd64` prove exact arrivals, quiet navigation, pointer/keyboard
 activation, focus return and bounded layout. input proof `9f9267423390484c`
 also exercises trusted browser touch events, completed prose taps, one-finger
-movement and zoom exclusion. these automated proofs do not establish physical
+movement and zoom exclusion. these historical checks did not establish physical
 touch or screen-reader usability.
 
-`docs/local-rules/testing-standards.md:784` requires deliberate manual
-assistive-technology review for consequential interaction changes. none is
-recorded for this cutover. oi-062's resolved geometry does not discharge this
+manual assistive-technology review remains appropriate for these interaction
+changes under `docs/local-rules/testing-standards.md`. none is recorded for this
+cutover. oi-062's resolved geometry does not discharge this
 remaining interaction review.
 
 prerequisite: the candidate reader running on the supported android/webview

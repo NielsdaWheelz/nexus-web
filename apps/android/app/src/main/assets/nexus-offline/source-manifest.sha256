@@ -1,5 +1,5 @@
-093d4772f53a0e35278eed2b2b7d7dc1d548b66687dde21c33d3456ff36398e1  apps/web/bun.lock
-209e93b7306323d8a9bc35c7ba61257ef24f3959909cccf450a42fcd3b921e52  apps/web/package.json
+feb540e8b61aa9ad04d7d742edee54695394f39e435d2d1386ab179882c769e4  apps/web/bun.lock
+69545c49ccb592e89ca1b3775f2ccb101012db98d0d1ea6ebbe62a74ff9bbcae  apps/web/package.json
 25de390ca8e6044bca37394655ec2406c7813b5f1e5d79a9b62fd3588494ac6f  apps/web/scripts/build-offline-reading.mjs
 2124958ef98e59901fed60f4a1fe68909b6018175b63d56b75c2214105af18cd  apps/web/scripts/copy-pdfjs.mjs
 e53a29c3b804fe240ba8e6de2f36d5bd38eba0c175a26fec8ccc48726b733fd6  apps/web/src/app/globals.css
@@ -61,8 +61,8 @@ bc1de97e4ad3d1d71f7c4226dbc22f7a8258067e7b888558d338bc169a8b7a54  apps/web/src/l
 697e483415eaf77d4bf3b54dba1577fef4648f2d742ae88476792ec6c3d711a5  apps/web/src/lib/highlights/segmenter.ts
 cb2d250c2b6117ea778a302ccafd443d9ea411ea900ef956394c3e908d8a63e0  apps/web/src/lib/highlights/useHighlightNoteChord.ts
 b26adcc58819bf8da76ff77e55704fb7d728e4583219a5349db176d54cec73d2  apps/web/src/lib/highlights/usePdfScrollToTarget.ts
-0b33f8da980b8da71e67efa03141b13a50fdce5bd3b3c9cf6f9edf37aed35c9c  apps/web/src/lib/imports/importRef.ts
-f51f4e3c22973d9a79b356daee4d452e22b7990741a0e824243281c611219f87  apps/web/src/lib/imports/importsClient.ts
+b7971e436b0f16ce2581d849b2cd4fedb53331c6ffb7196f7d3a6b92f73b4c45  apps/web/src/lib/imports/importRef.ts
+fc29e8e899caf1632b6f738dca12f8a4f0ada29f30e82ee5106983f88fc43569  apps/web/src/lib/imports/importsClient.ts
 51305941daa1a9e2efe9f9673c314e729fa1f2381e82b964be3c2d8766a6bfa4  apps/web/src/lib/lectern/contract.ts
 51a70f4fa2300a501cd2fb86e676d1fbe6c95a797652e98df4b062eef854fbf7  apps/web/src/lib/libraries/client.ts
 57bd89d1644703cbda20696c82c13d0531266d09fcb146334a8bb2f5e4120550  apps/web/src/lib/libraries/contract.ts
@@ -105,7 +105,7 @@ ae88e4860da8f473019c7cadf4bee30e213d0fabb1440541f9bc000acd37526b  apps/web/src/l
 8b6da23cd3c38f6d82565cdbc39d134d08cec0f888c2ba07ec220aafd182fe79  apps/web/src/lib/sharing/openOptions.ts
 1bf470120bab9d23615b47f808e3eebbdc5d58da268166261458b84f766f754c  apps/web/src/lib/sharing/targets.ts
 fb615224c11ce96396b528801dc41c678cfac7892482c7d842b785caac6c7617  apps/web/src/lib/sharing/wireValidation.ts
-bdb1c57e5d15ebfc55c7e79ed28290c9298d8b01128ab568a4213ff8be48f7a2  apps/web/src/lib/status/imports.ts
+458afada1deebe74fae576c8f85cbf503528c259d07749528e0331139e1f6148  apps/web/src/lib/status/imports.ts
 9d9053a82a85a04150af1aacadf7e931c6b81968cfa6e99025e51ee525adad08  apps/web/src/lib/ui/actionDescriptor.ts
 7e8ffc95bc3f5fbf58c8e07d009fd80657ca6edcccdbbec24c016753a5dac095  apps/web/src/lib/ui/composeRefs.ts
 8b802d5f9db2effa16bcfbc3cba0b7a4efc3857ecd15ee36e0623ea362b7ece1  apps/web/src/lib/ui/cx.ts

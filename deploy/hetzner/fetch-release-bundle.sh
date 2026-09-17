@@ -69,7 +69,7 @@ bundle_files="$(
     printf '%s\n' "${path#./}"
   done | LC_ALL=C sort
 )"
-expected_bundle_files=$'Caddyfile\ncandidate-manifest.json\ndocker-compose.yml\nnexus-codex-agent-host.apparmor\nprove-codex-capacity.sh\npython/nexus/__init__.py\npython/nexus/release_artifact.py\nrelease.py\ntestdata/android/player-protocol.json'
+expected_bundle_files=$'Caddyfile\ncandidate-manifest.json\ncontracts/android-player-protocol.json\ndocker-compose.yml\nnexus-codex-agent-host.apparmor\npython/nexus/__init__.py\npython/nexus/release_artifact.py\nrelease.py'
 [ "$bundle_files" = "$expected_bundle_files" ] || \
   die "release artifact has an unexpected shape"
 
@@ -78,11 +78,10 @@ cmp "$bundle/docker-compose.yml" "$root_dir/deploy/hetzner/docker-compose.yml"
 cmp "$bundle/Caddyfile" "$root_dir/deploy/hetzner/Caddyfile"
 cmp "$bundle/nexus-codex-agent-host.apparmor" \
   "$root_dir/deploy/hetzner/nexus-codex-agent-host.apparmor"
-cmp "$bundle/prove-codex-capacity.sh" "$root_dir/deploy/hetzner/prove-codex-capacity.sh"
 cmp "$bundle/python/nexus/__init__.py" "$root_dir/python/nexus/__init__.py"
 cmp "$bundle/python/nexus/release_artifact.py" "$root_dir/python/nexus/release_artifact.py"
-cmp "$bundle/testdata/android/player-protocol.json" \
-  "$root_dir/testdata/android/player-protocol.json"
+cmp "$bundle/contracts/android-player-protocol.json" \
+  "$root_dir/contracts/android-player-protocol.json"
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$root_dir/python" \
   python3 -B "$root_dir/deploy/hetzner/release.py" validate-candidate \
   --manifest "$bundle/candidate-manifest.json" >/dev/null
