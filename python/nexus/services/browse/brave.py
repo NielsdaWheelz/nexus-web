@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from urllib.parse import quote, urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from llm_tools import (
     WebSearchError,
@@ -31,11 +31,13 @@ from nexus.services.browse.models import (
     BrowseSectionFailureKind,
     BrowseTargetNotFound,
     brave_target,
+    provider_instant,
+    proxied_image,
     seal_target,
+    single_credit,
 )
 from nexus.services.net.safe_fetch import SafeFetchNotFound, safe_get
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
-from nexus.web_paths import media_image_url
 
 _MAX_PREVIEW_BYTES = 2 * 1024 * 1024
 
@@ -124,30 +126,23 @@ def preview(canonical_url: str) -> BraveArticle:
         "og:description",
     )
     author = _meta(document, "name", "author")
-    published_at = _instant_or_none(_meta(document, "property", "article:published_time"))
+    published_time = _meta(document, "property", "article:published_time")
     image_href = _meta(document, "property", "og:image")
     if image_href is not None:
         try:
             image_href = _canonical_public_url(urljoin(source_href, image_href))
         except (InvalidRequestError, ValueError):
             image_href = None
-    contributors = []
-    if author is not None:
-        contributors.append(
-            ContributorCreditOut(
-                credited_name=author,
-                contributor_display_name=author,
-                role="author",
-            )
-        )
     return BraveArticle(
         canonical_url=canonical_url,
         source_href=source_href,
         title=title,
         description=description,
-        published_at=published_at,
-        image_href=_proxied_image(image_href),
-        contributors=contributors,
+        published_at=(
+            None if published_time is None else provider_instant(published_time, provider="Brave")
+        ),
+        image_href=proxied_image(image_href),
+        contributors=single_credit(author, "author"),
         site_name=urlsplit(source_href).hostname or "",
     )
 
@@ -156,12 +151,7 @@ def _candidate(citation) -> WebArticleCandidate:
     canonical_url = _canonical_public_url(citation.url)
     if not citation.title.strip():
         raise RuntimeError("Brave Browse result has no title")
-    target = seal_target(
-        brave_target(
-            canonical_url,
-            result_ref=citation.result_ref,
-        )
-    )
+    target = seal_target(brave_target(canonical_url))
     return WebArticleCandidate(
         source=BrowseSource.Brave,
         resolution=PreviewResolution(target=target),
@@ -169,7 +159,9 @@ def _candidate(citation) -> WebArticleCandidate:
         contributors=[],
         description=absent() if not citation.snippet else present(citation.snippet),
         published_at=(
-            absent() if citation.published_at is None else present(_instant(citation.published_at))
+            absent()
+            if citation.published_at is None
+            else present(provider_instant(citation.published_at, provider="Brave"))
         ),
         image=absent(),
         kind_facts=WebArticleFacts(
@@ -184,20 +176,6 @@ def _canonical_public_url(value: str) -> str:
     except (InvalidRequestError, ValueError) as exc:
         raise RuntimeError("Brave returned an invalid public URL") from exc
     return normalize_url_for_display(value)
-
-
-def _instant(value: str) -> datetime:
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise RuntimeError("Brave returned an invalid publication instant") from exc
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise RuntimeError("Brave returned a timezone-free publication instant")
-    return parsed
-
-
-def _instant_or_none(value: str | None) -> datetime | None:
-    return None if value is None else _instant(value)
 
 
 def _first_text(values: list[object]) -> str | None:
@@ -215,9 +193,3 @@ def _meta(document, attribute: str, value: str) -> str | None:
             f"'abcdefghijklmnopqrstuvwxyz')='{value}']/@content"
         )
     )
-
-
-def _proxied_image(value: str | None) -> str | None:
-    if value is None:
-        return None
-    return media_image_url(quote(value, safe=""))

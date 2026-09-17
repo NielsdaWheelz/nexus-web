@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
-from urllib.parse import quote, urlsplit
+from datetime import UTC, datetime
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from nexus.config import get_settings
-from nexus.errors import ApiError, InvalidRequestError
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.schemas.browse import (
     BrowseCandidate,
     BrowseSource,
@@ -20,10 +20,8 @@ from nexus.schemas.browse import (
     PodcastPreviewEpisode,
     PreviewResolution,
 )
-from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import absent, present
 from nexus.services.browse.cursor import (
-    BrowsePreviewEpisodesPlan,
     decode_preview_episodes_cursor,
     encode_preview_episodes_cursor,
 )
@@ -36,13 +34,15 @@ from nexus.services.browse.models import (
     ResolvedPodcast,
     episode_target,
     podcast_target,
+    proxied_image,
+    retry_at_from_header,
     seal_target,
+    single_credit,
 )
 from nexus.services.podcasts.identity import validate_and_normalize_feed_url
 from nexus.services.podcasts.provider import get_podcast_index_client
 from nexus.services.sealed_handles import DiscoveryTargetHandle
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
-from nexus.web_paths import media_image_url
 
 _PROVIDER = ConfigDict(extra="ignore", strict=True)
 
@@ -103,8 +103,6 @@ def search(
     query: BrowseQuery,
 ) -> tuple[list[BrowseCandidate], str | None]:
     if query.cursor is not None:
-        from nexus.errors import ApiErrorCode, InvalidRequestError
-
         raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor")
     client = _client()
     payload = _provider_call(lambda: client.browse_search_payload(query.query, query.limit))
@@ -180,7 +178,6 @@ def episode_page(
             cursor,
             viewer_id=viewer_id,
             target=target,
-            plan=BrowsePreviewEpisodesPlan.PodcastIndexBeforePublished,
         )
     client = _client()
     payload = _provider_call(
@@ -223,7 +220,6 @@ def episode_page(
         next_cursor = encode_preview_episodes_cursor(
             viewer_id=viewer_id,
             target=target,
-            plan=BrowsePreviewEpisodesPlan.PodcastIndexBeforePublished,
             before_published=published,
             before_episode_ref=episode_ref,
         )
@@ -249,7 +245,7 @@ def _provider_call(call, *, target_lookup: bool = False):
             if response.status_code == 429:
                 raise BrowseProviderFailure(
                     BrowseSectionFailureKind.RateLimited,
-                    retry_at=_retry_at(response.headers.get("retry-after")),
+                    retry_at=retry_at_from_header(response.headers.get("retry-after")),
                 ) from exc
             if response.status_code in {408, 500, 502, 503, 504}:
                 raise BrowseProviderFailure(BrowseSectionFailureKind.Unavailable) from exc
@@ -316,17 +312,14 @@ def _episode(
 
 def _candidate(podcast: ResolvedPodcast) -> PodcastCandidate:
     target = seal_target(podcast_target(podcast.podcast_ref))
-    contributors = _contributors(podcast.author)
     return PodcastCandidate(
         source=BrowseSource.PodcastIndex,
         resolution=PreviewResolution(target=target),
         title=podcast.title,
-        contributors=contributors,
+        contributors=single_credit(podcast.author, "author"),
         description=(absent() if podcast.description is None else present(podcast.description)),
         published_at=absent(),
-        image=(
-            absent() if (image := _proxied_image(podcast.image_url)) is None else present(image)
-        ),
+        image=(absent() if (image := proxied_image(podcast.image_url)) is None else present(image)),
         kind_facts=PodcastFacts(podcast_ref=podcast.podcast_ref),
     )
 
@@ -336,12 +329,12 @@ def _episode_item(episode: ResolvedEpisode) -> PodcastPreviewEpisode:
     return PodcastPreviewEpisode(
         target=target,
         title=episode.title,
-        contributors=_contributors(episode.podcast.author),
+        contributors=single_credit(episode.podcast.author, "author"),
         description=(absent() if episode.description is None else present(episode.description)),
         published_at=(absent() if episode.published_at is None else present(episode.published_at)),
         image=(
             absent()
-            if (image := _proxied_image(episode.podcast.image_url)) is None
+            if (image := proxied_image(episode.podcast.image_url)) is None
             else present(image)
         ),
         kind_facts=EpisodePreviewFacts(
@@ -359,18 +352,6 @@ def _episode_item(episode: ResolvedEpisode) -> PodcastPreviewEpisode:
 def _episode_key(episode: ResolvedEpisode) -> tuple[int, str]:
     published = 0 if episode.published_at is None else int(episode.published_at.timestamp())
     return published, episode.episode_ref
-
-
-def _contributors(author: str | None) -> list[ContributorCreditOut]:
-    if author is None:
-        return []
-    return [
-        ContributorCreditOut(
-            credited_name=author,
-            contributor_display_name=author,
-            role="author",
-        )
-    ]
 
 
 def _provider_ref(value: int | str) -> str:
@@ -405,17 +386,3 @@ def _optional_public_url(value: str | None) -> str | None:
         return normalize_url_for_display(normalized)
     except (InvalidRequestError, ValueError):
         return None
-
-
-def _proxied_image(value: str | None) -> str | None:
-    return None if value is None else media_image_url(quote(value, safe=""))
-
-
-def _retry_at(raw: str | None) -> datetime | None:
-    if raw is None:
-        return None
-    try:
-        seconds = float(raw)
-    except ValueError:
-        return None
-    return datetime.now(UTC) + timedelta(seconds=max(seconds, 0.0))

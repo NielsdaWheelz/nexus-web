@@ -88,7 +88,9 @@ def build_search_query(
         text=text,
         requested_kinds=parse_requested_kinds(raw_kinds),
         formats=validate_formats(raw_formats),
-        authors=_dedup_strings(raw_authors),
+        authors=tuple(
+            dict.fromkeys(t for t in (str(v or "").strip() for v in raw_authors or ()) if t)
+        ),
         roles=validate_roles(raw_roles),
         scope=scope,
         cursor=cursor,
@@ -96,25 +98,12 @@ def build_search_query(
     )
 
 
-def _dedup[T](raw: list[str] | None, normalize: Callable[[str], T | None]) -> tuple[T, ...]:
-    """Map each token through ``normalize``, keeping the first occurrence of each non-None
-    result in order. The single trim/dedup scaffold the validators share."""
-    out: list[T] = []
-    seen: set[T] = set()
-    for token in raw or ():
-        value = normalize(token)
-        if value is None or value in seen:
-            continue
-        out.append(value)
-        seen.add(value)
-    return tuple(out)
-
-
 def _validate_dedup[T](
     raw: list[str] | None, normalize: Callable[[str], T | None], label: str
 ) -> tuple[T, ...]:
-    """Like :func:`_dedup`, but a token that normalizes to None is rejected (400) — the
-    strict query-time validation the HTTP edge applies (D-11)."""
+    """Map each token through ``normalize``, keeping the first occurrence of each result in
+    order; a token that normalizes to None is rejected (400) — the strict query-time
+    validation the HTTP edge applies (D-11)."""
     out: list[T] = []
     seen: set[T] = set()
     for token in raw or ():
@@ -133,11 +122,6 @@ def _normalize_role(token: str) -> str | None:
     """A contributor role is valid iff it is in the taxonomy vocab (strict, no coercion)."""
     role = str(token or "").strip().lower()
     return role if role in CONTRIBUTOR_ROLE_SET else None
-
-
-def _dedup_strings(values: list[str] | None) -> tuple[str, ...]:
-    """Trim and dedup free-text strings, preserving first-seen order. None → ()."""
-    return _dedup(values, lambda token: str(token or "").strip() or None)
 
 
 def parse_requested_kinds(raw: list[str] | None) -> frozenset[SearchKind] | None:

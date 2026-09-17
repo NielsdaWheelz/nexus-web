@@ -17,11 +17,7 @@ from nexus.schemas.browse import (
 )
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import absent, present
-from nexus.services.browse.cursor import (
-    BrowseSearchPlan,
-    decode_search_cursor,
-    encode_search_cursor,
-)
+from nexus.services.browse.cursor import decode_search_cursor, encode_search_cursor
 from nexus.services.browse.models import (
     BrowseQuery,
     BrowseTargetNotFound,
@@ -29,6 +25,7 @@ from nexus.services.browse.models import (
     seal_target,
 )
 from nexus.services.contributor_credits import visible_credit_rows_sql
+from nexus.services.signed_keyset_cursor import KeysetValueKind
 
 _PROVIDER_CONTRACT = "ProjectGutenbergCatalogSearch"
 _LANDING = "https://www.gutenberg.org/ebooks/{ebook_ref}"
@@ -59,7 +56,7 @@ def search(
                 query,
                 viewer_id=viewer_id,
                 provider_contract=_PROVIDER_CONTRACT,
-                plan=BrowseSearchPlan.ProjectGutenbergRankOffset,
+                kind=KeysetValueKind.Int,
             )
         )
     rows = (
@@ -145,7 +142,6 @@ def search(
             query,
             viewer_id=viewer_id,
             provider_contract=_PROVIDER_CONTRACT,
-            plan=BrowseSearchPlan.ProjectGutenbergRankOffset,
             after=offset + query.limit,
         )
     return items, next_cursor

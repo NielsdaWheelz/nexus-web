@@ -57,7 +57,7 @@ from nexus.services.search.projection import (
     _truncate_snippet,
 )
 from nexus.services.search.ranking import (
-    MAX_POSITIVE_TYPE_WEIGHT,
+    MAX_TYPE_WEIGHT,
     TYPE_WEIGHTS,
     _normalize_scores_by_type,
 )
@@ -97,10 +97,6 @@ from nexus.services.search.retrievers.resource_metadata import (
     _lexical_params,
     _tier_score_sql,
     reference_metadata_candidate_sql_parts,
-    retrieve_library_artifact_candidates,
-    retrieve_library_candidates,
-    retrieve_oracle_reading_candidates,
-    retrieve_passage_anchor_candidates,
 )
 from nexus.services.search.retrievers.web import _search_web_results
 
@@ -169,7 +165,7 @@ def rank_candidates[C: TargetCandidate](candidates: list[C]) -> list[C]:
     _normalize_scores_by_type(candidates)
     for candidate in candidates:
         candidate.score.weighted = candidate.score.normalized * TYPE_WEIGHTS[candidate.result_type]
-        candidate.score.normalized = candidate.score.weighted / MAX_POSITIVE_TYPE_WEIGHT
+        candidate.score.normalized = candidate.score.weighted / MAX_TYPE_WEIGHT
     candidates.sort(
         key=lambda candidate: (
             -candidate.score.normalized,
@@ -317,7 +313,13 @@ def link_candidates(
                 )
             )
     out.extend(
-        _metadata_candidates(db, viewer_id, q=query, include=include, limit=limit_per_source)
+        _candidate_union(
+            db,
+            reference_metadata_candidate_sql_parts(include),
+            viewer_id=viewer_id,
+            q=query,
+            limit=limit_per_source,
+        )
     )
     return rank_candidates(out)
 
@@ -352,21 +354,6 @@ def reference_candidates(
         limit=limit_per_source,
     )
     return rank_candidates(out)
-
-
-def _metadata_candidates(
-    db: Session, viewer_id: UUID, *, q: str, include: Callable[[str], bool], limit: int
-) -> list[ResourceMetadataCandidate]:
-    out: list[ResourceMetadataCandidate] = []
-    if include("library"):
-        out.extend(retrieve_library_candidates(db, viewer_id=viewer_id, q=q, limit=limit))
-    if include("oracle_reading"):
-        out.extend(retrieve_oracle_reading_candidates(db, viewer_id=viewer_id, q=q, limit=limit))
-    if include("artifact"):
-        out.extend(retrieve_library_artifact_candidates(db, viewer_id=viewer_id, q=q, limit=limit))
-    if include("passage_anchor"):
-        out.extend(retrieve_passage_anchor_candidates(db, viewer_id=viewer_id, q=q, limit=limit))
-    return out
 
 
 # =============================================================================
@@ -577,9 +564,15 @@ def _reference_candidates(
             """
         )
     parts.extend(reference_metadata_candidate_sql_parts(include))
+    return _candidate_union(db, parts, viewer_id=viewer_id, q=q, limit=limit)
+
+
+def _candidate_union(
+    db: Session, parts: list[str], *, viewer_id: UUID, q: str, limit: int
+) -> list[TargetCandidate]:
+    """Run one UNION ALL over the typed candidate branches and map each row."""
     if not parts:
         return []
-
     rows = db.execute(
         text(
             "SELECT result_type, id, score, payload FROM ("

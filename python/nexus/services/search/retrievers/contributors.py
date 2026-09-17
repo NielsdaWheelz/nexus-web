@@ -8,18 +8,12 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import visible_contributor_ids_cte_sql
-from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.services.contributor_credits import (
     contributor_fts_text_sql,
     visible_credit_rows_sql,
 )
 from nexus.services.search.projection import _truncate_snippet
-from nexus.services.search.results import (
-    _build_search_score,
-    _RankedContributorResult,
-    _SearchScore,
-)
+from nexus.services.search.results import _build_search_score, _RankedContributorResult
 from nexus.services.search.scope import ScopeUnsupported, scope_filter_sql
 
 
@@ -34,24 +28,15 @@ def _search_contributors(
     roles: list[str],
     content_kinds: list[str],
     limit: int,
-    *,
-    broad_visibility: bool = False,
 ) -> list[_RankedContributorResult]:
     """Search contributor identities by display name, aliases, and visible credited names.
 
     Composes the canonical read relation (``contributor_credits.visible_credit_rows_sql``
     for the credited-visible predicate, ``contributor_fts_text_sql`` for the blob) rather
-    than reading raw credit SQL. On the discovery surfaces a contributor surfaces only with
-    at least one visible credited target (spec §2.8 / D-8): retained key owners and
-    graph-referenced identities with zero visible credits never appear. The FTS blob is
-    display name + every human alias + visible credited names — never an external key (AC 24).
-
-    ``broad_visibility=True`` is the durable-ref re-resolution mode used by
-    ``resolve_contributor_search_result`` (id-pinned, ``has_query=False``): it uses the
-    BROAD contributor visibility predicate (visible credit OR viewer-owned graph edge) so a
-    chat citation to a contributor that is reachable only via a ``resource_edges`` endpoint
-    — with zero visible credits — still re-materializes, matching
-    ``resolve.py::_load_contributor``. Discovery keeps the narrow credited-visible gate.
+    than reading raw credit SQL. A contributor surfaces only with at least one visible
+    credited target (spec §2.8 / D-8): retained key owners and graph-referenced identities
+    with zero visible credits never appear. The FTS blob is display name + every human alias
+    + visible credited names — never an external key (AC 24).
     """
     params: dict[str, Any] = {
         "viewer_id": viewer_id,
@@ -103,12 +88,6 @@ def _search_contributors(
             )
         """
 
-    visibility_gate_sql = (
-        visible_contributor_ids_cte_sql()
-        if broad_visibility
-        else "SELECT DISTINCT contributor_id FROM scoped_credits"
-    )
-
     query = f"""
         WITH
             scoped_credits AS (
@@ -117,7 +96,7 @@ def _search_contributors(
                 WHERE TRUE
                 {scope_credit_filter}
             ),
-            visible_gate AS ({visibility_gate_sql}),
+            visible_gate AS (SELECT DISTINCT contributor_id FROM scoped_credits),
             contributor_fts AS ({contributor_fts_text_sql()})
         SELECT
             c.id,
@@ -155,31 +134,3 @@ def _search_contributors(
         )
         for row in rows
     ]
-
-
-def resolve_contributor_search_result(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    result_id: UUID,
-    score: _SearchScore,
-) -> _RankedContributorResult:
-    """Rematerialize one broadly visible Contributor identity."""
-    matches = _search_contributors(
-        db,
-        viewer_id,
-        "",
-        False,
-        "all",
-        None,
-        [result_id],
-        [],
-        [],
-        1,
-        broad_visibility=True,
-    )
-    if not matches:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
-    result = matches[0]
-    result.score = score
-    return result

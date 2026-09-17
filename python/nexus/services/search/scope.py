@@ -23,20 +23,16 @@ from nexus.services.search.query import ScopeKind, SearchScope
 # =============================================================================
 
 
-def parse_scope(scope: str) -> tuple[ScopeKind, UUID | None]:
-    """Parse scope string into (scope_kind, scope_id).
-
-    Valid scopes:
-    - "all" -> ("all", None)
-    - "media:<uuid>" -> ("media", UUID)
-    - "library:<uuid>" -> ("library", UUID)
-    - "conversation:<uuid>" -> ("conversation", UUID)
+def scope_from_uri(scope: str) -> SearchScope:
+    """Parse a scope URI (``all`` / ``media:<id>`` / ``library:<id>`` / ``conversation:<id>``)
+    into a typed :class:`SearchScope`. The single edge parser shared by the HTTP route and
+    the chat ``app_search`` tool so both construct scopes identically.
 
     Raises:
         InvalidRequestError: If scope format is invalid.
     """
     if scope == "all":
-        return ("all", None)
+        return SearchScope(kind="all", id=None)
 
     prefixes: tuple[tuple[str, ScopeKind], ...] = (
         ("media:", "media"),
@@ -46,22 +42,13 @@ def parse_scope(scope: str) -> tuple[ScopeKind, UUID | None]:
     for prefix, kind in prefixes:
         if scope.startswith(prefix):
             try:
-                return (kind, UUID(scope[len(prefix) :]))
+                return SearchScope(kind=kind, id=UUID(scope[len(prefix) :]))
             except ValueError:
                 raise InvalidRequestError(
                     ApiErrorCode.E_INVALID_REQUEST, f"Invalid {kind} ID in scope"
                 ) from None
 
-    # Unknown scope format - treat as invalid
     raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Invalid scope format")
-
-
-def scope_from_uri(scope: str) -> SearchScope:
-    """Parse a scope URI (``all`` / ``media:<id>`` / ``library:<id>`` / ``conversation:<id>``)
-    into a typed :class:`SearchScope`. The single edge parser shared by the HTTP route and
-    the chat ``app_search`` tool so both construct scopes identically."""
-    scope_type, scope_id = parse_scope(scope)
-    return SearchScope(kind=scope_type, id=scope_id)
 
 
 def authorize_scope(
@@ -360,7 +347,7 @@ def scope_filter_sql(scope_type: str, scope_id: UUID | None, entity: str) -> Sco
     Returns ``("", {})`` for the unscoped ``all``, ``(sql_fragment, params)`` for a
     supported scoped cell, or :data:`UNSUPPORTED` when the entity cannot honor the
     scope (the retriever yields no results). ``scope_type`` is assumed pre-validated
-    by :func:`parse_scope`.
+    by :func:`scope_from_uri`.
     """
     if scope_type == "all":
         return ("", {})

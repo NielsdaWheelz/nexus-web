@@ -10,7 +10,10 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.services.contributor_credits import credit_target_filter_exists_sql
+from nexus.services.contributor_credits import (
+    contributor_credits_rollup_cte_sql,
+    credit_target_filter_exists_sql,
+)
 from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
 from nexus.services.search.constants import (
     CONTENT_CHUNK_ANN_CANDIDATE_MULTIPLIER,
@@ -31,7 +34,6 @@ from nexus.services.search.results import (
 )
 from nexus.services.search.scope import ScopeUnsupported, scope_filter_sql
 from nexus.services.search.sql import (
-    contributor_credits_rollup_cte_sql,
     hybrid_content_chunk_tail_sql,
     query_embedding_cte_sql,
 )

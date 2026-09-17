@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from typing import Literal
-from urllib.parse import quote
+from datetime import datetime
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -22,22 +20,22 @@ from nexus.schemas.browse import (
 )
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import absent, present
-from nexus.services.browse.cursor import (
-    BrowseSearchPlan,
-    decode_search_cursor,
-    encode_search_cursor,
-)
+from nexus.services.browse.cursor import decode_search_cursor, encode_search_cursor
 from nexus.services.browse.models import (
     BrowseProviderFailure,
     BrowseQuery,
     BrowseSectionFailureKind,
     BrowseTargetNotFound,
+    provider_instant,
+    proxied_image,
+    retry_at_from_header,
     seal_target,
+    single_credit,
     youtube_target,
 )
 from nexus.services.net.http_retry import get_json_with_retry
+from nexus.services.signed_keyset_cursor import KeysetValueKind
 from nexus.services.youtube_identity import classify_youtube_provider_video_id
-from nexus.web_paths import media_image_url
 
 _PROVIDER_CONTRACT = "YouTubeDataV3VideoSearch"
 _BACKOFF_SECONDS = (0.25, 0.75)
@@ -47,13 +45,11 @@ _DURATION = re.compile(
     r"(?:(?P<minutes>[0-9]+)M)?"
     r"(?:(?P<seconds>[0-9]+)S)?\Z"
 )
-_PROVIDER = ConfigDict(extra="forbid", populate_by_name=False, strict=True)
+_PROVIDER = ConfigDict(extra="ignore", strict=True)
 
 
 class _Thumbnail(BaseModel):
     url: str
-    width: int | None = None
-    height: int | None = None
 
     model_config = _PROVIDER
 
@@ -70,73 +66,41 @@ class _Thumbnails(BaseModel):
 
 class _Snippet(BaseModel):
     published_at: str = Field(alias="publishedAt")
-    channel_id: str = Field(alias="channelId")
     title: str
     description: str
     thumbnails: _Thumbnails
     channel_title: str = Field(alias="channelTitle")
-    live_broadcast_content: str = Field(alias="liveBroadcastContent")
-    publish_time: str | None = Field(default=None, alias="publishTime")
-    category_id: str | None = Field(default=None, alias="categoryId")
-    localized: dict[str, str] | None = None
-    default_audio_language: str | None = Field(default=None, alias="defaultAudioLanguage")
-    default_language: str | None = Field(default=None, alias="defaultLanguage")
-    tags: list[str] | None = None
 
     model_config = _PROVIDER
 
 
 class _SearchIdentity(BaseModel):
-    kind: Literal["youtube#video"]
     video_id: str = Field(alias="videoId")
 
     model_config = _PROVIDER
 
 
 class _SearchItem(BaseModel):
-    kind: Literal["youtube#searchResult"]
-    etag: str
     id: _SearchIdentity
     snippet: _Snippet
 
     model_config = _PROVIDER
 
 
-class _PageInfo(BaseModel):
-    total_results: int = Field(alias="totalResults")
-    results_per_page: int = Field(alias="resultsPerPage")
-
-    model_config = _PROVIDER
-
-
 class _SearchResponse(BaseModel):
-    kind: Literal["youtube#searchListResponse"]
-    etag: str
     items: list[_SearchItem]
-    page_info: _PageInfo = Field(alias="pageInfo")
     next_page_token: str | None = Field(default=None, alias="nextPageToken")
-    prev_page_token: str | None = Field(default=None, alias="prevPageToken")
-    region_code: str | None = Field(default=None, alias="regionCode")
 
     model_config = _PROVIDER
 
 
 class _ContentDetails(BaseModel):
     duration: str
-    dimension: str
-    definition: str
-    caption: str
-    licensed_content: bool = Field(alias="licensedContent")
-    content_rating: dict[str, object] = Field(alias="contentRating")
-    projection: str
-    has_custom_thumbnail: bool | None = Field(default=None, alias="hasCustomThumbnail")
 
     model_config = _PROVIDER
 
 
 class _VideoItem(BaseModel):
-    kind: Literal["youtube#video"]
-    etag: str
     id: str
     snippet: _Snippet
     content_details: _ContentDetails = Field(alias="contentDetails")
@@ -145,10 +109,7 @@ class _VideoItem(BaseModel):
 
 
 class _VideoResponse(BaseModel):
-    kind: Literal["youtube#videoListResponse"]
-    etag: str
     items: list[_VideoItem]
-    page_info: _PageInfo = Field(alias="pageInfo")
 
     model_config = _PROVIDER
 
@@ -180,7 +141,7 @@ def search(
                 query,
                 viewer_id=viewer_id,
                 provider_contract=_PROVIDER_CONTRACT,
-                plan=BrowseSearchPlan.YouTubeSearchPageToken,
+                kind=KeysetValueKind.Text,
             )
         )
     settings = get_settings()
@@ -212,7 +173,6 @@ def search(
             query,
             viewer_id=viewer_id,
             provider_contract=_PROVIDER_CONTRACT,
-            plan=BrowseSearchPlan.YouTubeSearchPageToken,
             after=response.next_page_token,
         )
     return items, next_cursor
@@ -242,26 +202,17 @@ def preview(video_ref: str) -> YouTubeVideo:
         raise BrowseTargetNotFound
     item = response.items[0]
     channel_title = item.snippet.channel_title.strip() or None
-    contributors = []
-    if channel_title is not None:
-        contributors.append(
-            ContributorCreditOut(
-                credited_name=channel_title,
-                contributor_display_name=channel_title,
-                role="channel",
-            )
-        )
     return YouTubeVideo(
         video_ref=video_ref,
         title=_nonblank(item.snippet.title, "title"),
         description=item.snippet.description.strip() or None,
         channel_title=channel_title,
-        published_at=_instant(item.snippet.published_at),
+        published_at=provider_instant(item.snippet.published_at, provider="YouTube"),
         image_href=_thumbnail(item.snippet.thumbnails),
         watch_href=identity.watch_url,
         embed_href=identity.embed_url,
         duration_seconds=_duration_seconds(item.content_details.duration),
-        contributors=contributors,
+        contributors=single_credit(channel_title, "channel"),
     )
 
 
@@ -270,27 +221,18 @@ def _search_candidate(item: _SearchItem) -> VideoCandidate:
     if identity is None:
         raise RuntimeError("YouTube Browse returned an invalid video identity")
     channel_title = item.snippet.channel_title.strip() or None
-    contributors = []
-    if channel_title is not None:
-        contributors.append(
-            ContributorCreditOut(
-                credited_name=channel_title,
-                contributor_display_name=channel_title,
-                role="channel",
-            )
-        )
     target = seal_target(youtube_target(identity.provider_video_id))
     return VideoCandidate(
         source=BrowseSource.YouTube,
         resolution=PreviewResolution(target=target),
         title=_nonblank(item.snippet.title, "title"),
-        contributors=contributors,
+        contributors=single_credit(channel_title, "channel"),
         description=(
             absent()
             if not item.snippet.description.strip()
             else present(item.snippet.description.strip())
         ),
-        published_at=present(_instant(item.snippet.published_at)),
+        published_at=present(provider_instant(item.snippet.published_at, provider="YouTube")),
         image=(
             absent() if (image := _thumbnail(item.snippet.thumbnails)) is None else present(image)
         ),
@@ -320,7 +262,7 @@ def _provider_json(url: str, *, params: dict[str, str | int]) -> dict[str, objec
             if response.status_code == 429:
                 raise BrowseProviderFailure(
                     BrowseSectionFailureKind.RateLimited,
-                    retry_at=_retry_at(response.headers.get("retry-after")),
+                    retry_at=retry_at_from_header(response.headers.get("retry-after")),
                 ) from exc
             if response.status_code == 403:
                 reason = _google_error_reason(response)
@@ -349,26 +291,6 @@ def _google_error_reason(response: httpx.Response) -> str:
     return reason
 
 
-def _retry_at(raw: str | None) -> datetime | None:
-    if raw is None:
-        return None
-    try:
-        seconds = float(raw)
-    except ValueError:
-        return None
-    return datetime.now(UTC) + timedelta(seconds=max(seconds, 0.0))
-
-
-def _instant(raw: str) -> datetime:
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise RuntimeError("YouTube returned an invalid publication instant") from exc
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise RuntimeError("YouTube returned a timezone-free publication instant")
-    return parsed
-
-
 def _duration_seconds(raw: str) -> int:
     match = _DURATION.fullmatch(raw)
     if match is None or not any(match.groupdict().values()):
@@ -390,7 +312,7 @@ def _thumbnail(thumbnails: _Thumbnails) -> str | None:
         thumbnails.default,
     ):
         if value is not None and value.url:
-            return media_image_url(quote(value.url, safe=""))
+            return proxied_image(value.url)
     return None
 
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import assert_never
-from urllib.parse import quote
 from uuid import UUID
 
 from llm_tools import WebSearchProvider
@@ -31,7 +30,6 @@ from nexus.schemas.browse import (
     WebArticlePreview,
     WebArticlePreviewFacts,
 )
-from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import Presence, absent, present
 from nexus.services.browse import brave, gutenberg, nexus, podcast_index, youtube
 from nexus.services.browse.models import (
@@ -46,6 +44,8 @@ from nexus.services.browse.models import (
     ResolvedEpisode,
     ResolvedPodcast,
     YouTubeVideoTarget,
+    proxied_image,
+    single_credit,
     unseal_target,
 )
 from nexus.services.podcasts.episode_identity import (
@@ -53,7 +53,6 @@ from nexus.services.podcasts.episode_identity import (
 )
 from nexus.services.podcasts.subscriptions_query import active_subscription_rows_sql
 from nexus.services.sealed_handles import DiscoveryTargetHandle
-from nexus.web_paths import media_image_url
 
 
 async def search_browse(
@@ -220,7 +219,7 @@ def preview_browse(
             return PodcastPreview(
                 target=query.target,
                 title=podcast.title,
-                contributors=_podcast_contributors(podcast),
+                contributors=single_credit(podcast.author, "author"),
                 description=(
                     absent() if podcast.description is None else present(podcast.description)
                 ),
@@ -254,7 +253,7 @@ def preview_browse(
             return EpisodePreview(
                 target=query.target,
                 title=episode.title,
-                contributors=_podcast_contributors(episode.podcast),
+                contributors=single_credit(episode.podcast.author, "author"),
                 description=(
                     absent() if episode.description is None else present(episode.description)
                 ),
@@ -293,25 +292,18 @@ def _resolve_owned(
     viewer_id: UUID,
     candidates: list[BrowseCandidate],
 ) -> list[BrowseCandidate]:
-    return [
-        _with_owned_resolution(db, viewer_id=viewer_id, candidate=candidate)
-        for candidate in candidates
-    ]
-
-
-def _with_owned_resolution(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    candidate: BrowseCandidate,
-) -> BrowseCandidate:
-    if not isinstance(candidate.resolution, PreviewResolution):
-        return candidate
-    target = unseal_target(candidate.resolution.target)
-    resolution = _owned_resolution(db, viewer_id=viewer_id, target=target)
-    if resolution is None:
-        return candidate
-    return candidate.model_copy(update={"resolution": resolution})
+    resolved: list[BrowseCandidate] = []
+    for candidate in candidates:
+        if not isinstance(candidate.resolution, PreviewResolution):
+            resolved.append(candidate)
+            continue
+        target = unseal_target(candidate.resolution.target)
+        resolution = _owned_resolution(db, viewer_id=viewer_id, target=target)
+        if resolution is None:
+            resolved.append(candidate)
+            continue
+        resolved.append(candidate.model_copy(update={"resolution": resolution}))
+    return resolved
 
 
 def _preview_resolution(
@@ -474,24 +466,9 @@ def _visible_media_by_urls(
     )
 
 
-def _podcast_contributors(podcast: ResolvedPodcast) -> list[ContributorCreditOut]:
-    if podcast.author is None:
-        return []
-    return [
-        ContributorCreditOut(
-            credited_name=podcast.author,
-            contributor_display_name=podcast.author,
-            role="author",
-        )
-    ]
-
-
 def _podcast_image(podcast: ResolvedPodcast) -> Presence[str]:
-    return (
-        absent()
-        if podcast.image_url is None
-        else present(media_image_url(quote(podcast.image_url, safe="")))
-    )
+    image = proxied_image(podcast.image_url)
+    return absent() if image is None else present(image)
 
 
 def _episode_facts(episode: ResolvedEpisode) -> EpisodePreviewFacts:

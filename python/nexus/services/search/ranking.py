@@ -33,7 +33,7 @@ TYPE_WEIGHTS = {
     "oracle_reading": 1.0,
     "passage_anchor": 1.25,
 }
-MAX_POSITIVE_TYPE_WEIGHT = max(weight for weight in TYPE_WEIGHTS.values() if weight > 0)
+MAX_TYPE_WEIGHT = max(TYPE_WEIGHTS.values())
 
 
 class _ScoredCandidate(Protocol):

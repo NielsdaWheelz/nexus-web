@@ -2,13 +2,6 @@
 
 from __future__ import annotations
 
-# Re-exported so the many search retrievers keep importing the credit rollup from
-# this shared-fragments module, while the sole raw ``contributor_credits`` read
-# lives in the canonical credit read owner (spec §3; S9 single-owner sweep).
-from nexus.services.contributor_credits import (
-    contributor_credits_rollup_cte_sql as contributor_credits_rollup_cte_sql,
-)
-
 # Recency half-life term appended to the document hybrid score (media only).
 # Notes omit it so a note's age never reorders it.
 _RECENCY_DECAY_TERM = """
@@ -129,7 +122,3 @@ def hybrid_content_chunk_tail_sql(
                 )
             {final_projection_sql}
         """
-
-
-# contributor_credits_rollup_cte_sql now lives in the canonical credit read owner
-# (nexus.services.contributor_credits) and is re-exported at the top of this module.

@@ -7,7 +7,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.schemas.search import SearchResultOut
 from nexus.schemas.search_types import SEARCH_RESULT_TYPES, VALID_RESULT_TYPES
 from nexus.services.search.projection import _result_to_out
@@ -15,11 +15,7 @@ from nexus.services.search.results import InternalSearchResult, _SearchScore
 from nexus.services.search.retrievers.content_chunks import (
     resolve_content_chunk_search_result,
 )
-from nexus.services.search.retrievers.contributors import resolve_contributor_search_result
-from nexus.services.search.retrievers.conversations import (
-    ConversationSearchResultType,
-    resolve_conversation_search_result,
-)
+from nexus.services.search.retrievers.conversations import resolve_message_search_result
 from nexus.services.search.retrievers.evidence_spans import (
     resolve_evidence_span_search_result,
 )
@@ -74,18 +70,11 @@ def _resolve_search_result(
     score = _SearchScore(raw=1.0, weighted=1.0, normalized=1.0)
 
     match result_type:
-        case "media" | "podcast" | "episode" | "video":
+        case "media" | "episode" | "video":
             return resolve_media_search_result(
                 db,
                 viewer_id=viewer_id,
                 result_type=cast(MediaSearchResultType, result_type),
-                result_id=result_id,
-                score=score,
-            )
-        case "contributor":
-            return resolve_contributor_search_result(
-                db,
-                viewer_id=viewer_id,
                 result_id=result_id,
                 score=score,
             )
@@ -119,11 +108,10 @@ def _resolve_search_result(
                 result_id=result_id,
                 score=score,
             )
-        case "message" | "conversation" | "artifact":
-            return resolve_conversation_search_result(
+        case "message":
+            return resolve_message_search_result(
                 db,
                 viewer_id=viewer_id,
-                result_type=cast(ConversationSearchResultType, result_type),
                 result_id=result_id,
                 score=score,
             )
@@ -148,6 +136,9 @@ def _resolve_search_result(
                 result_id=result_id,
                 score=score,
             )
+        case "podcast" | "contributor" | "conversation" | "artifact":
+            # Discovery emits these, but no citable resource ever reopens as one.
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Search result not found")
         case unreachable:
             assert_never(unreachable)
 
