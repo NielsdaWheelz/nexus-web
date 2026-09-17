@@ -84,7 +84,7 @@ export function parseNexusUrlIntent(
         ? { kind: "QuickAction", actionId: action }
         : null;
     default:
-      return { kind: "UnsupportedLink" };
+      return null;
   }
 }
 

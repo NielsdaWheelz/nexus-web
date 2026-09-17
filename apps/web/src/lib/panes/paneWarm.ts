@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useContext, useEffect, useRef } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  type FocusEvent as ReactFocusEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { ResourceCacheContext } from "@/lib/api/resourceCache";
 import { clientResourceFetcher } from "@/lib/api/resourceTransport.client";
 import { paneResourceLoaders } from "@/lib/panes/paneResourceLoaders";
@@ -58,5 +65,25 @@ export function usePaneWarm(): (href: string) => void {
       );
     },
     [cache],
+  );
+}
+
+// Prefetch-on-intent delegate: warm the target pane the moment the pointer or keyboard
+// focus reaches any anchor beneath the surface. Wire it to onMouseOverCapture and
+// onFocusCapture; it mirrors the click delegates' closest("a[href]") reach, so every
+// in-surface link is covered at once.
+export function usePaneWarmOnIntent(): (
+  event: ReactMouseEvent<HTMLElement> | ReactFocusEvent<HTMLElement>,
+) => void {
+  const warmPane = usePaneWarm();
+  return useCallback(
+    (event: ReactMouseEvent<HTMLElement> | ReactFocusEvent<HTMLElement>) => {
+      if (!(event.target instanceof Element)) return;
+      const anchor = event.target.closest("a[href]");
+      if (!(anchor instanceof HTMLAnchorElement)) return;
+      const href = anchor.getAttribute("href");
+      if (href && !href.startsWith("#")) warmPane(href);
+    },
+    [warmPane],
   );
 }

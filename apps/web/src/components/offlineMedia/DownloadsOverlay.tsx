@@ -27,6 +27,7 @@ import {
   offlineReadingHasUnsyncedPosition,
   offlineReadingKindCopy,
 } from "@/lib/offlineReading/presentation";
+import { pointerModality } from "@/lib/ui/pointerModality";
 import styles from "./DownloadsOverlay.module.css";
 
 type ReadyOfflineMedia = Extract<OfflineMediaCapability, { kind: "Ready" }>;
@@ -165,7 +166,7 @@ function ReadingInventory({
             if (requestWorkspaceTargetActivation({
               target: { href: `/media/${item.mediaId}`, labelHint: item.title },
               disposition: { kind: "Follow" },
-              modality: event.detail === 0 ? "Keyboard" : "Pointer",
+              modality: pointerModality(event),
             })) {
               onClose();
             }
@@ -335,7 +336,7 @@ function DownloadsPanel({
       requestWorkspaceTargetActivation({
         target: { href: `/media/${item.mediaId}`, labelHint: item.title },
         disposition: { kind: "Follow" },
-        modality: event.detail === 0 ? "Keyboard" : "Pointer",
+        modality: pointerModality(event),
       })
     ) {
       onClose();

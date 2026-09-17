@@ -1,6 +1,6 @@
 import styles from "./PaneLoadingState.module.css";
 
-export type PaneLoadingAnnouncement = "None" | "Polite";
+type PaneLoadingAnnouncement = "None" | "Polite";
 
 // The one generic pane placeholder. The caller owns whether this initial load
 // is announced; a refresh stays with PaneShell and must not reuse this state.
@@ -22,7 +22,7 @@ export function PaneLoadingState({
       aria-busy="true"
       aria-label={announces ? undefined : label}
     >
-      <span className={styles.bar} data-testid="pane-loading-ink" aria-hidden />
+      <span className={styles.bar} aria-hidden />
       <span className={styles.bar} aria-hidden />
       <span className={styles.bar} aria-hidden />
       <span className="sr-only">{label}</span>

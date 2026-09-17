@@ -191,7 +191,6 @@ export default function NexusButton({
     <div
       ref={wrapperRef}
       className={styles.nexusWrapper}
-      data-testid="nexus-wrapper"
     >
       <button
         ref={setButtonRef}

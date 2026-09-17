@@ -12,6 +12,7 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime";
 import {
   nexusEntryKeyValue,
+  nexusOpenStateLabel,
   type NexusAction,
   type NexusEntry,
   type NexusTargetActivation,
@@ -19,6 +20,7 @@ import {
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import styles from "./switchboard.module.css";
+import { pointerModality } from "@/lib/ui/pointerModality";
 
 type ActionMenuProps = ComponentProps<typeof ActionMenu>;
 
@@ -45,19 +47,6 @@ function SwitchboardRowResourceMenu({
       {...menuProps}
     />
   );
-}
-
-function openStateLabel(state: NexusEntry["openState"]): string | undefined {
-  switch (state) {
-    case undefined:
-      return undefined;
-    case "Active":
-      return "Current";
-    case "Open":
-      return "Open";
-    case "Minimized":
-      return "Minimized";
-  }
 }
 
 export default function SwitchboardRow({
@@ -87,7 +76,7 @@ export default function SwitchboardRow({
   const secondary = [
     entry.typeLabel,
     entry.metadata,
-    openStateLabel(entry.openState),
+    nexusOpenStateLabel(entry.openState),
   ]
     .filter(
       (fact, index, all): fact is string =>
@@ -108,7 +97,7 @@ export default function SwitchboardRow({
       entry.primaryAction,
       {
         disposition: { kind: event.shiftKey ? "Fork" : "Follow" },
-        modality: event.detail === 0 ? "Keyboard" : "Pointer",
+        modality: pointerModality(event),
       },
       event.currentTarget,
       entry,

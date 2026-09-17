@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  useCallback,
-  useRef,
-  type FocusEvent as ReactFocusEvent,
-  type MouseEvent as ReactMouseEvent,
-} from "react";
+import { useCallback, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import PaneHeaderIdentity from "@/components/ui/PaneHeaderIdentity";
@@ -17,8 +12,9 @@ import {
   useMobileChrome,
   useMobileChromeSurface,
 } from "@/lib/workspace/mobileChrome";
-import { usePaneWarm } from "@/lib/panes/paneWarm";
+import { usePaneWarmOnIntent } from "@/lib/panes/paneWarm";
 import styles from "./AppNav.module.css";
+import { pointerModality } from "@/lib/ui/pointerModality";
 
 function activeCollapsedFilterAction(
   actions: readonly ActionDescriptor[],
@@ -37,7 +33,7 @@ function activeCollapsedFilterAction(
 
 export default function MobilePaneBar() {
   const { motionPhase, paneChrome } = useMobileChrome();
-  const warmPane = usePaneWarm();
+  const handleChromeIntentCapture = usePaneWarmOnIntent();
   const navigation = paneChrome?.navigation;
   const topBarRef = useRef<HTMLElement>(null);
   useMobileChromeSurface(topBarRef, "AppBar", true);
@@ -64,18 +60,6 @@ export default function MobilePaneBar() {
     },
     [paneChrome],
   );
-  const handleChromeIntentCapture = useCallback(
-    (
-      event: ReactMouseEvent<HTMLElement> | ReactFocusEvent<HTMLElement>,
-    ) => {
-      if (!(event.target instanceof Element)) return;
-      const anchor = event.target.closest("a[href]");
-      if (!(anchor instanceof HTMLAnchorElement)) return;
-      const href = anchor.getAttribute("href");
-      if (href && !href.startsWith("#")) warmPane(href);
-    },
-    [warmPane],
-  );
   const companionAction = paneChrome?.companionAction;
   const companionState = companionAction
     ? projectActionControlState(companionAction.label, companionAction.state)
@@ -94,12 +78,12 @@ export default function MobilePaneBar() {
       onMouseOverCapture={handleChromeIntentCapture}
       onFocusCapture={handleChromeIntentCapture}
     >
-      <div className={styles.topBarControls} data-testid="top-bar-controls">
+      <div className={styles.topBarControls}>
         <button
           type="button"
           className={styles.topBarButton}
           onClick={(event) =>
-            navigation?.onBack(event.detail === 0 ? "Keyboard" : "Pointer")
+            navigation?.onBack(pointerModality(event))
           }
           disabled={!navigation?.canGoBack}
           aria-label="Go back"
@@ -109,12 +93,9 @@ export default function MobilePaneBar() {
         <button
           type="button"
           className={styles.topBarButton}
-          onClick={(event) => {
-            if (!navigation) return;
-            navigation.onForward(
-              event.detail === 0 ? "Keyboard" : "Pointer",
-            );
-          }}
+          onClick={(event) =>
+            navigation?.onForward(pointerModality(event))
+          }
           disabled={!navigation?.canGoForward}
           aria-label="Go forward"
         >
@@ -132,7 +113,7 @@ export default function MobilePaneBar() {
         ) : null}
       </div>
 
-      <div className={styles.topBarControls} data-testid="top-bar-controls">
+      <div className={styles.topBarControls}>
         {companionAction && companionState ? (
           <button
             type="button"
@@ -142,10 +123,9 @@ export default function MobilePaneBar() {
             aria-expanded={companionState.barExpanded}
             aria-controls={companionState.barControls}
             disabled={companionAction.disabled}
-            onClick={(event) => {
-              if (!companionAction) return;
-              companionAction.onSelect({ triggerEl: event.currentTarget });
-            }}
+            onClick={(event) =>
+              companionAction.onSelect({ triggerEl: event.currentTarget })
+            }
           >
             {companionAction.icon}
           </button>
@@ -174,7 +154,6 @@ export default function MobilePaneBar() {
                 {hasHiddenStatus ? (
                   <span
                     className={styles.topBarStatusMarker}
-                    data-testid="pane-menu-status-marker"
                     aria-hidden="true"
                   />
                 ) : null}

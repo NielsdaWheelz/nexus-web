@@ -14,7 +14,7 @@ export interface NavItem {
   presentation: NavItemPresentation;
 }
 
-export type NavItemPresentation = "default" | "accent";
+type NavItemPresentation = "default" | "accent";
 
 interface AppNavigationDestinationDefinition {
   id: DestinationId;
@@ -26,27 +26,19 @@ interface AppNavigationDefinition {
     AppNavigationDestinationDefinition,
     ...AppNavigationDestinationDefinition[],
   ];
-  /** Destinations that live beside Add and Account rather than in the rail list. */
-  utilities: {
-    imports: AppNavigationDestinationDefinition;
-  };
   account: {
     stats: AppNavigationDestinationDefinition;
     settings: AppNavigationDestinationDefinition;
   };
 }
 
-export interface UtilityNavigation {
-  imports: NavItem;
-}
-
-export interface AccountNavigation {
+interface AccountNavigation {
   stats: NavItem;
   settings: NavItem;
 }
 
-/** The sole owner of fixed app-navigation membership, order, and decoration. */
-export const APP_NAVIGATION = {
+/** The sole owner of the rail list's membership and order, and of the Account cluster. */
+const APP_NAVIGATION = {
   destinations: [
     { id: "lectern" },
     { id: "libraries" },
@@ -57,9 +49,6 @@ export const APP_NAVIGATION = {
     { id: "atlas" },
     { id: "oracle", presentation: "accent" },
   ],
-  utilities: {
-    imports: { id: "imports" },
-  },
   account: {
     stats: { id: "stats" },
     settings: { id: "settings" },
@@ -80,25 +69,11 @@ function resolveNavDestination(
 export const NAV_MODEL: readonly NavItem[] =
   APP_NAVIGATION.destinations.map(resolveNavDestination);
 export const NAV_HOME = resolveNavDestination(APP_NAVIGATION.destinations[0]);
-export const NAV_UTILITIES: UtilityNavigation = {
-  imports: resolveNavDestination(APP_NAVIGATION.utilities.imports),
-};
+export const NAV_IMPORTS: NavItem = resolveNavDestination({ id: "imports" });
 export const NAV_ACCOUNT: AccountNavigation = {
   stats: resolveNavDestination(APP_NAVIGATION.account.stats),
   settings: resolveNavDestination(APP_NAVIGATION.account.settings),
 };
-
-/**
- * The utility destination the workspace is on, if it is on one: every chrome
- * marks its utility entrance current from this one derivation.
- */
-export function utilityActiveId(
-  activeDestinationId: DestinationId | null,
-): NavItem["id"] | null {
-  return activeDestinationId === NAV_UTILITIES.imports.id
-    ? activeDestinationId
-    : null;
-}
 
 export function isAccountDestinationId(
   destinationId: DestinationId | null,

@@ -10,6 +10,7 @@ import ContextualActionMenu from "@/components/resources/ContextualActionMenu";
 import ActionBar from "./ActionBar";
 import PaneHeaderIdentity from "./PaneHeaderIdentity";
 import styles from "./SurfaceHeader.module.css";
+import { pointerModality } from "@/lib/ui/pointerModality";
 
 export interface SurfaceHeaderNavigation {
   canGoBack: boolean;
@@ -65,7 +66,7 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
             type="button"
             className={styles.navigationButton}
             onClick={(event) =>
-              navigation.onBack(event.detail === 0 ? "Keyboard" : "Pointer")
+              navigation.onBack(pointerModality(event))
             }
             disabled={!navigation.canGoBack}
             aria-label="Go back in this pane"
@@ -76,9 +77,7 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
             type="button"
             className={styles.navigationButton}
             onClick={(event) =>
-              navigation.onForward(
-                event.detail === 0 ? "Keyboard" : "Pointer",
-              )
+              navigation.onForward(pointerModality(event))
             }
             disabled={!navigation.canGoForward}
             aria-label="Go forward in this pane"

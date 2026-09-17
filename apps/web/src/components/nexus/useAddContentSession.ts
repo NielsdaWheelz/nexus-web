@@ -123,7 +123,7 @@ function acceptedItem(
 }
 
 
-export function addContentPlacementErrorMessage(
+function addContentPlacementErrorMessage(
   error: unknown,
   title = "Libraries couldn’t be updated",
 ): FeedbackContent {
@@ -133,8 +133,20 @@ export function addContentPlacementErrorMessage(
   });
 }
 
+/**
+ * A write whose transport never settled: the server may or may not have applied
+ * it, so only these justify an authoritative re-read before deciding.
+ */
+function isPlacementSettlementUnknown(error: unknown): boolean {
+  return (
+    isApiError(error) &&
+    !isSameSystemApiDefect(error) &&
+    (error.code === "E_NETWORK" || error.code === "E_UPSTREAM_TIMEOUT")
+  );
+}
+
 /** Finite OPML-import copy adapter; contract and unknown failures defect. */
-export function opmlImportErrorMessage(error: unknown): FeedbackContent {
+function opmlImportErrorMessage(error: unknown): FeedbackContent {
   if (error instanceof PodcastOpmlEncodingError) {
     return { tone: "Danger", title: error.message };
   }
@@ -260,21 +272,8 @@ export function useAddContentSession(): AddContentSessionController {
   );
 
   const discard = useCallback(() => {
-    sessionAbortRef.current.abort();
-    sessionAbortRef.current = new AbortController();
-    generationRef.current += 1;
-    startedSubmissionItemIdsRef.current.clear();
-    placementProgressByMediaIdRef.current.clear();
-    destinationCreateIdByNameRef.current.clear();
-    setOpmlReplayIdentity(null);
-    apply({
-      kind: "Reset",
-      state: createAddSessionState({
-        seed: EMPTY_SEED,
-        sessionId: createRandomId("add-session"),
-      }),
-    });
-  }, [apply]);
+    start(EMPTY_SEED);
+  }, [start]);
 
   const stop = useCallback(() => {
     sessionAbortRef.current.abort();
@@ -871,6 +870,45 @@ export function useAddContentSession(): AddContentSessionController {
       });
       if (generation !== generationRef.current) return;
 
+      // A rejected write leaves the placement UNKNOWN only when the transport
+      // itself is ambiguous; every other rejection is an authoritative refusal
+      // and fails the command directly, as the canonical placement controller
+      // does (lib/libraries/useLibraryPlacement.ts isMutationSettlementUnknown).
+      const failPlacement = (
+        mediaId: string,
+        libraries: readonly LibraryPlacementOption[],
+        error: unknown,
+      ) => {
+        if (handleUnauthenticatedApiError(error)) {
+          apply({
+            kind: "SetPlacement",
+            mediaId,
+            placement: { kind: "Ready", libraries },
+          });
+          return;
+        }
+        try {
+          const feedback = addContentPlacementErrorMessage(error);
+          apply({
+            kind: "SetPlacement",
+            mediaId,
+            placement: {
+              kind: "CommandFailed",
+              libraries,
+              command,
+              feedback,
+            },
+          });
+        } catch (caughtDefect: unknown) {
+          apply({
+            kind: "SetPlacement",
+            mediaId,
+            placement: { kind: "Ready", libraries },
+          });
+          defects.push(caughtDefect);
+        }
+      };
+
       const uncertain: {
         mediaId: string;
         libraries: readonly LibraryPlacementOption[];
@@ -894,6 +932,10 @@ export function useAddContentSession(): AddContentSessionController {
             },
           });
         } else if (!signal.aborted && !isAbortError(outcome.error)) {
+          if (!isPlacementSettlementUnknown(outcome.error)) {
+            failPlacement(work.mediaId, work.libraries, outcome.error);
+            return;
+          }
           uncertain.push({ ...work, error: outcome.error });
           apply({
             kind: "SetPlacement",
@@ -918,34 +960,7 @@ export function useAddContentSession(): AddContentSessionController {
         const work = requireIndexedItem(uncertain, index);
         if (outcome.kind === "Rejected") {
           if (!signal.aborted && !isAbortError(outcome.error)) {
-            if (handleUnauthenticatedApiError(outcome.error)) {
-              apply({
-                kind: "SetPlacement",
-                mediaId: work.mediaId,
-                placement: { kind: "Ready", libraries: work.libraries },
-              });
-              return;
-            }
-            try {
-              const feedback = addContentPlacementErrorMessage(outcome.error);
-              apply({
-                kind: "SetPlacement",
-                mediaId: work.mediaId,
-                placement: {
-                  kind: "CommandFailed",
-                  libraries: work.libraries,
-                  command,
-                  feedback,
-                },
-              });
-            } catch (caughtDefect: unknown) {
-              apply({
-                kind: "SetPlacement",
-                mediaId: work.mediaId,
-                placement: { kind: "Ready", libraries: work.libraries },
-              });
-              defects.push(caughtDefect);
-            }
+            failPlacement(work.mediaId, work.libraries, outcome.error);
           }
           return;
         }

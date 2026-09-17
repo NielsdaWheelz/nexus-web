@@ -3,7 +3,6 @@
 import { RefreshCw, RotateCcw, Search, Share2 } from "lucide-react";
 import {
   useCallback,
-  useEffect,
   useId,
   useLayoutEffect,
   useMemo,
@@ -18,6 +17,7 @@ import SurfaceHeader, {
 import { PanePrimaryChromeProvider } from "@/components/workspace/PanePrimaryChrome";
 import SecondaryPaneShell from "@/components/workspace/SecondaryPaneShell";
 import { useResizeHandle } from "@/components/workspace/useResizeHandle";
+import { usePaneRefresh } from "@/components/workspace/usePaneRefresh";
 import {
   paneHeaderAccessibleName,
   resolvePaneHeaderModel,
@@ -39,9 +39,6 @@ import {
   type PaneFixedChromePublication,
   type PanePrimaryChromePublication,
   type PanePrimaryChromePublicationUpdate,
-  type PaneRefreshProgress,
-  type PaneRefreshPublication,
-  type PaneRefreshResult,
   type PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
 import type {
@@ -74,82 +71,10 @@ import {
 } from "@/lib/workspace/paneDom";
 import { useActiveMobileViewport } from "@/lib/mobileViewport/MobileViewportProvider";
 import { NexusPanePerformanceContext } from "@/lib/nexus/performance";
-import { isAbortError } from "@/lib/errors";
 import styles from "./PaneShell.module.css";
+import { pointerModality } from "@/lib/ui/pointerModality";
 
-const noopResizeSecondaryPane = () => {};
-const noopCloseSecondary = () => {};
-const noopSetActiveSecondarySurface = () => {};
 const EMPTY_ACTIONS: readonly ActionDescriptor[] = [];
-const PANE_REFRESH_ARM_DISTANCE_PX = 72;
-const PANE_REFRESH_MAX_OFFSET_PX = 96;
-const PANE_REFRESH_DRAG_RESISTANCE = 0.45;
-const PANE_REFRESH_SETTLED_MS = 900;
-
-type PaneRefreshState =
-  | { readonly kind: "Idle" }
-  | { readonly kind: "Pulling"; readonly offsetPx: number }
-  | { readonly kind: "Armed"; readonly offsetPx: number }
-  | {
-      readonly kind: "Refreshing";
-      readonly progress: PaneRefreshProgress;
-    }
-  | { readonly kind: "Settled"; readonly result: PaneRefreshResult };
-
-interface PaneRefreshTouch {
-  readonly identifier: number;
-  readonly startX: number;
-  readonly startY: number;
-  intent: "Pending" | "Downward";
-}
-
-interface PaneRefreshExecution {
-  readonly routeKey: string;
-  readonly sourceKey: string;
-  readonly controller: AbortController;
-}
-
-// A resolving publication has no operation to fence, so it owns no source key.
-function paneRefreshSourceKey(
-  publication: PaneRefreshPublication | undefined,
-): string | null {
-  return publication?.kind === "Refreshable" ? publication.sourceKey : null;
-}
-
-function findTouch(
-  touches: TouchList,
-  identifier: number,
-): Touch | undefined {
-  for (let index = 0; index < touches.length; index += 1) {
-    const touch = touches[index];
-    if (touch?.identifier === identifier) return touch;
-  }
-  return undefined;
-}
-
-function paneRefreshFeedback(state: PaneRefreshState): string | null {
-  switch (state.kind) {
-    case "Idle":
-      return null;
-    case "Pulling":
-      return "Pull to refresh";
-    case "Armed":
-      return "Release to refresh";
-    case "Refreshing":
-      return state.progress.kind === "Determinate"
-        ? `Refreshing ${state.progress.finishedCount} of ${state.progress.requestedCount}`
-        : "Refreshing";
-    case "Settled":
-      return state.result.announcement;
-    default: {
-      const exhaustive: never = state;
-      throw new Error(
-        `Unhandled pane refresh state: ${JSON.stringify(exhaustive)}`,
-      );
-    }
-  }
-}
-
 type PaneShellStyle = CSSProperties & {
   "--mobile-pane-chrome-height"?: string;
 };
@@ -173,28 +98,28 @@ interface PaneShellProps {
   paneId: string;
   routeKey: string;
   routeHeader: PaneRouteHeaderContract;
-  routeShareIdentity?: PaneRouteShareIdentity | null;
+  routeShareIdentity: PaneRouteShareIdentity | null;
   label: string;
-  labelPending?: boolean;
+  labelPending: boolean;
   returnMementoEnabled: boolean;
   queryNavigation?: "in-place";
   sizing: EffectivePaneSizing;
   bodyMode: PaneBodyMode;
-  secondaryPane?: WorkspaceAttachedSecondaryPaneState | null;
-  secondarySizing?: WorkspaceSecondarySizing | null;
-  secondaryPublication?: PaneSecondaryPublication | null;
-  fixedChromePublication?: PaneFixedChromePublication | null;
+  secondaryPane: WorkspaceAttachedSecondaryPaneState | null;
+  secondarySizing: WorkspaceSecondarySizing | null;
+  secondaryPublication: PaneSecondaryPublication | null;
+  fixedChromePublication: PaneFixedChromePublication | null;
   onResizePrimaryPane: (paneId: string, widthPx: number) => void;
-  onResizeSecondaryPane?: (secondaryPaneId: string, widthPx: number) => void;
-  onCloseSecondaryPane?: (secondaryPaneId: string) => void;
-  onSetSecondarySurface?: (
+  onResizeSecondaryPane: (secondaryPaneId: string, widthPx: number) => void;
+  onCloseSecondaryPane: (secondaryPaneId: string) => void;
+  onSetSecondarySurface: (
     secondaryPaneId: string,
     surfaceId: WorkspaceSecondarySurfaceId,
   ) => void;
-  onChromeMouseDown?: (event: React.MouseEvent<HTMLElement>) => void;
-  isActive?: boolean;
-  isMobile?: boolean;
-  responsiveSearchHandoff?: {
+  onChromeMouseDown: (event: React.MouseEvent<HTMLElement>) => void;
+  isActive: boolean;
+  isMobile: boolean;
+  responsiveSearchHandoff: {
     readonly id: number;
     readonly onConsumed: (id: number) => void;
   } | null;
@@ -205,25 +130,25 @@ export default function PaneShell({
   paneId,
   routeKey,
   routeHeader,
-  routeShareIdentity = null,
+  routeShareIdentity,
   label,
-  labelPending = false,
+  labelPending,
   returnMementoEnabled,
   queryNavigation,
   sizing,
   bodyMode,
-  secondaryPane = null,
-  secondarySizing = null,
-  secondaryPublication = null,
-  fixedChromePublication = null,
+  secondaryPane,
+  secondarySizing,
+  secondaryPublication,
+  fixedChromePublication,
   onResizePrimaryPane,
-  onResizeSecondaryPane = noopResizeSecondaryPane,
-  onCloseSecondaryPane = noopCloseSecondary,
-  onSetSecondarySurface = noopSetActiveSecondarySurface,
+  onResizeSecondaryPane,
+  onCloseSecondaryPane,
+  onSetSecondarySurface,
   onChromeMouseDown,
-  isActive = false,
-  isMobile = false,
-  responsiveSearchHandoff = null,
+  isActive,
+  isMobile,
+  responsiveSearchHandoff,
   children,
 }: PaneShellProps) {
   if (returnMementoEnabled && bodyMode !== "standard") {
@@ -246,7 +171,7 @@ export default function PaneShell({
   const activateTarget = paneRuntime.activateTarget;
   const activateChromeAnchor = useCallback(
     (event: TargetLinkMouseEvent, anchor: HTMLAnchorElement) => {
-      recordNavigationModality(event.detail === 0 ? "Keyboard" : "Pointer");
+      recordNavigationModality(pointerModality(event));
       activateTargetAnchor({ event, runtime: { activateTarget }, anchor });
     },
     [activateTarget, recordNavigationModality],
@@ -300,7 +225,6 @@ export default function PaneShell({
   const currentFilterRowsContinuityKeyRef = useRef(filterRowsContinuityKey);
   currentFilterRowsContinuityKeyRef.current = filterRowsContinuityKey;
   const [mobileChromeHeight, setMobileChromeHeight] = useState(0);
-  const [asyncDefect, setAsyncDefect] = useState<{ error: unknown } | null>(null);
   const [primaryChromeRecord, setPrimaryChromeRecord] = useState<{
     readonly routeKey: string;
     readonly publication: PanePrimaryChromePublication;
@@ -339,225 +263,23 @@ export default function PaneShell({
       ? primaryChromeRecord.publication
       : null;
   const acceptedRefresh = acceptedPrimaryChrome?.refresh;
-  const acceptedRefreshSourceKey = paneRefreshSourceKey(acceptedRefresh);
-  const acceptedRefreshRef = useRef(acceptedRefresh);
-  acceptedRefreshRef.current = acceptedRefresh;
-  const [refreshState, setRefreshState] = useState<PaneRefreshState>({
-    kind: "Idle",
-  });
-  const refreshStateRef = useRef(refreshState);
-  refreshStateRef.current = refreshState;
-  const [refreshAnnouncement, setRefreshAnnouncement] = useState<string | null>(
-    null,
-  );
-  const refreshExecutionRef = useRef<PaneRefreshExecution | null>(null);
-  const refreshTouchRef = useRef<PaneRefreshTouch | null>(null);
-  const refreshSettledTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-  const commitRefreshState = useCallback((next: PaneRefreshState) => {
-    refreshStateRef.current = next;
-    setRefreshState(next);
-  }, []);
-  const clearRefreshSettledTimer = useCallback(() => {
-    if (refreshSettledTimerRef.current === null) return;
-    clearTimeout(refreshSettledTimerRef.current);
-    refreshSettledTimerRef.current = null;
-  }, []);
-  const startPaneRefresh = useCallback(() => {
-    const publication = acceptedRefreshRef.current;
-    if (publication?.kind !== "Refreshable" || refreshExecutionRef.current) {
-      return;
-    }
-
-    clearRefreshSettledTimer();
-    setRefreshAnnouncement(null);
-    const execution: PaneRefreshExecution = {
-      routeKey: currentRouteKeyRef.current,
-      sourceKey: publication.sourceKey,
-      controller: new AbortController(),
-    };
-    refreshExecutionRef.current = execution;
-    commitRefreshState({
-      kind: "Refreshing",
-      progress: { kind: "Indeterminate" },
-    });
-
-    void (async () => {
-      try {
-        const result = await publication.execute({
-          signal: execution.controller.signal,
-          reportProgress: (progress) => {
-            if (
-              refreshExecutionRef.current !== execution ||
-              execution.controller.signal.aborted ||
-              currentRouteKeyRef.current !== execution.routeKey ||
-              paneRefreshSourceKey(acceptedRefreshRef.current) !==
-                execution.sourceKey
-            ) {
-              return;
-            }
-            commitRefreshState({ kind: "Refreshing", progress });
-          },
-        });
-        if (
-          refreshExecutionRef.current !== execution ||
-          execution.controller.signal.aborted ||
-          currentRouteKeyRef.current !== execution.routeKey ||
-          paneRefreshSourceKey(acceptedRefreshRef.current) !==
-            execution.sourceKey
-        ) {
-          return;
-        }
-        refreshExecutionRef.current = null;
-        setRefreshAnnouncement(result.announcement);
-        commitRefreshState({ kind: "Settled", result });
-        refreshSettledTimerRef.current = setTimeout(() => {
-          refreshSettledTimerRef.current = null;
-          if (
-            currentRouteKeyRef.current === execution.routeKey &&
-            paneRefreshSourceKey(acceptedRefreshRef.current) ===
-              execution.sourceKey
-          ) {
-            commitRefreshState({ kind: "Idle" });
-          }
-        }, PANE_REFRESH_SETTLED_MS);
-      } catch (error: unknown) {
-        if (refreshExecutionRef.current !== execution) return;
-        refreshExecutionRef.current = null;
-        commitRefreshState({ kind: "Idle" });
-        if (execution.controller.signal.aborted || isAbortError(error)) return;
-        setAsyncDefect({ error });
-      }
-    })();
-  }, [
-    clearRefreshSettledTimer,
-    commitRefreshState,
-    currentRouteKeyRef,
-  ]);
-  useEffect(() => {
-    refreshTouchRef.current = null;
-    clearRefreshSettledTimer();
-    refreshExecutionRef.current?.controller.abort(
-      new DOMException("Pane refresh target changed.", "AbortError"),
-    );
-    refreshExecutionRef.current = null;
-    setRefreshAnnouncement(null);
-    commitRefreshState({ kind: "Idle" });
-    return () => {
-      refreshTouchRef.current = null;
-      clearRefreshSettledTimer();
-      refreshExecutionRef.current?.controller.abort(
-        new DOMException("Pane refresh target changed.", "AbortError"),
-      );
-      refreshExecutionRef.current = null;
-    };
-  }, [
-    acceptedRefreshSourceKey,
-    clearRefreshSettledTimer,
-    commitRefreshState,
-    routeKey,
-  ]);
   const pullRefreshEligible =
     isActive &&
     isMobile &&
     bodyMode === "standard" &&
     acceptedRefresh?.kind === "Refreshable";
-  useEffect(() => {
-    const scrollport = bodyRef.current;
-    if (!pullRefreshEligible || !scrollport) {
-      refreshTouchRef.current = null;
-      if (
-        refreshStateRef.current.kind === "Pulling" ||
-        refreshStateRef.current.kind === "Armed"
-      ) {
-        commitRefreshState({ kind: "Idle" });
-      }
-      return;
-    }
-
-    const cancelPull = () => {
-      refreshTouchRef.current = null;
-      if (
-        refreshStateRef.current.kind === "Pulling" ||
-        refreshStateRef.current.kind === "Armed"
-      ) {
-        commitRefreshState({ kind: "Idle" });
-      }
-    };
-    const onTouchStart = (event: TouchEvent) => {
-      if (
-        event.touches.length !== 1 ||
-        scrollport.scrollTop !== 0 ||
-        refreshExecutionRef.current !== null
-      ) {
-        cancelPull();
-        return;
-      }
-      const touch = event.touches[0];
-      if (!touch) return;
-      refreshTouchRef.current = {
-        identifier: touch.identifier,
-        startX: touch.clientX,
-        startY: touch.clientY,
-        intent: "Pending",
-      };
-    };
-    const onTouchMove = (event: TouchEvent) => {
-      const tracked = refreshTouchRef.current;
-      if (!tracked) return;
-      if (event.touches.length !== 1 || scrollport.scrollTop !== 0) {
-        cancelPull();
-        return;
-      }
-      const touch = findTouch(event.touches, tracked.identifier);
-      if (!touch) {
-        cancelPull();
-        return;
-      }
-      const deltaX = touch.clientX - tracked.startX;
-      const deltaY = touch.clientY - tracked.startY;
-      if (deltaY <= 0 || Math.abs(deltaX) >= deltaY) {
-        cancelPull();
-        return;
-      }
-      tracked.intent = "Downward";
-      event.preventDefault();
-      const offsetPx = Math.min(
-        PANE_REFRESH_MAX_OFFSET_PX,
-        deltaY * PANE_REFRESH_DRAG_RESISTANCE,
-      );
-      commitRefreshState(
-        offsetPx >= PANE_REFRESH_ARM_DISTANCE_PX
-          ? { kind: "Armed", offsetPx }
-          : { kind: "Pulling", offsetPx },
-      );
-    };
-    const onTouchEnd = () => {
-      const tracked = refreshTouchRef.current;
-      refreshTouchRef.current = null;
-      if (!tracked) return;
-      if (refreshStateRef.current.kind === "Armed") {
-        startPaneRefresh();
-        return;
-      }
-      if (refreshStateRef.current.kind === "Pulling") {
-        commitRefreshState({ kind: "Idle" });
-      }
-    };
-
-    scrollport.addEventListener("touchstart", onTouchStart, { passive: true });
-    scrollport.addEventListener("touchmove", onTouchMove, { passive: false });
-    scrollport.addEventListener("touchend", onTouchEnd, { passive: true });
-    scrollport.addEventListener("touchcancel", cancelPull, { passive: true });
-    return () => {
-      scrollport.removeEventListener("touchstart", onTouchStart);
-      scrollport.removeEventListener("touchmove", onTouchMove);
-      scrollport.removeEventListener("touchend", onTouchEnd);
-      scrollport.removeEventListener("touchcancel", cancelPull);
-      cancelPull();
-    };
-  }, [commitRefreshState, pullRefreshEligible, startPaneRefresh]);
+  const {
+    state: refreshState,
+    start: startPaneRefresh,
+    feedback: refreshFeedback,
+    offsetPx: refreshIndicatorOffsetPx,
+    announcement: refreshAnnouncement,
+  } = usePaneRefresh({
+    publication: acceptedRefresh,
+    routeKey,
+    pullEnabled: pullRefreshEligible,
+    scrollportRef: bodyRef,
+  });
   const retainedFilterRowsSearch = primaryChromeRecord?.publication.search;
   const acceptedSearch =
     acceptedPrimaryChrome?.search ??
@@ -757,7 +479,6 @@ export default function PaneShell({
             {!searchExpanded && activeDomainControlCount > 0 ? (
               <span
                 className={styles.searchActionMarker}
-                data-testid="pane-filter-active-marker"
                 aria-hidden="true"
               />
             ) : null}
@@ -989,24 +710,14 @@ export default function PaneShell({
       };
       break;
   }
-  const refreshFeedback = paneRefreshFeedback(refreshState);
-  const refreshIndicatorOffsetPx =
-    refreshState.kind === "Pulling" || refreshState.kind === "Armed"
-      ? refreshState.offsetPx
-      : refreshState.kind === "Idle"
-        ? 0
-        : PANE_REFRESH_ARM_DISTANCE_PX;
   const refreshIndicatorStyle: PaneRefreshIndicatorStyle = {
     "--pane-refresh-offset": `${refreshIndicatorOffsetPx}px`,
   };
-
-  if (asyncDefect !== null) throw asyncDefect.error;
 
   return (
     <section
       className={styles.paneShell}
       aria-labelledby={landmarkLabelId}
-      data-testid="pane-shell-root"
       data-pane-shell="true"
       data-pane-focus-landmark="true"
       data-active={isActive ? "true" : "false"}
@@ -1032,7 +743,6 @@ export default function PaneShell({
         <div
           ref={chromeRef}
           className={styles.chrome}
-          data-testid="pane-shell-chrome"
           data-pane-chrome-focus={!isMobile ? "true" : undefined}
           data-mobile-chrome-phase={motionPhase.kind}
           aria-hidden={contextualSurfaceUnavailable || undefined}
@@ -1062,7 +772,6 @@ export default function PaneShell({
                   : undefined
               }
               className={styles.contextualRow}
-              data-testid="pane-contextual-row"
               data-contextual-row-variant={
                 effectiveContextualRow.kind === "Search" &&
                 effectiveContextualRow.publication.kind === "FilterRows"
@@ -1106,7 +815,6 @@ export default function PaneShell({
             ref={bodyRef}
             className={styles.body}
             id={bodyId}
-            data-testid="pane-shell-body"
             data-body-mode={bodyMode}
             data-pane-content="true"
             data-pane-refresh-eligible={
@@ -1123,7 +831,6 @@ export default function PaneShell({
             </NexusPanePerformanceContext.Provider>
             <div
               className={styles.refreshIndicator}
-              data-testid="pane-refresh-indicator"
               data-refresh-state={refreshState.kind}
               style={refreshIndicatorStyle}
               role={refreshState.kind === "Refreshing" ? "progressbar" : undefined}
@@ -1165,7 +872,7 @@ export default function PaneShell({
             </div>
           </div>
           {visibleFixedChrome ? (
-            <div className={styles.fixedChrome} data-testid="pane-fixed-chrome">
+            <div className={styles.fixedChrome}>
               {visibleFixedChrome.body}
             </div>
           ) : null}

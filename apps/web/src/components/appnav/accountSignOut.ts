@@ -1,4 +1,4 @@
-export type AccountSignOutOwner = "WebPost" | "Native" | "Unavailable";
+type AccountSignOutOwner = "WebPost" | "Native" | "Unavailable";
 
 export function accountSignOutOwner(
   androidShell: boolean,

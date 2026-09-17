@@ -1058,7 +1058,6 @@ export default function AddPanel({
         returnFocusFallback={() => headingRef.current}
         title={placementEditor?.title ?? "Libraries"}
         focusKey={placementEditor?.anchorEl}
-        panelTestId="add-placement-sheet"
       >
         {placementEditor ? (
           <LibraryEntryEditor

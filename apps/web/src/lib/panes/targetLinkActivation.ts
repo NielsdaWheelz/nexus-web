@@ -17,6 +17,7 @@ import {
   clearMediaReaderViewTransition,
   startSameDocumentViewTransition,
 } from "@/lib/ui/viewTransitions";
+import { pointerModality } from "@/lib/ui/pointerModality";
 
 export type TargetLinkActivationResult = "unhandled" | "handled";
 export type AppNavActivationResult =
@@ -40,7 +41,7 @@ export function workspaceTargetClickIntent(event: {
   readonly detail: number;
   readonly shiftKey: boolean;
 }): WorkspaceTargetClickIntent {
-  const modality = event.detail === 0 ? "Keyboard" : "Pointer";
+  const modality = pointerModality(event);
   return {
     disposition: {
       kind:

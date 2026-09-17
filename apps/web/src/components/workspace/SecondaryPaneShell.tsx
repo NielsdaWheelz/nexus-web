@@ -113,7 +113,6 @@ export default function SecondaryPaneShell({
         maxWidth: sizing.maxWidthPx,
       }}
       aria-label={activeSurfaceDefinition.title}
-      data-testid="workspace-secondary-pane"
       onKeyDown={(event) => {
         // Escape closes the Inspector only while focus is inside it: a keydown
         // reaches this <aside> only by bubbling from a focused descendant.

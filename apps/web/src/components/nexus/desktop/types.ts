@@ -1,21 +1,15 @@
 import type { ReactNode } from "react";
 import type {
   NexusAction,
+  NexusActionsRequest,
   NexusEntry,
   NexusEntryKey,
   NexusProjection,
+  NexusSource,
 } from "@/lib/nexus/model";
 
 export type DesktopNexusModality = "Keyboard" | "Pointer";
 export type DesktopNexusCell = "Primary" | "Actions";
-
-export type DesktopNexusSource = "Openables" | "Owned";
-
-export interface DesktopNexusActionsRequest {
-  readonly requestId: number;
-  /** Exact entry/action snapshot captured when Nexus.Open was pressed. */
-  readonly entry: NexusEntry;
-}
 
 /**
  * Desktop-only controller boundary. Semantic membership and action meaning stay
@@ -26,13 +20,13 @@ export interface DesktopNexusController {
   readonly open: boolean;
   readonly projection: NexusProjection;
   readonly query: string;
-  readonly failures: ReadonlySet<DesktopNexusSource>;
+  readonly failures: ReadonlySet<NexusSource>;
   readonly busy: boolean;
   readonly announcement: string | null;
   readonly focusKey: string;
   readonly dialogLabel: string;
   readonly nexusOpenShortcutLabel: string;
-  readonly actionsRequest: DesktopNexusActionsRequest | null;
+  readonly actionsRequest: NexusActionsRequest | null;
   /** A retained workflow panel owned by the shared controller. */
   readonly workflow?: ReactNode;
   setQuery(query: string): void;
@@ -49,7 +43,7 @@ export interface DesktopNexusController {
   }): void;
   /** The adapter calls this only after the real desktop input receives focus. */
   inputReady?(): void;
-  retry(source: DesktopNexusSource): void;
+  retry(source: NexusSource): void;
   escape(): void;
   shouldSuppressReturnFocusOnClose(): boolean;
 }

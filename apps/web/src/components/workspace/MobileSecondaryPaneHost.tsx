@@ -21,7 +21,6 @@ import {
   type WorkspaceSecondarySurfaceId,
 } from "@/lib/panes/paneSecondaryModel";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
-import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { useMobileChrome } from "@/lib/workspace/mobileChrome";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import styles from "./MobileSecondaryPaneHost.module.css";
@@ -46,11 +45,6 @@ interface MobileSecondaryPaneHostProps {
   returnFocusTo: ReturnFocusTarget;
 }
 
-interface MobileSecondaryPanePresentationProps
-  extends MobileSecondaryPaneHostProps {
-  actionSubject: ResourceActionSubject | undefined;
-}
-
 /**
  * The only workspace mobile secondary presentation (docs/modules/workspace.md):
  * surface tabs + tabpanel content hosted in the shared MobileSheet primitive.
@@ -58,7 +52,7 @@ interface MobileSecondaryPanePresentationProps
  * detaching it, so this component stays mounted and `active` toggles — the
  * MobileSheet mount contract (C7 history dismissal) holds.
  */
-function MobileSecondaryPanePresentation({
+export default function MobileSecondaryPaneHost({
   primaryPaneId,
   secondaryPaneId,
   secondary,
@@ -70,8 +64,10 @@ function MobileSecondaryPanePresentation({
   onActiveSurfaceChange,
   onSelectDurableFromTransient,
   returnFocusTo,
-  actionSubject,
-}: MobileSecondaryPanePresentationProps) {
+}: MobileSecondaryPaneHostProps) {
+  const { paneChrome } = useMobileChrome();
+  const actionSubject =
+    paneChrome?.paneId === primaryPaneId ? paneChrome.actionSubject : undefined;
   const baseId = useId();
   const activeSurface =
     transientSurface ??
@@ -135,8 +131,6 @@ function MobileSecondaryPanePresentation({
         Boolean(transientSurface && !transientExpanded)
       }
       focusKey={activeSurface?.id ?? null}
-      backdropTestId="mobile-secondary-backdrop"
-      panelTestId="mobile-secondary-host"
     >
       {publication && activeSurface && activeSurfaceDefinition ? (
         <>
@@ -191,18 +185,5 @@ function MobileSecondaryPanePresentation({
         </>
       ) : null}
     </MobileSheet>
-  );
-}
-
-export default function MobileSecondaryPaneHost(
-  props: MobileSecondaryPaneHostProps,
-) {
-  const { paneChrome } = useMobileChrome();
-  const actionSubject =
-    paneChrome?.paneId === props.primaryPaneId
-      ? paneChrome.actionSubject
-      : undefined;
-  return (
-    <MobileSecondaryPanePresentation {...props} actionSubject={actionSubject} />
   );
 }

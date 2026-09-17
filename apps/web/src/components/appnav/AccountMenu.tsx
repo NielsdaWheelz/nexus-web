@@ -11,29 +11,21 @@ import { useOfflineReadingCapability } from "@/lib/offlineReading/OfflineReading
 import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
-import type {
-  AccountNavigation,
-  NavItem,
-  UtilityNavigation,
-} from "./navModel";
+import { NAV_ACCOUNT, NAV_IMPORTS, type NavItem } from "./navModel";
 import styles from "./AppNav.module.css";
 import { accountSignOutOwner } from "./accountSignOut";
 
 export default function AccountMenu({
-  account,
-  utilities,
   activeId,
-  utilityActiveId,
+  importsActive,
   placement,
   align,
   renderTrigger,
   onNavigate,
 }: {
-  account: AccountNavigation;
-  utilities: UtilityNavigation;
   activeId: NavItem["id"] | null;
-  /** The utility destination the workspace is on, which is not an Account one. */
-  utilityActiveId: NavItem["id"] | null;
+  /** Whether the workspace is on Imports, which is not an Account destination. */
+  importsActive: boolean;
   placement: "above" | "below";
   align: "start" | "center" | "end";
   renderTrigger: Parameters<typeof ActionMenu>[0]["renderTrigger"];
@@ -42,7 +34,7 @@ export default function AccountMenu({
     destination: NavItem,
   ) => AppNavActivationResult;
 }): ReactNode {
-  const { stats, settings } = account;
+  const { stats, settings } = NAV_ACCOUNT;
   const StatsIcon = stats.icon;
   const SettingsIcon = settings.icon;
   const offlineMedia = useOfflineMediaCapability();
@@ -51,8 +43,7 @@ export default function AccountMenu({
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const signOutOwner = accountSignOutOwner(androidShell, offlineReading.kind);
-  const imports = utilities.imports;
-  const ImportsIcon = imports.icon;
+  const ImportsIcon = NAV_IMPORTS.icon;
   const options: ActionDescriptor[] = [
     {
       kind: "custom",
@@ -79,22 +70,22 @@ export default function AccountMenu({
     {
       kind: "custom",
       id: "imports",
-      label: imports.label,
+      label: NAV_IMPORTS.label,
       render: ({ closeMenu, closeMenuWithoutFocus }) => (
         <Link
-          href={imports.href}
+          href={NAV_IMPORTS.href}
           role="menuitem"
           className={styles.menuItem}
-          aria-current={utilityActiveId === imports.id ? "page" : undefined}
+          aria-current={importsActive ? "page" : undefined}
           onClick={(event) => {
-            const result = onNavigate(event, imports);
+            const result = onNavigate(event, NAV_IMPORTS);
             if (result === "unhandled") return;
             if (result === "handled-source-focus") closeMenu();
             else closeMenuWithoutFocus();
           }}
         >
           <ImportsIcon size={16} aria-hidden="true" />
-          <ImportsBadge label={imports.label} labelVisible />
+          <ImportsBadge label={NAV_IMPORTS.label} labelVisible />
         </Link>
       ),
     },

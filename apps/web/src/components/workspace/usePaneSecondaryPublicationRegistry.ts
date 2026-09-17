@@ -7,6 +7,10 @@ import {
   normalizePaneSecondaryPublication,
   type PaneSecondaryPublication,
 } from "@/lib/panes/panePublications";
+import {
+  pruneRouteKeyedRecords,
+  routeKeyedRecord,
+} from "@/lib/panes/paneRouteKeyedRecords";
 
 interface PaneSecondaryPublicationRecord {
   readonly routeKey: string;
@@ -17,15 +21,6 @@ interface PaneSecondaryPublicationInput {
   readonly paneId: string;
   readonly routeKey: string;
   readonly publication: PaneSecondaryPublication | null;
-}
-
-export function getPaneSecondaryPublication(
-  records: ReadonlyMap<string, PaneSecondaryPublicationRecord>,
-  paneId: string,
-  routeKey: string,
-): PaneSecondaryPublication | null {
-  const record = records.get(paneId);
-  return record?.routeKey === routeKey ? record.publication : null;
 }
 
 function upsertOrDeletePaneSecondaryPublicationRecord(
@@ -54,19 +49,6 @@ function upsertOrDeletePaneSecondaryPublicationRecord(
     publication: input.publication,
   });
   return next;
-}
-
-function prunePaneSecondaryPublicationRecords(
-  current: Map<string, PaneSecondaryPublicationRecord>,
-  currentRouteKeyByPaneId: ReadonlyMap<string, string>,
-): Map<string, PaneSecondaryPublicationRecord> {
-  let next: Map<string, PaneSecondaryPublicationRecord> | null = null;
-  for (const [paneId, record] of current) {
-    if (currentRouteKeyByPaneId.get(paneId) === record.routeKey) continue;
-    next ??= new Map(current);
-    next.delete(paneId);
-  }
-  return next ?? current;
 }
 
 export function usePaneSecondaryPublicationRegistry() {
@@ -106,10 +88,7 @@ export function usePaneSecondaryPublicationRegistry() {
   const prune = useCallback(
     (currentRouteKeyByPaneId: ReadonlyMap<string, string>) => {
       commit((current) =>
-        prunePaneSecondaryPublicationRecords(
-          current,
-          currentRouteKeyByPaneId,
-        ),
+        pruneRouteKeyedRecords(current, currentRouteKeyByPaneId),
       );
     },
     [commit],
@@ -117,7 +96,8 @@ export function usePaneSecondaryPublicationRegistry() {
 
   const current = useCallback(
     (paneId: string, routeKey: string) =>
-      getPaneSecondaryPublication(recordsRef.current, paneId, routeKey),
+      routeKeyedRecord(recordsRef.current, paneId, routeKey)?.publication ??
+      null,
     [],
   );
 

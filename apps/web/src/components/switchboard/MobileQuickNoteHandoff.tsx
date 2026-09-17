@@ -47,7 +47,7 @@ export type MaterializedDailyTextHandoffTarget = Omit<
   >;
 };
 
-export type DailyTextHandoffAccepted = Extract<
+type DailyTextHandoffAccepted = Extract<
   NexusDispatchOutcome,
   { kind: "DailyPageAccepted" }
 >;
