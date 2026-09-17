@@ -44,13 +44,6 @@ now refused by the server after its bytes are sent instead of by the browser
 before. See
 [docs/tickets/imports-upload-retry-cannot-check-the-file-size.md](tickets/imports-upload-retry-cannot-check-the-file-size.md).
 
-### [OPEN] OI-006 — Decide the disposition of the generation-cutover adversarial review
-documentation · opened 2026-09-06 by Claude (PR #203 takeover) · P3
-A 1272-line adversarial review of the generation-backends cutover exists only as
-an untracked file in a stale worktree; decide whether to archive it in the repo
-or drop it. See
-[docs/tickets/adversarial-review-artifact-disposition.md](tickets/adversarial-review-artifact-disposition.md).
-
 ### [OPEN] OI-012 — Import history collapses three queue execution codes
 backend · opened 2026-09-08 by Claude (imports cutover, Track A) · P3
 `queue_failure_code` maps three distinct queue execution codes onto
@@ -225,10 +218,7 @@ unexpected timeouts. See
 - [open] oi-111 · reader publication · 2026-09-15 restoration rehearsal · p2 · web replacement can retain a cursor for a deleted fragment: [ticket](tickets/web-publication-invalidates-saved-reader-cursors.md).
 - [open] oi-113 · interactive worker · 2026-09-15 pr #255 qualification · p2 · exact-image startup is oom-killed at 256 mib; isolate provider imports and qualify real execution demand: [ticket](tickets/interactive-worker-startup-reaches-memory-cap.md).
 
-
 - [open] oi-115 · api availability · 2026-09-15 memory review · p2 · api startup requires codex catalogue availability despite its independent-readiness contract: [ticket](tickets/api-startup-requires-codex-catalog-availability.md).
-
-
 
 - [open] oi-118 · release operations · 2026-09-15 restoration cutover · p2 · generic command errors and removed one-off logs obscure failure causes: [ticket](tickets/release-command-failures-lose-diagnostics.md).
 

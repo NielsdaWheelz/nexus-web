@@ -5,9 +5,8 @@ status: open · origin: 2026-09-16 utc pr #270 manual acceptance · area: api me
 the d23063e4 pillow-book plus shadow/claw reproduction remained usable, with
 no oom/restart during that interval. a later00:05:58 verification-overlap oom
 reopened oi-116. pr #271 removes probe overhead; its final7965 paired-reader
-manual check passed and closes that specific issue. the
-[release chronology](../cutovers/restoration-release-2026-09-15.md) retains the
-kernel evidence. capacity beyond bounded reader intervals remains unproved.
+manual check passed and closes that specific issue. capacity beyond bounded
+reader intervals remains unproved.
 
 pr #271 deployed7965f7cd with smaller health and host-side release probes.
 through00:36:58 utc2026-09-16 production api peak was312.484/320 mib, zero
