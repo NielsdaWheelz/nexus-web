@@ -7,7 +7,6 @@ import hashlib
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from dataclasses import dataclass, field
-from types import MappingProxyType
 from typing import Protocol, assert_never
 from uuid import UUID
 
@@ -57,7 +56,7 @@ from provider_runtime.types import (
     Present as RuntimePresent,
 )
 
-from nexus.config import GenerationApiProvider, Settings
+from nexus.config import Settings
 from nexus.schemas.presence import Absent, Present
 from nexus.services.generation_intent import (
     GenerationIntent,
@@ -118,21 +117,6 @@ class ProviderTurnRequest:
             raise ValueError("provider model turn sequence must be positive")
         if len(self.request_fingerprint) != 64:
             raise ValueError("provider model turn request fingerprint must be SHA-256")
-
-
-@dataclass(frozen=True, slots=True)
-class ProviderGenerationWiring:
-    """Composition-owned optional endpoint seam; production supplies ``None``."""
-
-    endpoint_overrides: Mapping[GenerationApiProvider, str] | None
-
-    def __post_init__(self) -> None:
-        if self.endpoint_overrides is not None:
-            object.__setattr__(
-                self,
-                "endpoint_overrides",
-                MappingProxyType(dict(self.endpoint_overrides)),
-            )
 
 
 class ProviderGenerationBackend:
@@ -247,7 +231,7 @@ class ProviderGenerationBackend:
         self,
         turn: ProviderTurnRequest,
         *,
-        cancel: CancelSignal | None = None,
+        cancel: CancelSignal,
     ) -> AsyncGenerator[ProviderGenerationEvent]:
         """Stream one bounded call; tool proposals publish only after success."""
 
@@ -369,18 +353,11 @@ class ProviderGenerationBackend:
 def build_provider_generation_backend(
     settings: Settings,
     client: httpx.AsyncClient,
-    *,
-    wiring: ProviderGenerationWiring,
 ) -> ProviderGenerationBackend:
-    """Wire credentials and explicit endpoints once at the process boundary."""
+    """Wire credentials once at the process boundary."""
 
     from provider_runtime import Credentials, ProviderRuntime
 
-    endpoint_overrides = wiring.endpoint_overrides
-    if endpoint_overrides is not None and set(endpoint_overrides) != set(
-        settings.generation_api_provider_list
-    ):
-        raise ValueError("provider endpoint overrides must name exactly configured providers")
     runtime = ProviderRuntime(
         Credentials(
             **{
@@ -389,7 +366,6 @@ def build_provider_generation_backend(
             }
         ),
         http_client=client,
-        endpoint_overrides=endpoint_overrides,
     )
     return ProviderGenerationBackend(runtime)
 
@@ -426,17 +402,6 @@ def _validate_frozen_request(
         instructions_max_bytes=spec.bounds.instructions_max_bytes,
         input_max_bytes=spec.bounds.input_max_bytes,
     )
-    if isinstance(spec.model_tool_plan_snapshot, Present):
-        if model_tools is None or model_tools.snapshot != spec.model_tool_plan_snapshot.value:
-            raise ProviderGenerationDefect(
-                origin="plan",
-                message="provider tool publication differs from the frozen GenerationSpec",
-            )
-    elif not isinstance(spec.model_tool_plan_snapshot, Absent) or model_tools is not None:
-        raise ProviderGenerationDefect(
-            origin="plan",
-            message="NoModelTools provider turn received a tool publication",
-        )
     runtime_output = _runtime_output(intent)
     if isinstance(spec.output_contract, TextOutputSnapshot):
         if not isinstance(runtime_output, RuntimeTextOutput):
@@ -708,20 +673,15 @@ class _DeadlineCancelSignal:
 
     __slots__ = ("_deadline_at", "_parent")
 
-    def __init__(self, *, deadline_at: float, parent: CancelSignal | None) -> None:
+    def __init__(self, *, deadline_at: float, parent: CancelSignal) -> None:
         self._deadline_at = deadline_at
         self._parent = parent
 
     def is_set(self) -> bool:
-        return time.monotonic() >= self._deadline_at or (
-            self._parent is not None and self._parent.is_set()
-        )
+        return time.monotonic() >= self._deadline_at or self._parent.is_set()
 
     async def wait(self) -> bool:
         remaining = max(0.0, self._deadline_at - time.monotonic())
-        if self._parent is None:
-            await asyncio.sleep(remaining)
-            return True
         deadline_task = asyncio.create_task(asyncio.sleep(remaining))
         parent_task = asyncio.create_task(self._parent.wait())
         tasks = {deadline_task, parent_task}
@@ -741,7 +701,6 @@ def _hash(value: bytes) -> str:
 __all__ = [
     "ProviderGenerationBackend",
     "ProviderGenerationRuntime",
-    "ProviderGenerationWiring",
     "ProviderTurnRequest",
     "build_provider_generation_backend",
 ]

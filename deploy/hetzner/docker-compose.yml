@@ -271,12 +271,12 @@ services:
       # provider-runtime publishes the private Codex SDK launcher beside its
       # profile state. Keep that executable write surface to this 0700 tmpfs;
       # general-purpose /tmp remains noexec.
-      # 180 MiB is derived from two 74 MiB policy-bounded serialized-state
-      # files plus 32 MiB launcher/cache/cleanup headroom.
+      # 180 MiB holds two 74 MiB serialized-state files (the fsize cap below)
+      # plus 32 MiB launcher/cache/cleanup headroom.
       - /run/nexus-codex-turns:rw,exec,nosuid,nodev,size=180m,mode=0700,uid=10001,gid=10001
     ulimits:
       core: 0
-      # generation_policy.CODEX_EPHEMERAL_FILE_LIMIT_BYTES
+      # 74 MiB cap on any one turn file; the 180m tmpfs above holds two.
       fsize: 77594624
       nofile: 64
     volumes:

@@ -609,7 +609,6 @@ class ResolvedCatalogPair:
     target_qualification_revision: Presence[str]
     reasoning_wire_qualification_revision: Presence[str]
     qualified_capabilities: tuple[QualifiedCapability, ...]
-    qualified_tool_plan_authority_revisions: tuple[str, ...]
     qualified_text_tool_plan_authority_revisions: tuple[str, ...] = ()
     qualified_strict_tool_plan_authority_revisions: tuple[str, ...] = ()
 
@@ -680,7 +679,6 @@ class GenerationCatalogService:
         self._readiness_ttl_seconds = readiness_ttl_seconds
         self._definitions: _DefinitionCache | None = None
         self._readiness: CatalogReadinessSnapshot | None = None
-        self._snapshot: GenerationCatalogSnapshot | None = None
         self._next_retirement: datetime | None = None
         self._lock = Lock()
 
@@ -698,15 +696,6 @@ class GenerationCatalogService:
 
     async def read_for_admission(self) -> GenerationCatalogSnapshot:
         snapshot = await self._read(require_fresh=True)
-        validate_background_policy(snapshot, policy=self._policy)
-        return snapshot
-
-    async def operator_refresh(self) -> GenerationCatalogSnapshot:
-        snapshot = await self._read(
-            require_fresh=True,
-            force_definition=True,
-            force_readiness=True,
-        )
         validate_background_policy(snapshot, policy=self._policy)
         return snapshot
 
@@ -774,7 +763,6 @@ class GenerationCatalogService:
                 policy=self._policy,
                 now=now,
             )
-            self._snapshot = snapshot
             self._next_retirement = next_retirement_at(snapshot)
             return snapshot
 
@@ -1037,9 +1025,6 @@ def compose_generation_catalog(
                     target_qualification_revision=target_revision,
                     reasoning_wire_qualification_revision=reasoning_revision,
                     qualified_capabilities=qualified_capabilities,
-                    qualified_tool_plan_authority_revisions=(
-                        _qualified_tool_revisions(target_receipt)
-                    ),
                     qualified_text_tool_plan_authority_revisions=(
                         _qualified_tool_revisions(target_receipt, output_contract="Text")
                     ),
@@ -1438,14 +1423,14 @@ def _qualified_capabilities(
 def _qualified_tool_revisions(
     receipt: TargetQualificationReceipt | None,
     *,
-    output_contract: OutputQualificationKind | None = None,
+    output_contract: OutputQualificationKind,
 ) -> tuple[str, ...]:
     if receipt is None:
         return ()
     return tuple(
         item.authority_revision
         for item in receipt.tool_plan_qualifications
-        if output_contract is None or item.output_contract == output_contract
+        if item.output_contract == output_contract
     )
 
 
@@ -1743,7 +1728,6 @@ def _hash(domain: bytes, value: object) -> str:
 
 __all__ = [
     "CatalogDefinitionStaleError",
-    "CatalogReadinessSnapshot",
     "CodexDispatchTarget",
     "GenerationCatalogSnapshot",
     "GenerationCatalogRefreshError",
@@ -1751,20 +1735,6 @@ __all__ = [
     "GenerationSelectionUnavailableError",
     "InvalidGenerationSelectionError",
     "ProviderDispatchTarget",
-    "QualificationManifestRow",
-    "QualificationSnapshot",
-    "ReasoningWireQualificationReceipt",
     "ResolvedCatalogPair",
-    "TargetQualificationReceipt",
-    "ToolPlanQualification",
     "build_generation_catalog_service",
-    "compose_generation_catalog",
-    "load_qualification_manifest",
-    "next_retirement_at",
-    "qualification_snapshot",
-    "readiness_snapshot",
-    "resolve_chat_selection",
-    "source_controlled_qualification_snapshot",
-    "production_catalog_readiness",
-    "validate_background_policy",
 ]

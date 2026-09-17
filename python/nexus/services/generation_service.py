@@ -8,12 +8,7 @@ from typing import Literal
 
 from llm_tools import Available
 
-from nexus.schemas.llm import (
-    CapacityPaused,
-    OperatorActionRequired,
-    Ready,
-    TemporarilyUnavailable,
-)
+from nexus.schemas.llm import Ready
 from nexus.schemas.presence import Absent, Presence, Present
 from nexus.services.generation_admission import (
     FrozenHostEvidence,
@@ -23,7 +18,6 @@ from nexus.services.generation_admission import (
 from nexus.services.generation_catalog import (
     CodexDispatchTarget,
     GenerationCatalogService,
-    GenerationSelectionUnavailableError,
     ProviderDispatchTarget,
     ResolvedCatalogPair,
 )
@@ -46,7 +40,6 @@ from nexus.services.generation_policy import (
 )
 from nexus.services.generation_selection import (
     CodexPersonalSelection,
-    GenerationSelectionSpec,
     ProviderApiSelection,
 )
 from nexus.services.generation_spec import (
@@ -94,31 +87,6 @@ class GenerationService:
         self._catalog = catalog
         self._policy = policy
         self._tools = tools
-
-    async def freeze_chat(
-        self,
-        *,
-        catalog_definition_revision: str,
-        selection: GenerationSelectionSpec,
-        tool_authority: ChatToolAuthority,
-        scope: FrozenToolScope,
-        intent: GenerationIntent,
-        prompt_template_revision: str,
-        prompt_payload_ref: ImmutablePromptPayloadRef,
-    ) -> GenerationSpec:
-        pair = await self._catalog.final_chat_selection_check(
-            catalog_definition_revision=catalog_definition_revision,
-            selection=selection,
-        )
-        return self.freeze_chat_from_pair(
-            catalog_definition_revision=catalog_definition_revision,
-            pair=pair,
-            tool_authority=tool_authority,
-            scope=scope,
-            intent=intent,
-            prompt_template_revision=prompt_template_revision,
-            prompt_payload_ref=prompt_payload_ref,
-        )
 
     def freeze_chat_from_pair(
         self,
@@ -213,13 +181,8 @@ class GenerationService:
                 f"frozen {spec.operation!r} selection retired before dispatch"
             )
         readiness = pair.readiness
-        if isinstance(
-            readiness,
-            CapacityPaused | OperatorActionRequired | TemporarilyUnavailable,
-        ):
-            raise GenerationOperationUnavailable(spec.operation, readiness)
         if not isinstance(readiness, Ready):
-            raise GenerationSelectionUnavailableError(pair)
+            raise GenerationOperationUnavailable(spec.operation, readiness)
         operation = self.model_tool_operation(spec)
         if operation is not None:
             _require_available_tool_bindings(
@@ -403,13 +366,8 @@ def _require_background_readiness(operation: str, pair: ResolvedCatalogPair) -> 
     if pair.lifecycle == "Retired":
         raise GenerationConfigurationDefect(f"background operation {operation!r} is retired")
     readiness = pair.readiness
-    if isinstance(readiness, Ready):
-        return
-    if isinstance(readiness, CapacityPaused):
+    if not isinstance(readiness, Ready):
         raise GenerationOperationUnavailable(operation, readiness)
-    if isinstance(readiness, OperatorActionRequired | TemporarilyUnavailable):
-        raise GenerationOperationUnavailable(operation, readiness)
-    raise GenerationSelectionUnavailableError(pair)
 
 
 def _freeze_spec(

@@ -120,7 +120,7 @@ def finalize_run(
     }
     run_kit.mark_terminal(
         db,
-        stream=run_kit.chat_run_stream(run),
+        parent=run,
         status=run_status,
         done_payload=chat_run_event_payload_json("done", done_payload),
         error_code=error_code,
