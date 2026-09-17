@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import retrieval_locator_json
+from nexus.services.contributor_credits import contributor_credits_rollup_cte_sql
 from nexus.services.search.projection import _truncate_snippet
 from nexus.services.search.results import (
     InternalSearchResult,
@@ -19,7 +20,6 @@ from nexus.services.search.results import (
     _SearchScore,
 )
 from nexus.services.search.scope import ScopeUnsupported, scope_filter_sql
-from nexus.services.search.sql import contributor_credits_rollup_cte_sql
 
 _APPARATUS_ROW_COLUMNS = """
     rai.id,

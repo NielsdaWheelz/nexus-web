@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import cast
 from uuid import UUID
 
@@ -19,29 +18,11 @@ _SEARCH_FAMILY = "BrowseSearch"
 _PREVIEW_EPISODES_FAMILY = "BrowsePreviewEpisodes"
 
 
-class BrowseSearchPlan(StrEnum):
-    NexusMediaRankOffset = "NexusMediaRankOffset"
-    ProjectGutenbergRankOffset = "ProjectGutenbergRankOffset"
-    YouTubeSearchPageToken = "YouTubeSearchPageToken"
-
-
-class BrowsePreviewEpisodesPlan(StrEnum):
-    PodcastIndexBeforePublished = "PodcastIndexBeforePublished"
-
-
-_SEARCH_PLAN_KINDS = {
-    BrowseSearchPlan.NexusMediaRankOffset: KeysetValueKind.Int,
-    BrowseSearchPlan.ProjectGutenbergRankOffset: KeysetValueKind.Int,
-    BrowseSearchPlan.YouTubeSearchPageToken: KeysetValueKind.Text,
-}
-
-
 def _search_digest(
     query: BrowseQuery,
     *,
     viewer_id: UUID,
     provider_contract: str,
-    plan: BrowseSearchPlan,
 ) -> dict[str, object]:
     return {
         "viewer": str(viewer_id),
@@ -52,7 +33,6 @@ def _search_digest(
         "providerContract": provider_contract,
         "locale": "und",
         "safety": "moderate",
-        "plan": plan.value,
     }
 
 
@@ -61,18 +41,12 @@ def encode_search_cursor(
     *,
     viewer_id: UUID,
     provider_contract: str,
-    plan: BrowseSearchPlan,
     after: int | str,
 ) -> str:
-    kind = _SEARCH_PLAN_KINDS[plan]
+    kind = KeysetValueKind.Int if isinstance(after, int) else KeysetValueKind.Text
     return encode_signed_keyset_cursor(
         family=_SEARCH_FAMILY,
-        query=_search_digest(
-            query,
-            viewer_id=viewer_id,
-            provider_contract=provider_contract,
-            plan=plan,
-        ),
+        query=_search_digest(query, viewer_id=viewer_id, provider_contract=provider_contract),
         after=(KeysetValue(kind, after),),
     )
 
@@ -83,18 +57,12 @@ def decode_search_cursor(
     *,
     viewer_id: UUID,
     provider_contract: str,
-    plan: BrowseSearchPlan,
+    kind: KeysetValueKind,
 ) -> int | str:
-    kind = _SEARCH_PLAN_KINDS[plan]
     (value,) = decode_signed_keyset_cursor(
         cursor,
         family=_SEARCH_FAMILY,
-        query=_search_digest(
-            query,
-            viewer_id=viewer_id,
-            provider_contract=provider_contract,
-            plan=plan,
-        ),
+        query=_search_digest(query, viewer_id=viewer_id, provider_contract=provider_contract),
         expected_kinds=(kind,),
     )
     if kind is KeysetValueKind.Int:
@@ -102,18 +70,12 @@ def decode_search_cursor(
     return cast(str, value)
 
 
-def _preview_digest(
-    *,
-    viewer_id: UUID,
-    target: DiscoveryTargetHandle,
-    plan: BrowsePreviewEpisodesPlan,
-) -> dict[str, object]:
+def _preview_digest(*, viewer_id: UUID, target: DiscoveryTargetHandle) -> dict[str, object]:
     return {
         "viewer": str(viewer_id),
         "target": str(target),
         "provider": "PodcastIndex",
         "order": "PublishedDescending",
-        "plan": plan.value,
     }
 
 
@@ -121,13 +83,12 @@ def encode_preview_episodes_cursor(
     *,
     viewer_id: UUID,
     target: DiscoveryTargetHandle,
-    plan: BrowsePreviewEpisodesPlan,
     before_published: int,
     before_episode_ref: str,
 ) -> str:
     return encode_signed_keyset_cursor(
         family=_PREVIEW_EPISODES_FAMILY,
-        query=_preview_digest(viewer_id=viewer_id, target=target, plan=plan),
+        query=_preview_digest(viewer_id=viewer_id, target=target),
         after=(
             KeysetValue(KeysetValueKind.Int, before_published),
             KeysetValue(KeysetValueKind.Text, before_episode_ref),
@@ -140,12 +101,11 @@ def decode_preview_episodes_cursor(
     *,
     viewer_id: UUID,
     target: DiscoveryTargetHandle,
-    plan: BrowsePreviewEpisodesPlan,
 ) -> tuple[int, str]:
     published, episode_ref = decode_signed_keyset_cursor(
         cursor,
         family=_PREVIEW_EPISODES_FAMILY,
-        query=_preview_digest(viewer_id=viewer_id, target=target, plan=plan),
+        query=_preview_digest(viewer_id=viewer_id, target=target),
         expected_kinds=(KeysetValueKind.Int, KeysetValueKind.Text),
     )
     return cast(int, published), cast(str, episode_ref)

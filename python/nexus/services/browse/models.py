@@ -4,20 +4,22 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Annotated, Literal
+from urllib.parse import quote
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.schemas.presence import Absent, Presence, Present, absent, present
+from nexus.schemas.contributors import ContributorCreditOut, ContributorRole
 from nexus.services.sealed_handles import (
     DiscoveryTargetHandle,
     seal_discovery_target,
     unseal_discovery_target,
 )
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
+from nexus.web_paths import media_image_url
 
 
 class BrowseKind(StrEnum):
@@ -109,18 +111,9 @@ class ProjectGutenbergEpubTarget(BaseModel):
     _ref = field_validator("ebook_ref")(_validate_ref)
 
 
-class BraveResultRef(BaseModel):
-    value: _REF
-
-    model_config = _TARGET_CONFIG
-
-    _ref = field_validator("value")(_validate_ref)
-
-
 class BraveWebArticleTarget(BaseModel):
     kind: Literal["BraveWebArticle"] = "BraveWebArticle"
     canonical_url: _URL = Field(alias="canonicalUrl")
-    search_provenance: Presence[BraveResultRef] = Field(alias="searchProvenance")
 
     model_config = _TARGET_CONFIG
 
@@ -165,17 +158,6 @@ type DiscoveryTarget = Annotated[
 ]
 
 _DISCOVERY_TARGET_ADAPTER = TypeAdapter(DiscoveryTarget)
-_TARGET_KEYS = {
-    "ProjectGutenbergEpub": {"kind", "ebookRef"},
-    "BraveWebArticle": {"kind", "canonicalUrl", "searchProvenance"},
-    "YouTubeVideo": {"kind", "videoRef"},
-    "PodcastIndexPodcast": {"kind", "podcastRef"},
-    "PodcastIndexEpisode": {"kind", "podcastRef", "episodeRef"},
-}
-
-
-def _reject_json_constant(_: str) -> object:
-    raise ValueError("non-finite JSON literal")
 
 
 def _canonical_json(value: object) -> bytes:
@@ -198,16 +180,8 @@ def seal_target(target: DiscoveryTarget) -> DiscoveryTargetHandle:
 def unseal_target(handle: str) -> DiscoveryTarget:
     payload = unseal_discovery_target(handle)
     try:
-        raw = json.loads(payload, parse_constant=_reject_json_constant)
-        if (
-            not isinstance(raw, dict)
-            or not isinstance(raw.get("kind"), str)
-            or set(raw) != _TARGET_KEYS.get(raw["kind"])
-            or _canonical_json(raw) != payload
-        ):
-            raise ValueError
-        return _DISCOVERY_TARGET_ADAPTER.validate_python(raw, strict=True)
-    except (ValueError, TypeError, KeyError) as exc:
+        return _DISCOVERY_TARGET_ADAPTER.validate_python(json.loads(payload), strict=True)
+    except (ValueError, TypeError) as exc:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_DISCOVERY_TARGET,
             "Invalid discovery target",
@@ -218,17 +192,8 @@ def gutenberg_target(ebook_ref: str) -> ProjectGutenbergEpubTarget:
     return ProjectGutenbergEpubTarget(ebookRef=ebook_ref)
 
 
-def brave_target(
-    canonical_url: str,
-    *,
-    result_ref: str | None,
-) -> BraveWebArticleTarget:
-    provenance: Absent | Present[BraveResultRef]
-    provenance = absent() if result_ref is None else present(BraveResultRef(value=result_ref))
-    return BraveWebArticleTarget(
-        canonicalUrl=canonical_url,
-        searchProvenance=provenance,
-    )
+def brave_target(canonical_url: str) -> BraveWebArticleTarget:
+    return BraveWebArticleTarget(canonicalUrl=canonical_url)
 
 
 def youtube_target(video_ref: str) -> YouTubeVideoTarget:
@@ -247,6 +212,44 @@ def episode_target(
         podcastRef=podcast_ref,
         episodeRef=episode_ref,
     )
+
+
+def retry_at_from_header(raw: str | None) -> datetime | None:
+    """Project a provider's ``Retry-After`` delta-seconds header into an absolute instant."""
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw)
+    except ValueError:
+        return None
+    return datetime.now(UTC) + timedelta(seconds=max(seconds, 0.0))
+
+
+def provider_instant(raw: str, *, provider: str) -> datetime:
+    """Parse a provider's ISO-8601 publication instant; a naive or malformed one is a defect."""
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise RuntimeError(f"{provider} returned an invalid publication instant") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise RuntimeError(f"{provider} returned a timezone-free publication instant")
+    return parsed
+
+
+def proxied_image(value: str | None) -> str | None:
+    return None if value is None else media_image_url(quote(value, safe=""))
+
+
+def single_credit(name: str | None, role: ContributorRole) -> list[ContributorCreditOut]:
+    if name is None:
+        return []
+    return [
+        ContributorCreditOut(
+            credited_name=name,
+            contributor_display_name=name,
+            role=role,
+        )
+    ]
 
 
 @dataclass(frozen=True, slots=True)

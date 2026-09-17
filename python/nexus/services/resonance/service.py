@@ -161,7 +161,10 @@ def build_lectern_slate(db: Session, *, viewer_id: UUID) -> SlateOut:
         return SlateOut(items=[])
     as_of = _evidence.capture_as_of(db)
     anchors = _evidence.lectern_anchors(db, viewer_id=viewer_id)
-    eligible_media = _lectern_eligible_media_relation()
+    eligible_media = _eligible_media_relation(
+        consumption_service.lectern_membership_rows_sql(),
+        extra_predicate="AND COALESCE(engagement.read_state, 'Unread') <> 'Finished'",
+    )
     candidates = _evidence.acquire_slate_candidates(
         db,
         viewer_id=viewer_id,
@@ -184,7 +187,7 @@ def build_library_slate(db: Session, *, viewer_id: UUID, library_id: UUID) -> Sl
     anchors = _evidence.library_anchors(db, viewer_id=viewer_id, library_id=library_id)
     if not anchors:
         return SlateOut(items=[])
-    eligible_media = _library_eligible_media_relation()
+    eligible_media = _eligible_media_relation(library_entries.destination_membership_rows_sql())
     eligible_targets = (
         _media_target_relation(eligible_media)
         if context.is_default
@@ -204,41 +207,17 @@ def build_library_slate(db: Session, *, viewer_id: UUID, library_id: UUID) -> Sl
     return _hydrate_slate(db, viewer_id=viewer_id, selected=selected)
 
 
-def _lectern_eligible_media_relation() -> str:
-    return f"""
-        WITH candidates AS ({media_service.media_candidate_rows_sql()}),
-        visible_media AS ({visible_media_ids_cte_sql()}),
-        membership AS ({consumption_service.lectern_membership_rows_sql()}),
-        engagement AS ({consumption_service.engagement_fact_rows_sql()}),
-        episodes AS ({episode_publication_rows_sql()})
-        SELECT
-            candidates.media_id,
-            candidates.media_kind,
-            candidates.created_at,
-            candidates.original_published_date,
-            engagement.read_state,
-            engagement.progress_fraction,
-            CASE
-                WHEN engagement.last_engaged_at <= :as_of
-                THEN engagement.last_engaged_at
-            END AS last_engaged_at,
-            episodes.published_at
-        FROM candidates
-        JOIN visible_media USING (media_id)
-        LEFT JOIN engagement USING (media_id)
-        LEFT JOIN episodes USING (media_id)
-        WHERE NOT EXISTS (
-            SELECT 1 FROM membership WHERE membership.media_id = candidates.media_id
-        )
-          AND COALESCE(engagement.read_state, 'Unread') <> 'Finished'
+def _eligible_media_relation(membership_rows_sql: str, *, extra_predicate: str = "") -> str:
+    """Visible media not already held by the slate's membership relation, with engagement.
+
+    ``membership_rows_sql`` is the surface's own held-media relation (Lectern queue or
+    library entries); ``extra_predicate`` appends the surface's own eligibility filter.
+    Both are fixed internal SQL literals, never user input.
     """
-
-
-def _library_eligible_media_relation() -> str:
     return f"""
         WITH candidates AS ({media_service.media_candidate_rows_sql()}),
         visible_media AS ({visible_media_ids_cte_sql()}),
-        membership AS ({library_entries.destination_membership_rows_sql()}),
+        membership AS ({membership_rows_sql}),
         engagement AS ({consumption_service.engagement_fact_rows_sql()}),
         episodes AS ({episode_publication_rows_sql()})
         SELECT
@@ -260,6 +239,7 @@ def _library_eligible_media_relation() -> str:
         WHERE NOT EXISTS (
             SELECT 1 FROM membership WHERE membership.media_id = candidates.media_id
         )
+          {extra_predicate}
     """
 
 

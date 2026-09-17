@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.errors import ApiErrorCode, NotFoundError
+from nexus.services.contributor_credits import contributor_credits_rollup_cte_sql
 from nexus.services.search.projection import _direct_fragment_locator, _truncate_snippet
 from nexus.services.search.results import (
     InternalSearchResult,
@@ -19,7 +20,32 @@ from nexus.services.search.results import (
     _SearchScore,
 )
 from nexus.services.search.scope import ScopeUnsupported, scope_filter_sql
-from nexus.services.search.sql import contributor_credits_rollup_cte_sql
+
+_FRAGMENT_ROW_COLUMNS = """
+    f.id,
+    f.idx,
+    char_length(f.canonical_text),
+    f.t_start_ms,
+    f.t_end_ms,
+    m.id AS media_id,
+    m.kind,
+    m.title,
+    m.original_published_date,
+    mcc.contributor_credits
+"""
+
+_FRAGMENT_INDEXED_ROWS_SQL = """
+    FROM fragments f
+    JOIN media m ON m.id = f.media_id
+    JOIN visible_media vm ON vm.media_id = f.media_id
+    JOIN content_index_states mcis ON mcis.owner_kind = 'media'
+        AND mcis.owner_id = f.media_id
+        AND mcis.status = 'ready'
+"""
+
+_FRAGMENT_VISIBLE_ROWS_SQL = f"""{_FRAGMENT_INDEXED_ROWS_SQL}
+    LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
+"""
 
 
 def _search_fragments(
@@ -44,27 +70,12 @@ def _search_fragments(
                 visible_media AS ({visible_media_ids_cte_sql()}),
                 media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
             SELECT
-                f.id,
-                f.idx,
-                char_length(f.canonical_text),
-                f.t_start_ms,
-                f.t_end_ms,
-                m.id AS media_id,
-                m.kind,
-                m.title,
-                m.original_published_date,
-                mcc.contributor_credits,
+                {_FRAGMENT_ROW_COLUMNS},
                 ts_rank_cd(
                     f.canonical_text_tsv,
                     websearch_to_tsquery('english', :query)
                 ) AS score
-            FROM fragments f
-            JOIN media m ON m.id = f.media_id
-            JOIN visible_media vm ON vm.media_id = f.media_id
-            JOIN content_index_states mcis ON mcis.owner_kind = 'media'
-                AND mcis.owner_id = f.media_id
-                AND mcis.status = 'ready'
-            LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
+            {_FRAGMENT_VISIBLE_ROWS_SQL}
             WHERE f.canonical_text_tsv @@ websearch_to_tsquery('english', :query)
             {scope_filter}
             ORDER BY score DESC, f.idx ASC, f.id ASC
@@ -110,24 +121,8 @@ def resolve_fragment_search_result(
             WITH
                 visible_media AS ({visible_media_ids_cte_sql()}),
                 media_contributor_credits AS ({contributor_credits_rollup_cte_sql("media_id")})
-            SELECT
-                f.id,
-                f.idx,
-                char_length(f.canonical_text),
-                f.t_start_ms,
-                f.t_end_ms,
-                m.id,
-                m.kind,
-                m.title,
-                m.original_published_date,
-                mcc.contributor_credits
-            FROM fragments f
-            JOIN media m ON m.id = f.media_id
-            JOIN visible_media vm ON vm.media_id = f.media_id
-            JOIN content_index_states mcis ON mcis.owner_kind = 'media'
-                AND mcis.owner_id = f.media_id
-                AND mcis.status = 'ready'
-            LEFT JOIN media_contributor_credits mcc ON mcc.media_id = m.id
+            SELECT {_FRAGMENT_ROW_COLUMNS}
+            {_FRAGMENT_VISIBLE_ROWS_SQL}
             WHERE f.id = :id
             """
         ),
@@ -159,11 +154,7 @@ def read_fragment_search_content(
                     websearch_to_tsquery('english', :query),
                     'MaxWords=50, MinWords=10, MaxFragments=1'
                 ) END AS snippet
-            FROM fragments f
-            JOIN media m ON m.id = f.media_id
-            JOIN visible_media vm ON vm.media_id = f.media_id
-            JOIN content_index_states mcis ON mcis.owner_kind = 'media'
-                AND mcis.owner_id = f.media_id AND mcis.status = 'ready'
+            {_FRAGMENT_INDEXED_ROWS_SQL}
             WHERE f.id = :id
             """
         ),

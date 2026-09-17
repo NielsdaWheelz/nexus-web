@@ -23,13 +23,10 @@ from nexus.schemas.browse import (
     WebArticleFacts,
 )
 from nexus.schemas.presence import absent, present
-from nexus.services.browse.cursor import (
-    BrowseSearchPlan,
-    decode_search_cursor,
-    encode_search_cursor,
-)
+from nexus.services.browse.cursor import decode_search_cursor, encode_search_cursor
 from nexus.services.browse.models import BrowseKind, BrowseQuery
 from nexus.services.contributor_credits import load_contributor_credits_for_media
+from nexus.services.signed_keyset_cursor import KeysetValueKind
 
 _PROVIDER_CONTRACT = "NexusVisibleMediaWebsearch"
 _MEDIA_KIND = {
@@ -57,7 +54,7 @@ def search(
                 query,
                 viewer_id=viewer_id,
                 provider_contract=_PROVIDER_CONTRACT,
-                plan=BrowseSearchPlan.NexusMediaRankOffset,
+                kind=KeysetValueKind.Int,
             )
         )
     rows = (
@@ -119,7 +116,6 @@ def search(
             query,
             viewer_id=viewer_id,
             provider_contract=_PROVIDER_CONTRACT,
-            plan=BrowseSearchPlan.NexusMediaRankOffset,
             after=offset + query.limit,
         )
     return items, next_cursor
