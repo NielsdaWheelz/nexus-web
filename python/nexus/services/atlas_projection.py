@@ -52,7 +52,7 @@ def _visible_media_sql() -> str:
 def _parse_pgvector_literal(raw: object) -> list[float]:
     """Parse a pgvector text literal ``[a,b,...]`` into a list of floats.
 
-    The PGVector column has no SQLAlchemy result processor, so both a raw select
+    The pgvector column has no SQLAlchemy result processor, so both a raw select
     and an ``avg()`` aggregate come back as the pgvector text representation.
     """
     if isinstance(raw, (list, tuple)):

@@ -17,11 +17,10 @@ class DatabaseRetryExhaustedError(RuntimeError):
 
 
 def integrity_constraint_name(exc: IntegrityError) -> str | None:
-    """Name of the constraint a failed write violated, when the driver reports it.
+    """Name of the constraint a failed write violated.
 
-    psycopg surfaces the violated constraint on ``exc.orig.diag.constraint_name``.
-    Callers that must also recognise a constraint from the error text (when the
-    driver does not populate ``diag``) keep that fallback at their own call site.
+    psycopg surfaces it on ``exc.orig.diag.constraint_name`` for every server-side
+    integrity violation.
     """
     diag = getattr(getattr(exc, "orig", None), "diag", None)
     name = getattr(diag, "constraint_name", None)
@@ -29,8 +28,5 @@ def integrity_constraint_name(exc: IntegrityError) -> str | None:
 
 
 def is_retryable_transaction_conflict(exc: OperationalError) -> bool:
-    sqlstate = getattr(exc.orig, "sqlstate", None)
-    message = str(exc.orig).lower()
-    return sqlstate in {"40001", "40P01"} or any(
-        marker in message for marker in ("could not serialize access", "deadlock detected")
-    )
+    """True for serialization_failure and deadlock_detected."""
+    return getattr(exc.orig, "sqlstate", None) in {"40001", "40P01"}

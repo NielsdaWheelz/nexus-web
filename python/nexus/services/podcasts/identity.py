@@ -177,16 +177,10 @@ def select_podcast_id_by_feed_url(db: Session, normalized_feed_url: str) -> UUID
 
 
 def is_podcast_identity_conflict(exc: IntegrityError) -> bool:
-    constraint_name = integrity_constraint_name(exc)
-    if constraint_name:
-        return constraint_name in {
-            "uq_podcasts_provider_provider_podcast_id",
-            "uq_podcasts_feed_url",
-        }
-    message = str(getattr(exc, "orig", None) or exc)
-    return (
-        "uq_podcasts_provider_provider_podcast_id" in message or "uq_podcasts_feed_url" in message
-    )
+    return integrity_constraint_name(exc) in {
+        "uq_podcasts_provider_provider_podcast_id",
+        "uq_podcasts_feed_url",
+    }
 
 
 def validate_and_normalize_feed_url(feed_url: str) -> str:

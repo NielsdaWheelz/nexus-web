@@ -1,7 +1,8 @@
 """SQLAlchemy ORM models for Nexus.
 
-Defines all database tables using SQLAlchemy 2.x declarative patterns.
-Enums are defined as Python enums and mapped to PostgreSQL enum types.
+The mapped classes the code queries through the ORM, in SQLAlchemy 2.x
+declarative form. The schema of record is the live database plus the
+hand-written Alembic migrations: constraints and indexes are not mirrored here.
 """
 
 from datetime import date, datetime
@@ -12,25 +13,20 @@ from uuid import UUID
 from sqlalchemy import (
     BigInteger,
     Boolean,
-    CheckConstraint,
     Date,
     Enum,
     Float,
     ForeignKey,
-    ForeignKeyConstraint,
-    Index,
     Integer,
     LargeBinary,
     Numeric,
     SmallInteger,
     Text,
-    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy.types import UserDefinedType
 
 from nexus.schemas.publication_dates import PublicationDate
 
@@ -39,18 +35,6 @@ class Base(DeclarativeBase):
     """Base class for all ORM models."""
 
     pass
-
-
-class PGVector(UserDefinedType):
-    """PostgreSQL pgvector column type."""
-
-    cache_ok = True
-
-    def __init__(self, dimensions: int):
-        self.dimensions = dimensions
-
-    def get_col_spec(self, **_kw: object) -> str:
-        return f"vector({self.dimensions})"
 
 
 # =============================================================================
@@ -141,32 +125,6 @@ class SemanticStatus(str, PyEnum):
     failed = "failed"
 
 
-class MembershipRole(str, PyEnum):
-    """Roles a user can have in a library."""
-
-    admin = "admin"
-    member = "member"
-
-
-# Library sharing enums
-
-
-class LibraryInvitationRole(str, PyEnum):
-    """Role assigned to a library invitation."""
-
-    admin = "admin"
-    member = "member"
-
-
-class LibraryInvitationStatus(str, PyEnum):
-    """Lifecycle states for a library invitation."""
-
-    pending = "pending"
-    accepted = "accepted"
-    declined = "declined"
-    revoked = "revoked"
-
-
 # =============================================================================
 # Models
 # =============================================================================
@@ -202,16 +160,6 @@ class User(Base):
     libraries: Mapped[list["Library"]] = relationship(
         "Library", back_populates="owner", cascade="all, delete-orphan"
     )
-    memberships: Mapped[list["Membership"]] = relationship(
-        "Membership", back_populates="user", cascade="all, delete-orphan"
-    )
-    consumption_queue_items: Mapped[list["ConsumptionQueueItem"]] = relationship(
-        "ConsumptionQueueItem", back_populates="user", cascade="all, delete-orphan"
-    )
-    podcast_listening_states: Mapped[list["PodcastListeningState"]] = relationship(
-        "PodcastListeningState", back_populates="user", cascade="all, delete-orphan"
-    )
-    nexus_usages: Mapped[list["NexusUsage"]] = relationship("NexusUsage", back_populates="user")
 
 
 class ViewerCollectionRevision(Base):
@@ -254,9 +202,6 @@ class Page(Base):
         server_default=text("now()"),
         nullable=False,
     )
-    __table_args__ = (
-        CheckConstraint("char_length(title) BETWEEN 1 AND 200", name="ck_pages_title_length"),
-    )
 
 
 class DailyPageBinding(Base):
@@ -286,19 +231,6 @@ class DailyPageBinding(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id",
-            "local_date",
-            name="uq_daily_page_bindings_user_date",
-        ),
-        UniqueConstraint(
-            "user_id",
-            "page_id",
-            name="uq_daily_page_bindings_user_page",
-        ),
-    )
-
 
 class DawnWrite(Base):
     """Current-only machine-generated morning block for one user + local date."""
@@ -317,12 +249,6 @@ class DawnWrite(Base):
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )
     dismissed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-    __table_args__ = (
-        UniqueConstraint("user_id", "local_date", name="uq_dawn_writes_user_date"),
-        CheckConstraint("char_length(body_md) >= 1", name="ck_dawn_writes_body_nonempty"),
-        Index("ix_dawn_writes_user", "user_id"),
-    )
 
 
 class NoteBlock(Base):
@@ -351,12 +277,6 @@ class NoteBlock(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "jsonb_typeof(body_pm_json) = 'object'", name="ck_note_blocks_pm_json_object"
-        ),
     )
 
 
@@ -391,39 +311,6 @@ class ResourceVersion(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            """
-            resource_scheme IN (
-                'media', 'library', 'evidence_span', 'content_chunk',
-                'highlight', 'page', 'note_block', 'fragment',
-                'conversation', 'message', 'oracle_reading',
-                'oracle_passage_anchor', 'artifact',
-                'artifact_revision',
-                'external_snapshot', 'contributor', 'podcast',
-                'reader_apparatus_item', 'passage_anchor'
-            )
-            """,
-            name="ck_resource_versions_resource_scheme",
-        ),
-        CheckConstraint(
-            "lane IN ('title', 'body', 'outgoing_edges')",
-            name="ck_resource_versions_lane",
-        ),
-        CheckConstraint("version >= 1", name="ck_resource_versions_version_positive"),
-        CheckConstraint(
-            "content_hash IS NULL OR char_length(content_hash) = 64",
-            name="ck_resource_versions_content_hash_length",
-        ),
-        UniqueConstraint(
-            "user_id",
-            "resource_scheme",
-            "resource_id",
-            "lane",
-            name="uix_resource_versions_lane",
-        ),
-    )
-
 
 class ResourceMutation(Base):
     """Generic idempotency ledger for resource mutations."""
@@ -449,35 +336,6 @@ class ResourceMutation(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "char_length(mutation_scope) BETWEEN 1 AND 300",
-            name="ck_resource_mutations_scope_length",
-        ),
-        CheckConstraint(
-            "char_length(client_mutation_id) BETWEEN 1 AND 120",
-            name="ck_resource_mutations_client_mutation_id_length",
-        ),
-        CheckConstraint(
-            "char_length(request_hash) = 64",
-            name="ck_resource_mutations_request_hash_length",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(changed_lanes) = 'object'",
-            name="ck_resource_mutations_changed_lanes_object",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(response_json) = 'object'",
-            name="ck_resource_mutations_response_json_object",
-        ),
-        UniqueConstraint(
-            "user_id",
-            "mutation_scope",
-            "client_mutation_id",
-            name="uix_resource_mutations_client_id",
-        ),
     )
 
 
@@ -515,54 +373,6 @@ class ResourceViewState(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            """
-            surface_scheme IN (
-                'media', 'library', 'evidence_span', 'content_chunk',
-                'highlight', 'page', 'note_block', 'fragment',
-                'conversation', 'message', 'oracle_reading',
-                'oracle_passage_anchor', 'artifact',
-                'artifact_revision',
-                'external_snapshot', 'contributor', 'podcast',
-                'reader_apparatus_item', 'passage_anchor'
-            )
-            """,
-            name="ck_resource_view_states_surface_scheme",
-        ),
-        CheckConstraint(
-            """
-            target_scheme IS NULL OR target_scheme IN (
-                'media', 'library', 'evidence_span', 'content_chunk',
-                'highlight', 'page', 'note_block', 'fragment',
-                'conversation', 'message', 'oracle_reading',
-                'oracle_passage_anchor', 'artifact',
-                'artifact_revision',
-                'external_snapshot', 'contributor', 'podcast',
-                'reader_apparatus_item', 'passage_anchor'
-            )
-            """,
-            name="ck_resource_view_states_target_scheme",
-        ),
-        CheckConstraint(
-            "(target_scheme IS NULL) = (target_id IS NULL)",
-            name="ck_resource_view_states_target_pair",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(state) = 'object'",
-            name="ck_resource_view_states_state_object",
-        ),
-        Index(
-            "uix_resource_view_states_edge_occurrence",
-            "user_id",
-            "surface_scheme",
-            "surface_id",
-            "edge_id",
-            unique=True,
-            postgresql_where=text("edge_id IS NOT NULL"),
-        ),
     )
 
 
@@ -604,313 +414,6 @@ class ResourceEdge(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "kind IN ('context', 'supports', 'contradicts')",
-            name="ck_resource_edges_kind",
-        ),
-        CheckConstraint(
-            """
-            origin IN (
-                'user', 'citation', 'system', 'note_body', 'highlight_note',
-                'synapse', 'document_embed', 'assistant', 'link_note'
-            )
-            """,
-            name="ck_resource_edges_origin",
-        ),
-        CheckConstraint(
-            """
-            source_scheme IN (
-                'media', 'library', 'evidence_span', 'content_chunk',
-                'highlight', 'page', 'note_block', 'fragment',
-                'conversation', 'message', 'oracle_reading',
-                'oracle_passage_anchor', 'artifact',
-                'artifact_revision',
-                'external_snapshot', 'contributor', 'podcast',
-                'reader_apparatus_item', 'passage_anchor'
-            )
-            """,
-            name="ck_resource_edges_source_scheme",
-        ),
-        CheckConstraint(
-            """
-            target_scheme IN (
-                'media', 'library', 'evidence_span', 'content_chunk',
-                'highlight', 'page', 'note_block', 'fragment',
-                'conversation', 'message', 'oracle_reading',
-                'oracle_passage_anchor', 'artifact',
-                'artifact_revision',
-                'external_snapshot', 'contributor', 'podcast',
-                'reader_apparatus_item', 'passage_anchor'
-            )
-            """,
-            name="ck_resource_edges_target_scheme",
-        ),
-        CheckConstraint(
-            "NOT (source_scheme = target_scheme AND source_id = target_id)",
-            name="ck_resource_edges_no_self_edge",
-        ),
-        CheckConstraint(
-            "source_order_key IS NULL OR char_length(source_order_key) BETWEEN 1 AND 64",
-            name="ck_resource_edges_source_order_key_length",
-        ),
-        CheckConstraint(
-            """
-            source_order_key IS NULL
-            OR (
-                kind = 'context'
-                AND origin = 'user'
-                AND ordinal IS NULL
-                AND snapshot IS NULL
-            )
-            OR (
-                kind = 'context'
-                AND origin IN ('citation', 'system')
-                AND source_scheme = 'conversation'
-                AND ordinal IS NULL
-                AND snapshot IS NULL
-            )
-            """,
-            name="ck_resource_edges_source_order_key_shape",
-        ),
-        CheckConstraint(
-            "target_order_key IS NULL",
-            name="ck_resource_edges_target_order_key_reserved",
-        ),
-        CheckConstraint(
-            """
-            origin != 'synapse'
-            OR (
-                snapshot IS NOT NULL
-                AND snapshot ? 'excerpt'
-                AND jsonb_typeof(snapshot->'excerpt') = 'string'
-                AND btrim(snapshot->>'excerpt') <> ''
-            )
-            """,
-            name="ck_resource_edges_synapse_snapshot_excerpt",
-        ),
-        CheckConstraint(
-            """
-            origin != 'citation'
-            OR (
-                ordinal IS NULL
-                AND kind = 'context'
-                AND source_scheme = 'conversation'
-                AND snapshot IS NULL
-            )
-            OR (
-                ordinal IS NOT NULL
-                AND source_scheme IN (
-                    'message', 'oracle_reading', 'artifact_revision'
-                )
-            )
-            """,
-            name="ck_resource_edges_citation_shape",
-        ),
-        CheckConstraint(
-            """
-            origin != 'system'
-            OR (
-                kind = 'context'
-                AND source_scheme = 'conversation'
-                AND ordinal IS NULL
-                AND snapshot IS NULL
-            )
-            """,
-            name="ck_resource_edges_system_shape",
-        ),
-        CheckConstraint(
-            """
-            origin != 'note_body'
-            OR (
-                kind = 'context'
-                AND source_scheme = 'note_block'
-                AND source_order_key IS NULL
-                AND target_order_key IS NULL
-                AND ordinal IS NULL
-                AND snapshot IS NULL
-            )
-            """,
-            name="ck_resource_edges_note_body_shape",
-        ),
-        CheckConstraint(
-            """
-            origin != 'synapse'
-            OR (
-                source_scheme IN ('media', 'page', 'note_block', 'highlight')
-                AND target_scheme IN ('media', 'note_block', 'evidence_span')
-                AND source_order_key IS NULL
-                AND target_order_key IS NULL
-                AND ordinal IS NULL
-            )
-            """,
-            name="ck_resource_edges_synapse_shape",
-        ),
-        CheckConstraint("ordinal >= 1", name="ck_resource_edges_ordinal_positive"),
-        CheckConstraint(
-            "ordinal IS NULL OR snapshot IS NOT NULL",
-            name="ck_resource_edges_citation_has_snapshot",
-        ),
-        CheckConstraint(
-            "snapshot IS NULL OR jsonb_typeof(snapshot) = 'object'",
-            name="ck_resource_edges_snapshot_object",
-        ),
-        CheckConstraint(
-            # A citation edge carries its snapshot beside an ordinal; a synapse
-            # or assistant edge carries a bare-edge rationale snapshot with no
-            # ordinal (spec §13.3, amanuensis §5.3). All are the snapshot's only
-            # writers.
-            "snapshot IS NULL OR ordinal IS NOT NULL OR origin IN ('synapse', 'assistant')",
-            name="ck_resource_edges_snapshot_has_ordinal",
-        ),
-        CheckConstraint(
-            "snapshot IS NULL OR origin IN ('citation', 'synapse', 'assistant')",
-            name="ck_resource_edges_snapshot_origin",
-        ),
-        CheckConstraint(
-            # An assistant edge (the house agent's hand) carries a mandatory
-            # bare-edge rationale snapshot whose excerpt is the model's one-line
-            # justification (amanuensis §5.4, mirrors synapse).
-            """
-            origin != 'assistant'
-            OR (
-                snapshot IS NOT NULL
-                AND snapshot ? 'excerpt'
-                AND jsonb_typeof(snapshot->'excerpt') = 'string'
-                AND btrim(snapshot->>'excerpt') <> ''
-            )
-            """,
-            name="ck_resource_edges_assistant_snapshot_excerpt",
-        ),
-        CheckConstraint(
-            # Assistant edges stay inside the durable library graph and carry no
-            # ordinal or order keys (amanuensis §5.5). Endpoints are a widened
-            # copy of synapse's shape (adds page + highlight, excludes
-            # evidence_span).
-            """
-            origin != 'assistant'
-            OR (
-                source_scheme IN ('media', 'page', 'note_block', 'highlight')
-                AND target_scheme IN ('media', 'page', 'note_block', 'highlight')
-                AND source_order_key IS NULL
-                AND target_order_key IS NULL
-                AND ordinal IS NULL
-            )
-            """,
-            name="ck_resource_edges_assistant_shape",
-        ),
-        CheckConstraint(
-            "ordinal IS NULL OR origin = 'citation'",
-            name="ck_resource_edges_ordinal_origin",
-        ),
-        CheckConstraint(
-            "ordinal IS NULL OR (source_order_key IS NULL AND target_order_key IS NULL)",
-            name="ck_resource_edges_citation_no_order",
-        ),
-        CheckConstraint(
-            """
-            origin != 'highlight_note'
-            OR (
-                kind = 'context'
-                AND source_scheme = 'highlight'
-                AND target_scheme = 'note_block'
-                AND source_order_key IS NULL
-                AND target_order_key IS NULL
-                AND ordinal IS NULL
-                AND snapshot IS NULL
-            )
-            """,
-            name="ck_resource_edges_highlight_note_shape",
-        ),
-        Index(
-            "uq_resource_edges_citation_ordinal",
-            "user_id",
-            "source_scheme",
-            "source_id",
-            "ordinal",
-            unique=True,
-            postgresql_where=text("ordinal IS NOT NULL"),
-        ),
-        # One neutral Link per user and directed pair; the service canonicalizes
-        # the pair to total (scheme, id) order before insert, so directed
-        # uniqueness here is unordered uniqueness in practice
-        # (universal-link-authoring-hard-cutover.md, Graph Shapes).
-        Index(
-            "uq_resource_edges_user_context_link_pair",
-            "user_id",
-            "source_scheme",
-            "source_id",
-            "target_scheme",
-            "target_id",
-            unique=True,
-            postgresql_where=text(
-                "origin = 'user' AND kind = 'context' AND ordinal IS NULL"
-                " AND snapshot IS NULL AND source_order_key IS NULL"
-                " AND target_order_key IS NULL"
-            ),
-        ),
-        # One stance per user and directed pair, excluding kind so supports and
-        # contradicts share the slot; the opposite-orientation invariant is
-        # transaction-enforced by the stance service, this index catches
-        # same-orientation races.
-        Index(
-            "uq_resource_edges_user_stance_directed_pair",
-            "user_id",
-            "source_scheme",
-            "source_id",
-            "target_scheme",
-            "target_id",
-            unique=True,
-            postgresql_where=text(
-                "origin = 'user' AND kind IN ('supports', 'contradicts')"
-                " AND ordinal IS NULL AND snapshot IS NULL"
-                " AND source_order_key IS NULL AND target_order_key IS NULL"
-            ),
-        ),
-        # Directed per-origin dedupe for non-user orderless bare pairs,
-        # replacing the dropped broad uq_resource_edges_context_pair without
-        # colliding ordered adjacency or user-shape rows.
-        Index(
-            "uq_resource_edges_nonuser_orderless_pair",
-            "user_id",
-            "origin",
-            "source_scheme",
-            "source_id",
-            "target_scheme",
-            "target_id",
-            unique=True,
-            postgresql_where=text(
-                "origin <> 'user' AND ordinal IS NULL"
-                " AND source_order_key IS NULL AND target_order_key IS NULL"
-            ),
-        ),
-        Index(
-            "uq_resource_edges_source_order",
-            "user_id",
-            "source_scheme",
-            "source_id",
-            "source_order_key",
-            unique=True,
-            postgresql_where=text("source_order_key IS NOT NULL"),
-        ),
-        Index(
-            "ix_resource_edges_user_source",
-            "user_id",
-            "source_scheme",
-            "source_id",
-            "source_order_key",
-            "id",
-        ),
-        Index(
-            "ix_resource_edges_user_target",
-            "user_id",
-            "target_scheme",
-            "target_id",
-            "created_at",
-            "id",
-        ),
-    )
-
 
 class ResourceExternalSnapshot(Base):
     """Stable citation target for a public web result or other non-local resource."""
@@ -936,13 +439,6 @@ class ResourceExternalSnapshot(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "jsonb_typeof(source_snapshot) = 'object'",
-            name="ck_resource_external_snapshots_source_object",
-        ),
     )
 
 
@@ -977,17 +473,6 @@ class PassageAnchor(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id",
-            "owner_scheme",
-            "owner_id",
-            "selector_version",
-            "anchor_key",
-            name="uq_passage_anchors_identity",
-        ),
-    )
-
 
 class SynapseSuppression(Base):
     """A dismissed synapse pair the resonance engine must never re-propose.
@@ -1013,39 +498,6 @@ class SynapseSuppression(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            """
-            source_scheme IN (
-                'media', 'library', 'evidence_span', 'content_chunk',
-                'highlight', 'page', 'note_block', 'fragment',
-                'conversation', 'message', 'oracle_reading',
-                'oracle_passage_anchor', 'artifact',
-                'external_snapshot', 'contributor', 'podcast'
-            )
-            """,
-            name="ck_synapse_suppressions_source_scheme",
-        ),
-        CheckConstraint(
-            """
-            target_scheme IN (
-                'media', 'library', 'evidence_span', 'content_chunk',
-                'highlight', 'page', 'note_block', 'fragment',
-                'conversation', 'message', 'oracle_reading',
-                'oracle_passage_anchor', 'artifact',
-                'external_snapshot', 'contributor', 'podcast'
-            )
-            """,
-            name="ck_synapse_suppressions_target_scheme",
-        ),
-        Index(
-            "ix_synapse_suppressions_user_target",
-            "user_id",
-            "target_scheme",
-            "target_id",
-        ),
     )
 
 
@@ -1081,28 +533,8 @@ class Library(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "char_length(name) BETWEEN 1 AND 100",
-            name="ck_libraries_name_length",
-        ),
-        CheckConstraint(
-            "system_key IS NULL OR char_length(system_key) BETWEEN 1 AND 80",
-            name="ck_libraries_system_key",
-        ),
-        Index(
-            "uix_libraries_system_key",
-            "system_key",
-            unique=True,
-            postgresql_where=text("system_key IS NOT NULL"),
-        ),
-    )
-
     # Relationships
     owner: Mapped["User"] = relationship("User", back_populates="libraries")
-    memberships: Mapped[list["Membership"]] = relationship(
-        "Membership", back_populates="library", cascade="all, delete-orphan"
-    )
     library_entries: Mapped[list["LibraryEntry"]] = relationship(
         "LibraryEntry", back_populates="library", cascade="all, delete-orphan"
     )
@@ -1130,16 +562,9 @@ class Membership(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "role IN ('admin', 'member')",
-            name="ck_memberships_role",
-        ),
-    )
-
     # Relationships
-    library: Mapped["Library"] = relationship("Library", back_populates="memberships")
-    user: Mapped["User"] = relationship("User", back_populates="memberships")
+    library: Mapped["Library"] = relationship("Library")
+    user: Mapped["User"] = relationship("User")
 
 
 class MediaUploadSession(Base):
@@ -1197,20 +622,6 @@ class MediaUploadSession(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "created_by_user_id",
-            "idempotency_key",
-            name="uq_media_upload_sessions_viewer_idempotency",
-        ),
-        UniqueConstraint("candidate_media_id", name="uq_media_upload_sessions_candidate_media"),
-        UniqueConstraint("published_media_id", name="uq_media_upload_sessions_published_media"),
-        UniqueConstraint(
-            "published_source_attempt_id",
-            name="uq_media_upload_sessions_published_source_attempt",
-        ),
     )
 
 
@@ -1335,100 +746,21 @@ class Media(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "kind IN ('web_article', 'epub', 'pdf', 'video', 'podcast_episode')",
-            name="ck_media_kind",
-        ),
-        # Note: processing_status and failure_stage use PostgreSQL enum types,
-        # so CHECK constraints are not needed - the enum enforces valid values.
-        CheckConstraint(
-            "requested_url IS NULL OR char_length(requested_url) <= 2048",
-            name="ck_media_requested_url_length",
-        ),
-        CheckConstraint(
-            "canonical_url IS NULL OR char_length(canonical_url) <= 2048",
-            name="ck_media_canonical_url_length",
-        ),
-        CheckConstraint(
-            "page_count IS NULL OR page_count >= 1",
-            name="ck_media_page_count_positive",
-        ),
-        Index(
-            "uix_media_x_provider_id",
-            "provider",
-            "provider_id",
-            unique=True,
-            postgresql_where=text("provider = 'x' AND provider_id IS NOT NULL"),
-        ),
-        Index(
-            "uix_media_email_provider_id",
-            "provider",
-            "provider_id",
-            unique=True,
-            postgresql_where=text("provider = 'email' AND provider_id IS NOT NULL"),
-        ),
-        Index(
-            "idx_media_stale_extracting_recovery",
-            "processing_started_at",
-            "id",
-            postgresql_where=text(
-                "processing_status = 'extracting' "
-                "AND kind IN ('web_article', 'pdf', 'epub', 'podcast_episode') "
-                "AND processing_started_at IS NOT NULL"
-            ),
-        ),
-    )
-
     # Relationships
-    created_by: Mapped["User | None"] = relationship("User")
     fragments: Mapped[list["Fragment"]] = relationship(
         "Fragment", back_populates="media", cascade="all, delete-orphan"
     )
     library_entries: Mapped[list["LibraryEntry"]] = relationship(
         "LibraryEntry", back_populates="media", cascade="all, delete-orphan"
     )
-    media_file: Mapped["MediaFile | None"] = relationship(
-        "MediaFile", back_populates="media", cascade="all, delete-orphan", uselist=False
-    )
-    source_attempts: Mapped[list["MediaSourceAttempt"]] = relationship(
-        "MediaSourceAttempt", back_populates="media"
-    )
     podcast_episode: Mapped["PodcastEpisode | None"] = relationship(
         "PodcastEpisode", back_populates="media", cascade="all, delete-orphan", uselist=False
-    )
-    podcast_episode_chapters: Mapped[list["PodcastEpisodeChapter"]] = relationship(
-        "PodcastEpisodeChapter",
-        back_populates="media",
-        cascade="all, delete-orphan",
-        order_by=lambda: PodcastEpisodeChapter.chapter_idx,
-    )
-    podcast_listening_states: Mapped[list["PodcastListeningState"]] = relationship(
-        "PodcastListeningState",
-        back_populates="media",
-        cascade="all, delete-orphan",
-    )
-    consumption_queue_items: Mapped[list["ConsumptionQueueItem"]] = relationship(
-        "ConsumptionQueueItem",
-        back_populates="media",
-        cascade="all, delete-orphan",
-    )
-    podcast_transcription_job: Mapped["PodcastTranscriptionJob | None"] = relationship(
-        "PodcastTranscriptionJob",
-        back_populates="media",
-        cascade="all, delete-orphan",
-        uselist=False,
     )
     transcript_state: Mapped["MediaTranscriptState | None"] = relationship(
         "MediaTranscriptState",
         back_populates="media",
         cascade="all, delete-orphan",
         uselist=False,
-    )
-    transcript_request_audits: Mapped[list["PodcastTranscriptRequestAudit"]] = relationship(
-        "PodcastTranscriptRequestAudit",
-        back_populates="media",
-        cascade="all, delete-orphan",
     )
     contributor_credits: Mapped[list["ContributorCredit"]] = relationship(
         "ContributorCredit",
@@ -1496,97 +828,7 @@ class MediaSourceAttempt(Base):
         nullable=False,
     )
 
-    media: Mapped["Media"] = relationship("Media", back_populates="source_attempts")
-
-    __table_args__ = (
-        CheckConstraint(
-            """
-            source_type IN (
-                'generic_web_url',
-                'x_author_thread',
-                'x_post',
-                'youtube_video',
-                'remote_pdf_url',
-                'remote_epub_url',
-                'uploaded_pdf_file',
-                'uploaded_epub_file',
-                'browser_article_capture',
-                'browser_pdf_capture',
-                'browser_epub_capture',
-                'podcast_episode_transcript',
-                'video_transcript',
-                'email_message'
-            )
-            """,
-            name="ck_media_source_attempts_source_type",
-        ),
-        CheckConstraint(
-            "status IN ('accepted', 'queued', 'running', 'succeeded', 'failed', 'superseded')",
-            name="ck_media_source_attempts_status",
-        ),
-        CheckConstraint("attempt_no >= 1", name="ck_media_source_attempts_attempt_no"),
-        CheckConstraint("run_count >= 0", name="ck_media_source_attempts_run_count"),
-        CheckConstraint(
-            "jsonb_typeof(source_payload) = 'object'",
-            name="ck_media_source_attempts_source_payload",
-        ),
-        CheckConstraint(
-            "idempotency_key IS NULL OR created_by_user_id IS NOT NULL",
-            name="ck_media_source_attempts_idempotency_user",
-        ),
-        CheckConstraint(
-            "requested_url IS NULL OR char_length(requested_url) <= 2048",
-            name="ck_media_source_attempts_requested_url_length",
-        ),
-        CheckConstraint(
-            "canonical_source_url IS NULL OR char_length(canonical_source_url) <= 2048",
-            name="ck_media_source_attempts_canonical_source_url_length",
-        ),
-        CheckConstraint(
-            "retry_after_seconds IS NULL OR retry_after_seconds >= 0",
-            name="ck_media_source_attempts_retry_after",
-        ),
-        UniqueConstraint("media_id", "attempt_no", name="uq_media_source_attempts_media_attempt"),
-        Index(
-            "idx_media_source_attempts_media_created",
-            "media_id",
-            text("created_at DESC"),
-            text("id DESC"),
-        ),
-        Index(
-            "idx_media_source_attempts_status_updated",
-            "status",
-            "updated_at",
-            "id",
-        ),
-        Index(
-            "idx_media_source_attempts_request_id",
-            "request_id",
-            postgresql_where=text("request_id IS NOT NULL"),
-        ),
-        Index(
-            "idx_media_source_attempts_source_type_status_updated",
-            "source_type",
-            "status",
-            "updated_at",
-            "id",
-        ),
-        Index(
-            "idx_media_source_attempts_provider_target",
-            "provider",
-            "provider_target_ref",
-            "created_at",
-            "id",
-            postgresql_where=text("provider IS NOT NULL AND provider_target_ref IS NOT NULL"),
-        ),
-        Index(
-            "uq_media_source_attempts_idempotency",
-            "created_by_user_id",
-            "idempotency_key",
-            unique=True,
-            postgresql_where=text("idempotency_key IS NOT NULL"),
-        ),
-    )
+    media: Mapped["Media"] = relationship("Media")
 
 
 class MediaTeardownIntent(Base):
@@ -1614,82 +856,6 @@ class MediaTeardownIntent(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (UniqueConstraint("media_id", name="uq_media_teardown_intents_media"),)
-
-
-class MediaUploadEvent(Base):
-    """Append-only upload history for one media upload session
-    (`imports-workspace-hard-cutover.md`).
-
-    ``event_type`` plus the owning table select the closed ``payload`` variant;
-    the application owns that validation, so the schema carries only storage
-    shape. ``id`` is application-generated (``nexus.ids.new_uuid7()``) because
-    the recording helper appends inside the transaction that commits the fact it
-    documents. ``stage`` and ``failure_code`` are the indexed query columns and
-    are absent for events that name neither.
-    """
-
-    __tablename__ = "media_upload_events"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    session_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media_upload_sessions.id", name="fk_media_upload_events_session"),
-        nullable=False,
-    )
-    occurred_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    event_type: Mapped[str] = mapped_column(Text, nullable=False)
-    stage: Mapped[str | None] = mapped_column(Text, nullable=True)
-    failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-
-    __table_args__ = (
-        Index(
-            "ix_media_upload_events_session_occurred_id",
-            "session_id",
-            "occurred_at",
-            "id",
-        ),
-    )
-
-
-class MediaProcessingEvent(Base):
-    """Append-only source-ingest and content-index history for one media
-    (`imports-workspace-hard-cutover.md`). Same envelope as
-    :class:`MediaUploadEvent`; the payload names a source attempt or an index
-    revision."""
-
-    __tablename__ = "media_processing_events"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="fk_media_processing_events_media"),
-        nullable=False,
-    )
-    occurred_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    event_type: Mapped[str] = mapped_column(Text, nullable=False)
-    stage: Mapped[str | None] = mapped_column(Text, nullable=True)
-    failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-
-    __table_args__ = (
-        Index(
-            "ix_media_processing_events_media_occurred_id",
-            "media_id",
-            "occurred_at",
-            "id",
-        ),
     )
 
 
@@ -1729,15 +895,8 @@ class ProjectGutenbergCatalogEntry(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint("ebook_id > 0", name="ck_project_gutenberg_catalog_ebook_id_positive"),
-        Index("ix_project_gutenberg_catalog_language", "language"),
-        Index("ix_project_gutenberg_catalog_title", "title"),
-    )
-
     contributor_credits: Mapped[list["ContributorCredit"]] = relationship(
         "ContributorCredit",
-        back_populates="project_gutenberg_catalog_entry",
         order_by=lambda: ContributorCredit.ordinal,
     )
 
@@ -1770,22 +929,12 @@ class Contributor(Base):
         nullable=False,
     )
 
-    __table_args__ = (UniqueConstraint("handle", name="uq_contributors_handle"),)
-
     aliases: Mapped[list["ContributorAlias"]] = relationship(
         "ContributorAlias",
         back_populates="contributor",
         order_by=lambda: [
             ContributorAlias.resolves_identity.desc(),
             ContributorAlias.alias.asc(),
-        ],
-    )
-    external_ids: Mapped[list["ContributorExternalId"]] = relationship(
-        "ContributorExternalId",
-        back_populates="contributor",
-        order_by=lambda: [
-            ContributorExternalId.authority.asc(),
-            ContributorExternalId.external_key.asc(),
         ],
     )
     credits: Mapped[list["ContributorCredit"]] = relationship(
@@ -1819,21 +968,6 @@ class ContributorAlias(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint(
-            "contributor_id",
-            "normalized_alias",
-            name="uq_contributor_aliases_owner_normalized",
-        ),
-        Index("ix_contributor_aliases_contributor_id", "contributor_id"),
-        Index(
-            "ix_contributor_aliases_resolution",
-            "normalized_alias",
-            "resolves_identity",
-            "contributor_id",
-        ),
-    )
-
     contributor: Mapped["Contributor"] = relationship("Contributor", back_populates="aliases")
 
 
@@ -1860,19 +994,7 @@ class ContributorExternalId(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint(
-            "authority",
-            "external_key",
-            name="uq_contributor_external_ids_authority_key",
-        ),
-        Index("ix_contributor_external_ids_contributor_id", "contributor_id"),
-    )
-
-    contributor: Mapped["Contributor"] = relationship(
-        "Contributor",
-        back_populates="external_ids",
-    )
+    contributor: Mapped["Contributor"] = relationship("Contributor")
 
 
 class ContributorCredit(Base):
@@ -1923,66 +1045,14 @@ class ContributorCredit(Base):
     )
 
     # One-target, dense-ordinal, role-vocabulary, and bounded-value invariants are
-    # enforced in application code (services), not CHECK constraints. The six
-    # partial unique indexes below own per-target ordinal and (contributor, role)
+    # enforced in application code (services), not CHECK constraints. Six partial
+    # unique indexes in the database own per-target ordinal and (contributor, role)
     # uniqueness; the whole-operation retry owner names them (services/contributors).
-    __table_args__ = (
-        Index("ix_contributor_credits_contributor_id", "contributor_id"),
-        Index(
-            "uq_contributor_credits_media_ordinal",
-            "media_id",
-            "ordinal",
-            unique=True,
-            postgresql_where=text("media_id IS NOT NULL"),
-        ),
-        Index(
-            "uq_contributor_credits_media_contributor_role",
-            "media_id",
-            "contributor_id",
-            "role",
-            unique=True,
-            postgresql_where=text("media_id IS NOT NULL"),
-        ),
-        Index(
-            "uq_contributor_credits_podcast_ordinal",
-            "podcast_id",
-            "ordinal",
-            unique=True,
-            postgresql_where=text("podcast_id IS NOT NULL"),
-        ),
-        Index(
-            "uq_contributor_credits_podcast_contributor_role",
-            "podcast_id",
-            "contributor_id",
-            "role",
-            unique=True,
-            postgresql_where=text("podcast_id IS NOT NULL"),
-        ),
-        Index(
-            "uq_contributor_credits_gutenberg_ordinal",
-            "project_gutenberg_catalog_ebook_id",
-            "ordinal",
-            unique=True,
-            postgresql_where=text("project_gutenberg_catalog_ebook_id IS NOT NULL"),
-        ),
-        Index(
-            "uq_contributor_credits_gutenberg_contributor_role",
-            "project_gutenberg_catalog_ebook_id",
-            "contributor_id",
-            "role",
-            unique=True,
-            postgresql_where=text("project_gutenberg_catalog_ebook_id IS NOT NULL"),
-        ),
-    )
 
     contributor: Mapped["Contributor"] = relationship("Contributor", back_populates="credits")
     media: Mapped["Media | None"] = relationship("Media", back_populates="contributor_credits")
     podcast: Mapped["Podcast | None"] = relationship(
         "Podcast",
-        back_populates="contributor_credits",
-    )
-    project_gutenberg_catalog_entry: Mapped["ProjectGutenbergCatalogEntry | None"] = relationship(
-        "ProjectGutenbergCatalogEntry",
         back_populates="contributor_credits",
     )
 
@@ -2007,7 +1077,7 @@ class MediaFile(Base):
     source_sha256: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Relationship
-    media: Mapped["Media"] = relationship("Media", back_populates="media_file")
+    media: Mapped["Media"] = relationship("Media")
 
 
 class ReaderPublication(Base):
@@ -2057,21 +1127,6 @@ class Fragment(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint("media_id", "idx", name="uq_fragments_media_idx"),
-        CheckConstraint(
-            "(t_start_ms IS NULL AND t_end_ms IS NULL) "
-            "OR (t_start_ms IS NOT NULL AND t_end_ms IS NOT NULL)",
-            name="ck_fragments_time_offsets_paired_null",
-        ),
-        CheckConstraint(
-            "(t_start_ms IS NULL OR t_start_ms >= 0) "
-            "AND (t_end_ms IS NULL OR t_end_ms >= 0) "
-            "AND (t_start_ms IS NULL OR t_end_ms > t_start_ms)",
-            name="ck_fragments_time_offsets_valid",
-        ),
-    )
-
     # Relationships
     media: Mapped["Media"] = relationship("Media", back_populates="fragments", lazy="joined")
 
@@ -2108,8 +1163,6 @@ class DocumentEmbedArtifactState(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )
-
-    __table_args__ = (UniqueConstraint("media_id", name="uq_document_embed_artifact_states_media"),)
 
 
 class DocumentEmbed(Base):
@@ -2165,31 +1218,6 @@ class DocumentEmbed(Base):
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )
 
-    __table_args__ = (
-        UniqueConstraint("media_id", "ordinal", name="uq_document_embeds_media_ordinal"),
-        UniqueConstraint("media_id", "occurrence_key", name="uq_document_embeds_media_key"),
-        Index("idx_document_embeds_media_order", "media_id", "ordinal", "id"),
-        Index(
-            "idx_document_embeds_fragment_order",
-            "fragment_id",
-            "ordinal",
-            "id",
-            postgresql_where=text("fragment_id IS NOT NULL"),
-        ),
-        Index(
-            "idx_document_embeds_target_media",
-            "target_media_id",
-            postgresql_where=text("target_media_id IS NOT NULL"),
-        ),
-        Index(
-            "idx_document_embeds_resolution",
-            "resolution_status",
-            "updated_at",
-            "id",
-            postgresql_where=text("resolution_status IN ('pending', 'resolving', 'failed')"),
-        ),
-    )
-
 
 class LibraryEntry(Base):
     """Association between a library and exactly one content target."""
@@ -2223,33 +1251,6 @@ class LibraryEntry(Base):
     )
     position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
-    __table_args__ = (
-        CheckConstraint(
-            "(media_id IS NOT NULL AND podcast_id IS NULL) "
-            "OR (media_id IS NULL AND podcast_id IS NOT NULL)",
-            name="ck_library_entries_exactly_one_target",
-        ),
-        CheckConstraint("position >= 0", name="ck_library_entries_position_non_negative"),
-        UniqueConstraint("library_id", "media_id", name="uq_library_entries_library_media"),
-        UniqueConstraint("library_id", "podcast_id", name="uq_library_entries_library_podcast"),
-        UniqueConstraint(
-            "library_id",
-            "position",
-            name="uq_library_entries_library_position",
-            deferrable=True,
-            initially="DEFERRED",
-        ),
-        Index("idx_library_entries_media_library", "media_id", "library_id"),
-        Index("idx_library_entries_podcast_library", "podcast_id", "library_id"),
-        Index(
-            "ix_library_entries_library_order",
-            "library_id",
-            "position",
-            text("created_at DESC"),
-            text("id DESC"),
-        ),
-    )
-
     library: Mapped["Library"] = relationship("Library", back_populates="library_entries")
     media: Mapped["Media | None"] = relationship("Media", back_populates="library_entries")
     podcast: Mapped["Podcast | None"] = relationship("Podcast", back_populates="library_entries")
@@ -2280,11 +1281,6 @@ class SynthesisArtifact(Base):
     audience_id: Mapped[str] = mapped_column(Text, nullable=False)
     current_revision_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey(
-            "artifact_revisions.id",
-            name="fk_artifacts_current_revision",
-            use_alter=True,
-        ),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -2296,16 +1292,6 @@ class SynthesisArtifact(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "subject_scheme",
-            "subject_id",
-            "audience_scheme",
-            "audience_id",
-            name="uq_artifacts_subject_audience",
-        ),
     )
 
 
@@ -2344,128 +1330,6 @@ class ArtifactBuild(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint(
-            "artifact_id",
-            "idempotency_key",
-            name="uq_artifact_builds_idempotency",
-        ),
-        Index("ix_artifact_builds_artifact", "artifact_id"),
-    )
-
-
-class ArtifactRevision(Base):
-    """Immutable successful dossier output — unique per build (D-3).
-
-    A revision exists only for a build that succeeded with >=1 materialized
-    citation. Linkage to the head is via the build; the typed ``input_manifest``
-    (freshness/coverage source) replaces the legacy ``covered_targets`` array;
-    citation edges are owned by ``resource_graph`` under
-    ``citation_owner_user_id`` (non-null — graph ownership).
-    """
-
-    __tablename__ = "artifact_revisions"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    build_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("artifact_builds.id"),
-        nullable=False,
-    )
-    content_html: Mapped[str] = mapped_column(Text, nullable=False)
-    content_text: Mapped[str] = mapped_column(Text, nullable=False)
-    input_manifest: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    citation_owner_user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    creator_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=True,
-    )
-    promoted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint("build_id", name="uq_artifact_revisions_build"),
-        CheckConstraint(
-            "jsonb_typeof(input_manifest) = 'object'",
-            name="ck_artifact_revisions_input_manifest_object",
-        ),
-    )
-
-
-class ArtifactBuildFailure(Base):
-    """Terminal modeled-failure child of a build (unique build FK, D-3)."""
-
-    __tablename__ = "artifact_build_failures"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    build_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("artifact_builds.id"),
-        nullable=False,
-    )
-    failure_code: Mapped[str] = mapped_column(Text, nullable=False)
-    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
-    support: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint("build_id", name="uq_artifact_build_failures_build"),
-        CheckConstraint(
-            "support IS NULL OR jsonb_typeof(support) = 'object'",
-            name="ck_artifact_build_failures_support_object",
-        ),
-    )
-
-
-class ArtifactBuildCancellation(Base):
-    """Terminal cancellation child of a build (unique build FK, D-3)."""
-
-    __tablename__ = "artifact_build_cancellations"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    build_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("artifact_builds.id"),
-        nullable=False,
-    )
-    actor_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (UniqueConstraint("build_id", name="uq_artifact_build_cancellations_build"),)
-
 
 class ArtifactBuildEvent(Base):
     """One sequenced, replayable build-event (the dossier run stream, D-3).
@@ -2498,21 +1362,6 @@ class ArtifactBuildEvent(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint("seq >= 1", name="ck_artifact_build_events_seq_positive"),
-        CheckConstraint(
-            "event_type IN ("
-            "'Started', 'Progress', 'Succeeded', 'Failed', 'HistoricalFailed', 'Cancelled'"
-            ")",
-            name="ck_artifact_build_events_type",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(payload) = 'object'",
-            name="ck_artifact_build_events_payload_object",
-        ),
-        UniqueConstraint("build_id", "seq", name="uq_artifact_build_events_seq"),
-    )
-
 
 class ArtifactIdeaSubject(Base):
     """One user-owned exact Idea identity eligible for a Dossier head."""
@@ -2535,14 +1384,6 @@ class ArtifactIdeaSubject(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id",
-            "idea_key",
-            name="uq_artifact_idea_subjects_owner_key",
-        ),
     )
 
 
@@ -2599,14 +1440,6 @@ class ArtifactIdeaSeed(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint(
-            "artifact_id",
-            "highlight_id",
-            name="uq_artifact_idea_seeds_pair",
-        ),
-    )
-
 
 class ArtifactLearnRequest(Base):
     """Learn-scoped replay identity and billed resolver coordination."""
@@ -2635,14 +1468,6 @@ class ArtifactLearnRequest(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id",
-            "idempotency_key",
-            name="uq_artifact_learn_requests_user_key",
-        ),
     )
 
 
@@ -2725,15 +1550,6 @@ class Podcast(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint(
-            "provider",
-            "provider_podcast_id",
-            name="uq_podcasts_provider_provider_podcast_id",
-        ),
-        UniqueConstraint("feed_url", name="uq_podcasts_feed_url"),
-    )
-
     episodes: Mapped[list["PodcastEpisode"]] = relationship(
         "PodcastEpisode", back_populates="podcast", cascade="all, delete-orphan"
     )
@@ -2744,238 +1560,6 @@ class Podcast(Base):
         "ContributorCredit",
         back_populates="podcast",
         order_by=lambda: ContributorCredit.ordinal,
-    )
-
-
-class PodcastSubscription(Base):
-    """Per-user subscription to a global podcast."""
-
-    __tablename__ = "podcast_subscriptions"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    podcast_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("podcasts.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    auto_queue: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    default_playback_speed: Mapped[float | None] = mapped_column(Float, nullable=True)
-    pause_shortening_mode: Mapped[str | None] = mapped_column(Text, nullable=True)
-    sync_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="Pending")
-    sync_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    sync_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    sync_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    sync_generation: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
-    next_sync_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    consecutive_sync_failures: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        server_default="0",
-    )
-    sync_job_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    sync_job_attempt_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    sync_started_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    sync_completed_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    last_checked_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    sync_checkpoint_status: Mapped[str | None] = mapped_column(Text, nullable=True)
-    sync_checkpoint_cutoff_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True),
-        nullable=True,
-    )
-    sync_checkpoint_new_episode_count: Mapped[int | None] = mapped_column(
-        Integer,
-        nullable=True,
-    )
-    sync_checkpoint_completed_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True),
-        nullable=True,
-    )
-    auto_queue_watermark_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id",
-            "podcast_id",
-            name="uq_podcast_subscriptions_user_podcast",
-        ),
-        Index(
-            "ix_podcast_subscriptions_next_sync_at_id",
-            "next_sync_at",
-            "id",
-        ),
-        CheckConstraint(
-            "sync_attempts >= 0",
-            name="ck_podcast_subscriptions_sync_attempts_non_negative",
-        ),
-    )
-
-    podcast: Mapped["Podcast"] = relationship("Podcast")
-
-
-class PodcastSubscriptionBackfill(Base):
-    """One fenced historical traversal for one active subscription."""
-
-    __tablename__ = "podcast_subscription_backfills"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    subscription_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("podcast_subscriptions.id"),
-        nullable=False,
-        unique=True,
-    )
-    cutoff_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    step_no: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    cursor: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    processed_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    added_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    source_limited_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    failed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
-class PodcastRefreshRun(Base):
-    """One viewer-owned manual or scheduled Podcast refresh aggregate."""
-
-    __tablename__ = "podcast_refresh_runs"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
-    )
-    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    request_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
-    scope: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    requested_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    finished_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    succeeded_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    source_limited_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    failed_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    skipped_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    new_episode_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    started_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        nullable=False,
-        server_default=text("now()"),
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        Index(
-            "uq_podcast_refresh_runs_user_idempotency_key",
-            "user_id",
-            "idempotency_key",
-            unique=True,
-            postgresql_where=text("idempotency_key IS NOT NULL"),
-        ),
-        Index(
-            "ix_podcast_refresh_runs_completed_at_id",
-            "completed_at",
-            "id",
-        ),
-    )
-
-
-class PodcastRefreshRunItem(Base):
-    """One subscription epoch/generation joined to a refresh run."""
-
-    __tablename__ = "podcast_refresh_run_items"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    run_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("podcast_refresh_runs.id"),
-        nullable=False,
-    )
-    podcast_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("podcasts.id"),
-        nullable=False,
-    )
-    subscription_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    sync_generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    new_episode_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "run_id",
-            "subscription_id",
-            name="uq_podcast_refresh_run_items_run_subscription",
-        ),
     )
 
 
@@ -3005,307 +1589,8 @@ class PodcastEpisode(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint(
-            "podcast_id",
-            "media_id",
-            name="uq_podcast_episodes_podcast_media",
-        ),
-        CheckConstraint(
-            "duration_seconds IS NULL OR duration_seconds > 0",
-            name="ck_podcast_episodes_duration_positive",
-        ),
-    )
-
     media: Mapped["Media"] = relationship("Media", back_populates="podcast_episode")
     podcast: Mapped["Podcast"] = relationship("Podcast", back_populates="episodes")
-
-
-class PodcastEpisodeIdentity(Base):
-    """A stable provider/feed alias proving one acquired episode identity."""
-
-    __tablename__ = "podcast_episode_identities"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    podcast_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("podcasts.id"),
-        nullable=False,
-    )
-    scheme: Mapped[str] = mapped_column(Text, nullable=False)
-    value: Mapped[str] = mapped_column(Text, nullable=False)
-    episode_media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "podcast_id",
-            "scheme",
-            "value",
-            name="uq_podcast_episode_identities_alias",
-        ),
-        ForeignKeyConstraint(
-            ["podcast_id", "episode_media_id"],
-            ["podcast_episodes.podcast_id", "podcast_episodes.media_id"],
-            name="fk_podcast_episode_identities_episode",
-        ),
-        Index(
-            "ix_podcast_episode_identities_episode_media_id",
-            "episode_media_id",
-        ),
-    )
-
-
-class PodcastEpisodeChapter(Base):
-    """Episode-level chapter markers extracted from RSS metadata."""
-
-    __tablename__ = "podcast_episode_chapters"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    chapter_idx: Mapped[int] = mapped_column(Integer, nullable=False)
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    t_start_ms: Mapped[int] = mapped_column(Integer, nullable=False)
-    t_end_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "media_id",
-            "chapter_idx",
-            name="uq_podcast_episode_chapters_media_idx",
-        ),
-        CheckConstraint(
-            "chapter_idx >= 0",
-            name="ck_podcast_episode_chapters_idx_non_negative",
-        ),
-        CheckConstraint(
-            "t_start_ms >= 0",
-            name="ck_podcast_episode_chapters_start_non_negative",
-        ),
-        CheckConstraint(
-            "t_end_ms IS NULL OR t_end_ms >= t_start_ms",
-            name="ck_podcast_episode_chapters_end_not_before_start",
-        ),
-        CheckConstraint(
-            "source IN ('rss_podcasting20', 'rss_podlove', 'embedded_mp4', 'embedded_id3')",
-            name="ck_podcast_episode_chapters_source",
-        ),
-        Index(
-            "ix_podcast_episode_chapters_media_t_start_ms",
-            "media_id",
-            "t_start_ms",
-        ),
-    )
-
-    media: Mapped["Media"] = relationship("Media", back_populates="podcast_episode_chapters")
-
-
-class PodcastListeningState(Base):
-    """Per-user playback state for podcast/audio media resume."""
-
-    __tablename__ = "podcast_listening_states"
-
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", name="fk_podcast_listening_states_user"),
-        primary_key=True,
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="fk_podcast_listening_states_media"),
-        primary_key=True,
-    )
-    position_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    playback_speed: Mapped[float | None] = mapped_column(Float, nullable=True)
-    is_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    # Listening-heartbeat fencing tokens (spec §5.4): only an exact expected
-    # write_revision + reset_epoch may atomically write position/duration/rate and
-    # advance write_revision; ResetProgress advances both and resets position.
-    write_revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
-    reset_epoch: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    # Engagement recency is advanced by listening heartbeats only. ``updated_at``
-    # remains the operational mutation clock (manual Finished/Unread included).
-    last_engaged_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True),
-        nullable=True,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "position_ms >= 0",
-            name="ck_podcast_listening_states_position_ms_non_negative",
-        ),
-        CheckConstraint(
-            "duration_ms IS NULL OR duration_ms >= 0",
-            name="ck_podcast_listening_states_duration_ms_non_negative",
-        ),
-        Index("ix_podcast_listening_states_media_id", "media_id"),
-        Index(
-            "ix_podcast_listening_states_user_last_engaged",
-            "user_id",
-            text("last_engaged_at DESC"),
-            text("media_id DESC"),
-            postgresql_where=text("last_engaged_at IS NOT NULL"),
-        ),
-    )
-
-    media: Mapped["Media"] = relationship("Media", back_populates="podcast_listening_states")
-    user: Mapped["User"] = relationship("User", back_populates="podcast_listening_states")
-
-
-class ConsumptionActivitySpan(Base):
-    """One bounded observed Consumption activity interval."""
-
-    __tablename__ = "consumption_activity_spans"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    capture_key: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", name="fk_consumption_activity_spans_user"),
-        nullable=False,
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="fk_consumption_activity_spans_media"),
-        nullable=False,
-    )
-    modality: Mapped[str] = mapped_column(Text, nullable=False)
-    device_id: Mapped[str] = mapped_column(Text, nullable=False)
-    device_class: Mapped[str] = mapped_column(Text, nullable=False)
-    occurred_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    duration_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    progress_start: Mapped[float | None] = mapped_column(Float, nullable=True)
-    progress_end: Mapped[float | None] = mapped_column(Float, nullable=True)
-    word_start: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    word_end: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    media_position_start_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    media_position_end_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id",
-            "capture_key",
-            name="uq_consumption_activity_spans_user_capture_key",
-        ),
-        Index("ix_consumption_activity_spans_user_occurred_id", "user_id", "occurred_at", "id"),
-        Index(
-            "ix_consumption_activity_spans_user_media_occurred_id",
-            "user_id",
-            "media_id",
-            "occurred_at",
-            "id",
-        ),
-        Index(
-            "ix_consumption_activity_spans_user_device_occurred_id",
-            "user_id",
-            "device_id",
-            "occurred_at",
-            "id",
-        ),
-        Index("ix_consumption_activity_spans_media_id", "media_id", "id"),
-    )
-
-
-class ConsumptionActivityExclusion(Base):
-    """One exact observed activity session excluded by its viewer."""
-
-    __tablename__ = "consumption_activity_exclusions"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", name="fk_consumption_activity_exclusions_user"),
-        nullable=False,
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="fk_consumption_activity_exclusions_media"),
-        nullable=False,
-    )
-    modality: Mapped[str] = mapped_column(Text, nullable=False)
-    device_id: Mapped[str] = mapped_column(Text, nullable=False)
-    started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    ended_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-    restored_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-    __table_args__ = (
-        Index(
-            "ix_consumption_activity_exclusions_user_started_id",
-            "user_id",
-            "started_at",
-            "id",
-        ),
-        Index(
-            "ix_cons_activity_exclusions_user_media_device_started_id",
-            "user_id",
-            "media_id",
-            "device_id",
-            "started_at",
-            "id",
-        ),
-        Index("ix_consumption_activity_exclusions_media_id", "media_id", "id"),
-    )
-
-
-class ConsumptionCompletionFact(Base):
-    """The first observed post-cutover Finished transition for one viewer/media."""
-
-    __tablename__ = "consumption_completion_facts"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", name="fk_consumption_completion_facts_user"),
-        nullable=False,
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="fk_consumption_completion_facts_media"),
-        nullable=False,
-    )
-    modality: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-
-    __table_args__ = (
-        UniqueConstraint("user_id", "media_id", name="uq_consumption_completion_facts_user_media"),
-        Index("ix_consumption_completion_facts_user_created_id", "user_id", "created_at", "id"),
-        Index("ix_consumption_completion_facts_media_id", "media_id", "id"),
-    )
 
 
 class ConsumptionQueueItem(Base):
@@ -3340,420 +1625,8 @@ class ConsumptionQueueItem(Base):
     # docs/cutovers/lectern-player-lifecycle-hard-cutover.md §4).
     source: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
 
-    __table_args__ = (
-        UniqueConstraint("user_id", "media_id", name="uq_consumption_queue_items_user_media"),
-        CheckConstraint(
-            "position >= 0",
-            name="ck_consumption_queue_items_position_non_negative",
-        ),
-        Index("ix_consumption_queue_items_user_position", "user_id", "position"),
-    )
-
-    user: Mapped["User"] = relationship("User", back_populates="consumption_queue_items")
-    media: Mapped["Media"] = relationship("Media", back_populates="consumption_queue_items")
-
-
-class PodcastTranscriptionJob(Base):
-    """One transcription-work record per globally ingested podcast episode."""
-
-    __tablename__ = "podcast_transcription_jobs"
-
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    requested_by_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    request_reason: Mapped[str] = mapped_column(Text, nullable=False, server_default="episode_open")
-    reserved_minutes: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    reservation_usage_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
-    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "status IN ('pending', 'running', 'completed', 'failed')",
-            name="ck_podcast_transcription_jobs_status",
-        ),
-        CheckConstraint(
-            "attempts >= 0",
-            name="ck_podcast_transcription_jobs_attempts_non_negative",
-        ),
-        CheckConstraint(
-            "reserved_minutes >= 0",
-            name="ck_podcast_transcription_jobs_reserved_minutes_non_negative",
-        ),
-        CheckConstraint(
-            "request_reason IN ("
-            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', 'operator_requeue', 'rss_feed'"
-            ")",
-            name="ck_podcast_transcription_jobs_request_reason",
-        ),
-    )
-
-    media: Mapped["Media"] = relationship("Media", back_populates="podcast_transcription_job")
-
-
-class PodcastTranscriptionUsageDaily(Base):
-    """Per-user UTC-day transcription usage ledger."""
-
-    __tablename__ = "podcast_transcription_usage_daily"
-
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    usage_date: Mapped[date] = mapped_column(Date, primary_key=True)
-    minutes_used: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    minutes_reserved: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "minutes_used >= 0 AND minutes_reserved >= 0",
-            name="ck_podcast_transcription_usage_daily_non_negative",
-        ),
-    )
-
-
-class PodcastTranscriptSegment(Base):
-    """Current transcript segment persisted for a media item."""
-
-    __tablename__ = "podcast_transcript_segments"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    segment_idx: Mapped[int] = mapped_column(Integer, nullable=False)
-    canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
-    t_start_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    t_end_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    speaker_label: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "media_id",
-            "segment_idx",
-            name="uq_podcast_transcript_segments_media_idx",
-        ),
-        CheckConstraint(
-            "segment_idx >= 0",
-            name="ck_podcast_transcript_segments_segment_idx_non_negative",
-        ),
-        CheckConstraint(
-            "t_start_ms >= 0 AND t_end_ms > t_start_ms",
-            name="ck_podcast_transcript_segments_time_offsets_valid",
-        ),
-        Index(
-            "ix_podcast_transcript_segments_media_start",
-            "media_id",
-            "t_start_ms",
-            "segment_idx",
-        ),
-    )
-
+    user: Mapped["User"] = relationship("User")
     media: Mapped["Media"] = relationship("Media")
-
-
-class ContentBlock(Base):
-    """Format-aware block of canonical source text."""
-
-    __tablename__ = "content_blocks"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    block_idx: Mapped[int] = mapped_column(Integer, nullable=False)
-    block_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
-    extraction_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
-    source_start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    source_end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    parent_block_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("content_blocks.id"),
-        nullable=True,
-    )
-    heading_path: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
-    locator: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    selector: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    metadata_json: Mapped[dict[str, object]] = mapped_column(
-        "metadata",
-        JSONB,
-        nullable=False,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("block_idx >= 0", name="ck_content_blocks_block_idx"),
-        CheckConstraint("source_start_offset >= 0", name="ck_content_blocks_start"),
-        CheckConstraint(
-            "source_end_offset >= source_start_offset", name="ck_content_blocks_offsets"
-        ),
-        CheckConstraint("jsonb_typeof(heading_path) = 'array'", name="ck_content_blocks_heading"),
-        CheckConstraint("jsonb_typeof(locator) = 'object'", name="ck_content_blocks_locator"),
-        CheckConstraint("jsonb_typeof(selector) = 'object'", name="ck_content_blocks_selector"),
-        CheckConstraint("jsonb_typeof(metadata) = 'object'", name="ck_content_blocks_metadata"),
-        CheckConstraint(
-            "extraction_confidence IS NULL OR "
-            "(extraction_confidence >= 0 AND extraction_confidence <= 1)",
-            name="ck_content_blocks_extraction_confidence",
-        ),
-        CheckConstraint(
-            "owner_kind IN ('media', 'note_block')",
-            name="ck_content_blocks_owner_kind",
-        ),
-        UniqueConstraint("owner_kind", "owner_id", "block_idx", name="uq_content_blocks_owner_idx"),
-        Index("ix_content_blocks_owner_idx", "owner_kind", "owner_id", "block_idx"),
-    )
-
-
-class EvidenceSpan(Base):
-    """Durable citeable span over content blocks."""
-
-    __tablename__ = "evidence_spans"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    start_block_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("content_blocks.id"),
-    )
-    end_block_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("content_blocks.id"),
-    )
-    start_block_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    end_block_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    span_text: Mapped[str] = mapped_column(Text, nullable=False)
-    selector: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    citation_label: Mapped[str] = mapped_column(Text, nullable=False)
-    resolver_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("start_block_offset >= 0", name="ck_evidence_spans_start"),
-        CheckConstraint(
-            "start_block_id <> end_block_id OR end_block_offset >= start_block_offset",
-            name="ck_evidence_spans_offsets",
-        ),
-        CheckConstraint("jsonb_typeof(selector) = 'object'", name="ck_evidence_spans_selector"),
-        CheckConstraint(
-            "resolver_kind IN ('web', 'epub', 'pdf', 'transcript', 'note')",
-            name="ck_evidence_spans_resolver",
-        ),
-        CheckConstraint(
-            "owner_kind IN ('media', 'note_block')",
-            name="ck_evidence_spans_owner_kind",
-        ),
-        Index("ix_evidence_spans_owner", "owner_kind", "owner_id"),
-    )
-
-
-class ContentChunk(Base):
-    """Retrieval chunk built from content blocks."""
-
-    __tablename__ = "content_chunks"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    owner_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    primary_evidence_span_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("evidence_spans.id"),
-        nullable=True,
-    )
-    chunk_idx: Mapped[int] = mapped_column(Integer, nullable=False)
-    source_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
-    token_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    heading_path: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
-    summary_locator: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("chunk_idx >= 0", name="ck_content_chunks_chunk_idx_non_negative"),
-        CheckConstraint(
-            "source_kind IN ('web_article', 'epub', 'pdf', 'transcript', 'note')",
-            name="ck_content_chunks_source_kind",
-        ),
-        CheckConstraint("token_count >= 0", name="ck_content_chunks_token_count"),
-        CheckConstraint("jsonb_typeof(heading_path) = 'array'", name="ck_content_chunks_heading"),
-        CheckConstraint(
-            "jsonb_typeof(summary_locator) = 'object'", name="ck_content_chunks_locator"
-        ),
-        CheckConstraint(
-            "owner_kind IN ('media', 'note_block')",
-            name="ck_content_chunks_owner_kind",
-        ),
-        UniqueConstraint("owner_kind", "owner_id", "chunk_idx", name="uq_content_chunks_owner_idx"),
-        Index("ix_content_chunks_owner_idx", "owner_kind", "owner_id", "chunk_idx"),
-    )
-
-
-class ContentChunkPart(Base):
-    """Exact block slice that composes a content chunk."""
-
-    __tablename__ = "content_chunk_parts"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    chunk_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("content_chunks.id"))
-    part_idx: Mapped[int] = mapped_column(Integer, nullable=False)
-    block_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("content_blocks.id"))
-    block_start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    block_end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    chunk_start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    chunk_end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    separator_before: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("part_idx >= 0", name="ck_content_chunk_parts_part_idx"),
-        CheckConstraint("block_start_offset >= 0", name="ck_content_chunk_parts_block_start"),
-        CheckConstraint(
-            "block_end_offset >= block_start_offset",
-            name="ck_content_chunk_parts_block_offsets",
-        ),
-        CheckConstraint("chunk_start_offset >= 0", name="ck_content_chunk_parts_chunk_start"),
-        CheckConstraint(
-            "chunk_end_offset >= chunk_start_offset",
-            name="ck_content_chunk_parts_chunk_offsets",
-        ),
-        UniqueConstraint("chunk_id", "part_idx", name="uq_content_chunk_parts_chunk_part"),
-        Index("ix_content_chunk_parts_chunk", "chunk_id"),
-    )
-
-
-class ContentEmbedding(Base):
-    """Model-specific embedding for one content chunk."""
-
-    __tablename__ = "content_embeddings"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    chunk_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("content_chunks.id"))
-    embedding_provider: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding_dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
-    embedding_vector: Mapped[list[float] | None] = mapped_column(PGVector(256), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("embedding_dimensions > 0", name="ck_content_embeddings_dimensions"),
-        Index(
-            "ix_content_embeddings_model",
-            "embedding_provider",
-            "embedding_model",
-        ),
-    )
-
-
-class MediaAtlasPosition(Base):
-    """Persistent 2D position for one work in the grand atlas.
-
-    Produced by the atlas_project_job PCA projection; x/y in [0, 1] map to
-    celestial coords at render time (grand-atlas-hard-cutover.md §4.2). Sole
-    writer: services/atlas_projection.py.
-    """
-
-    __tablename__ = "media_atlas_positions"
-
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    x: Mapped[float] = mapped_column(Float, nullable=False)
-    y: Mapped[float] = mapped_column(Float, nullable=False)
-    projection_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
-    computed_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("x >= 0.0 AND x <= 1.0", name="ck_media_atlas_positions_x_range"),
-        CheckConstraint("y >= 0.0 AND y <= 1.0", name="ck_media_atlas_positions_y_range"),
-        CheckConstraint(
-            "projection_version >= 1", name="ck_media_atlas_positions_version_positive"
-        ),
-        Index("ix_media_atlas_positions_version", "projection_version"),
-    )
 
 
 class ContentIndexState(Base):
@@ -3784,231 +1657,6 @@ class ContentIndexState(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint("owner_kind", "owner_id", name="uq_content_index_states_owner"),
-        CheckConstraint(
-            "owner_kind IN ('media', 'note_block')",
-            name="ck_content_index_states_owner_kind",
-        ),
-        CheckConstraint(
-            "status IN ('pending', 'indexing', 'ready', 'no_text', 'ocr_required', 'failed')",
-            name="ck_content_index_states_status",
-        ),
-        Index(
-            "ix_content_index_states_repair_waiting",
-            "updated_at",
-            "owner_kind",
-            "owner_id",
-            postgresql_where=text("status IN ('pending', 'failed')"),
-        ),
-        Index(
-            "ix_content_index_states_repair_indexing",
-            "updated_at",
-            "owner_kind",
-            "owner_id",
-            postgresql_where=text("status = 'indexing'"),
-        ),
-    )
-
-
-class ReaderApparatusState(Base):
-    """Extraction state for source-authored reader apparatus."""
-
-    __tablename__ = "reader_apparatus_states"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
-    media_kind: Mapped[str] = mapped_column(Text, nullable=False)
-    source_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
-    extractor_version: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    item_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    edge_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    diagnostics: Mapped[dict[str, object]] = mapped_column(
-        JSONB,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "status IN ('ready', 'empty', 'partial', 'unsupported', 'failed')",
-            name="ck_reader_apparatus_states_status",
-        ),
-        CheckConstraint("item_count >= 0", name="ck_reader_apparatus_states_item_count"),
-        CheckConstraint("edge_count >= 0", name="ck_reader_apparatus_states_edge_count"),
-        CheckConstraint(
-            "(status IN ('ready', 'partial') AND item_count > 0) "
-            "OR (status IN ('empty', 'unsupported', 'failed') "
-            "AND item_count = 0 AND edge_count = 0)",
-            name="ck_reader_apparatus_states_status_counts",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(diagnostics) = 'object'",
-            name="ck_reader_apparatus_states_diagnostics",
-        ),
-        UniqueConstraint("media_id", name="uq_reader_apparatus_states_media"),
-        UniqueConstraint("media_id", "id", name="uq_reader_apparatus_states_media_id"),
-    )
-
-
-class ReaderApparatusItem(Base):
-    """Source-authored apparatus marker or target."""
-
-    __tablename__ = "reader_apparatus_items"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
-    state_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True))
-    stable_key: Mapped[str] = mapped_column(Text, nullable=False)
-    kind: Mapped[str] = mapped_column(Text, nullable=False)
-    label: Mapped[str | None] = mapped_column(Text, nullable=True)
-    body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    body_html_sanitized: Mapped[str | None] = mapped_column(Text, nullable=True)
-    locator: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True),
-        nullable=True,
-    )
-    locator_status: Mapped[str] = mapped_column(Text, nullable=False)
-    confidence: Mapped[str] = mapped_column(Text, nullable=False)
-    extraction_method: Mapped[str] = mapped_column(Text, nullable=False)
-    source_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    sort_key: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "kind IN ('footnote_ref', 'endnote_ref', 'bibliography_ref', "
-            "'sidenote_ref', 'margin_note_ref', 'footnote', 'endnote', "
-            "'bibliography_entry', 'sidenote', 'margin_note', 'reference_section')",
-            name="ck_reader_apparatus_items_kind",
-        ),
-        CheckConstraint(
-            "locator_status IN ('exact', 'container', 'missing')",
-            name="ck_reader_apparatus_items_locator_status",
-        ),
-        CheckConstraint(
-            "confidence IN ('exact', 'strong', 'probable')",
-            name="ck_reader_apparatus_items_confidence",
-        ),
-        CheckConstraint(
-            "locator IS NULL OR jsonb_typeof(locator) = 'object'",
-            name="ck_reader_apparatus_items_locator",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(source_ref) = 'object'",
-            name="ck_reader_apparatus_items_source_ref",
-        ),
-        CheckConstraint(
-            "body_html_sanitized IS NULL OR kind IN ('footnote', 'endnote', "
-            "'bibliography_entry', 'sidenote', 'margin_note', 'reference_section')",
-            name="ck_reader_apparatus_items_body_html_target",
-        ),
-        ForeignKeyConstraint(
-            ["media_id", "state_id"],
-            ["reader_apparatus_states.media_id", "reader_apparatus_states.id"],
-        ),
-        UniqueConstraint("media_id", "stable_key", name="uq_reader_apparatus_items_key"),
-        UniqueConstraint(
-            "media_id",
-            "state_id",
-            "id",
-            name="uq_reader_apparatus_items_media_state_id",
-        ),
-    )
-
-
-class ReaderApparatusEdge(Base):
-    """Source-authored relationship between reader apparatus items."""
-
-    __tablename__ = "reader_apparatus_edges"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
-    state_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True))
-    stable_key: Mapped[str] = mapped_column(Text, nullable=False)
-    from_item_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-    )
-    to_item_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-    )
-    relation: Mapped[str] = mapped_column(Text, nullable=False)
-    confidence: Mapped[str] = mapped_column(Text, nullable=False)
-    extraction_method: Mapped[str] = mapped_column(Text, nullable=False)
-    source_ref: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    sort_key: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "relation IN ('points_to_note', 'points_to_endnote', "
-            "'points_to_sidenote', 'points_to_margin_note', "
-            "'cites_bibliography_entry', 'backlink_to_marker', 'contains_reference')",
-            name="ck_reader_apparatus_edges_relation",
-        ),
-        CheckConstraint(
-            "confidence IN ('exact', 'strong', 'probable')",
-            name="ck_reader_apparatus_edges_confidence",
-        ),
-        CheckConstraint("from_item_id <> to_item_id", name="ck_reader_apparatus_edges_not_self"),
-        CheckConstraint(
-            "jsonb_typeof(source_ref) = 'object'",
-            name="ck_reader_apparatus_edges_source_ref",
-        ),
-        ForeignKeyConstraint(
-            ["media_id", "state_id"],
-            ["reader_apparatus_states.media_id", "reader_apparatus_states.id"],
-        ),
-        ForeignKeyConstraint(
-            ["media_id", "state_id", "from_item_id"],
-            [
-                "reader_apparatus_items.media_id",
-                "reader_apparatus_items.state_id",
-                "reader_apparatus_items.id",
-            ],
-        ),
-        ForeignKeyConstraint(
-            ["media_id", "state_id", "to_item_id"],
-            [
-                "reader_apparatus_items.media_id",
-                "reader_apparatus_items.state_id",
-                "reader_apparatus_items.id",
-            ],
-        ),
-        UniqueConstraint("media_id", "stable_key", name="uq_reader_apparatus_edges_key"),
-    )
-
 
 class MediaSummary(Base):
     """Per-media unit head: one current summary + claim set per media (1:1)."""
@@ -4036,46 +1684,6 @@ class MediaSummary(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "status IN ('building', 'ready', 'failed')",
-            name="ck_media_summaries_status",
-        ),
-        UniqueConstraint("media_id", name="uq_media_summaries_media"),
-    )
-
-
-class MediaClaim(Base):
-    """One grounded per-media claim bound to an existing evidence span."""
-
-    __tablename__ = "media_claims"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("media.id"))
-    summary_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("media_summaries.id")
-    )
-    claim_text: Mapped[str] = mapped_column(Text, nullable=False)
-    evidence_span_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("evidence_spans.id")
-    )
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("ordinal >= 0", name="ck_media_claims_ordinal_non_negative"),
-        UniqueConstraint("summary_id", "ordinal", name="uq_media_claims_summary_ordinal"),
-        Index("ix_media_claims_media", "media_id"),
     )
 
 
@@ -4118,105 +1726,7 @@ class MediaTranscriptState(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "transcript_state IN ("
-            "'not_requested', 'queued', 'running', 'ready', 'partial', "
-            "'unavailable', 'failed_quota', 'failed_provider'"
-            ")",
-            name="ck_media_transcript_states_state",
-        ),
-        CheckConstraint(
-            "transcript_coverage IN ('none', 'partial', 'full')",
-            name="ck_media_transcript_states_coverage",
-        ),
-        CheckConstraint(
-            "semantic_status IN ('none', 'pending', 'ready', 'failed')",
-            name="ck_media_transcript_states_semantic_status",
-        ),
-        CheckConstraint(
-            "last_request_reason IS NULL OR last_request_reason IN ("
-            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', "
-            "'operator_requeue', 'rss_feed'"
-            ")",
-            name="ck_media_transcript_states_last_request_reason",
-        ),
-        Index("ix_media_transcript_states_semantic_status", "semantic_status"),
-        Index(
-            "ix_media_transcript_states_semantic_repair",
-            "updated_at",
-            "media_id",
-            postgresql_where=text(
-                "transcript_state IN ('ready', 'partial') "
-                "AND transcript_coverage IN ('partial', 'full') "
-                "AND semantic_status IN ('pending', 'failed', 'ready')"
-            ),
-        ),
-    )
-
     media: Mapped["Media"] = relationship("Media", back_populates="transcript_state")
-
-
-class PodcastTranscriptRequestAudit(Base):
-    """Immutable audit log for each transcript request attempt."""
-
-    __tablename__ = "podcast_transcript_request_audits"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    requested_by_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    request_reason: Mapped[str] = mapped_column(Text, nullable=False)
-    dry_run: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
-    outcome: Mapped[str] = mapped_column(Text, nullable=False)
-    required_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    remaining_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    fits_budget: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "request_reason IN ("
-            "'episode_open', 'search', 'highlight', 'quote', 'background_warming', "
-            "'operator_requeue', 'rss_feed'"
-            ")",
-            name="ck_podcast_transcript_request_audits_reason",
-        ),
-        CheckConstraint(
-            "outcome IN ('forecast', 'queued', 'idempotent', 'rejected_quota')",
-            name="ck_podcast_transcript_request_audits_outcome",
-        ),
-        CheckConstraint(
-            "required_minutes IS NULL OR required_minutes >= 0",
-            name="ck_podcast_transcript_request_audits_required_non_negative",
-        ),
-        CheckConstraint(
-            "remaining_minutes IS NULL OR remaining_minutes >= 0",
-            name="ck_podcast_transcript_request_audits_remaining_non_negative",
-        ),
-        Index(
-            "ix_podcast_transcript_request_audits_media_created",
-            "media_id",
-            "created_at",
-        ),
-    )
-
-    media: Mapped["Media"] = relationship("Media", back_populates="transcript_request_audits")
 
 
 # =============================================================================
@@ -4268,22 +1778,6 @@ class Highlight(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "color IN ('yellow','green','blue','pink','purple')",
-            name="ck_highlights_color",
-        ),
-        CheckConstraint(
-            "(anchor_kind IS NULL AND anchor_media_id IS NULL) "
-            "OR (anchor_kind IS NOT NULL AND anchor_media_id IS NOT NULL)",
-            name="ck_highlights_anchor_fields_paired_null",
-        ),
-        CheckConstraint(
-            "anchor_kind IS NULL OR anchor_kind IN ('fragment_offsets', 'pdf_page_geometry')",
-            name="ck_highlights_anchor_kind_valid",
-        ),
-    )
-
     # Relationships. No ORM cascade ownership: Highlight deletion is explicit
     # child-first cleanup (universal-link-authoring-hard-cutover.md, Highlight
     # Durability).
@@ -4329,14 +1823,6 @@ class HighlightFragmentAnchor(Base):
     start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    __table_args__ = (
-        CheckConstraint(
-            "start_offset >= 0 AND end_offset > start_offset",
-            name="ck_hfa_offsets_valid",
-        ),
-        Index("ix_hfa_fragment_offsets", "fragment_id", "start_offset", "end_offset"),
-    )
-
     highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="fragment_anchor")
     fragment: Mapped["Fragment | None"] = relationship(
         "Fragment",
@@ -4379,27 +1865,6 @@ class HighlightPdfAnchor(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint("page_number >= 1", name="ck_hpa_page_number"),
-        CheckConstraint("rect_count >= 1", name="ck_hpa_rect_count"),
-        CheckConstraint(
-            "plain_text_match_status IN "
-            "('pending', 'unique', 'ambiguous', 'no_match', 'empty_exact')",
-            name="ck_hpa_match_status",
-        ),
-        CheckConstraint(
-            "(plain_text_start_offset IS NULL OR plain_text_start_offset >= 0) "
-            "AND (plain_text_end_offset IS NULL OR plain_text_end_offset >= 0)",
-            name="ck_hpa_match_offsets_non_negative",
-        ),
-        CheckConstraint(
-            "(plain_text_start_offset IS NULL AND plain_text_end_offset IS NULL) "
-            "OR (plain_text_start_offset IS NOT NULL "
-            "AND plain_text_end_offset IS NOT NULL)",
-            name="ck_hpa_match_offsets_paired_null",
-        ),
-    )
-
     highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="pdf_anchor")
     media: Mapped["Media"] = relationship("Media")
 
@@ -4427,8 +1892,6 @@ class HighlightPdfQuad(Base):
     y3: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
     x4: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
     y4: Mapped[Decimal] = mapped_column(Numeric, nullable=False)
-
-    __table_args__ = (CheckConstraint("quad_idx >= 0", name="ck_hpq_quad_idx"),)
 
     highlight: Mapped["Highlight"] = relationship("Highlight", back_populates="pdf_quads")
 
@@ -4460,152 +1923,10 @@ class PdfPageTextSpan(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint("page_number >= 1", name="ck_ppts_page_number"),
-        CheckConstraint("start_offset >= 0", name="ck_ppts_start_offset"),
-        CheckConstraint("end_offset >= start_offset", name="ck_ppts_offsets_valid"),
-        CheckConstraint("page_width IS NULL OR page_width > 0", name="ck_ppts_page_width"),
-        CheckConstraint("page_height IS NULL OR page_height > 0", name="ck_ppts_page_height"),
-        CheckConstraint(
-            "page_rotation_degrees IS NULL OR page_rotation_degrees >= 0",
-            name="ck_ppts_page_rotation",
-        ),
-    )
-
 
 # =============================================================================
 # Chat, Conversations, and LLM Infrastructure
 # =============================================================================
-
-
-class SharingMode(str, PyEnum):
-    """Sharing modes for social objects."""
-
-    private = "private"
-    library = "library"
-    public = "public"
-
-
-class MessageRole(str, PyEnum):
-    """Roles for messages in a conversation."""
-
-    user = "user"
-    assistant = "assistant"
-    system = "system"
-
-
-class MessageStatus(str, PyEnum):
-    """Status of a message."""
-
-    pending = "pending"
-    complete = "complete"
-    error = "error"
-
-
-class BranchAnchorKind(str, PyEnum):
-    """Anchor kinds for a user message's branch edge."""
-
-    none = "none"
-    assistant_message = "assistant_message"
-    assistant_selection = "assistant_selection"
-
-
-class ContextTargetType(str, PyEnum):
-    """Types of universal message context targets."""
-
-    media = "media"
-    highlight = "highlight"
-    page = "page"
-    note_block = "note_block"
-    conversation = "conversation"
-    message = "message"
-    podcast = "podcast"
-    content_chunk = "content_chunk"
-    contributor = "contributor"
-
-
-class MessageToolStatus(str, PyEnum):
-    """Lifecycle states for assistant tool-call persistence."""
-
-    pending = "pending"
-    complete = "complete"
-    error = "error"
-
-
-class ChatRunStatus(str, PyEnum):
-    """Lifecycle states for a durable chat run."""
-
-    queued = "queued"
-    running = "running"
-    complete = "complete"
-    error = "error"
-    cancelled = "cancelled"
-
-
-class ChatRunEventType(str, PyEnum):
-    """User-visible event types persisted for chat run replay.
-
-    Mirrors the ``ck_chat_run_events_event_type`` CHECK exactly.
-    """
-
-    meta = "meta"
-    assistant_activity = "assistant_activity"
-    assistant_text_delta = "assistant_text_delta"
-    tool_call_start = "tool_call_start"
-    tool_call_delta = "tool_call_delta"
-    tool_call_done = "tool_call_done"
-    tool_result = "tool_result"
-    citation_index = "citation_index"
-    context_ref_added = "context_ref_added"
-    done = "done"
-
-
-class AppSearchResultType(str, PyEnum):
-    """Typed app-search result classes surfaced to assistant retrieval."""
-
-    page = "page"
-    note_block = "note_block"
-    highlight = "highlight"
-    media = "media"
-    podcast = "podcast"
-    episode = "episode"
-    video = "video"
-    content_chunk = "content_chunk"
-    fragment = "fragment"
-    message = "message"
-    contributor = "contributor"
-    evidence_span = "evidence_span"
-    conversation = "conversation"
-    web_result = "web_result"
-
-
-class AssistantClaimVerifierStatus(str, PyEnum):
-    """Verifier lifecycle states for persisted assistant evidence."""
-
-    pending = "pending"
-    complete = "complete"
-    failed = "failed"
-
-
-class AssistantEvidenceRole(str, PyEnum):
-    """Roles for evidence linked to assistant claims."""
-
-    supports = "supports"
-    contradicts = "contradicts"
-    context = "context"
-    scope_boundary = "scope_boundary"
-
-
-class RetrievalEvidenceStatus(str, PyEnum):
-    """Durable retrieval statuses for candidate evidence rows."""
-
-    attached_context = "attached_context"
-    retrieved = "retrieved"
-    selected = "selected"
-    included_in_prompt = "included_in_prompt"
-    excluded_by_budget = "excluded_by_budget"
-    excluded_by_scope = "excluded_by_scope"
-    web_result = "web_result"
 
 
 class Conversation(Base):
@@ -4637,38 +1958,10 @@ class Conversation(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "sharing IN ('private', 'library', 'public')",
-            name="ck_conversations_sharing",
-        ),
-        CheckConstraint(
-            "next_seq >= 1",
-            name="ck_conversations_next_seq_positive",
-        ),
-        CheckConstraint(
-            "length(btrim(title)) > 0",
-            name="ck_conversations_title_not_blank",
-        ),
-        CheckConstraint(
-            "char_length(title) <= 120",
-            name="ck_conversations_title_max_length",
-        ),
-    )
-
     # Relationships
     owner: Mapped["User"] = relationship("User")
     messages: Mapped[list["Message"]] = relationship(
         "Message", back_populates="conversation", cascade="all, delete-orphan"
-    )
-    shares: Mapped[list["ConversationShare"]] = relationship(
-        "ConversationShare", back_populates="conversation", cascade="all, delete-orphan"
-    )
-    prompt_assemblies: Mapped[list["ChatPromptAssembly"]] = relationship(
-        "ChatPromptAssembly",
-        back_populates="conversation",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
     )
 
 
@@ -4694,7 +1987,7 @@ class ConversationShare(Base):
     )
 
     # Relationships
-    conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="shares")
+    conversation: Mapped["Conversation"] = relationship("Conversation")
     library: Mapped["Library"] = relationship("Library")
 
 
@@ -4726,15 +2019,6 @@ class LLMCall(Base):
         nullable=False,
     )
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-    __table_args__ = (
-        UniqueConstraint(
-            "owner_kind",
-            "owner_id",
-            "generation_seq",
-            name="uq_llm_calls_owner_generation_seq",
-        ),
-    )
 
 
 class LLMModelTurn(Base):
@@ -4769,14 +2053,6 @@ class LLMModelTurn(Base):
     accepted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
-    __table_args__ = (
-        UniqueConstraint(
-            "generation_id",
-            "turn_seq",
-            name="uq_llm_model_turns_generation_turn_seq",
-        ),
-    )
-
 
 class LLMModelTurnContinuation(Base):
     """One sealed provider continuation authorizing an exact successor turn."""
@@ -4807,18 +2083,6 @@ class LLMModelTurnContinuation(Base):
     ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "source_model_turn_id",
-            name="uq_llm_model_turn_continuations_source_turn",
-        ),
-        UniqueConstraint(
-            "generation_id",
-            "successor_turn_seq",
-            name="uq_llm_model_turn_continuations_successor_turn",
-        ),
     )
 
 
@@ -4865,21 +2129,6 @@ class LLMToolPosition(Base):
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
     )
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-    __table_args__ = (
-        UniqueConstraint(
-            "generation_id",
-            "position",
-            name="uq_llm_tool_positions_generation_position",
-        ),
-        UniqueConstraint(
-            "generation_id",
-            "transport_kind",
-            "model_turn_seq",
-            "transport_call_id",
-            name="uq_llm_tool_positions_transport_call",
-        ),
-    )
 
 
 class Message(Base):
@@ -4943,59 +2192,8 @@ class Message(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint("seq >= 1", name="ck_messages_seq_positive"),
-        CheckConstraint(
-            "role IN ('user', 'assistant', 'system')",
-            name="ck_messages_role",
-        ),
-        CheckConstraint(
-            "status IN ('pending', 'complete', 'error', 'cancelled')",
-            name="ck_messages_status",
-        ),
-        CheckConstraint(
-            "(status != 'pending' OR role = 'assistant')",
-            name="ck_messages_pending_only_assistant",
-        ),
-        CheckConstraint(
-            "branch_anchor_kind IN ('none', 'assistant_message', 'assistant_selection')",
-            name="ck_messages_branch_anchor_kind",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(branch_anchor) = 'object'",
-            name="ck_messages_branch_anchor_object",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(message_document) = 'object'",
-            name="ck_messages_message_document_object",
-        ),
-        CheckConstraint(
-            "reader_selection_snapshot IS NULL "
-            "OR jsonb_typeof(reader_selection_snapshot) = 'object'",
-            name="ck_messages_reader_selection_snapshot_object",
-        ),
-        CheckConstraint(
-            "(role = 'user' AND parent_message_id IS NULL) "
-            "OR (role IN ('user', 'assistant') AND parent_message_id IS NOT NULL) "
-            "OR (role = 'system')",
-            name="ck_messages_parent_role_shape",
-        ),
-        UniqueConstraint("conversation_id", "seq", name="uix_messages_conversation_seq"),
-        Index("idx_messages_parent_message_id", "parent_message_id"),
-    )
-
     # Relationships
     conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="messages")
-    parent_message: Mapped["Message | None"] = relationship(
-        "Message",
-        foreign_keys=[parent_message_id],
-        remote_side=[id],
-    )
-    branch_root_message: Mapped["Message | None"] = relationship(
-        "Message",
-        foreign_keys=[branch_root_message_id],
-        remote_side=[id],
-    )
 
 
 class ConversationActivePath(Base):
@@ -5034,17 +2232,8 @@ class ConversationActivePath(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint(
-            "conversation_id",
-            "viewer_user_id",
-            name="uix_conversation_active_paths_conversation_viewer",
-        ),
-    )
-
     conversation: Mapped["Conversation"] = relationship("Conversation")
     viewer: Mapped["User"] = relationship("User")
-    active_leaf_message: Mapped["Message"] = relationship("Message")
 
 
 class ConversationBranch(Base):
@@ -5079,20 +2268,7 @@ class ConversationBranch(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint(
-            "branch_user_message_id",
-            name="uix_conversation_branches_user_message",
-        ),
-        CheckConstraint(
-            "title IS NULL OR char_length(btrim(title)) BETWEEN 1 AND 120",
-            name="ck_conversation_branches_title_length",
-        ),
-        Index("idx_conversation_branches_conversation", "conversation_id"),
-    )
-
     conversation: Mapped["Conversation"] = relationship("Conversation")
-    branch_user_message: Mapped["Message"] = relationship("Message")
 
 
 class MessageToolCall(Base):
@@ -5175,94 +2351,11 @@ class MessageToolCall(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "canonical_tool_id IS NULL OR char_length(canonical_tool_id) BETWEEN 1 AND 128",
-            name="ck_message_tool_calls_canonical_tool_id_length",
-        ),
-        CheckConstraint(
-            "provider_wire_name IS NULL OR char_length(provider_wire_name) BETWEEN 1 AND 128",
-            name="ck_message_tool_calls_provider_wire_name_length",
-        ),
-        CheckConstraint(
-            "tool_call_index >= 0",
-            name="ck_message_tool_calls_index_non_negative",
-        ),
-        CheckConstraint(
-            "search_query_fingerprint IS NULL "
-            "OR char_length(search_query_fingerprint) BETWEEN 1 AND 128",
-            name="ck_message_tool_calls_search_query_fingerprint_length",
-        ),
-        CheckConstraint(
-            "char_length(scope) BETWEEN 1 AND 256",
-            name="ck_message_tool_calls_scope_length",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(requested_types) = 'array'",
-            name="ck_message_tool_calls_requested_types_array",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(result_refs) = 'array'",
-            name="ck_message_tool_calls_result_refs_array",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(selected_context_refs) = 'array'",
-            name="ck_message_tool_calls_selected_context_refs_array",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(provider_request_ids) = 'array'",
-            name="ck_message_tool_calls_provider_request_ids_array",
-        ),
-        CheckConstraint(
-            "latency_ms IS NULL OR latency_ms >= 0",
-            name="ck_message_tool_calls_latency_non_negative",
-        ),
-        CheckConstraint(
-            "status IN ('pending', 'running', 'complete', 'error', 'cancelled')",
-            name="ck_message_tool_calls_status",
-        ),
-        UniqueConstraint(
-            "assistant_message_id",
-            "tool_call_index",
-            name="uix_message_tool_calls_assistant_index",
-        ),
-        UniqueConstraint(
-            "tool_position_id",
-            name="uq_message_tool_calls_tool_position",
-        ),
-        Index(
-            "idx_message_tool_calls_conversation_created",
-            "conversation_id",
-            "created_at",
-        ),
-        Index(
-            "idx_message_tool_calls_user_message",
-            "user_message_id",
-            "tool_call_index",
-        ),
-        Index(
-            "idx_message_tool_calls_assistant_message",
-            "assistant_message_id",
-            "tool_call_index",
-        ),
-        Index(
-            "idx_message_tool_calls_canonical_tool_status",
-            "canonical_tool_id",
-            "status",
-        ),
-    )
-
     conversation: Mapped["Conversation"] = relationship("Conversation")
     user_message: Mapped["Message"] = relationship("Message", foreign_keys=[user_message_id])
     assistant_message: Mapped["Message"] = relationship(
         "Message",
         foreign_keys=[assistant_message_id],
-    )
-    retrievals: Mapped[list["MessageRetrieval"]] = relationship(
-        "MessageRetrieval",
-        back_populates="tool_call",
-        cascade="all, delete-orphan",
-        order_by="MessageRetrieval.ordinal",
     )
 
 
@@ -5291,20 +2384,6 @@ class AssistantWriteAuthorship(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint(
-            "target_kind",
-            "target_id",
-            name="uq_assistant_write_authorships_target",
-        ),
-        Index(
-            "ix_assistant_write_authorships_tool_position",
-            "tool_position_id",
-            "created_at",
-            "id",
-        ),
-    )
-
 
 class MessageRetrieval(Base):
     """One app-search result retrieved for an assistant tool call."""
@@ -5331,7 +2410,6 @@ class MessageRetrieval(Base):
     )
     evidence_span_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("evidence_spans.id"),
         nullable=True,
     )
     scope: Mapped[str] = mapped_column(Text, nullable=False, server_default="all")
@@ -5367,98 +2445,6 @@ class MessageRetrieval(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "ordinal >= 0",
-            name="ck_message_retrievals_ordinal_non_negative",
-        ),
-        CheckConstraint(
-            """
-            result_type IN (
-                'page',
-                'note_block',
-                'highlight',
-                'media',
-                'podcast',
-                'episode',
-                'video',
-                'content_chunk',
-                'fragment',
-                'message',
-                'contributor',
-                'evidence_span',
-                'conversation',
-                'web_result',
-                'reader_apparatus_item'
-            )
-            """,
-            name="ck_message_retrievals_result_type",
-        ),
-        CheckConstraint(
-            "char_length(source_id) BETWEEN 1 AND 128",
-            name="ck_message_retrievals_source_id_length",
-        ),
-        CheckConstraint(
-            """
-            result_type <> 'web_result'
-            OR source_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-            """,
-            name="ck_message_retrievals_web_source_snapshot_uuid",
-        ),
-        CheckConstraint(
-            "char_length(scope) BETWEEN 1 AND 256",
-            name="ck_message_retrievals_scope_length",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(context_ref) = 'object'",
-            name="ck_message_retrievals_context_ref_object",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(result_ref) = 'object'",
-            name="ck_message_retrievals_result_ref_object",
-        ),
-        CheckConstraint(
-            "score IS NULL OR score >= 0",
-            name="ck_message_retrievals_score_non_negative",
-        ),
-        CheckConstraint(
-            "locator IS NULL OR locator = 'null'::jsonb OR jsonb_typeof(locator) = 'object'",
-            name="ck_message_retrievals_locator_object",
-        ),
-        CheckConstraint(
-            """
-            retrieval_status IN (
-                'attached_context',
-                'retrieved',
-                'selected',
-                'included_in_prompt',
-                'excluded_by_budget',
-                'excluded_by_scope',
-                'web_result'
-            )
-            """,
-            name="ck_message_retrievals_status",
-        ),
-        UniqueConstraint(
-            "tool_call_id",
-            "ordinal",
-            name="uix_message_retrievals_tool_call_ordinal",
-        ),
-        Index(
-            "idx_message_retrievals_tool_call_selected",
-            "tool_call_id",
-            "selected",
-            "ordinal",
-        ),
-        Index("idx_message_retrievals_media", "media_id"),
-        Index("idx_message_retrievals_result_type", "result_type"),
-        Index("idx_message_retrievals_evidence_span", "evidence_span_id"),
-    )
-
-    tool_call: Mapped["MessageToolCall"] = relationship(
-        "MessageToolCall",
-        back_populates="retrievals",
-    )
     media: Mapped["Media | None"] = relationship("Media")
 
 
@@ -5518,15 +2504,6 @@ class ChatRun(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "status IN ('queued', 'running', 'complete', 'error', 'cancelled')",
-            name="ck_chat_runs_status",
-        ),
-        UniqueConstraint("assistant_message_id", name="uq_chat_runs_assistant_message"),
-        Index("idx_chat_runs_owner_created", "owner_user_id", "created_at", "id"),
-    )
-
     owner: Mapped["User"] = relationship("User")
     conversation: Mapped["Conversation"] = relationship("Conversation")
     user_message: Mapped["Message"] = relationship("Message", foreign_keys=[user_message_id])
@@ -5538,18 +2515,6 @@ class ChatRun(Base):
         "ChatRunEvent",
         back_populates="run",
         order_by="ChatRunEvent.seq",
-        cascade="all, delete-orphan",
-    )
-    prompt_assembly: Mapped["ChatPromptAssembly | None"] = relationship(
-        "ChatPromptAssembly",
-        back_populates="chat_run",
-        uselist=False,
-        cascade="all, delete-orphan",
-    )
-    turn_context: Mapped["ChatRunTurnContext | None"] = relationship(
-        "ChatRunTurnContext",
-        back_populates="chat_run",
-        uselist=False,
         cascade="all, delete-orphan",
     )
 
@@ -5579,42 +2544,7 @@ class ChatRunTurnContext(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "(requested_subject_scheme IS NULL) = (requested_subject_id IS NULL)",
-            name="ck_chat_run_turn_contexts_requested_subject_pair",
-        ),
-        CheckConstraint(
-            "(subject_scheme IS NULL) = (subject_id IS NULL)",
-            name="ck_chat_run_turn_contexts_subject_pair",
-        ),
-        CheckConstraint(
-            "subject_id IS NOT NULL",
-            name="ck_chat_run_turn_contexts_has_anchor",
-        ),
-        CheckConstraint(
-            "requested_subject_scheme IS NULL OR requested_subject_scheme IN ("
-            "'media', 'library', 'evidence_span', 'content_chunk', 'highlight', 'page', "
-            "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
-            "'oracle_passage_anchor', 'artifact', "
-            "'artifact_revision', 'external_snapshot', 'contributor', "
-            "'podcast', 'reader_apparatus_item', 'passage_anchor')",
-            name="ck_chat_run_turn_contexts_requested_subject_scheme",
-        ),
-        CheckConstraint(
-            "subject_scheme IS NULL OR subject_scheme IN ("
-            "'media', 'library', 'evidence_span', 'content_chunk', 'highlight', 'page', "
-            "'note_block', 'fragment', 'conversation', 'message', 'oracle_reading', "
-            "'oracle_passage_anchor', 'artifact', "
-            "'artifact_revision', 'external_snapshot', 'contributor', "
-            "'podcast', 'reader_apparatus_item', 'passage_anchor')",
-            name="ck_chat_run_turn_contexts_subject_scheme",
-        ),
-        Index("idx_chat_run_turn_contexts_subject", "subject_scheme", "subject_id"),
-    )
-
-    chat_run: Mapped["ChatRun"] = relationship("ChatRun", back_populates="turn_context")
-    subject_context_edge: Mapped["ResourceEdge | None"] = relationship("ResourceEdge")
+    chat_run: Mapped["ChatRun"] = relationship("ChatRun")
 
 
 class ChatPromptAssembly(Base):
@@ -5687,43 +2617,8 @@ class ChatPromptAssembly(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "jsonb_typeof(included_message_ids) = 'array'",
-            name="ck_chat_prompt_assemblies_message_ids_array",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(included_retrieval_ids) = 'array'",
-            name="ck_chat_prompt_assemblies_retrieval_ids_array",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(included_context_refs) = 'array'",
-            name="ck_chat_prompt_assemblies_context_refs_array",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(dropped_items) = 'array'",
-            name="ck_chat_prompt_assemblies_dropped_items_array",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(budget_breakdown) = 'object'",
-            name="ck_chat_prompt_assemblies_budget_breakdown_object",
-        ),
-        CheckConstraint(
-            "jsonb_typeof(prompt_block_manifest) = 'object'",
-            name="ck_chat_prompt_assemblies_prompt_block_manifest_object",
-        ),
-        UniqueConstraint("chat_run_id", name="uix_chat_prompt_assemblies_chat_run"),
-        Index(
-            "idx_chat_prompt_assemblies_assistant_message",
-            "assistant_message_id",
-        ),
-    )
-
-    chat_run: Mapped["ChatRun"] = relationship("ChatRun", back_populates="prompt_assembly")
-    conversation: Mapped["Conversation"] = relationship(
-        "Conversation",
-        back_populates="prompt_assemblies",
-    )
+    chat_run: Mapped["ChatRun"] = relationship("ChatRun")
+    conversation: Mapped["Conversation"] = relationship("Conversation")
     assistant_message: Mapped["Message"] = relationship("Message")
 
 
@@ -5749,19 +2644,6 @@ class ChatRunEvent(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("seq >= 1", name="ck_chat_run_events_seq_positive"),
-        CheckConstraint(
-            "event_type IN ('meta', 'assistant_activity', 'assistant_text_delta', "
-            "'tool_call_start', 'tool_call_delta', 'tool_call_done', 'tool_result', "
-            "'citation_index', 'context_ref_added', 'done')",
-            name="ck_chat_run_events_event_type",
-        ),
-        UniqueConstraint("run_id", "seq", name="uix_chat_run_events_run_seq"),
-        Index("idx_chat_run_events_run_seq", "run_id", "seq"),
-        Index("idx_chat_run_events_run_event_type_seq", "run_id", "event_type", "seq"),
     )
 
     run: Mapped["ChatRun"] = relationship("ChatRun", back_populates="events")
@@ -5809,34 +2691,6 @@ class BillingAccount(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "plan_tier IN ('free', 'plus', 'ai_plus', 'ai_pro')",
-            name="ck_billing_accounts_plan_tier",
-        ),
-        CheckConstraint(
-            """
-            subscription_status IS NULL OR subscription_status IN (
-                'incomplete',
-                'incomplete_expired',
-                'trialing',
-                'active',
-                'past_due',
-                'canceled',
-                'unpaid',
-                'paused'
-            )
-            """,
-            name="ck_billing_accounts_subscription_status",
-        ),
-        UniqueConstraint("user_id", name="uq_billing_accounts_user_id"),
-        UniqueConstraint("stripe_customer_id", name="uq_billing_accounts_stripe_customer_id"),
-        UniqueConstraint(
-            "stripe_subscription_id",
-            name="uq_billing_accounts_stripe_subscription_id",
-        ),
     )
 
 
@@ -5891,36 +2745,6 @@ class BillingEntitlementOverride(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "plan_tier IN ('plus', 'ai_plus', 'ai_pro')",
-            name="ck_billing_entitlement_overrides_plan_tier",
-        ),
-        CheckConstraint(
-            "transcription_quota_mode IN ('plan', 'custom', 'unlimited')",
-            name="ck_billing_entitlement_overrides_transcription_quota_mode",
-        ),
-        CheckConstraint(
-            """
-            (
-                transcription_quota_mode = 'custom'
-                AND transcription_minutes_limit_monthly IS NOT NULL
-                AND transcription_minutes_limit_monthly >= 0
-            )
-            OR (
-                transcription_quota_mode <> 'custom'
-                AND transcription_minutes_limit_monthly IS NULL
-            )
-            """,
-            name="ck_billing_entitlement_overrides_transcription_limit",
-        ),
-        CheckConstraint(
-            "char_length(btrim(reason)) > 0",
-            name="ck_billing_entitlement_overrides_reason_present",
-        ),
-        UniqueConstraint("user_id", name="uq_billing_entitlement_overrides_user_id"),
-    )
-
 
 class BillingEntitlementOverrideEvent(Base):
     """Audit event for an internal entitlement grant mutation."""
@@ -5954,17 +2778,6 @@ class BillingEntitlementOverrideEvent(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "event_type IN ('created', 'updated', 'revoked')",
-            name="ck_billing_entitlement_override_events_event_type",
-        ),
-        CheckConstraint(
-            "char_length(btrim(reason)) > 0",
-            name="ck_billing_entitlement_override_events_reason_present",
-        ),
-    )
-
 
 class StripeWebhookEvent(Base):
     """Processed Stripe webhook event id for idempotency."""
@@ -5987,10 +2800,6 @@ class StripeWebhookEvent(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint("stripe_event_id", name="uq_stripe_webhook_events_stripe_event_id"),
     )
 
 
@@ -6017,19 +2826,6 @@ class ExtensionSession(Base):
     )
     last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-    __table_args__ = (
-        CheckConstraint(
-            "char_length(token_hash) = 64", name="ck_extension_sessions_token_hash_len"
-        ),
-        UniqueConstraint("token_hash", name="uix_extension_sessions_token_hash"),
-        Index(
-            "idx_extension_sessions_user_active",
-            "user_id",
-            "created_at",
-            postgresql_where=text("revoked_at IS NULL"),
-        ),
-    )
 
     user: Mapped["User"] = relationship("User")
 
@@ -6060,84 +2856,12 @@ class AuthHandoffCode(Base):
     )
     expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
-    __table_args__ = (
-        CheckConstraint("char_length(code_hash) = 64", name="ck_auth_handoff_codes_code_hash_len"),
-        CheckConstraint("char_length(challenge) = 64", name="ck_auth_handoff_codes_challenge_len"),
-        CheckConstraint(
-            "expires_at > created_at", name="ck_auth_handoff_codes_expires_after_created"
-        ),
-        UniqueConstraint("code_hash", name="uix_auth_handoff_codes_code_hash"),
-    )
-
     user: Mapped["User"] = relationship("User")
 
 
 # =============================================================================
 # Library Sharing
 # =============================================================================
-
-
-class LibraryInvitation(Base):
-    """Library invitation model - user-id invite for library membership."""
-
-    __tablename__ = "library_invitations"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    inviter_user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    invitee_user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    role: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    responded_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True),
-        nullable=True,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "role IN ('admin', 'member')",
-            name="ck_library_invitations_role",
-        ),
-        CheckConstraint(
-            "status IN ('pending', 'accepted', 'declined', 'revoked')",
-            name="ck_library_invitations_status",
-        ),
-        CheckConstraint(
-            "inviter_user_id <> invitee_user_id",
-            name="ck_library_invitations_not_self",
-        ),
-        CheckConstraint(
-            "(status = 'pending' AND responded_at IS NULL) "
-            "OR (status <> 'pending' AND responded_at IS NOT NULL)",
-            name="ck_library_invitations_responded_at",
-        ),
-    )
-
-    # Relationships
-    library: Mapped["Library"] = relationship("Library")
-    inviter: Mapped["User"] = relationship("User", foreign_keys=[inviter_user_id])
-    invitee: Mapped["User"] = relationship("User", foreign_keys=[invitee_user_id])
 
 
 class ResourceGrant(Base):
@@ -6172,23 +2896,6 @@ class ResourceGrant(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        Index("uq_resource_grants_share_token_hash", "share_token_hash", unique=True),
-        Index("ix_resource_grants_subject", "subject_scheme", "subject_id"),
-        Index(
-            "ix_resource_grants_recipient_subject",
-            "grantee_user_id",
-            "subject_scheme",
-            "subject_id",
-        ),
-        Index(
-            "ix_resource_grants_creator_subject",
-            "created_by_user_id",
-            "subject_scheme",
-            "subject_id",
-        ),
-    )
-
 
 class UserMediaDeletion(Base):
     """Viewer-specific tombstone for media hidden after delete."""
@@ -6214,10 +2921,6 @@ class UserMediaDeletion(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint("user_id", "media_id", name="uix_user_media_deletions_user_media"),
     )
 
 
@@ -6250,43 +2953,6 @@ class EpubTocNode(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "char_length(node_id) BETWEEN 1 AND 255",
-            name="ck_epub_toc_nodes_node_id_nonempty",
-        ),
-        CheckConstraint(
-            "nav_type IN ('toc', 'landmarks', 'page_list')",
-            name="ck_epub_toc_nodes_nav_type",
-        ),
-        CheckConstraint(
-            "parent_node_id IS NULL OR parent_node_id <> node_id",
-            name="ck_epub_toc_nodes_parent_nonself",
-        ),
-        CheckConstraint(
-            "char_length(trim(label)) BETWEEN 1 AND 512",
-            name="ck_epub_toc_nodes_label_nonempty",
-        ),
-        CheckConstraint(
-            "depth >= 0 AND depth <= 16",
-            name="ck_epub_toc_nodes_depth_range",
-        ),
-        CheckConstraint(
-            "fragment_idx IS NULL OR fragment_idx >= 0",
-            name="ck_epub_toc_nodes_fragment_idx_nonneg",
-        ),
-        CheckConstraint(
-            r"order_key ~ '^[0-9]{4}([.][0-9]{4})*$'",
-            name="ck_epub_toc_nodes_order_key_format",
-        ),
-        UniqueConstraint(
-            "media_id",
-            "nav_type",
-            "order_key",
-            name="uix_epub_toc_nodes_media_nav_order",
-        ),
     )
 
     # Relationships
@@ -6325,44 +2991,6 @@ class EpubNavLocation(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "char_length(location_id) BETWEEN 1 AND 255",
-            name="ck_epub_nav_locations_location_id_nonempty",
-        ),
-        CheckConstraint(
-            "char_length(trim(label)) BETWEEN 1 AND 512",
-            name="ck_epub_nav_locations_label_nonempty",
-        ),
-        CheckConstraint(
-            "fragment_idx >= 0",
-            name="ck_epub_nav_locations_fragment_idx_nonneg",
-        ),
-        CheckConstraint(
-            "ordinal >= 0",
-            name="ck_epub_nav_locations_ordinal_nonneg",
-        ),
-        ForeignKeyConstraint(
-            ["media_id", "fragment_idx"],
-            ["fragments.media_id", "fragments.idx"],
-            name="fk_epub_nav_locations_start_fragment",
-        ),
-        ForeignKeyConstraint(
-            ["media_id", "end_fragment_idx"],
-            ["fragments.media_id", "fragments.idx"],
-            name="fk_epub_nav_locations_end_fragment",
-        ),
-        ForeignKeyConstraint(
-            ["media_id", "parent_section_id"],
-            ["epub_nav_locations.media_id", "epub_nav_locations.location_id"],
-            name="fk_epub_nav_locations_parent",
-            deferrable=True,
-            initially="DEFERRED",
-        ),
-        UniqueConstraint("media_id", "ordinal", name="uix_epub_nav_locations_media_ordinal"),
-        UniqueConstraint("media_id", "source_node_id", name="uix_epub_nav_locations_media_source"),
-    )
-
     media: Mapped["Media"] = relationship("Media")
 
 
@@ -6398,25 +3026,6 @@ class EpubFragmentSource(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint("media_id", "fragment_id", name="uq_epub_fragment_sources_fragment"),
-        UniqueConstraint("media_id", "package_href", name="uq_epub_fragment_sources_href"),
-        CheckConstraint(
-            "char_length(package_href) BETWEEN 1 AND 2048",
-            name="ck_epub_fragment_sources_href_length",
-        ),
-        CheckConstraint(
-            "char_length(manifest_item_id) BETWEEN 1 AND 255",
-            name="ck_epub_fragment_sources_manifest_id_length",
-        ),
-        CheckConstraint(
-            "spine_itemref_id IS NULL OR char_length(spine_itemref_id) BETWEEN 1 AND 255",
-            name="ck_epub_fragment_sources_itemref_id_length",
-        ),
-        CheckConstraint("reading_order >= 0", name="ck_epub_fragment_sources_reading_order"),
-        Index("ix_epub_fragment_sources_media_order", "media_id", "reading_order"),
-    )
-
     media: Mapped["Media"] = relationship("Media")
     fragment: Mapped["Fragment"] = relationship("Fragment")
 
@@ -6450,21 +3059,6 @@ class EpubResource(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint("media_id", "package_href", name="uq_epub_resources_href"),
-        UniqueConstraint("media_id", "asset_key", name="uq_epub_resources_asset_key"),
-        CheckConstraint(
-            "char_length(package_href) BETWEEN 1 AND 2048",
-            name="ck_epub_resources_href_length",
-        ),
-        CheckConstraint(
-            "char_length(asset_key) BETWEEN 1 AND 2048",
-            name="ck_epub_resources_asset_key_length",
-        ),
-        CheckConstraint("size_bytes >= 0", name="ck_epub_resources_size_non_negative"),
-        Index("ix_epub_resources_media", "media_id"),
-    )
-
     media: Mapped["Media"] = relationship("Media")
 
 
@@ -6494,13 +3088,6 @@ class FragmentBlock(Base):
     block_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_empty: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
-    __table_args__ = (
-        CheckConstraint("block_idx >= 0", name="ck_fragment_blocks_block_idx"),
-        CheckConstraint("start_offset >= 0", name="ck_fragment_blocks_start_offset"),
-        CheckConstraint("end_offset >= start_offset", name="ck_fragment_blocks_offsets"),
-        UniqueConstraint("fragment_id", "block_idx", name="uix_fragment_blocks_fragment_idx"),
-    )
-
     # Relationships
     fragment: Mapped["Fragment"] = relationship("Fragment")
 
@@ -6528,37 +3115,6 @@ class ReaderProfile(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "theme IN ('light', 'dark')",
-            name="ck_reader_profiles_theme",
-        ),
-        CheckConstraint(
-            "font_size_px BETWEEN 12 AND 28",
-            name="ck_reader_profiles_font_size_px",
-        ),
-        CheckConstraint(
-            "line_height BETWEEN 1.2 AND 2.2",
-            name="ck_reader_profiles_line_height",
-        ),
-        CheckConstraint(
-            "font_family IN ('serif', 'sans')",
-            name="ck_reader_profiles_font_family",
-        ),
-        CheckConstraint(
-            "column_width_ch BETWEEN 40 AND 120",
-            name="ck_reader_profiles_column_width_ch",
-        ),
-        CheckConstraint(
-            "focus_mode IN ('off', 'distraction_free', 'paragraph', 'sentence')",
-            name="ck_reader_profiles_focus_mode",
-        ),
-        CheckConstraint(
-            "hyphenation IN ('auto', 'off')",
-            name="ck_reader_profiles_hyphenation",
-        ),
     )
 
     # Relationships
@@ -6602,170 +3158,7 @@ class NexusUsage(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id",
-            "query_normalized",
-            "target_href",
-            name="uq_nexus_usages_user_query_href",
-        ),
-        CheckConstraint("use_count >= 1", name="ck_nexus_usages_use_count"),
-        Index(
-            "ix_nexus_usages_user_last_used_at_id",
-            "user_id",
-            text("last_used_at DESC"),
-            text("id DESC"),
-        ),
-        Index(
-            "ix_nexus_usages_user_query_last_used_at",
-            "user_id",
-            "query_normalized",
-            text("last_used_at DESC"),
-        ),
-    )
-
-    user: Mapped["User"] = relationship("User", back_populates="nexus_usages")
-
-
-class ReaderMediaState(Base):
-    """The one canonical reader cursor per user + media.
-
-    ``locator IS NULL`` is a revisioned Empty tombstone. ``revision`` is the
-    only conflict token (monotonic, starts at 1); ``updated_at`` is metadata.
-    FKs are explicitly named and non-cascading:
-    media deletion removes child rows itself, and there is no user-delete flow,
-    so the user FK restricts deletion until that lifecycle is designed.
-    """
-
-    __tablename__ = "reader_media_state"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", name="fk_reader_media_state_user"),
-        nullable=False,
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="fk_reader_media_state_media"),
-        nullable=False,
-    )
-    locator: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    revision: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        server_default=text("1"),
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint("user_id", "media_id", name="uq_reader_media_state_user_media"),
-        Index("idx_reader_media_state_media", "media_id"),
-    )
-
-    # Relationships
     user: Mapped["User"] = relationship("User")
-    media: Mapped["Media"] = relationship("Media")
-
-
-class ReaderEngagementState(Base):
-    """One current row per (user, media): last-touched recency and max
-    whole-document progression, with no session/device/span/dwell history
-    (default-library-virtualization-and-transient-state-pruning-hard-cutover.md
-    §4.4). ``id`` is application-generated (``nexus.ids.new_uuid7``), matching
-    the trusted-id-generation pattern used elsewhere for owner-inserted rows.
-    Sole DML owner: ``services.consumption._reader_engagement_store``.
-    """
-
-    __tablename__ = "reader_engagement_states"
-
-    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", name="fk_reader_engagement_states_user"),
-        nullable=False,
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="fk_reader_engagement_states_media"),
-        nullable=False,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-    last_engaged_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        nullable=False,
-    )
-    max_total_progression: Mapped[float | None] = mapped_column(Float, nullable=True)
-
-    __table_args__ = (
-        UniqueConstraint("user_id", "media_id", name="uq_reader_engagement_states_user_media"),
-        CheckConstraint(
-            "max_total_progression IS NULL"
-            " OR (max_total_progression >= 0.0 AND max_total_progression <= 1.0)",
-            name="ck_reader_engagement_states_max_total_progression",
-        ),
-        Index(
-            "ix_reader_engagement_states_user_last_engaged",
-            "user_id",
-            text("last_engaged_at DESC"),
-            text("media_id DESC"),
-        ),
-    )
-
-    user: Mapped["User"] = relationship("User")
-    media: Mapped["Media"] = relationship("Media")
-
-
-class ConsumptionOverride(Base):
-    """Explicit per-viewer read-state override (highest-priority signal).
-
-    Written and read solely by the consumption owner
-    ``services.consumption._state_store`` (media teardown composes its all-users
-    delete). Vocabulary is 'unread' | 'finished' only — 'in_progress' is a derived
-    state, not a user gesture.
-    """
-
-    __tablename__ = "consumption_overrides"
-
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id", name="fk_consumption_overrides_user"),
-        primary_key=True,
-    )
-    media_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("media.id", name="fk_consumption_overrides_media"),
-        primary_key=True,
-    )
-    # Vocabulary owned by persistence adapters, not a database CHECK (spec
-    # docs/cutovers/lectern-player-lifecycle-hard-cutover.md §4).
-    status: Mapped[str] = mapped_column(Text, nullable=False)
-    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    user: Mapped["User"] = relationship("User")
-    media: Mapped["Media"] = relationship("Media")
 
 
 class WorkspaceSession(Base):
@@ -6794,20 +3187,6 @@ class WorkspaceSession(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        UniqueConstraint("user_id", "device_id", name="uq_workspace_sessions_user_device"),
-        CheckConstraint(
-            "jsonb_typeof(state) = 'object'",
-            name="ck_workspace_sessions_state_object",
-        ),
-        Index(
-            "ix_workspace_sessions_user_updated",
-            "user_id",
-            text("updated_at DESC"),
-            text("id DESC"),
-        ),
     )
 
 
@@ -6845,18 +3224,6 @@ class OracleCorpusSource(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "char_length(work_key) BETWEEN 1 AND 160", name="ck_oracle_corpus_sources_key"
-        ),
-        CheckConstraint(
-            "source_media_kind IN ('epub', 'web_article', 'pdf')",
-            name="ck_oracle_corpus_sources_kind",
-        ),
-        UniqueConstraint("corpus_key", "work_key", name="uix_oracle_corpus_sources_work"),
-        UniqueConstraint("media_id", name="uix_oracle_corpus_sources_media"),
     )
 
 
@@ -6907,46 +3274,6 @@ class OraclePassageAnchor(Base):
 
     source: Mapped["OracleCorpusSource"] = relationship("OracleCorpusSource")
 
-    __table_args__ = (
-        CheckConstraint(
-            "jsonb_typeof(selector) = 'object'", name="ck_oracle_passage_anchors_selector"
-        ),
-        CheckConstraint("jsonb_typeof(tags) = 'array'", name="ck_oracle_passage_anchors_tags"),
-        CheckConstraint(
-            "jsonb_typeof(phase_hints) = 'array'", name="ck_oracle_passage_anchors_phase_hints"
-        ),
-        CheckConstraint(
-            "resolution_status IN ('pending', 'resolved', 'failed')",
-            name="ck_oracle_passage_anchors_status",
-        ),
-        CheckConstraint(
-            """
-            (
-                resolution_status = 'pending'
-                AND current_evidence_span_id IS NULL
-                AND current_content_chunk_id IS NULL
-                AND resolved_at IS NULL
-                AND resolution_error IS NULL
-            )
-            OR (
-                resolution_status = 'resolved'
-                AND current_content_chunk_id IS NOT NULL
-                AND resolved_at IS NOT NULL
-                AND resolution_error IS NULL
-            )
-            OR (
-                resolution_status = 'failed'
-                AND current_evidence_span_id IS NULL
-                AND current_content_chunk_id IS NULL
-                AND resolved_at IS NULL
-                AND resolution_error IS NOT NULL
-            )
-            """,
-            name="ck_oracle_passage_anchors_resolution_state",
-        ),
-        UniqueConstraint("corpus_source_id", "passage_key", name="uix_oracle_passage_anchors_key"),
-    )
-
 
 class OraclePlate(Base):
     """Curated public-domain image plate, a public owned asset under oracle/plates/.
@@ -6981,33 +3308,6 @@ class OraclePlate(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("width > 0", name="ck_oracle_plates_width_positive"),
-        CheckConstraint("width <= 4096", name="ck_oracle_plates_width_safe"),
-        CheckConstraint("height > 0", name="ck_oracle_plates_height_positive"),
-        CheckConstraint("height <= 4096", name="ck_oracle_plates_height_safe"),
-        CheckConstraint("jsonb_typeof(tags) = 'array'", name="ck_oracle_plates_tags_array"),
-        CheckConstraint(
-            r"storage_key ~ '^oracle/plates/[a-z0-9][a-z0-9._-]{0,191}\.(jpg|png|webp)$'",
-            name="ck_oracle_plates_storage_key_shape",
-        ),
-        CheckConstraint(
-            "content_type IN ('image/jpeg', 'image/png', 'image/webp')",
-            name="ck_oracle_plates_content_type",
-        ),
-        CheckConstraint("byte_size > 0", name="ck_oracle_plates_byte_size_positive"),
-        CheckConstraint("byte_size <= 10485760", name="ck_oracle_plates_byte_size_safe"),
-        CheckConstraint(
-            """(
-                (content_type = 'image/jpeg' AND storage_key LIKE '%.jpg')
-                OR (content_type = 'image/png' AND storage_key LIKE '%.png')
-                OR (content_type = 'image/webp' AND storage_key LIKE '%.webp')
-            )""",
-            name="ck_oracle_plates_storage_key_content_type_match",
-        ),
-        UniqueConstraint("source_url", name="uix_oracle_plates_source_url"),
     )
 
 
@@ -7064,55 +3364,6 @@ class OracleReading(Base):
 
     image: Mapped["OraclePlate | None"] = relationship("OraclePlate")
 
-    __table_args__ = (
-        CheckConstraint("folio_number > 0", name="ck_oracle_readings_folio_positive"),
-        CheckConstraint(
-            "status IN ('pending', 'streaming', 'complete', 'failed')",
-            name="ck_oracle_readings_status",
-        ),
-        CheckConstraint(
-            "char_length(btrim(question_text)) BETWEEN 1 AND 280",
-            name="ck_oracle_readings_question_length",
-        ),
-        CheckConstraint(
-            "(status = 'complete' AND completed_at IS NOT NULL) OR status != 'complete'",
-            name="ck_oracle_readings_complete_has_timestamp",
-        ),
-        CheckConstraint(
-            "(status = 'failed' AND failed_at IS NOT NULL AND error_code IS NOT NULL) "
-            "OR status != 'failed'",
-            name="ck_oracle_readings_failed_has_error",
-        ),
-        CheckConstraint(
-            "folio_motto IS NULL OR char_length(folio_motto) BETWEEN 1 AND 80",
-            name="ck_oracle_readings_motto_length",
-        ),
-        CheckConstraint(
-            "folio_motto_gloss IS NULL OR char_length(folio_motto_gloss) BETWEEN 1 AND 120",
-            name="ck_oracle_readings_motto_gloss_length",
-        ),
-        CheckConstraint(
-            "folio_theme IS NULL OR folio_theme IN ("
-            "'Of Time','Of Death','Of the Threshold','Of Vanity','Of Solitude','Of Love',"
-            "'Of Fortune','Of Memory','Of the Self','Of the Other','Of Fear','Of Courage',"
-            "'Of Faith','Of Doubt','Of Power','Of Wisdom','Of the Body','Of the Soul',"
-            "'Of Origins','Of Endings','Of Silence','Of the Word','Of Justice','Of Mercy'"
-            ")",
-            name="ck_oracle_readings_theme",
-        ),
-        UniqueConstraint("user_id", "folio_number", name="uix_oracle_readings_user_folio"),
-        Index(
-            "uq_oracle_readings_user_idempotency_key",
-            "user_id",
-            "idempotency_key",
-            unique=True,
-            postgresql_where=text("idempotency_key IS NOT NULL"),
-        ),
-        Index("idx_oracle_readings_user_created", "user_id", text("created_at DESC")),
-        Index("idx_oracle_readings_user_image", "user_id", "image_id"),
-        Index("idx_oracle_readings_user_theme", "user_id", "folio_theme"),
-    )
-
 
 class OracleReadingFolio(Base):
     """Generated folio content for one reading phase, referencing its citation edge."""
@@ -7140,17 +3391,6 @@ class OracleReadingFolio(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "phase IN ('descent', 'ordeal', 'ascent')",
-            name="ck_oracle_reading_folios_phase",
-        ),
-        CheckConstraint(
-            "source_kind IN ('user_media', 'public_domain')",
-            name="ck_oracle_reading_folios_source_kind",
-        ),
-    )
-
 
 class OracleReadingEvent(Base):
     """Append-only SSE replay event for an oracle reading."""
@@ -7174,17 +3414,4 @@ class OracleReadingEvent(Base):
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
         nullable=False,
-    )
-
-    __table_args__ = (
-        CheckConstraint("seq >= 1", name="ck_oracle_reading_events_seq_positive"),
-        CheckConstraint(
-            "event_type IN ("
-            "'meta', 'bind', 'argument', 'plate', 'passage', 'delta', 'omens', 'done', "
-            "'historical_done'"
-            ")",
-            name="ck_oracle_reading_events_type",
-        ),
-        UniqueConstraint("reading_id", "seq", name="uix_oracle_reading_events_seq"),
-        Index("idx_oracle_reading_events_reading_seq", "reading_id", "seq"),
     )

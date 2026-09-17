@@ -773,7 +773,7 @@ def prune_contributors_if_orphaned(db: Session, *, contributor_ids: Iterable[UUI
 
 def _fresh_author_session() -> Session:
     fresh = get_session_factory()()
-    # An open transaction would make use_serializable_if_available silently
+    # An open transaction would make use_serializable silently
     # retain weaker isolation (spec 2.7); factory sessions must arrive clean.
     assert not fresh.in_transaction(), "author mutations require a fresh session"
     return fresh
