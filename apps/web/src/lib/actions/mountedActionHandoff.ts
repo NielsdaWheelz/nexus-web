@@ -75,24 +75,6 @@ export async function executeDestructiveMountedMutation(
   }
 }
 
-/**
- * Execute one authoritative mounted mutation and settle its runtime invocation.
- * Mutation rejection aborts; reconciliation rejection cannot retroactively turn
- * an already-committed domain mutation into an abort.
- */
-export async function executeCommittingMountedMutation(
-  intent: CommittingMountedActionIntentBase,
-  mutation: () => Promise<void>,
-): Promise<void> {
-  try {
-    await mutation();
-  } catch (error) {
-    intent.onAborted();
-    throw error;
-  }
-  await intent.onCommitted();
-}
-
 export interface MountedEditorMutationLease {
   /** The authoritative write committed; reconcile and settle the invocation. */
   readonly committed: () => Promise<void>;

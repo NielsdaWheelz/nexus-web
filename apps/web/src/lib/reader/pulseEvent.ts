@@ -1,7 +1,6 @@
 "use client";
 
-import { isRetrievalLocator, type RetrievalLocator } from "@/lib/api/sse/locators";
-import { isRecord } from "@/lib/validation";
+import type { RetrievalLocator } from "@/lib/api/sse/locators";
 import { createWindowEventChannel } from "@/lib/windowEventChannel";
 
 export const READER_PULSE_HIGHLIGHT = "nexus:reader-pulse-highlight";
@@ -16,26 +15,8 @@ export interface ReaderPulseTarget {
   focusBehavior: "scroll_into_view" | "preserve_position";
 }
 
-function isOptionalString(value: unknown): boolean {
-  return value === undefined || typeof value === "string";
-}
-
-export function isReaderPulseTarget(value: unknown): value is ReaderPulseTarget {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.mediaId === "string" &&
-    isOptionalString(value.highlightId) &&
-    isOptionalString(value.evidenceSpanId) &&
-    isRetrievalLocator(value.locator) &&
-    (typeof value.snippet === "string" || value.snippet === null) &&
-    value.highlightBehavior === "pulse" &&
-    (value.focusBehavior === "scroll_into_view" || value.focusBehavior === "preserve_position")
-  );
-}
-
-const readerPulseChannel = createWindowEventChannel({
+const readerPulseChannel = createWindowEventChannel<ReaderPulseTarget>({
   eventName: READER_PULSE_HIGHLIGHT,
-  isTarget: isReaderPulseTarget,
   cancelable: false,
 });
 
@@ -79,21 +60,8 @@ export interface NotePulseTarget {
   focusBehavior: "scroll_into_view";
 }
 
-export function isNotePulseTarget(value: unknown): value is NotePulseTarget {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.blockId === "string" &&
-    typeof value.startOffset === "number" &&
-    typeof value.endOffset === "number" &&
-    (typeof value.snippet === "string" || value.snippet === null) &&
-    value.highlightBehavior === "pulse" &&
-    value.focusBehavior === "scroll_into_view"
-  );
-}
-
-const notePulseChannel = createWindowEventChannel({
+const notePulseChannel = createWindowEventChannel<NotePulseTarget>({
   eventName: NOTE_PULSE_HIGHLIGHT,
-  isTarget: isNotePulseTarget,
   cancelable: false,
 });
 

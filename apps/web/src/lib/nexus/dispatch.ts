@@ -9,7 +9,7 @@ import {
 } from "@/lib/notes/openDailyPage";
 import { readDailyDraft } from "@/lib/notes/dailyDraftStore";
 import { browseHref } from "@/lib/browse/query";
-import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { resolveWorkspaceActivationRouteId } from "@/lib/panes/paneIdentity";
 import {
   executeResourceChat,
@@ -84,7 +84,7 @@ export function isAndroidShellRestrictedHref(
 ): boolean {
   return (
     androidShell &&
-    isAndroidShellRestrictedRouteId(resolvePaneRoute(href).id)
+    isAndroidShellRestrictedRouteId(resolvePaneRouteModel(href).id)
   );
 }
 
@@ -245,7 +245,7 @@ export function dispatchNexusTarget(
     case "InternalHref": {
       const blocked = blockedByAndroid(target.href);
       if (blocked) return blocked;
-      if (resolvePaneRoute(target.href).id === "search") {
+      if (resolvePaneRouteModel(target.href).id === "search") {
         requestSearchInputFocus();
       }
       return activateTarget(

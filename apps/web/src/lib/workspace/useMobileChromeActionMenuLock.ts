@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import { useOptionalMobileChromeVisibleLocks } from "./mobileChrome";
+import { useMobileChromeVisibleLocks } from "./mobileChrome";
 
 /**
  * Pins mobile chrome while an ActionMenu-backed overlay is open. The lock stays
@@ -10,7 +10,7 @@ import { useOptionalMobileChromeVisibleLocks } from "./mobileChrome";
 export function useMobileChromeActionMenuLock(): {
   readonly onOpenChange: (open: boolean) => void;
 } {
-  const { acquire } = useOptionalMobileChromeVisibleLocks();
+  const { acquire } = useMobileChromeVisibleLocks();
   const releaseRef = useRef<(() => void) | null>(null);
 
   const release = useCallback(() => {

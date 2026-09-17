@@ -12,7 +12,7 @@ import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import MobileSheet from "@/components/ui/MobileSheet";
-import { requestWorkspaceTargetActivation } from "@/lib/workspace/workspaceTargetActivationIngress";
+import { useWorkspaceStore } from "@/lib/workspace/store";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import type { OfflineMediaInventoryItem } from "@/lib/offlineMedia/clientStore";
 import type { OfflineMediaController } from "@/lib/offlineMedia/controller";
@@ -154,6 +154,7 @@ function ReadingInventory({
   readonly snapshot: ReadingSnapshot;
   readonly onClose: () => void;
 }) {
+  const workspace = useWorkspaceStore();
   if (snapshot.items.length === 0) return null;
   return <>
     <h3>Reading</h3>
@@ -163,11 +164,13 @@ function ReadingInventory({
           type="button"
           className={styles.title}
           onClick={(event) => {
-            if (requestWorkspaceTargetActivation({
+            const result = workspace.activateWorkspaceTarget({
+              originPaneId: workspace.state.activePrimaryPaneId,
               target: { href: `/media/${item.mediaId}`, labelHint: item.title },
               disposition: { kind: "Follow" },
               modality: pointerModality(event),
-            })) {
+            });
+            if (result.kind !== "Rejected") {
               onClose();
             }
           }}
@@ -266,6 +269,7 @@ function DownloadsPanel({
   readonly reading: OfflineReadingCapability;
 }) {
   const [policyRetry, setPolicyRetry] = useState<NetworkPolicy | null>(null);
+  const workspace = useWorkspaceStore();
   const store = audio?.store ?? null;
   const readingController = reading.kind === "Ready" ? reading.controller : null;
   const subscribeInventory = useCallback(
@@ -332,13 +336,13 @@ function DownloadsPanel({
     event: MouseEvent<HTMLButtonElement>,
     item: OfflineMediaInventoryItem,
   ) => {
-    if (
-      requestWorkspaceTargetActivation({
-        target: { href: `/media/${item.mediaId}`, labelHint: item.title },
-        disposition: { kind: "Follow" },
-        modality: pointerModality(event),
-      })
-    ) {
+    const result = workspace.activateWorkspaceTarget({
+      originPaneId: workspace.state.activePrimaryPaneId,
+      target: { href: `/media/${item.mediaId}`, labelHint: item.title },
+      disposition: { kind: "Follow" },
+      modality: pointerModality(event),
+    });
+    if (result.kind !== "Rejected") {
       onClose();
     }
   };

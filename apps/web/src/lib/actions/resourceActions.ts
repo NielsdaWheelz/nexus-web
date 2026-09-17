@@ -111,29 +111,29 @@ interface ResourceActionCatalogEntry {
   readonly confirmation: ResourceActionConfirmation;
 }
 
-const NONE = Object.freeze({ kind: "None" } as const);
+const NONE = { kind: "None" } as const;
 
 function requiredConfirmation(
   title: string,
   body: string,
   confirmLabel: string,
 ): ResourceActionConfirmation {
-  return Object.freeze({
+  return {
     kind: "Required" as const,
     title,
     body,
     confirmLabel,
-  });
+  };
 }
 
 function catalogEntry<const Entry extends ResourceActionCatalogEntry>(
   entry: Entry,
 ): Readonly<Entry> {
-  return Object.freeze(entry);
+  return entry;
 }
 
 function statePresentation(label: string, icon: LucideIcon) {
-  return Object.freeze({ label, icon });
+  return { label, icon };
 }
 
 /**
@@ -141,7 +141,7 @@ function statePresentation(label: string, icon: LucideIcon) {
  * semantic grouping, order, tone, and confirmation policy. Keys are the stable
  * action IDs themselves so callers cannot translate through a second identity.
  */
-export const RESOURCE_ACTION_CATALOG = Object.freeze({
+export const RESOURCE_ACTION_CATALOG = {
   "ResourceAction.Open": catalogEntry({
     id: "ResourceAction.Open",
     label: "Open",
@@ -178,11 +178,11 @@ export const RESOURCE_ACTION_CATALOG = Object.freeze({
     order: 10,
     tone: "default",
     confirmation: NONE,
-    states: Object.freeze({
+    states: {
       Idle: statePresentation("Play", Play),
       Paused: statePresentation("Resume", Play),
       Ended: statePresentation("Replay", RotateCcw),
-    }),
+    },
   }),
   "ResourceOperation.Media.PlayNext": catalogEntry({
     id: "ResourceOperation.Media.PlayNext",
@@ -201,12 +201,12 @@ export const RESOURCE_ACTION_CATALOG = Object.freeze({
     order: 30,
     tone: "default",
     confirmation: NONE,
-    states: Object.freeze({
+    states: {
       DocumentIncomplete: statePresentation("Mark as finished", CircleCheck),
       DocumentFinished: statePresentation("Mark as unread", Undo2),
       EpisodeUnplayed: statePresentation("Mark as played", CircleCheck),
       EpisodePlayed: statePresentation("Mark as unplayed", Undo2),
-    }),
+    },
   }),
   "ResourceOperation.Media.ResetProgress": catalogEntry({
     id: "ResourceOperation.Media.ResetProgress",
@@ -225,7 +225,7 @@ export const RESOURCE_ACTION_CATALOG = Object.freeze({
     order: 50,
     tone: "default",
     confirmation: NONE,
-    states: Object.freeze({
+    states: {
       NotRequested: statePresentation("Request transcript…", Captions),
       Queued: statePresentation("Transcript queued", Captions),
       Running: statePresentation("Transcript processing", Captions),
@@ -234,7 +234,7 @@ export const RESOURCE_ACTION_CATALOG = Object.freeze({
       Unavailable: statePresentation("Transcript unavailable", Captions),
       FailedQuota: statePresentation("Retry transcript", RotateCcw),
       FailedProvider: statePresentation("Retry transcript", RotateCcw),
-    }),
+    },
   }),
   "ResourceOperation.Media.Offline": catalogEntry({
     id: "ResourceOperation.Media.Offline",
@@ -244,12 +244,12 @@ export const RESOURCE_ACTION_CATALOG = Object.freeze({
     order: 60,
     tone: "default",
     confirmation: NONE,
-    states: Object.freeze({
+    states: {
       Absent: statePresentation("Download for offline", Download),
       Downloading: statePresentation("Cancel download", XCircle),
       Failed: statePresentation("Retry download", RotateCcw),
       Ready: statePresentation("Remove download", Trash2),
-    }),
+    },
   }),
 
   "RelationshipAction.LibraryPlacement": catalogEntry({
@@ -269,10 +269,10 @@ export const RESOURCE_ACTION_CATALOG = Object.freeze({
     order: 20,
     tone: "default",
     confirmation: NONE,
-    states: Object.freeze({
+    states: {
       Absent: statePresentation("Add to Lectern", ListPlus),
       Present: statePresentation("Remove from Lectern", ListMinus),
-    }),
+    },
   }),
   "RelationshipAction.PodcastSubscription": catalogEntry({
     id: "RelationshipAction.PodcastSubscription",
@@ -282,10 +282,10 @@ export const RESOURCE_ACTION_CATALOG = Object.freeze({
     order: 30,
     tone: "default",
     confirmation: NONE,
-    states: Object.freeze({
+    states: {
       Unsubscribed: statePresentation("Subscribe", Rss),
       Subscribed: statePresentation("Unsubscribe", Rss),
-    }),
+    },
   }),
 
   "ResourceAction.Chat": catalogEntry({
@@ -314,10 +314,10 @@ export const RESOURCE_ACTION_CATALOG = Object.freeze({
     order: 30,
     tone: "default",
     confirmation: NONE,
-    states: Object.freeze({
+    states: {
       Absent: statePresentation("Add note…", NotebookPen),
       Present: statePresentation("Edit note…", NotebookPen),
-    }),
+    },
   }),
   "ResourceOperation.Highlight.Link": catalogEntry({
     id: "ResourceOperation.Highlight.Link",
@@ -616,7 +616,7 @@ export const RESOURCE_ACTION_CATALOG = Object.freeze({
       "Delete page",
     ),
   }),
-} as const satisfies Record<string, ResourceActionCatalogEntry>);
+} as const satisfies Record<string, ResourceActionCatalogEntry>;
 
 export type ResourceActionId = keyof typeof RESOURCE_ACTION_CATALOG;
 
@@ -724,10 +724,10 @@ export interface PlannedResourceAction {
   readonly intent: ResourceActionIntent;
 }
 
-const COMMAND = Object.freeze({ kind: "Command" } as const);
-const AVAILABLE = Object.freeze({ kind: "Available" } as const);
+const COMMAND = { kind: "Command" } as const;
+const AVAILABLE = { kind: "Available" } as const;
 
-const GROUP_INDEX: Readonly<Record<ResourceActionGroup, number>> = Object.freeze({
+const GROUP_INDEX: Readonly<Record<ResourceActionGroup, number>> = {
   Navigate: 0,
   Consume: 1,
   Organize: 2,
@@ -735,10 +735,10 @@ const GROUP_INDEX: Readonly<Record<ResourceActionGroup, number>> = Object.freeze
   ShareExport: 4,
   Manage: 5,
   Danger: 6,
-});
+};
 
 function blocked(reason: ResourceActionBlockedReason): ResourceActionAvailability {
-  return Object.freeze({ kind: "Blocked" as const, reason });
+  return { kind: "Blocked" as const, reason };
 }
 
 function finalAvailability(
@@ -766,19 +766,15 @@ function planned(
   } = {},
 ): PlannedResourceAction {
   const entry = RESOURCE_ACTION_CATALOG[id];
-  const presentation = Object.freeze({
-    label: options.label ?? entry.label,
-    icon: options.icon ?? entry.icon,
-    group: entry.group,
-    tone: entry.tone,
-  });
-  const control = options.control ?? COMMAND;
-  if (!Object.isFrozen(control)) Object.freeze(control);
-  const frozenIntent = immutableCopy(intent);
-  return Object.freeze({
+  return {
     id,
-    presentation,
-    control,
+    presentation: {
+      label: options.label ?? entry.label,
+      icon: options.icon ?? entry.icon,
+      group: entry.group,
+      tone: entry.tone,
+    },
+    control: options.control ?? COMMAND,
     availability: finalAvailability(
       id,
       server,
@@ -786,25 +782,12 @@ function planned(
       options.clientBlockedReason,
     ),
     confirmation: options.confirmation ?? entry.confirmation,
-    intent: frozenIntent,
-  });
-}
-
-function immutableCopy<T>(value: T): T {
-  if (Array.isArray(value)) {
-    return Object.freeze(value.map((item) => immutableCopy(item))) as T;
-  }
-  if (typeof value === "object" && value !== null) {
-    const copy = Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, immutableCopy(item)]),
-    );
-    return Object.freeze(copy) as T;
-  }
-  return value;
+    intent,
+  };
 }
 
 function toggle(checked: boolean): ResourceActionControlState {
-  return Object.freeze({ kind: "Toggle" as const, checked });
+  return { kind: "Toggle" as const, checked };
 }
 
 function lecternBlockedReason(
@@ -1403,7 +1386,7 @@ export function resolveResourceActionPlan(
   environment: ResourceActionEnvironment,
   busyIds: ReadonlySet<ResourceActionId>,
 ): readonly PlannedResourceAction[] {
-  if (snapshot.missing) return Object.freeze([]);
+  if (snapshot.missing) return [];
 
   const seenKinds = new Set<ResourceActionCapability["kind"]>();
   const seenIds = new Set<ResourceActionId>();
@@ -1432,5 +1415,5 @@ export function resolveResourceActionPlan(
   }
 
   actions.sort(compareCatalogOrder);
-  return Object.freeze(actions);
+  return actions;
 }

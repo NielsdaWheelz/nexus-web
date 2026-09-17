@@ -2,7 +2,6 @@
 
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useState,
@@ -17,6 +16,10 @@ const MOBILE_QUERY =
 /** Read the canonical browser projection synchronously at an input boundary. */
 export function getBrowserViewportKind(): ViewportKind {
   return window.matchMedia(MOBILE_QUERY).matches ? "mobile" : "desktop";
+}
+
+function serverViewportKind(): ViewportKind {
+  return "desktop";
 }
 
 function subscribeToViewport(onStoreChange: () => void): () => void {
@@ -39,10 +42,6 @@ export function RenderEnvironmentProvider({
   value: RenderEnvironment;
   children: ReactNode;
 }) {
-  const serverViewportKind = useCallback(
-    () => value.initialViewport,
-    [value.initialViewport],
-  );
   const viewportKind = useSyncExternalStore(
     subscribeToViewport,
     getBrowserViewportKind,
@@ -88,8 +87,4 @@ export function useViewportState(): {
     isMobile: viewportKind === "mobile",
     hydrated: viewportHydrated,
   };
-}
-
-export function useViewportKind(): ViewportKind {
-  return useViewportState().kind;
 }

@@ -8,7 +8,6 @@ import {
 import { usePaneResolvedBodyReady } from "@/lib/workspace/paneReturnMemento";
 import { PaneLoadingState } from "@/components/workspace/PaneLoadingState";
 import { useReportNexusPaneReady } from "@/lib/nexus/performance";
-import { createPaneModuleRegistry } from "@/lib/panes/paneModuleRegistry";
 
 type PaneLoader = () => Promise<{ default: ComponentType }>;
 
@@ -57,11 +56,39 @@ const PANE_LOADERS: Record<PaneRouteId, PaneLoader> = {
   oracleReading: () =>
     import("@/app/(authenticated)/oracle/[readingId]/OracleReadingPaneBody"),
 };
-const PANE_MODULES = createPaneModuleRegistry(PANE_LOADERS);
+const modulePromises = new Map<PaneRouteId, Promise<{ default: ComponentType }>>();
+
+/**
+ * Owns one in-flight/resolved module promise per pane. Intent preloads and
+ * React.lazy must adopt the exact same promise; relying on a bundler to dedupe
+ * separate import() calls leaves Suspense ownership runtime-dependent.
+ *
+ * A rejected promise is evicted after, and only after, that exact attempt
+ * settles so a later navigation can retry without an older failure deleting a
+ * newer attempt.
+ */
+function loadPaneModule(id: PaneRouteId): Promise<{ default: ComponentType }> {
+  const existing = modulePromises.get(id);
+  if (existing) return existing;
+
+  let promise: Promise<{ default: ComponentType }>;
+  try {
+    promise = PANE_LOADERS[id]();
+  } catch (error) {
+    promise = Promise.reject(error);
+  }
+  modulePromises.set(id, promise);
+  void promise.catch(() => {
+    if (modulePromises.get(id) === promise) {
+      modulePromises.delete(id);
+    }
+  });
+  return promise;
+}
 
 const PANE_BODIES = (Object.keys(PANE_LOADERS) as PaneRouteId[]).reduce(
   (bodies, id) => {
-    bodies[id] = lazy(() => PANE_MODULES.load(id));
+    bodies[id] = lazy(() => loadPaneModule(id));
     return bodies;
   },
   {} as Record<PaneRouteId, ComponentType>,
@@ -109,5 +136,5 @@ export function renderPane(id: PaneRouteId): ReactNode {
 // same constraint that bans next/dynamic (D-3). The owned module registry gives
 // lazy() the exact promise started here and evicts rejected attempts for retry.
 export function preloadPane(id: PaneRouteId): Promise<void> {
-  return PANE_MODULES.preload(id);
+  return loadPaneModule(id).then(() => undefined);
 }

@@ -55,7 +55,6 @@ from nexus.schemas.resource_action_snapshots import (
     SimpleResourceActionCapabilityKind,
     SimpleResourceActionCapabilityOut,
     TranscriptResourceActionCapabilityOut,
-    compute_facts_revision,
 )
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services import conversations, highlights, library_governance, reader_apparatus
@@ -164,7 +163,7 @@ def resolve_action_snapshots(
 
     A ref whose resource is not visible to the viewer yields a ``missing`` snapshot
     (``missing=True``, ``capabilities=[]``) that keeps its position — it is never
-    dropped. Every snapshot's ``factsRevision`` is finalized from its own facts.
+    dropped.
     """
     refs_by_scheme: dict[ResourceScheme, list[ResourceRef]] = defaultdict(list)
     for ref in refs:
@@ -188,14 +187,14 @@ def resolve_action_snapshots(
         capabilities = (
             [] if missing else _capabilities_for_ref(ref, activation=activation, facts=facts)
         )
-        snapshot = ResourceActionSnapshotOut(
-            ref=ref.uri,
-            activation=activation,
-            missing=missing,
-            capabilities=capabilities,
+        snapshots.append(
+            ResourceActionSnapshotOut(
+                ref=ref.uri,
+                activation=activation,
+                missing=missing,
+                capabilities=capabilities,
+            )
         )
-        snapshot.facts_revision = compute_facts_revision(snapshot)
-        snapshots.append(snapshot)
     return ResourceActionSnapshotResolveResponse(snapshots=snapshots)
 
 

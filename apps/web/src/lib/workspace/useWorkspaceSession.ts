@@ -3,7 +3,6 @@
 import { useEffect, useRef } from "react";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { putWorkspaceSession } from "@/lib/workspace/sessionSync";
-import { workspaceStatesEqual } from "@/lib/workspace/workspaceRestore";
 import type { WorkspaceState } from "@/lib/workspace/schema";
 
 const WORKSPACE_SESSION_SYNC_DEBOUNCE_MS = 1000;
@@ -23,7 +22,7 @@ export function useWorkspaceSession(state: WorkspaceState, mounted: boolean): vo
     if (!mounted) {
       return;
     }
-    if (workspaceStatesEqual(state, lastSavedRef.current)) {
+    if (state === lastSavedRef.current) {
       return;
     }
     const timer = setTimeout(() => {

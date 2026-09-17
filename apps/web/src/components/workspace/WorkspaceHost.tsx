@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ResolvedPaneRoute } from "@/lib/panes/paneRouteTable";
+import type { ResolvedPaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { renderPane } from "@/lib/panes/paneRenderRegistry";
 import {
   PaneRuntimeProvider,
@@ -112,7 +112,7 @@ interface WorkspaceHostPane {
   paneId: string;
   visitId: PaneVisitId;
   href: string;
-  route: ResolvedPaneRoute;
+  route: ResolvedPaneRouteModel;
   routeKey: string;
   routeShareIdentity: PaneRouteShareIdentity | null;
   resourceItem: ResourceItem | null;
@@ -185,7 +185,7 @@ interface PaneTransientSecondaryActivationRecord {
 // ResolvedPaneRouteView — renders the resolved route or an unsupported message.
 // ---------------------------------------------------------------------------
 
-function ResolvedPaneRouteView({ route }: { route: ResolvedPaneRoute }) {
+function ResolvedPaneRouteView({ route }: { route: ResolvedPaneRouteModel }) {
   if (route.id !== "unsupported") {
     return renderPane(route.id);
   }
@@ -240,7 +240,7 @@ const PaneRuntimeFrame = memo(function PaneRuntimeFrame({
   visitId: PaneVisitId;
   isActive: boolean;
   href: string;
-  route: ResolvedPaneRoute;
+  route: ResolvedPaneRouteModel;
   routeKey: string;
   resourceItem: ResourceItem | null;
   resourceStatus: PaneResourceStatus;
@@ -395,7 +395,7 @@ const PaneContent = memo(function PaneContent({
 }: {
   href: string;
   visitId: PaneVisitId;
-  route: ResolvedPaneRoute;
+  route: ResolvedPaneRouteModel;
   routeKey: string;
 }) {
   const routeMountKey = useMemo(() => {

@@ -54,10 +54,6 @@ export function compareNexusEntries(left: NexusEntry, right: NexusEntry): number
 }
 
 export function rankNexusEntries(entries: readonly NexusEntry[]): NexusEntry[] {
-  for (const entry of entries) {
-    normalizedRankValue(entry, "score");
-    normalizedRankValue(entry, "frecency");
-  }
   return [...entries].sort(compareNexusEntries);
 }
 

@@ -1,4 +1,4 @@
-import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import {
   formatResourceRef,
   parseResourceRef,
@@ -30,7 +30,7 @@ function canonicalPathname(raw: string): string | null {
     parsed.origin !== "https://nexus.invalid" ||
     parsed.pathname !== raw ||
     parsed.pathname.split("/").some((part) => part === "." || part === "..") ||
-    resolvePaneRoute(parsed.pathname).id === "unsupported"
+    resolvePaneRouteModel(parsed.pathname).id === "unsupported"
   ) {
     return null;
   }

@@ -157,21 +157,10 @@ export type ResourceActionCapability =
       readonly noteBlockId: string;
     };
 
-const FACTS_REVISION_RE = /^[0-9a-f]{64}$/;
-
-function expectFactsRevision(raw: unknown, name: string): string {
-  const value = expectString(raw, name);
-  if (!FACTS_REVISION_RE.test(value)) {
-    throw new TypeError(`${name} must be a lowercase SHA-256 hex digest`);
-  }
-  return value;
-}
-
 export interface ResourceActionSnapshot {
   readonly ref: CanonicalResourceRef;
   readonly activation: ResourceActivation;
   readonly missing: boolean;
-  readonly factsRevision: string;
   readonly capabilities: readonly ResourceActionCapability[];
 }
 
@@ -464,7 +453,7 @@ function decodeResourceActionSnapshot(
 ): ResourceActionSnapshot {
   const value = expectExactRecord(
     raw,
-    ["ref", "activation", "missing", "factsRevision", "capabilities"],
+    ["ref", "activation", "missing", "capabilities"],
     name,
   );
   const ref = assumeCanonicalResourceRef(expectString(value.ref, `${name}.ref`));
@@ -503,10 +492,6 @@ function decodeResourceActionSnapshot(
     ref,
     activation,
     missing,
-    factsRevision: expectFactsRevision(
-      value.factsRevision,
-      `${name}.factsRevision`,
-    ),
     capabilities,
   };
 }

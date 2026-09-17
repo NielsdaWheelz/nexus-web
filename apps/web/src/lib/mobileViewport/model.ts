@@ -7,30 +7,12 @@ export interface MobileBottomSurfaceRect {
   readonly height: number;
 }
 
-function requireNonnegativeFinite(value: number, name: string): number {
-  if (!Number.isFinite(value) || value < 0) {
-    // justify-defect: viewport geometry comes from owned browser measurements.
-    throw new Error(`${name} must be a nonnegative finite number`);
-  }
-  return value;
-}
-
 /** Height of the band a bottom surface covers, measured up from the window bottom. */
 function bottomSurfaceClearancePx(
   viewportHeightPx: number,
   rect: MobileBottomSurfaceRect | null,
 ): number {
   if (!rect) return 0;
-  if (
-    !Number.isFinite(rect.top) ||
-    !Number.isFinite(rect.bottom) ||
-    !Number.isFinite(rect.width) ||
-    !Number.isFinite(rect.height)
-  ) {
-    // justify-defect: registered bottom-surface rectangles are browser-owned
-    // DOMRect measurements.
-    throw new Error("Mobile bottom surface rectangle must be finite");
-  }
   if (
     rect.width <= 0 ||
     rect.height <= 0 ||
@@ -51,13 +33,9 @@ export function resolveNexusBottomOffsetPx(input: {
   safeBottomPx: number;
   playerRect: MobileBottomSurfaceRect | null;
 }): number {
-  const viewportHeightPx = requireNonnegativeFinite(
-    input.viewportHeightPx,
-    "Mobile viewport height",
-  );
   return Math.max(
-    Math.ceil(requireNonnegativeFinite(input.safeBottomPx, "Safe bottom")),
-    bottomSurfaceClearancePx(viewportHeightPx, input.playerRect),
+    Math.ceil(input.safeBottomPx),
+    bottomSurfaceClearancePx(input.viewportHeightPx, input.playerRect),
   );
 }
 
@@ -72,19 +50,10 @@ export function resolveContentBottomClearancePx(input: {
   nexusRect: MobileBottomSurfaceRect | null;
   overlayKeyboardInsetPx: number;
 }): number {
-  const viewportHeightPx = requireNonnegativeFinite(
-    input.viewportHeightPx,
-    "Mobile viewport height",
-  );
   return Math.max(
-    Math.ceil(requireNonnegativeFinite(input.safeBottomPx, "Safe bottom")),
-    bottomSurfaceClearancePx(viewportHeightPx, input.nexusRect),
-    Math.ceil(
-      requireNonnegativeFinite(
-        input.overlayKeyboardInsetPx,
-        "Mobile overlay keyboard inset",
-      ),
-    ),
+    Math.ceil(input.safeBottomPx),
+    bottomSurfaceClearancePx(input.viewportHeightPx, input.nexusRect),
+    Math.ceil(input.overlayKeyboardInsetPx),
   );
 }
 
@@ -97,19 +66,12 @@ export function resolveContentSurfaceBottomClearancePx(input: {
   contentBottomClearancePx: number;
   surfaceBottomPx: number;
 }): number {
-  const viewportHeightPx = requireNonnegativeFinite(
-    input.viewportHeightPx,
-    "Mobile viewport height",
+  const belowSurfacePx = Math.max(
+    0,
+    input.viewportHeightPx - input.surfaceBottomPx,
   );
-  const contentBottomClearancePx = requireNonnegativeFinite(
-    input.contentBottomClearancePx,
-    "Mobile content bottom clearance",
+  return Math.max(
+    0,
+    Math.ceil(input.contentBottomClearancePx - belowSurfacePx),
   );
-  if (!Number.isFinite(input.surfaceBottomPx)) {
-    // justify-defect: registered content-surface rectangles are browser-owned
-    // DOMRect measurements.
-    throw new Error("Mobile content surface bottom must be finite");
-  }
-  const belowSurfacePx = Math.max(0, viewportHeightPx - input.surfaceBottomPx);
-  return Math.max(0, Math.ceil(contentBottomClearancePx - belowSurfacePx));
 }

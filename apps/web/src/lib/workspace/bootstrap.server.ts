@@ -173,10 +173,6 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
     case "Navigate":
       urlSeedPromise = seedPane(entryIntent.href);
       break;
-    default: {
-      const exhaustive: never = entryIntent;
-      throw new Error(`Unexpected workspace entry intent: ${exhaustive}`);
-    }
   }
 
   // Wave 1 — account profile, reader profile, saved session, and only a Navigate
@@ -209,10 +205,6 @@ export async function loadWorkspaceBootstrap(androidShell: boolean): Promise<{
         ? mergeRestoredWorkspaceWithDeepLink(restored, deepLink, metrics)
         : deepLink;
       break;
-    }
-    default: {
-      const exhaustive: never = entryIntent;
-      throw new Error(`Unexpected workspace entry intent: ${exhaustive}`);
     }
   }
 

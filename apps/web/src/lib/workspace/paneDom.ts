@@ -5,47 +5,46 @@
  */
 function findPane(paneId: string | null | undefined): HTMLElement | null {
   if (!paneId) return null;
-  return (
-    Array.from(
-      document.querySelectorAll<HTMLElement>("[data-pane-id]"),
-    ).find((candidate) => candidate.dataset.paneId === paneId) ?? null
+  return document.querySelector<HTMLElement>(
+    `[data-pane-id="${CSS.escape(paneId)}"]`,
   );
+}
+
+/** A focus target is usable only while it is live and not inside inert chrome. */
+function usable(el: HTMLElement | null | undefined): HTMLElement | null {
+  return el?.isConnected && !el.closest("[inert]") ? el : null;
 }
 
 export function findPaneLandmarkFocusTarget(
   paneId: string | null | undefined,
 ): HTMLElement | null {
-  const landmark = findPane(paneId)?.querySelector<HTMLElement>(
-    "[data-pane-focus-landmark='true']",
+  return usable(
+    findPane(paneId)?.querySelector<HTMLElement>(
+      "[data-pane-focus-landmark='true']",
+    ),
   );
-  return landmark?.isConnected && !landmark.closest("[inert]") ? landmark : null;
 }
 
 export function findPaneChromeFocusTarget(
   paneId: string | null | undefined,
 ): HTMLElement | null {
   if (!paneId) return null;
-  const mobileProjection = Array.from(
-    document.querySelectorAll<HTMLElement>("[data-pane-chrome-for]"),
-  ).find((candidate) => candidate.dataset.paneChromeFor === paneId);
-  const mobileOptions = mobileProjection?.querySelector<HTMLElement>(
-    "[data-pane-menu-trigger]",
+  const mobileProjection = document.querySelector<HTMLElement>(
+    `[data-pane-chrome-for="${CSS.escape(paneId)}"]`,
   );
-  if (mobileOptions?.isConnected && !mobileOptions.closest("[inert]")) {
-    return mobileOptions;
-  }
+  const mobileOptions = usable(
+    mobileProjection?.querySelector<HTMLElement>("[data-pane-menu-trigger]"),
+  );
+  if (mobileOptions) return mobileOptions;
 
   const pane = findPane(paneId);
-  const desktopOptions = pane?.querySelector<HTMLElement>(
-    "[data-pane-menu-trigger]",
+  const desktopOptions = usable(
+    pane?.querySelector<HTMLElement>("[data-pane-menu-trigger]"),
   );
-  if (desktopOptions?.isConnected && !desktopOptions.closest("[inert]")) {
-    return desktopOptions;
-  }
-  const chrome = pane?.querySelector<HTMLElement>(
-    "[data-pane-chrome-focus='true']",
+  if (desktopOptions) return desktopOptions;
+  return usable(
+    pane?.querySelector<HTMLElement>("[data-pane-chrome-focus='true']"),
   );
-  return chrome?.isConnected && !chrome.closest("[inert]") ? chrome : null;
 }
 
 export function findPaneSearchFocusTarget(
@@ -53,11 +52,13 @@ export function findPaneSearchFocusTarget(
 ): HTMLElement | null {
   if (!paneId) return null;
   const pane = findPane(paneId);
-  const input = pane?.querySelector<HTMLElement>("[data-pane-search-input]");
-  if (input?.isConnected && !input.closest("[inert]")) return input;
-  const action = pane?.querySelector<HTMLElement>(
-    '[data-action-id="Pane.Search"]',
+  const input = usable(
+    pane?.querySelector<HTMLElement>("[data-pane-search-input]"),
   );
-  if (action?.isConnected && !action.closest("[inert]")) return action;
+  if (input) return input;
+  const action = usable(
+    pane?.querySelector<HTMLElement>('[data-action-id="Pane.Search"]'),
+  );
+  if (action) return action;
   return findPaneChromeFocusTarget(paneId);
 }

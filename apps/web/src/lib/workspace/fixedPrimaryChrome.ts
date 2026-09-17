@@ -1,1 +1,0 @@
-export const DOCUMENT_MAP_OVERVIEW_RAIL_WIDTH_PX = 52;

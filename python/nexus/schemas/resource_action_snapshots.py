@@ -15,7 +15,6 @@ coercion.
 
 from __future__ import annotations
 
-import hashlib
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -33,7 +32,6 @@ from pydantic.alias_generators import to_camel
 from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.resource_items import ResourceActivationOut
-from nexus.services.resource_mutation_replay import canonical_json_bytes
 
 _MAX_REFS = 100
 _OUT_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
@@ -311,7 +309,6 @@ class ResourceActionSnapshotOut(BaseModel):
     ref: str
     activation: ResourceActivationOut
     missing: bool
-    facts_revision: str = ""
     capabilities: list[ResourceActionCapabilityOut] = Field(default_factory=list)
 
     model_config = _OUT_CONFIG
@@ -321,15 +318,3 @@ class ResourceActionSnapshotResolveResponse(BaseModel):
     snapshots: list[ResourceActionSnapshotOut]
 
     model_config = _OUT_CONFIG
-
-
-def compute_facts_revision(snapshot_out: ResourceActionSnapshotOut) -> str:
-    """Deterministic sha256hex of a snapshot's facts.
-
-    Hashes the by-alias canonical JSON of ``{ref, activation, missing,
-    capabilities}`` — ``factsRevision`` itself is excluded so the value is a
-    faithful content hash, not self-referential. Not persisted; recomputed on
-    every resolve so a stale client revision is a simple string mismatch.
-    """
-    payload = snapshot_out.model_dump(mode="json", by_alias=True, exclude={"facts_revision"})
-    return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()

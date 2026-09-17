@@ -1,5 +1,5 @@
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
+import { resolvePaneRouteModel } from "@/lib/panes/paneRouteModel";
 import { isCanonicalUuid } from "@/lib/validation";
 
 const ENTITY_PART = "[A-Za-z0-9_-]{22}";
@@ -112,7 +112,7 @@ export function expectAuthenticatedShareHref(
     if (
       url.search ||
       url.hash ||
-      resolvePaneRoute(url.pathname).id === "unsupported"
+      resolvePaneRouteModel(url.pathname).id === "unsupported"
     ) {
       throw new TypeError(`${name} is not a canonical artifact target`);
     }
@@ -122,7 +122,7 @@ export function expectAuthenticatedShareHref(
     if (
       url.search ||
       url.hash ||
-      resolvePaneRoute(url.pathname).id !== "author"
+      resolvePaneRouteModel(url.pathname).id !== "author"
     ) {
       throw new TypeError(`${name} is not a canonical contributor target`);
     }
