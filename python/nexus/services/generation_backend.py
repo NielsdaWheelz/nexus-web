@@ -98,13 +98,6 @@ class BackendGenerationRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class PreparedCodexChild:
-    """Pure grant-free route projection prepared before host admission."""
-
-    draft: GenerationCommandDraft = field(repr=False)
-
-
-@dataclass(frozen=True, slots=True)
 class BackendChildDispatch:
     """Durable identity to arm immediately before one native model call."""
 
@@ -265,12 +258,8 @@ class ProviderGenerationTransport(Protocol):
         self,
         turn: ProviderTurnRequest,
         *,
-        cancel: CancelSignal | None = None,
+        cancel: CancelSignal,
     ) -> AsyncGenerator[ProviderGenerationEvent]: ...
-
-
-class CodexChildProjection(Protocol):
-    def prepare(self, request: BackendGenerationRequest) -> PreparedCodexChild: ...
 
 
 class ProviderModelToolProjection(Protocol):
@@ -305,7 +294,6 @@ class BackendEventObserver(Protocol):
 class GenerationBackendComposition:
     codex: CodexGenerationTransport
     provider: ProviderGenerationTransport
-    codex_projection: CodexChildProjection
     provider_tools: ProviderModelToolProjection
 
 
@@ -344,15 +332,11 @@ class GenerationBackend:
                     raise GenerationBackendDefect(
                         "CodexPersonal execution received a ProviderApi resume state"
                     )
-                draft = self._composition.codex_projection.prepare(request).draft
-                if (
-                    draft.request_id != request.generation_id
-                    or draft.spec != request.spec
-                    or draft.intent != request.intent
-                ):
-                    raise GenerationBackendDefect(
-                        "Codex projection changed frozen generation identity"
-                    )
+                draft = GenerationCommandDraft(
+                    request_id=request.generation_id,
+                    spec=request.spec,
+                    intent=request.intent,
+                )
                 has_tools = isinstance(request.spec.model_tool_plan_snapshot, Present)
                 if has_tools != (execution.codex_bind_admission is not None):
                     raise GenerationBackendDefect(
@@ -374,15 +358,6 @@ class GenerationBackend:
                         "one generation"
                     )
                 model_tools = self._composition.provider_tools.resolve(request.spec)
-                if isinstance(frozen, Present):
-                    if model_tools is None or model_tools.snapshot != frozen.value:
-                        raise GenerationBackendDefect(
-                            "provider tool projection differs from the frozen GenerationSpec"
-                        )
-                elif model_tools is not None:
-                    raise GenerationBackendDefect(
-                        "NoModelTools resolved a provider tool publication"
-                    )
                 max_turns = model_tools.snapshot.run_limits.max_calls + 1 if model_tools else 1
                 if execution.provider_resume is None:
                     turn = self._composition.provider.prepare_initial_turn(
@@ -472,6 +447,8 @@ class _KernelAdapter:
                     if frame.request_id != native.request_id:
                         raise GenerationBackendDefect("Codex changed frozen generation identity")
                     event = project_codex_generation_frame(frame)
+                    if event is None:
+                        continue
                     if isinstance(event, BackendTerminal):
                         yield KernelTerminal(event.backend_seq, event)
                     else:
@@ -562,9 +539,7 @@ class _KernelAdapter:
                 else Present(value=terminal.continuation.payload)
             ),
         )
-        completed = _validate_effective_completion(
-            proposed, await self.execution.lifecycle.complete_child(proposed)
-        )
+        completed = await self.execution.lifecycle.complete_child(proposed)
         return KernelTerminal(
             terminal.sequence,
             completed.terminal,
@@ -670,24 +645,6 @@ def _codex_child_dispatch(
     )
 
 
-def _validate_effective_completion(
-    proposed: BackendChildCompletion,
-    completed: BackendChildCompletion,
-) -> BackendChildCompletion:
-    """Accept lifecycle-owned terminal resolution without successor substitution."""
-
-    successor_is_exact = completed.successor == proposed.successor
-    successor_was_dropped = isinstance(proposed.successor, Present) and isinstance(
-        completed.successor,
-        Absent,
-    )
-    if completed.child != proposed.child or not (successor_is_exact or successor_was_dropped):
-        raise GenerationBackendDefect(
-            "backend lifecycle changed child or continuation identity while completing"
-        )
-    return completed
-
-
 def _provider_child_dispatch(turn: ProviderTurnRequest) -> BackendChildDispatch:
     return BackendChildDispatch(
         generation_id=turn.generation_id,
@@ -772,14 +729,12 @@ __all__ = [
     "BackendToolExecutionResult",
     "BackendToolExecutor",
     "CodexAdmissionBinder",
-    "CodexChildProjection",
     "CodexGenerationTransport",
     "GenerationBackend",
     "GenerationBackendComposition",
     "GenerationBackendCompositionRefused",
     "GenerationBackendDefect",
     "GenerationBackendExecution",
-    "PreparedCodexChild",
     "ProviderContinuationIdentity",
     "ProviderContinuationMaterial",
     "ProviderResumeState",

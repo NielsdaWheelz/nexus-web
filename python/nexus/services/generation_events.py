@@ -79,24 +79,6 @@ class BackendToolObserved:
 
 
 @dataclass(frozen=True, slots=True)
-class BackendPermissionDecision:
-    kind: Literal["PermissionDecision"] = field(default="PermissionDecision", init=False)
-    route: Literal["CodexPersonal"] = field(default="CodexPersonal", init=False)
-    child_seq: Literal[1] = field(default=1, init=False)
-    backend_seq: int
-    decision: GenerationPermissionRequest
-
-
-@dataclass(frozen=True, slots=True)
-class BackendNativeDiagnostic:
-    kind: Literal["NativeDiagnostic"] = field(default="NativeDiagnostic", init=False)
-    route: Literal["CodexPersonal"] = field(default="CodexPersonal", init=False)
-    child_seq: Literal[1] = field(default=1, init=False)
-    backend_seq: int
-    diagnostic: GenerationNative
-
-
-@dataclass(frozen=True, slots=True)
 class CodexTerminalEvidence:
     route: Literal["CodexPersonal"] = field(default="CodexPersonal", init=False)
     native: GenerationTerminal
@@ -133,14 +115,16 @@ type BackendEvent = (
     | BackendUsageObserved
     | BackendToolProposed
     | BackendToolObserved
-    | BackendPermissionDecision
-    | BackendNativeDiagnostic
     | BackendTerminal
 )
 
 
-def project_codex_generation_frame(frame: GenerationFrame) -> BackendEvent:
-    """Project one already-validated Codex frame into the Nexus event union."""
+def project_codex_generation_frame(frame: GenerationFrame) -> BackendEvent | None:
+    """Project one already-validated Codex frame into the Nexus event union.
+
+    Permission requests and native diagnostics carry no Nexus event; the client
+    stream validator is their only reader.
+    """
 
     event = frame.event
     match event:
@@ -160,10 +144,8 @@ def project_codex_generation_frame(frame: GenerationFrame) -> BackendEvent:
             )
         case GenerationToolUse():
             return BackendToolObserved(backend_seq=frame.sequence, observation=event)
-        case GenerationPermissionRequest():
-            return BackendPermissionDecision(backend_seq=frame.sequence, decision=event)
-        case GenerationNative():
-            return BackendNativeDiagnostic(backend_seq=frame.sequence, diagnostic=event)
+        case GenerationPermissionRequest() | GenerationNative():
+            return None
         case GenerationTerminal():
             return BackendTerminal(
                 route="CodexPersonal",
@@ -229,8 +211,6 @@ def _public_provider_outcome(outcome: StreamOutcome) -> StreamOutcome:
 
 __all__ = [
     "BackendEvent",
-    "BackendNativeDiagnostic",
-    "BackendPermissionDecision",
     "BackendRoute",
     "BackendTerminal",
     "BackendTerminalEvidence",

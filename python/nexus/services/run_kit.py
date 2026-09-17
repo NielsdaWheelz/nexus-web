@@ -19,8 +19,6 @@ without materializing the parent row.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
 from enum import Enum
 from typing import Any, assert_never, cast
 from uuid import UUID
@@ -58,25 +56,6 @@ class RunStreamKind(Enum):
     ArtifactBuild = "ArtifactBuild"
 
 
-@dataclass(frozen=True)
-class RunStream:
-    """A durable-run event stream bound to one parent run row."""
-
-    parent: ChatRun | OracleReading | ArtifactBuild
-
-
-def chat_run_stream(run: ChatRun) -> RunStream:
-    return RunStream(parent=run)
-
-
-def oracle_reading_stream(reading: OracleReading) -> RunStream:
-    return RunStream(parent=reading)
-
-
-def artifact_build_stream(build: ArtifactBuild) -> RunStream:
-    return RunStream(parent=build)
-
-
 def notify_channel(kind: RunStreamKind) -> str:
     """The LISTEN/NOTIFY channel for a run kind (the only per-kind SSE constant)."""
     if kind is RunStreamKind.ChatRun:
@@ -111,7 +90,7 @@ def terminal_statuses(kind: RunStreamKind) -> frozenset[str]:
 def append_event(
     db: Session,
     *,
-    stream: RunStream,
+    parent: ChatRun | OracleReading | ArtifactBuild,
     event_type: str,
     payload: RunEventPayload,
 ) -> int:
@@ -122,7 +101,6 @@ def append_event(
     parent has one (chat only). Flushes; does not commit — the caller owns the
     transaction boundary.
     """
-    parent = stream.parent
     if isinstance(parent, ChatRun):
         seq = _next_seq(db, table="chat_run_events", fk="run_id", parent_id=parent.id)
         db.add(ChatRunEvent(run_id=parent.id, seq=seq, event_type=event_type, payload=payload))
@@ -148,7 +126,7 @@ def append_event(
 def mark_terminal(
     db: Session,
     *,
-    stream: RunStream,
+    parent: ChatRun | OracleReading | ArtifactBuild,
     status: str,
     done_payload: RunEventPayload,
     error_code: str | None = None,
@@ -163,7 +141,6 @@ def mark_terminal(
     a failed oracle reading (its failed-has-error CHECK), then appends the
     ``done`` event. Does not commit — the caller owns the transaction boundary.
     """
-    parent = stream.parent
     if isinstance(parent, ChatRun):
         terminal = _CHAT_TERMINAL_STATUSES
     elif isinstance(parent, OracleReading):
@@ -185,7 +162,7 @@ def mark_terminal(
         parent.error_detail = error_detail
     if isinstance(parent, OracleReading) and status == "failed":
         parent.failed_at = func.now()
-    append_event(db, stream=stream, event_type="done", payload=done_payload)
+    append_event(db, parent=parent, event_type="done", payload=done_payload)
 
 
 def get_run_events(
@@ -309,32 +286,6 @@ def is_run_terminal(db: Session, kind: RunStreamKind, parent_id: UUID) -> bool:
         )
         return (not row["present"]) or bool(row["terminal"])
     assert_never(kind)
-
-
-def fail_run_after_worker_exception[P](
-    db: Session,
-    *,
-    load_parent: Callable[[Session], P | None],
-    is_terminal: Callable[[P], bool],
-    write_failure: Callable[[Session, P], None],
-) -> tuple[P | None, bool]:
-    """Shared worker-boundary failure write for Oracle and Media Intelligence tasks.
-
-    Rolls back the broken transaction, reloads the run parent on the clean
-    session, no-ops when it is missing or already terminal, otherwise applies
-    ``write_failure`` (typically ``mark_terminal(status="failed", error_code=…,
-    error_detail=…)``) and commits. Returns ``(parent, failed_now)``: parent is
-    ``None`` when missing; ``failed_now`` is True only when this call wrote the
-    failure.
-    """
-    db.rollback()
-    parent = load_parent(db)
-    if parent is None or is_terminal(parent):
-        db.commit()
-        return parent, False
-    write_failure(db, parent)
-    db.commit()
-    return parent, True
 
 
 def _next_seq(db: Session, *, table: str, fk: str, parent_id: UUID) -> int:

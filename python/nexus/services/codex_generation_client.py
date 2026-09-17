@@ -168,7 +168,6 @@ class CodexGenerationClient:
         """Admit grant-free facts, bind dispatch authority, then stream exactly once."""
 
         await self.health()
-        accepted = False
         transport = httpx.AsyncHTTPTransport(uds=str(self._socket_path))
         try:
             async with asyncio.timeout(float(draft.spec.bounds.transport_deadline_seconds)):
@@ -177,7 +176,6 @@ class CodexGenerationClient:
                     # response is lost. Only its exact capacity rejection proves
                     # that the host accepted nothing; every successful admission is
                     # bound durably before the SDK/model dispatch, tools or not.
-                    accepted = True
                     admission = await self._admit(client, draft)
                     try:
                         dispatched_command = await bind_admission(admission)
@@ -207,7 +205,6 @@ class CodexGenerationClient:
                             raise CodexGenerationTransportAmbiguous(
                                 "Codex generation command was rejected after admission"
                             )
-                        accepted = True
                         if _content_type(response) != "application/x-ndjson":
                             raise CodexGenerationProtocolDefect(
                                 "Codex generation stream content type drifted"
@@ -220,19 +217,13 @@ class CodexGenerationClient:
         ):
             raise
         except TimeoutError as error:
-            if accepted:
-                raise CodexGenerationTransportAmbiguous(
-                    "Codex generation deadline expired after acceptance"
-                ) from error
-            raise CodexGenerationUnavailable(
-                "Codex generation deadline expired before acceptance"
+            raise CodexGenerationTransportAmbiguous(
+                "Codex generation deadline expired after acceptance"
             ) from error
         except httpx.HTTPError as error:
-            if accepted:
-                raise CodexGenerationTransportAmbiguous(
-                    "Codex generation transport was lost after acceptance"
-                ) from error
-            raise CodexGenerationUnavailable("Codex generation host is unavailable") from error
+            raise CodexGenerationTransportAmbiguous(
+                "Codex generation transport was lost after acceptance"
+            ) from error
 
     async def _admit(
         self,

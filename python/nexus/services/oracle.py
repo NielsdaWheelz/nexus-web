@@ -908,11 +908,10 @@ def _apply_completed_oracle(
             raise AssertionError(
                 f"oracle reading has non-terminal status {reading.status!r} at publication"
             )
-        stream = run_kit.oracle_reading_stream(reading)
         if isinstance(completed, _CompletedOracleFailure):
             run_kit.mark_terminal(
                 db,
-                stream=stream,
+                parent=reading,
                 status="failed",
                 done_payload=oracle_done_payload(
                     status="failed",
@@ -943,7 +942,7 @@ def _apply_completed_oracle(
 
         run_kit.append_event(
             db,
-            stream=stream,
+            parent=reading,
             event_type="meta",
             payload=oracle_event_payload(
                 "meta",
@@ -955,7 +954,7 @@ def _apply_completed_oracle(
         )
         run_kit.append_event(
             db,
-            stream=stream,
+            parent=reading,
             event_type="bind",
             payload=oracle_event_payload(
                 "bind",
@@ -968,13 +967,13 @@ def _apply_completed_oracle(
         )
         run_kit.append_event(
             db,
-            stream=stream,
+            parent=reading,
             event_type="argument",
             payload=oracle_event_payload("argument", {"text": completed.argument}),
         )
         run_kit.append_event(
             db,
-            stream=stream,
+            parent=reading,
             event_type="plate",
             payload=oracle_event_payload("plate", _completed_oracle_plate_payload(completed.plate)),
         )
@@ -1025,7 +1024,7 @@ def _apply_completed_oracle(
             )
             run_kit.append_event(
                 db,
-                stream=stream,
+                parent=reading,
                 event_type="passage",
                 payload=oracle_passage_payload(
                     phase=passage.phase,
@@ -1041,19 +1040,19 @@ def _apply_completed_oracle(
 
         run_kit.append_event(
             db,
-            stream=stream,
+            parent=reading,
             event_type="delta",
             payload=oracle_event_payload("delta", {"text": completed.interpretation}),
         )
         run_kit.append_event(
             db,
-            stream=stream,
+            parent=reading,
             event_type="omens",
             payload=oracle_event_payload("omens", {"lines": list(completed.omens)}),
         )
         run_kit.mark_terminal(
             db,
-            stream=stream,
+            parent=reading,
             status="complete",
             done_payload=oracle_done_payload(status="complete", error_code=None),
         )
@@ -1139,7 +1138,7 @@ def _stage_oracle_terminal_without_dispatch(
     if isinstance(completed, _CompletedOracleFailure):
         run_kit.mark_terminal(
             db,
-            stream=run_kit.oracle_reading_stream(reading),
+            parent=reading,
             status="failed",
             done_payload=oracle_done_payload(status="failed", error_code=completed.error_code),
             error_code=completed.error_code,

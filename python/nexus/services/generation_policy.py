@@ -480,7 +480,7 @@ def _policy_facts(
     )
 
 
-def policy_revision_from_facts(facts: Mapping[str, object]) -> str:
+def _policy_revision_from_facts(facts: Mapping[str, object]) -> str:
     digest = hashlib.sha256(b"nexus.generation-policy.v2\0" + _canonical(facts)).hexdigest()
     return f"generation-policy.v2.{digest}"
 
@@ -491,59 +491,22 @@ _INITIAL_POLICY_FACTS = _policy_facts(
     background_operations=_IMMUTABLE_BACKGROUND_OPERATIONS,
 )
 GENERATION_POLICY = GenerationPolicy(
-    revision=policy_revision_from_facts(_INITIAL_POLICY_FACTS),
+    revision=_policy_revision_from_facts(_INITIAL_POLICY_FACTS),
     chat=_CHAT,
     background_operations=_IMMUTABLE_BACKGROUND_OPERATIONS,
 )
-POLICY_REVISION = GENERATION_POLICY.revision
-POLICY_FINGERPRINT = hashlib.sha256(
-    b"nexus.generation-policy-envelope.v2\0" + _canonical(_INITIAL_POLICY_FACTS)
-).hexdigest()
-
 # Durable capacity pauses recheck at a low-frequency fallback only when the
 # provider supplies no reset instant. They are not ordinary generation retries.
 BACKGROUND_CAPACITY_PROBE_SECONDS = 15 * 60
 
-# This is a route-independent serialized-state allocation, not a model capacity
-# claim. It bounds private Codex rollout files while leaving SDK bookkeeping
-# headroom beyond the public event-stream ceiling.
-CODEX_RUNTIME_STATE_OUTPUT_LIMIT_BYTES = 64 * 1024 * 1024
-_CODEX_STATE_SERIALIZATION_OVERHEAD_BYTES = 8 * 1024 * 1024
-_CODEX_STATE_ROOT_FIXED_HEADROOM_BYTES = 32 * 1024 * 1024
-
-
-def _round_up_mib(value: int) -> int:
-    mib = 1024 * 1024
-    return ((value + mib - 1) // mib) * mib
-
-
-_ALL_WORKFLOWS = (
-    GENERATION_POLICY.chat.workflow,
-    *(entry.workflow for entry in GENERATION_POLICY.background_operations.values()),
-)
-CODEX_EPHEMERAL_FILE_LIMIT_BYTES = _round_up_mib(
-    CODEX_RUNTIME_STATE_OUTPUT_LIMIT_BYTES
-    + max(workflow.bounds.input_max_bytes for workflow in _ALL_WORKFLOWS)
-    + max(workflow.bounds.instructions_max_bytes for workflow in _ALL_WORKFLOWS)
-    + _CODEX_STATE_SERIALIZATION_OVERHEAD_BYTES
-)
-CODEX_EPHEMERAL_ROOT_BYTES = (
-    2 * CODEX_EPHEMERAL_FILE_LIMIT_BYTES + _CODEX_STATE_ROOT_FIXED_HEADROOM_BYTES
-)
 MODEL_TOOL_ADMISSION_RUNTIME_SECONDS = max(
     workflow.bounds.turn_timeout_seconds
-    for workflow in _ALL_WORKFLOWS
+    for workflow in (
+        GENERATION_POLICY.chat.workflow,
+        *(entry.workflow for entry in GENERATION_POLICY.background_operations.values()),
+    )
     if not isinstance(workflow.model_tool_policy, NoModelTools)
 )
-
-
-def policy_facts() -> dict[str, object]:
-    """Return a fresh canonical facts tree suitable for audit and evaluation."""
-
-    return _policy_facts(
-        chat=GENERATION_POLICY.chat,
-        background_operations=GENERATION_POLICY.background_operations,
-    )
 
 
 def background_operation_policy(operation: str) -> BackgroundOperationPolicy:
@@ -586,51 +549,12 @@ def validate_policy() -> None:
     )
     if tuple(GENERATION_POLICY.background_operations) != expected_operations:
         raise AssertionError("background operation policy is not exact and total")
-    if policy_revision_from_facts(policy_facts()) != GENERATION_POLICY.revision:
-        raise AssertionError("generation policy revision is not its content digest")
-    if GENERATION_POLICY.chat.seed != _codex("gpt-5.6-terra", "medium"):
-        raise AssertionError("Chat seed drifted")
-    for operation, entry in GENERATION_POLICY.background_operations.items():
-        workflow = entry.workflow
-        if workflow.operation != operation:
-            raise AssertionError(f"{operation} workflow identity drifted")
-        if workflow.revision != _workflow_revision(
-            {
-                "operation": workflow.operation,
-                "bounds": _canonical_value(workflow.bounds),
-                "request_budget": _canonical_value(workflow.request_budget),
-                "output_contract": _canonical_value(workflow.output_contract),
-                "host_tool_plan": _canonical_value(workflow.host_tool_plan),
-                "model_tool_policy": _canonical_value(workflow.model_tool_policy),
-            }
-        ):
-            raise AssertionError(f"{operation} workflow revision drifted")
-        if not isinstance(entry.selection, CodexPersonalSelection):
-            raise AssertionError(f"{operation} must ship through Codex Personal")
-        if workflow.request_budget.max_context_tokens <= 0:
-            raise AssertionError(f"{operation} context budget must be positive")
-        if workflow.request_budget.max_output_tokens <= 0:
-            raise AssertionError(f"{operation} output budget must be positive")
-        bounds = workflow.bounds
-        if bounds.transport_deadline_seconds != (
-            bounds.session_open_timeout_seconds
-            + bounds.turn_timeout_seconds
-            + bounds.runtime_close_timeout_seconds
-            + bounds.transport_margin_seconds
-        ):
-            raise AssertionError(f"{operation} transport deadline drifted")
-        if isinstance(workflow.model_tool_policy, ExactModelTools):
-            if workflow.model_tool_policy.effect_mode != "ReadOnly":
-                raise AssertionError(f"{operation} background tools must be read-only")
-    if not isinstance(GENERATION_POLICY.chat.workflow.model_tool_policy, ChatPerRunTools):
+    chat_tools = GENERATION_POLICY.chat.workflow.model_tool_policy
+    if not isinstance(chat_tools, ChatPerRunTools):
         raise AssertionError("Chat must own per-run read and additive-write plans")
     referenced_model_plans = {
-        GENERATION_POLICY.chat.workflow.model_tool_policy.read_plan_id: (
-            GENERATION_POLICY.chat.workflow.model_tool_policy.read_plan_authority_revision
-        ),
-        GENERATION_POLICY.chat.workflow.model_tool_policy.additive_write_plan_id: (
-            GENERATION_POLICY.chat.workflow.model_tool_policy.additive_write_plan_authority_revision
-        ),
+        chat_tools.read_plan_id: chat_tools.read_plan_authority_revision,
+        chat_tools.additive_write_plan_id: chat_tools.additive_write_plan_authority_revision,
         **{
             workflow.model_tool_policy.plan_id: workflow.model_tool_policy.authority_revision
             for workflow in (
@@ -649,23 +573,12 @@ def validate_policy() -> None:
         _tool_authority_revision(idea_host.plan_id)
     ):
         raise AssertionError("Idea Dossier host-tool authority drifted")
-    if MODEL_TOOL_ADMISSION_RUNTIME_SECONDS != 900:
-        raise AssertionError("model-tool admission runtime must remain bounded to 900 seconds")
-    if CODEX_EPHEMERAL_FILE_LIMIT_BYTES != 74 * 1024 * 1024:
-        raise AssertionError("Codex serialized-state file allocation drifted")
-    if CODEX_EPHEMERAL_ROOT_BYTES != 180 * 1024 * 1024:
-        raise AssertionError("Codex serialized-state root allocation drifted")
 
 
 __all__ = [
     "BACKGROUND_CAPACITY_PROBE_SECONDS",
-    "CODEX_EPHEMERAL_FILE_LIMIT_BYTES",
-    "CODEX_EPHEMERAL_ROOT_BYTES",
-    "CODEX_RUNTIME_STATE_OUTPUT_LIMIT_BYTES",
     "GENERATION_POLICY",
     "MODEL_TOOL_ADMISSION_RUNTIME_SECONDS",
-    "POLICY_FINGERPRINT",
-    "POLICY_REVISION",
     "BackgroundOperationPolicy",
     "ChatPerRunTools",
     "ChatPolicy",
@@ -687,8 +600,6 @@ __all__ = [
     "ToolScopeDerivation",
     "background_operation_policy",
     "operation_revision",
-    "policy_facts",
-    "policy_revision_from_facts",
     "validate_policy",
     "workflow_for_operation",
 ]

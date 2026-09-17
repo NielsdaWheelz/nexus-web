@@ -41,7 +41,7 @@ def append_run_event(db: Session, run: ChatRun, event_type: str, payload: dict[s
     validated = chat_run_event_payload_json(event_type, payload)
     run_kit.append_event(
         db,
-        stream=run_kit.chat_run_stream(run),
+        parent=run,
         event_type=event_type,
         payload=validated,
     )

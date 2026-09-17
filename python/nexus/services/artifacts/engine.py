@@ -3697,7 +3697,7 @@ def _append_build_event(
         raise AssertionError(f"cannot append event for missing build {build_id}")
     run_kit.append_event(
         db,
-        stream=run_kit.artifact_build_stream(build_orm),
+        parent=build_orm,
         event_type=event_type.value,
         payload=payload,
     )

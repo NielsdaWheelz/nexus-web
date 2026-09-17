@@ -20,7 +20,9 @@ _MAX_INSTRUCTIONS_BYTES = 32 * 1024
 _MAX_INPUT_BYTES = 1024 * 1024
 
 
-class _IntentModel(BaseModel):
+class WireTaggedModel(BaseModel):
+    """Strict frozen wire base that requires every Literal tag on JSON input."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     @model_validator(mode="before")
@@ -39,11 +41,11 @@ class _IntentModel(BaseModel):
         return data
 
 
-class TextOutput(_IntentModel):
+class TextOutput(WireTaggedModel):
     kind: Literal["Text"] = "Text"
 
 
-class JsonSchemaOutput(_IntentModel):
+class JsonSchemaOutput(WireTaggedModel):
     model_config = ConfigDict(
         extra="forbid",
         frozen=True,
@@ -66,7 +68,7 @@ class JsonSchemaOutput(_IntentModel):
 GenerationOutput = Annotated[TextOutput | JsonSchemaOutput, Field(discriminator="kind")]
 
 
-class BearerToolGrant(_IntentModel):
+class BearerToolGrant(WireTaggedModel):
     """Sensitive, run-scoped material; its value is never serialized."""
 
     kind: Literal["Bearer"] = "Bearer"
@@ -79,7 +81,7 @@ class BearerToolGrant(_IntentModel):
         return self
 
 
-class GenerationIntent(_IntentModel):
+class GenerationIntent(WireTaggedModel):
     instructions: str
     input: str
     output: GenerationOutput
@@ -116,6 +118,7 @@ __all__ = [
     "GenerationOutput",
     "JsonSchemaOutput",
     "TextOutput",
+    "WireTaggedModel",
     "utf8_size",
     "validate_intent_bounds",
 ]

@@ -6,22 +6,18 @@ import hashlib
 import json
 from datetime import datetime
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Annotated, Literal, Self, assert_never, get_origin
+from typing import TYPE_CHECKING, Annotated, Literal, Self, assert_never
 from uuid import UUID
 
 from provider_runtime import Absent as RuntimeAbsent
 from provider_runtime import Present as RuntimePresent
 from pydantic import (
-    BaseModel,
-    ConfigDict,
     Field,
     JsonValue,
     StringConstraints,
-    ValidationInfo,
     field_validator,
     model_validator,
 )
-from pydantic_core import PydanticUndefined
 
 from nexus.schemas.presence import Absent, Presence, Present
 from nexus.services.generation_intent import (
@@ -29,6 +25,7 @@ from nexus.services.generation_intent import (
     GenerationIntent,
     JsonSchemaOutput,
     TextOutput,
+    WireTaggedModel,
     utf8_size,
     validate_intent_bounds,
 )
@@ -45,9 +42,6 @@ if TYPE_CHECKING:
         AgentModelCatalog,
         AgentModelFacts,
         AgentUpgradeFacts,
-        UpgradeSourceConflict,
-        UpgradeTargetAmbiguous,
-        UpgradeTargetUnresolved,
     )
 
 COMMAND_SCHEMA_VERSION = "nexus-generation-command.v3"
@@ -76,41 +70,22 @@ MAX_COMMAND_BODY_BYTES = (
 )
 
 
-class _WireModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _require_wire_tags(cls, data: object, info: ValidationInfo) -> object:
-        if info.mode == "json" and isinstance(data, dict):
-            missing = [
-                name
-                for name, field in cls.model_fields.items()
-                if field.default is not PydanticUndefined
-                and get_origin(field.annotation) is Literal
-                and name not in data
-            ]
-            if missing:
-                raise ValueError(f"wire tags are required: {', '.join(missing)}")
-        return data
-
-
 CatalogKey = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 CatalogRevision = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
-class CodexCatalogReasoning(_WireModel):
+class CodexCatalogReasoning(WireTaggedModel):
     key: CatalogKey
     label: Annotated[str, StringConstraints(min_length=1, max_length=1_000)]
     native_wire_value: CatalogKey
 
 
-class CodexCatalogUpgrade(_WireModel):
+class CodexCatalogUpgrade(WireTaggedModel):
     target_key: CatalogKey
 
 
-class CodexCatalogModel(_WireModel):
+class CodexCatalogModel(WireTaggedModel):
     key: CatalogKey
     dispatch_model: CatalogKey
     label: Annotated[str, StringConstraints(min_length=1, max_length=1_000)]
@@ -141,31 +116,7 @@ class CodexCatalogModel(_WireModel):
         return self
 
 
-class CodexUpgradeTargetUnresolved(_WireModel):
-    kind: Literal["upgrade_target_unresolved"] = "upgrade_target_unresolved"
-    model_key: CatalogKey
-    native_target: CatalogKey
-
-
-class CodexUpgradeTargetAmbiguous(_WireModel):
-    kind: Literal["upgrade_target_ambiguous"] = "upgrade_target_ambiguous"
-    model_key: CatalogKey
-    native_target: CatalogKey
-
-
-class CodexUpgradeSourceConflict(_WireModel):
-    kind: Literal["upgrade_source_conflict"] = "upgrade_source_conflict"
-    model_key: CatalogKey
-    native_targets: tuple[CatalogKey, ...] = Field(min_length=2, max_length=16)
-
-
-CodexCatalogDiagnostic = Annotated[
-    CodexUpgradeTargetUnresolved | CodexUpgradeTargetAmbiguous | CodexUpgradeSourceConflict,
-    Field(discriminator="kind"),
-]
-
-
-class CodexModelCatalog(_WireModel):
+class CodexModelCatalog(WireTaggedModel):
     """Secret-free authenticated AgentRuntime catalog crossing the private UDS."""
 
     schema_version: Literal["nexus-codex-model-catalog.v1"] = MODEL_CATALOG_SCHEMA_VERSION
@@ -174,7 +125,6 @@ class CodexModelCatalog(_WireModel):
     native_revision: Presence[CatalogRevision]
     observed_at: datetime
     models: tuple[CodexCatalogModel, ...] = Field(max_length=512)
-    diagnostics: tuple[CodexCatalogDiagnostic, ...] = Field(max_length=512)
 
     @field_validator("observed_at")
     @classmethod
@@ -191,7 +141,7 @@ class CodexModelCatalog(_WireModel):
         return self
 
 
-class _GenerationCommandFacts(_WireModel):
+class _GenerationCommandFacts(WireTaggedModel):
     """Grant-free semantic facts shared by admission and dispatch."""
 
     request_id: UUID
@@ -266,7 +216,7 @@ class GenerationCommand(_GenerationCommandFacts):
         return self
 
 
-class GenerationAdmissionRequest(_WireModel):
+class GenerationAdmissionRequest(WireTaggedModel):
     """Grant-free immutable identity used to reserve the sole host slot."""
 
     schema_version: Literal["nexus-generation-admission-request.v2"] = (
@@ -297,11 +247,11 @@ FailureKind = Literal[
 ]
 
 
-class GenerationFailure(_WireModel):
+class GenerationFailure(WireTaggedModel):
     kind: FailureKind
 
 
-class GenerationUsage(_WireModel):
+class GenerationUsage(WireTaggedModel):
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
     total_tokens: int = Field(ge=0)
@@ -310,7 +260,7 @@ class GenerationUsage(_WireModel):
     cache_write_input_tokens: int | None = Field(default=None, ge=0)
 
 
-class GenerationSessionRef(_WireModel):
+class GenerationSessionRef(WireTaggedModel):
     schema_version: Literal["agent-session-ref.v1"]
     backend: Literal["codex"]
     transport: Literal["sdk"]
@@ -320,12 +270,12 @@ class GenerationSessionRef(_WireModel):
     cwd_fingerprint: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
-class GenerationText(_WireModel):
+class GenerationText(WireTaggedModel):
     kind: Literal["text"] = "text"
     text: str
 
 
-class GenerationToolUse(_WireModel):
+class GenerationToolUse(WireTaggedModel):
     kind: Literal["tool_use"] = "tool_use"
     tool_call_id: Annotated[str, StringConstraints(min_length=1)]
     name: Annotated[str, StringConstraints(min_length=1)]
@@ -341,12 +291,12 @@ class GenerationToolUse(_WireModel):
         return self
 
 
-class GenerationUsageEvent(_WireModel):
+class GenerationUsageEvent(WireTaggedModel):
     kind: Literal["usage"] = "usage"
     usage: GenerationUsage
 
 
-class GenerationPermissionRequest(_WireModel):
+class GenerationPermissionRequest(WireTaggedModel):
     kind: Literal["permission_request"] = "permission_request"
     operation: Literal["command", "file_change", "tool_use"]
     summary: Annotated[str, StringConstraints(min_length=1, max_length=1_000)]
@@ -362,7 +312,7 @@ class GenerationPermissionRequest(_WireModel):
         return self
 
 
-class GenerationNative(_WireModel):
+class GenerationNative(WireTaggedModel):
     kind: Literal["native"] = "native"
     native_type: Annotated[str, StringConstraints(min_length=1, max_length=128)]
 
@@ -375,7 +325,7 @@ AcceptedAt = Annotated[
 ]
 
 
-class GenerationAdmission(_WireModel):
+class GenerationAdmission(WireTaggedModel):
     """One replay-stable pre-provider acceptance of the sole host slot."""
 
     schema_version: Literal["nexus-generation-admission.v2"] = ADMISSION_SCHEMA_VERSION
@@ -399,7 +349,7 @@ class GenerationAdmission(_WireModel):
 Diagnostic = Annotated[str, StringConstraints(min_length=1, max_length=1_000)]
 
 
-class GenerationTerminal(_WireModel):
+class GenerationTerminal(WireTaggedModel):
     kind: Literal["terminal"] = "terminal"
     status: Literal["succeeded", "failed", "cancelled"]
     failure: GenerationFailure | None
@@ -453,14 +403,14 @@ GenerationEvent = Annotated[
 ]
 
 
-class GenerationFrame(_WireModel):
+class GenerationFrame(WireTaggedModel):
     schema_version: Literal["nexus-generation-event.v2"] = EVENT_SCHEMA_VERSION
     request_id: UUID
     sequence: int = Field(ge=0)
     event: GenerationEvent
 
 
-class GenerationHealth(_WireModel):
+class GenerationHealth(WireTaggedModel):
     schema_version: Literal["nexus-generation-health.v2"] = HEALTH_SCHEMA_VERSION
     status: Literal["ready"] = "ready"
     backend: Literal["codex"] = "codex"
@@ -471,12 +421,11 @@ class GenerationHealth(_WireModel):
     runtime_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
 
 
-class GenerationCapacityRejection(_WireModel):
+class GenerationCapacityRejection(WireTaggedModel):
     schema_version: Literal["nexus-generation-rejection.v2"] = REJECTION_SCHEMA_VERSION
     kind: Literal["capacity_unavailable"] = "capacity_unavailable"
 
 
-NormalizedOutcome = Literal["Succeeded", "Cancelled", "Failed"]
 NormalizedFailureCode = Literal[
     "auth",
     "quota",
@@ -523,14 +472,6 @@ def normalized_failure(kind: str) -> NormalizedFailureCode:
         raise GenerationContractDefect(f"unknown host failure kind {kind!r}") from error
 
 
-def normalized_outcome(terminal: GenerationTerminal) -> NormalizedOutcome:
-    if terminal.status == "succeeded":
-        return "Succeeded"
-    if terminal.status == "cancelled":
-        return "Cancelled"
-    return "Failed"
-
-
 def retained_terminal_error_detail(terminal: GenerationTerminal) -> str | None:
     """Return the closed diagnostic detail safe for durable domain state.
 
@@ -559,7 +500,6 @@ def codex_model_catalog_to_wire(catalog: AgentModelCatalog) -> CodexModelCatalog
         native_revision=_runtime_presence_to_wire(catalog.native_revision),
         observed_at=catalog.observed_at,
         models=tuple(_codex_model_to_wire(model) for model in catalog.models),
-        diagnostics=tuple(_codex_diagnostic_to_wire(item) for item in catalog.diagnostics),
     )
 
 
@@ -574,7 +514,7 @@ def codex_model_catalog_from_wire(catalog: CodexModelCatalog) -> AgentModelCatal
         native_revision=_wire_presence_to_runtime(catalog.native_revision),
         observed_at=catalog.observed_at,
         models=tuple(_codex_model_from_wire(model) for model in catalog.models),
-        diagnostics=tuple(_codex_diagnostic_from_wire(item) for item in catalog.diagnostics),
+        diagnostics=(),
     )
 
 
@@ -640,64 +580,6 @@ def _codex_model_from_wire(model: CodexCatalogModel) -> AgentModelFacts:
         retirement=RuntimeAbsent(),
         row_fingerprint=model.row_fingerprint,
     )
-
-
-def _codex_diagnostic_to_wire(
-    diagnostic: UpgradeTargetUnresolved | UpgradeTargetAmbiguous | UpgradeSourceConflict,
-) -> CodexCatalogDiagnostic:
-    from provider_runtime.agent_runtime import (
-        UpgradeSourceConflict,
-        UpgradeTargetAmbiguous,
-        UpgradeTargetUnresolved,
-    )
-
-    match diagnostic:
-        case UpgradeTargetUnresolved():
-            return CodexUpgradeTargetUnresolved(
-                model_key=diagnostic.model_key,
-                native_target=diagnostic.native_target,
-            )
-        case UpgradeTargetAmbiguous():
-            return CodexUpgradeTargetAmbiguous(
-                model_key=diagnostic.model_key,
-                native_target=diagnostic.native_target,
-            )
-        case UpgradeSourceConflict():
-            return CodexUpgradeSourceConflict(
-                model_key=diagnostic.model_key,
-                native_targets=diagnostic.native_targets,
-            )
-        case _ as unreachable:
-            assert_never(unreachable)
-
-
-def _codex_diagnostic_from_wire(
-    diagnostic: CodexCatalogDiagnostic,
-) -> UpgradeTargetUnresolved | UpgradeTargetAmbiguous | UpgradeSourceConflict:
-    from provider_runtime.agent_runtime import (
-        UpgradeSourceConflict,
-        UpgradeTargetAmbiguous,
-        UpgradeTargetUnresolved,
-    )
-
-    match diagnostic:
-        case CodexUpgradeTargetUnresolved():
-            return UpgradeTargetUnresolved(
-                model_key=diagnostic.model_key,
-                native_target=diagnostic.native_target,
-            )
-        case CodexUpgradeTargetAmbiguous():
-            return UpgradeTargetAmbiguous(
-                model_key=diagnostic.model_key,
-                native_target=diagnostic.native_target,
-            )
-        case CodexUpgradeSourceConflict():
-            return UpgradeSourceConflict(
-                model_key=diagnostic.model_key,
-                native_targets=diagnostic.native_targets,
-            )
-        case _ as unreachable:
-            assert_never(unreachable)
 
 
 def _runtime_presence_to_wire[T](value: RuntimeAbsent | RuntimePresent[T]) -> Absent | Present[T]:
@@ -777,12 +659,6 @@ def generation_command_from_draft(
     )
 
 
-def request_fingerprint(command: GenerationCommand) -> str:
-    """Backward-facing dispatch identity; grants never affect replay identity."""
-
-    return generation_draft_fingerprint(generation_command_draft(command))
-
-
 def generation_admission_request(draft: GenerationCommandDraft) -> GenerationAdmissionRequest:
     """Project a grant-free draft onto its replay-stable admission identity."""
 
@@ -816,7 +692,6 @@ __all__ = [
     "MAX_MODEL_CATALOG_BODY_BYTES",
     "MAX_TOOL_GRANT_BYTES",
     "FAILURE_KIND_TO_NORMALIZED",
-    "NormalizedOutcome",
     "NormalizedFailureCode",
     "GenerationCapacityRejection",
     "CodexModelCatalog",
@@ -840,10 +715,8 @@ __all__ = [
     "capacity_rejection_bytes",
     "codex_model_catalog_from_wire",
     "codex_model_catalog_to_wire",
-    "normalized_outcome",
     "normalized_failure",
     "retained_terminal_error_detail",
-    "request_fingerprint",
     "generation_admission_request",
     "generation_command_draft",
     "generation_command_from_draft",
