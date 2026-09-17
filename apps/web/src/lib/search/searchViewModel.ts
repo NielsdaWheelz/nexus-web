@@ -7,7 +7,11 @@ import {
 } from "@/lib/dates/publicationDate";
 import { hrefForResourceActivation } from "@/lib/resources/activation";
 import { normalizeSearchResult } from "./normalizeSearchResult";
-import type { SearchApiResult, SearchResultRowViewModel } from "./types";
+import type {
+  SearchApiResult,
+  SearchResultRowViewModel,
+  SearchType,
+} from "./types";
 
 function sanitizeSnippet(snippet: string): string {
   return snippet.replace(/<\/?b>/gi, "");
@@ -167,29 +171,18 @@ function buildPrimaryText(result: SearchApiResult): string {
   return sanitizeSnippet(result.snippet);
 }
 
+const TYPE_LABELS: Partial<Record<SearchType, string>> = {
+  episode: "episode",
+  contributor: "author",
+  page: "page",
+  conversation: "conversation",
+  artifact: "artifact",
+  web_result: "web result",
+};
+
 function getContributorCredits(result: SearchApiResult): ContributorCredit[] {
-  if (
-    result.type === "media" ||
-    result.type === "episode" ||
-    result.type === "video"
-  ) {
-    return result.source.contributors;
-  }
-  if (result.type === "podcast") {
-    return result.contributors;
-  }
-  if (result.type === "content_chunk" || result.type === "fragment") {
-    return result.source.contributors;
-  }
-  if (
-    result.type === "evidence_span" ||
-    result.type === "reader_apparatus_item"
-  ) {
-    return result.source.contributors;
-  }
-  if (result.type === "highlight") {
-    return result.source.contributors;
-  }
+  if ("source" in result) return result.source.contributors;
+  if (result.type === "podcast") return result.contributors;
   return [];
 }
 
@@ -222,23 +215,9 @@ export function adaptSearchResultRow(
         : {}),
     },
     typeLabel:
-      result.type === "content_chunk"
+      result.type === "content_chunk" || result.type === "evidence_span"
         ? result.citation_label
-        : result.type === "episode"
-          ? "episode"
-          : result.type === "contributor"
-            ? "author"
-            : result.type === "page"
-              ? "page"
-              : result.type === "evidence_span"
-                ? result.citation_label
-                : result.type === "conversation"
-                  ? "conversation"
-                  : result.type === "artifact"
-                    ? "artifact"
-                    : result.type === "web_result"
-                      ? "web result"
-                      : result.type,
+        : (TYPE_LABELS[result.type] ?? result.type),
     primaryText,
     snippetSegments: parseSnippetSegments(result.snippet),
     sourceMeta: buildSourceMeta(result),

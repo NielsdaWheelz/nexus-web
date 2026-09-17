@@ -61,7 +61,6 @@ export function localVaultErrorMessage(
           requestId,
         };
       case "E_INVALID_REQUEST":
-        if (operation !== "SyncVault" && operation !== "AutoSync") throw error;
         return {
           tone: "Danger",
           title,
@@ -69,7 +68,6 @@ export function localVaultErrorMessage(
           requestId,
         };
       case "E_MEDIA_NOT_FOUND":
-        if (operation !== "SyncVault" && operation !== "AutoSync") throw error;
         return {
           tone: "Danger",
           title,
@@ -77,7 +75,6 @@ export function localVaultErrorMessage(
           requestId,
         };
       case "E_MEDIA_NOT_READY":
-        if (operation !== "SyncVault" && operation !== "AutoSync") throw error;
         return {
           tone: "Danger",
           title,
@@ -85,7 +82,6 @@ export function localVaultErrorMessage(
           requestId,
         };
       case "E_HIGHLIGHT_CONFLICT":
-        if (operation !== "SyncVault" && operation !== "AutoSync") throw error;
         return {
           tone: "Danger",
           title,
@@ -135,7 +131,6 @@ export function localVaultErrorMessage(
         message: "The folder couldn’t be written because storage is full. Free space, then retry.",
       };
     case "DataCloneError":
-      if (operation !== "ConnectFolder" && operation !== "LoadSettings") throw error;
       return {
         tone: "Danger",
         title,

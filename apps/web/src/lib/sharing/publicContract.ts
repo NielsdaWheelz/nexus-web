@@ -1,8 +1,9 @@
-import { isRecord } from "@/lib/validation";
-
-export type Presence<T> =
-  | { kind: "Absent" }
-  | { kind: "Present"; value: T };
+import { decodePresence, type Presence } from "@/lib/api/presence";
+import {
+  expectExactRecord,
+  expectOneOf,
+  expectRecord,
+} from "@/lib/validation";
 
 export type PublicHighlightAnchor =
   | {
@@ -112,14 +113,6 @@ const SECTION_RE = /^nxps1_[A-Za-z0-9_-]{48}$/;
 const CURSOR_RE = /^nxpc1_[A-Za-z0-9_-]{48}$/;
 const MAX_SAFE_UINT = Number.MAX_SAFE_INTEGER;
 
-export class PublicShareContractDefect extends Error {
-  constructor(message: string) {
-    // justify-defect: same-system public wire drift is an implementation defect.
-    super(message);
-    this.name = "PublicShareContractDefect";
-  }
-}
-
 export function parsePublicShareFragment(hash: string): string | null {
   const match = /^#share=(nxshr1_[A-Za-z0-9_-]{43})$/.exec(hash);
   return match && TOKEN_RE.test(match[1]) ? match[1] : null;
@@ -127,12 +120,15 @@ export function parsePublicShareFragment(hash: string): string | null {
 
 export function decodePublicShareBootstrap(raw: unknown): PublicShareBootstrap {
   const data = envelope(raw);
-  exact(data, ["version", "subject", "media", "reader"], "bootstrap");
+  expectExactRecord(data, ["version", "subject", "media", "reader"], "bootstrap");
   if (data.version !== "V1") defect("bootstrap.version");
-  const media = record(data.media, "bootstrap.media");
-  exact(media, ["title", "media_kind", "source_url", "bylines"], "bootstrap.media");
+  const media = expectExactRecord(
+    data.media,
+    ["title", "media_kind", "source_url", "bylines"],
+    "bootstrap.media"
+  );
   const title = boundedString(media.title, 1, 1024, "media.title");
-  const mediaKind = oneOf(
+  const mediaKind = expectOneOf(
     media.media_kind,
     ["Article", "Epub", "Pdf", "Video", "PodcastEpisode"] as const,
     "media.media_kind"
@@ -143,7 +139,7 @@ export function decodePublicShareBootstrap(raw: unknown): PublicShareBootstrap {
   const bylines = media.bylines.map((value, index) =>
     boundedString(value, 1, 512, `media.bylines[${index}]`)
   );
-  const sourceUrl = presence(media.source_url, (value) => {
+  const sourceUrl = decodePresence(media.source_url, (value) => {
     const url = boundedBytes(value, 2048, "media.source_url");
     if (url.length === 0) defect("media.source_url");
     let parsed: URL;
@@ -208,15 +204,18 @@ export function decodePublicShareBootstrap(raw: unknown): PublicShareBootstrap {
 export function decodePublicFragmentPage(raw: unknown): PublicFragmentPage {
   const data = envelope(raw);
   const kind = data.kind;
-  exact(data, ["kind", "items", "page_info"], "fragment page");
+  expectExactRecord(data, ["kind", "items", "page_info"], "fragment page");
   const nextCursor = pageInfo(data.page_info);
   if (!Array.isArray(data.items)) defect("fragment page.items");
   if (kind === "ArticleFragments") {
     return {
       kind,
       items: data.items.map((rawItem, index) => {
-        const item = record(rawItem, `article.items[${index}]`);
-        exact(item, ["ordinal", "html_sanitized", "canonical_text"], "article item");
+        const item = expectExactRecord(
+          rawItem,
+          ["ordinal", "html_sanitized", "canonical_text"],
+          `article.items[${index}]`
+        );
         return {
           ordinal: int32(item.ordinal, "article.ordinal"),
           htmlSanitized: boundedBytes(item.html_sanitized, 2 * 1024 * 1024, "article.html"),
@@ -230,11 +229,10 @@ export function decodePublicFragmentPage(raw: unknown): PublicFragmentPage {
     return {
       kind,
       items: data.items.map((rawItem, index) => {
-        const item = record(rawItem, `transcript.items[${index}]`);
-        exact(
-          item,
+        const item = expectExactRecord(
+          rawItem,
           ["ordinal", "canonical_text", "time_range", "speaker"],
-          "transcript item"
+          `transcript.items[${index}]`
         );
         return {
           ordinal: int32(item.ordinal, "transcript.ordinal"),
@@ -243,8 +241,8 @@ export function decodePublicFragmentPage(raw: unknown): PublicFragmentPage {
             2 * 1024 * 1024,
             "transcript.text"
           ),
-          timeRange: presence(item.time_range, decodeTimeRange),
-          speaker: presence(item.speaker, (value) =>
+          timeRange: decodePresence(item.time_range, decodeTimeRange),
+          speaker: decodePresence(item.speaker, (value) =>
             boundedString(value, 0, 512, "transcript.speaker")
           ),
         };
@@ -257,14 +255,17 @@ export function decodePublicFragmentPage(raw: unknown): PublicFragmentPage {
 
 export function decodePublicNavigationPage(raw: unknown): PublicNavigationPage {
   const data = envelope(raw);
-  exact(data, ["kind", "items", "page_info"], "navigation");
+  expectExactRecord(data, ["kind", "items", "page_info"], "navigation");
   if (data.kind !== "EpubNavigation" || !Array.isArray(data.items)) {
     defect("navigation");
   }
   return {
     items: data.items.map((rawItem, index) => {
-      const item = record(rawItem, `navigation.items[${index}]`);
-      exact(item, ["ordinal", "label", "depth", "section_handle"], "navigation item");
+      const item = expectExactRecord(
+        rawItem,
+        ["ordinal", "label", "depth", "section_handle"],
+        `navigation.items[${index}]`
+      );
       const sectionHandle = boundedString(
         item.section_handle,
         54,
@@ -285,7 +286,7 @@ export function decodePublicNavigationPage(raw: unknown): PublicNavigationPage {
 
 export function decodePublicSection(raw: unknown): PublicSection {
   const data = envelope(raw);
-  exact(
+  expectExactRecord(
     data,
     ["kind", "ordinal", "section_handle", "html_sanitized", "canonical_text"],
     "section"
@@ -304,26 +305,25 @@ export function decodePublicSection(raw: unknown): PublicSection {
 function decodeSubject(
   raw: unknown
 ): PublicShareBootstrap["subject"] {
-  const value = record(raw, "subject");
+  const value = expectRecord(raw, "subject");
   if (value.kind === "Media") {
-    exact(value, ["kind"], "subject.Media");
+    expectExactRecord(value, ["kind"], "subject.Media");
     return { kind: "Media" };
   }
   if (value.kind === "Highlight") {
-    exact(value, ["kind", "highlight"], "subject.Highlight");
+    expectExactRecord(value, ["kind", "highlight"], "subject.Highlight");
     return { kind: "Highlight", highlight: decodeHighlight(value.highlight) };
   }
   return defect("subject.kind");
 }
 
 function decodeHighlight(raw: unknown): PublicHighlight {
-  const value = record(raw, "highlight");
-  exact(value, ["quote", "color", "anchor"], "highlight");
+  const value = expectExactRecord(raw, ["quote", "color", "anchor"], "highlight");
   return {
-    quote: presence(value.quote, (quote) =>
+    quote: decodePresence(value.quote, (quote) =>
       boundedBytes(quote, 65_536, "highlight.quote")
     ),
-    color: oneOf(
+    color: expectOneOf(
       value.color,
       ["Yellow", "Green", "Blue", "Pink", "Purple"] as const,
       "highlight.color"
@@ -333,10 +333,10 @@ function decodeHighlight(raw: unknown): PublicHighlight {
 }
 
 function decodeAnchor(raw: unknown): PublicHighlightAnchor {
-  const value = record(raw, "highlight.anchor");
+  const value = expectRecord(raw, "highlight.anchor");
   switch (value.kind) {
     case "ArticleText":
-      exact(
+      expectExactRecord(
         value,
         ["kind", "fragment_ordinal", "start_offset", "end_offset"],
         "ArticleText"
@@ -345,7 +345,7 @@ function decodeAnchor(raw: unknown): PublicHighlightAnchor {
         fragmentOrdinal: int32(value.fragment_ordinal, "fragment_ordinal"),
       });
     case "EpubText": {
-      exact(
+      expectExactRecord(
         value,
         ["kind", "section_handle", "start_offset", "end_offset"],
         "EpubText"
@@ -355,7 +355,7 @@ function decodeAnchor(raw: unknown): PublicHighlightAnchor {
       return offsetAnchor("EpubText", value, { sectionHandle });
     }
     case "TranscriptText":
-      exact(
+      expectExactRecord(
         value,
         [
           "kind",
@@ -368,10 +368,10 @@ function decodeAnchor(raw: unknown): PublicHighlightAnchor {
       );
       return offsetAnchor("TranscriptText", value, {
         segmentOrdinal: int32(value.segment_ordinal, "segment_ordinal"),
-        timeRange: presence(value.time_range, decodeTimeRange),
+        timeRange: decodePresence(value.time_range, decodeTimeRange),
       });
     case "PdfGeometry":
-      exact(value, ["kind", "page_number", "quads"], "PdfGeometry");
+      expectExactRecord(value, ["kind", "page_number", "quads"], "PdfGeometry");
       if (
         !Array.isArray(value.quads) ||
         value.quads.length < 1 ||
@@ -404,40 +404,39 @@ function offsetAnchor<T extends "ArticleText" | "EpubText" | "TranscriptText", E
 }
 
 function decodeQuad(raw: unknown): PublicPdfQuad {
-  const value = record(raw, "PDF quad");
   const keys = ["x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4"] as const;
-  exact(value, [...keys], "PDF quad");
+  const value = expectExactRecord(raw, keys, "PDF quad");
   return Object.fromEntries(
     keys.map((key) => [key, finite(value[key], `quad.${key}`)])
   ) as unknown as PublicPdfQuad;
 }
 
 function decodeReader(raw: unknown): PublicShareBootstrap["reader"] {
-  const value = record(raw, "reader");
+  const value = expectRecord(raw, "reader");
   switch (value.kind) {
     case "Article":
-      exact(value, ["kind"], "reader.Article");
+      expectExactRecord(value, ["kind"], "reader.Article");
       return { kind: "Article" };
     case "Epub":
-      exact(value, ["kind"], "reader.Epub");
+      expectExactRecord(value, ["kind"], "reader.Epub");
       return { kind: "Epub" };
     case "Pdf":
-      exact(value, ["kind", "byte_length", "filename"], "reader.Pdf");
+      expectExactRecord(value, ["kind", "byte_length", "filename"], "reader.Pdf");
       return {
         kind: "Pdf",
         byteLength: safeUint(value.byte_length, "reader.byte_length", true),
         filename: boundedString(value.filename, 1, 255, "reader.filename"),
       };
     case "Transcript":
-      exact(value, ["kind", "source_kind", "duration_ms"], "reader.Transcript");
+      expectExactRecord(value, ["kind", "source_kind", "duration_ms"], "reader.Transcript");
       return {
         kind: "Transcript",
-        sourceKind: oneOf(
+        sourceKind: expectOneOf(
           value.source_kind,
           ["Video", "PodcastEpisode"] as const,
           "reader.source_kind"
         ),
-        durationMs: presence(value.duration_ms, (duration) =>
+        durationMs: decodePresence(value.duration_ms, (duration) =>
           safeUint(duration, "reader.duration_ms")
         ),
       };
@@ -447,8 +446,7 @@ function decodeReader(raw: unknown): PublicShareBootstrap["reader"] {
 }
 
 function decodeTimeRange(raw: unknown): { startMs: number; endMs: number } {
-  const value = record(raw, "time range");
-  exact(value, ["start_ms", "end_ms"], "time range");
+  const value = expectExactRecord(raw, ["start_ms", "end_ms"], "time range");
   const startMs = safeUint(value.start_ms, "time.start_ms");
   const endMs = safeUint(value.end_ms, "time.end_ms");
   if (startMs >= endMs) defect("time range order");
@@ -456,9 +454,8 @@ function decodeTimeRange(raw: unknown): { startMs: number; endMs: number } {
 }
 
 function pageInfo(raw: unknown): Presence<string> {
-  const value = record(raw, "page_info");
-  exact(value, ["next_cursor"], "page_info");
-  return presence(value.next_cursor, (cursor) => {
+  const value = expectExactRecord(raw, ["next_cursor"], "page_info");
+  return decodePresence(value.next_cursor, (cursor) => {
     const decoded = boundedString(cursor, 54, 54, "next_cursor");
     if (!CURSOR_RE.test(decoded)) defect("next_cursor");
     return decoded;
@@ -466,45 +463,8 @@ function pageInfo(raw: unknown): Presence<string> {
 }
 
 function envelope(raw: unknown): Record<string, unknown> {
-  const value = record(raw, "response");
-  exact(value, ["data"], "response");
-  return record(value.data, "response.data");
-}
-
-function presence<T>(
-  raw: unknown,
-  decodeValue: (value: unknown) => T
-): Presence<T> {
-  const value = record(raw, "Presence");
-  if (value.kind === "Absent") {
-    exact(value, ["kind"], "Presence.Absent");
-    return { kind: "Absent" };
-  }
-  if (value.kind === "Present") {
-    exact(value, ["kind", "value"], "Presence.Present");
-    return { kind: "Present", value: decodeValue(value.value) };
-  }
-  return defect("Presence.kind");
-}
-
-function record(raw: unknown, path: string): Record<string, unknown> {
-  if (!isRecord(raw)) defect(path);
-  return raw;
-}
-
-function exact(
-  value: Record<string, unknown>,
-  keys: string[],
-  path: string
-): void {
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  if (
-    actual.length !== expected.length ||
-    actual.some((key, index) => key !== expected[index])
-  ) {
-    defect(`${path} fields`);
-  }
+  const value = expectExactRecord(raw, ["data"], "response");
+  return expectRecord(value.data, "response.data");
 }
 
 function boundedString(
@@ -554,15 +514,6 @@ function finite(raw: unknown, path: string): number {
   return raw;
 }
 
-function oneOf<const T extends readonly string[]>(
-  raw: unknown,
-  values: T,
-  path: string
-): T[number] {
-  if (typeof raw !== "string" || !values.includes(raw)) defect(path);
-  return raw as T[number];
-}
-
 function defect(path: string): never {
-  throw new PublicShareContractDefect(`Invalid public sharing contract at ${path}`);
+  throw new TypeError(`Invalid public sharing contract at ${path}`);
 }

@@ -1,7 +1,3 @@
-import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
-import { resolvePaneRoute } from "@/lib/panes/paneRouteTable";
-import { isCanonicalUuid } from "@/lib/validation";
-
 const ENTITY_PART = "[A-Za-z0-9_-]{22}";
 const RESOURCE_GRANT_HANDLE_RE = new RegExp(`^nrg1\\.${ENTITY_PART}\\.${ENTITY_PART}$`);
 const USER_HANDLE_RE = new RegExp(`^nus1\\.${ENTITY_PART}\\.${ENTITY_PART}$`);
@@ -9,14 +5,6 @@ const LIBRARY_INVITATION_HANDLE_RE = new RegExp(
   `^nli1\\.${ENTITY_PART}\\.${ENTITY_PART}$`,
 );
 const SHARE_TOKEN_RE = /^nxshr1_[A-Za-z0-9_-]{43}$/;
-
-function isCanonicalMediaPath(pathname: string): boolean {
-  const prefix = "/media/";
-  return (
-    pathname.startsWith(prefix) &&
-    isCanonicalUuid(pathname.slice(prefix.length))
-  );
-}
 
 function configuredOrigin(): string {
   const raw = process.env.NEXT_PUBLIC_APP_PUBLIC_ORIGIN ?? "";
@@ -80,59 +68,9 @@ function canonicalAppUrl(raw: unknown, name: string): URL {
 
 export function expectAuthenticatedShareHref(
   raw: unknown,
-  subject: string,
   name: string,
 ): string {
-  const ref = parseResourceRef(subject);
-  if (!ref) throw new TypeError(`${name} subject is invalid`);
-  const url = canonicalAppUrl(raw, name);
-  if (url.search) {
-    throw new TypeError(`${name} must not contain a query`);
-  }
-
-  const prefixes: Partial<Record<typeof ref.scheme, string>> = {
-    media: "/media",
-    library: "/libraries",
-    page: "/pages",
-    note_block: "/notes",
-    conversation: "/conversations",
-    oracle_reading: "/oracle",
-    podcast: "/podcasts",
-  };
-  if (ref.scheme === "highlight") {
-    if (
-      !isCanonicalMediaPath(url.pathname) ||
-      url.hash !== `#highlight-${ref.id}`
-    ) {
-      throw new TypeError(`${name} does not match its highlight subject`);
-    }
-    return url.href;
-  }
-  if (ref.scheme === "artifact") {
-    if (
-      url.search ||
-      url.hash ||
-      resolvePaneRoute(url.pathname).id === "unsupported"
-    ) {
-      throw new TypeError(`${name} is not a canonical artifact target`);
-    }
-    return url.href;
-  }
-  if (ref.scheme === "contributor") {
-    if (
-      url.search ||
-      url.hash ||
-      resolvePaneRoute(url.pathname).id !== "author"
-    ) {
-      throw new TypeError(`${name} is not a canonical contributor target`);
-    }
-    return url.href;
-  }
-  const prefix = prefixes[ref.scheme];
-  if (!prefix || url.pathname !== `${prefix}/${ref.id}` || url.hash) {
-    throw new TypeError(`${name} does not match its resource subject`);
-  }
-  return url.href;
+  return canonicalAppUrl(raw, name).href;
 }
 
 export function expectPublicShareHref(raw: unknown, name: string): string {

@@ -41,11 +41,3 @@ export function parseContributorHandle(value: string): ContributorHandle {
 export function tryParseContributorHandle(value: string): ContributorHandle | null {
   return isCanonicalContributorHandle(value) ? (value as ContributorHandle) : null;
 }
-
-/** Requires the value to already be canonical; defects (throws) otherwise. */
-export function assumeContributorHandle(value: string): ContributorHandle {
-  if (!isCanonicalContributorHandle(value)) {
-    throw new Error(`non-canonical contributor handle: ${JSON.stringify(value)}`);
-  }
-  return value as ContributorHandle;
-}
