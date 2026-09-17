@@ -2,15 +2,10 @@
 
 export type PendingNoteFocusTarget = "title" | "body";
 
-interface PendingNoteFocus {
-  pageId: string;
-  target: PendingNoteFocusTarget;
-}
-
 const pendingByPageId = new Map<string, PendingNoteFocusTarget>();
 
-export function setPendingNoteFocus(target: PendingNoteFocus): void {
-  pendingByPageId.set(target.pageId, target.target);
+export function setPendingNoteFocus(pageId: string, target: PendingNoteFocusTarget): void {
+  pendingByPageId.set(pageId, target);
 }
 
 export function consumePendingNoteFocus(pageId: string): PendingNoteFocusTarget | null {

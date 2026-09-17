@@ -7,10 +7,8 @@ import {
   decodeHighlightEnvelope,
   decodeHighlightListEnvelope,
   decodeHighlightNoteEnvelope,
-  decodeMediaHighlightListEnvelope,
   type Highlight,
   type HighlightLinkedNoteBlock,
-  type MediaHighlight,
 } from "@/lib/highlights/highlightContract";
 
 export async function fetchHighlights(
@@ -25,20 +23,6 @@ export async function fetchHighlights(
     response,
     decodeHighlightListEnvelope,
     "Highlight list",
-  );
-}
-
-export async function fetchMediaHighlights(
-  mediaId: string,
-): Promise<MediaHighlight[]> {
-  const response = await apiFetch<unknown>(
-    `/api/media/${mediaId}/highlights?mine_only=false`,
-    { cache: "no-store" },
-  );
-  return decodeApiPayload(
-    response,
-    decodeMediaHighlightListEnvelope,
-    "Media highlight list",
   );
 }
 

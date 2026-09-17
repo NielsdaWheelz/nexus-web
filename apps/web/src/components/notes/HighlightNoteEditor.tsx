@@ -296,7 +296,6 @@ export default function HighlightNoteEditor({
     scheduleSave: scheduleSessionSave,
     flush: flushSession,
     recoverDraft: recoverSessionDraft,
-    retry: retrySession,
     discardDraft: discardSessionDraft,
   } = session;
 
@@ -440,7 +439,7 @@ export default function HighlightNoteEditor({
                     label: "Retry",
                     onClick: () => {
                       setSaveFailure(null);
-                      retrySession();
+                      flushSession();
                     },
                   },
                   {
@@ -466,7 +465,7 @@ export default function HighlightNoteEditor({
         <NoteDraftRecovery
           status={saveStatus}
           hasRecoveredDraft={hasRecoveredDraft}
-          onRetry={retrySession}
+          onRetry={() => flushSession()}
           onDiscard={discardRecoveredDraft}
         />
       )}

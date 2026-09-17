@@ -206,11 +206,7 @@ function assertRenderedState(
     rendered.fragment.char_count !== fragment.charCount ||
     canonicalCpLength(rendered.fragment.canonical_text) !==
       fragment.charCount ||
-    !validateCanonicalText(
-      rendered.cursor,
-      rendered.fragment.canonical_text,
-      rendered.fragment.fragment_id,
-    )
+    !validateCanonicalText(rendered.cursor, rendered.fragment.canonical_text)
   ) {
     throw new Error("EPUB Find canonical rendered-fragment mismatch.");
   }

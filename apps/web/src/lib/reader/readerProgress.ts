@@ -35,8 +35,6 @@ export interface ReaderCursorPositioned {
 
 export type ReaderCursorSnapshot = ReaderCursorEmpty | ReaderCursorPositioned;
 
-export const EMPTY_READER_CURSOR: ReaderCursorEmpty = { state: "Empty", revision: 0 };
-
 /**
  * Strictly decode a reader cursor snapshot. A malformed same-system response
  * is a contract error, never Empty.

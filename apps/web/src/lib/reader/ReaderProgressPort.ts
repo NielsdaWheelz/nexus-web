@@ -4,7 +4,6 @@ import {
   readerStateConflictCurrent,
   type ReaderCursorSnapshot,
 } from "./readerProgress";
-import type { MediaId } from "./ReaderDocumentSource";
 import type { ReaderResumeState } from "./types";
 
 export type ReaderProgressView =
@@ -42,14 +41,14 @@ export type ReaderProgressSaveResult =
   | { readonly kind: "SourceUnavailable"; readonly view: ReaderProgressView };
 
 export interface ReaderProgressPort {
-  load(mediaId: MediaId, signal?: AbortSignal): Promise<ReaderProgressView>;
+  load(mediaId: string, signal?: AbortSignal): Promise<ReaderProgressView>;
   save(
-    mediaId: MediaId,
+    mediaId: string,
     locator: ReaderResumeState,
     options?: { readonly keepalive?: boolean; readonly baseRevision?: number },
   ): Promise<ReaderProgressSaveResult>;
   resolve(
-    mediaId: MediaId,
+    mediaId: string,
     choice: "Canonical" | "Device",
   ): Promise<ReaderProgressView>;
 }

@@ -57,13 +57,8 @@ export default function SettingsReaderPaneBody() {
     return suppress(READER_PROFILE_SAVE_FEEDBACK_KEY);
   }, [isActive, suppress]);
 
-  // Controls stay interactive while Pending or SaveFailed; only the terminal
-  // Forbidden state disables persistence controls.
-  const disabled = persistence.state === "Forbidden";
   const failure =
-    persistence.state === "SaveFailed" || persistence.state === "Forbidden"
-      ? persistence.failure
-      : null;
+    persistence.state === "SaveFailed" ? persistence.failure : null;
 
   return (
     <PaneSurface>
@@ -75,11 +70,7 @@ export default function SettingsReaderPaneBody() {
               ...toReaderProfileSaveErrorMessage(failure),
             }}
             announcement="Assertive"
-            actions={
-              persistence.state === "SaveFailed"
-                ? [{ label: "Retry", onClick: retrySave }]
-                : undefined
-            }
+            actions={[{ label: "Retry", onClick: retrySave }]}
           />
         )}
 
@@ -95,7 +86,6 @@ export default function SettingsReaderPaneBody() {
               onChange={(e) => {
                 if (isReaderTheme(e.target.value)) setTheme(e.target.value);
               }}
-              disabled={disabled}
             >
               <option value="light">Light</option>
               <option value="dark">Dark</option>
@@ -114,7 +104,6 @@ export default function SettingsReaderPaneBody() {
                   setFontFamily(e.target.value);
                 }
               }}
-              disabled={disabled}
             >
               <option value="serif">Serif</option>
               <option value="sans">Sans-serif</option>
@@ -134,7 +123,6 @@ export default function SettingsReaderPaneBody() {
               max={28}
               value={p.font_size_px}
               onChange={(e) => setFontSize(Number.parseInt(e.target.value, 10))}
-              disabled={disabled}
               className={styles.range}
             />
           </div>
@@ -153,7 +141,6 @@ export default function SettingsReaderPaneBody() {
               step={0.1}
               value={p.line_height}
               onChange={(e) => setLineHeight(Number.parseFloat(e.target.value))}
-              disabled={disabled}
               className={styles.range}
             />
           </div>
@@ -171,7 +158,6 @@ export default function SettingsReaderPaneBody() {
               max={120}
               value={p.column_width_ch}
               onChange={(e) => setColumnWidth(Number.parseInt(e.target.value, 10))}
-              disabled={disabled}
               className={styles.range}
             />
           </div>
@@ -192,7 +178,6 @@ export default function SettingsReaderPaneBody() {
                   <TabsTrigger
                     key={option.value}
                     value={option.value}
-                    disabled={disabled}
                   >
                     {option.label}
                   </TabsTrigger>
@@ -207,7 +192,6 @@ export default function SettingsReaderPaneBody() {
             <Toggle
               checked={p.hyphenation === "auto"}
               onCheckedChange={(checked) => setHyphenation(checked ? "auto" : "off")}
-              disabled={disabled}
               label="Hyphenation on narrow screens"
             />
           </div>

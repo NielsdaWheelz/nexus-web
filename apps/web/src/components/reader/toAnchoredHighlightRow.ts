@@ -3,7 +3,7 @@ import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 import type { AnchoredReaderRow } from "./useAnchoredReaderProjection";
 
 /**
- * Fields shared by every `Highlight` and `PdfHighlight` that flow into an
+ * Fields shared by every text and PDF highlight that flows into an
  * `AnchoredReaderRow`. Both row constructors copy these through unchanged.
  */
 type HighlightMetadata = Pick<

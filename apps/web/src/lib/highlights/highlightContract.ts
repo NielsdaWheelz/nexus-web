@@ -13,7 +13,6 @@ import {
   HIGHLIGHT_COLORS,
   type HighlightColor,
 } from "@/lib/highlights/segmenter";
-import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 
 export interface HighlightLinkedNoteBlock {
   note_block_id: string;
@@ -53,19 +52,6 @@ export interface Highlight {
   linked_conversations: HighlightLinkedConversation[];
   linked_note_blocks: HighlightLinkedNoteBlock[];
 }
-
-/** A highlight anchored to a PDF page's geometry, as returned by the API. */
-export interface PdfHighlight extends Omit<Highlight, "anchor"> {
-  anchor: {
-    type: "pdf_page_geometry";
-    media_id: string;
-    page_number: number;
-    quads: PdfHighlightQuad[];
-  };
-}
-
-/** A highlight from the media-wide endpoint: fragment-offset or PDF-page anchor. */
-export type MediaHighlight = Highlight | PdfHighlight;
 
 function expectInteger(raw: unknown, name: string): number {
   const value = expectFiniteNumber(raw, name);
@@ -159,94 +145,37 @@ const HIGHLIGHT_KEYS = [
   "linked_note_blocks",
 ] as const;
 
-export function decodeMediaHighlight(
-  raw: unknown,
-  name = "Highlight",
-): MediaHighlight {
+export function decodeHighlight(raw: unknown, name = "Highlight"): Highlight {
   const value = expectExactRecord(raw, HIGHLIGHT_KEYS, name);
   const anchor = expectRecord(value.anchor, `${name}.anchor`);
   const common = decodeCommonHighlightFields(value, name);
-  if (anchor.type === "fragment_offsets") {
-    const decodedAnchor = expectExactRecord(
-      anchor,
-      ["type", "media_id", "fragment_id", "start_offset", "end_offset"],
-      `${name}.anchor`,
-    );
-    return {
-      ...common,
-      anchor: {
-        type: "fragment_offsets",
-        media_id: expectString(
-          decodedAnchor.media_id,
-          `${name}.anchor.media_id`,
-        ),
-        fragment_id: expectNullableString(
-          decodedAnchor.fragment_id,
-          `${name}.anchor.fragment_id`,
-        ),
-        start_offset: expectNullableInteger(
-          decodedAnchor.start_offset,
-          `${name}.anchor.start_offset`,
-        ),
-        end_offset: expectNullableInteger(
-          decodedAnchor.end_offset,
-          `${name}.anchor.end_offset`,
-        ),
-      },
-    };
+  if (anchor.type !== "fragment_offsets") {
+    throw new TypeError(`${name}.anchor.type is unsupported`);
   }
-  if (anchor.type === "pdf_page_geometry") {
-    const decodedAnchor = expectExactRecord(
-      anchor,
-      ["type", "media_id", "page_number", "quads"],
-      `${name}.anchor`,
-    );
-    return {
-      ...common,
-      anchor: {
-        type: "pdf_page_geometry",
-        media_id: expectString(
-          decodedAnchor.media_id,
-          `${name}.anchor.media_id`,
-        ),
-        page_number: expectInteger(
-          decodedAnchor.page_number,
-          `${name}.anchor.page_number`,
-        ),
-        quads: expectArray(
-          decodedAnchor.quads,
-          (item, index) => {
-            const quadName = `${name}.anchor.quads[${index}]`;
-            const quad = expectExactRecord(
-              item,
-              ["x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4"],
-              quadName,
-            );
-            return {
-              x1: expectFiniteNumber(quad.x1, `${quadName}.x1`),
-              y1: expectFiniteNumber(quad.y1, `${quadName}.y1`),
-              x2: expectFiniteNumber(quad.x2, `${quadName}.x2`),
-              y2: expectFiniteNumber(quad.y2, `${quadName}.y2`),
-              x3: expectFiniteNumber(quad.x3, `${quadName}.x3`),
-              y3: expectFiniteNumber(quad.y3, `${quadName}.y3`),
-              x4: expectFiniteNumber(quad.x4, `${quadName}.x4`),
-              y4: expectFiniteNumber(quad.y4, `${quadName}.y4`),
-            };
-          },
-          `${name}.anchor.quads`,
-        ),
-      },
-    };
-  }
-  throw new TypeError(`${name}.anchor.type is unsupported`);
-}
-
-export function decodeHighlight(raw: unknown, name = "Highlight"): Highlight {
-  const highlight = decodeMediaHighlight(raw, name);
-  if (highlight.anchor.type !== "fragment_offsets") {
-    throw new TypeError(`${name}.anchor.type must be fragment_offsets`);
-  }
-  return highlight as Highlight;
+  const decodedAnchor = expectExactRecord(
+    anchor,
+    ["type", "media_id", "fragment_id", "start_offset", "end_offset"],
+    `${name}.anchor`,
+  );
+  return {
+    ...common,
+    anchor: {
+      type: "fragment_offsets",
+      media_id: expectString(decodedAnchor.media_id, `${name}.anchor.media_id`),
+      fragment_id: expectNullableString(
+        decodedAnchor.fragment_id,
+        `${name}.anchor.fragment_id`,
+      ),
+      start_offset: expectNullableInteger(
+        decodedAnchor.start_offset,
+        `${name}.anchor.start_offset`,
+      ),
+      end_offset: expectNullableInteger(
+        decodedAnchor.end_offset,
+        `${name}.anchor.end_offset`,
+      ),
+    },
+  };
 }
 
 export function decodeHighlightListEnvelope(raw: unknown): Highlight[] {
@@ -260,20 +189,6 @@ export function decodeHighlightListEnvelope(raw: unknown): Highlight[] {
     data.highlights,
     (item, index) => decodeHighlight(item, `Highlight[${index}]`),
     "HighlightListResponse.data.highlights",
-  );
-}
-
-export function decodeMediaHighlightListEnvelope(raw: unknown): MediaHighlight[] {
-  const envelope = expectExactRecord(raw, ["data"], "MediaHighlightListResponse");
-  const data = expectExactRecord(
-    envelope.data,
-    ["highlights"],
-    "MediaHighlightListResponse.data",
-  );
-  return expectArray(
-    data.highlights,
-    (item, index) => decodeMediaHighlight(item, `MediaHighlight[${index}]`),
-    "MediaHighlightListResponse.data.highlights",
   );
 }
 

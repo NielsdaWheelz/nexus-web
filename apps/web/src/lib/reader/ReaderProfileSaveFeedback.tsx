@@ -14,8 +14,8 @@ export const READER_PROFILE_SAVE_FEEDBACK_KEY = "reader-profile-save";
 
 /**
  * The global presentation owner for reader-profile persistence: SaveFailed
- * keeps one persistent notice with Retry, Forbidden one without, and leaving
- * failure (new intent or success) permanently clears it. Renders nothing.
+ * keeps one persistent notice with Retry, and leaving failure (new intent or
+ * success) permanently clears it. Renders nothing.
  */
 export function ReaderProfileSaveFeedback() {
   const { persistence, retrySave } = useReaderContext();
@@ -27,7 +27,7 @@ export function ReaderProfileSaveFeedback() {
   persistenceRef.current = persistence;
 
   useEffect(() => {
-    if (persistence.state === "SaveFailed" || persistence.state === "Forbidden") {
+    if (persistence.state === "SaveFailed") {
       publish({
         kind: "Persistent",
         key: READER_PROFILE_SAVE_FEEDBACK_KEY,
@@ -36,19 +36,16 @@ export function ReaderProfileSaveFeedback() {
           ...toReaderProfileSaveErrorMessage(persistence.failure),
         },
         announcement: "Assertive",
-        actions:
-          persistence.state === "SaveFailed"
-            ? [
-                {
-                  label: "Retry",
-                  onClick: () => {
-                    if (persistenceRef.current.state === "SaveFailed") {
-                      retrySave();
-                    }
-                  },
-                },
-              ]
-            : undefined,
+        actions: [
+          {
+            label: "Retry",
+            onClick: () => {
+              if (persistenceRef.current.state === "SaveFailed") {
+                retrySave();
+              }
+            },
+          },
+        ],
       });
       return;
     }

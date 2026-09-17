@@ -354,23 +354,6 @@ export function findEvidenceItem(
   return item ? { scope: "document", item } : null;
 }
 
-export function readerSurfaceForMarkerKind(
-  kind: ReaderDocumentMapMarkerKind,
-): "resource-contents" | "resource-evidence" | null {
-  switch (kind) {
-    case "Contents":
-      return "resource-contents";
-    case "Embed":
-      return null;
-    case "Highlight":
-    case "SourceReference":
-    case "GeneratedCitation":
-    case "Link":
-    case "Synapse":
-      return "resource-evidence";
-  }
-}
-
 export async function getReaderDocumentMap(
   mediaId: string,
   options: { signal?: AbortSignal } = {},
@@ -379,9 +362,5 @@ export async function getReaderDocumentMap(
     `/api/media/${mediaId}/document-map` as ApiPath,
     { signal: options.signal },
   );
-  return decodeReaderDocumentMap(response.data);
-}
-
-export function decodeReaderDocumentMap(raw: unknown): ReaderDocumentMap {
-  return decodeReaderDocumentMapContract(raw);
+  return decodeReaderDocumentMapContract(response.data);
 }

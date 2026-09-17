@@ -1059,7 +1059,7 @@ export function useNexusController(): NexusController {
       void createNotePage({ pageId: input.pageId, title })
         .then((created) => {
           invalidateOpenables();
-          setPendingNoteFocus({ pageId: created.id, target: "title" });
+          setPendingNoteFocus(created.id, "title");
           dispatchWorkspaceTarget({
             target: { href: `/pages/${created.id}`, labelHint: created.title },
             source: "Page",

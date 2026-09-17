@@ -102,15 +102,14 @@ import {
   applyFocusClass,
   reconcileFocusAfterRefetch,
 } from "@/lib/highlights/useHighlightInteraction";
-import { useHighlightNoteChord } from "@/lib/highlights/useHighlightNoteChord";
 import MarginRail from "@/components/reader/MarginRail";
 import LinkTargetDialog from "@/components/resources/LinkTargetDialog";
 import Dialog from "@/components/ui/Dialog";
 import { buildMarginItems } from "@/lib/reader/marginItems";
 import { useEvidenceFilters } from "@/lib/reader/useEvidenceFilters";
 import { useLinkComposer } from "@/lib/reader/useLinkComposer";
+import { useReaderKeyChord } from "@/lib/reader/useReaderKeyChord";
 import {
-  useReaderKeyChord,
   useStanceComposer,
   type StanceEdgeRef,
 } from "@/lib/reader/useStanceComposer";
@@ -575,7 +574,6 @@ export default function MediaPaneBody() {
   const isMobileViewport = useIsMobileViewport();
   const {
     profile: readerProfile,
-    persistence: readerPersistence,
     setTheme,
     setFocusMode,
   } = useReaderContext();
@@ -3104,7 +3102,6 @@ export default function MediaPaneBody() {
       const applied = applyHighlightsToHtml(
         canonicalHtml,
         activeContent.canonicalText,
-        activeContent.fragmentId,
         [
           ...highlights.map((highlight) => ({
             id: highlight.id,
@@ -3166,11 +3163,7 @@ export default function MediaPaneBody() {
       return;
     }
     const cursor = buildCanonicalCursor(content);
-    const isValid = validateCanonicalText(
-      cursor,
-      activeContent.canonicalText,
-      activeContent.fragmentId,
-    );
+    const isValid = validateCanonicalText(cursor, activeContent.canonicalText);
     cursorRef.current = cursor;
     setIsMismatchDisabled(!isValid);
     if (
@@ -3884,8 +3877,9 @@ export default function MediaPaneBody() {
     });
   }, [handleCreateHighlight, readRetainedSelection]);
 
-  useHighlightNoteChord({
+  useReaderKeyChord({
     enabled: !isPdf && selection !== null && !focusState.editingBounds,
+    key: "n",
     onTrigger: handleAddNoteToSelection,
   });
 
@@ -4660,11 +4654,6 @@ export default function MediaPaneBody() {
       if (isEditableTarget(event.target)) {
         return;
       }
-      // Forbidden disables persistence controls; the shortcut goes quiet with
-      // them instead of firing intents the reducer would ignore.
-      if (readerPersistence.state === "Forbidden") {
-        return;
-      }
       const isCycle =
         event.shiftKey &&
         (event.metaKey || event.ctrlKey) &&
@@ -4705,7 +4694,6 @@ export default function MediaPaneBody() {
     };
   }, [
     clearTarget,
-    readerPersistence.state,
     readerProfile.focus_mode,
     setFocusMode,
     targetStatus,
@@ -5389,8 +5377,6 @@ export default function MediaPaneBody() {
       },
     });
 
-    // Terminal Forbidden disables the quick-switch alongside Settings (spec §8).
-    const readerPersistenceForbidden = readerPersistence.state === "Forbidden";
     if (resolving || isReflowableReader) {
       view.push({
         kind: "command",
@@ -5399,10 +5385,7 @@ export default function MediaPaneBody() {
           readerProfile.theme === "light"
             ? "Light theme (current)"
             : "Light theme",
-        disabled:
-          resolving ||
-          readerProfile.theme === "light" ||
-          readerPersistenceForbidden,
+        disabled: resolving || readerProfile.theme === "light",
         disabledReason: resolving ? PANE_COMMAND_RESOLVING_REASON : undefined,
         onSelect: () => setTheme("light"),
       });
@@ -5413,10 +5396,7 @@ export default function MediaPaneBody() {
           readerProfile.theme === "dark"
             ? "Dark theme (current)"
             : "Dark theme",
-        disabled:
-          resolving ||
-          readerProfile.theme === "dark" ||
-          readerPersistenceForbidden,
+        disabled: resolving || readerProfile.theme === "dark",
         disabledReason: resolving ? PANE_COMMAND_RESOLVING_REASON : undefined,
         onSelect: () => setTheme("dark"),
       });
@@ -5445,7 +5425,6 @@ export default function MediaPaneBody() {
     openMediaInfoOverlay,
     activateForkTarget,
     readerProfile.theme,
-    readerPersistence.state,
     canRead,
     setTheme,
   ]);

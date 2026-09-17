@@ -1,11 +1,5 @@
 import { isLocalDate } from "@/lib/localDate";
-import {
-  expectCanonicalRfcUuid,
-  expectExactRecord,
-  expectOneOf,
-  expectRecord,
-  expectString,
-} from "@/lib/validation";
+import { decodeNoteBodyValue } from "@/lib/notes/prosemirror/schema";
 
 export type DailyDraftHandoff =
   | { kind: "None" }
@@ -36,102 +30,6 @@ export function dailyDraftKey(accountId: string, localDate: string): string {
   return `nexus.dailyDraft:${accountId}:${localDate}`;
 }
 
-function decodeDailyDraft(raw: unknown): DailyDraft {
-  const draft = expectExactRecord(
-    raw,
-    [
-      "version",
-      "accountId",
-      "localDate",
-      "noteId",
-      "clientMutationId",
-      "bodyPmJson",
-      "bodyText",
-      "handoff",
-    ],
-    "daily draft",
-  );
-  if (draft.version !== 1) {
-    throw new TypeError("daily draft.version must be 1");
-  }
-  const localDate = expectString(draft.localDate, "daily draft.localDate");
-  if (!isLocalDate(localDate)) {
-    throw new TypeError("daily draft.localDate must be a valid YYYY-MM-DD date");
-  }
-  const handoff = expectRecord(draft.handoff, "daily draft.handoff");
-  const handoffKind = expectOneOf(
-    handoff.kind,
-    ["None", "Buffered"] as const,
-    "daily draft.handoff.kind",
-  );
-  let decodedHandoff: DailyDraftHandoff;
-  if (handoffKind === "None") {
-    expectExactRecord(handoff, ["kind"], "daily draft.handoff");
-    decodedHandoff = { kind: "None" };
-  } else {
-    const buffered = expectExactRecord(
-      handoff,
-      [
-        "kind",
-        "handoffId",
-        "text",
-        "selectionStart",
-        "selectionEnd",
-        "composition",
-      ],
-      "daily draft.handoff",
-    );
-    if (
-      typeof buffered.selectionStart !== "number" ||
-      !Number.isInteger(buffered.selectionStart) ||
-      buffered.selectionStart < 0 ||
-      typeof buffered.selectionEnd !== "number" ||
-      !Number.isInteger(buffered.selectionEnd) ||
-      buffered.selectionEnd < buffered.selectionStart
-    ) {
-      throw new TypeError("daily draft handoff selection is invalid");
-    }
-    decodedHandoff = {
-      kind: "Buffered",
-      handoffId: expectString(
-        buffered.handoffId,
-        "daily draft.handoff.handoffId",
-      ),
-      text: expectString(buffered.text, "daily draft.handoff.text"),
-      selectionStart: buffered.selectionStart,
-      selectionEnd: buffered.selectionEnd,
-      composition: expectOneOf(
-        buffered.composition,
-        ["Composing", "Complete"] as const,
-        "daily draft.handoff.composition",
-      ),
-    };
-  }
-  const noteId = expectCanonicalRfcUuid(
-    draft.noteId,
-    "daily draft.noteId",
-  );
-  const clientMutationId = expectString(
-    draft.clientMutationId,
-    "daily draft.clientMutationId",
-  );
-  if (clientMutationId.length === 0 || clientMutationId.length > 120) {
-    throw new TypeError(
-      "daily draft.clientMutationId must contain 1 to 120 characters",
-    );
-  }
-  return {
-    version: 1,
-    accountId: expectString(draft.accountId, "daily draft.accountId"),
-    localDate,
-    noteId,
-    clientMutationId,
-    bodyPmJson: expectRecord(draft.bodyPmJson, "daily draft.bodyPmJson"),
-    bodyText: expectString(draft.bodyText, "daily draft.bodyText"),
-    handoff: decodedHandoff,
-  };
-}
-
 function storage(): Storage | null {
   return typeof window === "undefined" ? null : window.localStorage;
 }
@@ -146,10 +44,17 @@ export function readDailyDraft(
     return null;
   }
   try {
-    const draft = decodeDailyDraft(JSON.parse(value));
-    if (draft.accountId !== accountId || draft.localDate !== localDate) {
+    const draft = JSON.parse(value) as DailyDraft;
+    if (
+      draft.version !== 1 ||
+      draft.accountId !== accountId ||
+      draft.localDate !== localDate
+    ) {
       throw new TypeError("daily draft identity does not match its storage key");
     }
+    // The body mounts in a ProseMirror editor, which cannot render invalid
+    // document JSON.
+    decodeNoteBodyValue(draft.bodyPmJson, draft.bodyText, "daily draft");
     return draft;
   } catch {
     storage()?.removeItem(key);
@@ -158,15 +63,23 @@ export function readDailyDraft(
 }
 
 export function writeDailyDraft(draft: DailyDraft): void {
-  storage()?.setItem(
-    dailyDraftKey(draft.accountId, draft.localDate),
-    JSON.stringify(decodeDailyDraft(draft)),
-  );
+  try {
+    storage()?.setItem(
+      dailyDraftKey(draft.accountId, draft.localDate),
+      JSON.stringify(draft),
+    );
+  } catch {
+    // Local recovery may be unavailable; the owning network save continues.
+  }
   publishDailyDraftChange(draft.accountId, draft.localDate);
 }
 
 export function clearDailyDraft(accountId: string, localDate: string): void {
-  storage()?.removeItem(dailyDraftKey(accountId, localDate));
+  try {
+    storage()?.removeItem(dailyDraftKey(accountId, localDate));
+  } catch {
+    // Local recovery may be unavailable; there is no durable row to clear.
+  }
   publishDailyDraftChange(accountId, localDate);
 }
 

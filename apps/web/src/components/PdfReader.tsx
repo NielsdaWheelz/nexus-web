@@ -45,7 +45,7 @@ import {
   type PdfFindRuntime,
 } from "@/components/pdfPaneFind";
 import SelectionPopover, { DEFAULT_COLOR } from "./SelectionPopover";
-import { useHighlightNoteChord } from "@/lib/highlights/useHighlightNoteChord";
+import { useReaderKeyChord } from "@/lib/reader/useReaderKeyChord";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import {
   rectToCanonicalQuad,
@@ -2545,8 +2545,9 @@ export default function PdfReader({
     onLink?.({ pageNumber: activeSelection.pageNumber, quads, exact });
   }, [buildSelectionQuads, clearSelection, onLink, readRetainedSelection]);
 
-  useHighlightNoteChord({
+  useReaderKeyChord({
     enabled: Boolean(onAddNote && selection && textGeometryReliable),
+    key: "n",
     onTrigger: handleAddNote,
   });
 

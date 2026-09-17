@@ -6,7 +6,7 @@
  * facts:
  *
  *   acknowledged: ReaderProfile (confirmed server truth)
- *   local:        Clean | Deferred(work) | Saving(attempt) | SaveFailed | Forbidden
+ *   local:        Clean | Deferred(work) | Saving(attempt) | SaveFailed
  *
  * The desired (optimistic) profile is a projection of both, so an older
  * response can never revert queued intent. The impure coordinator
@@ -28,10 +28,10 @@ import {
   type ReaderProfile,
 } from "./types";
 
-export const READER_PROFILE_IDLE_MS = 400;
-export const READER_PROFILE_MAX_WAIT_MS = 5_000;
+const READER_PROFILE_IDLE_MS = 400;
+const READER_PROFILE_MAX_WAIT_MS = 5_000;
 /** The BFF's 30 s upstream deadline plus margin; see spec §7. */
-export const READER_PROFILE_ATTEMPT_TIMEOUT_MS = 35_000;
+const READER_PROFILE_ATTEMPT_TIMEOUT_MS = 35_000;
 
 export type ReaderProfilePatch = Partial<ReaderProfile>;
 export type ReaderProfileField = keyof ReaderProfile;
@@ -102,33 +102,20 @@ export function parseReaderProfile(value: unknown): ReaderProfile {
   };
 }
 
-export type ReaderProfileRetryableFailure =
+export type ReaderProfileSaveFailure =
   | { kind: "TransientApi"; error: ApiError } // network, rate limit, or BFF deadline
   | { kind: "Transport"; error: TypeError | DOMException }
   | { kind: "AttemptDeadlineExceeded" };
 
-export type ReaderProfileForbiddenFailure = { kind: "Forbidden"; error: ApiError };
-
-export type ReaderProfileSaveFailure =
-  | ReaderProfileRetryableFailure
-  | ReaderProfileForbiddenFailure;
-
 /**
  * Classify a PATCH settlement error. 401 must be routed to the auth boundary
- * before this is called. Anything unclassifiable (other 4xx, unknown 403
- * codes, unknown throws) is a defect and is rethrown; the attempt watchdog is
- * the liveness escape for a defective settlement.
+ * before this is called. Anything unclassifiable (4xx including every 403,
+ * unknown throws) is a defect and is rethrown; the attempt watchdog is the
+ * liveness escape for a defective settlement.
  */
 export function classifyReaderProfileSaveError(error: unknown): ReaderProfileSaveFailure {
   if (isApiError(error)) {
     if (isSameSystemApiDefect(error)) throw error;
-    if (error.status === 403) {
-      if (error.code === "E_FORBIDDEN") {
-        return { kind: "Forbidden", error };
-      }
-      // E_INTERNAL_ONLY and unknown 403 codes are contract defects.
-      throw error;
-    }
     if (
       error.code === "E_NETWORK" ||
       error.code === "E_UPSTREAM_TIMEOUT" ||
@@ -145,7 +132,7 @@ export function classifyReaderProfileSaveError(error: unknown): ReaderProfileSav
 }
 
 /** Structurally matches the Feedback owner's content shape without importing it. */
-export interface ReaderProfileSaveErrorMessage {
+interface ReaderProfileSaveErrorMessage {
   title: string;
   message: string;
   requestId?: string;
@@ -172,12 +159,6 @@ export function toReaderProfileSaveErrorMessage(
         title: "Reader settings didn’t save",
         message: "The save timed out. Retry to save your reader settings.",
       };
-    case "Forbidden":
-      return {
-        title: "Reader settings can’t be changed",
-        message: "Your account isn’t allowed to update reader settings.",
-        requestId: failure.error.requestId,
-      };
   }
 }
 
@@ -201,8 +182,7 @@ export type ReaderProfileLocal =
       startedAt: number;
       expiresAt: number;
     }
-  | { status: "save_failed"; patch: ReaderProfilePatch; failure: ReaderProfileRetryableFailure }
-  | { status: "forbidden"; failure: ReaderProfileForbiddenFailure };
+  | { status: "save_failed"; patch: ReaderProfilePatch; failure: ReaderProfileSaveFailure };
 
 export interface ReaderProfileSyncState {
   acknowledged: ReaderProfile;
@@ -217,7 +197,6 @@ export function initialReaderProfileSyncState(profile: ReaderProfile): ReaderPro
 export function desiredReaderProfile(state: ReaderProfileSyncState): ReaderProfile {
   switch (state.local.status) {
     case "clean":
-    case "forbidden":
       return state.acknowledged;
     case "deferred":
       return { ...state.acknowledged, ...state.local.work.patch };
@@ -235,8 +214,7 @@ export function desiredReaderProfile(state: ReaderProfileSyncState): ReaderProfi
 export type ReaderProfilePersistence =
   | { state: "Clean" }
   | { state: "Pending" }
-  | { state: "SaveFailed"; failure: ReaderProfileRetryableFailure }
-  | { state: "Forbidden"; failure: ReaderProfileForbiddenFailure };
+  | { state: "SaveFailed"; failure: ReaderProfileSaveFailure };
 
 const PERSISTENCE_CLEAN: ReaderProfilePersistence = { state: "Clean" };
 const PERSISTENCE_PENDING: ReaderProfilePersistence = { state: "Pending" };
@@ -250,8 +228,6 @@ export function readerProfilePersistence(state: ReaderProfileSyncState): ReaderP
       return PERSISTENCE_PENDING;
     case "save_failed":
       return { state: "SaveFailed", failure: state.local.failure };
-    case "forbidden":
-      return { state: "Forbidden", failure: state.local.failure };
   }
 }
 
@@ -264,7 +240,6 @@ export function sendableReaderProfilePatch(local: ReaderProfileLocal): ReaderPro
   switch (local.status) {
     case "clean":
     case "saving":
-    case "forbidden":
       return null;
     case "deferred":
       return local.work.patch;
@@ -340,9 +315,8 @@ export function reduceReaderProfileSync(
   switch (event.type) {
     case "intent": {
       // Intent that would not move a single desired pixel asserts nothing and
-      // schedules nothing. Forbidden controls are disabled; a queued pointer
-      // event racing that render is deliberately ignored, never promoted.
-      if (local.status === "forbidden" || !patchChangesProfile(desiredReaderProfile(state), event.patch)) {
+      // schedules nothing.
+      if (!patchChangesProfile(desiredReaderProfile(state), event.patch)) {
         return state;
       }
       switch (local.status) {
@@ -419,10 +393,6 @@ export function reduceReaderProfileSync(
     case "save_failed": {
       if (local.status !== "saving" || local.attemptId !== event.attemptId) {
         return state;
-      }
-      if (event.failure.kind === "Forbidden") {
-        // Desired projects back to acknowledged: the optimistic pixels revert.
-        return { ...state, local: { status: "forbidden", failure: event.failure } };
       }
       return {
         ...state,

@@ -278,18 +278,8 @@ export function noteBodyNodeFromJson(
   bodyPmJson: Record<string, unknown> | undefined,
   fallbackBodyText = "",
 ): ProseMirrorNode {
-  if (bodyPmJson) {
-    try {
-      const parsed = noteBodySchema.nodeFromJSON(bodyPmJson);
-      if (parsed.type.isInGroup("block_body")) {
-        return parsed;
-      }
-    } catch {
-      // Same-system body JSON should already be valid. The text projection is
-      // retained only as the explicit render-boundary recovery value.
-    }
-  }
-  return paragraphFromText(fallbackBodyText);
+  if (bodyPmJson === undefined) return paragraphFromText(fallbackBodyText);
+  return decodeNoteBodyNode(bodyPmJson, "note body");
 }
 
 function noteBodyValueFromNode(body: ProseMirrorNode): NoteBodyValue {

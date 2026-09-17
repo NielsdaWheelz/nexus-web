@@ -15,7 +15,6 @@ import { useRef } from "react";
 import { useSyncExternalStore } from "react";
 import { isApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { isAbortError } from "@/lib/errors";
 import {
   cancelDossierBuild,
   createDossierBuild,
@@ -66,13 +65,6 @@ export interface DossierControllerStore {
    * observer in `useResourceInspector`; NOT a body mount effect). */
   resetRevisionSelection(): void;
   dispose(): void;
-}
-
-function isTransientTransport(error: unknown): boolean {
-  if (isAbortError(error)) return false;
-  if (isApiError(error)) return error.status === 0 || error.status >= 500;
-  // A raw TypeError from fetch (network down) has no status.
-  return error instanceof TypeError;
 }
 
 function isGenerationInProgress(error: unknown): boolean {
@@ -392,40 +384,29 @@ export function createDossierControllerStore(
   async function runGenerate(instruction: string | null): Promise<void> {
     if (disposed) return;
     set({ pendingAction: "generate", actionError: null });
-    // ONE fresh idempotency key per logical generation; the in-loop transport
-    // retry below reuses THIS key (A15).
-    const key = crypto.randomUUID();
-    let lastError: unknown = null;
-    // One in-place transport retry reuses the SAME idempotency key (A15).
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        await createDossierBuild({
-          target,
-          artifactRef: currentArtifactRef(),
-          instruction,
-          idempotencyKey: key,
-        });
-        if (disposed) return;
-        set({ pendingAction: null, instructionDraft: "" });
-        await loadHead(true);
-        syncStream();
-        return;
-      } catch (error) {
-        if (handleUnauthenticatedApiError(error)) return;
-        lastError = error;
-        if (!isTransientTransport(error)) break;
-      }
-    }
-    if (disposed) return;
-    if (isGenerationInProgress(lastError)) {
-      // Our Generate lost the race to an already-active build: surface it and
-      // reconcile to the live build.
-      set({ pendingAction: null, actionError: toDossierErrorInfo(lastError) });
+    try {
+      // ONE fresh idempotency key per logical generation (A15).
+      await createDossierBuild({
+        target,
+        artifactRef: currentArtifactRef(),
+        instruction,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      if (disposed) return;
+      set({ pendingAction: null, instructionDraft: "" });
       await loadHead(true);
       syncStream();
-      return;
+    } catch (error) {
+      if (handleUnauthenticatedApiError(error)) return;
+      if (disposed) return;
+      set({ pendingAction: null, actionError: toDossierErrorInfo(error) });
+      if (isGenerationInProgress(error)) {
+        // Our Generate lost the race to an already-active build: surface it and
+        // reconcile to the live build.
+        await loadHead(true);
+        syncStream();
+      }
     }
-    set({ pendingAction: null, actionError: toDossierErrorInfo(lastError) });
   }
 
   async function runCancel(): Promise<void> {

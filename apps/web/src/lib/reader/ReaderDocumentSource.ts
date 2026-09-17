@@ -19,7 +19,6 @@ export interface ReaderMedia {
 
 export interface ReaderTextDocument {
   readonly fragments: readonly Fragment[];
-
 }
 
 export type ReaderNavigation = MediaNavigation;
@@ -29,32 +28,22 @@ export interface ResolvedPdfDocument {
   readonly expiresAtMs: number | null;
 }
 
-/** Contract-named identifier aliases from the Cut-1 reader contract. */
-export type MediaId = string;
-export type FragmentId = string;
-export type ReaderAssetRef = string;
-export type ReaderAssetUrl = string;
-
 export interface ReaderDocumentSource {
-  loadDescriptor(mediaId: MediaId, signal: AbortSignal): Promise<ReaderMedia>;
+  loadDescriptor(mediaId: string, signal: AbortSignal): Promise<ReaderMedia>;
   loadTextDocument(
-    mediaId: MediaId,
+    mediaId: string,
     signal: AbortSignal,
   ): Promise<ReaderTextDocument>;
   loadNavigation(
-    mediaId: MediaId,
+    mediaId: string,
     signal: AbortSignal,
   ): Promise<ReaderNavigation>;
   loadEpubFragment(
-    mediaId: MediaId,
-    fragmentId: FragmentId,
+    mediaId: string,
+    fragmentId: string,
     signal: AbortSignal,
   ): Promise<EpubFragmentContent>;
-  openPdf(
-    mediaId: MediaId,
-    signal: AbortSignal,
-  ): Promise<ResolvedPdfDocument>;
-  resolveAsset(ref: ReaderAssetRef): ReaderAssetUrl;
+  openPdf(mediaId: string, signal: AbortSignal): Promise<ResolvedPdfDocument>;
 }
 
 interface ReaderDescriptorResponse {
@@ -125,10 +114,6 @@ class HostedReaderSource implements ReaderDocumentSource {
         signal,
       }),
     );
-  }
-
-  resolveAsset(ref: ReaderAssetRef): ReaderAssetUrl {
-    return ref;
   }
 }
 

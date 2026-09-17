@@ -10,9 +10,8 @@ import {
   type StoredNoteEditorDraft,
 } from "@/lib/notes/noteEditorDraftStore";
 
-export const NOTE_AUTOSAVE_IDLE_DELAY_MS = 1500;
-export const NOTE_AUTOSAVE_MAX_WAIT_MS = 5000;
-export const NOTE_LAYOUT_MEASURE_DELAY_MS = 100;
+const NOTE_AUTOSAVE_IDLE_DELAY_MS = 1500;
+const NOTE_AUTOSAVE_MAX_WAIT_MS = 5000;
 
 export type NoteEditorSessionStatus =
   | "clean"
@@ -41,7 +40,6 @@ export interface NoteEditorSession {
   scheduleSave(body: NoteBodyValue): void;
   flush(body?: NoteBodyValue): void;
   recoverDraft(draft: StoredNoteEditorDraft): void;
-  retry(): void;
   discardDraft(): void;
   reset(): void;
 }
@@ -58,7 +56,6 @@ export function useNoteEditorSession({
   const saveRef = useRef(save);
   const draftMetadataRef = useRef(draftMetadata);
   const onErrorRef = useRef(onError);
-  const mountedRef = useRef(false);
   const generationRef = useRef(0);
   const localSequenceRef = useRef(0);
   const pendingDocRef = useRef<NoteBodyValue | null>(null);
@@ -98,18 +95,6 @@ export function useNoteEditorSession({
     }
   }, []);
 
-  const setMountedStatus = useCallback((nextStatus: NoteEditorSessionStatus) => {
-    if (mountedRef.current) {
-      setStatus(nextStatus);
-    }
-  }, []);
-
-  const setMountedRecoveredDraft = useCallback((nextValue: boolean) => {
-    if (mountedRef.current) {
-      setHasRecoveredDraft(nextValue);
-    }
-  }, []);
-
   const startSave = useCallback(
     (
       doc: NoteBodyValue,
@@ -129,8 +114,8 @@ export function useNoteEditorSession({
         generationRef.current !== saveGeneration ||
         resourceKeyRef.current !== saveResourceKey;
       saveInFlightRef.current = true;
-      setMountedRecoveredDraft(false);
-      setMountedStatus("saving");
+      setHasRecoveredDraft(false);
+      setStatus("saving");
 
       void saveRef
         .current(doc, {
@@ -149,12 +134,12 @@ export function useNoteEditorSession({
 
           if (isLatestSequence && !hasQueuedWork) {
             clearStoredNoteEditorDraft(saveResourceKey);
-            setMountedRecoveredDraft(false);
-            setMountedStatus("saved");
+            setHasRecoveredDraft(false);
+            setStatus("saved");
             return;
           }
 
-          setMountedStatus("dirty");
+          setStatus("dirty");
         })
         .catch((error: unknown) => {
           if (isStaleSave()) {
@@ -178,12 +163,12 @@ export function useNoteEditorSession({
               sequence,
               clientMutationId
             );
-            setMountedStatus("failed");
+            setStatus("failed");
             onErrorRef.current?.(error);
             return;
           }
 
-          setMountedStatus("dirty");
+          setStatus("dirty");
         })
         .finally(() => {
           if (isStaleSave()) {
@@ -202,7 +187,7 @@ export function useNoteEditorSession({
           }
         });
     },
-    [setMountedRecoveredDraft, setMountedStatus]
+    []
   );
 
   useEffect(() => {
@@ -259,8 +244,8 @@ export function useNoteEditorSession({
         nextSequence,
         clientMutationId
       );
-      setMountedRecoveredDraft(false);
-      setMountedStatus("dirty");
+      setHasRecoveredDraft(false);
+      setStatus("dirty");
 
       if (idleTimerRef.current !== null) {
         window.clearTimeout(idleTimerRef.current);
@@ -275,7 +260,7 @@ export function useNoteEditorSession({
         }, NOTE_AUTOSAVE_MAX_WAIT_MS);
       }
     },
-    [setMountedRecoveredDraft, setMountedStatus]
+    []
   );
 
   const recoverDraft = useCallback(
@@ -290,60 +275,37 @@ export function useNoteEditorSession({
       queuedSequenceRef.current = 0;
       queuedClientMutationIdRef.current = null;
       saveInFlightRef.current = false;
-      setMountedRecoveredDraft(true);
-      setMountedStatus("recovered");
+      setHasRecoveredDraft(true);
+      setStatus("recovered");
     },
-    [clearTimers, setMountedRecoveredDraft, setMountedStatus]
+    [clearTimers]
   );
 
-  const retry = useCallback(() => {
-    flushRef.current();
-  }, []);
+  const reset = useCallback(() => {
+    generationRef.current += 1;
+    localSequenceRef.current = 0;
+    pendingDocRef.current = null;
+    pendingSequenceRef.current = 0;
+    pendingClientMutationIdRef.current = null;
+    queuedDocRef.current = null;
+    queuedSequenceRef.current = 0;
+    queuedClientMutationIdRef.current = null;
+    saveInFlightRef.current = false;
+    clearTimers();
+    setHasRecoveredDraft(false);
+    setStatus("clean");
+  }, [clearTimers]);
 
-  const discardDraft = useCallback(
-    () => {
-      generationRef.current += 1;
-      localSequenceRef.current = 0;
-      pendingDocRef.current = null;
-      pendingSequenceRef.current = 0;
-      pendingClientMutationIdRef.current = null;
-      queuedDocRef.current = null;
-      queuedSequenceRef.current = 0;
-      queuedClientMutationIdRef.current = null;
-      saveInFlightRef.current = false;
-      clearTimers();
-      clearStoredNoteEditorDraft(resourceKeyRef.current);
-      setMountedRecoveredDraft(false);
-      setMountedStatus("clean");
-    },
-    [clearTimers, setMountedRecoveredDraft, setMountedStatus]
-  );
-
-  const reset = useCallback(
-    () => {
-      generationRef.current += 1;
-      localSequenceRef.current = 0;
-      pendingDocRef.current = null;
-      pendingSequenceRef.current = 0;
-      pendingClientMutationIdRef.current = null;
-      queuedDocRef.current = null;
-      queuedSequenceRef.current = 0;
-      queuedClientMutationIdRef.current = null;
-      saveInFlightRef.current = false;
-      clearTimers();
-      setMountedRecoveredDraft(false);
-      setMountedStatus("clean");
-    },
-    [clearTimers, setMountedRecoveredDraft, setMountedStatus]
-  );
+  const discardDraft = useCallback(() => {
+    reset();
+    clearStoredNoteEditorDraft(resourceKeyRef.current);
+  }, [reset]);
 
   useEffect(() => {
     reset();
   }, [resourceKey, reset]);
 
   useEffect(() => {
-    mountedRef.current = true;
-
     function flushForPageLifecycle() {
       flushRef.current();
     }
@@ -360,7 +322,6 @@ export function useNoteEditorSession({
     return () => {
       flushRef.current();
       clearTimers();
-      mountedRef.current = false;
       window.removeEventListener("pagehide", flushForPageLifecycle);
       document.removeEventListener("visibilitychange", flushForHiddenDocument);
     };
@@ -372,7 +333,6 @@ export function useNoteEditorSession({
     scheduleSave,
     flush,
     recoverDraft,
-    retry,
     discardDraft,
     reset,
   };
