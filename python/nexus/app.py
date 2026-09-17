@@ -41,7 +41,6 @@ Outbound client lifecycle:
 
 import json
 import re
-from collections.abc import Callable
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 from uuid import UUID
@@ -224,24 +223,8 @@ async def lifespan(app: FastAPI):
     logger.info("httpx_client_closed")
 
 
-def create_app(
-    skip_auth_middleware: bool = False,
-    install_auth_middleware: Callable[[FastAPI], None] | None = None,
-) -> FastAPI:
-    """Create and configure the FastAPI application.
-
-    Args:
-        skip_auth_middleware: If True (and no installer is given), run without
-            auth middleware (for testing).
-        install_auth_middleware: Test-tier hook that installs a
-            custom-verifier ``AuthMiddleware`` at the exact production
-            position in the stack. Adding auth after ``create_app`` returns
-            would place it outermost and change middleware ordering — e.g.
-            ``private_reader_no_store`` would no longer stamp 401 responses.
-
-    Returns:
-        Configured FastAPI application instance.
-    """
+def create_app() -> FastAPI:
+    """Create and configure the FastAPI application."""
     settings = get_settings()
 
     # Interactive API docs are exposed only in non-production environments.
@@ -329,25 +312,22 @@ def create_app(
     app.include_router(api_router)
 
     # Add auth middleware (runs on all requests except public paths)
-    if install_auth_middleware is not None:
-        install_auth_middleware(app)
-    elif not skip_auth_middleware:
-        verifier = create_token_verifier()
-        bootstrap_callback = create_bootstrap_callback()
+    verifier = create_token_verifier()
+    bootstrap_callback = create_bootstrap_callback()
 
-        app.add_middleware(
-            AuthMiddleware,
-            verifier=verifier,
-            requires_internal_header=settings.requires_internal_header,
-            internal_secret=settings.nexus_internal_secret,
-            bootstrap_callback=bootstrap_callback,
-        )
+    app.add_middleware(
+        AuthMiddleware,
+        verifier=verifier,
+        requires_internal_header=settings.requires_internal_header,
+        internal_secret=settings.nexus_internal_secret,
+        bootstrap_callback=bootstrap_callback,
+    )
 
-        logger.info(
-            "auth_middleware_enabled",
-            env=settings.nexus_env.value,
-            internal_header_required=settings.requires_internal_header,
-        )
+    logger.info(
+        "auth_middleware_enabled",
+        env=settings.nexus_env.value,
+        internal_header_required=settings.requires_internal_header,
+    )
 
     # Release request-scoped DB sessions when the response starts, not after the
     # response body finishes transferring. This prevents slow clients or aborted

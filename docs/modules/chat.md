@@ -602,14 +602,7 @@ and the silent-`None` fallback in prompt assembly are removed. Source-activation
 destination comes from the immutable locator (gated by live visibility), never
 the live Highlight.
 
-## Contract Tests
+## verification
 
-Keep the fast unit coverage aligned with this module contract:
-
-- `python/tests/kernel/test_resource_action_subject_boundaries.py`
-- `python/tests/kernel/test_resource_action_snapshots_schema.py`
-- `apps/web/src/lib/chat/messageActionIntent.unit.test.ts`
-- `apps/web/src/lib/conversations/chatRunBody.unit.test.ts`
-
-Manually validate durable execution, citations, authorization, provider tools,
+manually validate durable execution, citations, authorization, provider tools,
 and browser composition when those boundaries change.

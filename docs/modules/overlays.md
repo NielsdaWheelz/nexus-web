@@ -200,15 +200,7 @@ None of these may appear in the implementation:
 - user-agent sniffing
 - the VirtualKeyboard API
 
-## Contract Tests
+## verification
 
-Keep these tests aligned with this module contract:
-
-- `apps/web/src/components/ui/MobileSheet.test.tsx`
-- `apps/web/src/components/ui/MobileFullScreenTask.test.tsx`
-- `apps/web/src/lib/ui/useKeyboardInset.test.tsx`
-- `apps/web/src/lib/ui/useDialogOverlay.test.tsx`
-- `apps/web/src/lib/ui/useHistoryDismiss.test.tsx`
-- `apps/web/src/lib/ui/useEscapeKey.test.tsx`
-- `apps/web/src/components/ui/HoverPreview.test.tsx`
-- `apps/web/src/components/contributors/AuthorSearchField.test.tsx`
+when their behavior changes, manually check keyboard geometry, focus return,
+back/escape dismissal, and nested overlays on the affected browser or device.

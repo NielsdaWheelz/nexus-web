@@ -41,14 +41,11 @@ def upgrade() -> None:
     op.add_column("oracle_corpus_images", sa.Column("byte_size", sa.BigInteger(), nullable=True))
     op.add_column("oracle_corpus_images", sa.Column("sha256", sa.Text(), nullable=True))
 
-    # 2) Backfill every existing row to the bundled hermetic fixture.
+    # 2) Backfill every existing row to the historical seed object.
     #    The only pre-existing rows are the deterministic 0072 seed plates. The
-    #    fixture is committed at python/nexus/oracle/fixtures/seed_plate.jpg and the
-    #    literals below are its compile-time constants (sha256/byte_size/content_type/
-    #    storage_key), also defined in nexus/oracle/seed_objects.py — keep in lockstep.
-    #    In prod, ensure_oracle_seed_objects guarantees the object exists before this
-    #    migration runs; real plate bytes arrive later via a fresh build_corpus run on
-    #    a new corpus version. This UPDATE is hermetic (no network).
+    #    literals below record that object's identity; this migration does not
+    #    read or upload its bytes. Real plates arrive through later corpus builds.
+    #    This UPDATE requires no network access.
     op.execute(
         sa.text(
             """

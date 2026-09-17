@@ -46,7 +46,7 @@ that would let the 3:1 large-text exception apply, so this is WCAG 1.4.3
 Why it is not a blocker for this cutover: the Imports pane paints only the
 warning, info and success tones (`ImportRow.tsx` `STATE_TONE`,
 `ImportsWorkspace.tsx` tab counts, `ImportsBadge.tsx`, `ImportInspector.tsx`), all
-three of which now clear 4.5:1 and are held there by a browser proof. The two
+three of which measured above 4.5:1 in the original browser check. The two
 remaining tones are painted by other surfaces (`CollectionRow`,
 `ConnectionsSurface`, `SettingsBillingPaneBody`, `SettingsLocalVaultPaneBody`,
 `MediaPaneBody`, `EvidenceItemRow`), none of which is in this cutover's ownership.
@@ -56,8 +56,9 @@ remaining tones are painted by other surfaces (`CollectionRow`,
 Computed from `apps/web/src/app/globals.css` (the `--danger` / `--accent` steps of
 each palette) composited through `Pill.module.css`'s 18% mix, with the WCAG 2.1
 relative-luminance formula; the same computation, run against the rendered DOM,
-is the assertion in `ImportsWorkspace.browser.test.tsx` ("paints every status pill
-label at AA contrast over its own tinted fill"), which measured the pre-fix
+was recorded by the former `ImportsWorkspace.browser.test.tsx` assertion
+"paints every status pill label at AA contrast over its own tinted fill," which
+measured the pre-fix
 warning pair at 3.92:1 over the plain page ground. The D15 captures
 `<scratchpad>/evidence/F-imports-review-5/{history-recovered,in-progress-counted,needs-attention-selected}.png`
 decoded 3.24-4.19:1 for the three now-fixed tones on the selected row.
@@ -70,14 +71,14 @@ follow already exists (`--info-ink` / `--success-ink` / `--warning-ink`).
 ## Proposed fix
 
 Add `--danger-ink` and `--accent-ink` to each palette in `globals.css` the same
-way, point `.toneDanger` / `.toneAccent` at them, and extend the contrast
-assertion to a surface that paints those two tones so the pairs cannot regress.
+way, point `.toneDanger` / `.toneAccent` at them, and manually measure surfaces
+that paint those tones.
 The same tone-on-its-own-tint pairing outside `Pill` is
 `docs/tickets/tone-text-on-its-own-tint-fails-aa-outside-pill.md` (OI-050); the
 ink steps added here are what those rules should point at.
 
 ## Acceptance
 
-A browser case over a danger and an accent `Pill` computes the WCAG ratio from
-the rendered `color` and the composited effective background and fails below
-4.5:1, in the light, dark and elvish palettes.
+manual measurements of danger and accent pills show at least 4.5:1 between
+rendered text and the composited effective background in the light, dark, and
+elvish palettes.

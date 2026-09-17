@@ -479,9 +479,6 @@ is not generated chat citation evidence and must not write or read
   strict law-review-style same-page legal footnotes with footnote-sized target
   text. Generic PDF superscripts, reference sections, and plain extracted text
   do not create apparatus rows.
-- The 20-source support matrix, fixture hashes, and expected counts live in
-  `python/tests/fixtures/reader_apparatus/corpus_manifest.json`, not in reader
-  prose.
 
 ### reader connections
 
@@ -926,10 +923,7 @@ identity; the verified package manifest replaces it after installation.
 
 `offline_reading_packages.py` creates deterministic package-schema and
 archive1/reader2 zips. unique fragment bodies and the full hosted navigation
-contract are serialized once; adapters never invent source metadata. `testdata/offline-reading-contract-v1.json` is the
-shared Python/TypeScript/Kotlin oracle for strict keys, paths, bounds, hashes,
-revision-key computation, local EPUB assets, PDF binding, and text-only article
-content. Native verifies the response digest, ZIP grammar, manifest and entry
+contract are serialized once; adapters never invent source metadata. native verifies the response digest, ZIP grammar, manifest and entry
 integrity, supported versions, media/account/generation binding, and baseline
 before publishing one package row and sealed directory.
 
@@ -988,7 +982,7 @@ this keeps resume robust when typography changes.
 
 ## manual regression coverage
 
-when reader behavior changes, manually verify:
+when reader behavior changes, manually check the affected behavior from this list:
 
 - reader settings persistence
 - web canonical locator resume after reflow from profile typography changes
@@ -1008,13 +1002,10 @@ when reader behavior changes, manually verify:
   bounded restart/busy result
 - wrong-account and wrong-generation offline cursor writes leaving the
   canonical cursor unchanged
-- the cross-language V1 package/reader vector and verification-before-publication
-  host state machine
+- package/reader compatibility and host verification before publication
 - the APK shelf's local-only request/range routing and explicit downloaded-copy
   and text-only-article disclosures
 
-## validation commands
+## static verification
 
-```bash
-./scripts/test
-```
+`./scripts/test` checks static consistency. it does not exercise the reader.

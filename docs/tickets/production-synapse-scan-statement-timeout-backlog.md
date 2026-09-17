@@ -14,8 +14,8 @@ First deploy the already-reviewed search and generation cutovers on current
 `main`; they substantially replace this execution path. Then observe a bounded
 post-deployment interval and inspect only aggregate job state and typed errors.
 If timeouts continue, profile the exact candidate-owned query plan against a
-redacted production-shape fixture, bound candidate retrieval before enrichment,
-and add a regression gate for both query cost and retry convergence.
+redacted production-shape input, bound candidate retrieval before enrichment,
+and manually measure query cost and retry convergence.
 
 This issue is resolved only when a deployed release completes or terminally
 classifies the inherited backlog, no new unexpected statement-timeout failures

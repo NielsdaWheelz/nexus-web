@@ -12,7 +12,7 @@ source; do not mutate immutable source or canonical identities through navigatio
 preserve unique authored heading ids and mint ids only where absent. explicitly
 classify duplicate authored targets; repair existing imports from source evidence.
 
-acceptance: a real web-ingest proof retains an authored heading, an internal link,
+acceptance: a manual web ingestion retains an authored heading, an internal link,
 and its labelled container; each resolves after canonicalization. generated ids
 remain deterministic for unanchored headings. existing-source repair preserves
 canonical text and accepted locators.

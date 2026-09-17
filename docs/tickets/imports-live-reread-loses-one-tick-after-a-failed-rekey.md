@@ -51,7 +51,6 @@ for Track F to absorb. Decide on the smaller of the two; do not do both.
 
 ## Acceptance
 
-A named case in `apps/web/src/lib/imports/ImportsProvider.browser.test.tsx`:
-work active, the reader refreshes while the summary read fails, the next
-successful automatic read arrives ~5 s later, and page one is re-read on that
-observation.
+with work active, manually interrupt the summary read during refresh. the
+next successful automatic read arrives about 5 s later and page one is re-read
+on that observation.

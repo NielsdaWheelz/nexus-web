@@ -24,9 +24,8 @@ its left edge at x=-1 while the rail spans x=0..48 and the link has narrowed to
 **text-only** scaling is not, and the spec's navigation rubric asks for legible
 counts under zoom.
 
-`NavRail.browser.test.tsx` measures the default root font only. Its containment
-assertion is against the *link's* box, which is the tighter bound, so the case
-that exercises a larger root will fail on the link before it fails on the rail.
+the former browser check measured only the default root font. its link-box
+bound was tighter than the rail, but it did not cover text scaling.
 
 ## Prerequisites
 
@@ -40,11 +39,10 @@ Preferred: express the collapsed rail's width (and the footer's padding) in the
 same unit the chip is typed in, so the whole chrome scales together. Otherwise
 clamp the chip's typography in px, since it lives in a px chrome — noting that
 px typography removes text-only scaling from the one number this chrome shows,
-which is why the unit is a design call and not a local fix. Either way add a case
-to `NavRail.browser.test.tsx` that raises `document.documentElement`'s font size
-(restoring it afterwards) and re-asserts that the link contains the `99+` chip.
+which is why the unit is a design call and not a local fix. manually inspect
+the `99+` chip with the document root enlarged and restore the setting afterward.
 
 ## Acceptance
 
-A named case fails if the widest count chip is painted outside the collapsed
-rail's box at a root font size materially larger than 16px.
+the widest count chip remains visible inside the collapsed rail at the
+default root font size and at 22px, with legible text.

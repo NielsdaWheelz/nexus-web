@@ -23,10 +23,9 @@ extra host ram alone does not enlarge this container's fixed cap.
 
 ## prerequisites and proposed fix
 
-after the independent host-capacity blocker is resolved, capture cgroup
-`memory.stat`, pressure and proportional process memory during the next exact
-image qualification, including representative interactive work through the
-product owner. identify the dominant allocation before changing imports or
+capture cgroup `memory.stat`, pressure and proportional process memory during
+manual observation of representative interactive work through the product
+owner. identify the dominant allocation before changing imports or
 limits. keep the restored background child-process architecture; its supervisor
 stayed near 96 mib rss, and this run provides no reason to copy the legacy
 lazy-provider implementation. do not recreate a removed test suite.

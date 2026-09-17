@@ -27,7 +27,7 @@ defined in [`modules/consumption-activity.md`](modules/consumption-activity.md).
 9. [Frontend architecture](#9-frontend-architecture)
 10. [Non-web clients](#10-non-web-clients)
 11. [Build, run, deploy, env, migrations](#11-build-run-deploy-env-migrations)
-12. [Testing strategy](#12-testing-strategy)
+12. [verification](#12-verification)
 13. [Invariants cheat-sheet](#13-invariants-cheat-sheet)
 14. [Where to look (file index)](#14-where-to-look-file-index)
 
@@ -956,7 +956,7 @@ user_link_target: UserLinkTargetMode)` row per `ResourceScheme` replaces the
   `reader_apparatus_item`, and `oracle_passage_anchor` are passage-candidate-only
   (`materialize_passage`); `external_snapshot` is `"none"`; every other scheme
   above is a direct source/target/reference. Backend policy and the
-  hand-maintained frontend projection are exhaustive and parity-tested.
+  hand-maintained frontend projection must agree on the same capabilities.
 
 ### 7.7 Citations & the agent tool contract
 
@@ -1004,7 +1004,7 @@ resource activation plus an optional reader-internal focus target.
 
 `RESOURCE_ITEM_CAPABILITIES` is the backend authority for Inspector eligibility,
 linked-items policy, Forks, and default surface order; the committed TypeScript
-projection is parity-tested. Every eligible resource implies Dossier.
+projection must agree with the backend. Every eligible resource implies Dossier.
 `useResourceInspector` composes one stable publication and Companion action per
 pane from route-owned Contents/Evidence/Context/Forks/Connections bodies plus
 the shared Dossier body. Selecting that action validates the requested surface
@@ -1268,8 +1268,6 @@ remain `partial`, synthetic legal-footnote support is narrow, and unsupported
 scholarly/literary PDFs deliberately emit empty apparatus rather than inferring
 from raw layout text. Replacement reconciles rows by `(media_id, stable_key)` so
 surviving resource refs and their graph edges remain stable across refresh.
-Fixture counts and 20-source support status live in
-`python/tests/fixtures/reader_apparatus/corpus_manifest.json`.
 
 **Frontend** (`components/reader/*`, `PdfReader.tsx`, `HtmlRenderer.tsx`,
 `lib/reader/*`, `lib/highlights/*`): `HtmlRenderer` is the only
@@ -2157,26 +2155,22 @@ pipeline.
 
 ## 11. Build, run, deploy, env, migrations
 
-The `Makefile` owns product setup, development, build, migration, smoke, and
-deployment helpers; `make help` is canonical for those operations. Testing has
-one separate entrypoint, `./scripts/test`.
+The `Makefile` owns product setup, development, build, migration, and
+deployment helpers; `make help` is canonical for those operations. static
+verification has one separate entrypoint, `./scripts/test`.
 
 - **Setup / dev loop**: `make setup`, `make dev` (Docker Compose Postgres + MinIO +
   Supabase-local Auth), then `make api`, `make web`,
   `make worker-interactive`, and `make worker-background` in separate
   terminals. Ports are written to `.dev-ports`.
 - **Formatting**: `make format`, `make format-back`, `make fix-front`.
-- **Tests and verification**: see §12; no Make aliases.
+- **verification**: see §12; no Make aliases.
 - **Build**: `make build` (Next.js), `make build-android[-release]`.
-- **Smoke**: `make smoke`, `make smoke-auth`.
 
 **Deploy** ([`deployment.md`](../deployment.md), sole runbook): each exact
 `main` push triggers one backend publisher. It builds API/worker targets once,
 publishes their GHCR digests and strict manifest, and supplies the immutable host
 bundle. Vercel builds the exact SHA as an unaliased production-target candidate.
-Candidates carrying the Codex agent host first run the separate immutable-bundle
-capacity qualification on the existing VPS; its candidate-bound measured
-evidence must be fresh before application mutation.
 `deploy/hetzner/deploy.sh <source-sha>` validates both lineages, captures current
 content-addressed VPS config by exact path and digest, stops app writers,
 verifies a migration backup when needed, upgrades the linear Alembic head,
@@ -2213,19 +2207,18 @@ is an artifact operation, not a test or release gate.
 
 ---
 
-## 12. Testing strategy
+## 12. verification
 
 [`local-rules/testing-standards.md`](local-rules/testing-standards.md) is the
-authoritative contract. `./scripts/test` is a fixed deterministic sequence:
-workflow and shell lint, Python format/lint/type checking, web lint/type
-checking, fast Python kernel tests, Node-environment Vitest units, and a cheap
-single-head Alembic graph check.
+authoritative contract. `./scripts/test` runs workflow and shell lint, python
+format/lint/type checking, web lint/type checking, and a single-head alembic
+graph check. no automated tests, fixtures, or harnesses remain after the
+2026-09-17 reset.
 
-The suite has no selector, planner, service runtime, browser, hosted provider,
-device, policy engine, receipts, replay, or sensitivity machinery. This keeps
-the complete pull-request check below two minutes on the devbox. Browser,
-cross-process, provider, device, and production behavior therefore require
-manual validation when touched.
+static checks target two minutes on the devbox. manually verify affected
+behavior according to the change's failure risk and recovery cost. future
+tests need a concrete benefit that exceeds their maintenance cost; historical
+proof checklists impose no obligation to rebuild the suite.
 
 ---
 
@@ -2308,7 +2301,7 @@ The things most likely to bite you, distilled:
 | Android shell                                                     | `apps/android/app/src/main/`                                                                                                                                                                           |
 | Browser extension                                                 | `apps/extension/`                                                                                                                                                                                      |
 | Build / run / deploy                                              | `Makefile`, `deployment.md`, `deploy/`                                                                                                                                                                 |
-| Tests                                                             | `docs/local-rules/testing-standards.md`, `scripts/test`, `python/tests/kernel/`, `apps/web/src/**/*.test.ts(x)`, `apps/web/vitest.config.ts`                                                           |
+| verification | `docs/local-rules/testing-standards.md`, `scripts/test` |
 
 ---
 

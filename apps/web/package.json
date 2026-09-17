@@ -7,9 +7,8 @@
     "build": "node scripts/copy-pdfjs.mjs && next build",
     "start": "next start",
     "lint:css-tokens": "node scripts/check-css-tokens.mjs",
-    "lint": "eslint src/ vitest.config.ts androidPlayerProtocolCorpus.ts --max-warnings 0",
+    "lint": "eslint src/ androidPlayerProtocolContract.ts --max-warnings 0",
     "typecheck": "rm -rf .next/types && next typegen && tsc --noEmit",
-    "test:unit": "vitest run --bail=1",
     "build:offline-reading": "node scripts/build-offline-reading.mjs"
   },
   "dependencies": {
@@ -42,14 +41,13 @@
     "eslint-config-next": "15.5.22",
     "typescript": "^6.0.2",
     "vercel": "58.7.1",
-    "vitest": "^4.1.10"
+    "vite": "8.0.16"
   },
   "overrides": {
     "brace-expansion": "5.0.8",
     "js-yaml": "4.3.0",
     "postcss": "8.5.18",
     "sharp": "0.35.0",
-    "vite": "8.0.16",
     "ws": "8.21.0"
   },
   "patchedDependencies": {

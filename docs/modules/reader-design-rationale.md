@@ -381,7 +381,7 @@ dismissal, source replacement, and successful return clear it.
 
 ## regression strategy
 
-when reader behavior changes, manually verify:
+when reader behavior changes, manually check the affected behavior from this list:
 
 - reader settings persistence
 - web article canonical locator resume after profile typography reflow
@@ -397,8 +397,6 @@ when reader behavior changes, manually verify:
   from a typed launch intent and captures an immutable per-message snapshot that
   survives reload, branch, and rerun; a geometry-only Highlight is non-sendable
 
-## validation commands
+## static verification
 
-```bash
-./scripts/test
-```
+`./scripts/test` checks static consistency. it does not exercise the reader.

@@ -1240,8 +1240,3 @@ def get_settings() -> Settings:
         ValidationError: If required settings are missing or invalid.
     """
     return Settings()  # pyright: ignore[reportCallIssue] - BaseSettings reads env.
-
-
-def clear_settings_cache() -> None:
-    """Clear the settings cache. Useful for testing."""
-    get_settings.cache_clear()

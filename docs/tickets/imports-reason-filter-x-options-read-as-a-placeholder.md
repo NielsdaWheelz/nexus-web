@@ -28,12 +28,12 @@ the leading token reads as a template variable that was never substituted.
 
 ## Prerequisites
 
-A content-designer decision. The reviewed reason strings themselves are a D15
-content gate output and must not be re-worded without that gate.
+choose wording or grouping that disambiguates the filter without making the
+already-clear row and inspector copy worse.
 
 ## Proposed fix
 
-One of, decided by the content designer:
+choose one:
 
 1. Group the Reason options by the source or stage they belong to (`<optgroup>`),
    so the X entries sit under a visible source heading; or
@@ -43,6 +43,5 @@ One of, decided by the content designer:
 
 ## Acceptance
 
-A named case in `apps/web/src/lib/status/imports.unit.test.ts` (option 2) or in
-`ImportsWorkspace.browser.test.tsx` (option 1) fixes whichever shape is chosen,
-and no reason string outside the filter list changes.
+manual inspection makes the platform meaning clear in the filter list; no
+reason string outside that list changes.

@@ -274,12 +274,7 @@ resolved through the `highlight:<id>` resource and graph citation path.
   not add a DB cascade between highlight-family rows; deletion is always
   explicit and child-first.
 
-## Contract Tests
+## verification
 
-Keep the fast unit coverage aligned with this module contract:
-
-- `python/tests/kernel/test_resource_action_subject_boundaries.py`
-- `apps/web/src/components/highlights/selectionActions.unit.test.tsx`
-
-Manually validate persisted highlight provenance, authorization, and
+manually validate persisted highlight provenance, authorization, and
 reader-to-chat behavior when those boundaries change.

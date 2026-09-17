@@ -103,7 +103,7 @@ Despite the `Accept` advertisement, Nexus returns JSON for requests and a
 bodyless acknowledgement for notifications. It returns no session id and
 configures no GET/SSE stream, DELETE-session lifecycle, event store, resume,
 OAuth, protocol downgrade, or dual/fallback server. Do not “upgrade” the wire
-revision independently of the pinned Codex client and its service proof.
+revision independently of the pinned codex client and its runtime contract.
 
 ## Encrypted credential state
 
@@ -124,7 +124,7 @@ truncate/write/create and then performs `write_all` plus `flush`, so the
 per-turn absolute link updates the mounted file in place. Any SDK/runtime
 upgrade that renames/replaces the file, changes its location or credential
 store, or changes refresh persistence requires a credential-boundary redesign
-and new release proof first. Upstream does not use atomic replacement or
+and manual verification of the changed boundary first. Upstream does not use atomic replacement or
 `fsync`; after runtime close, Nexus re-proves the original inode/mode/size and
 `fsync`s that exact descriptor before returning the terminal or releasing a
 disconnected turn's slot. A crash during upstream truncate/write can still
@@ -303,7 +303,7 @@ credential paths or SDK frames.
 
 ### Disposable-VM locked-reboot acceptance (live evidence pending)
 
-CI fakes do not satisfy this live acceptance procedure. On a disposable host,
+this remains a manual host check. on a disposable host,
 reboot with the mapping locked, then record only these bounded facts:
 
 ```sh
@@ -316,104 +316,19 @@ Prove the application services can start, the Codex host cannot be admitted,
 and the protected underlay remains empty and inaccessible. Then unlock, mount,
 run the controller resume command, and prove exact isolation again.
 
-## Existing-VPS capacity qualification
+## runtime verification
 
-Before the first hard-cut attempt, run from a clean checkout at the exact
-candidate SHA; repeat if that pre-activation evidence is older than 72 hours:
+synthetic capacity canaries and their release qualification are removed.
+container memory, pid, no-swap, sandbox, credential-state, and identity contracts
+still apply. the deployment controller checks the actual runtime's readiness
+and release identity; these checks do not establish successful generation or
+sustained memory margin.
 
-```sh
-./deploy/hetzner/prove-codex-capacity.sh "$(git rev-parse HEAD)"
-```
-
-After `ForwardFixRequired`, use the ordinary `deploy.sh` recovery command with a
-fresh published SHA. The old predecessor must remain stopped against the
-migrated database. The release owner activates and proves the bound successor,
-then runs this same qualification before promotion. An active first-cut attempt
-also refreshes expired evidence through release replay. All five long-lived
-services must be healthy; the same image, three turns, cgroup limits, host
-thresholds, evidence freshness, and permanent-failure rules apply. Transient
-refusal stops candidate writers and Codex services and leaves the phase
-replayable. The candidate API is reachable while it is measured, so keep clients
-closed until release success. See `deployment.md` for that no-use requirement.
-
-The controller must first materialize one canonical
-`nexus-codex-capacity-canary-input.v1` envelope at an explicit resolved absolute
-file and pass it as `NEXUS_CODEX_CAPACITY_GENERATION_SPEC_FILE`. The envelope
-contains a candidate-image-frozen `dawn_write` BackgroundPolicy `GenerationSpec`
-and its digest-matched controller-owned synthetic intent. The canary accepts
-only Codex Personal Terra/medium, Text,
-`NoModelTools`, and `NoHostTools`, then sends one cold and two warm turns while
-varying only `request_id`. It never resolves a model, reasoning value, policy,
-or tool plan locally.
-
-The bounded result is `nexus-codex-capacity-canary.v4`; the enclosing immutable
-qualification remains `nexus-codex-capacity.v3`. It records only phase,
-operation, frozen-spec fingerprint, model/reasoning identity, terminal class,
-usage presence, SDK/runtime versions, and tool/permission event counts. It
-records no prompt, model output, grant, session identifier, account identifier,
-or credential fact.
-
-The release controller measures the 448 MiB host cgroup from startup through
-the final canary turn and rejects a peak above 384 MiB, preserving 64 MiB for
-bounded runtime variance. It also measures host headroom,
-pressure, swap, OOM counters, and unchanged long-lived service health. Passing
-root-owned `0444` evidence is written under
-`/var/lib/nexus/releases/codex-capacity/<source-sha>.json`. The run refuses
-when the encrypted credential state has less than 128 MiB free. A pre-accept
-capacity refusal is `not_run`; authentication/quota refusal is
-`subscription_blocked`; a pre-accept loss or accepted transport loss is
-`transport_retriable`. Those outcomes write no qualifying evidence. A measured
-candidate cgroup or exact-contract breach writes immutable failed evidence. Sampling
-starts before the host's `up --wait`, so retained cgroup peak/OOM counters and
-one-second host-pressure samples cover authenticated bootstrap, readiness,
-input materialization, and every canary turn. During active-release recovery,
-sampling starts after backend proof; retained peak/OOM counters cover its
-already-started host, but earlier host pressure is not sampled. An ordinary Docker or
-authenticated-startup failure without a measured kernel-envelope breach
-remains retryable and writes no false breach.
-
-Admission uses observed capacity: at least 128 MiB of available host memory and
-memory `some avg10` no greater than 10. This smaller operating margin accepts
-less room for unrelated allocations and more reclaim latency on the single-user
-host; a passing exact workload qualification is still required.
-The 448 MiB container ceiling remains
-enforced; admission does not additionally reserve its entire possible growth.
-`full avg10` remains a recorded diagnostic, since short reclaim stalls do not
-prove that the workload cannot fit. Falling below the observed headroom reserve
-or exceeding the pressure threshold interrupts qualification as a retryable
-host condition. It never permanently disqualifies a source SHA. Actual cgroup
-OOM, peak-limit and isolation breaches are classified first and remain failures.
-This accepts bounded allocation/reclaim variance while retaining the kernel
-limits and the real cold/warm execution and service-health proof.
-
-Before it starts the candidate host, the controller converges every exact
-predecessor's Docker limits and attests the corresponding host cgroup's
-`memory.low`, `memory.max`, `memory.swap.max`, and `pids.max`. Docker metadata
-alone is not proof. If a corrected cgroup still has nonzero
-`memory.swap.current`, qualification writes no candidate evidence and reports
-the exact container ID. Settle that pre-contract state only through the planned
-retained-swap maintenance procedure in `deployment.md`, then rerun the same
-qualification command.
-
-An interrupted run may reclaim only its own labeled canary. A foreign
-same-named container is never name-only deletion authority. Apart from the
-documented retained-swap maintenance transition, do not stop other services,
-clear caches, add swap, raise the host limit, or lower reserves to manufacture
-a pass.
-
-## Operation smoke boundary
-
-Do not create production fixtures or a synthetic account to replay every
-operation. Nexus has no account-deletion lifecycle, and Dawn is intentionally a
-population sweep. The closed static catalog owns operation composition and
-policy; representative real-owner service proofs own publication and replay;
-the capacity proof owns the shipped host envelope.
-
-After deployment, exercise desired operations through their ordinary product
-entrypoints. Use the generation ledger only as passive evidence that the
-deployed policy and route were used; never edit it or fabricate missing
-coverage. Missing naturally exercised operations are simply not observed, not
-green.
+after deployment, manually exercise affected generation operations through
+ordinary product entrypoints when the change warrants it. use the generation
+ledger as passive evidence of the deployed policy and route. investigate
+memory demand with the actual affected workload; no synthetic account,
+production fixtures, or replacement qualification harness is required.
 
 ## Worker coupling
 
@@ -451,7 +366,7 @@ restore, or copy credential contents, and never re-enroll while the host runs.
 Application rollback is permitted only before database mutation starts. After
 the 0224 migration begins, recovery is forward-fix only. The dedicated encrypted
 state remains untouched in either case. Do not bypass health, policy, sandbox,
-environment, MCP-origin, or capacity checks.
+environment, mcp-origin, or resource-limit checks.
 
 ## Incident boundaries
 

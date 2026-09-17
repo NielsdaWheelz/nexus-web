@@ -19,10 +19,8 @@ written: `source_success`
 
 `operator_repair` has no producer, at this revision or at `origin/main`: repair
 requeues the *existing* dead job, which keeps the reason its enqueue wrote, so
-no repair path has ever minted a payload with this reason. The only reference
-left is a fixture argument
-(`python/tests/service/test_bounded_content_index_plan.py:269`) and the wire
-documentation in
+no repair path has ever minted a payload with this reason. at discovery, the only other references were a now-deleted fixture and the
+wire documentation in
 `docs/cutovers/media-pipeline-reliability-hard-cutover.md:442`.
 
 This surfaced while reverting an undirected `mark_content_index_pending(...,
@@ -36,8 +34,7 @@ None; the decision is local to the reason vocabulary.
 
 ## Proposed fix
 
-Drop `"operator_repair"` from `MEDIA_CONTENT_REINDEX_REASONS`, repoint the
-`test_bounded_content_index_plan` fixture at a produced reason, and delete the
+drop `"operator_repair"` from `MEDIA_CONTENT_REINDEX_REASONS` and delete the
 token from the cutover document's payload example.
 
 ## Acceptance

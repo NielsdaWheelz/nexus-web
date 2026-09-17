@@ -45,4 +45,4 @@ deleted). Delete the `cast` at each media-kind projection site.
 
 One `Literal` declaration of the media kinds in the repository, `MediaOut.kind`
 typed by it, no `cast` to a media-kind Literal anywhere, and
-`./scripts/test changed python/nexus/schemas/media.py` green.
+`./scripts/test` passes.

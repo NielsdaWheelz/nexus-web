@@ -43,19 +43,18 @@ When running locally:
 - `nexus/auth/` -> auth middleware + permissions + JWT verification
 - `nexus/db/` -> SQLAlchemy models and session utilities
 - `nexus/jobs/` + `nexus/tasks/` -> job policies and task handlers
-- `tests/` -> backend test suite
 
-## Backend Proof
+## verification
 
-From the repository root, use the single test command:
+from the repository root, run:
 
 ```bash
 ./scripts/test
 ```
 
-It runs Ruff, Pyright, and fast deterministic kernel tests. Real-service,
-hosted-provider, and privileged host tests are not part of the automated
-portfolio. Direct pytest is not a repository verdict.
+it runs ruff, pyright, the migration graph check, and the repository's other
+static checks. no automated tests remain. manually verify affected runtime
+behavior according to [the verification contract](../docs/local-rules/testing-standards.md).
 
 ## Runtime Contracts
 

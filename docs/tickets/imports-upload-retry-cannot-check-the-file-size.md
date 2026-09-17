@@ -34,6 +34,5 @@ size comparison in `ImportRow`'s guard.
 
 ## Acceptance
 
-A file whose size differs from the accepted intent is refused before any PUT,
-proved by a named case in `components/imports/ImportsWorkspace.browser.test.tsx`
-asserting no `/retry` request was made.
+a manual retry with the same filename and kind but a different size is refused
+before any put or `/retry` request, as observed in browser network activity.

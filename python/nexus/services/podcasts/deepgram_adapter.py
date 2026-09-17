@@ -93,7 +93,7 @@ class DeepgramClient:
 
         Posts the bytes directly as the request body with the given Content-Type.
         Uses the same params as the non-diarized URL path (no diarization for short
-        clips). No fixture path — callers must mock the adapter in tests.
+        clips).
         """
         if not self.api_key:
             raise RuntimeError("Transcription provider credentials are not configured")

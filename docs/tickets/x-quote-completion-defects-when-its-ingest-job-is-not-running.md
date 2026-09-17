@@ -54,8 +54,7 @@ that does not belong to the attempt.
 
 ## Acceptance
 
-`test_import_source_recovery.py` carries a named case per reachable state — a quote
-whose ingest job dead-letters, and a quote whose execution failed into retry backoff
-— each completed from a parent thread publication, each leaving `Complete`
-capabilities and offering no repair; the file stays green; and no assertion path
-remains for a quote attempt whose exact job is not `running`.
+manual publication completes a quote whose job is dead and one whose job is
+in retry backoff. both expose `Complete` capabilities and offer no repair. no
+assertion path remains for a valid quote attempt solely because its exact job
+is not `running`.

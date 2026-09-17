@@ -2,9 +2,8 @@
 # Run `make help` for available commands.
 
 .PHONY: help setup dev down logs clean api web worker-interactive worker-background local-runtime-identity \
-	migrate migrate-down seed format format-back fix-front build build-android \
-	build-android-release build-icons generate-resource-capabilities \
-	smoke smoke-auth
+	migrate migrate-down format format-back fix-front build build-android \
+	build-android-release build-icons generate-resource-capabilities
 
 -include .env
 -include .dev-ports
@@ -54,10 +53,8 @@ help:
 	@echo "  make build-icons        - Regenerate icons from apps/web/public/brand/asterism.svg"
 	@echo "  make generate-resource-capabilities - Regenerate the browser resource-capability projection from the backend table"
 	@echo ""
-	@echo "Testing:"
-	@echo "  ./scripts/test          - Run the complete deterministic check"
-	@echo "  make smoke              - Post-deploy auth smoke check against production URLs"
-	@echo "  make smoke-auth         - Full hosted Auth configuration and production smoke gate"
+	@echo "Static checks:"
+	@echo "  ./scripts/test          - Run formatting, lint, type, and migration graph checks"
 	@echo ""
 	@echo "Formatting:"
 	@echo "  make format             - Apply backend formatting and frontend lint fixes"
@@ -67,7 +64,6 @@ help:
 	@echo "Database:"
 	@echo "  make migrate            - Run migrations on the dev database"
 	@echo "  make migrate-down       - Roll back one dev migration"
-	@echo "  make seed               - Seed development data"
 	@echo ""
 	@echo "Maintenance:"
 	@echo "  make logs               - Show local compose service logs"
@@ -195,11 +191,6 @@ migrate-down:
 	cd migrations && DATABASE_URL=$(DATABASE_URL) \
 		uv run --project ../python alembic downgrade -1
 
-seed:
-	cd python && DATABASE_URL=$(DATABASE_URL) \
-		SUPABASE_URL=$(SUPABASE_URL) \
-		uv run python ../scripts/seed_dev.py
-
 format:
 	make format-back
 	make fix-front
@@ -224,10 +215,3 @@ build-icons:
 
 generate-resource-capabilities:
 	cd python && uv run python scripts/generate_resource_capabilities.py
-
-smoke:
-	./deploy/smoke/auth-smoke.sh
-
-smoke-auth:
-	./deploy/supabase/verify-auth-config.sh
-	./deploy/smoke/auth-smoke.sh

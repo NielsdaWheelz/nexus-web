@@ -39,8 +39,6 @@ codex-agent = [
 dev = [
     "cryptography>=45.0.0",
     "ruff>=0.8.0",
-    "pytest>=8.3.0",
-    "pytest-socket>=0.7.0",
     "pyright>=1.1.390",
 ]
 
@@ -62,7 +60,7 @@ llm-tools = { git = "https://github.com/NielsdaWheelz/llm-tools.git", rev = "9e6
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = [".", "tests"]
+src = ["."]
 
 [tool.ruff.lint]
 select = [
@@ -76,9 +74,6 @@ select = [
 ignore = [
     "E501",  # line too long (handled by formatter)
 ]
-
-[tool.ruff.lint.per-file-ignores]
-"tests/conftest.py" = ["E402"]  # sys.path modification requires imports after
 
 [tool.ruff.format]
 quote-style = "double"
@@ -192,27 +187,4 @@ include = [
     "nexus/storage/__init__.py",
     "nexus/storage/client.py",
     "nexus/storage/paths.py",
-]
-exclude = [
-    "tests",
-]
-
-[tool.pytest.ini_options]
-testpaths = [
-    "tests/kernel",
-]
-python_files = ["test_*.py"]
-python_functions = ["test_*"]
-addopts = [
-    "-v",
-    "--tb=short",
-    "--strict-config",
-    "--strict-markers",
-    "--disable-socket",
-    "--allow-unix-socket",
-    "--allow-hosts=127.0.0.1,::1,127.0.1.1",
-]
-pythonpath = ["."]
-filterwarnings = [
-    "error::UserWarning",
 ]
