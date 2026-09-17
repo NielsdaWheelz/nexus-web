@@ -307,7 +307,6 @@ function Timeline({ data }: { data: ConsumptionStats }) {
         ))}
       </div>
       <svg
-        data-testid="activity-timeline-chart"
         className={styles.lineChart}
         aria-hidden="true"
         viewBox="0 0 320 86"
@@ -1173,18 +1172,16 @@ export default function StatsPaneBody() {
     [setState, state],
   );
   const anchor = state.view === "year" ? `${state.year}-01-01` : state.anchor;
-  const activeAnchor =
-    state.view === "year" ? `${state.year}-01-01` : state.anchor;
   const canGoNext =
     state.view === "year"
       ? state.year < new Date().getFullYear()
-      : periodStart(shiftAnchor(activeAnchor, state.period, 1), state.period) <=
+      : periodStart(shiftAnchor(anchor, state.period, 1), state.period) <=
         periodStart(localToday(), state.period);
   const move = (amount: number) =>
     update(
       state.view === "year"
         ? { year: state.year + amount }
-        : { anchor: shiftAnchor(activeAnchor, state.period, amount) },
+        : { anchor: shiftAnchor(anchor, state.period, amount) },
     );
   const filters = state.filters;
   const setFilter = (

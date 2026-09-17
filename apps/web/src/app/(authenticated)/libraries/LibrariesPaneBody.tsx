@@ -8,13 +8,15 @@ import {
   useRef,
   useState,
 } from "react";
-import { isApiError } from "@/lib/api/client";
+import { isInvalidViewError } from "@/lib/api/client";
 import {
   type CollectionCursor,
   type CollectionPage,
   type CollectionRevision,
+  NO_CURSOR,
+  ZERO_REVISION,
 } from "@/lib/api/collectionPage";
-import { absent, type Presence } from "@/lib/api/presence";
+import type { Presence } from "@/lib/api/presence";
 import { librariesResource } from "@/lib/api/resource";
 import { useExhaustivePagination } from "@/lib/api/useExhaustivePagination";
 import { usePaneUrlState } from "@/lib/api/usePaneUrlState";
@@ -96,15 +98,6 @@ interface LibrariesSnapshot {
   readonly exhaustion: "Partial" | "Complete";
 }
 
-// The one code that turns a first-page failure into the "Invalid libraries
-// view" terminal state: the backend rejects a bad view/cursor with these codes.
-function isInvalidViewError(error: unknown): boolean {
-  return (
-    isApiError(error) &&
-    (error.code === "E_INVALID_REQUEST" || error.code === "E_INVALID_CURSOR")
-  );
-}
-
 interface PendingLibrariesRevalidation {
   readonly version: number;
   readonly resolve: () => void;
@@ -115,8 +108,6 @@ interface PendingLibrariesRevalidation {
 const LIBRARIES_VISIT_DATA = definePaneVisitDataKey<LibrariesSnapshot>(
   "Libraries.CompleteCollection",
 );
-const NO_CURSOR = absent<CollectionCursor>();
-const ZERO_REVISION = 0 as CollectionRevision;
 
 export default function LibrariesPaneBody() {
   requirePaneRuntime(usePaneRuntime(), "LibrariesPaneBody");

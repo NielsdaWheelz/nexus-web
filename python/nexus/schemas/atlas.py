@@ -34,11 +34,3 @@ class AtlasOut(BaseModel):
     stars: list[StarOut]
     constellations: list[ConstellationOut]
     edges: list[AtlasEdgeOut]
-
-
-class AtlasStatusOut(BaseModel):
-    projection_version: int | None
-    positioned_count: int
-    total_count: int
-    stale_count: int
-    last_run: str | None

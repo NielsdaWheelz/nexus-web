@@ -14,10 +14,6 @@ import {
   activityRuntime,
   installActivityRecorderState,
 } from "./activityRuntime";
-import {
-  emitActivityDiagnostic,
-  type ActivityDiagnosticEmitter,
-} from "./activityDiagnostics";
 
 export const ACTIVITY_SPAN_MAX_MS = 30_000;
 export const ACTIVITY_CHECKPOINT_MS = 10_000;
@@ -69,7 +65,6 @@ interface ActivityRecorderOptions {
   wallNow?: () => number;
   closedSpan?: (span: ClosedActivitySpan) => void;
   recordingChanged?: (recording: boolean) => void;
-  activityDiagnostic?: ActivityDiagnosticEmitter;
   diagnostic?: (kind: ActivityDiagnostic) => void;
 }
 
@@ -211,7 +206,6 @@ export class ActivityRecorder {
   private readonly emitClosedSpan: (span: ClosedActivitySpan) => void;
   private readonly recordingChanged: (recording: boolean) => void;
   private readonly diagnostic: (kind: ActivityDiagnostic) => void;
-  private readonly activityDiagnostic: ActivityDiagnosticEmitter;
   private readonly observers = new Map<string, Observer>();
   private readonly lanes = new Map<string, Lane>();
   private readonly ambiguousGroups = new Set<string>();
@@ -224,8 +218,6 @@ export class ActivityRecorder {
     this.wallNow = options.wallNow ?? Date.now;
     this.emitClosedSpan = options.closedSpan ?? (() => undefined);
     this.recordingChanged = options.recordingChanged ?? (() => undefined);
-    this.activityDiagnostic =
-      options.activityDiagnostic ?? emitActivityDiagnostic;
     this.diagnostic =
       options.diagnostic ??
       ((kind) => {
@@ -402,12 +394,6 @@ export class ActivityRecorder {
           body,
         );
         this.emitClosedSpan(captured);
-        this.activityDiagnostic({
-          event: "activity_span_closed",
-          platform: "Web",
-          modality: captured.modality,
-          count: 1,
-        });
       }
     }
     lane.startedMono = closedAtMono;

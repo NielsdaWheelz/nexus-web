@@ -1,5 +1,6 @@
 import { ApiError } from "@/lib/api/client";
 import {
+  absent,
   decodePresence,
   type Presence,
 } from "@/lib/api/presence";
@@ -20,6 +21,9 @@ export type CollectionCursor = string & {
 export type CollectionRevision = number & {
   readonly [collectionRevisionBrand]: true;
 };
+
+export const NO_CURSOR = absent<CollectionCursor>();
+export const ZERO_REVISION = 0 as CollectionRevision;
 
 export interface CollectionPage<T> {
   readonly items: readonly T[];
