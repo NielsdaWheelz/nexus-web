@@ -25,7 +25,7 @@ from nexus.config import (
     get_settings,
     parse_agent_tools_mcp_listen,
 )
-from nexus.db.engine import get_engine
+from nexus.db.session import create_session_factory
 from nexus.job_topology import (
     BACKGROUND_WORKER_JOB_KINDS,
     INTERACTIVE_WORKER_JOB_KINDS,
@@ -51,16 +51,6 @@ if TYPE_CHECKING:
     from nexus.services.agent_tools_mcp import ActiveAgentToolRegistry
 
 _MCP_LISTENER_START_TIMEOUT_SECONDS = 10.0
-
-
-def _get_worker_session_factory() -> sessionmaker[Session]:
-    """Build the worker factory without importing the FastAPI request seam."""
-    return sessionmaker(
-        bind=get_engine(),
-        autocommit=False,
-        autoflush=False,
-        expire_on_commit=False,
-    )
 
 
 def _worker_readiness_check(
@@ -225,7 +215,7 @@ def create_worker(
     if unknown_kinds:
         raise RuntimeError(f"Unknown worker job kinds: {', '.join(sorted(unknown_kinds))}")
 
-    session_factory = _get_worker_session_factory()
+    session_factory = create_session_factory()
     process_executor: BackgroundProcessExecutor | None = None
     if settings.worker_lane == "background":
         process_executor = BackgroundProcessExecutor(
@@ -313,7 +303,7 @@ def main() -> None:
     if settings.worker_lane == "interactive":
         mcp_listener = _start_agent_tools_listener(
             settings=settings,
-            session_factory=_get_worker_session_factory(),
+            session_factory=create_session_factory(),
         )
         from nexus.services.agent_tools_mcp import set_active_agent_tool_registry
 

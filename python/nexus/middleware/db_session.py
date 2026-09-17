@@ -23,7 +23,7 @@ class RequestDbSessionMiddleware:
             if released:
                 return
             released = True
-            release_tracked_request_db_sessions(scope.get("state"))
+            release_tracked_request_db_sessions(scope.setdefault("state", {}))
 
         async def send_wrapper(message: Message) -> None:
             if message["type"] == "http.response.start":

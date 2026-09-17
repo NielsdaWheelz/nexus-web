@@ -586,12 +586,7 @@ def enqueue_unique_job(
             )
             return inserted, True
     except IntegrityError as exc:
-        constraint_name = integrity_constraint_name(exc)
-        sqlstate = getattr(exc.orig, "sqlstate", None)
-        if not (
-            constraint_name == "idx_background_jobs_dedupe_key_unique"
-            or (sqlstate == "23505" and "idx_background_jobs_dedupe_key_unique" in str(exc.orig))
-        ):
+        if integrity_constraint_name(exc) != "idx_background_jobs_dedupe_key_unique":
             raise
         existing_after_conflict = (
             db.execute(

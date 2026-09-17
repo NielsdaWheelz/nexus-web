@@ -145,11 +145,7 @@ def commit_transcription_reservation(
 
 
 def _is_usage_daily_identity_conflict(exc: IntegrityError) -> bool:
-    orig = getattr(exc, "orig", None)
-    constraint_name = integrity_constraint_name(exc)
-    if constraint_name:
-        return constraint_name == "podcast_transcription_usage_daily_pkey"
-    return "podcast_transcription_usage_daily_pkey" in str(orig or exc)
+    return integrity_constraint_name(exc) == "podcast_transcription_usage_daily_pkey"
 
 
 def _claim_job_reservation(

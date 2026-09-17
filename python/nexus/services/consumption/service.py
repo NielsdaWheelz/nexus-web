@@ -1934,7 +1934,7 @@ def fresh_session() -> Session:
     sibling modules of this package — must arrive through this owner.
     """
     fresh = get_session_factory()()
-    # An open transaction would make use_serializable_if_available retain weaker
+    # An open transaction would make use_serializable retain weaker
     # isolation; factory sessions must arrive clean (contributors precedent).
     assert not fresh.in_transaction(), "consumption commands require a fresh session"
     return fresh

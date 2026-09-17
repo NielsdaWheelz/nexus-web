@@ -13,7 +13,7 @@ from nexus.db.errors import (
     integrity_constraint_name,
     is_retryable_transaction_conflict,
 )
-from nexus.db.session import use_read_committed_if_available, use_serializable_if_available
+from nexus.db.session import use_read_committed, use_serializable
 
 # Named uniqueness constraints whose violation is a legitimate concurrent-insert
 # race rather than a defect, owner-neutral across callers: the author
@@ -118,7 +118,7 @@ def retry_serializable[T](db: Session, label: str, op: Callable[[], T], *, retri
         db,
         label,
         op,
-        use_serializable_if_available,
+        use_serializable,
         retries=retries,
     )
 
@@ -149,6 +149,6 @@ def retry_read_committed[T](db: Session, label: str, op: Callable[[], T], *, ret
         db,
         label,
         op,
-        use_read_committed_if_available,
+        use_read_committed,
         retries=retries,
     )
