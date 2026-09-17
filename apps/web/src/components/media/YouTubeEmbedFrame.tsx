@@ -20,7 +20,7 @@ export function isAllowedYoutubeEmbedUrl(rawUrl: string): boolean {
   }
 }
 
-export function buildYoutubeEmbedSrc(
+function buildYoutubeEmbedSrc(
   embedUrl: string,
   seekTargetMs: number | null,
 ): string {

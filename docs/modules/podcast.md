@@ -141,8 +141,7 @@ that matter:
 
 - **Subscription-settings UI — `PodcastSubscriptionSettingsOverlay`.** The
   app-level resource overlay is the only load/draft/save/reconcile lifecycle
-  owner. `PodcastSubscriptionSettingsDialog` is presentation-only, and
-  `lib/podcasts/subscriptionSettings.ts` strictly decodes the complete GET/PATCH
+  owner, and `lib/podcasts/subscriptionSettings.ts` strictly decodes the complete GET/PATCH
   envelopes, serializes mutations, and publishes canonical installs. Podcast,
   Podcast-detail, and Library panes subscribe directly to that install
   publisher to refresh their local projections; they do not instantiate a

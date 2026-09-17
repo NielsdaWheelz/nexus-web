@@ -160,7 +160,6 @@ export default memo(function HtmlRenderer({
     <div
       ref={rootRef}
       className={`${styles.renderer} ${className || ""}`}
-      data-testid="html-renderer"
       dangerouslySetInnerHTML={{ __html: projectedHtml }}
     />
   );
@@ -199,8 +198,5 @@ function collectPulseCandidates(
     );
     if (matches.length > 0) return matches;
   }
-  const fallback = root.querySelectorAll<HTMLElement>(
-    "[data-active-highlight-ids]",
-  );
-  return fallback.length > 0 ? [fallback[0]] : [];
+  return [];
 }

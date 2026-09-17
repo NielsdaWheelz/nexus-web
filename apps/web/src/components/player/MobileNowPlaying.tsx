@@ -2,10 +2,9 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Ellipsis, List, Mic, X } from "lucide-react";
+import { ChevronDown, Ellipsis, X } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import { useHistoryDismiss } from "@/lib/ui/useHistoryDismiss";
@@ -20,26 +19,21 @@ import {
   PlayerContentsButton,
   PlayerCurrentChapterLine,
   PlayerSeek,
+  PlayerRecordingActionsMenu,
   PlayerStatus,
   PlayerTransport,
-  playerMediaActionSubject,
+  playerChapters,
+  playerContentsAction,
+  playerNextProvenance,
+  playerOpenLecternAction,
+  playerPreviewActions,
+  playerReviewCapturesAction,
   playerSourceHref,
   playerTitle,
   type PresentPlayerChrome,
 } from "./PlayerControls";
 import { PlayerPlaybackRateButton } from "./PlayerPlaybackControls";
 import styles from "./MobileNowPlaying.module.css";
-
-function nextProvenance(model: PresentPlayerChrome): string | null {
-  if (model.kind !== "Canonical") return null;
-  if (model.nextPreview.kind === "Forward") {
-    return `Forward: ${model.nextPreview.descriptor.title}`;
-  }
-  if (model.nextPreview.kind === "Lectern") {
-    return `Next on the Lectern: ${model.nextPreview.descriptor.title}`;
-  }
-  return null;
-}
 
 export default function MobileNowPlaying({
   active,
@@ -74,11 +68,8 @@ export default function MobileNowPlaying({
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [shortViewport, setShortViewport] = useState(false);
   const title = playerTitle(model);
-  const chapters =
-    model.kind === "Canonical"
-      ? model.state.session.descriptor.activation.chapters
-      : [];
-  const provenance = nextProvenance(model);
+  const chapters = playerChapters(model);
+  const provenance = playerNextProvenance(model);
 
   const overlay = useDialogOverlay({
     ref: panelRef,
@@ -100,53 +91,10 @@ export default function MobileNowPlaying({
   }, []);
 
   const secondaryOptions: ActionDescriptor[] = [
-    ...(model.kind === "Canonical" && chapters.length > 0
-      ? [
-          {
-            id: "Player.Contents",
-            kind: "command" as const,
-            label: "Contents",
-            icon: <List aria-hidden="true" />,
-            onSelect: onOpenContents,
-          },
-        ]
-      : []),
-    // A canonical recording's open/source/media actions are the shared resource
-    // dropdown (rendered separately below); a Preview is a transient resource
-    // and keeps its own plain open/source controls.
-    ...(model.kind === "Preview"
-      ? [
-          {
-            id: "OccurrenceAction.PlayerPreview.Open",
-            kind: "command" as const,
-            label: "Open preview",
-            onSelect: onOpenTarget,
-          },
-          {
-            id: "OccurrenceAction.PlayerPreview.OpenSource",
-            kind: "link" as const,
-            label: "Open source",
-            href: playerSourceHref(model),
-          },
-        ]
-      : []),
-    ...(model.kind === "Canonical"
-      ? [
-          {
-            id: "Player.ReviewCaptures",
-            kind: "command" as const,
-            label: `Review captures (${capture.waypointCount})`,
-            icon: <Mic aria-hidden="true" />,
-            onSelect: capture.openReview,
-          },
-          {
-            id: "Player.OpenLectern",
-            kind: "command" as const,
-            label: "Open Lectern",
-            onSelect: onOpenLectern,
-          },
-        ]
-      : []),
+    ...playerContentsAction(model, onOpenContents),
+    ...playerPreviewActions(model, onOpenTarget),
+    ...playerReviewCapturesAction(model, capture),
+    ...playerOpenLecternAction(model, onOpenLectern),
   ];
 
   if (!active) return null;
@@ -228,24 +176,20 @@ export default function MobileNowPlaying({
 
               {shortViewport ? (
                 <>
-                  {model.kind === "Canonical" ? (
-                    <ResourceActionMenu
-                      actionSubject={playerMediaActionSubject(model)}
-                      label="Recording actions"
-                      placement="above"
-                      align="center"
-                      renderTrigger={(props) => (
-                        <Button
-                          {...props}
-                          variant="ghost"
-                          size="lg"
-                          leadingIcon={<Ellipsis aria-hidden="true" />}
-                        >
-                          Recording actions
-                        </Button>
-                      )}
-                    />
-                  ) : null}
+                  <PlayerRecordingActionsMenu
+                    model={model}
+                    align="center"
+                    renderTrigger={(props) => (
+                      <Button
+                        {...props}
+                        variant="ghost"
+                        size="lg"
+                        leadingIcon={<Ellipsis aria-hidden="true" />}
+                      >
+                        Recording actions
+                      </Button>
+                    )}
+                  />
                   <ActionMenu
                     options={secondaryOptions}
                     label="More Now Playing controls"
@@ -271,10 +215,8 @@ export default function MobileNowPlaying({
                     </span>
                   ) : null}
                   {model.kind === "Canonical" ? (
-                    <ResourceActionMenu
-                      actionSubject={playerMediaActionSubject(model)}
-                      label="Recording actions"
-                      placement="above"
+                    <PlayerRecordingActionsMenu
+                      model={model}
                       align="center"
                       renderTrigger={(props) => (
                         <Button

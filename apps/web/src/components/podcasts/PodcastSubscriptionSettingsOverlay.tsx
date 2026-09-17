@@ -3,21 +3,32 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  FeedbackNotice,
   useFeedback,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
+import { PlaybackRateEditor } from "@/components/player/PlayerPlaybackControls";
+import Button from "@/components/ui/Button";
+import Select from "@/components/ui/Select";
 import type { ResourceActionMutationBoundary } from "@/lib/actions/resourceActionMutation";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import { absent, presenceValueOr, present } from "@/lib/api/presence";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
+import { usePlayerSettings } from "@/lib/player/globalPlayer";
+import { formatPlaybackRate } from "@/lib/player/playbackRate";
 import {
   fetchPodcastSubscriptionSettingsSource,
   savePodcastSubscriptionSettings,
   type PodcastSubscriptionSettingsSource,
 } from "@/lib/podcasts/subscriptionSettings";
+import { useAndroidShell } from "@/lib/renderEnvironment/provider";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
-import PodcastSubscriptionSettingsDialog, {
-  type PodcastSubscriptionSettingsEditor,
-} from "./PodcastSubscriptionSettingsDialog";
+import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
+import {
+  ModalLayerProvider,
+  modalBackdropProjection,
+} from "@/lib/ui/useModalLayer";
+import styles from "./PodcastSubscriptionSettingsOverlay.module.css";
 
 function podcastSettingsSaveErrorContent(error: unknown): FeedbackContent {
   if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
@@ -74,12 +85,30 @@ function podcastSettingsSaveErrorContent(error: unknown): FeedbackContent {
   }
 }
 
-function usePodcastSettingsEditor(
-  podcastId: string,
-  source: PodcastSubscriptionSettingsSource,
-  mutation: ResourceActionMutationBoundary,
-  onClose: () => void,
-): PodcastSubscriptionSettingsEditor {
+function AndroidDeviceDefaultPauseOption() {
+  const playerSettings = usePlayerSettings();
+  return (
+    <option value="Device">
+      Use device default
+      {playerSettings.pauseShortening.kind === "Available"
+        ? ` (currently ${playerSettings.pauseShortening.deviceDefaultMode})`
+        : ""}
+    </option>
+  );
+}
+
+function LoadedPodcastSettingsOverlay({
+  podcastId,
+  source,
+  mutation,
+  onClose,
+}: {
+  podcastId: string;
+  source: PodcastSubscriptionSettingsSource;
+  mutation: ResourceActionMutationBoundary;
+  onClose: () => void;
+}) {
+  const androidShell = useAndroidShell();
   const [defaultPlaybackSpeed, setDefaultPlaybackSpeed] =
     useState(source.default_playback_speed);
   const [pauseShorteningMode, setPauseShorteningMode] = useState(
@@ -90,6 +119,16 @@ function usePodcastSettingsEditor(
   const [error, setError] = useState<FeedbackContent | null>(null);
   const [defect, setDefect] = useState<{ error: unknown } | null>(null);
   const busyRef = useRef(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const overlay = useDialogOverlay({
+    ref: cardRef,
+    active: true,
+    onDismiss: onClose,
+    initialFocus: () =>
+      cardRef.current?.querySelector<HTMLElement>(
+        "[data-playback-rate-range]",
+      ) ?? null,
+  });
 
   const save = useCallback(async () => {
     if (busyRef.current) return;
@@ -133,42 +172,120 @@ function usePodcastSettingsEditor(
 
   if (defect) throw defect.error;
 
-  return {
-    defaultPlaybackSpeed,
-    pauseShorteningMode,
-    autoQueue,
-    busy,
-    error,
-    setDefaultPlaybackSpeed,
-    setPauseShorteningMode,
-    setAutoQueue,
-    close: onClose,
-    save,
-  };
-}
-
-function LoadedPodcastSettingsOverlay({
-  podcastId,
-  source,
-  mutation,
-  onClose,
-}: {
-  podcastId: string;
-  source: PodcastSubscriptionSettingsSource;
-  mutation: ResourceActionMutationBoundary;
-  onClose: () => void;
-}) {
-  const editor = usePodcastSettingsEditor(
-    podcastId,
-    source,
-    mutation,
-    onClose,
-  );
   return (
-    <PodcastSubscriptionSettingsDialog
-      podcastTitle="this podcast"
-      editor={editor}
-    />
+    <ModalLayerProvider token={overlay.layerToken}>
+      <div
+        className={styles.modalBackdrop}
+        {...modalBackdropProjection(overlay.isTopmost)}
+        role="presentation"
+        onClick={onClose}
+      >
+        <div
+          ref={cardRef}
+          className={styles.modalCard}
+          role="dialog"
+          aria-label="Subscription settings"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <h2 className={styles.modalTitle}>Subscription settings</h2>
+          <p className={styles.modalDescription}>
+            Configure default playback behavior for{" "}
+            <strong>this podcast</strong>.
+          </p>
+          <div className={styles.settingsFieldLabel}>
+            <PlaybackRateEditor
+              value={presenceValueOr(defaultPlaybackSpeed, 1)}
+              onChange={(rate) => setDefaultPlaybackSpeed(present(rate))}
+              label="Default playback speed"
+            />
+            <Button
+              variant="secondary"
+              size="lg"
+              aria-pressed={defaultPlaybackSpeed.kind === "Absent"}
+              onClick={() => setDefaultPlaybackSpeed(absent())}
+            >
+              Use app default (1x)
+            </Button>
+            <span className={styles.modalDescription}>
+              {defaultPlaybackSpeed.kind === "Absent"
+                ? "New episodes use the app default, 1x."
+                : `New episodes start at ${formatPlaybackRate(
+                    defaultPlaybackSpeed.value,
+                  )}.`}
+            </span>
+          </div>
+          <label className={styles.settingsFieldLabel}>
+            <span>Shorten pauses</span>
+            <Select
+              size="lg"
+              aria-label="Shorten pauses"
+              value={
+                pauseShorteningMode.kind === "Present"
+                  ? pauseShorteningMode.value
+                  : "Device"
+              }
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setPauseShorteningMode(
+                  value === "Device"
+                    ? absent()
+                    : present(value === "Natural" ? "Natural" : "Off"),
+                );
+              }}
+            >
+              {androidShell ? (
+                <AndroidDeviceDefaultPauseOption />
+              ) : (
+                <option value="Device">Use device default</option>
+              )}
+              <option value="Off">Off</option>
+              <option value="Natural">Natural</option>
+            </Select>
+            <span className={styles.modalDescription}>
+              Applies when an episode has no setting for this session.
+            </span>
+          </label>
+          <label className={styles.settingsToggleLabel}>
+            <input
+              type="checkbox"
+              checked={autoQueue}
+              onChange={(event) => setAutoQueue(event.target.checked)}
+              aria-label="Automatically add new episodes to my queue"
+            />
+            Automatically add new episodes to my queue
+          </label>
+          <p className={styles.modalDescription}>
+            New episodes from this podcast will be added to the end of your playback
+            queue when they&apos;re synced.
+          </p>
+          {error ? (
+            <FeedbackNotice content={error} announcement="Assertive" />
+          ) : null}
+          <div className={styles.modalActions}>
+            <Button
+              variant="primary"
+              size="lg"
+              onClick={() => {
+                void save();
+              }}
+              disabled={busy}
+              aria-label="Save subscription settings"
+            >
+              {busy ? "Saving..." : "Save"}
+            </Button>
+            <Button
+              variant="secondary"
+              size="lg"
+              onClick={onClose}
+              disabled={busy}
+              aria-label="Close subscription settings"
+            >
+              Close
+            </Button>
+          </div>
+        </div>
+      </div>
+    </ModalLayerProvider>
   );
 }
 

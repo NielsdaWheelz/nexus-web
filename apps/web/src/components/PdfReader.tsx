@@ -86,7 +86,7 @@ export interface PdfHighlightNavigationRequest {
   pulse?: "Highlight" | "Transient";
 }
 
-export interface PdfTemporaryHighlight {
+interface PdfTemporaryHighlight {
   id: string;
   pageNumber: number;
   quads: PdfHighlightQuad[];
@@ -148,7 +148,7 @@ export interface PdfReaderResourceState {
   error: string | null;
 }
 
-export interface PdfReaderResources {
+interface PdfReaderResources {
   signedUrl: ReaderResource<ResolvedPdfDocument>;
   pageHighlights: ReaderResource<PdfHighlightOut[]>;
   requestSignedUrlRefresh: (targetPage: number) => void;
@@ -274,7 +274,7 @@ interface PdfReaderPositioningRenderTarget {
   zoom: number;
 }
 
-export type PdfViewportIntent = "ReaderRestore" | "FindPreview" | "FindReturn";
+type PdfViewportIntent = "ReaderRestore" | "FindPreview" | "FindReturn";
 
 const SIGNED_URL_REFRESH_SKEW_MS = 2_000;
 const MIN_ZOOM = 0.5;
@@ -1301,25 +1301,8 @@ export default function PdfReader({
     (targetPage: number, explicitPageView?: PdfPageViewLike) => {
       const pageElement = getPageElement(targetPage);
       if (pageElement) {
-        pageElement.setAttribute(
-          "data-testid",
-          `pdf-page-surface-${targetPage}`,
-        );
         const textLayer = pageElement.querySelector<HTMLElement>(".textLayer");
-        textLayer?.setAttribute(
-          "data-testid",
-          `pdf-page-text-layer-${targetPage}`,
-        );
         textLayer?.setAttribute("data-reader-tap-reveal-surface", "true");
-        pageElement
-          .querySelector<HTMLElement>(".canvasWrapper")
-          ?.setAttribute(
-            "data-testid",
-            `pdf-page-canvas-wrapper-${targetPage}`,
-          );
-        pageElement
-          .querySelector<HTMLElement>(".canvasWrapper canvas")
-          ?.setAttribute("data-testid", `pdf-page-canvas-${targetPage}`);
         const pageView =
           explicitPageView ??
           pdfViewerRef.current?.getPageView?.(Math.max(0, targetPage - 1));
@@ -3241,10 +3224,6 @@ export default function PdfReader({
       if (pulsingHighlightId === rect.highlightId) {
         rectEl.classList.add(styles.pulsing);
       }
-      rectEl.setAttribute(
-        "data-testid",
-        `pdf-highlight-${rect.highlightId}-${rect.index}`,
-      );
       rectEl.setAttribute("data-highlight-color", rect.color);
       rectEl.setAttribute("data-highlight-id", rect.highlightId);
       rectEl.setAttribute("data-reader-tap-handled", "true");
@@ -3595,7 +3574,7 @@ export default function PdfReader({
               Loading PDF…
             </div>
           )}
-          <div className={styles.pdfViewport} data-testid="pdf-viewport">
+          <div className={styles.pdfViewport}>
             <div
               className={styles.viewerA11yMarker}
               role="img"
@@ -3639,19 +3618,19 @@ export default function PdfReader({
       )}
 
       {selectionPopoverProps ? (
-        onQuoteToNewChat && onQuoteToExistingChat && textGeometryReliable ? (
-          <SelectionPopover
-            {...selectionPopoverProps}
-            onQuoteToNewChat={(highlight) =>
-              onQuoteToNewChat(highlight.id, highlight)
-            }
-            onQuoteToExistingChat={(highlight) =>
-              onQuoteToExistingChat(highlight.id, highlight)
-            }
-          />
-        ) : (
-          <SelectionPopover {...selectionPopoverProps} />
-        )
+        <SelectionPopover
+          {...selectionPopoverProps}
+          chat={
+            onQuoteToNewChat && onQuoteToExistingChat && textGeometryReliable
+              ? {
+                  newChat: (highlight) =>
+                    onQuoteToNewChat(highlight.id, highlight),
+                  existingChat: (highlight) =>
+                    onQuoteToExistingChat(highlight.id, highlight),
+                }
+              : undefined
+          }
+        />
       ) : null}
     </div>
   );

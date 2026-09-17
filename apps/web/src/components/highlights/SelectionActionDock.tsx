@@ -306,23 +306,7 @@ function actionIsPending(
   actionId: string,
   pendingActionId: SelectionPendingActionId | null,
 ): boolean {
-  if (pendingActionId === null) return false;
-  switch (pendingActionId) {
-    case "color":
-      return actionId === "color";
-    case "share":
-      return actionId === "share";
-    case "learn":
-    case "quote-new":
-    case "quote-existing":
-      return actionId === pendingActionId;
-    default: {
-      // justify-defect: every pending id names a fresh-selection action; a new
-      // one without a mapping here would silently announce nothing.
-      const exhaustive: never = pendingActionId;
-      throw new Error(`Unhandled pending selection action: ${exhaustive}`);
-    }
-  }
+  return pendingActionId !== null && actionId === pendingActionId;
 }
 
 function pendingActionLabel(

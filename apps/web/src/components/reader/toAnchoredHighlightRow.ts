@@ -15,7 +15,6 @@ type HighlightMetadata = Pick<
   | "updated_at"
   | "prefix"
   | "suffix"
-  | "is_owner"
 > &
   Pick<AnchoredReaderRow, "linked_note_blocks" | "linked_conversations">;
 

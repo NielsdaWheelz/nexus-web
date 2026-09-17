@@ -30,7 +30,7 @@ export interface InspectorDomainBodies {
   forks?: ReactNode;
 }
 
-export interface InspectorSurfacePlan {
+interface InspectorSurfacePlan {
   surfaces: PaneSecondarySurfacePublication[];
   transientSurfaces: PaneTransientSecondarySurfacePublication[];
   defaultSurfaceId: WorkspaceSecondarySurfaceId;

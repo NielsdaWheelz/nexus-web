@@ -111,7 +111,20 @@ type ActivateEvidenceSourceTarget = (
   target: ReaderEvidenceSourceTarget,
   disposition: WorkspaceTargetDisposition,
 ) => void;
-type HoverEvidenceItem = (item: ReaderEvidenceItem | null) => void;
+
+/**
+ * The handlers every evidence row shares, forwarded unchanged from the pane
+ * surface through the passage groups. Disclosure ids are minted by the surface
+ * that opens them: a row asks for its own.
+ */
+export interface EvidenceRowActions {
+  onToggleDisclosure: (disclosureId: string) => void;
+  onEditHighlight: (highlightId: string | null) => void;
+  onActivateObject: ActivateEvidenceObject;
+  onActivateSourceTarget: ActivateEvidenceSourceTarget;
+  onHoverItem: (item: ReaderEvidenceItem | null) => void;
+  onDismissSynapse: (edgeId: string) => Promise<void>;
+}
 
 export function EvidenceItemRow({
   item,
@@ -121,13 +134,8 @@ export function EvidenceItemRow({
   disclosureOpen,
   editing,
   highlightActions,
-  onToggleDisclosure,
-  onEditHighlight,
-  onActivateObject,
-  onActivateSourceTarget,
-  onHoverItem,
-  onDismissSynapse,
   linkActions,
+  rowActions,
 }: {
   item: ReaderEvidenceItem;
   group: ReaderEvidencePassageGroup | null;
@@ -136,13 +144,8 @@ export function EvidenceItemRow({
   disclosureOpen: boolean;
   editing: boolean;
   highlightActions: EvidenceHighlightActions;
-  onToggleDisclosure: () => void;
-  onEditHighlight: (highlightId: string | null) => void;
-  onActivateObject: ActivateEvidenceObject;
-  onActivateSourceTarget: ActivateEvidenceSourceTarget;
-  onHoverItem: HoverEvidenceItem;
-  onDismissSynapse: (edgeId: string) => Promise<void>;
   linkActions: EvidenceLinkActions;
+  rowActions: EvidenceRowActions;
 }) {
   const removableLink = isReaderEvidenceUserLink(item) ? item : null;
   // Link notes are a capability of neutral top-level Links only. A user stance
@@ -161,7 +164,7 @@ export function EvidenceItemRow({
     item.kind === "Highlight" ? linkedHighlightNote(item) : null;
   const relationshipPanelId = useId();
   const handleFocus = (event: FocusEvent<HTMLElement>) => {
-    if (event.currentTarget.contains(event.target)) onHoverItem(item);
+    if (event.currentTarget.contains(event.target)) rowActions.onHoverItem(item);
   };
   return (
     <article
@@ -170,12 +173,12 @@ export function EvidenceItemRow({
       data-kind={item.kind}
       data-active={active ? "true" : undefined}
       data-hovered={hovered ? "true" : undefined}
-      onMouseEnter={() => onHoverItem(item)}
-      onMouseLeave={() => onHoverItem(null)}
+      onMouseEnter={() => rowActions.onHoverItem(item)}
+      onMouseLeave={() => rowActions.onHoverItem(null)}
       onFocusCapture={handleFocus}
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget))
-          onHoverItem(null);
+          rowActions.onHoverItem(null);
       }}
     >
       <div className={styles.itemMain}>
@@ -212,7 +215,7 @@ export function EvidenceItemRow({
           {item.kind === "Link" || item.kind === "Synapse" ? (
             <ObjectOpenButton
               object={item.object}
-              onActivate={onActivateObject}
+              onActivate={rowActions.onActivateObject}
             />
           ) : null}
           {item.kind === "Link" || item.kind === "Synapse" ? (
@@ -223,7 +226,7 @@ export function EvidenceItemRow({
                 item.kind === "Synapse"
                   ? {
                       kind: "Dismiss",
-                      execute: () => onDismissSynapse(item.edge_id),
+                      execute: () => rowActions.onDismissSynapse(item.edge_id),
                     }
                   : removableLink
                     ? {
@@ -297,7 +300,7 @@ export function EvidenceItemRow({
           <button
             type="button"
             className={styles.doneButton}
-            onClick={() => onEditHighlight(null)}
+            onClick={() => rowActions.onEditHighlight(null)}
           >
             Done editing note
           </button>
@@ -310,7 +313,7 @@ export function EvidenceItemRow({
             className={styles.disclosureButton}
             aria-expanded={disclosureOpen}
             aria-controls={relationshipPanelId}
-            onClick={onToggleDisclosure}
+            onClick={() => rowActions.onToggleDisclosure(`item:${item.id}`)}
           >
             <ChevronDown
               size={14}
@@ -326,7 +329,7 @@ export function EvidenceItemRow({
                 <AssociationRow
                   key={`${association.relationship}:${association.object.ref}:${index}`}
                   association={association}
-                  onActivateObject={onActivateObject}
+                  onActivateObject={rowActions.onActivateObject}
                   onRemoveUserEdge={linkActions.onRemoveUserEdge}
                 />
               ))}
@@ -335,7 +338,7 @@ export function EvidenceItemRow({
                     <SourceTargetRow
                       key={target.ref}
                       target={target}
-                      onActivate={onActivateSourceTarget}
+                      onActivate={rowActions.onActivateSourceTarget}
                     />
                   ))
                 : null}
@@ -617,7 +620,6 @@ function evidenceHighlightRow(
     suffix: item.suffix,
     created_at: item.created_at,
     updated_at: item.updated_at,
-    is_owner: item.is_owner,
     linked_note_blocks: notes,
     linked_conversations: conversations,
   };

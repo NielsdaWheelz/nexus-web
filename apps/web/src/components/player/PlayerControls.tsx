@@ -3,6 +3,7 @@
 import {
   useRef,
   useState,
+  type ComponentProps,
   type CSSProperties,
   type PointerEvent,
   type Ref,
@@ -34,8 +35,11 @@ import {
 } from "@/lib/player/playerChromeModel";
 import Button from "@/components/ui/Button";
 import MediaImage from "@/components/ui/MediaImage";
+import ResourceActionMenu from "@/components/resources/ResourceActionMenu";
+import type { ChapterOut } from "@/lib/lectern/contract";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
+import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PlayerCaptureController } from "@/lib/walknotes/usePlayerCapture";
 import styles from "./PlayerControls.module.css";
 
@@ -68,11 +72,172 @@ export function playerTargetHref(model: PresentPlayerChrome): string {
  * model has a stable media `ResourceRef`; the Preview model is a transient
  * resource excluded from the resource-action system (spec Scope).
  */
-export function playerMediaActionSubject(
+function playerMediaActionSubject(
   model: Extract<PresentPlayerChrome, { readonly kind: "Canonical" }>,
 ): ResourceActionSubject {
   const mediaId = model.state.session.descriptor.mediaId;
   return { ref: canonicalResourceRef({ scheme: "media", id: mediaId }) };
+}
+
+/** The playing session, or null while no session is on the air. */
+export function presentPlayerChrome(
+  model: PlayerChromeModel,
+): PresentPlayerChrome | null {
+  return model.kind === "Canonical" || model.kind === "Preview" ? model : null;
+}
+
+/** Identity of the playing session: the media it plays, or a preview target. */
+export function playerSessionIdentity(model: PlayerChromeModel): string | null {
+  const present = presentPlayerChrome(model);
+  if (present === null) return null;
+  return present.kind === "Canonical"
+    ? present.state.session.descriptor.mediaId
+    : present.state.session.descriptor.target;
+}
+
+/** What plays next, for the surfaces that name it under the title. */
+export function playerNextProvenance(model: PresentPlayerChrome): string | null {
+  if (model.kind !== "Canonical") return null;
+  if (model.nextPreview.kind === "Forward") {
+    return `Forward: ${model.nextPreview.descriptor.title}`;
+  }
+  if (model.nextPreview.kind === "Lectern") {
+    return `Next on the Lectern: ${model.nextPreview.descriptor.title}`;
+  }
+  return null;
+}
+
+/** The chapters of the playing recording; a Preview has none. */
+export function playerChapters(
+  model: PresentPlayerChrome,
+): readonly ChapterOut[] {
+  return model.kind === "Canonical"
+    ? model.state.session.descriptor.activation.chapters
+    : [];
+}
+
+export function playerCaptureAction(
+  model: PresentPlayerChrome,
+  capture: PlayerCaptureController,
+): ActionDescriptor[] {
+  if (model.kind !== "Canonical") return [];
+  return [
+    {
+      id: "Player.Capture",
+      kind: "custom",
+      label: "Capture this moment",
+      icon: <Mic aria-hidden="true" />,
+      render: ({ closeMenu }) => (
+        <PlayerCaptureButton
+          model={model}
+          capture={capture}
+          afterCapture={closeMenu}
+        />
+      ),
+    },
+  ];
+}
+
+export function playerReviewCapturesAction(
+  model: PresentPlayerChrome,
+  capture: PlayerCaptureController,
+): ActionDescriptor[] {
+  if (model.kind !== "Canonical") return [];
+  return [
+    {
+      id: "Player.ReviewCaptures",
+      kind: "command",
+      label: `Review captures (${capture.waypointCount})`,
+      icon: <Mic aria-hidden="true" />,
+      onSelect: capture.openReview,
+    },
+  ];
+}
+
+export function playerContentsAction(
+  model: PresentPlayerChrome,
+  onOpenContents: () => void,
+): ActionDescriptor[] {
+  if (playerChapters(model).length === 0) return [];
+  return [
+    {
+      id: "Player.Contents",
+      kind: "command",
+      label: "Contents",
+      icon: <List aria-hidden="true" />,
+      onSelect: onOpenContents,
+    },
+  ];
+}
+
+/**
+ * A canonical recording's open/source/media actions are the shared resource
+ * dropdown every surface renders separately; a Preview is a transient resource
+ * with no canonical ResourceRef, so it keeps its own plain open/source
+ * controls.
+ */
+export function playerPreviewActions(
+  model: PresentPlayerChrome,
+  onOpenTarget: () => void,
+): ActionDescriptor[] {
+  if (model.kind !== "Preview") return [];
+  return [
+    {
+      id: "OccurrenceAction.PlayerPreview.Open",
+      kind: "command",
+      label: "Open preview",
+      onSelect: onOpenTarget,
+    },
+    {
+      id: "OccurrenceAction.PlayerPreview.OpenSource",
+      kind: "link",
+      label: "Open source",
+      href: playerSourceHref(model),
+    },
+  ];
+}
+
+export function playerOpenLecternAction(
+  model: PresentPlayerChrome,
+  onOpenLectern: () => void,
+): ActionDescriptor[] {
+  if (model.kind !== "Canonical") return [];
+  return [
+    {
+      id: "Player.OpenLectern",
+      kind: "command",
+      label: "Open Lectern",
+      onSelect: onOpenLectern,
+    },
+  ];
+}
+
+/**
+ * The one canonical resource dropdown for the now-playing recording. Each
+ * surface supplies only its own trigger; a Preview has no canonical resource
+ * and renders nothing.
+ */
+export function PlayerRecordingActionsMenu({
+  model,
+  align,
+  renderTrigger,
+}: {
+  readonly model: PresentPlayerChrome;
+  readonly align?: ComponentProps<typeof ResourceActionMenu>["align"];
+  readonly renderTrigger: ComponentProps<
+    typeof ResourceActionMenu
+  >["renderTrigger"];
+}) {
+  if (model.kind !== "Canonical") return null;
+  return (
+    <ResourceActionMenu
+      actionSubject={playerMediaActionSubject(model)}
+      label="Recording actions"
+      placement="above"
+      align={align}
+      renderTrigger={renderTrigger}
+    />
+  );
 }
 
 export function PlayerArtwork({
