@@ -3,10 +3,7 @@ import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import type { PaneSubresourceFailure } from "@/lib/panes/paneResourceLoaders";
 
 export type MediaPaneOperation =
-  | "Lectern"
   | "Consumption"
-  | "Progress"
-  | "CanonicalState"
   | "Citation"
   | "Highlight"
   | "DocumentMap"
@@ -17,14 +14,8 @@ export type MediaPaneOperation =
 
 function mediaPaneOperationTitle(operation: MediaPaneOperation): string {
   switch (operation) {
-    case "Lectern":
-      return "Lectern wasn’t changed";
     case "Consumption":
       return "Reading state wasn’t changed";
-    case "Progress":
-      return "Progress wasn’t reset";
-    case "CanonicalState":
-      return "The latest state couldn’t be loaded";
     case "Citation":
       return "Citation couldn’t be opened";
     case "Highlight":

@@ -3,19 +3,6 @@ import { tryParseContributorHandle } from "@/lib/contributors/handle";
 import { contributorAuthorHref } from "@/lib/contributors/routes";
 import type { ContributorCredit, MediaAuthorCredit } from "@/lib/contributors/types";
 import type { PaneResourceHeaderPublication } from "@/lib/panes/paneHeaderModel";
-import { isApiError } from "@/lib/api/client";
-
-type CanonicalMediaRefetchFailure = "unavailable" | "retain-ready";
-
-export function classifyCanonicalMediaRefetchFailure(
-  error: unknown,
-): CanonicalMediaRefetchFailure {
-  if (!isApiError(error)) return "retain-ready";
-  if (error.code === "E_MEDIA_NOT_READY") return "retain-ready";
-  return error.status === 404 || error.code === "E_MEDIA_NOT_FOUND"
-    ? "unavailable"
-    : "retain-ready";
-}
 
 /**
  * Maps a media DTO's author-role credits into the editor's camel `MediaAuthorCredit`

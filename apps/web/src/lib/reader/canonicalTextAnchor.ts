@@ -70,6 +70,29 @@ export function findFirstVisibleCanonicalOffset(
   );
 }
 
+/**
+ * The viewport coordinates a Find preview must restore: the first visible
+ * canonical offset plus that offset's distance from the container top.
+ */
+export function measureCanonicalViewportOrigin(
+  container: HTMLElement,
+  cursor: CanonicalCursorResult,
+): {
+  readonly anchorCp: number;
+  readonly viewportTopDeltaPx: number;
+  readonly scrollLeft: number;
+} | null {
+  const anchorCp = findFirstVisibleCanonicalOffset(container, cursor);
+  if (anchorCp === null) return null;
+  const viewportTopDeltaPx = measureCanonicalTextAnchorViewportDelta(
+    container,
+    cursor,
+    anchorCp,
+  );
+  if (viewportTopDeltaPx === null) return null;
+  return { anchorCp, viewportTopDeltaPx, scrollLeft: container.scrollLeft };
+}
+
 function canonicalOffsetRects(
   cursor: CanonicalCursorResult,
   offset: number,

@@ -3,8 +3,7 @@ export interface MediaFindPreviewLease {
   beginSource(): void;
   acquire(): void;
   releaseForGenuineInput(): void;
-  cancelUnreportedPreview(): void;
-  completeReturn(): void;
+  release(): void;
   retire(): void;
   subscribe(listener: () => void): () => void;
   armNextCaptureSuppression(): void;
@@ -60,8 +59,7 @@ export function createMediaFindPreviewLease(): MediaFindPreviewLease {
       suppressCapturesUntilGenuineInput = false;
       release();
     },
-    cancelUnreportedPreview: release,
-    completeReturn: release,
+    release,
     retire() {
       suppressNextCapture = false;
       suppressCapturesUntilGenuineInput = false;

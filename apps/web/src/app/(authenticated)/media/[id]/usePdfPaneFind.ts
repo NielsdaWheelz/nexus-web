@@ -8,6 +8,7 @@ import {
   type PaneFindSourceKey,
 } from "@/lib/panes/paneSearch";
 import type { PaneFindAdapter } from "@/lib/panes/usePaneFind";
+import { isAbortError } from "@/lib/errors";
 import type {
   PdfFindError,
   PdfFindLocator,
@@ -47,10 +48,6 @@ export interface PdfPaneFindAdapter extends PaneFindAdapter<PdfFindError> {
 
 function throwAbort(message: string): never {
   throw new DOMException(message, "AbortError");
-}
-
-function isAbort(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function pdfFindErrorMessage(error: PdfFindError): string {
@@ -218,7 +215,7 @@ function failedResponse({
   };
 }
 
-export function createPdfFindAdapter({
+function createPdfFindAdapter({
   mediaId,
   runtime,
   getCurrentRuntime,
@@ -265,7 +262,7 @@ export function createPdfFindAdapter({
       origin = { kind: "Absent" };
     }
     if (!query.leaseWasActive) {
-      previewLease.cancelUnreportedPreview();
+      previewLease.release();
     }
     activeQuery = null;
   };
@@ -294,7 +291,7 @@ export function createPdfFindAdapter({
       activeQuery = null;
       occurrencesByKey = new Map();
       origin = { kind: "Absent" };
-      previewLease.cancelUnreportedPreview();
+      previewLease.release();
       runtime.clearPresentation();
       const captured = runtime.captureOrigin();
       if (captured.kind === "Captured") {
@@ -372,7 +369,7 @@ export function createPdfFindAdapter({
         if (
           request.signal.aborted ||
           getCurrentRuntime() !== runtime ||
-          isAbort(error)
+          isAbortError(error)
         ) {
           throwAbort("PDF Find query was cancelled.");
         }
@@ -511,7 +508,7 @@ export function createPdfFindAdapter({
         if (captured.kind === "Unavailable") {
           if (origin.kind === "Provisional") {
             origin = { kind: "Absent" };
-            previewLease.cancelUnreportedPreview();
+            previewLease.release();
           }
           return {
             kind: "Rejected",
@@ -549,7 +546,7 @@ export function createPdfFindAdapter({
               .then(() => {
                 runtime.clearPresentation();
                 origin = { kind: "Absent" };
-                previewLease.cancelUnreportedPreview();
+                previewLease.release();
               });
             previewRollback = rollback;
             try {
@@ -563,7 +560,7 @@ export function createPdfFindAdapter({
           if (
             request.signal.aborted ||
             getCurrentRuntime() !== runtime ||
-            isAbort(error)
+            isAbortError(error)
           ) {
             throwAbort("PDF Find preview was cancelled.");
           }
@@ -608,7 +605,7 @@ export function createPdfFindAdapter({
         activePreviewInFlightGeneration === null
       ) {
         origin = { kind: "Absent" };
-        previewLease.cancelUnreportedPreview();
+        previewLease.release();
       }
     },
     async returnToReadingPosition(request) {
@@ -653,7 +650,7 @@ export function createPdfFindAdapter({
       // preview lease may synchronously notify React consumers and replace it.
       focusReaderViewport();
       previewLease.armNextCaptureSuppression();
-      previewLease.completeReturn();
+      previewLease.release();
     },
     errorMessage: pdfFindErrorMessage,
     dispose() {

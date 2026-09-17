@@ -17,6 +17,7 @@ import type { Fragment } from "@/lib/media/transcriptView";
 import type { ReaderNavigationSection } from "@/lib/media/readerNavigation";
 import { buildReaderDocumentStructure, readerSectionAtPosition, readerTextPointOffset, type ReaderDocumentStructure } from "@/lib/reader/readerDocumentPosition";
 import { canonicalCpLength } from "@/lib/reader/textOffsets";
+import { isAbortError } from "@/lib/errors";
 import {
   createPaneFindResultKey,
   createPaneFindSourceKey,
@@ -33,7 +34,7 @@ import {
 import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import {
   findFirstVisibleCanonicalOffset,
-  measureCanonicalTextAnchorViewportDelta,
+  measureCanonicalViewportOrigin,
   restoreCanonicalTextAnchorViewportPosition,
   scrollToExactCanonicalTextAnchor,
 } from "@/lib/reader/canonicalTextAnchor";
@@ -53,7 +54,7 @@ interface WebFindFragment {
   readonly canonicalText: string;
 }
 
-export interface WebFindSnapshot {
+interface WebFindSnapshot {
   readonly mediaId: string;
   readonly sourceKey: PaneFindSourceKey;
   readonly fragments: readonly WebFindFragment[];
@@ -67,7 +68,7 @@ export interface WebFindRenderedState {
   readonly viewport: HTMLElement;
 }
 
-export interface WebFindOrigin {
+interface WebFindOrigin {
   readonly fragmentId: string;
   readonly anchorCp: number;
   readonly viewportTopDeltaPx: number;
@@ -94,7 +95,7 @@ export interface WebFindAdapter
   dispose(): void;
 }
 
-export type WebPaneFindSource =
+type WebPaneFindSource =
   | { readonly kind: "Unavailable" }
   | {
       readonly kind: "Available";
@@ -104,11 +105,11 @@ export type WebPaneFindSource =
       readonly generation: number;
     };
 
-export type WebPaneFindCapability =
+type WebPaneFindCapability =
   | { readonly kind: "Unavailable" }
   | { readonly kind: "Available"; readonly adapter: WebFindAdapter };
 
-export function resolvePreparedWebSectionScope({ structure, fragmentId, anchorCp }: {
+function resolvePreparedWebSectionScope({ structure, fragmentId, anchorCp }: {
   readonly structure: ReaderDocumentStructure;
   readonly fragmentId: string;
   readonly anchorCp: number;
@@ -120,7 +121,7 @@ export function resolvePreparedWebSectionScope({ structure, fragmentId, anchorCp
     : null;
 }
 
-export function createWebFindSnapshot({
+function createWebFindSnapshot({
   mediaId,
   fragments,
   sections,
@@ -167,10 +168,6 @@ function throwIfAborted(signal: AbortSignal): void {
   }
 }
 
-function isAbort(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
-}
-
 function assertRenderedFragment(
   snapshot: WebFindSnapshot,
   rendered: WebFindRenderedState,
@@ -194,27 +191,14 @@ function captureOrigin(
 ): WebFindOrigin | null {
   if (!rendered) return null;
   assertRenderedFragment(snapshot, rendered);
-  const anchorCp = findFirstVisibleCanonicalOffset(
+  const origin = measureCanonicalViewportOrigin(
     rendered.viewport,
     rendered.cursor,
   );
-  if (anchorCp === null) return null;
-  const viewportTopDeltaPx = measureCanonicalTextAnchorViewportDelta(
-    rendered.viewport,
-    rendered.cursor,
-    anchorCp,
-  );
-  return viewportTopDeltaPx === null
-    ? null
-    : {
-        fragmentId: rendered.fragmentId,
-        anchorCp,
-        viewportTopDeltaPx,
-        scrollLeft: rendered.viewport.scrollLeft,
-      };
+  return origin === null ? null : { fragmentId: rendered.fragmentId, ...origin };
 }
 
-export function createWebFindAdapter({
+function createWebFindAdapter({
   snapshot,
   getCurrentSourceKey,
   getRenderedState,
@@ -515,7 +499,7 @@ export function createWebFindAdapter({
         }
         activeOccurrence = null;
         presentation.clear();
-        if (isAbort(error) && originWasNew) {
+        if (isAbortError(error) && originWasNew) {
           const current = getRenderedState();
           if (current?.fragmentId === occurrence.fragmentId) {
             assertRenderedFragment(snapshot, current);
@@ -532,7 +516,7 @@ export function createWebFindAdapter({
           await showPreviewFragment(candidateOrigin.fragmentId, restoreSignal);
           clearPreviewFragment();
           origin = null;
-          previewLease.cancelUnreportedPreview();
+          previewLease.release();
           throw error;
         }
         if (occurrence.fragmentId !== candidateOrigin.fragmentId) {
@@ -544,7 +528,7 @@ export function createWebFindAdapter({
         }
         if (originWasNew) {
           origin = null;
-          previewLease.cancelUnreportedPreview();
+          previewLease.release();
         }
         throw error;
       }
@@ -581,7 +565,7 @@ export function createWebFindAdapter({
       origin = null;
       clearPreviewFragment();
       focusReaderViewport();
-      previewLease.completeReturn();
+      previewLease.release();
     },
     errorMessage: mediaPaneFindErrorMessage,
     rebuildPresentation() {

@@ -7,6 +7,7 @@ import {
   type RefObject,
 } from "react";
 import { isApiError } from "@/lib/api/client";
+import { isAbortError } from "@/lib/errors";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import {
   validateCanonicalText,
@@ -39,7 +40,7 @@ import { canonicalCpLength } from "@/lib/reader/textOffsets";
 import {
   findFirstVisibleCanonicalOffset,
   isCanonicalTextAnchorVisible,
-  measureCanonicalTextAnchorViewportDelta,
+  measureCanonicalViewportOrigin,
   restoreCanonicalTextAnchorViewportPosition,
   scrollToExactCanonicalTextAnchor,
 } from "@/lib/reader/canonicalTextAnchor";
@@ -67,7 +68,7 @@ export interface EpubFindOccurrence {
   readonly endCp: number;
 }
 
-export interface EpubFindOrigin {
+interface EpubFindOrigin {
   readonly fragmentId: string;
   readonly anchorCp: number;
   readonly viewportTopDeltaPx: number;
@@ -94,11 +95,11 @@ export type EpubRenderedFragmentOverride =
       readonly fragment: EpubFragmentContent;
     };
 
-export interface EpubFindPreviewLease {
+interface EpubFindPreviewLease {
   isActive(): boolean;
   beginSource(): void;
   acquire(): void;
-  cancelUnreportedPreview(): void;
+  release(): void;
   retire(): void;
 }
 
@@ -107,7 +108,7 @@ export interface EpubPaneFindAdapter
   dispose(): void;
 }
 
-export type EpubPaneFindCapability =
+type EpubPaneFindCapability =
   | { readonly kind: "Unavailable" }
   | { readonly kind: "Available"; readonly adapter: EpubPaneFindAdapter };
 
@@ -159,13 +160,6 @@ function throwIfAborted(signal: AbortSignal): void {
 
 function abortError(message: string): DOMException {
   return new DOMException(message, "AbortError");
-}
-
-function isAbort(error: unknown): boolean {
-  return (
-    (error instanceof DOMException && error.name === "AbortError") ||
-    (error instanceof Error && error.name === "AbortError")
-  );
 }
 
 function isTransportUnavailable(error: unknown): boolean {
@@ -242,23 +236,15 @@ function captureOrigin(
 ): CapturedEpubFindOrigin | null {
   if (!rendered) return null;
   assertRenderedState(snapshot, rendered);
-  const anchorCp = findFirstVisibleCanonicalOffset(
+  const origin = measureCanonicalViewportOrigin(
     rendered.viewport,
     rendered.cursor,
   );
-  if (anchorCp === null) return null;
-  const viewportTopDeltaPx = measureCanonicalTextAnchorViewportDelta(
-    rendered.viewport,
-    rendered.cursor,
-    anchorCp,
-  );
-  return viewportTopDeltaPx === null
+  return origin === null
     ? null
     : {
         fragmentId: rendered.fragment.fragment_id,
-        anchorCp,
-        viewportTopDeltaPx,
-        scrollLeft: rendered.viewport.scrollLeft,
+        ...origin,
         fragment: rendered.fragment,
       };
 }
@@ -299,7 +285,7 @@ function requestFailure(
   error: unknown,
   onSourceChanged: () => void,
 ): "RequestUnavailable" {
-  if (isAbort(error)) throw error;
+  if (isAbortError(error)) throw error;
   if (handleUnauthenticatedApiError(error)) {
     throw abortError("EPUB Find authentication boundary took ownership.");
   }
@@ -349,7 +335,7 @@ async function waitForRenderedFragment({
   throw new Error("EPUB Find preview fragment did not render.");
 }
 
-export function createEpubFindAdapter({
+function createEpubFindAdapter({
   snapshot,
   getCurrentSourceKey,
   getRenderedState,
@@ -473,7 +459,7 @@ export function createEpubFindAdapter({
   const retireUnreportedOrigin = () => {
     origin = null;
     setAwaitingReaderAdoption(false);
-    previewLease.cancelUnreportedPreview();
+    previewLease.release();
   };
 
   const retireUnsafeFindState = ({

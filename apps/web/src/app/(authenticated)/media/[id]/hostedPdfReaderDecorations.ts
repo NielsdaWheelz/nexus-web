@@ -34,11 +34,7 @@ class HostedPdfReaderDecorations implements PdfReaderDecorations {
       `/api/media/${this.mediaId}/pdf-highlights?page_number=${pageNumber}&mine_only=false`,
       { signal },
     );
-    return response.data.highlights.filter(
-      (highlight) =>
-        highlight.anchor.type === "pdf_page_geometry" &&
-        highlight.anchor.page_number === pageNumber,
-    );
+    return response.data.highlights;
   }
 
   async createHighlight(
