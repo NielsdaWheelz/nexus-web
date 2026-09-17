@@ -259,33 +259,6 @@ def _generation_provenance(
     return provider, model, sum(totals) if totals else None
 
 
-def assert_revision_viewer(db: Session, *, viewer_id: UUID, revision_id: UUID) -> None:
-    """Ownership assert for the revision read (404-masked by head audience)."""
-    row = (
-        db.execute(
-            text(
-                "SELECT a.subject_scheme, a.subject_id, "
-                "a.audience_scheme, a.audience_id "
-                "FROM artifact_revisions r "
-                "JOIN artifact_builds b ON b.id = r.build_id "
-                "JOIN artifacts a ON a.id = b.artifact_id "
-                "WHERE r.id = :revision_id"
-            ),
-            {"revision_id": revision_id},
-        )
-        .mappings()
-        .first()
-    )
-    if row is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Revision not found")
-    _assert_subject_and_audience_viewer(
-        db,
-        row=row,
-        viewer_id=viewer_id,
-        message="Revision not found",
-    )
-
-
 def _assert_artifact_viewer(db: Session, *, viewer_id: UUID, artifact_id: UUID) -> UUID | None:
     """Assert the viewer may read the head's audience; return its current revision."""
     row = (

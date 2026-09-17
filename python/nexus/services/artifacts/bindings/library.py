@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import is_library_member, visible_media_ids_cte_sql
 from nexus.errors import NotFoundError
-from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.artifacts.bindings._shared import (
     AggregateMediaBinding,
     synthesis_prompt,
@@ -32,7 +31,6 @@ from nexus.services.artifacts.subject_policy import (
     ResolvedSubject,
     decode_resource_locator,
 )
-from nexus.services.resource_graph.refs import ResourceRef
 
 
 class LibraryBinding(AggregateMediaBinding):
@@ -126,36 +124,10 @@ class LibrarySubjectPolicy:
     def derive_audience(self, resolved: ResolvedSubject, requester_user_id: UUID) -> AudienceScope:
         return AudienceLibrary(library_id=resolved.subject_id)
 
-    def collection_viewer(self, resolved: ResolvedSubject, audience: AudienceScope) -> UUID | None:
-        resolved = require_resource_subject(resolved)
-        if not isinstance(resolved.detail, UUID):
-            raise AssertionError("resolved library must carry its owner")
-        return resolved.detail
-
-    def requester_admission(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
-        return requester_user_id
-
     def citation_owner(
         self, db: Session, resolved: ResolvedSubject, audience: AudienceScope
     ) -> UUID:
         return _library_owner(db, resolved.subject_id)
-
-    def audience_visible_source_intersection(
-        self, db: Session, resolved: ResolvedSubject, audience: AudienceScope
-    ) -> list[ResourceRef]:
-        owner_id = _library_owner(db, resolved.subject_id)
-        return [
-            ResourceRef(scheme="media", id=media_id)
-            for media_id in BINDING._media_ids(db, resolved, owner_id)
-        ]
-
-    def activate(self, db: Session, ref: ResourceRef) -> ResourceActivationOut:
-        return ResourceActivationOut(
-            resource_ref=ref.uri,
-            kind="route",
-            href=f"/libraries/{ref.id}",
-            unresolved_reason=None,
-        )
 
 
 def _library_owner(db: Session, library_id: UUID) -> UUID:

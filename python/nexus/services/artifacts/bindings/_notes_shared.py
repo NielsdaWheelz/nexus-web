@@ -16,6 +16,7 @@ from nexus.services.resource_graph.refs import (
     ResourceScheme,
 )
 from nexus.services.resource_graph.schemas import (
+    CitationSnapshot,
     ConnectionFilters,
     ConnectionQuery,
 )
@@ -95,9 +96,7 @@ def _connection_snapshot(
     label: str | None,
     body: str,
     href: str | None,
-):
-    from nexus.services.resource_graph.schemas import CitationSnapshot
-
+) -> CitationSnapshot:
     return CitationSnapshot(
         title=label,
         excerpt=body[:600],

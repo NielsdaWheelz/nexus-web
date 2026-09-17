@@ -27,7 +27,6 @@ from nexus.services.artifacts.bindings._shared import (
 )
 from nexus.services.artifacts.bindings.base import DossierBinding, PublishableDossier
 from nexus.services.artifacts.coordination import DossierBuildRuntime
-from nexus.services.artifacts.definition import DOSSIER_DEFINITION
 from nexus.services.artifacts.document_html import DocumentHtmlError
 from nexus.services.artifacts.dossier_types import DossierBuildFailureCode
 from nexus.services.artifacts.manifests import IdeaInputManifestV1, LibraryInputManifestV1
@@ -81,6 +80,8 @@ SYNTHESIS_STEP_PATH: Final = "synthesis"
 DOCUMENT_REPAIR_STEP_PATH: Final = "document-repair"
 GENERATION_STEP_PATHS: Final = frozenset({SYNTHESIS_STEP_PATH, DOCUMENT_REPAIR_STEP_PATH})
 _VISIBLE_SYNTHESIS_FIELD: Final = "content_html"
+# Zero materialized citations fails the build (A10); the floor is one.
+MIN_MATERIALIZED_CITATIONS: Final = 1
 _MODEL_TOOL_OPERATIONS: Final = frozenset({"dossier_library", "dossier_idea"})
 
 
@@ -298,7 +299,7 @@ class ArtifactGenerationStep:
                         f"dossier schema has no string {_VISIBLE_SYNTHESIS_FIELD!r} field"
                     )
                 materialized = self._materialize(decoded)
-                if len(materialized.citations) < DOSSIER_DEFINITION.min_materialized_citations:
+                if len(materialized.citations) < MIN_MATERIALIZED_CITATIONS:
                     raise CitationValidationError("dossier output cited no offered evidence")
             except CitationValidationError as error:
                 diagnostic = str(error)

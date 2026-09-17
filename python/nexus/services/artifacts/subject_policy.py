@@ -3,11 +3,10 @@
 The generic dossier engine carries no Resource-kind branches. Every
 scheme-specific decision — how a route locator resolves to a private subject id,
 whether the requester may read/generate (404-masked), which closed
-:class:`AudienceScope` the head is keyed by, who owns per-user concurrency and
-the citation graph edges, and how a canonical resource activates — lives behind
-one :class:`SubjectPolicy` per eligible subject scheme. The internal Idea
-subject is the one explicit typed non-Resource branch because it has no public
-``ResourceRef``.
+:class:`AudienceScope` the head is keyed by, and who owns the citation graph
+edges — lives behind one :class:`SubjectPolicy` per eligible subject scheme. The
+internal Idea subject is the one explicit typed non-Resource branch because it
+has no public ``ResourceRef``.
 
 The closed policy-plus-binding composition lives in
 :mod:`nexus.services.artifacts.registry`. A scheme absent from that immutable
@@ -65,7 +64,7 @@ DossierSubjectScheme = ResourceScheme | Literal["idea"]
 
 
 class SubjectPolicy(Protocol):
-    """The per-scheme identity/authz/audience/activation owner (A3/A20).
+    """The per-scheme identity/authz/audience owner (A3/A20).
 
     A concrete policy is registered under its ``subject_scheme``. Every method is
     404-masked where it can leak existence: an unauthorized or missing subject is
@@ -105,31 +104,11 @@ class SubjectPolicy(Protocol):
         client-supplied."""
         ...
 
-    def collection_viewer(self, resolved: ResolvedSubject, audience: AudienceScope) -> UUID | None:
-        """The user identity whose visibility gates input collection (a shared
-        library anchors on its owner, not the triggering member)."""
-        ...
-
-    def requester_admission(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
-        """The user identity charged against the in-flight concurrency limit."""
-        ...
-
     def citation_owner(
         self, db: Session, resolved: ResolvedSubject, audience: AudienceScope
     ) -> UUID:
         """The stable citation-edge owner (the user, or the library owner for a
         Library audience) — graph ownership, non-null."""
-        ...
-
-    def audience_visible_source_intersection(
-        self, db: Session, resolved: ResolvedSubject, audience: AudienceScope
-    ) -> Any:
-        """The audience-visible slice of the subject's candidate sources."""
-        ...
-
-    def activate(self, db: Session, ref: ResourceRef) -> Any:
-        """The canonical workspace activation command for the subject resource
-        (keeps the resource-activation href non-None so citations stay anchored)."""
         ...
 
 

@@ -1,7 +1,8 @@
 """Shared binding mechanics for Universal Dossiers.
 
-This module owns the two genuinely common pieces of the eight bindings:
+This module owns the genuinely common pieces of the eight bindings:
 
+* the User audience every non-Library dossier head is keyed by;
 * strict, index-grounded synthesis/citation materialization; and
 * bounded Media Intelligence aggregation for Library, Podcast, and Contributor.
 
@@ -32,6 +33,7 @@ from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.artifacts.document_html import accept_model_article, compile_learning_document
 from nexus.services.artifacts.dossier_types import (
     AudienceScope,
+    AudienceUser,
     DossierBuildFailureCode,
 )
 from nexus.services.artifacts.manifests import (
@@ -60,6 +62,13 @@ _MAX_AGGREGATE_MEDIA = 1_000
 _AGGREGATE_FANOUT_BUDGET = 8
 _EXCERPT_CHARS = 600
 _CITATION_ROLES: frozenset[str] = frozenset(("supports", "contradicts", "context"))
+
+
+def audience_user(audience: AudienceScope) -> UUID:
+    if not isinstance(audience, AudienceUser):
+        # justify-defect: every non-Library dossier head is keyed to a User audience (A2).
+        raise AssertionError("dossier audience must be a user")
+    return audience.user_id
 
 
 @dataclass(frozen=True, slots=True)

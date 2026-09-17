@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import visible_media_ids_cte_sql, visible_podcast_ids_cte_sql
 from nexus.errors import NotFoundError
-from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.artifacts.bindings._shared import (
     AggregateMediaBinding,
+    audience_user,
     synthesis_prompt,
 )
 from nexus.services.artifacts.bindings.base import DossierOperation, require_resource_subject
@@ -32,7 +32,6 @@ from nexus.services.artifacts.subject_policy import (
     ResolvedSubject,
     decode_resource_locator,
 )
-from nexus.services.resource_graph.refs import ResourceRef
 
 
 class PodcastBinding(AggregateMediaBinding):
@@ -42,7 +41,7 @@ class PodcastBinding(AggregateMediaBinding):
     candidates_heading = "GROUNDED CLAIMS FROM PODCAST EPISODES"
 
     def _viewer(self, db: Session, resolved: ResolvedSubject, audience: AudienceScope) -> UUID:
-        return _audience_user(audience)
+        return audience_user(audience)
 
     def _media_ids(self, db: Session, resolved: ResolvedSubject, viewer_id: UUID) -> list[UUID]:
         rows = db.execute(
@@ -110,33 +109,10 @@ class PodcastSubjectPolicy:
     def derive_audience(self, resolved: ResolvedSubject, requester_user_id: UUID) -> AudienceScope:
         return AudienceUser(user_id=requester_user_id)
 
-    def collection_viewer(self, resolved: ResolvedSubject, audience: AudienceScope) -> UUID | None:
-        return _audience_user(audience)
-
-    def requester_admission(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
-        return requester_user_id
-
     def citation_owner(
         self, db: Session, resolved: ResolvedSubject, audience: AudienceScope
     ) -> UUID:
-        return _audience_user(audience)
-
-    def audience_visible_source_intersection(
-        self, db: Session, resolved: ResolvedSubject, audience: AudienceScope
-    ) -> list[ResourceRef]:
-        viewer_id = _audience_user(audience)
-        return [
-            ResourceRef(scheme="media", id=media_id)
-            for media_id in BINDING._media_ids(db, resolved, viewer_id)
-        ]
-
-    def activate(self, db: Session, ref: ResourceRef) -> ResourceActivationOut:
-        return ResourceActivationOut(
-            resource_ref=ref.uri,
-            kind="route",
-            href=f"/podcasts/{ref.id}",
-            unresolved_reason=None,
-        )
+        return audience_user(audience)
 
 
 def _podcast_visible(db: Session, viewer_id: UUID, podcast_id: UUID) -> bool:
@@ -152,12 +128,6 @@ def _podcast_visible(db: Session, viewer_id: UUID, podcast_id: UUID) -> bool:
         ).first()
         is not None
     )
-
-
-def _audience_user(audience: AudienceScope) -> UUID:
-    if not isinstance(audience, AudienceUser):
-        raise AssertionError("podcast dossier audience must be a user")
-    return audience.user_id
 
 
 BINDING = PodcastBinding()

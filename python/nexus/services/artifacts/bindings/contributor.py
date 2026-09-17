@@ -8,11 +8,11 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.errors import NotFoundError
-from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services import contributors
 from nexus.services.artifacts.bindings._shared import (
     AggregateCollected,
     AggregateMediaBinding,
+    audience_user,
     synthesis_prompt,
 )
 from nexus.services.artifacts.bindings.base import DossierOperation, require_resource_subject
@@ -36,7 +36,6 @@ from nexus.services.contributor_taxonomy import (
     assume_contributor_handle,
     parse_contributor_handle,
 )
-from nexus.services.resource_graph.refs import ResourceRef
 
 
 class ContributorBinding(AggregateMediaBinding):
@@ -65,7 +64,7 @@ class ContributorBinding(AggregateMediaBinding):
         return super().live_manifest(db, _with_handle(db, resolved), audience)
 
     def _viewer(self, db: Session, resolved: ResolvedSubject, audience: AudienceScope) -> UUID:
-        return _audience_user(audience)
+        return audience_user(audience)
 
     def _media_ids(self, db: Session, resolved: ResolvedSubject, viewer_id: UUID) -> list[UUID]:
         return resolve_contributor_media_ids(
@@ -134,37 +133,10 @@ class ContributorSubjectPolicy:
     def derive_audience(self, resolved: ResolvedSubject, requester_user_id: UUID) -> AudienceScope:
         return AudienceUser(user_id=requester_user_id)
 
-    def collection_viewer(self, resolved: ResolvedSubject, audience: AudienceScope) -> UUID | None:
-        return _audience_user(audience)
-
-    def requester_admission(self, resolved: ResolvedSubject, requester_user_id: UUID) -> UUID:
-        return requester_user_id
-
     def citation_owner(
         self, db: Session, resolved: ResolvedSubject, audience: AudienceScope
     ) -> UUID:
-        return _audience_user(audience)
-
-    def audience_visible_source_intersection(
-        self, db: Session, resolved: ResolvedSubject, audience: AudienceScope
-    ) -> list[ResourceRef]:
-        return [
-            ResourceRef(scheme="media", id=media_id)
-            for media_id in resolve_contributor_media_ids(
-                db,
-                contributor_id=resolved.subject_id,
-                viewer_id=_audience_user(audience),
-            )
-        ]
-
-    def activate(self, db: Session, ref: ResourceRef) -> ResourceActivationOut:
-        handle = _contributor_handle(db, ref.id)
-        return ResourceActivationOut(
-            resource_ref=ref.uri,
-            kind="route",
-            href=f"/authors/{handle}",
-            unresolved_reason=None,
-        )
+        return audience_user(audience)
 
 
 def resolve_contributor_media_ids(
@@ -206,12 +178,6 @@ def _contributor_handle(db: Session, contributor_id: UUID) -> ContributorHandle:
     if value is None:
         raise NotFoundError(message="Contributor not found")
     return assume_contributor_handle(str(value))
-
-
-def _audience_user(audience: AudienceScope) -> UUID:
-    if not isinstance(audience, AudienceUser):
-        raise AssertionError("contributor dossier audience must be a user")
-    return audience.user_id
 
 
 BINDING = ContributorBinding()

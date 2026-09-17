@@ -307,12 +307,17 @@ async def collect_idea_evidence(
                 raise AssertionError("omitted Web page has no reason")
             omissions.append(ResearchOmission(item.result_id, ready.omission_reason.value.value))
             continue
-        receipt = await _complete_page_read_step(
+        receipt = await _redispatchable_step(
             db,
             runtime=runtime,
-            viewer_id=resolved.user_id,
-            index=index,
-            accepted=accepted,
+            path=f"research/page-read/{index}",
+            request_fingerprint=_fingerprint(encode_step_result(accepted)),
+            schema=PageReadReceipt,
+            dispatch=lambda accepted=accepted: _read_page_receipt(
+                db,
+                viewer_id=resolved.user_id,
+                accepted=accepted,
+            ),
         )
         hydrated = _hydrate_page_receipt(
             db,
@@ -677,28 +682,6 @@ def _observe_page_step(
         raise ResearchLeaseLost
     db.commit()
     return observed
-
-
-async def _complete_page_read_step(
-    db: Session,
-    *,
-    runtime: DossierBuildRuntime,
-    viewer_id: UUID,
-    index: int,
-    accepted: PageAcceptResult,
-) -> PageReadReceipt:
-    return await _redispatchable_step(
-        db,
-        runtime=runtime,
-        path=f"research/page-read/{index}",
-        request_fingerprint=_fingerprint(encode_step_result(accepted)),
-        schema=PageReadReceipt,
-        dispatch=lambda: _read_page_receipt(
-            db,
-            viewer_id=viewer_id,
-            accepted=accepted,
-        ),
-    )
 
 
 async def _read_page_receipt(
