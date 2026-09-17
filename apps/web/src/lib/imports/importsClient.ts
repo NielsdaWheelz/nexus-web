@@ -40,6 +40,7 @@ import {
   expectNonemptyString,
   expectNonnegativeInteger,
   expectOneOf,
+  expectPositiveInteger,
   expectRecord,
 } from "@/lib/validation";
 
@@ -297,12 +298,6 @@ export interface SearchAdmission {
   readonly jobId: string;
 }
 
-function positiveInteger(raw: unknown, name: string): number {
-  const value = expectNonnegativeInteger(raw, name);
-  if (value === 0) throw new TypeError(`${name} must be positive`);
-  return value;
-}
-
 function mediaResourceRef(raw: unknown, name: string): CanonicalResourceRef {
   const parsed = parseResourceRef(expectNonemptyString(raw, name));
   if (parsed === null || parsed.scheme !== "media") {
@@ -414,7 +409,7 @@ function recoveryOffer(
       );
       return {
         kind,
-        expectedGeneration: positiveInteger(
+        expectedGeneration: expectPositiveInteger(
           offer[keys.expectedGeneration],
           `${name}.${keys.expectedGeneration}`,
         ),

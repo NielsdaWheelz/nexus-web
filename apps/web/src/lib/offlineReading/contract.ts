@@ -6,6 +6,7 @@ import {
   expectIsoInstant,
   expectNonnegativeInteger,
   expectOneOf,
+  expectPositiveInteger,
   expectString,
 } from "@/lib/validation";
 import {
@@ -172,12 +173,6 @@ export type ReadingInbound =
       readonly mediaId: string;
     };
 
-function positiveInteger(raw: unknown, name: string): number {
-  const value = expectNonnegativeInteger(raw, name);
-  if (value === 0) throw new TypeError(`${name} must be positive`);
-  return value;
-}
-
 function sha256Hex(raw: unknown, name: string): string {
   const value = expectString(raw, name);
   if (!SHA256_HEX_RE.test(value)) throw new TypeError(`${name} must be lowercase SHA-256 hex`);
@@ -288,7 +283,7 @@ function availability(raw: unknown, name: string): ReadingAvailability {
       const value = expectExactRecord(raw, ["kind", "attempt", "reason"], name);
       return {
         kind,
-        attempt: positiveInteger(value.attempt, `${name}.attempt`),
+        attempt: expectPositiveInteger(value.attempt, `${name}.attempt`),
         reason: expectOneOf(value.reason, ["Interrupted", "PolicyChanged"] as const, `${name}.reason`),
       };
     }
@@ -325,7 +320,7 @@ function availability(raw: unknown, name: string): ReadingAvailability {
         kind,
         sizeBytes: expectNonnegativeInteger(value.sizeBytes, `${name}.sizeBytes`),
         installedAt: expectIsoInstant(value.installedAt, `${name}.installedAt`),
-        readerGeneration: positiveInteger(value.readerGeneration, `${name}.readerGeneration`),
+        readerGeneration: expectPositiveInteger(value.readerGeneration, `${name}.readerGeneration`),
         readerRevisionKey: sha256Hex(value.readerRevisionKey, `${name}.readerRevisionKey`),
         progress: progressView(value.progress, `${name}.progress`),
       };
@@ -417,7 +412,7 @@ export function decodeReadingInbound(raw: unknown): ReadingInbound {
         outcome = {
           kind: outcomeKind,
           leaseId: canonicalUuid(record.leaseId, "leaseId"),
-          readerGeneration: positiveInteger(record.readerGeneration, "readerGeneration"),
+          readerGeneration: expectPositiveInteger(record.readerGeneration, "readerGeneration"),
           readerRevisionKey: sha256Hex(record.readerRevisionKey, "readerRevisionKey"),
           readerUrl: decodeInternalReaderUrl(record.readerUrl),
           progress: progressView(record.progress, "opened progress"),

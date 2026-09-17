@@ -15,10 +15,7 @@ import {
   OfflineReadingForeignBindingError,
   OfflineReadingRejectedError,
 } from "./runtime";
-import {
-  createWebKitOfflineReadingTransport,
-  type OfflineReadingTransport,
-} from "./transport";
+import { createWebKitOfflineReadingTransport } from "./transport";
 
 export type OfflineReadingCapability =
   | { readonly kind: "Unavailable" }
@@ -36,11 +33,9 @@ const OfflineReadingContext = createContext<OfflineReadingCapability>(UNAVAILABL
 export function OfflineReadingProvider({
   accountId,
   children,
-  transport,
 }: {
   readonly accountId: string;
   readonly children: ReactNode;
-  readonly transport?: OfflineReadingTransport | null;
 }) {
   const feedback = useFeedback();
   // The capability is keyed on the hosted account: an in-place account switch
@@ -55,8 +50,7 @@ export function OfflineReadingProvider({
   const [defect, setDefect] = useState<Error | null>(null);
 
   useEffect(() => {
-    const sessionTransport =
-      transport === undefined ? createWebKitOfflineReadingTransport() : transport;
+    const sessionTransport = createWebKitOfflineReadingTransport();
     if (sessionTransport === null) {
       setSession({ accountId, capability: UNAVAILABLE });
       return;
@@ -122,7 +116,7 @@ export function OfflineReadingProvider({
       unsubscribeDefect();
       controller.dispose();
     };
-  }, [accountId, feedback, transport]);
+  }, [accountId, feedback]);
 
   if (defect !== null) throw defect;
   return (

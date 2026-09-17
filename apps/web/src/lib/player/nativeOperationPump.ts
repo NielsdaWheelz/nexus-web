@@ -63,11 +63,9 @@ export type NativeOperationPump = {
   readonly parked: ReadonlyMap<NativeOperationKey, ParkedNativeOperation>;
 };
 
-export type PumpEffect = { kind: "Run"; operation: DispatchedNativeOperation };
-
 export type PumpStep = {
   pump: NativeOperationPump;
-  effects: readonly PumpEffect[];
+  effects: readonly DispatchedNativeOperation[];
 };
 
 export type VisibleConnectionFailure = {
@@ -115,7 +113,7 @@ type Draft = {
   queue: NativeOperation[];
   latest: Map<NativeOperationKey, number>;
   parked: Map<NativeOperationKey, ParkedNativeOperation>;
-  effects: PumpEffect[];
+  effects: DispatchedNativeOperation[];
 };
 
 function draft(pump: NativeOperationPump): Draft {
@@ -156,7 +154,7 @@ function stamp(
 }
 
 function run(state: Draft, operation: NativeOperation): void {
-  state.effects.push({ kind: "Run", operation: stamp(state, operation) });
+  state.effects.push(stamp(state, operation));
 }
 
 function drainQueue(state: Draft): void {

@@ -62,32 +62,10 @@ export type ActivityDrainTrigger =
   | "Online"
   | "Manual";
 
-export interface ActivityRuntime {
-  open(accountId: string): Promise<void>;
-  enqueue(span: ClosedActivitySpan): Promise<void>;
-  drain(trigger: ActivityDrainTrigger): Promise<void>;
-  setPaused(paused: boolean): Promise<void>;
-  retryFailed(): Promise<void>;
-  discardFailed(): Promise<void>;
-  snapshot(): ActivityRuntimeSnapshot;
-  subscribe(listener: () => void): () => void;
-}
-
 export interface NativeActivityActions {
   readonly setPaused: (paused: boolean) => Promise<void>;
   readonly retryFailed: () => Promise<void>;
   readonly discardFailed: () => Promise<void>;
-}
-
-interface RuntimeOptions {
-  readonly outbox?: ActivityOutbox;
-  readonly capacityLimit?: number;
-  readonly now?: () => number;
-  readonly upload?: (
-    body: string,
-    signal?: AbortSignal,
-  ) => Promise<ActivityUploadOutcome>;
-  readonly wait?: (delayMs: number) => Promise<void>;
 }
 
 const INITIAL_SNAPSHOT: ActivityRuntimeSnapshot = {
@@ -263,15 +241,8 @@ function activityRequest(batch: ActivityOutboxBatch): ActivityRequest {
   };
 }
 
-class BrowserActivityRuntime implements ActivityRuntime {
-  private readonly outbox: ActivityOutbox;
-  private readonly capacityLimit: number;
-  private readonly now: () => number;
-  private readonly upload: (
-    body: string,
-    signal?: AbortSignal,
-  ) => Promise<ActivityUploadOutcome>;
-  private readonly wait: (delayMs: number) => Promise<void>;
+class BrowserActivityRuntime {
+  private readonly outbox = new ActivityOutbox(ACTIVITY_OUTBOX_MAX_SPANS);
   private readonly listeners = new Set<() => void>();
   private current = INITIAL_SNAPSHOT;
   private accountId: string | undefined;
@@ -292,15 +263,6 @@ class BrowserActivityRuntime implements ActivityRuntime {
   private accountGeneration = 0;
   private accountAbort = new AbortController();
   private accountTransition = false;
-
-  constructor(options: RuntimeOptions = {}) {
-    this.capacityLimit =
-      options.capacityLimit ?? ACTIVITY_OUTBOX_MAX_SPANS;
-    this.outbox = options.outbox ?? new ActivityOutbox(this.capacityLimit);
-    this.now = options.now ?? Date.now;
-    this.upload = options.upload ?? postActivityBatch;
-    this.wait = options.wait ?? waitFor;
-  }
 
   async open(accountId: string): Promise<void> {
     const accountChanged = this.accountId !== accountId;
@@ -345,7 +307,7 @@ class BrowserActivityRuntime implements ActivityRuntime {
     if (accountId === undefined || !this.storageAvailable) return;
     try {
       const outcome = await this.write(() =>
-        this.outbox.enqueue(accountId, span, this.now()),
+        this.outbox.enqueue(accountId, span, Date.now()),
       );
       await this.refresh(accountId);
       if (outcome === "Enqueued") {
@@ -488,7 +450,7 @@ class BrowserActivityRuntime implements ActivityRuntime {
   ): Promise<void> {
     if (!this.isCurrent(accountId, generation)) return;
     await this.write(() =>
-      this.outbox.markExpired(accountId, this.now() - ACTIVITY_MAX_AGE_MS),
+      this.outbox.markExpired(accountId, Date.now() - ACTIVITY_MAX_AGE_MS),
     );
     if (!this.isCurrent(accountId, generation)) return;
     await this.refresh(accountId);
@@ -498,7 +460,7 @@ class BrowserActivityRuntime implements ActivityRuntime {
         this.outbox.nextPendingBatch(accountId, ACTIVITY_BATCH_MAX_SPANS),
       );
       if (batch === undefined) return;
-      const expiryCutoff = this.now() - ACTIVITY_MAX_AGE_MS;
+      const expiryCutoff = Date.now() - ACTIVITY_MAX_AGE_MS;
       const expiredKeys = batch.rows
         .filter(
           (row) =>
@@ -624,7 +586,7 @@ class BrowserActivityRuntime implements ActivityRuntime {
     batch: ActivityOutboxBatch,
     signal: AbortSignal,
   ): Promise<ActivityUploadOutcome> {
-    const outcome = await this.upload(body, signal);
+    const outcome = await postActivityBatch(body, signal);
     if (outcome.kind !== "Accepted") {
       console.warn("consumption_activity_upload_rejected", {
         modality: batch.modality,
@@ -674,7 +636,7 @@ class BrowserActivityRuntime implements ActivityRuntime {
       storageAvailable: this.storageAvailable,
       summary: this.summaryState,
       recording: this.recording,
-      capacityLimit: this.capacityLimit,
+      capacityLimit: ACTIVITY_OUTBOX_MAX_SPANS,
     });
     const browserSync = syncState(this.summaryState);
     const next: ActivityRuntimeSnapshot = {
@@ -734,7 +696,7 @@ class BrowserActivityRuntime implements ActivityRuntime {
       };
       const onAbort = () => finish(false);
       signal.addEventListener("abort", onAbort, { once: true });
-      void this.wait(delayMs).then(
+      void waitFor(delayMs).then(
         () => finish(true),
         () => finish(false),
       );
@@ -742,13 +704,9 @@ class BrowserActivityRuntime implements ActivityRuntime {
   }
 }
 
-export function createActivityRuntime(options: RuntimeOptions = {}): ActivityRuntime {
-  return new BrowserActivityRuntime(options);
-}
-
 let singleton: BrowserActivityRuntime | undefined;
 
-export function activityRuntime(): ActivityRuntime {
+export function activityRuntime(): BrowserActivityRuntime {
   singleton ??= new BrowserActivityRuntime();
   return singleton;
 }
@@ -770,28 +728,19 @@ export function useActivityRuntimeSnapshot(): ActivityRuntimeSnapshot {
 }
 
 export function installActivityRecorderState(recording: boolean): void {
-  const runtime = activityRuntime();
-  if (runtime instanceof BrowserActivityRuntime) {
-    runtime.installRecording(recording);
-  }
+  activityRuntime().installRecording(recording);
 }
 
 export function installNativeActivitySync(
   accountId: string,
   snapshot: AndroidActivitySyncSnapshot | null,
 ): void {
-  const runtime = activityRuntime();
-  if (runtime instanceof BrowserActivityRuntime) {
-    runtime.installNativeSnapshot(accountId, snapshot);
-  }
+  activityRuntime().installNativeSnapshot(accountId, snapshot);
 }
 
 export function installNativeActivityActions(
   accountId: string,
   actions: NativeActivityActions | null,
 ): void {
-  const runtime = activityRuntime();
-  if (runtime instanceof BrowserActivityRuntime) {
-    runtime.installNativeActions(accountId, actions);
-  }
+  activityRuntime().installNativeActions(accountId, actions);
 }

@@ -12,7 +12,7 @@ import {
 } from "./contract";
 import type { OfflineMediaTransport } from "./transport";
 
-export type OfflineDownloadSpecReader = (
+type OfflineDownloadSpecReader = (
   mediaId: string,
   signal: AbortSignal,
 ) => Promise<OfflineDownloadSpec>;
@@ -89,7 +89,6 @@ export class OfflineMediaControllerRuntime
     private readonly onFatal: (error: Error) => void,
     private readonly handleUnauthenticated: (error: unknown) => boolean,
     readonly openDownloads: () => void,
-    private readonly mintRequestId: () => string = () => crypto.randomUUID(),
   ) {}
 
   async connect(): Promise<void> {
@@ -264,7 +263,7 @@ export class OfflineMediaControllerRuntime
     if (this.disposed) {
       return Promise.reject(new Error("Offline media session ended"));
     }
-    const requestId = this.mintRequestId();
+    const requestId = crypto.randomUUID();
     let wireCommand: OfflineMediaCommand;
     switch (command.kind) {
       case "Connect":

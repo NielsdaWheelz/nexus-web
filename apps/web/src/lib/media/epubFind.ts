@@ -82,11 +82,6 @@ export type EpubFindResultOut =
     };
 
 
-type ApiFetch = (
-  path: ApiPath,
-  options?: RequestInit,
-) => Promise<unknown>;
-
 function snapshotDefect(message: string): never {
   throw new Error(`EPUB Find source defect: ${message}`);
 }
@@ -272,17 +267,15 @@ export async function requestEpubFind({
   mediaId,
   request,
   signal,
-  fetchFn = apiFetch,
 }: {
   readonly mediaId: string;
   readonly request: EpubFindRequest;
   readonly signal: AbortSignal;
-  readonly fetchFn?: ApiFetch;
 }): Promise<EpubFindResultOut> {
   const path = `/api/media/${mediaId}/epub-find` as ApiPath;
   const raw = await requestWithRetry(
     (attemptSignal) =>
-      fetchFn(path, {
+      apiFetch(path, {
         method: "POST",
         body: JSON.stringify(request),
         signal: attemptSignal,

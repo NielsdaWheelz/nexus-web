@@ -616,8 +616,8 @@ export function AndroidPlayerRuntimeProvider({
   const commitPump = useCallback((step: PumpStep): void => {
     pumpRef.current = step.pump;
     setPumpFailure(visibleConnectionFailure(step.pump));
-    for (const effect of step.effects) {
-      runOperationRef.current(effect.operation);
+    for (const operation of step.effects) {
+      runOperationRef.current(operation);
     }
   }, []);
 
@@ -873,41 +873,17 @@ export function AndroidPlayerRuntimeProvider({
 
   const acknowledgeNaturalEnd = useCallback(
     async (receipt: PendingNaturalEnd): Promise<void> => {
-      const client = getClient();
-      try {
-        const reply = await client.request({
-          kind: "AcknowledgeNaturalEnd",
-          sessionKey: receipt.sessionKey,
-          clientMutationId: receipt.clientMutationId,
-        });
-        if (reply.kind !== "Accepted") {
-          throw new TypeError(
-            "AcknowledgeNaturalEnd must return Accepted",
-          );
-        }
-      } catch (error) {
-        if (
-          !(error instanceof NativePlayerTimeoutError) &&
-          !(
-            error instanceof NativePlayerRejectedError &&
-            error.code === "StaleSession"
-          )
-        ) {
-          throw error;
-        }
-        const reconciled = await client.request({ kind: "GetSnapshot" });
-        if (reconciled.kind !== "Snapshot") {
-          throw new TypeError("GetSnapshot must return Snapshot");
-        }
-        installReply(reconciled, true);
-        if (
-          reconciled.pendingNaturalEnd.kind !== "Absent"
-        ) {
-          throw error;
-        }
-      }
+      const reply = await requestAndReconcile({
+        kind: "AcknowledgeNaturalEnd",
+        sessionKey: receipt.sessionKey,
+        clientMutationId: receipt.clientMutationId,
+      });
+      requireReconciled(
+        reply.kind !== "Snapshot" || reply.pendingNaturalEnd.kind === "Absent",
+        "AcknowledgeNaturalEnd",
+      );
     },
-    [getClient, installReply],
+    [requestAndReconcile],
   );
 
   const connect = useCallback(async (): Promise<void> => {
@@ -1443,6 +1419,53 @@ export function AndroidPlayerRuntimeProvider({
     [sendCurrent],
   );
 
+  /**
+   * The subscription the settings write targeted is gone: install the
+   * removed-subscription state natively so the session stops projecting a
+   * podcast preference that no longer exists.
+   */
+  const installRemovedSubscription = useCallback(
+    async (
+      active: Extract<AndroidPlayerSnapshot, { kind: "Canonical" }>,
+      podcastId: string,
+    ): Promise<void> => {
+      await runNativeOperationInline({
+        key: "PodcastSettings",
+        run: async () => {
+          const subscription = absent<PodcastPlaybackSubscription>();
+          const rateState = rateStateAfterSubscription(
+            active.rateState,
+            podcastId,
+            subscription,
+          );
+          const reply = await requestAndReconcile({
+            kind: "InstallPodcastPlaybackSettings",
+            sessionKey: active.sessionKey,
+            podcastId,
+            subscription,
+            rateState,
+          });
+          requireReconciled(
+            reconciledSettingsInstall(
+              reply,
+              active.sessionKey,
+              subscription,
+              rateState,
+            ),
+            "Removed-subscription install",
+          );
+        },
+        stillApplies: () =>
+          snapshotRef.current?.kind === "Canonical" &&
+          snapshotRef.current.sessionKey === active.sessionKey &&
+          podcastIdForSnapshot(snapshotRef.current) === podcastId,
+      }).catch(() => {
+        // Presented by the pump as a frozen transport failure or defect.
+      });
+    },
+    [requestAndReconcile, runNativeOperationInline],
+  );
+
   const runPodcastRateAttempt = useCallback(
     async (attempt: PodcastRateAttempt): Promise<void> => {
       const current = snapshotRef.current;
@@ -1486,39 +1509,7 @@ export function AndroidPlayerRuntimeProvider({
           (error.code === "E_NOT_FOUND" ||
             error.code === "E_PODCAST_NOT_FOUND");
         if (notFound) {
-          await runNativeOperationInline({
-            key: "PodcastSettings",
-            run: async () => {
-              const subscription = absent<PodcastPlaybackSubscription>();
-              const rateState = rateStateAfterSubscription(
-                active.rateState,
-                attempt.podcastId,
-                subscription,
-              );
-              const reply = await requestAndReconcile({
-                kind: "InstallPodcastPlaybackSettings",
-                sessionKey: active.sessionKey,
-                podcastId: attempt.podcastId,
-                subscription,
-                rateState,
-              });
-              requireReconciled(
-                reconciledSettingsInstall(
-                  reply,
-                  active.sessionKey,
-                  subscription,
-                  rateState,
-                ),
-                "Removed-subscription install",
-              );
-            },
-            stillApplies: () =>
-              snapshotRef.current?.kind === "Canonical" &&
-              snapshotRef.current.sessionKey === active.sessionKey &&
-              podcastIdForSnapshot(snapshotRef.current) === attempt.podcastId,
-          }).catch(() => {
-            // Presented by the pump as a frozen transport failure or defect.
-          });
+          await installRemovedSubscription(active, attempt.podcastId);
         }
         let feedback: FeedbackContent;
         try {
@@ -1545,7 +1536,7 @@ export function AndroidPlayerRuntimeProvider({
         }
       }
     },
-    [installProtocolFailure, requestAndReconcile, runNativeOperationInline],
+    [installProtocolFailure, installRemovedSubscription],
   );
   retryPodcastRateRef.current = (attempt) => {
     void runPodcastRateAttempt(attempt);
@@ -1628,39 +1619,7 @@ export function AndroidPlayerRuntimeProvider({
           (error.code === "E_NOT_FOUND" ||
             error.code === "E_PODCAST_NOT_FOUND");
         if (notFound) {
-          await runNativeOperationInline({
-            key: "PodcastSettings",
-            run: async () => {
-              const subscription = absent<PodcastPlaybackSubscription>();
-              const rateState = rateStateAfterSubscription(
-                active.rateState,
-                attempt.podcastId,
-                subscription,
-              );
-              const reply = await requestAndReconcile({
-                kind: "InstallPodcastPlaybackSettings",
-                sessionKey: active.sessionKey,
-                podcastId: attempt.podcastId,
-                subscription,
-                rateState,
-              });
-              requireReconciled(
-                reconciledSettingsInstall(
-                  reply,
-                  active.sessionKey,
-                  subscription,
-                  rateState,
-                ),
-                "Removed-subscription install",
-              );
-            },
-            stillApplies: () =>
-              snapshotRef.current?.kind === "Canonical" &&
-              snapshotRef.current.sessionKey === active.sessionKey &&
-              podcastIdForSnapshot(snapshotRef.current) === attempt.podcastId,
-          }).catch(() => {
-            // Presented by the pump as a frozen transport failure or defect.
-          });
+          await installRemovedSubscription(active, attempt.podcastId);
         }
         let feedback: FeedbackContent;
         try {
@@ -1687,7 +1646,11 @@ export function AndroidPlayerRuntimeProvider({
         }
       }
     },
-    [installProtocolFailure, requestAndReconcile, runNativeOperationInline],
+    [
+      installProtocolFailure,
+      installRemovedSubscription,
+      requestAndReconcile,
+    ],
   );
   retryPodcastPauseRef.current = (attempt) => {
     void runPodcastPauseAttempt(attempt);

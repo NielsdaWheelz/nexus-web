@@ -8,7 +8,6 @@ import {
   decodePlayerDescriptor,
   parseLecternItemId,
   parseMediaId,
-  type MediaId,
   type NaturalEndSettlement,
 } from "@/lib/lectern/contract";
 import {
@@ -25,6 +24,7 @@ import {
   expectIsoInstant,
   expectNonnegativeInteger,
   expectOneOf,
+  expectPositiveInteger,
   expectString,
 } from "@/lib/validation";
 
@@ -654,12 +654,6 @@ function decodeActivitySync(raw: unknown): AndroidActivitySyncSnapshot {
   };
 }
 
-function expectPositiveInteger(raw: unknown, name: string): number {
-  const value = expectNonnegativeInteger(raw, name);
-  if (value === 0) throw new TypeError(`${name} must be positive`);
-  return value;
-}
-
 function expectNonnegativeSafeInteger(raw: unknown, name: string): number {
   const value = expectNonnegativeInteger(raw, name);
   if (!Number.isSafeInteger(value)) {
@@ -1029,12 +1023,4 @@ export function receiptSettlement(
     expectedConsumptionOverrideRevision:
       receipt.expectedConsumptionOverrideRevision,
   };
-}
-
-export function snapshotMediaId(
-  snapshot: AndroidPlayerSnapshot,
-): MediaId | null {
-  return snapshot.kind === "Canonical"
-    ? snapshot.session.descriptor.mediaId
-    : null;
 }

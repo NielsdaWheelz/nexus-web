@@ -26,17 +26,13 @@ import {
   OfflineMediaRejectedError,
   OfflineMediaControllerRuntime,
   offlineMediaRejectionMessage,
-  type OfflineDownloadSpecReader,
   type OfflineMediaController,
 } from "./controller";
 import {
   decodeOfflineDownloadSpecEnvelope,
   type LocalAvailability,
 } from "./contract";
-import {
-  createWebKitOfflineMediaTransport,
-  type OfflineMediaTransport,
-} from "./transport";
+import { createWebKitOfflineMediaTransport } from "./transport";
 
 export type OfflineMediaCapability =
   | { readonly kind: "Unavailable" }
@@ -115,15 +111,9 @@ async function readOfflineDownloadSpec(
 export function OfflineMediaProvider({
   accountId,
   children,
-  transport,
-  downloadSpecReader = readOfflineDownloadSpec,
-  ownedOrigin,
 }: {
   readonly accountId: string;
   readonly children: ReactNode;
-  readonly transport?: OfflineMediaTransport | null;
-  readonly downloadSpecReader?: OfflineDownloadSpecReader;
-  readonly ownedOrigin?: string;
 }) {
   const feedback = useFeedback();
   const [session, setSession] = useState<{
@@ -135,10 +125,7 @@ export function OfflineMediaProvider({
   const [asyncDefect, setAsyncDefect] = useState<Error | null>(null);
 
   useEffect(() => {
-    const sessionTransport =
-      transport === undefined
-        ? createWebKitOfflineMediaTransport()
-        : transport;
+    const sessionTransport = createWebKitOfflineMediaTransport();
     if (sessionTransport === null) {
       setSession({ accountId, capability: UNAVAILABLE });
       return;
@@ -151,8 +138,8 @@ export function OfflineMediaProvider({
       accountId,
       store,
       sessionTransport,
-      downloadSpecReader,
-      ownedOrigin ?? window.location.origin,
+      readOfflineDownloadSpec,
+      window.location.origin,
       (message) =>
         feedback.publish({
           kind: "Hud",
@@ -223,7 +210,7 @@ export function OfflineMediaProvider({
       document.removeEventListener("visibilitychange", refreshOnVisibility);
       controller.dispose();
     };
-  }, [accountId, downloadSpecReader, feedback, ownedOrigin, transport]);
+  }, [accountId, feedback]);
 
   if (asyncDefect !== null) throw asyncDefect;
 
