@@ -30,7 +30,7 @@ export interface MobileNexusActivationAdapterHandle {
   ): void;
 }
 
-export interface MobileNexusActivationAdapterProps {
+interface MobileNexusActivationAdapterProps {
   materialize(target: NexusTarget): MaterializedNexusTarget;
   dispatch(
     target: MaterializedNexusTarget,

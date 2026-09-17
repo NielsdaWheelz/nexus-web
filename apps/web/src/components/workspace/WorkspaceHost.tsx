@@ -77,7 +77,6 @@ import {
   type PaneSecondaryPublication,
   type PaneTransientSecondarySurfacePublication,
 } from "@/lib/panes/panePublications";
-import { emitWorkspaceTelemetry } from "@/lib/workspace/telemetry";
 import {
   findPaneChromeFocusTarget,
   findPaneLandmarkFocusTarget,
@@ -99,9 +98,10 @@ import { usePaneCanvas } from "./usePaneCanvas";
 import { PaneRouteErrorBoundary } from "./PaneRouteErrorBoundary";
 import PaneRouteBoundary from "./PaneRouteBoundary";
 import {
-  getPaneSecondaryPublication,
-  usePaneSecondaryPublicationRegistry,
-} from "./usePaneSecondaryPublicationRegistry";
+  pruneRouteKeyedRecords,
+  routeKeyedRecord,
+} from "@/lib/panes/paneRouteKeyedRecords";
+import { usePaneSecondaryPublicationRegistry } from "./usePaneSecondaryPublicationRegistry";
 import styles from "./WorkspaceHost.module.css";
 
 // ---------------------------------------------------------------------------
@@ -475,54 +475,6 @@ function upsertOrDeletePaneFixedChromePublicationRecord(
   return next;
 }
 
-function getRuntimePaneLayoutRecord(
-  records: Map<string, RuntimePaneLayoutRecord>,
-  paneId: string,
-  routeKey: string,
-): RuntimePaneLayoutRecord | null {
-  const record = records.get(paneId);
-  return record?.routeKey === routeKey ? record : null;
-}
-
-function getPaneFixedChromePublication(
-  records: Map<string, PaneFixedChromePublicationRecord>,
-  paneId: string,
-  routeKey: string,
-): PaneFixedChromePublication | null {
-  const record = records.get(paneId);
-  return record?.routeKey === routeKey ? record.publication : null;
-}
-
-function pruneRuntimePaneLayoutRecords(
-  current: Map<string, RuntimePaneLayoutRecord>,
-  currentRouteKeyByPaneId: Map<string, string>,
-): Map<string, RuntimePaneLayoutRecord> {
-  let next: Map<string, RuntimePaneLayoutRecord> | null = null;
-  for (const [paneId, record] of current) {
-    if (currentRouteKeyByPaneId.get(paneId) === record.routeKey) {
-      continue;
-    }
-    next ??= new Map(current);
-    next.delete(paneId);
-  }
-  return next ?? current;
-}
-
-function prunePaneFixedChromePublicationRecords(
-  current: Map<string, PaneFixedChromePublicationRecord>,
-  currentRouteKeyByPaneId: Map<string, string>,
-): Map<string, PaneFixedChromePublicationRecord> {
-  let next: Map<string, PaneFixedChromePublicationRecord> | null = null;
-  for (const [paneId, record] of current) {
-    if (currentRouteKeyByPaneId.get(paneId) === record.routeKey) {
-      continue;
-    }
-    next ??= new Map(current);
-    next.delete(paneId);
-  }
-  return next ?? current;
-}
-
 function buildHostPane(input: {
   pane: WorkspacePrimaryPaneState;
   secondaryPane: WorkspaceAttachedSecondaryPaneState | null;
@@ -685,7 +637,6 @@ function WorkspaceHost() {
     publishPaneAliases,
     workspacePrimaryMetrics,
   } = useWorkspaceHostStore();
-  const labelTelemetryByPaneIdRef = useRef<Map<string, string>>(new Map());
   const [runtimeLayoutByPaneId, setRuntimeLayoutByPaneId] = useState<
     Map<string, RuntimePaneLayoutRecord>
   >(() => new Map());
@@ -840,7 +791,7 @@ function WorkspaceHost() {
 
   useEffect(() => {
     setRuntimeLayoutByPaneId((current) =>
-      pruneRuntimePaneLayoutRecords(current, currentRouteKeyByPaneId),
+      pruneRouteKeyedRecords(current, currentRouteKeyByPaneId),
     );
     pruneSecondaryPublicationRecords(currentRouteKeyByPaneId);
     setTransientSecondaryActivationByPaneId((current) => {
@@ -849,11 +800,8 @@ function WorkspaceHost() {
       for (const [paneId, activation] of current) {
         const routeKey = currentRouteKeyByPaneId.get(paneId);
         const publication = routeKey
-          ? getPaneSecondaryPublication(
-              secondaryPublicationByPaneId,
-              paneId,
-              routeKey,
-            )
+          ? (routeKeyedRecord(secondaryPublicationByPaneId, paneId, routeKey)
+              ?.publication ?? null)
           : null;
         if (
           routeKey === activation.routeKey &&
@@ -870,49 +818,16 @@ function WorkspaceHost() {
       return next ?? current;
     });
     setFixedChromePublicationByPaneId((current) =>
-      prunePaneFixedChromePublicationRecords(current, currentRouteKeyByPaneId),
+      pruneRouteKeyedRecords(current, currentRouteKeyByPaneId),
     );
-    setSecondaryActivationByPaneId((current) => {
-      let next: Map<string, SecondaryActivationDelivery> | null = null;
-      for (const [paneId, delivery] of current) {
-        if (currentRouteKeyByPaneId.get(paneId) === delivery.routeKey) {
-          continue;
-        }
-        next ??= new Map(current);
-        next.delete(paneId);
-      }
-      return next ?? current;
-    });
+    setSecondaryActivationByPaneId((current) =>
+      pruneRouteKeyedRecords(current, currentRouteKeyByPaneId),
+    );
   }, [
     currentRouteKeyByPaneId,
     pruneSecondaryPublicationRecords,
     secondaryPublicationByPaneId,
   ]);
-
-  useEffect(() => {
-    const nextTelemetryByPaneId = new Map<string, string>();
-
-    for (const { pane, descriptor } of paneDescriptors) {
-      const telemetryKey = [
-        descriptor.label,
-        descriptor.labelState,
-        descriptor.route.id,
-      ].join("|");
-      nextTelemetryByPaneId.set(pane.id, telemetryKey);
-      if (labelTelemetryByPaneIdRef.current.get(pane.id) === telemetryKey) {
-        continue;
-      }
-      emitWorkspaceTelemetry({
-        type: "label",
-        status: "ok",
-        errorCode: null,
-        labelState: descriptor.labelState,
-        routeId: descriptor.route.id,
-      });
-    }
-
-    labelTelemetryByPaneIdRef.current = nextTelemetryByPaneId;
-  }, [paneDescriptors]);
 
   const panes = useMemo(
     () =>
@@ -925,7 +840,7 @@ function WorkspaceHost() {
               resourceResolutionByLocatorKey.get(resourceLocatorKey),
             )
           : null;
-        const runtimeLayoutRecord = getRuntimePaneLayoutRecord(
+        const runtimeLayoutRecord = routeKeyedRecord(
           runtimeLayoutByPaneId,
           pane.id,
           descriptor.routeKey,
@@ -942,18 +857,20 @@ function WorkspaceHost() {
           runtimeLayout:
             runtimeLayoutRecord?.layout ?? DEFAULT_PANE_RUNTIME_LAYOUT,
           runtimeLayoutResolved: runtimeLayoutRecord !== null,
-          secondaryPublication: getPaneSecondaryPublication(
-            secondaryPublicationByPaneId,
-            pane.id,
-            descriptor.routeKey,
-          ),
+          secondaryPublication:
+            routeKeyedRecord(
+              secondaryPublicationByPaneId,
+              pane.id,
+              descriptor.routeKey,
+            )?.publication ?? null,
           transientSecondaryActivation:
             transientSecondaryActivationByPaneId.get(pane.id) ?? null,
-          fixedChromePublication: getPaneFixedChromePublication(
-            fixedChromePublicationByPaneId,
-            pane.id,
-            descriptor.routeKey,
-          ),
+          fixedChromePublication:
+            routeKeyedRecord(
+              fixedChromePublicationByPaneId,
+              pane.id,
+              descriptor.routeKey,
+            )?.publication ?? null,
           isMobile,
           workspacePrimaryMetrics,
         });
@@ -1111,11 +1028,11 @@ function WorkspaceHost() {
       }
       const routeKey = currentRouteKeyByPaneId.get(primaryPane.id);
       const publication = routeKey
-        ? getPaneSecondaryPublication(
+        ? (routeKeyedRecord(
             secondaryPublicationByPaneId,
             primaryPane.id,
             routeKey,
-          )
+          )?.publication ?? null)
         : null;
       if (!publication) {
         continue;
@@ -1510,14 +1427,6 @@ function WorkspaceHost() {
 
   useAdjacentPaneKeybindings({ onActivated: requestPaneFocus });
 
-  // --- Close handler ---
-  const handleClosePane = useCallback(
-    (paneId: string) => {
-      closePane(paneId);
-    },
-    [closePane],
-  );
-
   return (
     <section className={styles.host} aria-label="Workspace host">
       <title>{documentTitle}</title>
@@ -1527,7 +1436,7 @@ function WorkspaceHost() {
           onActivatePane={handleActivatePane}
           onMinimizePane={minimizePane}
           onRestorePane={restorePane}
-          onClosePane={handleClosePane}
+          onClosePane={closePane}
         />
       )}
       <div className={styles.canvasViewport}>
@@ -1742,14 +1651,12 @@ function WorkspaceHost() {
           <div
             className={styles.edgeFade}
             data-side="start"
-            data-testid="workspace-edge-fade-start"
           />
         ) : null}
         {layoutMode === "desktop" && edges.atEnd ? (
           <div
             className={styles.edgeFade}
             data-side="end"
-            data-testid="workspace-edge-fade-end"
           />
         ) : null}
       </div>

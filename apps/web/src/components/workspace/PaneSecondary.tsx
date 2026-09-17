@@ -17,7 +17,7 @@ export const PaneSecondaryContext = createContext<
   ((publication: PaneSecondaryPublication | null) => void) | null
 >(null);
 
-export type RequestPublishedSecondarySurface = (
+type RequestPublishedSecondarySurface = (
   surfaceId: WorkspaceSecondarySurfaceId,
   options?: PaneSecondarySurfaceRequestOptions,
 ) => void;

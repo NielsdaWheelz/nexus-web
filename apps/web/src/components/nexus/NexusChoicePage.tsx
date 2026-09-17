@@ -1,20 +1,24 @@
 "use client";
 
 import { ArrowLeft } from "lucide-react";
+import type { ReactNode } from "react";
 import type {
   NexusAction,
   NexusTargetActivation,
 } from "@/lib/nexus/model";
+import { pointerModality } from "@/lib/ui/pointerModality";
 import styles from "./Nexus.module.css";
 
-export default function ChooseCreatePage({
-  initialDraft,
+export default function NexusChoicePage({
+  title,
+  subtitle,
   actions,
   onBack,
   onSelect,
   onUnavailable,
 }: {
-  readonly initialDraft: string;
+  readonly title: ReactNode;
+  readonly subtitle: string;
   readonly actions: readonly NexusAction[];
   readonly onBack: () => void;
   readonly onSelect: (
@@ -32,9 +36,9 @@ export default function ChooseCreatePage({
         </button>
         <div>
           <h2 tabIndex={-1} data-switchboard-heading>
-            Create “{initialDraft}”
+            {title}
           </h2>
-          <p>Choose where this draft belongs.</p>
+          <p>{subtitle}</p>
         </div>
       </header>
       <div className={styles.workflowChoices}>
@@ -54,7 +58,7 @@ export default function ChooseCreatePage({
                   action,
                   {
                     disposition: { kind: "Follow" },
-                    modality: event.detail === 0 ? "Keyboard" : "Pointer",
+                    modality: pointerModality(event),
                   },
                   event.currentTarget,
                 );

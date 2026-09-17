@@ -2,7 +2,6 @@
 
 import {
   useCallback,
-  type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -13,13 +12,14 @@ import {
   usePaneRuntime,
   useRecordPaneNavigationModality,
 } from "@/lib/panes/paneRuntime";
-import { usePaneWarm } from "@/lib/panes/paneWarm";
+import { usePaneWarmOnIntent } from "@/lib/panes/paneWarm";
 import styles from "./WorkspaceHost.module.css";
+import { pointerModality } from "@/lib/ui/pointerModality";
 
 export default function PaneRouteBoundary({ children }: { children: ReactNode }) {
   const paneRuntime = usePaneRuntime();
   const activateTarget = paneRuntime?.activateTarget ?? null;
-  const warmPane = usePaneWarm();
+  const handleIntentCapture = usePaneWarmOnIntent();
   const recordNavigationModality = useRecordPaneNavigationModality();
   const isActivationTarget = useCallback((target: EventTarget | null) => {
     if (!(target instanceof Element)) {
@@ -39,9 +39,7 @@ export default function PaneRouteBoundary({ children }: { children: ReactNode })
         return;
       }
       if (isActivationTarget(target)) {
-        recordNavigationModality(
-          event.detail === 0 ? "Keyboard" : "Pointer",
-        );
+        recordNavigationModality(pointerModality(event));
       }
       const anchor = target.closest("a[href]");
       if (anchor instanceof HTMLAnchorElement) {
@@ -72,27 +70,6 @@ export default function PaneRouteBoundary({ children }: { children: ReactNode })
       }
     },
     [isActivationTarget, recordNavigationModality],
-  );
-
-  // Prefetch-on-intent: warm the target pane's chunk + data the moment the pointer or
-  // keyboard focus reaches any in-pane anchor, so the click/Enter opens warm. Mirrors
-  // the click delegate (capture-phase + closest("a[href]")), covering every in-pane
-  // link — ResourceRow, prose, media cards, anchor-form citations — at once.
-  const handleIntentCapture = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement> | ReactFocusEvent<HTMLDivElement>) => {
-      if (!(event.target instanceof Element)) {
-        return;
-      }
-      const anchor = event.target.closest("a[href]");
-      if (!(anchor instanceof HTMLAnchorElement)) {
-        return;
-      }
-      const href = anchor.getAttribute("href");
-      if (href && !href.startsWith("#")) {
-        warmPane(href);
-      }
-    },
-    [warmPane],
   );
 
   return (

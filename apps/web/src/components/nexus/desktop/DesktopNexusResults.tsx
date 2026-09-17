@@ -1,7 +1,10 @@
 "use client";
 
 import { useLayoutEffect } from "react";
-import { nexusEntryKeyValue } from "@/lib/nexus/model";
+import {
+  nexusEntryKeyValue,
+  nexusSourceFailureCopy,
+} from "@/lib/nexus/model";
 import {
   completeNexusPerformance,
   NEXUS_LOCAL_FIND_PERFORMANCE,
@@ -72,7 +75,7 @@ export default function DesktopNexusResults({
         <div className={styles.sourceFailures} aria-live="polite">
           {controller.failures.has("Openables") ? (
             <p>
-              Couldn’t search your resources.{" "}
+              {nexusSourceFailureCopy("Openables")}{" "}
               <button
                 type="button"
                 onClick={() => controller.retry("Openables")}
@@ -83,7 +86,7 @@ export default function DesktopNexusResults({
           ) : null}
           {controller.failures.has("Owned") ? (
             <p>
-              Couldn’t search inside your library.{" "}
+              {nexusSourceFailureCopy("Owned")}{" "}
               <button type="button" onClick={() => controller.retry("Owned")}>
                 Retry
               </button>

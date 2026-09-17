@@ -76,7 +76,6 @@ export class PaneRouteErrorBoundary extends Component<
       <div
         className={styles.paneErrorBoundaryShell}
         data-pane-error-boundary-shell="true"
-        data-testid={`pane-error-boundary-${this.props.paneId}`}
         style={{ minWidth: this.props.slotMinWidth }}
       >
         {this.state.hasError ? (

@@ -25,18 +25,18 @@ import type { PodcastOpmlImportResult } from "@/lib/podcasts/opmlImport";
 
 export const ADD_SESSION_MAX_ITEMS = 20;
 
-export type AddSource =
+type AddSource =
   | { kind: "Url"; url: string }
   | { kind: "File"; file: File; fileKind: UploadFileKind };
 
-export type FileSummary<K extends UploadFileKind | "Opml" | "Unsupported"> = {
+type FileSummary<K extends UploadFileKind | "Opml" | "Unsupported"> = {
   kind: "File";
   name: string;
   sizeBytes: number;
   fileKind: K;
 };
 
-export type SourceSummary =
+type SourceSummary =
   | { kind: "Url"; url: string }
   | FileSummary<UploadFileKind>;
 
@@ -101,7 +101,7 @@ export type PlacementCommand =
   | { kind: "Add"; destination: LibraryPlacementDestination }
   | { kind: "Remove"; destination: LibraryPlacementDestination };
 
-export type PlacementWork = {
+type PlacementWork = {
   libraries: readonly LibraryPlacementOption[];
   command: PlacementCommand;
 };
@@ -133,7 +133,7 @@ export type SessionMutationOperation =
       mediaIds: readonly string[];
     };
 
-export type SessionMutationState =
+type SessionMutationState =
   | { kind: "Idle" }
   | { kind: "Running"; operation: SessionMutationOperation };
 
@@ -176,7 +176,7 @@ export type StagedAddItem = Extract<AddItem, { kind: "Invalid" | "Draft" }>;
  */
 export type UnresolvedAcceptanceReason = "StatusUnknown" | "UploadIncomplete";
 
-export type AcceptanceFailure =
+type AcceptanceFailure =
   | { kind: "Rejected"; feedback: FeedbackContent }
   | {
       kind: "Unresolved";

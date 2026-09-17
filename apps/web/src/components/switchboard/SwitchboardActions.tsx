@@ -14,6 +14,7 @@ import {
   type ActionDescriptor,
 } from "@/lib/ui/actionDescriptor";
 import styles from "./switchboard.module.css";
+import { pointerModality } from "@/lib/ui/pointerModality";
 
 /**
  * The full-screen actions list for a NON-resource entry: its own local
@@ -46,7 +47,7 @@ function SwitchboardNexusActions({
       action,
       {
         disposition: { kind: "Follow" },
-        modality: event.detail === 0 ? "Keyboard" : "Pointer",
+        modality: pointerModality(event),
       },
       event.currentTarget,
       entry,

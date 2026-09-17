@@ -17,16 +17,14 @@ import { DEFAULT_KEYBINDINGS } from "@/lib/keybindings";
 import { useKeybinding, useKeybindingLabel } from "@/lib/keybindingsProvider";
 import { useIsMobileViewport } from "@/lib/ui/useIsMobileViewport";
 import {
-  NAV_ACCOUNT,
-  NAV_HOME,
+  NAV_IMPORTS,
   NAV_MODEL,
-  NAV_UTILITIES,
   isAccountDestinationId,
-  utilityActiveId,
   type NavItem,
 } from "./navModel";
 import NavRail from "./NavRail";
 import MobilePaneBar from "./MobilePaneBar";
+import { pointerModality } from "@/lib/ui/pointerModality";
 
 const COLLAPSE_KEY = "nexus.nav.collapsed";
 
@@ -77,7 +75,7 @@ export default function AppNav() {
               originPaneId: state.activePrimaryPaneId,
               target,
               disposition,
-              modality: event.detail === 0 ? "Keyboard" : "Pointer",
+              modality: pointerModality(event),
             });
           },
         },
@@ -116,11 +114,7 @@ export default function AppNav() {
 
   return (
     <NavRail
-      items={NAV_MODEL}
-      home={NAV_HOME}
-      utilities={NAV_UTILITIES}
-      account={NAV_ACCOUNT}
-      utilityActiveId={utilityActiveId(activeDestinationId)}
+      importsActive={activeDestinationId === NAV_IMPORTS.id}
       accountActiveId={accountActiveId}
       activeId={activeId}
       collapsed={collapsed}

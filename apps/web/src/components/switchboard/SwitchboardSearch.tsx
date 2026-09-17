@@ -8,11 +8,14 @@ import {
 } from "react";
 import {
   nexusEntryKeyValue,
+  nexusSourceFailureCopy,
   type NexusAction,
+  type NexusActionsRequest,
   type NexusEntry,
   type NexusEntryKey,
   type NexusGroup,
   type NexusProjection,
+  type NexusSource,
   type NexusTargetActivation,
 } from "@/lib/nexus/model";
 import {
@@ -25,28 +28,6 @@ import {
 } from "@/lib/nexus/performance";
 import SwitchboardRow from "./SwitchboardRow";
 import styles from "./switchboard.module.css";
-
-export type MobileNexusFailureSource = "Openables" | "Owned";
-
-export interface MobileNexusActionsRequest {
-  readonly requestId: number;
-  readonly entry: NexusEntry;
-}
-
-function failureCopy(source: MobileNexusFailureSource): string {
-  switch (source) {
-    case "Openables":
-      return "Couldn’t search your resources.";
-    case "Owned":
-      return "Couldn’t search inside your library.";
-    default: {
-      const exhaustive: never = source;
-      throw new Error(
-        `Unhandled mobile Nexus failure source: ${JSON.stringify(exhaustive)}`,
-      );
-    }
-  }
-}
 
 export default function SwitchboardSearch({
   active,
@@ -73,11 +54,11 @@ export default function SwitchboardSearch({
   query: string;
   projection: NexusProjection;
   accountMenu: ReactNode;
-  failures: ReadonlySet<MobileNexusFailureSource>;
+  failures: ReadonlySet<NexusSource>;
   busy: boolean;
   pending: boolean;
   announcement: string;
-  actionsRequest: MobileNexusActionsRequest | null;
+  actionsRequest: NexusActionsRequest | null;
   onDone(): void;
   onQuery(query: string): void;
   onActive(key: NexusEntryKey): void;
@@ -87,10 +68,10 @@ export default function SwitchboardSearch({
     returnFocus: HTMLElement,
     entry: NexusEntry,
   ): void;
-  onEntryActions(entry: MobileNexusActionsRequest["entry"]): void;
+  onEntryActions(entry: NexusActionsRequest["entry"]): void;
   onEscapeRoot(): void;
   onUnavailable(reason: string): void;
-  onRetry(source: MobileNexusFailureSource): void;
+  onRetry(source: NexusSource): void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const composingRef = useRef(false);
@@ -254,14 +235,13 @@ export default function SwitchboardSearch({
 
       <div
         className={styles.searchScroll}
-        data-testid="switchboard-search-scroll"
         aria-busy={busy || undefined}
       >
         {failures.size > 0 ? (
           <div className={styles.sourceStatus} aria-live="polite">
             {Array.from(failures).map((source) => (
               <p key={source}>
-                {failureCopy(source)}{" "}
+                {nexusSourceFailureCopy(source)}{" "}
                 <button type="button" onClick={() => onRetry(source)}>
                   Retry
                 </button>

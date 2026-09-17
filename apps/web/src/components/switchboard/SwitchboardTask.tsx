@@ -10,44 +10,24 @@ import {
 import AccountMenu from "@/components/appnav/AccountMenu";
 import {
   isAccountDestinationId,
-  NAV_ACCOUNT,
-  NAV_UTILITIES,
-  utilityActiveId,
+  NAV_IMPORTS,
   type NavItem,
 } from "@/components/appnav/navModel";
-import {
-  FeedbackNotice,
-  type FeedbackContent,
-} from "@/components/feedback/Feedback";
-import AddPanel, {
-  type AddDismissalConfirmation,
-} from "@/components/nexus/AddPanel";
+import { FeedbackNotice } from "@/components/feedback/Feedback";
+import AddPanel from "@/components/nexus/AddPanel";
 import AddPanelBoundary from "@/components/nexus/AddPanelBoundary";
-import ChooseBrowsePage from "@/components/nexus/ChooseBrowsePage";
-import ChooseCreatePage from "@/components/nexus/ChooseCreatePage";
+import NexusChoicePage from "@/components/nexus/NexusChoicePage";
 import ManageTabsPage from "@/components/nexus/ManageTabsPage";
-import type { AddContentSessionController } from "@/components/nexus/useAddContentSession";
-import type {
-  NexusManagedClosedPane,
-  NexusManagedPane,
-} from "@/components/nexus/useNexusController";
+import type { NexusController } from "@/components/nexus/useNexusController";
 import MobileFullScreenTask from "@/components/ui/MobileFullScreenTask";
-import type {
-  MaterializedNexusTarget,
-  NexusDispatchOutcome,
-} from "@/lib/nexus/dispatch";
 import type {
   NexusAction,
   NexusEntry,
-  NexusEntryKey,
   NexusPage,
-  NexusProjection,
-  NexusTarget,
   NexusTargetActivation,
 } from "@/lib/nexus/model";
 import { sectionDestinationIdForHref } from "@/lib/panes/paneRouteModel";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
-import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
 import { getWorkspacePrimaryPanes } from "@/lib/workspace/schema";
 import { useWorkspaceStore } from "@/lib/workspace/store";
 import CreateLibraryPanel from "./CreateLibraryPanel";
@@ -56,75 +36,9 @@ import MobileNexusActivationAdapter, {
 } from "./MobileNexusActivationAdapter";
 import SwitchboardActions from "./SwitchboardActions";
 import SwitchboardRecovery from "./SwitchboardRecovery";
-import SwitchboardSearch, {
-  type MobileNexusActionsRequest,
-  type MobileNexusFailureSource,
-} from "./SwitchboardSearch";
+import SwitchboardSearch from "./SwitchboardSearch";
 import { assertNever } from "@/lib/assertNever";
 import styles from "./switchboard.module.css";
-
-export interface MobileNexusTaskController {
-  readonly query: string;
-  readonly page: NexusPage;
-  readonly projection: NexusProjection;
-  readonly actionsRequest: MobileNexusActionsRequest | null;
-  readonly failures: ReadonlySet<MobileNexusFailureSource>;
-  readonly busy: boolean;
-  readonly pending: boolean;
-  readonly announcement: string;
-  readonly dialogLabel: string;
-  readonly focusKey: string;
-  readonly addSession: AddContentSessionController;
-  readonly dismissalConfirmation: AddDismissalConfirmation;
-  readonly createChoiceActions: readonly NexusAction[];
-  readonly browseChoiceActions: readonly NexusAction[];
-  readonly managedPanes: readonly NexusManagedPane[];
-  readonly managedClosedPanes: readonly NexusManagedClosedPane[];
-  readonly managedTabsFeedback: {
-    readonly content: FeedbackContent;
-    readonly paneId: string;
-  } | null;
-  setQuery(query: string): void;
-  setActiveEntry(key: NexusEntryKey): void;
-  openEntryActions(entry: NexusEntry): void;
-  announceUnavailable(reason: string): void;
-  materialize(target: NexusTarget): MaterializedNexusTarget;
-  dispatch(
-    target: MaterializedNexusTarget,
-    activation: NexusTargetActivation,
-    entry?: NexusEntry,
-  ): Promise<NexusDispatchOutcome>;
-  reportActivationFailure(
-    error: unknown,
-    retry: () => void,
-    target: MaterializedNexusTarget,
-    activation: NexusTargetActivation,
-  ): void;
-  retry(source: MobileNexusFailureSource): void;
-  back(): void;
-  escape(): void;
-  openRoot(): void;
-  close(): void;
-  dismissAccepted(): void;
-  guardClose(): DismissDecision;
-  initialFocus(container: HTMLElement, isMobile: boolean): HTMLElement | null;
-  shouldSuppressReturnFocusOnClose(): boolean;
-  openTarget(target: NexusTarget): void;
-  openAddTarget(target: NexusTarget): void;
-  keepWorking(): void;
-  confirmDismissal(): void;
-  setLibraryNameDraft(name: string): void;
-  submitLibrary(): void;
-  retryPageCreation(): void;
-  retryCommandFailure(): void;
-  retryBlockedOperation(): void;
-  manageTabs(): void;
-  openManagedPane(paneId: string): void;
-  closeManagedPane(paneId: string): void;
-  restoreManagedPane(paneId: string): void;
-  retryRetainedActivation(): void;
-  cancelRetainedActivation(): void;
-}
 
 function CreationStatus({
   submit,
@@ -162,7 +76,7 @@ export default function SwitchboardTask({
   onAddDefect,
   onClearAddDefect,
 }: {
-  controller: MobileNexusTaskController;
+  controller: NexusController;
   active: boolean;
   returnFocusTo: () => HTMLElement | null;
   activeAddDefect: boolean;
@@ -238,10 +152,8 @@ export default function SwitchboardTask({
   };
   const accountMenu = (
     <AccountMenu
-      account={NAV_ACCOUNT}
       activeId={accountActiveId}
-      utilities={NAV_UTILITIES}
-      utilityActiveId={utilityActiveId(activeDestinationId)}
+      importsActive={activeDestinationId === NAV_IMPORTS.id}
       placement="below"
       align="end"
       renderTrigger={(trigger) => (
@@ -328,8 +240,9 @@ export default function SwitchboardTask({
         );
       case "ChooseCreate":
         return (
-          <ChooseCreatePage
-            initialDraft={page.initialDraft}
+          <NexusChoicePage
+            title={`Create “${page.initialDraft}”`}
+            subtitle="Choose where this draft belongs."
             actions={controller.createChoiceActions}
             onBack={back}
             onSelect={activate}
@@ -338,8 +251,9 @@ export default function SwitchboardTask({
         );
       case "ChooseBrowse":
         return (
-          <ChooseBrowsePage
-            query={page.query}
+          <NexusChoicePage
+            title={`Browse${page.query ? ` for “${page.query}”` : ""}`}
+            subtitle="Choose one source kind."
             actions={controller.browseChoiceActions}
             onBack={back}
             onSelect={activate}
@@ -393,28 +307,6 @@ export default function SwitchboardTask({
             >
               {page.manualValue ? <code>{page.manualValue}</code> : null}
             </FeedbackNotice>
-          </div>
-        );
-      case "UnsupportedLink":
-        return (
-          <div className={styles.page}>
-            <header className={styles.header}>
-              <h2 tabIndex={-1} data-switchboard-heading>
-                This link is no longer supported
-              </h2>
-            </header>
-            <button
-              type="button"
-              onClick={() =>
-                controller.openTarget({
-                  kind: "InternalHref",
-                  href: "/browse",
-                  labelHint: "Browse",
-                })
-              }
-            >
-              Open Browse
-            </button>
           </div>
         );
       case "CreatePage":

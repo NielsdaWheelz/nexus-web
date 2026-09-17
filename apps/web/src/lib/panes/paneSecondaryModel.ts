@@ -19,18 +19,9 @@ const COMPANION_WIDTH_POLICY: WorkspaceSecondaryWidthPolicy = {
 // Imports pane publishes its selected import into its own group because that
 // selection is a row, not a resource. Both share the region-id scheme.
 const PANE_SECONDARY_GROUP_BASE = {
-  "resource-inspector": {
-    title: "Companion",
-    width: COMPANION_WIDTH_POLICY,
-  },
-  "imports-inspector": {
-    title: "Import details",
-    width: COMPANION_WIDTH_POLICY,
-  },
-} as const satisfies Record<
-  string,
-  { title: string; width: WorkspaceSecondaryWidthPolicy }
->;
+  "resource-inspector": { width: COMPANION_WIDTH_POLICY },
+  "imports-inspector": { width: COMPANION_WIDTH_POLICY },
+} as const satisfies Record<string, { width: WorkspaceSecondaryWidthPolicy }>;
 
 export type WorkspaceSecondaryGroupId = keyof typeof PANE_SECONDARY_GROUP_BASE;
 
@@ -172,13 +163,6 @@ export interface WorkspaceSecondarySizing {
   storedWidthCorrectionPx: number | null;
 }
 
-export interface PaneSecondaryGroupDefinition {
-  id: WorkspaceSecondaryGroupId;
-  title: string;
-  width: WorkspaceSecondaryWidthPolicy;
-  surfaces: readonly WorkspaceSecondarySurfaceId[];
-}
-
 export interface PaneSecondarySurfaceDefinition {
   id: WorkspaceSecondarySurfaceId;
   groupId: WorkspaceSecondaryGroupId;
@@ -243,18 +227,6 @@ export function isPaneTransientSecondarySurfaceId(
   );
 }
 
-export function getSecondarySurfaceDefinition(
-  surfaceId: WorkspaceSecondarySurfaceId,
-): PaneSecondarySurfaceDefinition {
-  return findSecondarySurfaceDefinition(surfaceId);
-}
-
-export function getTransientSecondarySurfaceDefinition(
-  surfaceId: PaneTransientSecondarySurfaceId,
-): PaneTransientSecondarySurfaceDefinition {
-  return findTransientSecondarySurfaceDefinition(surfaceId);
-}
-
 export function getPaneSecondarySurfaceDefinition(
   surfaceId: PaneSecondaryPresentationSurfaceId,
 ):
@@ -269,26 +241,6 @@ export function getSecondaryGroupForSurface(
   surfaceId: WorkspaceSecondarySurfaceId,
 ): WorkspaceSecondaryGroupId {
   return findSecondarySurfaceDefinition(surfaceId).groupId;
-}
-
-export function getSecondarySurfaceIdsForGroup(
-  groupId: WorkspaceSecondaryGroupId,
-): readonly WorkspaceSecondarySurfaceId[] {
-  return PANE_SECONDARY_SURFACE_DEFINITIONS.filter(
-    (definition) => definition.groupId === groupId,
-  ).map((definition) => definition.id);
-}
-
-export function getSecondaryGroupDefinition(
-  groupId: WorkspaceSecondaryGroupId,
-): PaneSecondaryGroupDefinition {
-  const base = PANE_SECONDARY_GROUP_BASE[groupId];
-  return {
-    id: groupId,
-    title: base.title,
-    width: base.width,
-    surfaces: getSecondarySurfaceIdsForGroup(groupId),
-  };
 }
 
 export function getSecondaryWidthPolicy(

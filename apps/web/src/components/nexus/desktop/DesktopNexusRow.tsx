@@ -17,6 +17,7 @@ import { useResourceActionMenuModel } from "@/lib/actions/resourceActionRuntime"
 import {
   nexusEntryHasSecondaryActions,
   nexusEntryKeyValue,
+  nexusOpenStateLabel,
   type NexusAction,
   type NexusEntry,
 } from "@/lib/nexus/model";
@@ -30,18 +31,6 @@ import type {
   DesktopNexusModality,
 } from "./types";
 import styles from "./desktopNexus.module.css";
-
-function openStateLabel(state: NexusEntry["openState"]): string | undefined {
-  if (state === undefined) return undefined;
-  switch (state) {
-    case "Active":
-      return "Current";
-    case "Open":
-      return "Open";
-    case "Minimized":
-      return "Minimized";
-  }
-}
 
 function unavailableReason(action: NexusAction): string | undefined {
   switch (action.availability.kind) {
@@ -73,11 +62,10 @@ function DesktopNexusRowResourceMenu({
   const model = useResourceActionMenuModel(actionSubject);
   // A standing resource always has a standing trigger, including Loading and
   // Error. The canonical model owns whether that trigger is inert or Retryable.
-  const present = true;
   useEffect(() => {
-    onPresenceChange(present);
+    onPresenceChange(true);
     return () => onPresenceChange(false);
-  }, [present, onPresenceChange]);
+  }, [onPresenceChange]);
   return (
     <ActionMenu
       options={model.descriptors}
@@ -212,7 +200,7 @@ export default function DesktopNexusRow({
     entry.typeLabel,
     entry.metadata,
     parentLabel,
-    openStateLabel(entry.openState),
+    nexusOpenStateLabel(entry.openState),
   ].filter(
     (fact, index, all): fact is string =>
       Boolean(fact) && all.indexOf(fact) === index,

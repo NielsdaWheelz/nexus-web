@@ -12,6 +12,7 @@ import { createPortal } from "react-dom";
 import {
   ChevronLeft,
   ChevronRight,
+  CircleUser,
   Plus,
   Search,
 } from "lucide-react";
@@ -19,21 +20,19 @@ import Link from "next/link";
 import AsterismMark from "@/components/AsterismMark";
 import ImportsBadge from "@/components/imports/ImportsBadge";
 import { useAnchoredPosition } from "@/lib/ui/useAnchoredPosition";
-import NavAccount from "./NavAccount";
+import AccountMenu from "./AccountMenu";
 import type { AppNavActivationResult } from "@/lib/panes/targetLinkActivation";
-import type {
-  AccountNavigation,
-  NavItem,
-  UtilityNavigation,
+import {
+  isAccountDestinationId,
+  NAV_HOME,
+  NAV_IMPORTS,
+  NAV_MODEL,
+  type NavItem,
 } from "./navModel";
 import styles from "./AppNav.module.css";
 
 export default function NavRail({
-  items,
-  home,
-  utilities,
-  account,
-  utilityActiveId,
+  importsActive,
   accountActiveId,
   activeId,
   collapsed,
@@ -44,11 +43,7 @@ export default function NavRail({
   onOpenAdd,
   onNavigate,
 }: {
-  items: readonly NavItem[];
-  home: NavItem;
-  utilities: UtilityNavigation;
-  account: AccountNavigation;
-  utilityActiveId: NavItem["id"] | null;
+  importsActive: boolean;
   accountActiveId: NavItem["id"] | null;
   activeId: NavItem["id"] | null;
   collapsed: boolean;
@@ -62,7 +57,8 @@ export default function NavRail({
     destination: NavItem,
   ) => AppNavActivationResult;
 }) {
-  const ImportsIcon = utilities.imports.icon;
+  const ImportsIcon = NAV_IMPORTS.icon;
+  const accountActive = isAccountDestinationId(accountActiveId);
   const listRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
   const [indicator, setIndicator] = useState({ top: 0, height: 0, visible: false });
@@ -84,7 +80,7 @@ export default function NavRail({
     });
   }, [activeId]);
 
-  useLayoutEffect(() => measure(), [measure, collapsed, items]);
+  useLayoutEffect(() => measure(), [measure, collapsed]);
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
@@ -106,10 +102,10 @@ export default function NavRail({
     <nav className={`${styles.rail} ${collapsed ? styles.collapsed : ""}`} aria-label="Primary">
       <div className={styles.brand}>
         <Link
-          href={home.href}
+          href={NAV_HOME.href}
           className={styles.brandLink}
           aria-label="Nexus — Home"
-          onClick={(event) => onNavigate(event, home)}
+          onClick={(event) => onNavigate(event, NAV_HOME)}
         >
           <AsterismMark size={20} className={styles.brandMark} />
           <span className={styles.brandText}>Nexus</span>
@@ -152,7 +148,7 @@ export default function NavRail({
           aria-hidden="true"
         />
         <ul className={styles.navList}>
-          {items.map((item) => {
+          {NAV_MODEL.map((item) => {
             const Icon = item.icon;
             const active = item.id === activeId;
             return (
@@ -186,14 +182,12 @@ export default function NavRail({
 
       <div className={styles.footer}>
         <Link
-          href={utilities.imports.href}
+          href={NAV_IMPORTS.href}
           className={`${styles.item} ${styles.utilityLink} ${
-            utilityActiveId === utilities.imports.id ? styles.active : ""
+            importsActive ? styles.active : ""
           }`}
-          aria-current={
-            utilityActiveId === utilities.imports.id ? "page" : undefined
-          }
-          onClick={(event) => onNavigate(event, utilities.imports)}
+          aria-current={importsActive ? "page" : undefined}
+          onClick={(event) => onNavigate(event, NAV_IMPORTS)}
         >
           <span className={styles.itemIcon}>
             <ImportsIcon size={20} strokeWidth={2} aria-hidden="true" />
@@ -204,7 +198,7 @@ export default function NavRail({
               still names the link. */}
           <span className={collapsed ? styles.utilityChip : styles.utilityLabel}>
             <ImportsBadge
-              label={utilities.imports.label}
+              label={NAV_IMPORTS.label}
               labelVisible={!collapsed}
             />
           </span>
@@ -221,12 +215,24 @@ export default function NavRail({
           </span>
           {!collapsed && <span className={styles.itemLabel}>Add</span>}
         </button>
-        <NavAccount
-          account={account}
-          utilities={utilities}
+        <AccountMenu
           activeId={accountActiveId}
-          utilityActiveId={utilityActiveId}
-          collapsed={collapsed}
+          importsActive={importsActive}
+          placement="above"
+          align="start"
+          renderTrigger={(trigger) => (
+            <button
+              {...trigger}
+              type="button"
+              className={`${styles.accountTrigger} ${accountActive ? styles.active : ""}`}
+              aria-current={accountActive ? "page" : undefined}
+            >
+              <span className={styles.accountAvatar}>
+                <CircleUser size={20} strokeWidth={2} aria-hidden="true" />
+              </span>
+              {!collapsed && <span className={styles.itemLabel}>Account</span>}
+            </button>
+          )}
           onNavigate={onNavigate}
         />
       </div>

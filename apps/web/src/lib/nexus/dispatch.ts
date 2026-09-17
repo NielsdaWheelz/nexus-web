@@ -99,11 +99,6 @@ export const PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION: NexusTargetActivation =
     modality: "Programmatic",
   };
 
-export const KEYBOARD_NEXUS_TARGET_ACTIVATION: NexusTargetActivation = {
-  disposition: { kind: "Follow" },
-  modality: "Keyboard",
-};
-
 export type NexusDispatchOutcome =
   | { kind: "Stayed" }
   | {
@@ -214,33 +209,6 @@ function activateTarget(
       modality: activation.modality,
     }),
   );
-}
-
-export function nexusTargetNavigates(target: NexusTarget): boolean {
-  switch (target.kind) {
-    case "InternalHref":
-    case "ResourceOpen":
-    case "ResourceShare":
-    case "ResourceChat":
-    case "Ask":
-    case "NewConversation":
-    case "Share":
-    case "PaneOpen":
-    case "OpenDailyPage":
-    case "Browse":
-      return true;
-    case "CopyExternalLink":
-    case "PaneClose":
-    case "PaneSearch":
-    case "OpenAdd":
-    case "CreatePage":
-    case "CreateLibrary":
-    case "ChooseCreate":
-    case "ChooseBrowse":
-    case "ResumeCurrentPlayback":
-    case "ManageTabs":
-      return false;
-  }
 }
 
 export type NexusDispatchResult =

@@ -219,6 +219,22 @@ export interface NexusEntry {
   };
 }
 
+/** The one fact copy for an entry's workspace-pane open state. */
+export function nexusOpenStateLabel(
+  state: NexusEntry["openState"],
+): string | undefined {
+  switch (state) {
+    case undefined:
+      return undefined;
+    case "Active":
+      return "Current";
+    case "Open":
+      return "Open";
+    case "Minimized":
+      return "Minimized";
+  }
+}
+
 /**
  * A Nexus entry exposes a secondary/overflow menu when it either carries local
  * NexusAction secondaries (panes, continuations) or is a canonical resource
@@ -226,6 +242,24 @@ export interface NexusEntry {
  */
 export function nexusEntryHasSecondaryActions(entry: NexusEntry): boolean {
   return entry.secondaryActions.length > 0 || entry.actionSubject !== undefined;
+}
+
+/** The two retrieval sources a Nexus find fans out to, and can fail on. */
+export type NexusSource = "Openables" | "Owned";
+
+export function nexusSourceFailureCopy(source: NexusSource): string {
+  switch (source) {
+    case "Openables":
+      return "Couldn’t search your resources.";
+    case "Owned":
+      return "Couldn’t search inside your library.";
+  }
+}
+
+export interface NexusActionsRequest {
+  readonly requestId: number;
+  /** Exact entry/action snapshot captured when Nexus.Open was pressed. */
+  readonly entry: NexusEntry;
 }
 
 export interface NexusCommand {
@@ -333,7 +367,6 @@ export type ManageTabsOrigin =
 
 export type NexusPage =
   | { readonly kind: "Root" }
-  | { readonly kind: "UnsupportedLink" }
   | {
       readonly kind: "CommandFailed";
       readonly content: NexusFeedbackContent;
@@ -378,5 +411,4 @@ export type NexusPage =
 export type NexusOpenIntent =
   | { readonly kind: "Root" }
   | { readonly kind: "Add"; readonly seed: AddSeed }
-  | { readonly kind: "QuickAction"; readonly actionId: NexusCommandId }
-  | { readonly kind: "UnsupportedLink" };
+  | { readonly kind: "QuickAction"; readonly actionId: NexusCommandId };

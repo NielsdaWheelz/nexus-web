@@ -59,6 +59,7 @@ import {
 import type {
   CommittedWorkflow,
   NexusAction,
+  NexusActionsRequest,
   NexusCommandId,
   NexusEntry,
   NexusEntryKey,
@@ -66,6 +67,7 @@ import type {
   NexusPage,
   NexusProjection,
   NexusReturnPoint,
+  NexusSource,
   NexusSurface,
   NexusTarget,
   NexusTargetActivation,
@@ -131,11 +133,7 @@ import {
   type WorkspaceAdjacentPaneDirection,
 } from "@/lib/workspace/store";
 import type { WorkspaceTarget } from "@/lib/workspace/targetActivation";
-import type {
-  DesktopNexusActionsRequest,
-  DesktopNexusController,
-  DesktopNexusSource,
-} from "./desktop/types";
+import type { DesktopNexusController } from "./desktop/types";
 import {
   resolveAddPanelInitialFocus,
   type AddDismissalConfirmation,
@@ -161,21 +159,14 @@ export interface NexusManagedClosedPane {
   readonly label: string;
 }
 
-export interface NexusMobileProjection {
-  readonly projection: NexusProjection;
-  readonly failures: ReadonlySet<DesktopNexusSource>;
-  readonly busy: boolean;
-  readonly pending: boolean;
-}
-
 export interface NexusController {
   readonly open: boolean;
   readonly paneCount: number;
   readonly query: string;
   readonly page: NexusPage;
   readonly projection: NexusProjection;
-  readonly actionsRequest: DesktopNexusActionsRequest | null;
-  readonly failures: ReadonlySet<DesktopNexusSource>;
+  readonly actionsRequest: NexusActionsRequest | null;
+  readonly failures: ReadonlySet<NexusSource>;
   readonly busy: boolean;
   readonly pending: boolean;
   readonly announcement: string;
@@ -216,7 +207,7 @@ export interface NexusController {
     target: MaterializedNexusTarget,
     activation: NexusTargetActivation,
   ): void;
-  retry(source: DesktopNexusSource): void;
+  retry(source: NexusSource): void;
   openTarget(target: NexusTarget): void;
   openAddTarget(target: NexusTarget): void;
   back(): void;
@@ -277,7 +268,7 @@ type PendingDismissal = {
   readonly intent: ExitIntent;
 };
 
-export type NexusOperation =
+type NexusOperation =
   | "SaveHistory"
   | "Command"
   | "CreatePage"
@@ -297,7 +288,7 @@ function nexusOperationTitle(operation: NexusOperation): string {
 }
 
 /** Finite Nexus-operation copy adapter; contract and unknown failures defect. */
-export function nexusErrorMessage(
+function nexusErrorMessage(
   error: unknown,
   operation: NexusOperation,
 ): FeedbackContent {
@@ -435,7 +426,7 @@ export function useNexusController(): NexusController {
     useState<NexusEntryKey | null>(null);
   const [blankActiveKey, setBlankActiveKey] = useState<NexusEntryKey | null>(null);
   const [actionsRequest, setActionsRequest] =
-    useState<DesktopNexusActionsRequest | null>(null);
+    useState<NexusActionsRequest | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [openablesRetry, setOpenablesRetry] = useState(0);
   const [searchRetry, setSearchRetry] = useState(0);
@@ -869,7 +860,7 @@ export function useNexusController(): NexusController {
     [projection.activeKey, query],
   );
   const failures = useMemo(() => {
-    const value = new Set<DesktopNexusSource>();
+    const value = new Set<NexusSource>();
     if (openablesError) value.add("Openables");
     if (ownedError) value.add("Owned");
     return value;
@@ -1570,8 +1561,6 @@ export function useNexusController(): NexusController {
               sessionId: startAddSession(detail.seed),
               activation: PROGRAMMATIC_ADOPT_NEXUS_TARGET_ACTIVATION,
             });
-          } else if (detail.kind === "UnsupportedLink") {
-            setPage({ kind: "UnsupportedLink" });
           } else {
             setPage({ kind: "Root" });
           }
@@ -1744,7 +1733,7 @@ export function useNexusController(): NexusController {
   }, [pendingDismissal, performExit, stopAddSession]);
 
   const retry = useCallback(
-    (source: DesktopNexusSource) => {
+    (source: NexusSource) => {
       if (source === "Openables") invalidateOpenables();
       else setSearchRetry((value) => value + 1);
     },

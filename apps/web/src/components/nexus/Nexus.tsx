@@ -9,8 +9,7 @@ import SwitchboardTask from "@/components/switchboard/SwitchboardTask";
 import { useViewportState } from "@/lib/renderEnvironment/provider";
 import AddPanel from "./AddPanel";
 import AddPanelBoundary from "./AddPanelBoundary";
-import ChooseBrowsePage from "./ChooseBrowsePage";
-import ChooseCreatePage from "./ChooseCreatePage";
+import NexusChoicePage from "./NexusChoicePage";
 import ManageTabsPage from "./ManageTabsPage";
 import DesktopNexus from "./desktop/DesktopNexus";
 import { useNexusController, type NexusController } from "./useNexusController";
@@ -46,31 +45,11 @@ function desktopWorkflow(input: {
         </section>
       );
       break;
-    case "UnsupportedLink":
-      content = (
-        <section className={styles.workflowPage}>
-          <h2 tabIndex={-1} data-switchboard-heading>
-            This link is no longer supported
-          </h2>
-          <button
-            type="button"
-            onClick={() =>
-              controller.openTarget({
-                kind: "InternalHref",
-                href: "/browse",
-                labelHint: "Browse",
-              })
-            }
-          >
-            Open Browse
-          </button>
-        </section>
-      );
-      break;
     case "ChooseCreate":
       content = (
-        <ChooseCreatePage
-          initialDraft={page.initialDraft}
+        <NexusChoicePage
+          title={`Create “${page.initialDraft}”`}
+          subtitle="Choose where this draft belongs."
           actions={controller.createChoiceActions}
           onBack={controller.back}
           onSelect={(action, activation) =>
@@ -82,8 +61,9 @@ function desktopWorkflow(input: {
       break;
     case "ChooseBrowse":
       content = (
-        <ChooseBrowsePage
-          query={page.query}
+        <NexusChoicePage
+          title={`Browse${page.query ? ` for “${page.query}”` : ""}`}
+          subtitle="Choose one source kind."
           actions={controller.browseChoiceActions}
           onBack={controller.back}
           onSelect={(action, activation) =>
