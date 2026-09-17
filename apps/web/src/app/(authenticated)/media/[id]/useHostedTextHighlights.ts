@@ -12,7 +12,7 @@ import { isAbortError } from "@/lib/errors";
 import { fetchHighlights } from "@/lib/highlights/api";
 import type { Highlight } from "@/lib/highlights/highlightContract";
 
-export type HostedTextHighlightStatus =
+type HostedTextHighlightStatus =
   | "idle"
   | "loading"
   | "ready"

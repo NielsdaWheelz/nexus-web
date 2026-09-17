@@ -14,7 +14,7 @@ import {
 } from "@/lib/media/transcriptView";
 import styles from "./page.module.css";
 
-export interface TranscriptFindOccurrenceRange {
+interface TranscriptFindOccurrenceRange {
   readonly key: PaneFindResultKey;
   readonly fragmentId: string;
   readonly startCp: number;

@@ -23,6 +23,7 @@ import type {
   PaneFindPreviewReceipt,
 } from "@/lib/panes/usePaneFind";
 import { canonicalTextFind } from "@/lib/reader/canonicalTextFind";
+import { isAbortError } from "@/lib/errors";
 import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
 import {
   mediaPaneFindErrorMessage,
@@ -79,7 +80,7 @@ export interface TranscriptFindAdapter extends PaneFindAdapter<TranscriptPaneFin
   dispose(): void;
 }
 
-export interface CreateTranscriptFindAdapterInput {
+interface CreateTranscriptFindAdapterInput {
   readonly snapshot: TranscriptFindSnapshot;
   readonly getCurrentSourceKey: () => PaneFindSourceKey | null;
   readonly getActiveFragmentId: () => string | null;
@@ -172,10 +173,6 @@ function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) {
     throwAbort("Transcript Find request was cancelled.");
   }
-}
-
-function isAbort(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function nextAnimationFrame(signal: AbortSignal): Promise<void> {
@@ -541,10 +538,10 @@ export function createTranscriptFindAdapter({
           reveal(rendered.scrollOwner, rendered.matchElement);
         });
       } catch (error) {
-        if (isAbort(error) && request.signal.aborted) {
+        if (isAbortError(error) && request.signal.aborted) {
           return previewReceipt(request);
         }
-        if (isAbort(error)) throw error;
+        if (isAbortError(error)) throw error;
         try {
           setActiveFragmentId(previous.activeFragmentId);
           if (
@@ -569,7 +566,7 @@ export function createTranscriptFindAdapter({
         }
         if (originWasNew) {
           origin = null;
-          previewLease.cancelUnreportedPreview();
+          previewLease.release();
         }
         throw error;
       }
@@ -608,7 +605,7 @@ export function createTranscriptFindAdapter({
       });
       segmentList.focus({ preventScroll: true });
       origin = null;
-      previewLease.completeReturn();
+      previewLease.release();
     },
     errorMessage: mediaPaneFindErrorMessage,
     dispose() {

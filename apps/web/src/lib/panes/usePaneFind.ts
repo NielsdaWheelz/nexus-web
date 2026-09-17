@@ -10,6 +10,7 @@ import type {
   PaneFindSourceKey,
 } from "@/lib/panes/paneSearch";
 import { truncatePaneSearchQuery } from "@/lib/panes/paneSearch";
+import { isAbortError } from "@/lib/errors";
 
 export const PANE_FIND_INPUT_DELAY_MS = 120;
 
@@ -150,10 +151,6 @@ type PreviewSettlement =
   | { readonly kind: "Stale" }
   | { readonly kind: "Current"; readonly reprepare: boolean };
 
-function isAbort(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
-}
-
 function entireResourceScope(
   scopes: readonly PaneFindScopeOption[],
 ): PaneFindScopeOption {
@@ -282,7 +279,7 @@ export function usePaneFind<TError>({
   );
 
   const defectAsync = useCallback((error: unknown) => {
-    if (!isAbort(error)) setDefect(error);
+    if (!isAbortError(error)) setDefect(error);
   }, []);
 
   const clearCurrentPresentation = useCallback(() => {

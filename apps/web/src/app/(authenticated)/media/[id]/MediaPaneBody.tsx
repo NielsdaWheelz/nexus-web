@@ -365,25 +365,21 @@ interface SelectionState {
 function readSelectionRangeGeometry(
   range: Range,
 ): { rect: DOMRect; lineRects: DOMRect[] } | null {
-  try {
-    if (
-      range.collapsed ||
-      !range.startContainer.isConnected ||
-      !range.endContainer.isConnected
-    ) {
-      return null;
-    }
-    const rect = range.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) {
-      return null;
-    }
-    const lineRects = Array.from(range.getClientRects()).filter(
-      (clientRect) => clientRect.width > 0 && clientRect.height > 0,
-    );
-    return { rect, lineRects: lineRects.length > 0 ? lineRects : [rect] };
-  } catch {
+  if (
+    range.collapsed ||
+    !range.startContainer.isConnected ||
+    !range.endContainer.isConnected
+  ) {
     return null;
   }
+  const rect = range.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+  const lineRects = Array.from(range.getClientRects()).filter(
+    (clientRect) => clientRect.width > 0 && clientRect.height > 0,
+  );
+  return { rect, lineRects: lineRects.length > 0 ? lineRects : [rect] };
 }
 
 interface ActiveContent {
@@ -3503,11 +3499,32 @@ export default function MediaPaneBody() {
   }, [hoveredApparatusItemId, readerApparatusItemIdsForRow, renderedHtml]);
 
   useEffect(() => {
-    if (!requestedHighlightId) {
-      urlHighlightAppliedRef.current = null;
-      return;
+    const textEvidenceHighlightId =
+      evidenceTextHighlight?.id ??
+      resolvedEvidenceRoute.transcriptHighlight?.id ??
+      null;
+    if (!requestedHighlightId) urlHighlightAppliedRef.current = null;
+    if (!requestedEvidenceId || !textEvidenceHighlightId) {
+      urlEvidenceAppliedRef.current = null;
     }
-    if (resolvedHighlightTargetResource.status !== "ready") {
+    // The reader target is one discriminated union, so at most one arm applies.
+    const request =
+      requestedHighlightId &&
+      resolvedHighlightTargetResource.status === "ready" &&
+      highlights.some((item) => item.id === requestedHighlightId)
+        ? {
+            anchorId: requestedHighlightId,
+            appliedRef: urlHighlightAppliedRef,
+            focusOnArrival: true,
+          }
+        : requestedEvidenceId && textEvidenceHighlightId
+          ? {
+              anchorId: textEvidenceHighlightId,
+              appliedRef: urlEvidenceAppliedRef,
+              focusOnArrival: false,
+            }
+          : null;
+    if (!request) {
       return;
     }
     if (
@@ -3518,20 +3535,16 @@ export default function MediaPaneBody() {
     ) {
       return;
     }
-    if (urlHighlightAppliedRef.current === requestedHighlightId) {
+    if (request.appliedRef.current === request.anchorId) {
       return;
     }
-    if (!highlights.some((item) => item.id === requestedHighlightId)) {
-      return;
-    }
-
     const container = getPaneScrollContainer(contentRef.current);
     if (!container) {
       return;
     }
 
-    const escapedId = escapeAttrValue(requestedHighlightId);
-    const anchor = contentRef.current.querySelector<HTMLElement>(
+    const escapedId = escapeAttrValue(request.anchorId);
+    const anchor = container.querySelector<HTMLElement>(
       `[data-highlight-anchor="${escapedId}"]`,
     );
     if (!anchor) {
@@ -3553,8 +3566,8 @@ export default function MediaPaneBody() {
       })
       .then(() => {
         if (cancelled || sessionId !== restoreSessionIdRef.current || !isElementInPaneView(container, anchor)) return;
-        focusHighlight(requestedHighlightId);
-        urlHighlightAppliedRef.current = requestedHighlightId;
+        if (request.focusOnArrival) focusHighlight(request.anchorId);
+        request.appliedRef.current = request.anchorId;
         scrollRestoreAppliedRef.current = true;
         settleRestoreSession(sessionId);
         markActive();
@@ -3563,10 +3576,13 @@ export default function MediaPaneBody() {
     return () => { cancelled = true; releaseChrome(); };
   }, [
     requestedHighlightId,
+    requestedEvidenceId,
     beginRestoreSession,
     mediaFindPreviewLease,
     settleRestoreSession,
     resolvedHighlightTargetResource.status,
+    resolvedEvidenceRoute.transcriptHighlight?.id,
+    evidenceTextHighlight,
     activeContent,
     epubFragmentLoading,
     highlights,
@@ -3601,76 +3617,6 @@ export default function MediaPaneBody() {
     });
     focusHighlight(requestedHighlightId);
   }, [cancelRestoreSession, focusHighlight, requestedHighlightId, resolvedHighlightTarget]);
-
-  useEffect(() => {
-    const textEvidenceHighlightId =
-      evidenceTextHighlight?.id ??
-      resolvedEvidenceRoute.transcriptHighlight?.id ??
-      null;
-    if (!requestedEvidenceId || !textEvidenceHighlightId) {
-      urlEvidenceAppliedRef.current = null;
-      return;
-    }
-    if (
-      textHighlightInitialLoading ||
-      !activeContent ||
-      !contentRef.current ||
-      epubFragmentLoading
-    ) {
-      return;
-    }
-    if (urlEvidenceAppliedRef.current === textEvidenceHighlightId) {
-      return;
-    }
-    const container = getPaneScrollContainer(contentRef.current);
-    if (!container) {
-      return;
-    }
-
-    const escapedId = escapeAttrValue(textEvidenceHighlightId);
-    const anchor = container.querySelector<HTMLElement>(
-      `[data-highlight-anchor="${escapedId}"]`,
-    );
-    if (!anchor) {
-      return;
-    }
-    let releaseChromeLock: (() => void) | null =
-      mobileChromeVisibleLocks.acquire("highlight-navigation");
-    const releaseChrome = () => {
-      releaseChromeLock?.();
-      releaseChromeLock = null;
-    };
-    const sessionId = beginRestoreSession("restoring_exact");
-    mediaFindPreviewLease.armCaptureSuppressionUntilGenuineInput();
-    let cancelled = false;
-    void readerScrollPositioner
-      .run(({ reveal }) => {
-        if (!cancelled && sessionId === restoreSessionIdRef.current) reveal(container, anchor);
-      })
-      .then(() => {
-        if (cancelled || sessionId !== restoreSessionIdRef.current || !isElementInPaneView(container, anchor)) return;
-        urlEvidenceAppliedRef.current = textEvidenceHighlightId;
-        scrollRestoreAppliedRef.current = true;
-        settleRestoreSession(sessionId);
-        markActive();
-      })
-      .finally(releaseChrome);
-    return () => { cancelled = true; releaseChrome(); };
-  }, [
-    requestedEvidenceId,
-    beginRestoreSession,
-    mediaFindPreviewLease,
-    settleRestoreSession,
-    activeContent,
-    epubFragmentLoading,
-    mobileChromeVisibleLocks,
-    readerScrollPositioner,
-    renderedHtml,
-    resolvedEvidenceRoute.transcriptHighlight?.id,
-    evidenceTextHighlight,
-    markActive,
-    textHighlightInitialLoading,
-  ]);
 
   useEffect(() => {
     if (targetStatus !== "dismissed") return;
@@ -3767,16 +3713,11 @@ export default function MediaPaneBody() {
     }
     refreshRetainedSelection((captured) => {
       const content = contentRef.current;
-      let belongsToCurrentContent = false;
-      try {
-        belongsToCurrentContent = Boolean(
-          content &&
+      const belongsToCurrentContent = Boolean(
+        content &&
           content.contains(captured.range.startContainer) &&
           content.contains(captured.range.endContainer),
-        );
-      } catch {
-        belongsToCurrentContent = false;
-      }
+      );
       const geometry = belongsToCurrentContent
         ? readSelectionRangeGeometry(captured.range)
         : null;
@@ -5118,13 +5059,7 @@ export default function MediaPaneBody() {
     publishPendingTextViewport();
   };
 
-  const handleTextViewportReady = useCallback(
-    (snapshot: ReaderViewportSnapshot) => {
-      scheduleTextViewportCapture(snapshot, false);
-    },
-    [scheduleTextViewportCapture],
-  );
-  const handleTextViewportScroll = useCallback(
+  const captureTextViewport = useCallback(
     (snapshot: ReaderViewportSnapshot) => {
       scheduleTextViewportCapture(snapshot, false);
     },
@@ -7375,38 +7310,6 @@ export default function MediaPaneBody() {
                 />
               </div>
             )
-          ) : isEpub ? (
-            <TextDocumentReader
-              key={`${id}:${canonicalResetRevision ?? "initial"}`}
-              mediaId={id}
-              additionalViewportRef={textMobileChromeScrollportRef}
-              beforeContent={readerBanners}
-              readerRootRef={readerRootRef}
-              contentRef={contentRef}
-              readerThemeClassName={readerThemeClassName}
-              readerSurfaceStyle={readerSurfaceStyle}
-              focusMode={focusModeForRoot}
-              hyphenation={hyphenationForRoot}
-              contentState={epubTextDocumentContentState}
-              decorator={textReaderDecorator}
-              textViewportRef={textViewportRef}
-              textEndRef={textEndRef}
-              onViewportReady={handleTextViewportReady}
-              onViewportScroll={handleTextViewportScroll}
-              onTrustedScrollIntent={handleTrustedTextScrollIntent}
-              endContent={textReaderEndContent}
-              onContentClick={handleReaderContentClick}
-              onContentPointerOver={handleContentPointerOver}
-              onContentPointerOut={handleContentPointerOut}
-              onContentFocus={handleContentFocus}
-              onContentBlur={handleContentBlur}
-              onInternalLinkClick={(link) => {
-                const target = resolveEpubInternalLinkTarget(link);
-                if (target.kind === "Absent") return false;
-                void positionFromDocumentMap(() => navigateToEpubRequest(target.value));
-                return true;
-              }}
-            />
           ) : (
             <TextDocumentReader
               key={`${id}:${canonicalResetRevision ?? "initial"}`}
@@ -7419,12 +7322,16 @@ export default function MediaPaneBody() {
               readerSurfaceStyle={readerSurfaceStyle}
               focusMode={focusModeForRoot}
               hyphenation={hyphenationForRoot}
-              contentState={webTextDocumentContentState}
+              contentState={
+                isEpub
+                  ? epubTextDocumentContentState
+                  : webTextDocumentContentState
+              }
               decorator={textReaderDecorator}
               textViewportRef={textViewportRef}
               textEndRef={textEndRef}
-              onViewportReady={handleTextViewportReady}
-              onViewportScroll={handleTextViewportScroll}
+              onViewportReady={captureTextViewport}
+              onViewportScroll={captureTextViewport}
               onTrustedScrollIntent={handleTrustedTextScrollIntent}
               endContent={textReaderEndContent}
               onContentClick={handleReaderContentClick}
@@ -7432,6 +7339,18 @@ export default function MediaPaneBody() {
               onContentPointerOut={handleContentPointerOut}
               onContentFocus={handleContentFocus}
               onContentBlur={handleContentBlur}
+              onInternalLinkClick={
+                isEpub
+                  ? (link) => {
+                      const target = resolveEpubInternalLinkTarget(link);
+                      if (target.kind === "Absent") return false;
+                      void positionFromDocumentMap(() =>
+                        navigateToEpubRequest(target.value),
+                      );
+                      return true;
+                    }
+                  : undefined
+              }
             />
           )}
           {showMobileReaderPositionRibbon ? (
