@@ -29,8 +29,11 @@ import {
   PlayerPlaybackSheet,
 } from "./PlayerPlaybackControls";
 import {
+  playerChapters,
+  playerSessionIdentity,
   playerTargetHref,
   playerTitle,
+  presentPlayerChrome,
   type PresentPlayerChrome,
 } from "./PlayerControls";
 import styles from "./GlobalPlayerSurfaces.module.css";
@@ -110,14 +113,7 @@ export default function GlobalPlayerSurfaces() {
   useEffect(() => {
     const viewportChanged = previousIsMobileRef.current !== isMobile;
     previousIsMobileRef.current = isMobile;
-    const identity =
-      model.kind === "Absent" ||
-      model.kind === "UpdateRequired" ||
-      model.kind === "RuntimeFailure"
-        ? null
-        : model.kind === "Canonical"
-          ? model.state.session.descriptor.mediaId
-          : model.state.session.descriptor.target;
+    const identity = playerSessionIdentity(model);
     if (
       activeSessionIdentityRef.current !== null &&
       activeSessionIdentityRef.current !== identity
@@ -129,12 +125,7 @@ export default function GlobalPlayerSurfaces() {
     }
     activeSessionIdentityRef.current = identity;
 
-    if (
-      viewportChanged ||
-      model.kind === "Absent" ||
-      model.kind === "UpdateRequired" ||
-      model.kind === "RuntimeFailure"
-    ) {
+    if (viewportChanged || presentPlayerChrome(model) === null) {
       setNowPlayingOpen(false);
       setPlaybackOpen(false);
       setContentsOpen(false);
@@ -159,10 +150,7 @@ export default function GlobalPlayerSurfaces() {
       setAnnouncement(model.state.error.message);
       return;
     }
-    const identity =
-      model.kind === "Canonical"
-        ? model.state.session.descriptor.mediaId
-        : model.state.session.descriptor.target;
+    const identity = playerSessionIdentity(model);
     if (identity !== announcedIdentityRef.current) {
       announcedIdentityRef.current = identity;
       setAnnouncement(`Now playing: ${playerTitle(model)}`);
@@ -248,17 +236,12 @@ export default function GlobalPlayerSurfaces() {
   );
 
   const openPlayerTarget = useCallback(() => {
-    if (
-      model.kind === "Absent" ||
-      model.kind === "UpdateRequired" ||
-      model.kind === "RuntimeFailure"
-    ) {
-      return;
-    }
+    const present = presentPlayerChrome(model);
+    if (present === null) return;
     collapse();
     activateTarget({
-      href: playerTargetHref(model),
-      labelHint: playerTitle(model),
+      href: playerTargetHref(present),
+      labelHint: playerTitle(present),
     });
   }, [activateTarget, collapse, model]);
 
@@ -329,10 +312,7 @@ export default function GlobalPlayerSurfaces() {
     );
   }
 
-  const chapters =
-    model.kind === "Canonical"
-      ? model.state.session.descriptor.activation.chapters
-      : [];
+  const chapters = playerChapters(model);
   const podcastTitle =
     model.kind === "Canonical"
       ? presenceValueOr(model.state.session.descriptor.subtitle, null)

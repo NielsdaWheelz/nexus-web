@@ -1,4 +1,8 @@
-import { expectExactRecord, expectRecord } from "@/lib/validation";
+import {
+  expectExactRecord,
+  expectIsoInstant,
+  expectRecord,
+} from "@/lib/validation";
 import { decodePresence, type Presence } from "@/lib/api/presence";
 import { decodeContributorCredit } from "@/lib/contributors/credit";
 import type { ContributorCredit } from "@/lib/contributors/types";
@@ -99,11 +103,11 @@ export type BrowseSectionFailure =
   | { readonly kind: "Unavailable" }
   | {
       readonly kind: "RateLimited";
-      readonly retryAt: Presence<PublicationDate>;
+      readonly retryAt: Presence<string>;
     }
   | {
       readonly kind: "QuotaExhausted";
-      readonly resetAt: Presence<PublicationDate>;
+      readonly resetAt: Presence<string>;
     };
 
 export interface PreviewEpisodeFacts {
@@ -232,50 +236,14 @@ export function decodePreviewAudioDescriptor(
   };
 }
 
-export function assumeDiscoveryTargetHandle(
-  value: string,
-): DiscoveryTargetHandle {
-  return parseDiscoveryTargetHandle(value);
-}
-
-function decodeCanonicalBase64Url(value: string, context: string): string {
-  if (!/^[A-Za-z0-9_-]+$/.test(value) || value.length % 4 === 1) {
-    throw new TypeError(`${context} must be unpadded base64url`);
-  }
-  const padding = "=".repeat((4 - (value.length % 4)) % 4);
-  let decoded: string;
-  try {
-    decoded = atob(value.replaceAll("-", "+").replaceAll("_", "/") + padding);
-  } catch {
-    throw new TypeError(`${context} must be unpadded base64url`);
-  }
-  const encoded = btoa(decoded)
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
-  if (encoded !== value) {
-    throw new TypeError(`${context} must be canonical base64url`);
-  }
-  return decoded;
-}
-
 export function parseDiscoveryTargetHandle(
   value: unknown,
 ): DiscoveryTargetHandle {
   if (typeof value !== "string") {
     throw new TypeError("DiscoveryTargetHandle must be a string");
   }
-  const match = /^ndt1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{43})$/u.exec(value);
-  if (!match) {
+  if (!/^ndt1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/u.test(value)) {
     throw new TypeError("DiscoveryTargetHandle has invalid grammar");
-  }
-  const payload = decodeCanonicalBase64Url(
-    match[1]!,
-    "DiscoveryTargetHandle payload",
-  );
-  const tag = decodeCanonicalBase64Url(match[2]!, "DiscoveryTargetHandle tag");
-  if (payload.length === 0 || payload.length > 4096 || tag.length !== 32) {
-    throw new TypeError("DiscoveryTargetHandle has invalid bounds");
   }
   return value as DiscoveryTargetHandle;
 }
@@ -402,7 +370,7 @@ function decodeResolution(raw: unknown, context: string): BrowseResolution {
       expectExactRecord(value, ["kind", "target"], context);
       return {
         kind: "Preview",
-        target: assumeDiscoveryTargetHandle(
+        target: parseDiscoveryTargetHandle(
           string(value.target, `${context}.target`),
         ),
       };
@@ -583,9 +551,6 @@ export function decodeBrowseSectionFailure(
   switch (error.code) {
     case "E_BROWSE_PROVIDER_UNAVAILABLE":
       expectExactRecord(details, ["kind"], "BrowseSectionFailure.Unavailable");
-      if (details.kind !== "Unavailable") {
-        throw new TypeError("BrowseSectionFailure.Unavailable.kind is invalid");
-      }
       return { kind: "Unavailable" };
     case "E_BROWSE_PROVIDER_RATE_LIMITED":
       expectExactRecord(
@@ -593,13 +558,10 @@ export function decodeBrowseSectionFailure(
         ["kind", "retryAt"],
         "BrowseSectionFailure.RateLimited",
       );
-      if (details.kind !== "RateLimited") {
-        throw new TypeError("BrowseSectionFailure.RateLimited.kind is invalid");
-      }
       return {
         kind: "RateLimited",
         retryAt: decodePresence(details.retryAt, (value) =>
-          decodePublicationDate(
+          expectIsoInstant(
             value,
             "BrowseSectionFailure.RateLimited.retryAt.value",
           ),
@@ -611,15 +573,10 @@ export function decodeBrowseSectionFailure(
         ["kind", "resetAt"],
         "BrowseSectionFailure.QuotaExhausted",
       );
-      if (details.kind !== "QuotaExhausted") {
-        throw new TypeError(
-          "BrowseSectionFailure.QuotaExhausted.kind is invalid",
-        );
-      }
       return {
         kind: "QuotaExhausted",
         resetAt: decodePresence(details.resetAt, (value) =>
-          decodePublicationDate(
+          expectIsoInstant(
             value,
             "BrowseSectionFailure.QuotaExhausted.resetAt.value",
           ),
@@ -675,7 +632,7 @@ function decodePreviewEpisodeItem(
     context,
   );
   return {
-    target: assumeDiscoveryTargetHandle(
+    target: parseDiscoveryTargetHandle(
       string(value.target, `${context}.target`),
     ),
     ...decodeCommon(value, context),
@@ -743,7 +700,7 @@ export function decodeBrowsePreview(raw: unknown): BrowsePreview {
     "BrowsePreview",
   );
   const source = literal(value.source, BROWSE_SOURCES, "BrowsePreview.source");
-  const target = assumeDiscoveryTargetHandle(
+  const target = parseDiscoveryTargetHandle(
     string(value.target, "BrowsePreview.target"),
   );
   const resolution = decodeResolution(

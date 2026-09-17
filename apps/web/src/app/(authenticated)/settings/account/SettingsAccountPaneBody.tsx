@@ -41,10 +41,7 @@ import {
   copyText,
 } from "@/lib/ui/copyText";
 import { useAuthenticatedAccount } from "@/lib/account/authenticatedAccount";
-import {
-  decodeAuthenticatedAccountProfile,
-  isAuthenticatedAccountContractDefect,
-} from "@/lib/account/contract";
+import { decodeAuthenticatedAccountProfile } from "@/lib/account/contract";
 
 interface AccountResponse {
   data: unknown;
@@ -253,10 +250,6 @@ export default function SettingsAccountPaneBody() {
           setDisplayNameFeedback(null);
         } catch (error) {
           if (handleUnauthenticatedApiError(error)) return;
-          if (isAuthenticatedAccountContractDefect(error)) {
-            setContractDefect({ error });
-            return;
-          }
           try {
             setDisplayNameFeedback(accountErrorMessage(error, "DisplayName"));
           } catch (defect) {
@@ -290,10 +283,6 @@ export default function SettingsAccountPaneBody() {
           setCalendarTimeZoneFeedback(null);
         } catch (error) {
           if (handleUnauthenticatedApiError(error)) return;
-          if (isAuthenticatedAccountContractDefect(error)) {
-            setContractDefect({ error });
-            return;
-          }
           try {
             setCalendarTimeZoneFeedback(
               accountErrorMessage(error, "CalendarTimeZone"),

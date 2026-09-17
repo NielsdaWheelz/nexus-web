@@ -13,11 +13,6 @@ function resolveBrowserTimeZone(): string {
   }
 }
 
-/** The sole browser owner for IANA timezone detection. */
-export function browserTimeZone(): string {
-  return resolveBrowserTimeZone();
-}
-
 /** Hydration-safe owner for timezone-sensitive reads. ``null`` means the
  * browser has not resolved its IANA zone yet; callers must not issue a
  * timezone-sensitive request in that state. */
@@ -36,10 +31,4 @@ export function useHydratedBrowserTimeZone(): string | null {
   }, []);
 
   return timeZone;
-}
-
-/** Presentation convenience for consumers whose server fallback is truthfully
- * UTC and which do not issue a timezone-sensitive read during hydration. */
-export function useBrowserTimeZone(): string {
-  return useHydratedBrowserTimeZone() ?? "UTC";
 }

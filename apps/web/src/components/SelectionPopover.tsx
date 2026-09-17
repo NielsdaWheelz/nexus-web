@@ -30,7 +30,7 @@ import {
   useIsModalLayerTopmost,
 } from "@/lib/ui/useModalLayer";
 
-interface SelectionPopoverBaseProps<H extends { id: string }> {
+interface SelectionPopoverProps<H extends { id: string }> {
   selectionRect: DOMRect;
   selectionLineRects?: DOMRect[];
   containerRef: React.RefObject<HTMLElement | null>;
@@ -38,22 +38,14 @@ interface SelectionPopoverBaseProps<H extends { id: string }> {
   onAddNote?: () => void;
   onLink?: () => void;
   onLearn?: (highlight: H) => void | Promise<void>;
+  /** Both chat destinations, or none: a surface that quotes offers both. */
+  chat?: {
+    newChat: (highlight: H) => void | Promise<void>;
+    existingChat: (highlight: H) => void | Promise<void>;
+  };
   onDismiss: () => void;
   isCreating?: boolean;
 }
-
-type SelectionPopoverChatProps<H extends { id: string }> =
-  | {
-      onQuoteToNewChat: (highlight: H) => void | Promise<void>;
-      onQuoteToExistingChat: (highlight: H) => void | Promise<void>;
-    }
-  | {
-      onQuoteToNewChat?: never;
-      onQuoteToExistingChat?: never;
-    };
-
-type SelectionPopoverProps<H extends { id: string }> =
-  SelectionPopoverBaseProps<H> & SelectionPopoverChatProps<H>;
 
 export const DEFAULT_COLOR: HighlightColor = "yellow";
 
@@ -62,8 +54,7 @@ export default function SelectionPopover<H extends { id: string }>({
   selectionLineRects,
   containerRef,
   onCreateHighlight,
-  onQuoteToNewChat,
-  onQuoteToExistingChat,
+  chat,
   onAddNote,
   onLink,
   onLearn,
@@ -85,14 +76,6 @@ export default function SelectionPopover<H extends { id: string }>({
     },
     { isTopmost: modalIsTopmost },
   );
-  const chatDestinations =
-    onQuoteToNewChat && onQuoteToExistingChat
-      ? {
-          newChat: onQuoteToNewChat,
-          existingChat: onQuoteToExistingChat,
-        }
-      : null;
-
   const runHighlightFirst = useCallback(
     (
       actionId: SelectionPendingActionId,
@@ -142,19 +125,18 @@ export default function SelectionPopover<H extends { id: string }>({
   const learnHighlight = onLearn
     ? () => runHighlightFirst("learn", DEFAULT_COLOR, onLearn)
     : undefined;
-  const chatHandlers = chatDestinations
+  const chatHandlers = chat
     ? {
-        onQuoteToNewChat: () =>
-          quoteHighlight("quote-new", chatDestinations.newChat),
+        onQuoteToNewChat: () => quoteHighlight("quote-new", chat.newChat),
         onQuoteToExistingChat: () =>
-          quoteHighlight("quote-existing", chatDestinations.existingChat),
+          quoteHighlight("quote-existing", chat.existingChat),
       }
     : {};
 
   const plan = projectSelectionActionPlan(
     buildSelectionActions({
       color: DEFAULT_COLOR,
-      canQuoteToChat: chatDestinations !== null,
+      canQuoteToChat: chat !== undefined,
       canAddNote: Boolean(onAddNote),
       changingColor: actionBusy,
       handlers: {

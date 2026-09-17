@@ -10,7 +10,7 @@ import {
 } from "@/lib/libraries/presentation";
 import styles from "./LibrarySettingsDialog.module.css";
 
-export interface LibraryForSettings {
+interface LibraryForSettings {
   id: string;
   name: string;
   canRename: boolean;

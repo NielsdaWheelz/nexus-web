@@ -1,6 +1,3 @@
-export const DOSSIER_FIND_ALL_HIGHLIGHT_NAME = "dossier-find-all";
-export const DOSSIER_FIND_ACTIVE_HIGHLIGHT_NAME = "dossier-find-active";
-
 export const DOSSIER_DOCUMENT_FIND_STYLES = `
 ::highlight(dossier-find-all){background:color-mix(in srgb,var(--machine-accent,#d4b687) 32%,transparent);color:inherit}
 ::highlight(dossier-find-active){background:color-mix(in srgb,var(--machine-accent,#d4b687) 58%,transparent);color:inherit;text-decoration:underline 2px;text-underline-offset:.18em}

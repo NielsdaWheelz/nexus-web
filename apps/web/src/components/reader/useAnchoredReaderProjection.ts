@@ -47,10 +47,9 @@ export interface AnchoredReaderRow {
   linked_conversations?: { conversation_id: string; title: string }[];
   page_number?: number;
   quads?: PdfHighlightQuad[];
-  is_owner?: boolean;
 }
 
-export interface AnchoredReaderProjection {
+interface AnchoredReaderProjection {
   row: AnchoredReaderRow;
   rect: { top: number; bottom: number };
 }
@@ -246,14 +245,10 @@ export function useAnchoredReaderProjection({
   contentRef,
   rows,
   measureKey = 0,
-  targetSelector,
-  missingTargetLogName = "reader_row_target_missing",
 }: {
   contentRef: RefObject<HTMLElement | null>;
   rows: AnchoredReaderRow[];
   measureKey?: string | number;
-  targetSelector?: (escapedId: string) => string;
-  missingTargetLogName?: string;
 }) {
   const measureTimerRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
@@ -385,13 +380,11 @@ export function useAnchoredReaderProjection({
       } else {
         const escapedId = escapeAttrValue(row.id);
         const segments = contentRef.current.querySelectorAll<HTMLElement>(
-          targetSelector
-            ? targetSelector(escapedId)
-            : `[data-active-highlight-ids~="${escapedId}"]`,
+          `[data-active-highlight-ids~="${escapedId}"]`,
         );
         rects.push(...elementRects(segments, viewerRect, viewerScrollTop));
 
-        if (!targetSelector && rects.length === 0 && row.anchor?.fragment_id) {
+        if (rects.length === 0 && row.anchor?.fragment_id) {
           rects.push(
             ...textAnchorRects(
               contentRef.current,
@@ -423,7 +416,7 @@ export function useAnchoredReaderProjection({
     setMissingTargets((previous) =>
       sameStringArray(previous, nextMissingTargets) ? previous : nextMissingTargets,
     );
-  }, [contentRef, orderedRows, syncViewportState, targetSelector]);
+  }, [contentRef, orderedRows, syncViewportState]);
 
   const scheduleMeasure = useCallback(() => {
     if (measureTimerRef.current != null) {
@@ -541,8 +534,8 @@ export function useAnchoredReaderProjection({
     if (missingTargets.length === 0) {
       return;
     }
-    console.warn(missingTargetLogName, { targetIds: missingTargets });
-  }, [missingTargetLogName, missingTargets]);
+    console.warn("reader_margin_target_missing", { targetIds: missingTargets });
+  }, [missingTargets]);
 
   const projections = useMemo<AnchoredReaderProjection[]>(() => {
     const viewportTop = viewportState.scrollTop;
@@ -566,12 +559,5 @@ export function useAnchoredReaderProjection({
     return out;
   }, [orderedRows, targetRects, viewportState]);
 
-  return {
-    orderedRows,
-    projections,
-    targetRects,
-    missingTargets,
-    viewportState,
-    hasMeasuredTargets: targetRects.size > 0 || missingTargets.length > 0,
-  };
+  return { orderedRows, projections, viewportState };
 }

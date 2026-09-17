@@ -57,11 +57,7 @@ import {
   type LibraryGovernanceSnapshot,
   type LibraryGovernanceState,
 } from "@/lib/libraries/governanceState";
-import {
-  isUserSearchContractDefect,
-  searchUsers,
-  type UserSearchResult,
-} from "@/lib/users/search";
+import { searchUsers, type UserSearchResult } from "@/lib/users/search";
 
 export type LibraryMembersConfirmation = LibraryGovernanceConfirmation;
 
@@ -696,10 +692,6 @@ export function useLibraryMembers({
             sequence,
           )
         ) {
-          return;
-        }
-        if (isUserSearchContractDefect(error)) {
-          setDefectState({ error });
           return;
         }
         const failure = classifyGovernanceFailure(

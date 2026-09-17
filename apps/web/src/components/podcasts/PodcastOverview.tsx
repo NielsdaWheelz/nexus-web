@@ -4,7 +4,7 @@ import type { ContributorCredit } from "@/lib/contributors/types";
 import type { MediaImageProxySrc } from "@/lib/media/imageProxy";
 import styles from "./PodcastOverview.module.css";
 
-export interface PodcastOverviewLink {
+interface PodcastOverviewLink {
   readonly label: string;
   readonly href: string;
 }

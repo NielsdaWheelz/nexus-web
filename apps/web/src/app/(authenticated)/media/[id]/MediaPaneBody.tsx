@@ -55,7 +55,7 @@ import PdfReader, {
 } from "@/components/PdfReader";
 import type { PdfHighlightOut } from "@/lib/reader/ReaderDecorations";
 import SelectionPopover, { DEFAULT_COLOR } from "@/components/SelectionPopover";
-import HighlightActionPopover from "@/components/highlights/HighlightActionPopover";
+import HighlightResourceActionMenu from "@/components/highlights/HighlightResourceActionMenu";
 import HighlightColorPicker from "@/components/highlights/HighlightColorPicker";
 import HighlightQuickNoteComposer, {
   type QuickNoteSession,
@@ -7397,26 +7397,30 @@ export default function MediaPaneBody() {
       ) : null}
 
       {selectionPopoverProps ? (
-        media.capabilities?.can_quote ? (
-          <SelectionPopover
-            {...selectionPopoverProps}
-            onQuoteToNewChat={(highlight) =>
-              quoteHighlightToNewChat(highlight.id)
-            }
-            onQuoteToExistingChat={(highlight) =>
-              quoteHighlightToExistingChat(highlight.id)
-            }
-          />
-        ) : (
-          <SelectionPopover {...selectionPopoverProps} />
-        )
+        <SelectionPopover
+          {...selectionPopoverProps}
+          chat={
+            media.capabilities?.can_quote
+              ? {
+                  newChat: (highlight) => quoteHighlightToNewChat(highlight.id),
+                  existingChat: (highlight) =>
+                    quoteHighlightToExistingChat(highlight.id),
+                }
+              : undefined
+          }
+        />
       ) : null}
 
+      {/* The reader-text click surface: the same canonical menu the sidecar
+          uses, anchored to the highlight the user clicked. Dismisses on
+          outside-click, Escape, and scroll; re-anchors on the next click. */}
       {highlightActionTarget && highlightActionAnchor ? (
-        <HighlightActionPopover
+        <HighlightResourceActionMenu
           highlight={highlightActionTarget}
-          anchorRect={highlightActionAnchor.rect}
-          onDismiss={dismissHighlightActions}
+          anchored={{
+            anchor: highlightActionAnchor.rect,
+            onDismiss: dismissHighlightActions,
+          }}
         />
       ) : null}
 

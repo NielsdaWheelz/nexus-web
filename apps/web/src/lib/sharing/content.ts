@@ -35,29 +35,3 @@ export function audienceUnavailableMessage(
     }
   }
 }
-
-export function shareSubjectKind(ref: string): string {
-  const scheme = ref.slice(0, ref.indexOf(":"));
-  switch (scheme) {
-    case "highlight":
-      return "highlight";
-    case "media":
-      return "media";
-    case "library":
-      return "library";
-    case "podcast":
-      return "podcast";
-    default:
-      return "item";
-  }
-}
-
-export function shareErrorMessage(error: unknown): string {
-  if (error instanceof DOMException || error instanceof TypeError) {
-    return "We could not reach Nexus. Check your connection and try again.";
-  }
-  if (error instanceof Error && error.message.trim()) {
-    return error.message;
-  }
-  return "Sharing could not be loaded. Try again.";
-}

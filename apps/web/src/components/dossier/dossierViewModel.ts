@@ -65,7 +65,7 @@ export type DossierActivityView =
   | { kind: "Failed"; code: ReadDossierBuildFailureCode; message: string }
   | { kind: "Cancelled" };
 
-export interface DossierControls {
+interface DossierControls {
   canGenerate: boolean;
   canRegenerate: boolean;
   canCancel: boolean;

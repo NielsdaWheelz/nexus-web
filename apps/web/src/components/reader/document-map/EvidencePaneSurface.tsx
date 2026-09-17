@@ -35,6 +35,7 @@ import {
   EvidenceItemRow,
   type EvidenceHighlightActions,
   type EvidenceLinkActions,
+  type EvidenceRowActions,
 } from "./EvidenceItemRow";
 
 type EvidenceScope = "passages" | "document";
@@ -50,7 +51,7 @@ export type EvidencePaneProjection =
       aggregateStatus: "ready" | "partial";
     };
 
-export interface EvidencePaneSurfaceProps {
+interface EvidencePaneSurfaceProps {
   projection: EvidencePaneProjection;
   filters: EvidenceFilters;
   activeItemId: string | null;
@@ -220,6 +221,15 @@ export default function EvidencePaneSurface({
     });
   };
 
+  const rowActions: EvidenceRowActions = {
+    onToggleDisclosure: toggleDisclosure,
+    onEditHighlight: setEditingHighlightId,
+    onActivateObject,
+    onActivateSourceTarget,
+    onHoverItem,
+    onDismissSynapse,
+  };
+
   const pauseFollow = () => setFollowPaused(true);
   const handleListPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.target === event.currentTarget) pauseFollow();
@@ -367,13 +377,8 @@ export default function EvidencePaneSurface({
             onActivate={() => {
               if (onActivatePassage(group)) setFollowPaused(false);
             }}
-            onToggleDisclosure={toggleDisclosure}
-            onEditHighlight={setEditingHighlightId}
-            onActivateObject={onActivateObject}
-            onActivateSourceTarget={onActivateSourceTarget}
-            onHoverItem={onHoverItem}
-            onDismissSynapse={onDismissSynapse}
             linkActions={linkActions}
+            rowActions={rowActions}
           />
         ))}
         {unavailableGroups.length > 0 ? (
@@ -395,13 +400,8 @@ export default function EvidencePaneSurface({
                 editingHighlightId={editingHighlightId}
                 highlightActions={highlightActions}
                 onActivate={() => {}}
-                onToggleDisclosure={toggleDisclosure}
-                onEditHighlight={setEditingHighlightId}
-                onActivateObject={onActivateObject}
-                onActivateSourceTarget={onActivateSourceTarget}
-                onHoverItem={onHoverItem}
-                onDismissSynapse={onDismissSynapse}
                 linkActions={linkActions}
+                rowActions={rowActions}
               />
             ))}
           </section>
@@ -424,13 +424,8 @@ export default function EvidencePaneSurface({
               editingHighlightId === item.highlight_id
             }
             highlightActions={highlightActions}
-            onToggleDisclosure={() => toggleDisclosure(`item:${item.id}`)}
-            onEditHighlight={setEditingHighlightId}
-            onActivateObject={onActivateObject}
-            onActivateSourceTarget={onActivateSourceTarget}
-            onHoverItem={onHoverItem}
-            onDismissSynapse={onDismissSynapse}
             linkActions={linkActions}
+            rowActions={rowActions}
           />
         ))}
       </div>
@@ -449,7 +444,6 @@ export default function EvidencePaneSurface({
       variant="segmented"
       className={styles.root}
       aria-label="Evidence"
-      data-testid="evidence-pane-surface"
     >
       {header}
       {aggregateStatus === "partial" ? (
@@ -509,13 +503,8 @@ function PassageGroup({
   editingHighlightId,
   highlightActions,
   onActivate,
-  onToggleDisclosure,
-  onEditHighlight,
-  onActivateObject,
-  onActivateSourceTarget,
-  onHoverItem,
-  onDismissSynapse,
   linkActions,
+  rowActions,
 }: {
   group: ReaderEvidencePassageGroup;
   items: ReaderEvidenceItem[];
@@ -525,13 +514,8 @@ function PassageGroup({
   editingHighlightId: string | null;
   highlightActions: EvidenceHighlightActions;
   onActivate: () => void;
-  onToggleDisclosure: (id: string) => void;
-  onEditHighlight: (highlightId: string | null) => void;
-  onActivateObject: EvidencePaneSurfaceProps["onActivateObject"];
-  onActivateSourceTarget: EvidencePaneSurfaceProps["onActivateSourceTarget"];
-  onHoverItem: EvidencePaneSurfaceProps["onHoverItem"];
-  onDismissSynapse: (edgeId: string) => Promise<void>;
   linkActions: EvidenceLinkActions;
+  rowActions: EvidenceRowActions;
 }) {
   const resolved = group.resolution.kind === "Resolved";
   const active = group.items.some((item) => item.id === activeItemId);
@@ -582,13 +566,8 @@ function PassageGroup({
               editingHighlightId === item.highlight_id
             }
             highlightActions={highlightActions}
-            onToggleDisclosure={() => onToggleDisclosure(`item:${item.id}`)}
-            onEditHighlight={onEditHighlight}
-            onActivateObject={onActivateObject}
-            onActivateSourceTarget={onActivateSourceTarget}
-            onHoverItem={onHoverItem}
-            onDismissSynapse={onDismissSynapse}
             linkActions={linkActions}
+            rowActions={rowActions}
           />
         ))}
       </div>
@@ -597,8 +576,8 @@ function PassageGroup({
           label="Also references this passage"
           associations={group.also_references}
           open={openDisclosureIds.has(groupDisclosureId)}
-          onToggle={() => onToggleDisclosure(groupDisclosureId)}
-          onActivateObject={onActivateObject}
+          onToggle={() => rowActions.onToggleDisclosure(groupDisclosureId)}
+          onActivateObject={rowActions.onActivateObject}
           onRemoveUserEdge={linkActions.onRemoveUserEdge}
         />
       ) : null}

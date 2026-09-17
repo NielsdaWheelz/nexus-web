@@ -5,16 +5,16 @@ export interface PdfTextItemLike {
   readonly hasEOL: boolean;
 }
 
-export interface PdfMarkedContentLike {
+interface PdfMarkedContentLike {
   readonly type: string;
   readonly id?: string;
 }
 
-export interface PdfTextContentLike {
+interface PdfTextContentLike {
   readonly items: readonly (PdfTextItemLike | PdfMarkedContentLike)[];
 }
 
-export interface PdfPageLike {
+interface PdfPageLike {
   getTextContent(params: {
     includeMarkedContent: true;
     disableNormalization: true;
@@ -37,7 +37,7 @@ export interface PdfDocumentLoadingTaskLike {
   destroy?: () => Promise<void> | void;
 }
 
-export interface PdfDocumentSourceLike {
+interface PdfDocumentSourceLike {
   url: string;
   httpHeaders?: Record<string, string>;
   withCredentials?: boolean;
@@ -50,7 +50,7 @@ export interface PdfDocumentSourceLike {
   wasmUrl?: string;
 }
 
-export interface PdfGlobalWorkerOptionsLike {
+interface PdfGlobalWorkerOptionsLike {
   workerSrc: string;
 }
 
@@ -59,7 +59,7 @@ export interface PdfJsLike {
   GlobalWorkerOptions: PdfGlobalWorkerOptionsLike;
 }
 
-export interface PdfViewportLike {
+interface PdfViewportLike {
   width: number;
   height: number;
   scale?: number;
@@ -97,7 +97,7 @@ export interface PdfFindSelectionLike {
   readonly matchIdx: number;
 }
 
-export interface PdfFindStateLike {
+interface PdfFindStateLike {
   readonly highlightAll: boolean;
 }
 

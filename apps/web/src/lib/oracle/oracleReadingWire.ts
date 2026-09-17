@@ -585,11 +585,6 @@ export function decodeOracleReadingDetail(value: unknown): OracleReadingDetail {
     decodePersistedEvent,
     "Oracle reading events",
   );
-  events.forEach((event, index) => {
-    if (event.seq !== index + 1) {
-      fail("persisted Oracle event sequence is not contiguous");
-    }
-  });
   const errorCode =
     detail.error_code === null
       ? null
@@ -599,44 +594,6 @@ export function decodeOracleReadingDetail(value: unknown): OracleReadingDetail {
     "Oracle reading completed_at",
   );
   const failedAt = nullableInstant(detail.failed_at, "Oracle reading failed_at");
-  if (status === "failed" && (errorCode === null || failedAt === null)) {
-    fail("failed Oracle reading is missing failure facts");
-  }
-  if (status !== "failed" && errorCode !== null) {
-    fail("non-failed Oracle reading carries a failure code");
-  }
-  if (status === "complete" && completedAt === null) {
-    fail("complete Oracle reading is missing completed_at");
-  }
-  const terminalEvent = events.at(-1);
-  if (status === "failed") {
-    const historical = HISTORICAL_ORACLE_READING_FAILURE_CODES.some(
-      (code) => code === errorCode,
-    );
-    if (
-      terminalEvent?.event_type !==
-        (historical ? "historical_done" : "done") ||
-      terminalEvent.payload.status !== "failed" ||
-      terminalEvent.payload.error_code !== errorCode
-    ) {
-      fail("failed Oracle detail and terminal event disagree");
-    }
-  } else if (status === "complete") {
-    if (
-      terminalEvent?.event_type !== "done" ||
-      terminalEvent.payload.status !== "complete"
-    ) {
-      fail("complete Oracle detail has no matching terminal event");
-    }
-  } else if (
-    events.some(
-      (event) =>
-        event.event_type === "done" || event.event_type === "historical_done",
-    )
-  ) {
-    fail("non-terminal Oracle detail carries a terminal event");
-  }
-
   const passages = expectArray(
     detail.passages,
     (passage, index) => decodePassage(passage, `Oracle passage ${index}`),
