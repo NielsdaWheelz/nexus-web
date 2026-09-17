@@ -1,5 +1,13 @@
 import { apiCommand204, apiFetch } from "@/lib/api/client";
-import { isRecord } from "@/lib/validation";
+import {
+  expectBoolean,
+  expectExactRecord,
+  expectNonemptyString,
+  expectNullableString,
+  expectOneOf,
+  expectRecord,
+  isRecord,
+} from "@/lib/validation";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
 import {
   expectAuthenticatedShareHref,
@@ -7,32 +15,17 @@ import {
   expectResourceGrantHandle,
   expectUserHandle,
 } from "@/lib/sharing/wireValidation";
-import type {
-  AudienceAvailability,
-  AudienceUnavailableReason,
-  OwnedShare,
-  ReceivedUserShare,
-  ShareMode,
-  ShareSnapshot,
-  ShareUserProjection,
+import {
+  AUDIENCE_UNAVAILABLE_REASONS,
+  isShareMode,
+  type AudienceAvailability,
+  type OwnedShare,
+  type ReceivedUserShare,
+  type ShareMode,
+  type ShareSnapshot,
+  type ShareUserProjection,
 } from "@/lib/sharing/types";
 
-const SHARE_MODES = new Set<ShareMode>([
-  "None",
-  "CopyOnly",
-  "ResourceGrants",
-  "HighlightGrants",
-  "LibraryMembership",
-]);
-const UNAVAILABLE_REASONS = new Set<AudienceUnavailableReason>([
-  "UnsupportedSubject",
-  "Deleting",
-  "InsufficientAuthority",
-  "HighlightUnresolved",
-  "EntitlementRequired",
-  "ProjectionNotReady",
-  "ProjectionUnsupported",
-]);
 const SHARE_MODE_BY_SCHEME: Readonly<Partial<Record<string, ShareMode>>> = {
   media: "ResourceGrants",
   highlight: "HighlightGrants",
@@ -46,103 +39,59 @@ const SHARE_MODE_BY_SCHEME: Readonly<Partial<Record<string, ShareMode>>> = {
   contributor: "CopyOnly",
 };
 
-export class ShareContractDefect extends Error {
-  constructor(message: string) {
-    // justify-defect: malformed same-system sharing payloads mean the frontend
-    // and backend shipped different contracts.
-    super(message);
-    this.name = "ShareContractDefect";
-  }
-}
-
-function exactRecord(
-  raw: unknown,
-  name: string,
-  keys: readonly string[],
-): Record<string, unknown> {
-  if (!isRecord(raw)) {
-    throw new ShareContractDefect(`${name} must be an object`);
-  }
-  const actual = Object.keys(raw).sort();
-  const expected = [...keys].sort();
-  if (
-    actual.length !== expected.length ||
-    actual.some((key, index) => key !== expected[index])
-  ) {
-    throw new ShareContractDefect(
-      `${name} has keys [${actual.join(", ")}], expected [${expected.join(", ")}]`,
-    );
-  }
-  return raw;
-}
-
-function requiredString(raw: unknown, name: string): string {
-  if (typeof raw !== "string" || raw.length === 0) {
-    throw new ShareContractDefect(`${name} must be a non-empty string`);
-  }
-  return raw;
-}
-
-function nullableString(raw: unknown, name: string): string | null {
-  if (raw === null || typeof raw === "string") return raw;
-  throw new ShareContractDefect(`${name} must be a string or null`);
-}
-
 function decodeUser(raw: unknown, name: string): ShareUserProjection {
-  const row = exactRecord(raw, name, ["userHandle", "email", "displayName"]);
+  const row = expectExactRecord(
+    raw,
+    ["userHandle", "email", "displayName"],
+    name,
+  );
   return {
     userHandle: expectUserHandle(row.userHandle, `${name}.userHandle`),
-    email: nullableString(row.email, `${name}.email`),
-    displayName: nullableString(row.displayName, `${name}.displayName`),
+    email: expectNullableString(row.email, `${name}.email`),
+    displayName: expectNullableString(row.displayName, `${name}.displayName`),
   };
 }
 
 function decodeAvailability(raw: unknown, name: string): AudienceAvailability {
-  if (!isRecord(raw)) {
-    throw new ShareContractDefect(`${name} must be an object`);
-  }
-  if (raw.kind === "Available") {
-    exactRecord(raw, name, ["kind"]);
+  const value = expectRecord(raw, name);
+  if (value.kind === "Available") {
+    expectExactRecord(value, ["kind"], name);
     return { kind: "Available" };
   }
-  if (raw.kind === "Unavailable") {
-    const row = exactRecord(raw, name, ["kind", "reason"]);
-    if (
-      typeof row.reason !== "string" ||
-      !UNAVAILABLE_REASONS.has(row.reason as AudienceUnavailableReason)
-    ) {
-      throw new ShareContractDefect(`${name}.reason is invalid`);
-    }
+  if (value.kind === "Unavailable") {
+    const row = expectExactRecord(value, ["kind", "reason"], name);
     return {
       kind: "Unavailable",
-      reason: row.reason as AudienceUnavailableReason,
+      reason: expectOneOf(
+        row.reason,
+        AUDIENCE_UNAVAILABLE_REASONS,
+        `${name}.reason`,
+      ),
     };
   }
-  throw new ShareContractDefect(`${name}.kind is invalid`);
+  throw new TypeError(`${name}.kind is invalid`);
 }
 
 function decodeOwnedShare(raw: unknown, index: number): OwnedShare {
-  if (!isRecord(raw)) {
-    throw new ShareContractDefect(`shares[${index}] must be an object`);
-  }
-  if (raw.kind === "User") {
-    const row = exactRecord(raw, `shares[${index}]`, [
-      "kind",
-      "handle",
-      "user",
-    ]);
+  const value = expectRecord(raw, `shares[${index}]`);
+  if (value.kind === "User") {
+    const row = expectExactRecord(
+      value,
+      ["kind", "handle", "user"],
+      `shares[${index}]`,
+    );
     return {
       kind: "User",
       handle: expectResourceGrantHandle(row.handle, `shares[${index}].handle`),
       user: decodeUser(row.user, `shares[${index}].user`),
     };
   }
-  if (raw.kind === "Link") {
-    const row = exactRecord(raw, `shares[${index}]`, [
-      "kind",
-      "handle",
-      "publicHref",
-    ]);
+  if (value.kind === "Link") {
+    const row = expectExactRecord(
+      value,
+      ["kind", "handle", "publicHref"],
+      `shares[${index}]`,
+    );
     return {
       kind: "Link",
       handle: expectResourceGrantHandle(row.handle, `shares[${index}].handle`),
@@ -152,20 +101,17 @@ function decodeOwnedShare(raw: unknown, index: number): OwnedShare {
       ),
     };
   }
-  throw new ShareContractDefect(`shares[${index}].kind is invalid`);
+  throw new TypeError(`shares[${index}].kind is invalid`);
 }
 
 function decodeReceivedShare(raw: unknown, index: number): ReceivedUserShare {
-  const row = exactRecord(raw, `receivedAccess[${index}]`, [
-    "kind",
-    "handle",
-    "sharedBy",
-    "subject",
-  ]);
+  const row = expectExactRecord(
+    raw,
+    ["kind", "handle", "sharedBy", "subject"],
+    `receivedAccess[${index}]`,
+  );
   if (row.kind !== "ReceivedUser") {
-    throw new ShareContractDefect(
-      `receivedAccess[${index}].kind must be ReceivedUser`,
-    );
+    throw new TypeError(`receivedAccess[${index}].kind must be ReceivedUser`);
   }
   return {
     kind: "ReceivedUser",
@@ -175,44 +121,46 @@ function decodeReceivedShare(raw: unknown, index: number): ReceivedUserShare {
     ),
     sharedBy: decodeUser(row.sharedBy, `receivedAccess[${index}].sharedBy`),
     subject: assumeCanonicalResourceRef(
-      requiredString(row.subject, `receivedAccess[${index}].subject`),
+      expectNonemptyString(row.subject, `receivedAccess[${index}].subject`),
     ),
   };
 }
 
 export function decodeShareSnapshot(raw: unknown): ShareSnapshot {
-  const envelope = exactRecord(raw, "share response", ["data"]);
-  const data = exactRecord(envelope.data, "share response.data", [
-    "subject",
-    "sharing",
-    "authenticatedHref",
-    "creationAvailability",
-    "shares",
-    "receivedAccess",
-  ]);
-  if (
-    typeof data.sharing !== "string" ||
-    !SHARE_MODES.has(data.sharing as ShareMode)
-  ) {
-    throw new ShareContractDefect("share response.data.sharing is invalid");
+  const envelope = expectExactRecord(raw, ["data"], "share response");
+  const data = expectExactRecord(
+    envelope.data,
+    [
+      "subject",
+      "sharing",
+      "authenticatedHref",
+      "creationAvailability",
+      "shares",
+      "receivedAccess",
+    ],
+    "share response.data",
+  );
+  if (!isShareMode(data.sharing)) {
+    throw new TypeError("share response.data.sharing is invalid");
   }
-  const availability = exactRecord(
+  const sharing: ShareMode = data.sharing;
+  const availability = expectExactRecord(
     data.creationAvailability,
-    "share response.data.creationAvailability",
     ["user", "link"],
+    "share response.data.creationAvailability",
   );
   if (!Array.isArray(data.shares) || !Array.isArray(data.receivedAccess)) {
-    throw new ShareContractDefect(
+    throw new TypeError(
       "share response shares and receivedAccess must be arrays",
     );
   }
   const subject = assumeCanonicalResourceRef(
-    requiredString(data.subject, "share response.data.subject"),
+    expectNonemptyString(data.subject, "share response.data.subject"),
   );
   const subjectScheme = subject.slice(0, subject.indexOf(":"));
   const expectedMode = SHARE_MODE_BY_SCHEME[subjectScheme];
-  if (!expectedMode || data.sharing !== expectedMode) {
-    throw new ShareContractDefect(
+  if (sharing !== expectedMode) {
+    throw new TypeError(
       "share response.data.sharing does not match its subject",
     );
   }
@@ -221,24 +169,21 @@ export function decodeShareSnapshot(raw: unknown): ShareSnapshot {
     expectedMode !== "HighlightGrants" &&
     (data.shares.length > 0 || data.receivedAccess.length > 0)
   ) {
-    throw new ShareContractDefect(
-      "non-grant sharing modes must not contain grant rows",
-    );
+    throw new TypeError("non-grant sharing modes must not contain grant rows");
   }
   const linkCount = data.shares.filter(
     (share) => isRecord(share) && share.kind === "Link",
   ).length;
   if (linkCount > 1) {
-    throw new ShareContractDefect(
+    throw new TypeError(
       "share response contains more than one creator public link",
     );
   }
   return {
     subject,
-    sharing: data.sharing as ShareMode,
+    sharing,
     authenticatedHref: expectAuthenticatedShareHref(
       data.authenticatedHref,
-      subject,
       "share response.data.authenticatedHref",
     ),
     creationAvailability: {
@@ -267,17 +212,16 @@ function decodeCreateShare(raw: unknown): {
   share: OwnedShare;
   created: boolean;
 } {
-  const envelope = exactRecord(raw, "create share response", ["data"]);
-  const data = exactRecord(envelope.data, "create share response.data", [
-    "share",
-    "created",
-  ]);
-  if (typeof data.created !== "boolean") {
-    throw new ShareContractDefect(
-      "create share response.data.created must be boolean",
-    );
-  }
-  return { share: decodeOwnedShare(data.share, 0), created: data.created };
+  const envelope = expectExactRecord(raw, ["data"], "create share response");
+  const data = expectExactRecord(
+    envelope.data,
+    ["share", "created"],
+    "create share response.data",
+  );
+  return {
+    share: decodeOwnedShare(data.share, 0),
+    created: expectBoolean(data.created, "create share response.data.created"),
+  };
 }
 
 export async function createUserShare(input: {

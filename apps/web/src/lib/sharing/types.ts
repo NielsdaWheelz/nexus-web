@@ -1,23 +1,18 @@
 import type { Presence } from "@/lib/api/presence";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
 
-export type ShareMode =
-  | "None"
-  | "CopyOnly"
-  | "ResourceGrants"
-  | "HighlightGrants"
-  | "LibraryMembership";
-
-const SHARE_MODES = new Set<ShareMode>([
+const SHARE_MODES = [
   "None",
   "CopyOnly",
   "ResourceGrants",
   "HighlightGrants",
   "LibraryMembership",
-]);
+] as const;
+
+export type ShareMode = (typeof SHARE_MODES)[number];
 
 export function isShareMode(value: unknown): value is ShareMode {
-  return typeof value === "string" && SHARE_MODES.has(value as ShareMode);
+  return SHARE_MODES.includes(value as ShareMode);
 }
 
 declare const canonicalResourceRefBrand: unique symbol;
@@ -43,14 +38,18 @@ export interface ShareUserProjection {
   displayName: string | null;
 }
 
+export const AUDIENCE_UNAVAILABLE_REASONS = [
+  "UnsupportedSubject",
+  "Deleting",
+  "InsufficientAuthority",
+  "HighlightUnresolved",
+  "EntitlementRequired",
+  "ProjectionNotReady",
+  "ProjectionUnsupported",
+] as const;
+
 export type AudienceUnavailableReason =
-  | "UnsupportedSubject"
-  | "Deleting"
-  | "InsufficientAuthority"
-  | "HighlightUnresolved"
-  | "EntitlementRequired"
-  | "ProjectionNotReady"
-  | "ProjectionUnsupported";
+  (typeof AUDIENCE_UNAVAILABLE_REASONS)[number];
 
 export type AudienceAvailability =
   | { kind: "Available" }

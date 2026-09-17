@@ -1,8 +1,7 @@
-// The frontend SearchQuery value object — one model shared by the /search page and
-// the retired sigil-based search mode (search cutover §7.1/G3).
+// The frontend SearchQuery value object, shared by the /search page and Nexus results.
 
 import { SEARCH_KINDS, type MediaFormat, type SearchKind } from "./kinds";
-import { parseSearchInput, type ParsedSearchInput } from "./parseSearchInput";
+import type { ParsedSearchInput } from "./parseSearchInput";
 
 export interface SearchQuery {
   text: string;
@@ -87,9 +86,4 @@ export function applyParsedInput(
     roles: [...roles],
     scope,
   };
-}
-
-// One-shot: build a fresh SearchQuery from raw box input (page + Nexus share this).
-export function searchQueryFromInput(raw: string): SearchQuery {
-  return applyParsedInput(emptySearchQuery(), parseSearchInput(raw));
 }

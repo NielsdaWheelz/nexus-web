@@ -39,11 +39,7 @@ import type {
   ShareSnapshot,
   ShareUserProjection,
 } from "@/lib/sharing/types";
-import {
-  isUserSearchContractDefect,
-  searchUsers,
-  type UserSearchResult,
-} from "@/lib/users/search";
+import { searchUsers, type UserSearchResult } from "@/lib/users/search";
 import {
   ClipboardWriteUnavailableError,
   copyText,
@@ -535,7 +531,6 @@ function SharePanel({
           announce={announce}
           reportApiError={reportApiActionError}
           reportLocalError={reportLocalActionError}
-          reportDefect={reportDefect}
         />
       ) : null}
 
@@ -649,7 +644,6 @@ function GrantEditor({
   announce,
   reportApiError,
   reportLocalError,
-  reportDefect,
 }: {
   snapshot: ShareSnapshot;
   onSnapshotChange: (snapshot: ShareSnapshot) => void;
@@ -658,7 +652,6 @@ function GrantEditor({
   announce: (message: string) => void;
   reportApiError: (error: unknown, operation: SharingActionOperation) => void;
   reportLocalError: (title: string) => void;
-  reportDefect: (error: unknown) => void;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<UserSearchResult[]>([]);
@@ -696,10 +689,6 @@ function GrantEditor({
         if (searchSequence.current === sequence) setResults(next);
       } catch (error) {
         if (!controller.signal.aborted) {
-          if (isUserSearchContractDefect(error)) {
-            reportDefect(error);
-            return;
-          }
           reportApiError(error, "SearchPeople");
         }
       } finally {
@@ -710,7 +699,7 @@ function GrantEditor({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [query, reportApiError, reportDefect]);
+  }, [query, reportApiError]);
 
   const addUser = async (user: UserSearchResult) => {
     if (busyHandle !== null) return;
