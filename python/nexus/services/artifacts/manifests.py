@@ -1,4 +1,4 @@
-"""Typed dossier input manifests + failure support (CP2-TYPES, CONTRACTS.md A21).
+"""Typed dossier input manifests.
 
 Stored in ``artifact_revisions.input_manifest`` (JSONB), discriminated by
 ``kind`` (the spec-pinned lowercase subject scheme). Coverage on the head read is
@@ -154,50 +154,3 @@ InputManifestV1 = Annotated[
     | IdeaInputManifestV1,
     Field(discriminator="kind"),
 ]
-
-
-# ---------------------------------------------------------------------------
-# Wire projection. The persisted Idea manifest carries ``idea_subject_id`` for
-# freshness/rebuild (§5.6), but ``idea`` is an internal subject scheme and §9.3
-# forbids ever exposing the Idea subject UUID on the public contract. Resource
-# manifests carry only public ResourceRefs and are already wire-safe, so only the
-# Idea variant is projected to a subject-id-free shape at the API boundary.
-# ---------------------------------------------------------------------------
-class IdeaInputManifestOut(_Manifest):
-    version: Literal["v1"] = "v1"
-    kind: Literal["idea"] = "idea"
-    included_seed_refs: list[str] = Field(default_factory=list)
-    nexus_query_fingerprints: list[str] = Field(default_factory=list)
-    web_query_fingerprints: list[str] = Field(default_factory=list)
-    included_sources: list[IdeaIncludedSource] = Field(default_factory=list)
-    omitted_sources: list[IdeaOmittedSource] = Field(default_factory=list)
-
-
-InputManifestOut = Annotated[
-    MediaInputManifestV1
-    | ConversationInputManifestV1
-    | LibraryInputManifestV1
-    | PodcastInputManifestV1
-    | ContributorInputManifestV1
-    | PageInputManifestV1
-    | NoteInputManifestV1
-    | IdeaInputManifestOut,
-    Field(discriminator="kind"),
-]
-
-
-def project_manifest_to_wire(manifest: InputManifestV1) -> InputManifestOut:
-    """Redact internal-only fields before a manifest crosses the API boundary.
-
-    Idea manifests drop the internal ``idea_subject_id`` (§9.3); Resource
-    manifests are already wire-safe and pass through unchanged.
-    """
-    if isinstance(manifest, IdeaInputManifestV1):
-        return IdeaInputManifestOut(
-            included_seed_refs=manifest.included_seed_refs,
-            nexus_query_fingerprints=manifest.nexus_query_fingerprints,
-            web_query_fingerprints=manifest.web_query_fingerprints,
-            included_sources=manifest.included_sources,
-            omitted_sources=manifest.omitted_sources,
-        )
-    return manifest

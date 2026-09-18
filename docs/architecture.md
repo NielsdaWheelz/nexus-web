@@ -1035,6 +1035,11 @@ immutable eight-scheme registration. Callers perform one correlated lookup;
 there is no second mutable policy map or package-initializer registration side
 effect.
 
+Revision responses use the binding's stored manifest directly, including the
+Idea subject id for its owning user; Idea subject routes remain unavailable.
+Failure facts contain a code and optional diagnostic detail. Build identifiers
+are UUIDs, with authorization checked separately on the owning Artifact.
+
 Resource bootstrap/Companion lookup uses
 `GET /artifacts/dossiers/{subject_scheme}/{subject_handle}`,
 `POST /artifacts/dossiers/{subject_scheme}/{subject_handle}/builds`; an
@@ -1047,9 +1052,9 @@ API is
 `GET /artifacts/{artifact_ref}/revisions`,
 `GET /artifact-revisions/{artifact_revision_ref}`,
 `POST /artifact-revisions/{artifact_revision_ref}/make-current`, and
-`POST /artifact-builds/{sealed_handle}/cancel`. Build streaming is
-`GET /stream/artifact-builds/{sealed_handle}/events`; persisted
-`Started | Progress | Succeeded | Failed | Cancelled` events are build-keyed
+`POST /artifact-builds/{artifact_build_id}/cancel`. Build streaming is
+`GET /stream/artifact-builds/{artifact_build_id}/events`; persisted
+`Started | Progress | Succeeded | Failed | HistoricalFailed | Cancelled` events are build-keyed
 and replayable. `lib/dossiers/generationAdapter.ts` is the one browser Dossier
 transport boundary: value responses must be the exact `{data: ...}` envelope,
 Make-current and Cancel must be exact HTTP 204 commands, and same-system shape

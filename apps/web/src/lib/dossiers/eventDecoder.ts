@@ -101,7 +101,7 @@ export function decodeDossierStreamEvent(
       };
     case "Failed":
     case "HistoricalFailed":
-      if (!hasExactKeys(data, ["detail", "failure_code", "support"])) {
+      if (!hasExactKeys(data, ["detail", "failure_code"])) {
         fail(`${type} fields`);
       }
       return {
@@ -112,10 +112,6 @@ export function decodeDossierStreamEvent(
               ? decodeFailureCode(data.failure_code)
               : decodeHistoricalDossierBuildFailureCode(data.failure_code),
           detail: decodePresence(data.detail, (v) => str(v, "Failed.detail")),
-          support: decodePresence(data.support, (v) => {
-            if (!isRecord(v)) fail("Failed.support");
-            return v;
-          }),
         },
       };
     case "Cancelled":

@@ -112,7 +112,6 @@ from nexus.services.artifacts.generation_step import (
     ArtifactGenerationUncertain,
     build_artifact_generation_step,
 )
-from nexus.services.artifacts.handles import seal_artifact_build
 from nexus.services.artifacts.idea_identity import InvalidIdeaText
 from nexus.services.artifacts.idea_seeds import (
     delete_artifact_idea_rows_before_head,
@@ -247,7 +246,6 @@ class DossierUnsuccessfulBuildView:
     outcome: Literal["failed", "cancelled"]
     failure_code: ReadDossierBuildFailureCode | None
     failure_detail: str | None
-    failure_support: dict[str, object] | None
     cancellation_actor_user_id: UUID | None
     cancelled_at: datetime | None
 
@@ -1227,7 +1225,7 @@ def _ensure_build_locked(
         build_id=build_id,
         event_type=ArtifactBuildEventType.Started,
         payload=StartedEventPayload(
-            build_handle=seal_artifact_build(build_id),
+            build_handle=str(build_id),
             artifact_ref=ResourceRef(scheme="artifact", id=artifact_id).uri,
         ).model_dump(mode="json"),
     )
@@ -1244,7 +1242,7 @@ def _ensure_build_locked(
     return BuildTicket(
         artifact_id=artifact_id,
         build_id=build_id,
-        handle=seal_artifact_build(build_id),
+        handle=str(build_id),
         created=True,
     )
 
@@ -1264,7 +1262,7 @@ def _build_ticket_for_idempotency(
     return BuildTicket(
         artifact_id=artifact_id,
         build_id=build_id,
-        handle=seal_artifact_build(build_id),
+        handle=str(build_id),
         created=False,
     )
 
@@ -1882,7 +1880,6 @@ def _success_terminal(
                 payload=FailedEventPayload(
                     failure_code=DossierBuildFailureCode.InputsChanged,
                     detail=present("inputs changed between collection and terminal recheck"),
-                    support=absent(),
                 ).model_dump(mode="json"),
             )
             db.commit()
@@ -1987,7 +1984,6 @@ def _terminal_failure(
             payload=FailedEventPayload(
                 failure_code=effective_code,
                 detail=(present(effective_detail) if effective_detail is not None else absent()),
-                support=absent(),
             ).model_dump(mode="json"),
         )
         db.commit()
@@ -2489,7 +2485,7 @@ def _read_head_snapshot(
                 "(SELECT count(*) FROM artifact_build_failures f WHERE f.build_id = b.id) AS fail, "
                 "(SELECT count(*) FROM artifact_build_cancellations c WHERE c.build_id = b.id) "
                 "  AS canc, "
-                "f.failure_code, f.detail AS failure_detail, f.support AS failure_support, "
+                "f.failure_code, f.detail AS failure_detail, "
                 "c.actor_user_id AS cancellation_actor_user_id, c.created_at AS cancelled_at "
                 "FROM artifact_builds b "
                 "LEFT JOIN artifact_build_failures f ON f.build_id = b.id "
@@ -2518,7 +2514,7 @@ def _read_head_snapshot(
                 job = _job_state(db, build_id)
                 active = DossierActiveBuildView(
                     build_id=build_id,
-                    handle=seal_artifact_build(build_id),
+                    handle=str(build_id),
                     requester_user_id=(
                         UUID(str(b["requester_user_id"]))
                         if b["requester_user_id"] is not None
@@ -2538,7 +2534,7 @@ def _read_head_snapshot(
         elif (fail or canc) and latest_unsuccessful is None and not newer_success_seen:
             latest_unsuccessful = DossierUnsuccessfulBuildView(
                 build_id=build_id,
-                handle=seal_artifact_build(build_id),
+                handle=str(build_id),
                 requester_user_id=(
                     UUID(str(b["requester_user_id"]))
                     if b["requester_user_id"] is not None
@@ -2555,9 +2551,6 @@ def _read_head_snapshot(
                 ),
                 failure_detail=(
                     str(b["failure_detail"]) if b["failure_detail"] is not None else None
-                ),
-                failure_support=(
-                    dict(b["failure_support"]) if isinstance(b["failure_support"], dict) else None
                 ),
                 cancellation_actor_user_id=(
                     UUID(str(b["cancellation_actor_user_id"]))

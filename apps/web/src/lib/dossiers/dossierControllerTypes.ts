@@ -136,6 +136,7 @@ export type DossierInputManifest =
   | {
       version: "v1";
       kind: "idea";
+      ideaSubjectId: string;
       includedSeedRefs: readonly string[];
       nexusQueryFingerprints: readonly string[];
       webQueryFingerprints: readonly string[];
@@ -188,12 +189,11 @@ export interface DossierRevisionSummary {
   promotedAt: Presence<string>;
 }
 
-/** Failed{code, detail/support} facts, shared by the head snapshot and the SSE
+/** Failed{code, detail} facts, shared by the head snapshot and the SSE
  * `Failed` event (one shape for one fact). */
 export interface DossierFailedFacts {
   failureCode: ReadDossierBuildFailureCode;
   detail: Presence<string>;
-  support: Presence<Record<string, unknown>>;
 }
 
 /** Cancelled{actor, time} facts. */
