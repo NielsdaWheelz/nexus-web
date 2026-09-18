@@ -10,6 +10,11 @@ reproduction: a note containing `Cafe\u0301 target` stores `target` at `[6:12]`;
 `resolve_owner_quote` instead returns `[5:11]`, selecting ` targe`. the claimed
 nfc-source invariant in `NormalizedText` does not hold for notes.
 
+current impact is an incorrect stored locator hint. `resource_items/routing.py`
+emits a passage hash for notes, but `NotePaneBody.tsx` does not consume it;
+`reader_connections.py` only resolves media owners. this reproduction does not
+establish a broken browser citation pulse, which uses note-index offsets.
+
 establish the note editor's source/offset contract before changing it. preserve
 matching by normalized text while projecting offsets into the actual stored
 text; do not silently rewrite existing notes or their anchors.
