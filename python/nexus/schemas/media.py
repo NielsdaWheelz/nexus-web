@@ -584,18 +584,6 @@ class ArticleCaptureRequest(BaseModel):
     library_ids: list[UUID] = Field(default_factory=list)
 
 
-class ArticleCaptureResponse(BaseModel):
-    """Response schema for browser-captured web articles."""
-
-    media_id: UUID
-    source_attempt_id: UUID
-    source_type: str
-    source_attempt_status: MediaSourceAttemptStatus
-    idempotency_outcome: Literal["created", "reused", "retrying", "refreshed"]
-    processing_status: MediaProcessingStatus
-    ingest_enqueued: bool
-
-
 class RetrySourceRequest(BaseModel):
     """Body for POST /media/{id}/retry that admits a new source attempt."""
 
@@ -696,19 +684,6 @@ class TranscriptRequestRequest(BaseModel):
     dry_run: bool = False
 
     model_config = ConfigDict(extra="forbid")
-
-
-class TranscriptForecastBatchItemRequest(BaseModel):
-    """One media forecast request for POST /media/transcript/forecasts."""
-
-    media_id: UUID
-    reason: TranscriptRequestReason = "episode_open"
-
-
-class TranscriptForecastBatchRequest(BaseModel):
-    """Batch forecast request for transcript admission without enqueueing work."""
-
-    requests: list[TranscriptForecastBatchItemRequest] = Field(min_length=1, max_length=100)
 
 
 class TranscriptRequestResponse(BaseModel):

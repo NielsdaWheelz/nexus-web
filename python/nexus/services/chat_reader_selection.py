@@ -129,14 +129,18 @@ def compute_reader_selection_revision(snapshot: ReaderSelectionSnapshot) -> str:
     serialize lowercase-hyphenated and keys are sorted, so equal snapshots always
     digest equal.
     """
-    canonical = json.dumps(snapshot.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    canonical = json.dumps(
+        encode_reader_selection_snapshot(snapshot), sort_keys=True, separators=(",", ":")
+    )
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def encode_reader_selection_snapshot(snapshot: ReaderSelectionSnapshot) -> dict[str, object]:
-    """Encode the snapshot to the JSON object persisted in
-    ``messages.reader_selection_snapshot``."""
-    return snapshot.model_dump(mode="json")
+    """Encode the snapshot fields to the JSON object persisted in
+    ``messages.reader_selection_snapshot``. Only the snapshot's own fields are
+    encoded: ``ReaderSelectionOut``/``Preview`` subclasses carry derived fields
+    that must never reach the digest or the stored row."""
+    return snapshot.model_dump(mode="json", include=set(ReaderSelectionSnapshot.model_fields))
 
 
 def decode_reader_selection_snapshot(raw: object) -> ReaderSelectionSnapshot:

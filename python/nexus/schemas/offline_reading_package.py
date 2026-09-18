@@ -105,8 +105,6 @@ class OfflineReadingSchemaModel(BaseModel):
 
 def validate_safe_package_path(path: str) -> str:
     """Return one canonical, platform-neutral member path or reject it."""
-    if not isinstance(path, str):
-        raise ValueError("package path must be a string")
     if not path or len(path.encode("utf-8")) > OFFLINE_READING_MAX_PATH_BYTES:
         raise ValueError("package path is empty or exceeds the V1 UTF-8 byte bound")
     if unicodedata.normalize("NFC", path) != path:
@@ -126,8 +124,6 @@ def validate_safe_package_path(path: str) -> str:
 
 def validate_safe_epub_href_path(path: str) -> str:
     """Return one canonical EPUB-relative path suitable for a reader locator."""
-    if not isinstance(path, str):
-        raise ValueError("hrefPath must be a string")
     if not path or len(path.encode("utf-8")) > 2048:
         raise ValueError("hrefPath is empty or exceeds the V1 UTF-8 byte bound")
     if unicodedata.normalize("NFC", path) != path:
@@ -182,8 +178,6 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _parse_strict_json_object(payload: bytes, *, maximum_bytes: int, name: str) -> dict[str, Any]:
-    if not isinstance(payload, bytes):
-        raise ValueError(f"{name} must be bytes")
     if len(payload) > maximum_bytes:
         raise ValueError(f"{name} exceeds the V1 byte bound")
     if payload.startswith(b"\xef\xbb\xbf"):

@@ -261,3 +261,4 @@ unexpected timeouts. See
 - [open] oi-161 · web panes · 2026-09-17 slop sweep · p3 · four pane bodies are oversized with no split that does not invent abstractions; re-measure after the dedupes land: [ticket](tickets/oversized-pane-bodies-have-no-obvious-split.md).
 - [open] oi-163 · note anchors · 2026-09-17 cleanup audit · p2 · normalized quote offsets can address the wrong stored text: [ticket](tickets/note-quote-offsets-assume-normalized-source.md).
 - [open] oi-165 · note navigation · 2026-09-17 cleanup audit · p2 · emitted passage links have no navigation consumer: [ticket](tickets/note-passage-links-have-no-navigation-consumer.md).
+- [open] oi-166 · reader evidence · 2026-09-17 slop sweep · p3 · media evidence wire keeps dead `route`/`selector` fields coupled by an exact-key web decoder: [ticket](tickets/media-evidence-wire-keeps-dead-route-and-selector.md).

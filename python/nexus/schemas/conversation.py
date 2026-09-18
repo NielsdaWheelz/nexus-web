@@ -33,15 +33,6 @@ from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, Retri
 from nexus.schemas.search_types import SEARCH_RESULT_TYPES
 from nexus.services.generation_selection import GenerationSelectionSpec
 
-# Valid sharing modes - must match DB constraint
-SHARING_MODES = Literal["private", "library", "public"]
-
-# Valid message roles - must match DB constraint
-MESSAGE_ROLES = Literal["user", "assistant", "system"]
-
-# Valid message statuses - must match DB constraint
-MESSAGE_STATUSES = Literal["pending", "complete", "error", "cancelled"]
-
 # Valid assistant tool-call statuses - must match message_tool_calls.status
 MESSAGE_TOOL_STATUSES = Literal["pending", "running", "complete", "error", "cancelled"]
 TOOL_RECORD_KINDS = Literal[
@@ -57,7 +48,6 @@ TOOL_RESULT_KINDS = Literal[
     "rejected_provider_call",
     "retrieval",
 ]
-WEB_SEARCH_RESULT_TYPES = Literal["web", "news", "mixed"]
 CHAT_RUN_STATUSES = Literal["queued", "running", "complete", "error", "cancelled"]
 # Filter vocabulary for GET /chat-runs: the run statuses plus the synthetic
 # "active" (non-terminal) filter. Owned once at the boundary; the service maps it.
@@ -618,9 +608,6 @@ TRUST_TRAIL_VERSION = "assistant_trust_trail.v1"
 
 
 class TrustPromptAssemblyOut(BaseModel):
-    id: UUID
-    prompt_block_manifest: dict[str, Any]
-    max_context_tokens: int
     reserved_output_tokens: int
     input_budget_tokens: int
     estimated_input_tokens: int
@@ -628,8 +615,6 @@ class TrustPromptAssemblyOut(BaseModel):
     included_retrieval_ids: list[str]
     included_context_refs: list[dict[str, Any]]
     dropped_items: list[dict[str, Any]]
-    budget_breakdown: dict[str, Any]
-    created_at: datetime
 
     model_config = ConfigDict(extra="forbid")
 

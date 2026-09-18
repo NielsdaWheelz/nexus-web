@@ -8,7 +8,7 @@ hydration need.
 """
 
 from datetime import datetime
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -17,17 +17,12 @@ from nexus.schemas.highlights import HIGHLIGHT_COLORS, PdfQuadIn
 from nexus.schemas.resource_items import ResourceActivationOut, validate_note_body_pm_json
 from nexus.services.resource_graph.refs import ResourceScheme
 
-# The edge vocabularies are single-sourced in the graph-schema module (LOW #20);
-# this wire layer re-exports them and derives the route-boundary value-tuples.
+# The edge vocabularies are single-sourced in the graph-schema module; re-exported here.
 from nexus.services.resource_graph.schemas import Connection as Connection
 from nexus.services.resource_graph.schemas import ConnectionEndpoint as ConnectionEndpoint
 from nexus.services.resource_graph.schemas import EdgeKind as EdgeKind
 from nexus.services.resource_graph.schemas import EdgeOrigin as EdgeOrigin
 from nexus.services.resource_graph.schemas import snapshot_to_jsonb
-
-# Route-boundary vocabulary for query params (Literal values, importable as data).
-EDGE_KIND_VALUES: tuple[str, ...] = get_args(EdgeKind)
-EDGE_ORIGIN_VALUES: tuple[str, ...] = get_args(EdgeOrigin)
 
 
 class ResourceGraphModel(BaseModel):
