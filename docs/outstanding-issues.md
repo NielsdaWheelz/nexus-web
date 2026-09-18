@@ -224,7 +224,6 @@ unexpected timeouts. See
 
 - [open] oi-119 · release recovery · 2026-09-15 source review · p2 · a permanently failed current publication prefix blocks successor resource convergence: [ticket](tickets/failed-published-release-cannot-converge-successor.md).
 
-- [open] oi-123 · reader quote resolution · 2026-09-15 source review · p2 · normalized quote spans allocate Python objects per character across the whole book: [ticket](tickets/normalized-quote-spans-amplify-whole-book-text.md).
 - [open] oi-125 · epub assets · 2026-09-15 source review · p2 · complete asset bodies, broad media reads and per-request storage clients lack an aggregate allocation budget: [ticket](tickets/epub-asset-response-allocation-and-client-lifetime.md).
 - [open] oi-126 · backend publication · 2026-09-15 restoration release · p2 · disk exhaustion aborts the runner before bundle upload and cleanup: [ticket](tickets/backend-publication-can-exhaust-devbox-disk.md).
 - [open] oi-127 · devbox operations · 2026-09-15 memory diagnosis · p2 · runner stopped and user/docker services restarted during diagnosis; cause remains unresolved: [ticket](tickets/devbox-services-interrupted-memory-diagnosis.md).
@@ -265,3 +264,5 @@ unexpected timeouts. See
 - [open] oi-161 · web panes · 2026-09-17 slop sweep · p3 · four pane bodies are oversized with no split that does not invent abstractions; re-measure after the dedupes land: [ticket](tickets/oversized-pane-bodies-have-no-obvious-split.md).
 - [open] oi-162 · web collections · 2026-09-17 cleanup audit · p2 · pagination splits request ownership and misclassifies defects: [ticket](tickets/cursor-pagination-duplicates-request-ownership.md).
 - [open] oi-163 · note anchors · 2026-09-17 cleanup audit · p2 · normalized quote offsets can address the wrong stored text: [ticket](tickets/note-quote-offsets-assume-normalized-source.md).
+- [open] oi-164 · note citations · 2026-09-17 cleanup audit · p2 · citation ranges count trimmed text against untrimmed editor positions: [ticket](tickets/note-citation-pulse-counts-untrimmed-text.md).
+- [open] oi-165 · note navigation · 2026-09-17 cleanup audit · p2 · emitted passage links have no navigation consumer: [ticket](tickets/note-passage-links-have-no-navigation-consumer.md).

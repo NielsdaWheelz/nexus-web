@@ -10,6 +10,7 @@ exact/prefix/suffix from.
 from __future__ import annotations
 
 import unicodedata
+from array import array
 from dataclasses import dataclass
 from enum import Enum
 from uuid import UUID
@@ -52,23 +53,21 @@ def _find_all_occurrences(text: str, needle: str) -> list[int]:
 
 @dataclass(frozen=True, slots=True)
 class NormalizedText:
-    """Whitespace-collapsed NFC text with per-char raw spans.
+    """Whitespace-collapsed NFC text with compact source boundaries.
 
-    ``spans[i]`` is the ``[start, end)`` codepoint span in the NFC source that
-    normalized char ``i`` came from (a collapsed whitespace run maps to one
-    U+0020). Owner texts (fragment canonical_text, media plain_text, note
-    body_text) are produced NFC, so NFC here is a no-op and raw spans index the
-    stored text directly.
+    Normalized character ``i`` spans ``[boundaries[i], boundaries[i + 1])``
+    in the NFC source. A collapsed whitespace run maps to one U+0020.
+    These codepoint offsets address stored text directly when it is NFC.
     """
 
     text: str
-    spans: tuple[tuple[int, int], ...]
+    boundaries: array[int]
 
 
 def normalize_for_match(text: str) -> NormalizedText:
     nfc = unicodedata.normalize("NFC", text)
     chars: list[str] = []
-    spans: list[tuple[int, int]] = []
+    boundaries = array("Q", [0])
     i = 0
     length = len(nfc)
     while i < length:
@@ -77,13 +76,13 @@ def normalize_for_match(text: str) -> NormalizedText:
             while j < length and nfc[j].isspace():
                 j += 1
             chars.append(" ")
-            spans.append((i, j))
+            boundaries.append(j)
             i = j
         else:
             chars.append(nfc[i])
-            spans.append((i, i + 1))
+            boundaries.append(i + 1)
             i += 1
-    return NormalizedText(text="".join(chars), spans=tuple(spans))
+    return NormalizedText(text="".join(chars), boundaries=boundaries)
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,8 +114,8 @@ def find_quote_candidates(
             continue
         candidates.append(
             QuoteCandidate(
-                raw_start=normalized.spans[start][0],
-                raw_end=normalized.spans[end - 1][1],
+                raw_start=normalized.boundaries[start],
+                raw_end=normalized.boundaries[end],
                 normalized_start=start,
                 normalized_end=end,
             )
