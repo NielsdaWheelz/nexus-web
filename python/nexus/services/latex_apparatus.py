@@ -174,7 +174,6 @@ def extract_latex_biblatex_apparatus(
                 "kind": "bibliography_entry",
                 "label": entry.key,
                 "body_text": body_text,
-                "body_html_sanitized": None,
                 "confidence": "exact",
                 "extraction_method": "latex_biblatex_bibliography",
                 "source_ref": {
@@ -205,7 +204,6 @@ def extract_latex_biblatex_apparatus(
                 "kind": "bibliography_ref",
                 "label": _citation_marker_label(marker),
                 "body_text": None,
-                "body_html_sanitized": None,
                 "confidence": "exact",
                 "extraction_method": "latex_biblatex_citation",
                 "source_ref": marker_source_ref,
@@ -245,7 +243,6 @@ def extract_latex_biblatex_apparatus(
                 "kind": "footnote",
                 "label": footnote.label,
                 "body_text": footnote.body_text,
-                "body_html_sanitized": None,
                 "confidence": "exact",
                 "extraction_method": "latex_footnote",
                 "source_ref": {

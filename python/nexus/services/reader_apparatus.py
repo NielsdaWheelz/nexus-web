@@ -259,7 +259,6 @@ def extract_html_apparatus(
                         "kind": target_kind,
                         "label": _target_label(target_text),
                         "body_text": target_text,
-                        "body_html_sanitized": None,
                         "confidence": confidence,
                         "extraction_method": method,
                         "source_ref": target_source_ref,
@@ -285,7 +284,6 @@ def extract_html_apparatus(
                 "kind": marker_kind,
                 "label": marker_text,
                 "body_text": None,
-                "body_html_sanitized": None,
                 "confidence": confidence,
                 "extraction_method": method,
                 "source_ref": marker_source_ref,
@@ -433,7 +431,6 @@ def _extract_distill_apparatus(
                     "kind": "footnote",
                     "label": label,
                     "body_text": footnote_text,
-                    "body_html_sanitized": None,
                     "confidence": "exact",
                     "extraction_method": "distill_footnote",
                     "source_ref": note_source_ref,
@@ -447,7 +444,6 @@ def _extract_distill_apparatus(
                     "kind": "footnote_ref",
                     "label": label,
                     "body_text": None,
-                    "body_html_sanitized": None,
                     "confidence": "exact",
                     "extraction_method": "distill_footnote",
                     "source_ref": note_source_ref,
@@ -535,7 +531,6 @@ def _extract_distill_apparatus(
                         "kind": "bibliography_entry",
                         "label": _target_label(target_text) or citation_key,
                         "body_text": target_text,
-                        "body_html_sanitized": None,
                         "confidence": "exact",
                         "extraction_method": "distill_citation",
                         "source_ref": target_source_ref,
@@ -554,7 +549,6 @@ def _extract_distill_apparatus(
                         "kind": "bibliography_ref",
                         "label": visible_marker_text or citation_key,
                         "body_text": None,
-                        "body_html_sanitized": None,
                         "confidence": "exact",
                         "extraction_method": "distill_citation",
                         "source_ref": marker_source_ref,
@@ -647,7 +641,6 @@ def _extract_tufte_sidenotes(
                 "kind": target_kind,
                 "label": target_label,
                 "body_text": note_text,
-                "body_html_sanitized": None,
                 "confidence": "strong",
                 "extraction_method": method,
                 "source_ref": note_source_ref,
@@ -661,7 +654,6 @@ def _extract_tufte_sidenotes(
                 "kind": marker_kind,
                 "label": marker_label,
                 "body_text": None,
-                "body_html_sanitized": None,
                 "confidence": "strong",
                 "extraction_method": method,
                 "source_ref": note_source_ref,
@@ -721,7 +713,6 @@ def _extract_standalone_margin_notes(
                 "kind": "margin_note",
                 "label": f"Margin note {ordinal + 1}",
                 "body_text": note_text,
-                "body_html_sanitized": None,
                 "confidence": "strong",
                 "extraction_method": "html_margin_note",
                 "source_ref": note_source_ref,
@@ -840,7 +831,6 @@ def _extract_jats_multirid_bibliography_refs(
                 "kind": "bibliography_ref",
                 "label": marker_text,
                 "body_text": None,
-                "body_html_sanitized": None,
                 "confidence": "exact",
                 "extraction_method": "jats_multirid_bibliography",
                 "source_ref": marker_source_ref,
@@ -869,7 +859,6 @@ def _extract_jats_multirid_bibliography_refs(
                         "kind": "bibliography_entry",
                         "label": _target_label(target_text),
                         "body_text": target_text,
-                        "body_html_sanitized": None,
                         "confidence": "exact",
                         "extraction_method": "jats_multirid_bibliography",
                         "source_ref": target_source_ref,
@@ -923,7 +912,6 @@ def _extract_mediawiki_cited_work_links(
                     "kind": "bibliography_entry",
                     "label": _target_label(target_text),
                     "body_text": target_text,
-                    "body_html_sanitized": None,
                     "confidence": confidence,
                     "extraction_method": method,
                     "source_ref": {
@@ -980,7 +968,6 @@ def _extract_mediawiki_cited_work_links(
                     "kind": "bibliography_ref",
                     "label": marker_text,
                     "body_text": None,
-                    "body_html_sanitized": None,
                     "confidence": confidence,
                     "extraction_method": method,
                     "source_ref": marker_source_ref,
@@ -1100,7 +1087,6 @@ def _extract_legacy_named_notes(
                 "kind": "footnote",
                 "label": str(number),
                 "body_text": body_text,
-                "body_html_sanitized": None,
                 "confidence": confidence,
                 "extraction_method": method,
                 "source_ref": {
@@ -1142,7 +1128,6 @@ def _extract_legacy_named_notes(
                 "kind": "footnote_ref",
                 "label": marker_text,
                 "body_text": None,
-                "body_html_sanitized": None,
                 "confidence": confidence,
                 "extraction_method": method,
                 "source_ref": marker_source_ref,
@@ -1249,7 +1234,6 @@ def _extract_project_gutenberg_linknotes(
                 "kind": "endnote",
                 "label": str(number),
                 "body_text": body_text,
-                "body_html_sanitized": None,
                 "confidence": confidence,
                 "extraction_method": method,
                 "source_ref": {
@@ -1290,7 +1274,6 @@ def _extract_project_gutenberg_linknotes(
                 "kind": "endnote_ref",
                 "label": marker_text,
                 "body_text": None,
-                "body_html_sanitized": None,
                 "confidence": confidence,
                 "extraction_method": method,
                 "source_ref": marker_source_ref,
@@ -1456,7 +1439,6 @@ def _materialize_external_targets_in_document(
                 "kind": target_kind,
                 "label": external_target.get("label"),
                 "body_text": body_text,
-                "body_html_sanitized": None,
                 "confidence": confidence,
                 "extraction_method": str(external_target["extraction_method"]),
                 "source_ref": _object_dict(external_target.get("source_ref")),
@@ -1634,7 +1616,6 @@ def _apparatus_locator_texts_in_order(html_sanitized: str | None) -> list[tuple[
 
 def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderApparatusResponse:
     media = _visible_media(db, viewer_id, media_id)
-    guard_media_apparatus_generation(db, media_id)
     kind = str(media["kind"])
     status = str(media["processing_status"])
 
@@ -1643,7 +1624,6 @@ def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderA
             media_id=media_id,
             media_kind=kind,
             status="unsupported",
-            extractor_version=EXTRACTOR_VERSION,
             source_fingerprint=source_fingerprint(media_id, kind, "unsupported"),
             capabilities=_capabilities([], []),
             items=[],
@@ -1657,7 +1637,7 @@ def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderA
         db.execute(
             text(
                 """
-            SELECT id, media_kind, source_fingerprint, extractor_version, status,
+            SELECT id, media_kind, source_fingerprint, status,
                    item_count, edge_count, diagnostics
             FROM reader_apparatus_states
             WHERE media_id = :media_id
@@ -1674,17 +1654,11 @@ def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderA
             "Reader apparatus state is missing",
         )
 
-    _validate_state_counts(
-        status=str(state["status"]),
-        item_count=int(state["item_count"]),
-        edge_count=int(state["edge_count"]),
-    )
-
     item_rows = (
         db.execute(
             text(
                 """
-            SELECT id, stable_key, kind, label, body_text, body_html_sanitized,
+            SELECT id, stable_key, kind, label, body_text,
                    locator, locator_status, confidence, extraction_method,
                    source_ref, sort_key
             FROM reader_apparatus_items
@@ -1705,7 +1679,6 @@ def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderA
             kind=row["kind"],
             label=row["label"],
             body_text=row["body_text"],
-            body_html_sanitized=row["body_html_sanitized"],
             locator=cast(
                 RetrievalLocator | None,
                 retrieval_locator_json(_object_dict(row["locator"]) or None),
@@ -1761,34 +1734,16 @@ def get_media_apparatus(db: Session, viewer_id: UUID, media_id: UUID) -> ReaderA
         for row in edge_rows
     ]
 
-    if len(items) != int(state["item_count"]) or len(edges) != int(state["edge_count"]):
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Reader apparatus state counts are stale")
-
     return ReaderApparatusResponse(
         media_id=media_id,
         media_kind=str(state["media_kind"]),
         status=state["status"],
-        extractor_version=str(state["extractor_version"]),
         source_fingerprint=str(state["source_fingerprint"]),
         capabilities=_capabilities(items, edges),
         items=items,
         edges=edges,
         diagnostics=dict(state["diagnostics"] or {}),
     )
-
-
-def guard_media_apparatus_generation(db: Session, media_id: UUID) -> None:
-    """Use a stable snapshot or hold the parent against apparatus replacement."""
-
-    isolation = str(db.scalar(text("SHOW transaction_isolation")))
-    if isolation in {"repeatable read", "serializable"}:
-        return
-    if str(db.scalar(text("SHOW transaction_read_only"))) == "on":
-        raise RuntimeError("apparatus reads require a stable snapshot or a writable lock session")
-    db.execute(
-        text("SELECT id FROM media WHERE id = :media_id FOR SHARE"),
-        {"media_id": media_id},
-    ).scalar_one()
 
 
 def replace_media_apparatus(
@@ -1837,11 +1792,11 @@ def replace_media_apparatus(
             text(
                 """
                 INSERT INTO reader_apparatus_states (
-                    media_id, media_kind, source_fingerprint, extractor_version,
+                    media_id, media_kind, source_fingerprint,
                     status, item_count, edge_count, diagnostics
                 )
                 VALUES (
-                    :media_id, :media_kind, :source_fingerprint, :extractor_version,
+                    :media_id, :media_kind, :source_fingerprint,
                     :status, :item_count, :edge_count, :diagnostics
                 )
                 RETURNING id
@@ -1851,7 +1806,6 @@ def replace_media_apparatus(
                 "media_id": media_id,
                 "media_kind": media_kind,
                 "source_fingerprint": source_fingerprint_value,
-                "extractor_version": EXTRACTOR_VERSION,
                 "status": status,
                 "item_count": len(items),
                 "edge_count": len(edges),
@@ -1879,12 +1833,12 @@ def replace_media_apparatus(
         """
         INSERT INTO reader_apparatus_items (
             media_id, state_id, stable_key, kind, label, body_text,
-            body_html_sanitized, locator, locator_status, confidence,
+            locator, locator_status, confidence,
             extraction_method, source_ref, sort_key
         )
         VALUES (
             :media_id, :state_id, :stable_key, :kind, :label, :body_text,
-            :body_html_sanitized, :locator, :locator_status, :confidence,
+            :locator, :locator_status, :confidence,
             :extraction_method, :source_ref, :sort_key
         )
         RETURNING id
@@ -1899,7 +1853,6 @@ def replace_media_apparatus(
         SET kind = :kind,
             label = :label,
             body_text = :body_text,
-            body_html_sanitized = :body_html_sanitized,
             locator = :locator,
             locator_status = :locator_status,
             confidence = :confidence,
@@ -1926,7 +1879,6 @@ def replace_media_apparatus(
             "kind": item["kind"],
             "label": item.get("label"),
             "body_text": item.get("body_text"),
-            "body_html_sanitized": item.get("body_html_sanitized"),
             "locator": locator,
             "locator_status": item.get("locator_status", "exact" if locator else "missing"),
             "confidence": item["confidence"],
@@ -1938,10 +1890,7 @@ def replace_media_apparatus(
         if item_id is None:
             item_id = db.execute(item_insert, values).scalar_one()
         else:
-            _assert_one_mutated_row(
-                db.execute(item_update, {**values, "id": item_id}),
-                "reader apparatus item update",
-            )
+            db.execute(item_update, {**values, "id": item_id})
         ids_by_key[stable_key] = item_id
 
     removed_item_ids = [
@@ -1969,13 +1918,9 @@ def replace_media_apparatus(
         if stable_key not in set(edge_stable_keys)
     ]
     if removed_edge_ids:
-        _assert_mutated_rows(
-            db.execute(
-                text("DELETE FROM reader_apparatus_edges WHERE id = ANY(:ids)"),
-                {"ids": removed_edge_ids},
-            ),
-            expected=len(removed_edge_ids),
-            operation="reader apparatus edge deletion",
+        db.execute(
+            text("DELETE FROM reader_apparatus_edges WHERE id = ANY(:ids)"),
+            {"ids": removed_edge_ids},
         )
 
     edge_insert = text(
@@ -2023,68 +1968,42 @@ def replace_media_apparatus(
         }
         edge_id = existing_edges.get(stable_key)
         if edge_id is None:
-            _assert_one_mutated_row(
-                db.execute(edge_insert, values),
-                "reader apparatus edge insert",
-            )
+            db.execute(edge_insert, values)
         else:
-            _assert_one_mutated_row(
-                db.execute(edge_update, {**values, "id": edge_id}),
-                "reader apparatus edge update",
-            )
+            db.execute(edge_update, {**values, "id": edge_id})
 
     if removed_item_ids:
         _delete_apparatus_item_dependents(db, removed_item_ids)
-        _assert_mutated_rows(
-            db.execute(
-                text("DELETE FROM reader_apparatus_items WHERE id = ANY(:ids)"),
-                {"ids": removed_item_ids},
-            ),
-            expected=len(removed_item_ids),
-            operation="reader apparatus item deletion",
+        db.execute(
+            text("DELETE FROM reader_apparatus_items WHERE id = ANY(:ids)"),
+            {"ids": removed_item_ids},
         )
 
-    _assert_one_mutated_row(
-        db.execute(
-            text(
-                """
-                UPDATE reader_apparatus_states
-                SET media_kind = :media_kind,
-                    source_fingerprint = :source_fingerprint,
-                    extractor_version = :extractor_version,
-                    status = :status,
-                    item_count = :item_count,
-                    edge_count = :edge_count,
-                    diagnostics = :diagnostics
-                WHERE id = :state_id AND media_id = :media_id
-                """
-            ).bindparams(bindparam("diagnostics", type_=JSONB)),
-            {
-                "state_id": state_id,
-                "media_id": media_id,
-                "media_kind": media_kind,
-                "source_fingerprint": source_fingerprint_value,
-                "extractor_version": EXTRACTOR_VERSION,
-                "status": status,
-                "item_count": len(items),
-                "edge_count": len(edges),
-                "diagnostics": diagnostics or {},
-            },
-        ),
-        "reader apparatus state update",
+    db.execute(
+        text(
+            """
+            UPDATE reader_apparatus_states
+            SET media_kind = :media_kind,
+                source_fingerprint = :source_fingerprint,
+                status = :status,
+                item_count = :item_count,
+                edge_count = :edge_count,
+                diagnostics = :diagnostics
+            WHERE id = :state_id AND media_id = :media_id
+            """
+        ).bindparams(bindparam("diagnostics", type_=JSONB)),
+        {
+            "state_id": state_id,
+            "media_id": media_id,
+            "media_kind": media_kind,
+            "source_fingerprint": source_fingerprint_value,
+            "status": status,
+            "item_count": len(items),
+            "edge_count": len(edges),
+            "diagnostics": diagnostics or {},
+        },
     )
     db.flush()
-
-
-def _assert_one_mutated_row(result: object, operation: str) -> None:
-    _assert_mutated_rows(result, expected=1, operation=operation)
-
-
-def _assert_mutated_rows(result: object, *, expected: int, operation: str) -> None:
-    if getattr(result, "rowcount", None) != expected:
-        # justify-service-invariant-check: replace_media_apparatus holds the
-        # parent-media and state locks, so a missing owned row is a defect.
-        raise AssertionError(f"{operation} did not affect exactly {expected} rows")
 
 
 def delete_media_apparatus(db: Session, media_id: UUID) -> None:
@@ -2194,17 +2113,6 @@ def _validate_replacement(
         raise ApiError(ApiErrorCode.E_INTERNAL, "Terminal empty apparatus states cannot carry rows")
     if status in {"ready", "partial"} and not items:
         raise ApiError(ApiErrorCode.E_INTERNAL, "Reader apparatus state needs items")
-
-
-def _validate_state_counts(*, status: str, item_count: int, edge_count: int) -> None:
-    if item_count < 0 or edge_count < 0:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Reader apparatus state counts are invalid")
-    if status in {"empty", "unsupported", "failed"} and (item_count != 0 or edge_count != 0):
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Terminal empty apparatus state has rows")
-    if status in {"ready", "partial"} and item_count == 0:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Reader apparatus state has no items")
-    if status not in {"ready", "empty", "partial", "unsupported", "failed"}:
-        raise ApiError(ApiErrorCode.E_INTERNAL, "Invalid reader apparatus status")
 
 
 def _visible_media(db: Session, viewer_id: UUID, media_id: UUID) -> dict[str, object]:

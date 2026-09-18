@@ -623,7 +623,6 @@ def _materialize_pdf_native_link_apparatus(
                 "kind": "bibliography_ref",
                 "label": link.exact,
                 "body_text": None,
-                "body_html_sanitized": None,
                 "locator": {
                     "type": "pdf_page_geometry",
                     "media_id": str(media_id),
@@ -1105,7 +1104,6 @@ def _pdf_legal_footnote_target_item(
         "kind": "footnote",
         "label": str(target.label_number),
         "body_text": target.body_text,
-        "body_html_sanitized": None,
         "locator": {
             "type": "pdf_page_geometry",
             "media_id": str(media_id),
@@ -1148,7 +1146,6 @@ def _pdf_legal_footnote_marker_item(
         "kind": "footnote_ref",
         "label": label,
         "body_text": None,
-        "body_html_sanitized": None,
         "locator": {
             "type": "pdf_page_geometry",
             "media_id": str(media_id),
@@ -1456,7 +1453,6 @@ def _pdf_native_link_target_item(
         "kind": "bibliography_entry",
         "label": target.label,
         "body_text": target.body_text,
-        "body_html_sanitized": None,
         "locator": locator,
         "locator_status": "exact",
         "confidence": "exact",

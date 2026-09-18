@@ -20,7 +20,7 @@ from nexus.services.reader_locations import (
     order_key_from_locator,
 )
 from nexus.services.resource_graph.connections import query_connections
-from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
+from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import reader_target_for_citation_target
 from nexus.services.resource_graph.schemas import (
     Connection,
@@ -56,39 +56,18 @@ class ReaderConnectionRow:
     excerpt: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class ReaderConnectionPage:
-    items: tuple[ReaderConnectionRow, ...]
-    next_cursor: str | None
-
-
 def list_reader_connections(
     db: Session,
     *,
     viewer_id: UUID,
     media_id: UUID,
-    origins: tuple[EdgeOrigin, ...] | None,
-    source_schemes: tuple[ResourceScheme, ...] | None,
-    limit: int,
-    cursor: str | None,
-) -> ReaderConnectionPage:
+) -> list[ReaderConnectionRow]:
+    """Every reader-projected connection for one media, in reader order."""
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Media not found")
-    page = query_connections(
-        db,
-        viewer_id=viewer_id,
-        query=ConnectionQuery(
-            refs=(ResourceRef(scheme="media", id=media_id),),
-            direction="both",
-            rollup="owner",
-            filters=ConnectionFilters(origins=origins, source_schemes=source_schemes),
-            limit=limit,
-            cursor=cursor,
-        ),
-    )
-    # One request-scoped memo of normalized owner sources: a page whose passage
-    # anchors share the media being read reloads+renormalizes it once, not once
-    # per anchor. Passage-anchor locators are resolved LIVE (never persisted).
+    # One request-scoped memo of normalized owner sources: anchors that share
+    # the media being read reload+renormalize it once, not once per anchor.
+    # Passage-anchor locators are resolved LIVE (never persisted).
     sources_cache: text_quote.MediaSourceCache = {}
     anchors: dict[str, ReaderConnectionAnchor | None] = {}
     rows: list[ReaderConnectionRow] = []
@@ -105,43 +84,60 @@ def list_reader_connections(
             )
         return anchors[ref.uri]
 
-    for connection in page.items:
-        # A neutral Link is undirected, so BOTH endpoints may anchor in this
-        # media. When they do (a same-media Link between two local passages), the
-        # reader emits one row per local endpoint — each activating the opposite
-        # endpoint (§ Reader Projection). Every other edge keeps its single,
-        # locality-chosen anchor.
-        if connection.direction == "undirected":
-            source_anchor = anchor_for(connection, connection.source_ref)
-            target_anchor = anchor_for(connection, connection.target_ref)
-            if source_anchor is not None and target_anchor is not None:
-                rows.append(
-                    _row(
-                        connection=replace(connection, other=connection.target),
-                        anchor=source_anchor,
+    cursor: str | None = None
+    while True:
+        page = query_connections(
+            db,
+            viewer_id=viewer_id,
+            query=ConnectionQuery(
+                refs=(ResourceRef(scheme="media", id=media_id),),
+                direction="both",
+                rollup="owner",
+                filters=ConnectionFilters(origins=READER_CONNECTION_ORIGINS, source_schemes=None),
+                limit=100,
+                cursor=cursor,
+            ),
+        )
+        for connection in page.items:
+            # A neutral Link is undirected, so BOTH endpoints may anchor in this
+            # media. When they do (a same-media Link between two local passages), the
+            # reader emits one row per local endpoint — each activating the opposite
+            # endpoint (§ Reader Projection). Every other edge keeps its single,
+            # locality-chosen anchor.
+            if connection.direction == "undirected":
+                source_anchor = anchor_for(connection, connection.source_ref)
+                target_anchor = anchor_for(connection, connection.target_ref)
+                if source_anchor is not None and target_anchor is not None:
+                    rows.append(
+                        _row(
+                            connection=replace(connection, other=connection.target),
+                            anchor=source_anchor,
+                        )
                     )
-                )
+                    rows.append(
+                        _row(
+                            connection=replace(connection, other=connection.source),
+                            anchor=target_anchor,
+                        )
+                    )
+                    continue
+                anchor_ref = _anchor_ref(connection)
                 rows.append(
                     _row(
-                        connection=replace(connection, other=connection.source),
-                        anchor=target_anchor,
+                        connection=connection,
+                        anchor=source_anchor
+                        if anchor_ref.uri == connection.source_ref.uri
+                        else target_anchor,
                     )
                 )
                 continue
             anchor_ref = _anchor_ref(connection)
-            rows.append(
-                _row(
-                    connection=connection,
-                    anchor=source_anchor
-                    if anchor_ref.uri == connection.source_ref.uri
-                    else target_anchor,
-                )
-            )
-            continue
-        anchor_ref = _anchor_ref(connection)
-        rows.append(_row(connection=connection, anchor=anchor_for(connection, anchor_ref)))
+            rows.append(_row(connection=connection, anchor=anchor_for(connection, anchor_ref)))
+        if page.next_cursor is None:
+            break
+        cursor = page.next_cursor
     rows.sort(key=_row_order_key)
-    return ReaderConnectionPage(items=tuple(rows), next_cursor=page.next_cursor)
+    return rows
 
 
 def _row(*, connection: Connection, anchor: ReaderConnectionAnchor | None) -> ReaderConnectionRow:

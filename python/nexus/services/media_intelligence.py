@@ -17,8 +17,8 @@ unpersistable.
 The lower-level unit machinery (``ensure_media_unit``, ``get_media_unit``,
 ``run_media_unit_build`` and the fingerprint/candidate/persist helpers) is
 permission-free: it is driven by ingest, teardown and the worker, which enforce
-visibility upstream. The **owner facade** — ``read_single``, ``ensure_current``
-and ``ensure_current_many`` — is audience-gated: it masks unreadable media with a
+visibility upstream. The **owner facade** — ``read_single``, ``read_batch`` and
+``ensure_current_many`` — is audience-gated: it masks unreadable media with a
 404 *before* resolving any ids and never selects or keys a different summary.
 Routes, agents, search, Synapse, citation enrichment and Dossier bindings consume
 the facade (single / batch / bounded-many) and STOP reading ``media_summaries`` /
@@ -165,11 +165,11 @@ MediaAbstractStatus = Literal[
 class MediaProjection:
     """The authorized, compact, current-only per-media projection (Media Abstract).
 
-    Returned by the owner facade (``read_single`` / ``ensure_current`` /
-    ``read_batch`` / usable ``ensure_current_many`` items). ``summary_md`` /
+    Returned by the owner facade (``read_single`` / ``read_batch`` / usable
+    ``ensure_current_many`` items). ``summary_md`` /
     ``model_name`` are populated only when ``status == "ready"``. Grounded claims
     are NOT carried here (the abstract is compact); callers that need the claim
-    set read the internal :func:`get_current` (``MediaUnit``).
+    set read the internal :func:`get_media_unit` (``MediaUnit``).
     """
 
     media_id: UUID
@@ -212,7 +212,11 @@ def media_summary_orm_or_none(db: Session, *, media_id: UUID) -> MediaSummary | 
 
 
 def get_media_unit(db: Session, *, media_id: UUID) -> MediaUnit | NotReady:
-    """Return the ready unit, or a :class:`NotReady` reason. Permission-free."""
+    """Internal, permission-free single read: the current unit or a NotReady reason.
+
+    Consumers that hold their own visibility (e.g. Synapse) read the current unit
+    through here.
+    """
     summary = (
         db.execute(
             text("SELECT * FROM media_summaries WHERE media_id = :media_id"),
@@ -266,24 +270,13 @@ def get_media_unit(db: Session, *, media_id: UUID) -> MediaUnit | NotReady:
     )
 
 
-def get_current(db: Session, *, media_id: UUID) -> MediaUnit | NotReady:
-    """Internal, permission-free single read: the current unit or a NotReady reason.
-
-    The canonical owner-facing name for the internal media-unit read; the retained
-    :func:`get_media_unit` is its untouched implementation (referenced by the
-    media-unit-build worker/test seam). Consumers that hold their own visibility
-    (e.g. Synapse) read the current unit through here.
-    """
-    return get_media_unit(db, media_id=media_id)
-
-
 def read_batch(db: Session, *, media_ids: list[UUID]) -> dict[UUID, MediaProjection]:
     """Batch projection read for search / retrieval, keyed by media id.
 
     The set-based read model behind result-card and citation-chip enrichment:
     yields a ready :class:`MediaProjection` (``status='ready'``) only for media
     whose ``ready`` head still matches the freshly recomputed content fingerprint,
-    applying the same staleness gate as :func:`get_current` so a
+    applying the same staleness gate as :func:`get_media_unit` so a
     re-ingested-but-not-yet-rebuilt unit is withheld. Keeps populating
     ``summary_md`` so the FE consumers that read it off search / citation DTOs do
     not silently null out. Audience filtering is the caller's (the ids are already
@@ -322,7 +315,7 @@ def read_batch(db: Session, *, media_ids: list[UUID]) -> dict[UUID, MediaProject
 
 def _project(db: Session, *, media_id: UUID) -> MediaProjection:
     """Build the compact current-only :class:`MediaProjection` from unit state."""
-    unit = get_current(db, media_id=media_id)
+    unit = get_media_unit(db, media_id=media_id)
     if isinstance(unit, MediaUnit):
         return MediaProjection(
             media_id=media_id,
@@ -389,20 +382,6 @@ def read_single(db: Session, *, media_id: UUID, requester_user_id: UUID) -> Medi
     return _project(db, media_id=media_id)
 
 
-def ensure_current(db: Session, *, media_id: UUID, requester_user_id: UUID) -> MediaProjection:
-    """Authorized, idempotent-by-fingerprint ensure of the current unit.
-
-    404-masks unreadable media, then find-or-creates the current head and enqueues
-    a build when the content fingerprint moved (idempotent otherwise), returning
-    the resulting compact projection (typically ``status='building'`` on first
-    ensure).
-    """
-    if not can_read_media(db, requester_user_id, media_id):
-        raise NotFoundError(message="Media not found")
-    ensure_media_unit(db, media_id=media_id)
-    return _project(db, media_id=media_id)
-
-
 def ensure_current_many(
     db: Session,
     *,
@@ -440,7 +419,7 @@ def ensure_current_many(
                 MediaOmission(media_id=media_id, reason=MediaOmissionReason.NotAudienceVisible)
             )
             continue
-        unit = get_current(db, media_id=media_id)
+        unit = get_media_unit(db, media_id=media_id)
         if isinstance(unit, MediaUnit) and unit.claims:
             results.append(
                 MediaProjection(
@@ -730,116 +709,75 @@ async def run_media_unit_build(
             f"media {media_id} fingerprint {content_fingerprint} synthesis is uncertain"
         )
 
-    summary = media_summary_orm_or_none(db, media_id=media_id)
-    if summary is None:
+    def skip(reason: str) -> Literal["ok"]:
         if state is not None and state.dispatch_phase is step_journal.Prepared:
             _complete_prepared_media_unit_without_dispatch(
                 db,
                 owner=owner,
                 ctx=ctx,
                 state=state,
-                result=_CompletedSkip(reason="summary_missing"),
+                result=_CompletedSkip(reason=reason),
             )
-            return "ok"
-        db.commit()
+        else:
+            db.commit()
         return "ok"
+
+    def fail(completed: _CompletedFailure) -> Literal["ok", "failed"]:
+        if state is not None and state.dispatch_phase is step_journal.Prepared:
+            if not _complete_prepared_media_unit_without_dispatch(
+                db,
+                owner=owner,
+                ctx=ctx,
+                state=state,
+                result=completed,
+            ):
+                return "ok"
+        else:
+            db.commit()
+        fail_media_unit(
+            db,
+            summary_id=summary_id,
+            expected_fingerprint=content_fingerprint,
+            ctx=ctx,
+            error_code=completed.error_code,
+            error_detail=nullable_from_presence(completed.error_detail),
+        )
+        return "failed"
+
+    summary = media_summary_orm_or_none(db, media_id=media_id)
+    if summary is None:
+        return skip("summary_missing")
     if summary.id != summary_id:
         raise AssertionError("media unit job summary owner changed")
     if summary.content_fingerprint != content_fingerprint:
-        if state is not None and state.dispatch_phase is step_journal.Prepared:
-            _complete_prepared_media_unit_without_dispatch(
-                db,
-                owner=owner,
-                ctx=ctx,
-                state=state,
-                result=_CompletedSkip(reason="summary_superseded"),
-            )
-        else:
-            db.commit()
-        return "ok"
+        return skip("summary_superseded")
     if current_content_fingerprint(db, media_id=media_id) != content_fingerprint:
-        if state is not None and state.dispatch_phase is step_journal.Prepared:
-            _complete_prepared_media_unit_without_dispatch(
-                db,
-                owner=owner,
-                ctx=ctx,
-                state=state,
-                result=_CompletedSkip(reason="content_fingerprint_changed"),
-            )
-        else:
-            db.commit()
-        return "ok"
+        return skip("content_fingerprint_changed")
     if summary.status != "building":
         # A prior attempt already applied the Completed result.
-        if state is not None and state.dispatch_phase is step_journal.Prepared:
-            _complete_prepared_media_unit_without_dispatch(
-                db,
-                owner=owner,
-                ctx=ctx,
-                state=state,
-                result=_CompletedSkip(reason="summary_not_building"),
-            )
-        else:
-            db.commit()
-        return "ok"
+        return skip("summary_not_building")
 
     owner_row = db.execute(
         text("SELECT created_by_user_id FROM media WHERE id = :media_id"),
         {"media_id": media_id},
     ).scalar_one_or_none()
     if owner_row is None:
-        completed = _CompletedFailure(
-            error_code="no_owner",
-            error_detail=present("media has no owning user to attribute the generation to"),
+        return fail(
+            _CompletedFailure(
+                error_code="no_owner",
+                error_detail=present("media has no owning user to attribute the generation to"),
+            ),
         )
-        if state is not None and state.dispatch_phase is step_journal.Prepared:
-            if not _complete_prepared_media_unit_without_dispatch(
-                db,
-                owner=owner,
-                ctx=ctx,
-                state=state,
-                result=completed,
-            ):
-                return "ok"
-        else:
-            db.commit()
-        fail_media_unit(
-            db,
-            summary_id=summary_id,
-            expected_fingerprint=content_fingerprint,
-            ctx=ctx,
-            error_code=completed.error_code,
-            error_detail=nullable_from_presence(completed.error_detail),
-        )
-        return "failed"
     owner_user_id = UUID(str(owner_row))
 
     candidates = _load_candidates(db, media_id=media_id)
     if not candidates:
-        completed = _CompletedFailure(
-            error_code="no_candidates",
-            error_detail=present("media has no indexed content chunks with evidence spans"),
+        return fail(
+            _CompletedFailure(
+                error_code="no_candidates",
+                error_detail=present("media has no indexed content chunks with evidence spans"),
+            ),
         )
-        if state is not None and state.dispatch_phase is step_journal.Prepared:
-            if not _complete_prepared_media_unit_without_dispatch(
-                db,
-                owner=owner,
-                ctx=ctx,
-                state=state,
-                result=completed,
-            ):
-                return "ok"
-        else:
-            db.commit()
-        fail_media_unit(
-            db,
-            summary_id=summary_id,
-            expected_fingerprint=content_fingerprint,
-            ctx=ctx,
-            error_code=completed.error_code,
-            error_detail=nullable_from_presence(completed.error_detail),
-        )
-        return "failed"
 
     user_content = _build_media_unit_user_content(candidates)
     intent = _media_unit_intent(user_content=user_content)

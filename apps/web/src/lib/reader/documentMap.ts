@@ -255,12 +255,6 @@ export interface ReaderDocumentMap {
   media_kind: string;
   title: string;
   status: "ready" | "empty" | "partial";
-  source_version: {
-    media_updated_at: Presence<string>;
-    apparatus_source_fingerprint: Presence<string>;
-    graph_max_updated_at: Presence<string>;
-    highlights_max_updated_at: Presence<string>;
-  };
   navigation: Presence<MediaNavigationResponse["data"]>;
   embeds: DocumentEmbed[];
   evidence: ReaderEvidence;

@@ -9,11 +9,10 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
-from nexus.schemas.presence import absent, presence_from_nullable, present
+from nexus.schemas.presence import absent, present
 from nexus.schemas.reader_document_map import (
     ReaderDocumentMapDiagnosticsOut,
     ReaderDocumentMapOut,
-    ReaderDocumentMapSourceVersionOut,
     ReaderDocumentMapStatus,
 )
 from nexus.services import (
@@ -38,13 +37,12 @@ def get_reader_document_map(
 
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    reader_apparatus.guard_media_apparatus_generation(db, media_id)
 
     media = (
         db.execute(
             text(
                 """
-                SELECT id, kind, title, updated_at, page_count, processing_status
+                SELECT id, kind, title, page_count, processing_status
                 FROM media
                 WHERE id = :media_id
                 """
@@ -127,7 +125,9 @@ def get_reader_document_map(
         mine_only=False,
     )
     apparatus = reader_apparatus.get_media_apparatus(db, viewer_id, media_id)
-    connection_rows = _read_all_connections(db, viewer_id=viewer_id, media_id=media_id)
+    connection_rows = reader_connections.list_reader_connections(
+        db, viewer_id=viewer_id, media_id=media_id
+    )
     embed_rows = (
         document_embeds.list_document_embeds_for_media(db, viewer_id=viewer_id, media_id=media_id)
         if media_kind == "web_article"
@@ -176,28 +176,12 @@ def get_reader_document_map(
     status: ReaderDocumentMapStatus = (
         "partial" if partial else ("ready" if has_content else "empty")
     )
-    graph_max_updated_at = max((row.connection.created_at for row in connection_rows), default=None)
-    highlights_max_updated_at = max(
-        (highlight.updated_at for highlight in media_highlights), default=None
-    )
     return ReaderDocumentMapOut(
         media_id=media_id,
         generation=generation,
         media_kind=media_kind,
         title=str(media["title"]),
         status=status,
-        source_version=ReaderDocumentMapSourceVersionOut(
-            media_updated_at=presence_from_nullable(media["updated_at"]),
-            apparatus_source_fingerprint=present(apparatus.source_fingerprint),
-            graph_max_updated_at=(
-                present(graph_max_updated_at) if graph_max_updated_at is not None else absent()
-            ),
-            highlights_max_updated_at=(
-                present(highlights_max_updated_at)
-                if highlights_max_updated_at is not None
-                else absent()
-            ),
-        ),
         navigation=present(navigation) if navigation is not None else absent(),
         embeds=embed_rows,
         evidence=projection.evidence,
@@ -206,31 +190,3 @@ def get_reader_document_map(
             omitted_item_counts=omitted_item_counts,
         ),
     )
-
-
-def _read_all_connections(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    media_id: UUID,
-) -> list[reader_connections.ReaderConnectionRow]:
-    rows: list[reader_connections.ReaderConnectionRow] = []
-    cursor: str | None = None
-    seen_cursors: set[str] = set()
-    while True:
-        page = reader_connections.list_reader_connections(
-            db,
-            viewer_id=viewer_id,
-            media_id=media_id,
-            origins=reader_connections.READER_CONNECTION_ORIGINS,
-            source_schemes=None,
-            limit=100,
-            cursor=cursor,
-        )
-        rows.extend(page.items)
-        if page.next_cursor is None:
-            return rows
-        if page.next_cursor in seen_cursors:
-            raise RuntimeError("Reader graph pagination returned a repeated cursor")
-        seen_cursors.add(page.next_cursor)
-        cursor = page.next_cursor

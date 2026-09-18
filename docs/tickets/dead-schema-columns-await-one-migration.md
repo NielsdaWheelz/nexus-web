@@ -25,24 +25,17 @@ columns to drop, with the slice that removes their code side:
 - `fragment_blocks.block_type` + `is_empty` (SVCDOC-10)
 - `epub_resources.fallback_item_id` + `manifest_item_id` + `properties`
   (SVCDOC-16 / M-01)
-- `reader_apparatus_items.body_html_sanitized`,
-  `reader_apparatus_states.extractor_version`,
-  `content_blocks.{parent_block_id, selector, metadata (+
-  ck_content_blocks_metadata), extraction_confidence, source_start_offset,
-  source_end_offset}`, `content_chunks.token_count` (svc-media-reader-index)
 - `libraries.color` (SVCLIB-03; always NULL)
 - `resource_versions.content_hash` + its CHECK (RS-11)
 - `resource_grants.share_token_hash` + its unique index (RS-12)
 - `resource_external_snapshots.source_snapshot` +
   `ck_resource_external_snapshots_source_object` (M-01)
 
-tables to drop: `content_chunk_parts` (+ `ix_content_chunk_parts_block_id`,
-`ix_content_chunk_parts_chunk`; derived data, rebuilt by reindex),
-`podcast_transcript_request_audits` (POD-01; write-only audit ledger),
-`billing_entitlement_override_events` (SAM-02; write-only audit table),
-`external_provider_events` with `record_external_provider_event`, its three
-`x_ingest.py` call sites (1026, 1065, 1098) and the two FK-nulling UPDATEs at
-`services/media_deletion.py:680,691` (GEN-02), plus the dead tables the py-db
+tables to drop: `podcast_transcript_request_audits` (POD-01; write-only audit
+ledger), `billing_entitlement_override_events` (SAM-02; write-only audit
+table), `external_provider_events` with `record_external_provider_event`, its
+three `x_ingest.py` call sites (1026, 1065, 1098) and the two FK-nulling UPDATEs
+at `services/media_deletion.py:680,691` (GEN-02), plus the dead tables the py-db
 verifier confirms.
 
 not in scope: the trust prompt-assembly fields stay in `chat_prompt_assemblies`;

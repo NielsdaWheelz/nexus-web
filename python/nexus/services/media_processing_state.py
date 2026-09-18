@@ -6,12 +6,24 @@ mutating the columns directly, so the state machine has one owner.
 """
 
 from datetime import datetime
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import FailureStage, Media, MediaKind, ProcessingStatus
+
+type MediaFailureStage = Literal[
+    "upload",
+    "extract",
+    "transcribe",
+    "embed",
+    "metadata",
+    "other",
+]
+
+_MEDIA_FAILURE_STAGES = frozenset(stage.value for stage in FailureStage)
 
 
 def is_metadata_enrichment_eligible(*, kind: str, processing_status: str) -> bool:
@@ -22,23 +34,48 @@ def is_metadata_enrichment_eligible(*, kind: str, processing_status: str) -> boo
     )
 
 
-def mark_failed(
+def require_media_failure_stage(value: str) -> MediaFailureStage:
+    """Narrow a boundary string to the closed Media failure-stage contract."""
+    if value not in _MEDIA_FAILURE_STAGES:
+        raise AssertionError(f"unsupported Media failure stage: {value!r}")
+    return cast(MediaFailureStage, value)
+
+
+def mark_media_failed_by_id(
     db: Session,
-    media: Media,
     *,
-    stage: str,
+    media_id: UUID,
+    stage: MediaFailureStage,
     error_code: str,
     error_message: str,
+    now: datetime,
 ) -> None:
-    """Transition media to terminal failed; the owning transaction commits."""
-    media.processing_status = ProcessingStatus.failed
-    media.failure_stage = FailureStage(stage)
-    media.last_error_code = error_code
-    media.last_error_message = error_message
-    media.processing_completed_at = None
-    media.failed_at = func.now()
-    media.updated_at = func.now()
-    db.flush()
+    """Transition one locked Media row to terminal failure."""
+    updated = db.execute(
+        text(
+            """
+            UPDATE media
+            SET processing_status = 'failed',
+                failure_stage = :failure_stage,
+                last_error_code = :error_code,
+                last_error_message = :error_message,
+                processing_completed_at = NULL,
+                failed_at = :now,
+                updated_at = :now
+            WHERE id = :media_id
+            RETURNING id
+            """
+        ),
+        {
+            "media_id": media_id,
+            "failure_stage": stage,
+            "error_code": error_code,
+            "error_message": error_message,
+            "now": now,
+        },
+    ).one_or_none()
+    if updated is None:
+        raise AssertionError("terminal Media failure target is absent")
 
 
 def begin_extraction(db: Session, media: Media) -> None:
