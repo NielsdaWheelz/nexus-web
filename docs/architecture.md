@@ -367,7 +367,7 @@ hashes, fingerprints, or supersession chains.
 The tables group into these domains:
 
 **Identity / auth / sessions** — `users` (PK = Supabase `sub`),
-`billing_accounts`, `billing_entitlement_overrides` (+events),
+`billing_accounts`, `billing_entitlement_overrides`,
 `stripe_webhook_events`, `extension_sessions`, `auth_handoff_codes`,
 `reader_profiles`, `workspace_sessions`, `nexus_usages`. LLM access
 runs on platform credentials only — there is no per-user key table.

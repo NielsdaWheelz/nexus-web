@@ -150,7 +150,6 @@ def record_selection_for_viewer(
             client_mutation_id=request.client_mutation_id,
             request_bytes=request_bytes,
             response_json=response.model_dump(mode="json"),
-            changed_lanes={},
         )
         db.commit()
         return response

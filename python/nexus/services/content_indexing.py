@@ -1296,7 +1296,6 @@ def repair_dead_media_reindex(
                 client_mutation_id=actor.client_mutation_id,
                 request_bytes=request_bytes,
                 response_json=admission.model_dump(mode="json"),
-                changed_lanes={},
             )
         db.commit()
         return admission

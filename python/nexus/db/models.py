@@ -20,7 +20,6 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     Numeric,
-    SmallInteger,
     Text,
     text,
 )
@@ -299,7 +298,6 @@ class ResourceVersion(Base):
     resource_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     lane: Mapped[str] = mapped_column(Text, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
-    content_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -330,7 +328,6 @@ class ResourceMutation(Base):
     mutation_scope: Mapped[str] = mapped_column(Text, nullable=False)
     client_mutation_id: Mapped[str] = mapped_column(Text, nullable=False)
     request_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    changed_lanes: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     response_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -434,7 +431,6 @@ class ResourceExternalSnapshot(Base):
     url: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     snippet: Mapped[str] = mapped_column(Text, nullable=False)
-    source_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -445,7 +441,7 @@ class ResourceExternalSnapshot(Base):
 class PassageAnchor(Base):
     """User-owned durable passage identity within one owner (media or
     note_block), materialized when a Link/stance targets a derived passage
-    (universal-link-authoring-hard-cutover.md, Passage Anchor). Owner, version,
+    (universal-link-authoring-hard-cutover.md, Passage Anchor). Owner,
     normalized quote, and key are immutable; only the selector's locator_hint
     is replaceable. ``id`` is application-generated. ``owner_id`` is
     polymorphic and deliberately has no FK; owner visibility and explicit
@@ -462,7 +458,6 @@ class PassageAnchor(Base):
     )
     owner_scheme: Mapped[str] = mapped_column(Text, nullable=False)
     owner_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    selector_version: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     # sha256 hex of the canonical normalized quote {exact, prefix, suffix}.
     anchor_key: Mapped[str] = mapped_column(Text, nullable=False)
     # Quote identity plus non-identity locator_hint.
@@ -1506,7 +1501,6 @@ class ArtifactLearnFailure(Base):
         ForeignKey("artifact_learn_requests.id"),
         primary_key=True,
     )
-    error_code: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -2754,11 +2748,6 @@ class StripeWebhookEvent(Base):
     )
     stripe_event_id: Mapped[str] = mapped_column(Text, nullable=False)
     event_type: Mapped[str] = mapped_column(Text, nullable=False)
-    processed_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -2852,7 +2841,6 @@ class ResourceGrant(Base):
         nullable=True,
     )
     share_token: Mapped[str | None] = mapped_column(Text, nullable=True)
-    share_token_hash: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),

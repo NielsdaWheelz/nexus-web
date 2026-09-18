@@ -1211,7 +1211,6 @@ def _build_web_search_audit(
                 url=persisted.url,
                 title=persisted.title,
                 snippet=persisted.snippet,
-                source_snapshot=result_ref,
             )
         )
         source_id = str(persisted.external_snapshot_id)

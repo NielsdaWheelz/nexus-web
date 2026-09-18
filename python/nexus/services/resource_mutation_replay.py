@@ -77,7 +77,6 @@ def record_replay(
     client_mutation_id: str,
     request_bytes: bytes,
     response_json: dict[str, object],
-    changed_lanes: Mapping[str, object],
 ) -> None:
     """Add (not commit) the memo row so a future exact replay is a pure read.
 
@@ -90,7 +89,6 @@ def record_replay(
             mutation_scope=scope,
             client_mutation_id=client_mutation_id,
             request_hash=hashlib.sha256(request_bytes).hexdigest(),
-            changed_lanes=changed_lanes,
             response_json=response_json,
         )
     )

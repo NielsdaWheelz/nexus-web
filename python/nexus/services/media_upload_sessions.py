@@ -706,7 +706,6 @@ def retry_upload_session(
                 "generation": admitted.generation,
                 "expires_at": admitted.expires_at.isoformat(),
             },
-            changed_lanes={},
         )
         db.commit()
         return capability, admitted

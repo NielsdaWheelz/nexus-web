@@ -423,7 +423,7 @@ def _capture_daily_page_note_in_transaction(
         else _page_for_binding(db, viewer_id=viewer_id, binding=binding)
     )
     page_ref = _page_ref(page.id)
-    note = resource_surfaces.insert_note_occurrence_without_commit(
+    resource_surfaces.insert_note_occurrence_without_commit(
         db,
         viewer_id=viewer_id,
         source=page_ref,
@@ -432,7 +432,6 @@ def _capture_daily_page_note_in_transaction(
         position="end",
         reindex_reason="daily_capture",
     )
-    note_ref = _note_ref(note.id)
     response = DailyCaptureResult(
         client_mutation_id=request.client_mutation_id,
         local_date=local_date,
@@ -450,10 +449,6 @@ def _capture_daily_page_note_in_transaction(
         client_mutation_id=request.client_mutation_id,
         request_bytes=request_bytes,
         response_json=response.model_dump(mode="json", by_alias=True),
-        changed_lanes={
-            page_ref.uri: versions.versions_for_ref(db, viewer_id=viewer_id, ref=page_ref),
-            note_ref.uri: versions.versions_for_ref(db, viewer_id=viewer_id, ref=note_ref),
-        },
     )
     db.flush()
     return response
@@ -663,7 +658,6 @@ def _set_highlight_note_in_transaction(
         client_mutation_id=client_mutation_id,
         request_bytes=request_bytes,
         response_json=response.model_dump(mode="json", by_alias=True),
-        changed_lanes={scope: True},
     )
     db.flush()
     return response

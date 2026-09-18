@@ -217,7 +217,6 @@ def acquire_episode_from_discovery(
                 client_mutation_id=idempotency_key,
                 request_bytes=request_bytes,
                 response_json=response.model_dump(mode="json", by_alias=True),
-                changed_lanes={},
             )
             return response
 
