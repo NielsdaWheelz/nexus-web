@@ -23,6 +23,7 @@ import type {
 } from "@/lib/collections/types";
 import type { LocalAvailability } from "@/lib/offlineMedia/contract";
 import { useRelatedMedia } from "@/lib/resonance/useRelatedMedia";
+import { formatByteCount } from "@/lib/text/formatByteCount";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import ConnectionRail from "./ConnectionRail";
 import {
@@ -81,21 +82,6 @@ function renderExceptionalStatus(status: ExceptionalStatus): ReactNode {
     default:
       return assertNever(status, "Unsupported exceptional status");
   }
-}
-
-function formatByteCount(bytes: number): string {
-  if (bytes < 1_000) return `${bytes} B`;
-  const units = ["KB", "MB", "GB"] as const;
-  let value = bytes / 1_000;
-  let unit: (typeof units)[number] = units[0];
-  for (const nextUnit of units.slice(1)) {
-    if (value < 1_000) break;
-    value /= 1_000;
-    unit = nextUnit;
-  }
-  return `${new Intl.NumberFormat(undefined, {
-    maximumFractionDigits: value < 10 ? 1 : 0,
-  }).format(value)} ${unit}`;
 }
 
 function localAvailabilityStatus(
@@ -272,11 +258,9 @@ export default function CollectionRow({
   const disclosureId = useId();
   const reorderHintId = useId();
 
-  const connections = row.connections.kind === "Present" ? row.connections.value : null;
   const relatedMediaId =
     row.relatedMediaId.kind === "Present" ? row.relatedMediaId.value : null;
-  const hasConnections = connections !== null && connections.total > 0;
-  const hasPeerAffordance = hasConnections || relatedMediaId !== null;
+  const hasPeerAffordance = relatedMediaId !== null;
   const related = useRelatedMedia(showPeers ? relatedMediaId : null);
   const relatedStatus =
     relatedMediaId !== null && showPeers
@@ -461,7 +445,6 @@ export default function CollectionRow({
         {showPeers && hasPeerAffordance ? (
           <div id={disclosureId}>
             <ConnectionRail
-              peers={connections ? [...connections.topPeers] : []}
               related={related.data ? [...related.data] : []}
               relatedStatus={relatedStatus}
             />

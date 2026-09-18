@@ -81,7 +81,6 @@ export default function ConversationDestinationOverlay({
         ariaLabel={OVERLAY_TITLE}
         initialFocus={focusSearchField}
         skipReturnFocus={() => skipReturnRef.current}
-        backdropTestId="ask-existing-chat-backdrop"
       >
         <div className={styles.sheetHeader}>
           <h2 className={styles.sheetTitle}>{OVERLAY_TITLE}</h2>

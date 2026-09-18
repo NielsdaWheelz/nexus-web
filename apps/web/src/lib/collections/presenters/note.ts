@@ -20,7 +20,6 @@ export function presentNote(item: NotePageSummary): CollectionRowView {
     activity: absent(),
     exceptionalStatus: absent(),
     localAvailability: absent(),
-    connections: absent(),
     relatedMediaId: absent(),
     actionSubject: item.actionSubject,
     selected: false,

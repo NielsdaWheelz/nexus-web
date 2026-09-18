@@ -7,16 +7,12 @@ export type PillTone =
   | "success"
   | "warning"
   | "danger"
-  | "accent"
-  | "subtle";
-type PillShape = "pill" | "square";
-type PillSize = "xs" | "sm" | "md";
+  | "accent";
+type PillSize = "xs" | "sm";
 
 interface PillProps extends HTMLAttributes<HTMLSpanElement> {
   tone?: PillTone;
-  shape?: PillShape;
   size?: PillSize;
-  uppercase?: boolean;
 }
 
 const toneClass: Record<PillTone, string> = {
@@ -26,26 +22,17 @@ const toneClass: Record<PillTone, string> = {
   warning: styles.toneWarning,
   danger: styles.toneDanger,
   accent: styles.toneAccent,
-  subtle: styles.toneSubtle,
-};
-
-const shapeClass: Record<PillShape, string> = {
-  pill: styles.shapePill,
-  square: styles.shapeSquare,
 };
 
 const sizeClass: Record<PillSize, string> = {
   xs: styles.sizeXs,
   sm: styles.sizeSm,
-  md: styles.sizeMd,
 };
 
 const Pill = forwardRef<HTMLSpanElement, PillProps>(function Pill(
   {
     tone = "neutral",
-    shape = "pill",
     size = "sm",
-    uppercase = true,
     className,
     children,
     ...rest
@@ -55,9 +42,7 @@ const Pill = forwardRef<HTMLSpanElement, PillProps>(function Pill(
   const cls = [
     styles.pill,
     toneClass[tone],
-    shapeClass[shape],
     sizeClass[size],
-    uppercase ? styles.uppercase : "",
     className ?? "",
   ]
     .filter(Boolean)

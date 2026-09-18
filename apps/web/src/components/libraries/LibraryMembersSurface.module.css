@@ -42,7 +42,6 @@
 .inviteActions,
 .memberActions,
 .row,
-.unconfirmed,
 .pageError,
 .confirmationActions {
   display: flex;
@@ -92,7 +91,6 @@
   justify-content: flex-end;
 }
 
-.unconfirmed,
 .pageError {
   justify-content: space-between;
   flex-wrap: wrap;
@@ -106,7 +104,6 @@
 @container (max-width: 24rem) {
   .inviteActions,
   .row,
-  .unconfirmed,
   .pageError {
     align-items: stretch;
     flex-direction: column;

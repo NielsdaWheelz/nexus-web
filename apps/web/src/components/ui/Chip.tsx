@@ -1,4 +1,4 @@
-import { forwardRef, type HTMLAttributes, type ReactNode, type Ref } from "react";
+import { forwardRef, type HTMLAttributes, type Ref } from "react";
 import { X } from "lucide-react";
 import styles from "./Chip.module.css";
 
@@ -6,13 +6,10 @@ type ChipSize = "sm" | "md";
 
 interface ChipProps extends HTMLAttributes<HTMLElement> {
   size?: ChipSize;
-  selected?: boolean;
   removable?: boolean;
   /** What the remove control is called, so it reads outside its chip. */
   removeLabel?: string;
   onRemove?: () => void;
-  leadingIcon?: ReactNode;
-  truncate?: boolean;
   // Pressable toggle mode: when onPressedChange is given the chip renders a real
   // <button aria-pressed> (multi-select toggle semantics) instead of a <div>.
   pressed?: boolean;
@@ -28,12 +25,9 @@ const sizeClass: Record<ChipSize, string> = {
 const Chip = forwardRef<HTMLButtonElement | HTMLDivElement, ChipProps>(function Chip(
   {
     size = "sm",
-    selected = false,
     removable = false,
     removeLabel = "Remove",
     onRemove,
-    leadingIcon,
-    truncate = false,
     pressed,
     onPressedChange,
     disabled = false,
@@ -47,27 +41,14 @@ const Chip = forwardRef<HTMLButtonElement | HTMLDivElement, ChipProps>(function 
   const cls = [
     styles.chip,
     sizeClass[size],
-    selected || pressed ? styles.selected : "",
+    pressed ? styles.selected : "",
     isPressable ? styles.pressable : "",
     className ?? "",
   ]
     .filter(Boolean)
     .join(" ");
 
-  const labelCls = [styles.label, truncate ? styles.labelTruncate : ""]
-    .filter(Boolean)
-    .join(" ");
-
-  const body = (
-    <>
-      {leadingIcon ? (
-        <span className={styles.leadingIcon} aria-hidden="true">
-          {leadingIcon}
-        </span>
-      ) : null}
-      <span className={labelCls}>{children}</span>
-    </>
-  );
+  const body = <span className={styles.label}>{children}</span>;
 
   if (isPressable) {
     return (

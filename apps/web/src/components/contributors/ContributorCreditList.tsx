@@ -10,7 +10,6 @@ interface ContributorCreditListProps {
   credits: readonly ContributorCredit[] | null | undefined;
   className?: string;
   maxVisible?: number;
-  showRole?: boolean;
 }
 
 // Dense collection/discovery credit line (Surface 5). Renders every credit as an
@@ -22,7 +21,6 @@ export default function ContributorCreditList({
   credits,
   className,
   maxVisible = 3,
-  showRole = false,
 }: ContributorCreditListProps) {
   if (!Array.isArray(credits) || credits.length === 0) {
     return null;
@@ -39,7 +37,7 @@ export default function ContributorCreditList({
           key={`${credit.contributor_handle ?? credit.credited_name}-${credit.role ?? "role"}-${index}`}
         >
           {index > 0 ? <span className={styles.separator}>, </span> : null}
-          <ContributorChip credit={credit} showRole={showRole} />
+          <ContributorChip credit={credit} />
         </Fragment>
       ))}
       {overflowCount > 0 ? <span className={styles.overflow}>, +{overflowCount}</span> : null}

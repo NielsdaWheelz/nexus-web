@@ -17,7 +17,6 @@ export interface MobileModalLifecycleInput {
   onDismiss(): void;
   onDismissRequest?: () => DismissDecision;
   onEscape?: () => void;
-  historyDismiss?: boolean;
   initialFocus?: (container: HTMLElement) => HTMLElement | null;
   returnFocusTo?: ReturnFocusTarget;
   returnFocusFallback?: ReturnFocusTarget;
@@ -44,7 +43,6 @@ export function useMobileModalLifecycle({
   onDismiss,
   onDismissRequest,
   onEscape,
-  historyDismiss = true,
   initialFocus,
   returnFocusTo,
   returnFocusFallback,
@@ -73,7 +71,7 @@ export function useMobileModalLifecycle({
     layerScope,
   });
 
-  useHistoryDismiss(active && historyDismiss, requestDismiss, {
+  useHistoryDismiss(active, requestDismiss, {
     isTopmost: overlay.isTopmost,
     onHistorySettled: overlay.restoreFocus,
   });

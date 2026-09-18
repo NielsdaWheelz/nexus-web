@@ -64,7 +64,6 @@ export type DetachedFeedback =
 export interface FeedbackContextValue {
   publish(signal: DetachedFeedback): void;
   resolve(key: string): void;
-  suppress(key: string): () => void;
 }
 
 type SignalRecordBase = {
@@ -72,8 +71,6 @@ type SignalRecordBase = {
   key?: string;
   content: FeedbackContent;
   actions?: FeedbackActions;
-  revision: number;
-  announcedRevision: number;
 };
 
 type HudRecord = SignalRecordBase & {
@@ -307,8 +304,6 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
   const nextIdRef = useRef(1);
   const timersRef = useRef<Map<number, TimerState>>(new Map());
   const interactionPausesRef = useRef<Map<number, Set<PauseReason>>>(new Map());
-  const suppressionCountsRef = useRef<Map<string, number>>(new Map());
-  const [, setSuppressionEpoch] = useState(0);
   const announcementSequenceRef = useRef(0);
   const [detachedAnnouncement, setDetachedAnnouncement] =
     useState<DetachedAnnouncement | null>(null);
@@ -335,10 +330,6 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
     [clearTimer, commit],
   );
 
-  const isSuppressed = useCallback((key: string | undefined): boolean => {
-    return Boolean(key && (suppressionCountsRef.current.get(key) ?? 0) > 0);
-  }, []);
-
   const scheduleHud = useCallback(
     (id: number) => {
       clearTimer(id);
@@ -348,7 +339,6 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       );
       if (record === undefined || record.remainingMs <= 0) return;
       if (document.visibilityState === "hidden") return;
-      if (isSuppressed(record.key)) return;
       if ((interactionPausesRef.current.get(id)?.size ?? 0) > 0) return;
 
       timersRef.current.set(id, {
@@ -356,7 +346,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
         handle: setTimeout(() => removeRecord(id), record.remainingMs),
       });
     },
-    [clearTimer, isSuppressed, removeRecord],
+    [clearTimer, removeRecord],
   );
 
   const pauseHud = useCallback(
@@ -411,9 +401,6 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       }
 
       const id = existing?.id ?? nextIdRef.current++;
-      const revision = (existing?.revision ?? 0) + 1;
-      const suppressed = isSuppressed(signal.key);
-      const announcedRevision = suppressed ? (existing?.announcedRevision ?? 0) : revision;
       let nextRecord: SignalRecord;
 
       if (signal.kind === "Hud") {
@@ -423,8 +410,6 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
           key: signal.key,
           content: signal.content,
           actions: signal.actions,
-          revision,
-          announcedRevision,
           remainingMs: feedbackDuration(signal.actions),
         };
       } else {
@@ -435,8 +420,6 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
           content: signal.content,
           actions: signal.actions,
           announcement: signal.announcement,
-          revision,
-          announcedRevision,
         };
       }
 
@@ -448,35 +431,34 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       let nextRecords = existing
         ? recordsRef.current.map((record) => (record.id === id ? nextRecord : record))
         : [...recordsRef.current, nextRecord];
-      const visibleHudRecords = nextRecords.filter(
-        (record): record is HudRecord =>
-          record.kind === "Hud" && !isSuppressed(record.key),
+      const hudRecords = nextRecords.filter(
+        (record): record is HudRecord => record.kind === "Hud",
       );
-      if (visibleHudRecords.length > MAX_HUDS) {
+      if (hudRecords.length > MAX_HUDS) {
         // Evict the oldest HUD the user is not actively reading. A hovered or
         // focused HUD is paused (WCAG 2.2.1 Timing Adjustable) and must not be
         // yanked out from under the pointer; only when every rendered HUD is
         // paused does the oldest fall back to eviction.
         const evicted =
-          visibleHudRecords.find(
+          hudRecords.find(
             (record) =>
               record.id !== id &&
               (interactionPausesRef.current.get(record.id)?.size ?? 0) === 0,
           ) ??
-          visibleHudRecords.find((record) => record.id !== id) ??
-          visibleHudRecords[0];
+          hudRecords.find((record) => record.id !== id) ??
+          hudRecords[0];
         clearTimer(evicted.id);
         interactionPausesRef.current.delete(evicted.id);
         nextRecords = nextRecords.filter((record) => record.id !== evicted.id);
       }
 
       commit(nextRecords);
-      if (!suppressed) announce(nextRecord);
+      announce(nextRecord);
       if (nextRecord.kind === "Hud" && nextRecords.some((record) => record.id === id)) {
         scheduleHud(id);
       }
     },
-    [announce, clearTimer, commit, isSuppressed, scheduleHud],
+    [announce, clearTimer, commit, scheduleHud],
   );
 
   const resolve = useCallback(
@@ -485,85 +467,6 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       if (record) removeRecord(record.id);
     },
     [removeRecord],
-  );
-
-  const suppress = useCallback(
-    (key: string) => {
-      const previousCount = suppressionCountsRef.current.get(key) ?? 0;
-      suppressionCountsRef.current.set(key, previousCount + 1);
-      if (previousCount === 0) {
-        const record = recordsRef.current.find((candidate) => candidate.key === key);
-        if (record?.kind === "Hud") {
-          pauseHud(record.id);
-          interactionPausesRef.current.delete(record.id);
-        }
-        // pauseHud has no state update when the HUD was already paused.
-        setSuppressionEpoch((epoch) => epoch + 1);
-      }
-
-      let released = false;
-      return () => {
-        if (released) return;
-        released = true;
-        const count = suppressionCountsRef.current.get(key) ?? 0;
-        if (count > 1) {
-          suppressionCountsRef.current.set(key, count - 1);
-          return;
-        }
-
-        suppressionCountsRef.current.delete(key);
-        const record = recordsRef.current.find((candidate) => candidate.key === key);
-        if (record === undefined) {
-          setSuppressionEpoch((epoch) => epoch + 1);
-          return;
-        }
-
-        let nextRecords = recordsRef.current;
-        if (record.kind === "Hud") {
-          const visibleHudRecords = nextRecords.filter(
-            (candidate): candidate is HudRecord =>
-              candidate.kind === "Hud" && !isSuppressed(candidate.key),
-          );
-          if (visibleHudRecords.length > MAX_HUDS) {
-            const evictedRecord =
-              visibleHudRecords.find(
-                (candidate) =>
-                  candidate.id !== record.id &&
-                  (interactionPausesRef.current.get(candidate.id)?.size ?? 0) ===
-                    0,
-              ) ??
-              visibleHudRecords.find((candidate) => candidate.id !== record.id);
-            if (evictedRecord !== undefined) {
-              clearTimer(evictedRecord.id);
-              interactionPausesRef.current.delete(evictedRecord.id);
-              nextRecords = nextRecords.filter(
-                (candidate) => candidate.id !== evictedRecord.id,
-              );
-            }
-          }
-        }
-
-        if (record.announcedRevision < record.revision) {
-          const restoredRecord = {
-            ...record,
-            announcedRevision: record.revision,
-          } as SignalRecord;
-          commit(
-            nextRecords.map((candidate) =>
-              candidate.id === restoredRecord.id ? restoredRecord : candidate,
-            ),
-          );
-          announce(restoredRecord);
-        } else if (nextRecords !== recordsRef.current) {
-          commit(nextRecords);
-        } else {
-          setSuppressionEpoch((epoch) => epoch + 1);
-        }
-
-        if (record.kind === "Hud") scheduleHud(record.id);
-      };
-    },
-    [announce, clearTimer, commit, isSuppressed, pauseHud, scheduleHud],
   );
 
   const setPauseReason = useCallback(
@@ -624,11 +527,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
     };
   }, [pauseHud, scheduleHud]);
 
-  const value = useMemo(
-    () => ({ publish, resolve, suppress }),
-    [publish, resolve, suppress],
-  );
-  const visibleRecords = records.filter((record) => !isSuppressed(record.key));
+  const value = useMemo(() => ({ publish, resolve }), [publish, resolve]);
 
   return (
     <FeedbackContext.Provider value={value}>
@@ -662,7 +561,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
         role="region"
         aria-label="Persistent feedback"
       >
-        {visibleRecords
+        {records
           .filter((record): record is PersistentRecord => record.kind === "Persistent")
           .map((record) => (
             <SignalArticle
@@ -675,7 +574,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
           ))}
       </div>
       <div className={styles.hudViewport} role="region" aria-label="HUD feedback">
-        {visibleRecords
+        {records
           .filter((record): record is HudRecord => record.kind === "Hud")
           .map((record) => (
             <SignalArticle

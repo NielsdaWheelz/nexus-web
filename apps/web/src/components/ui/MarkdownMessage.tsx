@@ -122,7 +122,6 @@ function CodeBlockWrapper({
         className={styles.codeBlockContent}
         data-pane-find-code-scroll="true"
         data-lang={language}
-        data-testid="markdown-code-scroll"
       >
         {children}
       </div>
@@ -141,7 +140,7 @@ function TableBlock({
   ...rest
 }: HTMLAttributes<HTMLTableElement> & { children?: ReactNode; node?: unknown }) {
   return (
-    <div className={styles.tableScroll} data-testid="markdown-table-scroll">
+    <div className={styles.tableScroll}>
       <table {...rest}>{children}</table>
     </div>
   );

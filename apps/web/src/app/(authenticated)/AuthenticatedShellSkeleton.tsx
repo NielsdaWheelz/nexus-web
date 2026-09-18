@@ -9,7 +9,7 @@ import styles from "./AuthenticatedShellSkeleton.module.css";
 // seamless (D-8). Server component, CSS-only — no client JS, CSP-safe.
 export function AuthenticatedShellSkeleton() {
   return (
-    <div className={layout.layout} data-testid="shell-skeleton">
+    <div className={layout.layout}>
       {/* No pane label exists yet, and this tree carries no metadata title, so
           the first flush names the app until the host reveals and replaces it. */}
       <title>Nexus</title>

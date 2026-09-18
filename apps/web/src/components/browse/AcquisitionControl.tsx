@@ -131,49 +131,20 @@ async function fetchWritableDestinationIndex(): Promise<
 }
 
 function replacementConflict(error: unknown): {
-  conflicts: PodcastReplacementConflict[];
+  conflicts: readonly PodcastReplacementConflict[];
   conflictFingerprint: string;
 } | null {
-  if (
-    !isApiError(error) ||
-    error.code !== "E_PODCAST_REPLACES_EPISODES" ||
-    !error.details ||
-    Object.keys(error.details).length !== 2 ||
-    !Array.isArray(error.details.conflicts) ||
-    typeof error.details.conflictFingerprint !== "string" ||
-    error.details.conflictFingerprint.length === 0
-  ) {
+  if (!isApiError(error) || error.code !== "E_PODCAST_REPLACES_EPISODES") {
     return null;
   }
-  const conflicts = error.details.conflicts.map((raw) => {
-    if (
-      typeof raw !== "object" ||
-      raw === null ||
-      Array.isArray(raw) ||
-      Object.keys(raw).length !== 3 ||
-      !("libraryId" in raw) ||
-      !("libraryName" in raw) ||
-      !("episodeCount" in raw) ||
-      typeof raw.libraryId !== "string" ||
-      typeof raw.libraryName !== "string" ||
-      typeof raw.episodeCount !== "number" ||
-      !Number.isInteger(raw.episodeCount) ||
-      raw.episodeCount <= 0
-    ) {
-      throw new TypeError("Podcast replacement conflict is invalid");
-    }
-    return {
-      libraryId: raw.libraryId,
-      libraryName: raw.libraryName,
-      episodeCount: raw.episodeCount,
-    };
-  });
-  if (conflicts.length === 0) {
-    throw new TypeError("Podcast replacement conflict must be non-empty");
+  const conflicts = error.details?.conflicts;
+  const conflictFingerprint = error.details?.conflictFingerprint;
+  if (!Array.isArray(conflicts) || typeof conflictFingerprint !== "string") {
+    throw error;
   }
   return {
-    conflicts,
-    conflictFingerprint: error.details.conflictFingerprint,
+    conflicts: conflicts as readonly PodcastReplacementConflict[],
+    conflictFingerprint,
   };
 }
 
