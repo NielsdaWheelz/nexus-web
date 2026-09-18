@@ -49,7 +49,7 @@ INLINE_THRESHOLD_CHARS = 1500
 # Byline label for resolved media/quote rows: composed from the canonical credit
 # read owner so the sole raw ``contributor_credits`` read lives there (spec §3).
 _AUTHORS_SQL = media_author_names_agg_sql()
-_AUTHORS_JOIN_SQL = media_author_credits_join_sql("m.id")
+_AUTHORS_JOIN_SQL = media_author_credits_join_sql()
 
 
 @dataclass(frozen=True)

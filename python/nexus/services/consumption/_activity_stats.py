@@ -29,7 +29,6 @@ from nexus.services.consumption.handles import (
     seal_device,
 )
 from nexus.services.contributor_credits import (
-    current_contributor_rows_for_media_sql,
     current_media_contributor_rows_sql,
 )
 
@@ -785,6 +784,14 @@ def active_exclusion_rows(
     ]
 
 
+def _credits_for_media_sql() -> str:
+    """Current credit facts restricted to the supplied media ids. Binds ``:media_ids``."""
+    return f"""
+        SELECT * FROM ({current_media_contributor_rows_sql()}) credit
+        WHERE credit.media_id = ANY(CAST(:media_ids AS uuid[]))
+    """
+
+
 def top_contributor_rows(
     db: Session, *, viewer_id: UUID, query: ActivityQuery, as_of: datetime
 ) -> tuple[list[dict[str, Any]], int]:
@@ -793,11 +800,7 @@ def top_contributor_rows(
     media_ids = [row["media_id"] for row in media_rows]
     if not media_ids:
         return [], 0
-    credits = (
-        db.execute(text(current_contributor_rows_for_media_sql()), {"media_ids": media_ids})
-        .mappings()
-        .all()
-    )
+    credits = db.execute(text(_credits_for_media_sql()), {"media_ids": media_ids}).mappings().all()
     metrics = {
         row["media_id"]: {
             "active_ms": int(row["active_ms"]),
@@ -1134,7 +1137,7 @@ def completion_stats_rows(
     if media_ids:
         credits = (
             db.execute(
-                text(current_contributor_rows_for_media_sql()),
+                text(_credits_for_media_sql()),
                 {"media_ids": media_ids},
             )
             .mappings()

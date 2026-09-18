@@ -21,17 +21,16 @@ from nexus.services.collection_revisions import (
     bump_collection_revisions,
 )
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
-from nexus.services.contributor_observation_seam import (
-    ContributorObservation,
-    MediaTarget,
-    apply_contributor_observation_in_current_transaction,
-)
 from nexus.services.contributor_taxonomy import (
     NOT_OBSERVED,
     ContributorObservationBatch,
     ObservedRoleSlices,
     RawCreditEntry,
     build_observation,
+)
+from nexus.services.contributors import (
+    MediaTarget,
+    apply_observed_role_slices_in_current_transaction,
 )
 from nexus.services.library_entries import (
     ensure_subscription_episode_default_in_current_transaction,
@@ -257,13 +256,11 @@ def sync_subscription_ingest(
             )
             observation = _build_episode_author_observation(author_names)
             if isinstance(observation, ObservedRoleSlices):
-                apply_contributor_observation_in_current_transaction(
+                apply_observed_role_slices_in_current_transaction(
                     db,
-                    ContributorObservation(
-                        target=MediaTarget(media_id),
-                        observation=observation,
-                        source="rss",
-                    ),
+                    target=MediaTarget(media_id),
+                    observation=observation,
+                    source="rss",
                 )
             if not author_names:
                 enrichment_media_ids.add(media_id)
@@ -372,13 +369,11 @@ def sync_subscription_ingest(
             )
             observation = _build_episode_author_observation(author_names)
             if isinstance(observation, ObservedRoleSlices):
-                apply_contributor_observation_in_current_transaction(
+                apply_observed_role_slices_in_current_transaction(
                     db,
-                    ContributorObservation(
-                        target=MediaTarget(media_id),
-                        observation=observation,
-                        source="rss",
-                    ),
+                    target=MediaTarget(media_id),
+                    observation=observation,
+                    source="rss",
                 )
             attach_episode_aliases_in_current_transaction(
                 db,

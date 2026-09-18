@@ -3,7 +3,7 @@
 ``SearchQuery`` is the sole input to ``search()`` (spec §5.1/§5.2). The HTTP route
 and the chat tool both parse transport → ``SearchQuery`` at the edge. Validation is
 query-strict: invalid kinds/formats/roles raise 400 rather than being normalized
-(D-11), unlike the lenient ingestion-time ``normalize_contributor_role``.
+(D-11).
 """
 
 from __future__ import annotations

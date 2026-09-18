@@ -2746,39 +2746,6 @@ class BillingEntitlementOverride(Base):
     )
 
 
-class BillingEntitlementOverrideEvent(Base):
-    """Audit event for an internal entitlement grant mutation."""
-
-    __tablename__ = "billing_entitlement_override_events"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        server_default=text("gen_random_uuid()"),
-    )
-    override_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("billing_entitlement_overrides.id"),
-        nullable=True,
-    )
-    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"))
-    event_type: Mapped[str] = mapped_column(Text, nullable=False)
-    actor_user_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=True,
-    )
-    actor_label: Mapped[str | None] = mapped_column(Text, nullable=True)
-    reason: Mapped[str] = mapped_column(Text, nullable=False)
-    before_state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    after_state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-
 class StripeWebhookEvent(Base):
     """Processed Stripe webhook event id for idempotency."""
 
