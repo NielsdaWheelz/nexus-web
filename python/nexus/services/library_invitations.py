@@ -27,13 +27,12 @@ from nexus.errors import (
 from nexus.schemas.library import (
     AcceptLibraryInviteResponse,
     DeclineLibraryInviteResponse,
-    EmailLibraryInvitee,
     InviteAcceptMembershipOut,
     LibraryGovernancePageInfo,
     LibraryInvitationOut,
     LibraryInvitationStatusValue,
-    LibraryInvitee,
     LibraryRole,
+    UserLibraryInvitee,
     ViewerLibraryInvitationOut,
 )
 from nexus.schemas.presence import absent, presence_from_nullable, present
@@ -193,10 +192,10 @@ def create_library_invite(
     db: Session,
     viewer_id: UUID,
     library_id: UUID,
-    invitee: LibraryInvitee,
+    invitee: UserLibraryInvitee,
     role: LibraryRole,
 ) -> LibraryInvitationOut:
-    """Create an invitation from one strict sealed-user or email audience."""
+    """Create an invitation for one strict sealed-user audience."""
 
     def attempt() -> LibraryInvitationOut:
         with transaction(db):
@@ -205,31 +204,16 @@ def create_library_invite(
             governance.require_non_default(ctx.is_default)
             governance.require_not_system(ctx.system_key)
 
-            if isinstance(invitee, EmailLibraryInvitee):
-                normalized_invitee_email = invitee.email.strip()
-                if not normalized_invitee_email:
-                    raise InvalidRequestError(
-                        ApiErrorCode.E_INVALID_REQUEST,
-                        "Invitee email is required",
-                    )
-                row = db.execute(
-                    text("SELECT id FROM users WHERE email = :email"),
-                    {"email": normalized_invitee_email},
-                ).fetchone()
-                if row is None:
-                    raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found")
-                invitee_user_id = row[0]
-            else:
-                try:
-                    invitee_user_id = unseal_user(invitee.user_handle)
-                except InvalidSealedHandle as exc:
-                    raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found") from exc
-                invitee_exists = db.execute(
-                    text("SELECT 1 FROM users WHERE id = :uid"),
-                    {"uid": invitee_user_id},
-                ).fetchone()
-                if invitee_exists is None:
-                    raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found")
+            try:
+                invitee_user_id = unseal_user(invitee.user_handle)
+            except InvalidSealedHandle as exc:
+                raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found") from exc
+            invitee_exists = db.execute(
+                text("SELECT 1 FROM users WHERE id = :uid"),
+                {"uid": invitee_user_id},
+            ).fetchone()
+            if invitee_exists is None:
+                raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found")
 
             member_exists = db.execute(
                 text("SELECT 1 FROM memberships WHERE library_id = :lid AND user_id = :uid"),

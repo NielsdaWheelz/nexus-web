@@ -40,7 +40,7 @@ from nexus.services.codex_generation_contract import (
     retained_terminal_error_detail,
 )
 from nexus.services.collection_revisions import (
-    CollectionFamily,
+    ENTRY_VISIBILITY_FAMILIES,
     bump_all_collection_families,
 )
 from nexus.services.contributors import (
@@ -113,12 +113,6 @@ _LEASE_SECONDS = 300
 _PRE_DISPATCH_SOURCE_CHANGED_DETAIL = "metadata request fingerprint changed before dispatch"
 _PRE_DISPATCH_MEDIA_MISSING_DETAIL = "metadata media no longer exists before dispatch"
 _PRE_DISPATCH_NOT_READY_DETAIL = "metadata media is no longer ready before dispatch"
-_COLLECTION_FAMILIES = (
-    CollectionFamily.AuthorWorks,
-    CollectionFamily.LibraryEntries,
-    CollectionFamily.PodcastEpisodes,
-    CollectionFamily.PodcastSubscriptions,
-)
 _METADATA_TASK_SPEC = LlmTaskSpec(label="metadata_generation")
 
 
@@ -721,7 +715,7 @@ def _stage_pre_dispatch_terminal(
                 # media_not_found before source_changed.
                 raise AssertionError("source-changed terminal has no media")
             _record_metadata_failure(media, code, _PRE_DISPATCH_SOURCE_CHANGED_DETAIL)
-            bump_all_collection_families(db, families=_COLLECTION_FAMILIES)
+            bump_all_collection_families(db, families=ENTRY_VISIBILITY_FAMILIES)
         case "media_not_found":
             result = _SkippedPublication(reason="media_not_found")
             completed = _CompletedSkip(
@@ -925,7 +919,7 @@ def _publish_completed_transaction(
             and media.last_error_message == completed.error_detail
         ):
             _record_metadata_failure(media, completed.error_code, completed.error_detail)
-            bump_all_collection_families(db, families=_COLLECTION_FAMILIES)
+            bump_all_collection_families(db, families=ENTRY_VISIBILITY_FAMILIES)
         return _commit_publication_result(
             db,
             context=context,
@@ -944,7 +938,7 @@ def _publish_completed_transaction(
         code = ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value
         detail = "media facts changed before metadata publication"
         _record_metadata_failure(media, code, detail)
-        bump_all_collection_families(db, families=_COLLECTION_FAMILIES)
+        bump_all_collection_families(db, families=ENTRY_VISIBILITY_FAMILIES)
         return _commit_publication_result(
             db,
             context=context,
@@ -966,7 +960,7 @@ def _publish_completed_transaction(
         media.failure_stage = None
         media.last_error_code = None
         media.last_error_message = None
-    bump_all_collection_families(db, families=_COLLECTION_FAMILIES)
+    bump_all_collection_families(db, families=ENTRY_VISIBILITY_FAMILIES)
     result = _success_result(merge_result.accepted_fields)
     persisted = _commit_publication_result(
         db,

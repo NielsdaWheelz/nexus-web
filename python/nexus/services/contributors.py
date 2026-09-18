@@ -168,6 +168,7 @@ from nexus.services.signed_keyset_cursor import (
     decode_signed_keyset_cursor,
     encode_signed_keyset_cursor,
 )
+from nexus.text import escape_like
 
 # One fresh session + one serializable operation per chunk of gutenberg targets
 # (D-15): caps a 75k-row first sync at ~375 transactions without sharing any
@@ -200,7 +201,7 @@ def search_contributors(
     if not q_key:
         return ContributorSearchPageOut(contributors=[], nextCursor=None)
 
-    pattern = f"%{_escape_like(q_key)}%"
+    pattern = f"%{escape_like(q_key)}%"
     params: dict[str, object] = {
         "viewer_id": viewer_id,
         "pattern": pattern,
@@ -1305,10 +1306,6 @@ def _foreign_author_memo_exists(db: Session, *, contributor: Contributor) -> boo
         {"contributor_handle": contributor.handle},
     ).first()
     return row is not None
-
-
-def _escape_like(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _encode_cursor(payload: dict[str, object]) -> str:

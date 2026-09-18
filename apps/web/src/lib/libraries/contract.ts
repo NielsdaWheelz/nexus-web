@@ -23,7 +23,6 @@ export type LibraryGovernanceCursor = string;
 export interface LibraryOut {
   id: string;
   name: string;
-  color: string | null;
   ownerUserHandle: string;
   isDefault: boolean;
   role: LibraryRole;
@@ -213,7 +212,6 @@ export function expectLibraryOut(
   const row = exactRecord(raw, name, [
     "id",
     "name",
-    "color",
     "ownerUserHandle",
     "isDefault",
     "role",
@@ -229,7 +227,6 @@ export function expectLibraryOut(
   return {
     id: text(row.id, `${name}.id`),
     name: text(row.name, `${name}.name`),
-    color: nullableText(row.color, `${name}.color`),
     ownerUserHandle: userHandle(
       row.ownerUserHandle,
       `${name}.ownerUserHandle`,

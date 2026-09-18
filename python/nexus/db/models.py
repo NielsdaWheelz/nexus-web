@@ -517,7 +517,6 @@ class Library(Base):
         nullable=False,
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    color: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_default: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
     # System-owned identity for non-user-created libraries (e.g. 'oracle_corpus').
     # NULL for ordinary user libraries; protects rename/delete/share/entry edits.

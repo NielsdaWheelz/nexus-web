@@ -121,10 +121,11 @@ that matter:
   `GET /podcasts/{podcastId}/libraries` is registered by the always-available
   Library relationship router, not the optional provider-ingestion router.
   `PUT /libraries/{libraryId}/podcasts/{podcastId}` is placement-only: it
-  requires and transactionally rechecks the active subscription, uses a stable
-  idempotency key, and never creates a subscription. An existing unsubscribed
-  Podcast remains a canonical actionable resource; its placement inventory
-  exposes named destinations as blocked with `RequiresSubscription`.
+  requires and transactionally rechecks the active subscription, is
+  outcome-idempotent by construction, and never creates a subscription. An
+  existing unsubscribed Podcast remains a canonical actionable resource; its
+  placement inventory exposes named destinations as blocked with
+  `RequiresSubscription`.
   The row owns the nullable playback-rate and pause-shortening defaults;
   nullable pause shortening projects as `Presence<Off | Natural>` and means
   use the Android device default.

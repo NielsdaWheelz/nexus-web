@@ -45,15 +45,11 @@ export function isLibraryDestinationDefect(error: unknown): boolean {
 export interface LibraryDestination {
   id: string;
   name: string;
-  color: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export type LibraryDestinationSelection = Pick<
-  LibraryDestination,
-  "id" | "name" | "color"
->;
+export type LibraryDestinationSelection = Pick<LibraryDestination, "id" | "name">;
 
 export interface LibraryDestinationPage {
   data: LibraryDestination[];
@@ -308,11 +304,6 @@ function decodeLibraryDestination(
       `${field}.name must be a non-empty string`,
     );
   }
-  if (raw.color !== null && typeof raw.color !== "string") {
-    return invalidDestinationResponse(
-      `${field}.color must be a string or null`,
-    );
-  }
   if (typeof raw.created_at !== "string" || raw.created_at.length === 0) {
     return invalidDestinationResponse(
       `${field}.created_at must be a non-empty string`,
@@ -326,7 +317,6 @@ function decodeLibraryDestination(
   return {
     id: raw.id,
     name: raw.name,
-    color: raw.color,
     created_at: raw.created_at,
     updated_at: raw.updated_at,
   };

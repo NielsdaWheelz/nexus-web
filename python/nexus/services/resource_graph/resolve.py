@@ -31,7 +31,7 @@ from nexus.auth.permissions import (
 )
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import retrieval_locator_json
-from nexus.services import library_entries
+from nexus.services import library_entries, library_entry_listing
 from nexus.services.artifacts.registry import visible_persisted_subject
 from nexus.services.artifacts.subject_policy import DossierSubjectScheme
 from nexus.services.contributor_credits import (
@@ -796,7 +796,9 @@ def _load_library(
         db, [lid for lid in ids if lid not in own_default_ids]
     )
     virtual_counts = {
-        lid: library_entries.count_default_root_inventory(db, viewer_id=viewer_id, library_id=lid)
+        lid: library_entry_listing.count_default_root_inventory(
+            db, viewer_id=viewer_id, library_id=lid
+        )
         for lid in own_default_ids
     }
     out: list[LoadedResource] = []

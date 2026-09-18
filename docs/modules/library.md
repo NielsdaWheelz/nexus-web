@@ -25,18 +25,22 @@ The domain is split into three owned modules, each owning its own tables:
   exactly-one-target check) and the `media_target`/`podcast_target` constructors,
   the single canonical entry ordering constant (`_ENTRY_ORDER = "position ASC,
 created_at DESC, id DESC"`), the locked `ensure_entry` append, deletes and
-  `normalize_positions`, all read accessors, hydration, and the item-in-library
+  `normalize_positions`, all read accessors, and the item-in-library
   commands (`list_item_libraries`, `ensure_media_in_library`,
   `add_podcast_to_library`, `remove_podcast_from_library`, `reorder_entries`,
   `ensure_media_in_libraries_for_viewer`,
   `ensure_media_absent_from_library_for_viewer`,
   `assign_libraries_for_media_in_current_transaction`,
   named Podcast placement/compaction, and unsubscribe placement teardown).
-  It also composes, for reads only, the factual view lenses (Title/Creator/
-  Published/Added, each ascending or descending) and a hide-finished
-  completion filter — see
-  [`cutovers/library-sorting-hard-cutover.md`](../cutovers/library-sorting-hard-cutover.md);
-  none of these write `position`.
+- **`services/library_entry_listing.py`** owns the entry listing path:
+  `parse_entries_query` and the view lenses (the factual Title/Creator/
+  Published/Added orders, each ascending or descending, the
+  all-items/unfiled/in-progress projections and the hide-finished completion
+  filter — see
+  [`cutovers/library-sorting-hard-cutover.md`](../cutovers/library-sorting-hard-cutover.md)),
+  the sort-key plan and signed keyset cursor, `count_default_root_inventory`,
+  `list_library_entries`, and hydration into the wire DTOs. It reads through
+  `library_entries` and writes nothing; `library_entries` never imports it.
 - **`services/library_invitations.py`** owns the `library_invitations` table:
   create/list/list-for-viewer/accept/decline/revoke. Accept is one transaction
   — membership upsert, then invite status update — and returns
@@ -59,7 +63,7 @@ The Library pane's capability-gated **Members** Companion tab is the sole
 non-default membership-governance UI, including invitation lifecycle, roles,
 removal, and ownership transfer. Library Share retains member-only link actions
 and exposes one authorized **Manage members** activation into that tab.
-`LibrarySettingsDialog` owns name/color settings only. Media and podcast
+`LibrarySettingsDialog` owns name settings only. Media and podcast
 placement is a separate top-level `Libraries…` resource relationship action
 backed by `LibraryEntryEditor`; it never appears inside Share. Library entries
 are organization references rather than access-grant provenance. See
@@ -237,8 +241,8 @@ is the sole media-level aggregate owner: it sums stored integers for a bounded
 batch and never reads document text on a request. Shared PDF quote readiness
 likewise uses the stored positive word count instead of scanning `plain_text`.
 
-`services/library_entries.py` applies the one product policy (240 words/minute,
-coarse half-up 1/5/15-minute rounding) while hydrating entries. Only ready,
+`services/library_entry_listing.py` applies the one product policy (240
+words/minute, coarse half-up 1/5/15-minute rounding) while hydrating entries. Only ready,
 quotable web articles, EPUBs, and text PDFs with a positive count receive a
 value. Every `LibraryEntryOut` has a required
 `readingTimeEstimate: Presence<ReadingTimeEstimateOut>`: total is always present
@@ -336,7 +340,7 @@ the resource graph, contributor credits, media/podcasts, and the semantic index;
 those modules retain their tables and mutations.
 
 - Library entry ordering is no longer Resonance's: it is the factual view
-  lenses owned by `library_entries` (see
+  lenses owned by `library_entry_listing` (see
   [`cutovers/library-sorting-hard-cutover.md`](../cutovers/library-sorting-hard-cutover.md)).
   Resonance here retains only the Reading Slate.
 - `GET /libraries/{id}/slate` returns zero to ten deterministic suggestions
@@ -406,9 +410,8 @@ DELETE /libraries/{library_id}/podcasts/{podcast_id}
 
 The GETs return the strict destination/relation/availability inventory. Media
 POST and Saved PUT are idempotent bodyless commands; removals and Podcast
-placement return typed collection revisions. Podcast PUT/DELETE carry a stable
-`Idempotency-Key`. There is no inverse library-to-media write route and no
-scoped resource-delete query mode.
+placement return typed collection revisions. There is no inverse
+library-to-media write route and no scoped resource-delete query mode.
 
 ## Composition Rules
 

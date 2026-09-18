@@ -37,7 +37,6 @@ interface PlacementCommand {
   readonly destination: LibraryPlacementDestination;
   readonly destinationKey: LibraryPlacementDestinationKey;
   readonly op: PlacementOp;
-  readonly clientMutationId: string;
 }
 
 interface CreateCommand {
@@ -507,13 +506,11 @@ export function useLibraryPlacement(
           await addLibraryPlacement({
             target: committedSession.target,
             destination: command.destination,
-            clientMutationId: command.clientMutationId,
           });
         } else {
           await removeLibraryPlacement({
             target: committedSession.target,
             destination: command.destination,
-            clientMutationId: command.clientMutationId,
           });
         }
       } catch (error) {
@@ -624,9 +621,8 @@ export function useLibraryPlacement(
           await finishCommitted(committedSession, observed, command, lease);
           return;
         case "RetryCommand":
-          // Replay the exact command identity. Podcast commands replay their
-          // idempotency memo; Media placement commands are themselves
-          // idempotent at the owning endpoint.
+          // Replay the exact command identity; every placement endpoint is
+          // idempotent by outcome.
           await runCommand(committedSession, observed, command, lease);
           return;
         case "DestinationGone": {
@@ -772,7 +768,6 @@ export function useLibraryPlacement(
           destination: decision.destination,
           destinationKey,
           op: "Add",
-          clientMutationId: crypto.randomUUID(),
         },
         lease,
       );
@@ -809,7 +804,6 @@ export function useLibraryPlacement(
           destination: option.destination,
           destinationKey,
           op,
-          clientMutationId: crypto.randomUUID(),
         },
         lease,
       );
