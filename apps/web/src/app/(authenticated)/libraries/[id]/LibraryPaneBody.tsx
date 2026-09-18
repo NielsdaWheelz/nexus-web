@@ -1351,7 +1351,6 @@ export default function LibraryPaneBody() {
         return Promise.resolve({ kind: "Abandoned" });
       }
       const targetId = slateTargetId(target);
-      const clientMutationId = crypto.randomUUID();
       const frozenAttempt = () =>
         addLibraryPlacement({
           target: { kind: target.kind, id: targetId },
@@ -1360,10 +1359,8 @@ export default function LibraryPaneBody() {
             library: {
               id: currentLibrary.id,
               name: currentLibrary.name,
-              color: currentLibrary.color,
             },
           },
-          clientMutationId,
         });
 
       return new Promise((resolve) => {
@@ -1602,7 +1599,6 @@ export default function LibraryPaneBody() {
                         {
                           id: currentLibrary.id,
                           name: currentLibrary.name,
-                          color: currentLibrary.color,
                         },
                       ],
                 },

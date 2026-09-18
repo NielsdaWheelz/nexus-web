@@ -217,7 +217,7 @@ class _CanonicalTextTarget:
     def data(self, text: str) -> None:
         if not self._visible_stack or not self._visible_stack[-1]:
             return
-        normalized = _normalize_text(text)
+        normalized = WHITESPACE_RE.sub(" ", text)
         if normalized:
             self.builder.append(normalized)
 
@@ -699,18 +699,3 @@ def _normalize_nfc_with_sources(
 
 def _is_whitespace(char: str) -> bool:
     return WHITESPACE_RE.fullmatch(char) is not None
-
-
-def _normalize_text(text: str) -> str:
-    """Normalize whitespace in text.
-
-    - Maps all Unicode whitespace to space
-    - Collapses consecutive spaces to single space
-    """
-    if not text:
-        return ""
-
-    # Replace all whitespace with single space
-    normalized = WHITESPACE_RE.sub(" ", text)
-
-    return normalized

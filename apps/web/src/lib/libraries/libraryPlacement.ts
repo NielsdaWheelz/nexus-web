@@ -14,7 +14,6 @@ export type LibraryPlacementTarget =
 export interface LibraryPlacementIdentity {
   readonly id: string;
   readonly name: string;
-  readonly color: string | null;
 }
 
 export type LibraryPlacementDestination =
@@ -93,7 +92,7 @@ function decodeIdentity(
   context: string,
 ): LibraryPlacementIdentity {
   const value = requireRecord(raw, context);
-  requireExactKeys(value, ["id", "name", "color"], context);
+  requireExactKeys(value, ["id", "name"], context);
   const ref =
     typeof value.id === "string"
       ? parseResourceRef(`library:${value.id}`)
@@ -101,14 +100,13 @@ function decodeIdentity(
   if (
     ref === null ||
     typeof value.name !== "string" ||
-    value.name.trim().length === 0 ||
-    (value.color !== null && typeof value.color !== "string")
+    value.name.trim().length === 0
   ) {
     throw new LibraryPlacementContractDefect(
       `Invalid ${context}: invalid field`,
     );
   }
-  return { id: ref.id, name: value.name, color: value.color };
+  return { id: ref.id, name: value.name };
 }
 
 function decodeDestination(raw: unknown): LibraryPlacementDestination {
@@ -332,10 +330,9 @@ function requireNamedDestination(
 export async function addLibraryPlacement(input: {
   readonly target: LibraryPlacementTarget;
   readonly destination: LibraryPlacementDestination;
-  readonly clientMutationId: string;
   readonly signal?: AbortSignal;
 }): Promise<void> {
-  const { target, destination, clientMutationId, signal } = input;
+  const { target, destination, signal } = input;
   switch (target.kind) {
     case "Media":
       if (destination.kind === "SavedInNexus") {
@@ -354,11 +351,7 @@ export async function addLibraryPlacement(input: {
       const library = requireNamedDestination(target, destination);
       const response = await apiFetch<unknown>(
         `/api/libraries/${library.id}/podcasts/${target.id}`,
-        {
-          method: "PUT",
-          headers: { "Idempotency-Key": clientMutationId },
-          signal,
-        },
+        { method: "PUT", signal },
       );
       decodePodcastPlacementAddition(response);
       publishLibraryPlacementChange([library.id]);
@@ -387,10 +380,9 @@ function decodePodcastPlacementAddition(raw: unknown): CollectionRevision {
 export async function removeLibraryPlacement(input: {
   readonly target: LibraryPlacementTarget;
   readonly destination: LibraryPlacementDestination;
-  readonly clientMutationId: string;
   readonly signal?: AbortSignal;
 }): Promise<CollectionRevision> {
-  const { target, destination, clientMutationId, signal } = input;
+  const { target, destination, signal } = input;
   let response: unknown;
   let changedLibraryIds: string[] | "Unknown" = [];
   switch (target.kind) {
@@ -414,11 +406,7 @@ export async function removeLibraryPlacement(input: {
       changedLibraryIds = [library.id];
       response = await apiFetch<unknown>(
         `/api/libraries/${library.id}/podcasts/${target.id}`,
-        {
-          method: "DELETE",
-          headers: { "Idempotency-Key": clientMutationId },
-          signal,
-        },
+        { method: "DELETE", signal },
       );
       break;
     }

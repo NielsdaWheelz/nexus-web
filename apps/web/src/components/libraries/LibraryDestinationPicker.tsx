@@ -45,7 +45,6 @@ function toItem(
   return {
     id: destination.id,
     name: destination.name,
-    color: destination.color,
     selected,
     interaction: { kind: "Enabled" },
   };
