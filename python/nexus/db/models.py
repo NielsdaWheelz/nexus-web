@@ -1151,8 +1151,6 @@ class DocumentEmbedArtifactState(Base):
     resolved_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     unsupported_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     failed_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    extraction_error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    extraction_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     diagnostics: Mapped[dict[str, object]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
@@ -3044,14 +3042,11 @@ class EpubResource(Base):
         ForeignKey("media.id"),
         nullable=False,
     )
-    manifest_item_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     package_href: Mapped[str] = mapped_column(Text, nullable=False)
     asset_key: Mapped[str] = mapped_column(Text, nullable=False)
     storage_path: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str] = mapped_column(Text, nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    fallback_item_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    properties: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),
@@ -3084,8 +3079,6 @@ class FragmentBlock(Base):
     block_idx: Mapped[int] = mapped_column(Integer, nullable=False)
     start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
-    block_type: Mapped[str | None] = mapped_column(Text, nullable=True)
-    is_empty: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
     # Relationships
     fragment: Mapped["Fragment"] = relationship("Fragment")

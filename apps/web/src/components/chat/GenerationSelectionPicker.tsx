@@ -869,7 +869,6 @@ export default function GenerationSelectionPicker({
         initialFocus={() => searchRef.current}
         returnFocusTo={() => triggerRef.current}
         focusKey={catalog.definition_revision}
-        backdropTestId="generation-selection-backdrop"
       >
         {content}
       </MobileSheet>

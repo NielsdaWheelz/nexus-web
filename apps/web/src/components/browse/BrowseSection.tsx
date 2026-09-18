@@ -3,16 +3,12 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import CollectionView from "@/components/collections/CollectionView";
 import Button from "@/components/ui/Button";
-import { ApiError, type ApiPath } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/client";
 import type { CursorPage } from "@/lib/api/useCursorPagination";
 import { useCursorPagination } from "@/lib/api/useCursorPagination";
 import { useResource, type AsyncResource } from "@/lib/api/useResource";
 import { absent, present } from "@/lib/api/presence";
-import {
-  browsePagePath,
-  fetchBrowsePage,
-  fetchBrowsePagePath,
-} from "@/lib/browse/client";
+import { fetchBrowsePage } from "@/lib/browse/client";
 import {
   decodeBrowseSectionFailure,
   type BrowseCandidate,
@@ -179,23 +175,16 @@ export default function BrowseSection({
   const pagination = useCursorPagination({
     firstPage,
     initialMoreError,
-    buildMoreHref: (cursor) =>
-      browsePagePath({
-        query,
-        ...identity,
-        limit: PAGE_SIZE,
-        cursor,
-      }),
-    loadMorePage: async (href, signal) =>
+    loadMorePage: async (cursor, signal) =>
       cursorPage(
         await runRequest(signal, () =>
-          fetchBrowsePagePath(
-            // justify-type-assertion: buildMoreHref returns browsePagePath's
-            // ApiPath unchanged; useCursorPagination widens it to string.
-            href as ApiPath,
-            { query, ...identity },
+          fetchBrowsePage({
+            query,
+            ...identity,
+            limit: PAGE_SIZE,
+            cursor,
             signal,
-          ),
+          }),
         ),
       ),
   });

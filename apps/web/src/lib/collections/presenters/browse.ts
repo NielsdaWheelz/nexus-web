@@ -85,7 +85,6 @@ export function presentBrowseCandidate(
     activity: absent(),
     exceptionalStatus: absent(),
     localAvailability: absent(),
-    connections: absent(),
     relatedMediaId: absent(),
     actionSubject:
       candidate.resolution.kind === "InNexus"
@@ -116,7 +115,6 @@ export function presentPreviewEpisode(
     activity: absent(),
     exceptionalStatus: absent(),
     localAvailability: absent(),
-    connections: absent(),
     relatedMediaId: absent(),
     actionSubject: null,
     selected: false,

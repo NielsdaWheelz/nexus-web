@@ -7,7 +7,11 @@ import {
   type FeedbackAnnouncement,
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
-import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
+import {
+  apiTransportFeedback,
+  isApiError,
+  isSameSystemApiDefect,
+} from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { createRandomId } from "@/lib/createRandomId";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
@@ -54,22 +58,9 @@ function highlightNoteErrorMessage(
       ? "Highlight note wasn’t saved"
       : "Linked object wasn’t opened";
   const requestId = error.requestId;
+  const transport = apiTransportFeedback(error, title);
+  if (transport) return transport;
   switch (error.code) {
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title,
-        message: "Check your connection and try again.",
-        requestId,
-      };
-    case "E_UPSTREAM_TIMEOUT":
-    case "E_RATE_LIMITED":
-      return {
-        tone: "Danger",
-        title,
-        message: "Please wait a moment, then try again.",
-        requestId,
-      };
     case "E_NOT_FOUND":
       if (operation !== "Save") throw error;
       return {
@@ -150,7 +141,6 @@ export default function HighlightNoteEditor({
   editable,
   onSave,
   onDelete,
-  onLocalChange,
   onOpenLink,
   onSubmitted,
 }: {
@@ -170,7 +160,6 @@ export default function HighlightNoteEditor({
     clientMutationId: string,
     shouldApply: () => boolean,
   ) => Promise<void>;
-  onLocalChange?: () => void;
   onOpenLink: (href: string, disposition: WorkspaceTargetDisposition) => void;
   onSubmitted?: () => void;
 }) {
@@ -335,10 +324,9 @@ export default function HighlightNoteEditor({
       editVersionRef.current += 1;
       setSubmitRequested(false);
       setSaveFailure(null);
-      onLocalChange?.();
       scheduleSessionSave(body);
     },
-    [onLocalChange, scheduleSessionSave],
+    [scheduleSessionSave],
   );
 
   const discardRecoveredDraft = useCallback(() => {

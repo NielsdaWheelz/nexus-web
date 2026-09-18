@@ -98,13 +98,9 @@ function loadedSignature(authors: MediaAuthorCredit[]): string {
   return JSON.stringify(authors.map((a) => [`existing:${a.contributorHandle}`, a.creditedName]));
 }
 
-function formatCount(n: number): string {
-  return new Intl.NumberFormat().format(n);
-}
-
 function removedAnnouncement(name: string, remaining: number): string {
   const count =
-    remaining === 0 ? "No authors" : remaining === 1 ? "1 author" : `${formatCount(remaining)} authors`;
+    remaining === 0 ? "No authors" : remaining === 1 ? "1 author" : `${new Intl.NumberFormat().format(remaining)} authors`;
   return `Removed ${name}. ${count}.`;
 }
 
@@ -712,7 +708,6 @@ export default function MediaAuthorsEditor({
         onDismissRequest={requestDismiss}
         returnFocusTo={returnFocusTo}
         returnFocusFallback={returnFocusFallback}
-        backdropTestId="edit-authors-backdrop"
       >
         {renderContent(true)}
       </MobileSheet>

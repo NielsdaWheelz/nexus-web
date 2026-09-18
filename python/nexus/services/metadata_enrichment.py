@@ -114,39 +114,10 @@ _METADATA_MAX_AUTHORS = 20
 _METADATA_PROMPT_HINT_MAX_BYTES = 1_024
 _METADATA_PROMPT_HINT_TOTAL_MAX_BYTES = 8_192
 _METADATA_PROMPT_SOURCE_RESERVED_BYTES = 16_384
-# The wire bound splits three ways by construction: bounded hints, reserved
-# source capacity, and the remainder for the code-owned trusted framing. The
-# framing's largest possible rendering is a module fact the content contract
-# proves fits its share, so no prompt build can find a negative budget.
-_METADATA_PROMPT_FRAMING_RESERVED_BYTES = (
-    _METADATA_INPUT_MAX_BYTES
-    - _METADATA_PROMPT_HINT_TOTAL_MAX_BYTES
-    - _METADATA_PROMPT_SOURCE_RESERVED_BYTES
-)
 _METADATA_PROMPT_TRUNCATION_MARKER = " [truncated]"
 # A hint is one persisted scalar or the current author-name list; nothing else
 # is ever disclosed, so the renderer branches exhaustively on this union.
 type _MetadataPromptHint = str | list[str]
-_METADATA_PROMPT_HINT_LABELS = (
-    "kind",
-    "current_title",
-    "media_ref",
-    "admission_facts",
-    "requested_url",
-    "canonical_source_url",
-    "canonical_url",
-    "external_playback_url",
-    "provider",
-    "provider_id",
-    "current_authors",
-    "current_publisher",
-    "current_original_published_date",
-    "current_edition_published_date",
-    "edition_isbn",
-    "current_language",
-    "current_description",
-    "podcast_title",
-)
 _METADATA_KIND_RULES = {
     "epub": (
         "Saved item is an EPUB/book work. Prefer the work title and creators over "
@@ -510,9 +481,7 @@ def build_enrichment_user_content(
     # The wire contract is byte-bounded, but all persisted field values and
     # extracted source are untrusted UTF-8 data. Reserve every trusted label,
     # section heading, and delimiter first; then allocate the remaining bytes
-    # deterministically to metadata values (in priority order) and source. The
-    # framing fits its reserved share by construction (see
-    # metadata_prompt_budget), so every budget below is non-negative.
+    # deterministically to metadata values (in priority order) and source.
     structural_bytes = _framing_bytes(metadata_line_prefixes, kind_rule)
     untrusted_budget = _METADATA_INPUT_MAX_BYTES - structural_bytes
     metadata_budget = min(
@@ -551,32 +520,6 @@ def _framing_bytes(line_prefixes: Sequence[str], kind_rule: str) -> int:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class MetadataPromptBudget:
-    """The wire bound's three-way split and the framing's largest possible rendering."""
-
-    wire_bound_bytes: int
-    hint_total_max_bytes: int
-    source_reserved_bytes: int
-    framing_reserved_bytes: int
-    framing_max_bytes: int
-
-
-def metadata_prompt_budget() -> MetadataPromptBudget:
-    """Expose the prompt budget so the content contract can prove it closes."""
-    longest_rule = max((*_METADATA_KIND_RULES.values(), _METADATA_DEFAULT_KIND_RULE), key=len)
-    return MetadataPromptBudget(
-        wire_bound_bytes=_METADATA_INPUT_MAX_BYTES,
-        hint_total_max_bytes=_METADATA_PROMPT_HINT_TOTAL_MAX_BYTES,
-        source_reserved_bytes=_METADATA_PROMPT_SOURCE_RESERVED_BYTES,
-        framing_reserved_bytes=_METADATA_PROMPT_FRAMING_RESERVED_BYTES,
-        framing_max_bytes=_framing_bytes(
-            tuple(f"- {label}: " for label in _METADATA_PROMPT_HINT_LABELS),
-            longest_rule,
-        ),
-    )
-
-
 def _bounded_utf8_text(value: str, max_bytes: int) -> str:
     encoded = value.encode("utf-8")
     if len(encoded) <= max_bytes:
@@ -591,8 +534,7 @@ def _allocate_bounded_metadata_hints(
     """Render ordered untrusted hints as bounded valid JSON values.
 
     The hint budget always covers one truncation marker per hint: the framing
-    reservation leaves the full hint total available, and at most
-    ``len(_METADATA_PROMPT_HINT_LABELS)`` hints exist.
+    reservation leaves the full hint total available.
     """
     remaining = budget
     bounded_values: list[str] = []

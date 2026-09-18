@@ -26,8 +26,3 @@ a.link:focus-visible {
      the slot level, never per-name — so no per-name ellipsis here. */
   overflow-wrap: anywhere;
 }
-
-.role {
-  margin-inline-start: var(--space-1);
-  color: var(--ink-muted);
-}

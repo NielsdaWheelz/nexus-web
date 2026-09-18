@@ -175,30 +175,10 @@ def issue_generation_tool_grant(
     jti = uuid4()
     claims = authority.claims(jti=jti, issued_at=current, expires_at=expires)
     return IssuedGenerationToolGrant(
-        token=issue_agent_tool_grant(claims, signing_key=signing_key, now=now),
+        token=_encode_claims(claims, key=_key(signing_key)),
         jti=str(jti),
         expires_at=datetime.fromtimestamp(expires, tz=UTC),
     )
-
-
-def issue_agent_tool_grant(
-    claims: AgentToolGrantClaims,
-    *,
-    signing_key: SecretStr,
-    now: datetime,
-) -> SecretStr:
-    """Encode already-frozen claims after exact lifetime validation."""
-
-    current = _epoch(now)
-    checked = AgentToolGrantClaims.model_validate(claims.model_dump(mode="json"))
-    if checked.iat != current or checked.nbf != current:
-        raise ValueError("grant iat and nbf must equal the issuing clock")
-    if checked.exp <= current or checked.exp - current > MAX_AGENT_TOOL_GRANT_TTL_SECONDS:
-        raise ValueError(
-            "grant lifetime must be positive and no greater than "
-            f"{MAX_AGENT_TOOL_GRANT_TTL_SECONDS} seconds"
-        )
-    return _encode_claims(checked, key=_key(signing_key))
 
 
 def verify_agent_tool_grant(
@@ -271,7 +251,6 @@ __all__ = [
     "GenerationToolGrantAuthority",
     "IssuedGenerationToolGrant",
     "MAX_AGENT_TOOL_GRANT_TTL_SECONDS",
-    "issue_agent_tool_grant",
     "issue_generation_tool_grant",
     "validate_agent_tool_grant_signing_key",
     "verify_agent_tool_grant",

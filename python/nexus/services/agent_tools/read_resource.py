@@ -40,7 +40,6 @@ from nexus.services.resource_graph.refs import (
     parse_resource_ref,
 )
 from nexus.services.resource_graph.resolve import (
-    LoadedQuote,
     LoadedResource,
     load_resource_batch,
 )
@@ -54,25 +53,20 @@ from nexus.services.resource_items.capabilities import (
 class ReadResourceResult:
     """Executed read-resource tool call.
 
-    ``body`` carries exact text on success or the domain refusal on failure.
-    The canonical tool-runtime binding owns the model-facing JSON projection.
+    ``body`` carries exact text on success and is empty on failure. The
+    canonical tool-runtime binding owns the model-facing JSON projection.
     """
 
     uri: str
     status: Literal["complete", "error"]
-    body: str
+    body: str = ""
     kind: str | None = None
-    quote: LoadedQuote | None = None
     # Citation target for evidence kinds (quote/section/full/page_range): the
     # (result_type, source_id) get_search_result needs to materialize a chip.
     # None for non-evidence (too_large) and errors.
     citation_result_type: str | None = None
     citation_source_id: str | None = None
     error_code: str | None = None
-    subject_ref: str | None = None
-    artifact_ref: str | None = None
-    revision_ref: str | None = None
-    revision_is_current: bool | None = None
 
     @property
     def is_error(self) -> bool:
@@ -96,15 +90,7 @@ def execute_read_resource(
         admitted_resource_uris=admitted_resource_uris,
         allow_derived_read=True,
     ):
-        return ReadResourceResult(
-            uri=uri,
-            status="error",
-            body=(
-                f"Resource {uri} is not in this operation's admitted scope. "
-                "Search for an admitted source first."
-            ),
-            error_code="not_in_context_refs",
-        )
+        return ReadResourceResult(uri=uri, status="error", error_code="not_in_context_refs")
 
     if uri.startswith("page_range:"):
         return _enforce_read_bound(_read_page_range(db, viewer_id, uri))
@@ -112,39 +98,15 @@ def execute_read_resource(
     parsed = parse_resource_ref(uri)
     if isinstance(parsed, ResourceRefParseFailure):
         if parsed.reason == "unsupported_scheme":
-            scheme = uri.partition(":")[0]
-            return ReadResourceResult(
-                uri=uri,
-                status="error",
-                body=f"Resource URI scheme '{scheme}' is not supported.",
-                error_code="unknown_scheme",
-            )
-        return ReadResourceResult(
-            uri=uri,
-            status="error",
-            body=f"Resource URI {uri} is malformed or has an invalid identifier.",
-            error_code="invalid_uri",
-        )
+            return ReadResourceResult(uri=uri, status="error", error_code="unknown_scheme")
+        return ReadResourceResult(uri=uri, status="error", error_code="invalid_uri")
 
     read_policy = resource_read_policy(parsed)
     if read_policy == "scope":
-        return ReadResourceResult(
-            uri=uri,
-            status="error",
-            body=(
-                f"Resource {uri} is a search scope, not a readable resource. "
-                f'Call nexus__search(query=..., scopes=["{uri}"]) instead.'
-            ),
-            error_code="scope_not_readable",
-        )
+        return ReadResourceResult(uri=uri, status="error", error_code="scope_not_readable")
 
     if read_policy == "none":
-        return ReadResourceResult(
-            uri=uri,
-            status="error",
-            body=f"Resource {uri} has no readable body for nexus__resource__read.",
-            error_code="not_readable",
-        )
+        return ReadResourceResult(uri=uri, status="error", error_code="not_readable")
 
     if read_policy == "media":
         return _enforce_read_bound(_read_media(db, viewer_id, parsed.id, uri))
@@ -168,12 +130,7 @@ def _enforce_read_bound(result: ReadResourceResult) -> ReadResourceResult:
 
 
 def _missing(uri: str) -> ReadResourceResult:
-    return ReadResourceResult(
-        uri=uri,
-        status="error",
-        body=f"Resource {uri} is unavailable or you do not have access to it.",
-        error_code="missing",
-    )
+    return ReadResourceResult(uri=uri, status="error", error_code="missing")
 
 
 def _read_media(db: Session, viewer_id: UUID, media_id: UUID, uri: str) -> ReadResourceResult:
@@ -191,14 +148,9 @@ def _read_media(db: Session, viewer_id: UUID, media_id: UUID, uri: str) -> ReadR
 
 
 def _read_page_range(db: Session, viewer_id: UUID, uri: str) -> ReadResourceResult:
-    parsed = _parse_page_range(uri)
+    parsed = parse_page_range(uri)
     if parsed is None:
-        return ReadResourceResult(
-            uri=uri,
-            status="error",
-            body=f"Resource URI {uri} is not a valid page_range pointer.",
-            error_code="invalid_uri",
-        )
+        return ReadResourceResult(uri=uri, status="error", error_code="invalid_uri")
     media_id, page_start, page_end = parsed
     body = read_page_range(db, viewer_id, media_id, page_start, page_end)
     if body is None:
@@ -236,7 +188,6 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
             status="complete",
             body=quote.exact,
             kind="quote",
-            quote=quote,
             citation_result_type=resource_citation_result_type(parsed),
             citation_source_id=str(parsed.id),
         )
@@ -272,32 +223,11 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult:
     if scheme in ("artifact", "artifact_revision"):
         # Synthesis prose is NON-citable here: inline [N] markers reference the
         # revision's own citations, not a get_search_result chip.
-        subject_ref = (
-            f"{loaded.related_subject_scheme}:{loaded.related_subject_id}"
-            if loaded.related_subject_scheme is not None
-            and loaded.related_subject_scheme != "idea"
-            and loaded.related_subject_id is not None
-            else None
-        )
-        artifact_ref = (
-            f"artifact:{loaded.related_artifact_id}"
-            if loaded.related_artifact_id is not None
-            else None
-        )
-        revision_ref = (
-            f"artifact_revision:{loaded.related_revision_id}"
-            if loaded.related_revision_id is not None
-            else None
-        )
         return ReadResourceResult(
             uri=loaded.uri,
             status="complete",
             body=loaded.body or "",
             kind=("artifact_revision" if scheme == "artifact_revision" else "artifact"),
-            subject_ref=subject_ref,
-            artifact_ref=artifact_ref,
-            revision_ref=revision_ref,
-            revision_is_current=loaded.related_revision_is_current,
         )
     if scheme == "oracle_reading":
         # The reading's body is its question + motto/argument + interpretation. NON-citable
@@ -337,7 +267,7 @@ def _loaded_ref(loaded: LoadedResource) -> ResourceRef:
     return parsed
 
 
-def _parse_page_range(uri: str) -> tuple[UUID, int, int] | None:
+def parse_page_range(uri: str) -> tuple[UUID, int, int] | None:
     """Parse ``page_range:<media_uuid>:<a>-<b>``; None if malformed."""
     scheme, _, rest = uri.partition(":")
     if scheme != "page_range":

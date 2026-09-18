@@ -75,7 +75,7 @@ function resourceSurfaceOperationTitle(
 }
 
 /** Finite surface-domain copy adapter; contract and unknown failures defect. */
-export function resourceSurfaceErrorMessage(
+function resourceSurfaceErrorMessage(
   error: unknown,
   operation: ResourceSurfaceOperation,
 ): FeedbackContent {

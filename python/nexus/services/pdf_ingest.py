@@ -91,10 +91,6 @@ class PdfExtractionResult:
     page_spans: list[PdfPageSpan] = field(default_factory=list)
     has_text: bool = False
     source_byte_length: int = 0
-    extraction_method: str = "digital_text"
-    ocr_engine: str | None = None
-    ocr_engine_version: str | None = None
-    ocr_confidence: float | None = None
     pdf_title: str | None = None
     pdf_author: str | None = None
     pdf_subject: str | None = None

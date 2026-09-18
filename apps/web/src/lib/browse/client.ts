@@ -1,5 +1,5 @@
 import { expectExactRecord, expectRecord } from "@/lib/validation";
-import { apiFetch, type ApiPath } from "@/lib/api/client";
+import { apiFetch } from "@/lib/api/client";
 import {
   decodeCollectionRevision,
   type CollectionRevision,
@@ -52,25 +52,6 @@ function envelopeData(raw: unknown, context: string): Record<string, unknown> {
   return expectRecord(envelope.data, context);
 }
 
-export function browsePagePath(input: {
-  query: string;
-  kind: BrowseKind;
-  source: BrowseSource;
-  sort: BrowseSort;
-  limit: number;
-  cursor?: string;
-}): ApiPath {
-  const params = new URLSearchParams({
-    q: input.query,
-    kind: input.kind,
-    source: input.source,
-    limit: String(input.limit),
-  });
-  if (input.sort === "Newest") params.set("sort", "Newest");
-  if (input.cursor) params.set("cursor", input.cursor);
-  return `/api/browse?${params.toString()}`;
-}
-
 interface BrowsePageIdentity {
   readonly query: string;
   readonly kind: BrowseKind;
@@ -100,57 +81,46 @@ function bindBrowsePageIdentity(
 }
 
 export async function fetchBrowsePage(
-  input: Parameters<typeof browsePagePath>[0] & { signal?: AbortSignal },
+  input: BrowsePageIdentity & {
+    limit: number;
+    cursor?: string;
+    signal?: AbortSignal;
+  },
 ): Promise<BrowsePage> {
-  return fetchBrowsePagePath(browsePagePath(input), input, input.signal);
-}
-
-export async function fetchBrowsePagePath(
-  path: ApiPath,
-  expected: BrowsePageIdentity,
-  signal?: AbortSignal,
-): Promise<BrowsePage> {
+  const params = new URLSearchParams({
+    q: input.query,
+    kind: input.kind,
+    source: input.source,
+    limit: String(input.limit),
+  });
+  if (input.sort === "Newest") params.set("sort", "Newest");
+  if (input.cursor) params.set("cursor", input.cursor);
   return bindBrowsePageIdentity(
-    decodeBrowsePageEnvelope(await apiFetch<unknown>(path, { signal })),
-    expected,
+    decodeBrowsePageEnvelope(
+      await apiFetch<unknown>(`/api/browse?${params}`, { signal: input.signal }),
+    ),
+    input,
   );
 }
 
-export function browsePreviewPath(input: {
+export async function fetchBrowsePreview(input: {
   target: DiscoveryTargetHandle;
   limit?: number;
   cursor?: string;
-}): ApiPath {
+  signal?: AbortSignal;
+}): Promise<BrowsePreview> {
   const params = new URLSearchParams({
     target: input.target,
     limit: String(input.limit ?? 20),
   });
   if (input.cursor) params.set("cursor", input.cursor);
-  return `/api/browse/preview?${params.toString()}`;
-}
-
-export async function fetchBrowsePreview(
-  input: Parameters<typeof browsePreviewPath>[0] & { signal?: AbortSignal },
-): Promise<BrowsePreview> {
-  return fetchBrowsePreviewPath(
-    browsePreviewPath(input),
-    input.target,
-    input.signal,
-  );
-}
-
-export async function fetchBrowsePreviewPath(
-  path: ApiPath,
-  expectedTarget: DiscoveryTargetHandle,
-  signal?: AbortSignal,
-): Promise<BrowsePreview> {
   const preview = decodeBrowsePreviewEnvelope(
-    await apiFetch<unknown>(path, { signal }),
+    await apiFetch<unknown>(`/api/browse/preview?${params}`, { signal: input.signal }),
   );
   if (
-    preview.target !== expectedTarget ||
+    preview.target !== input.target ||
     (preview.resolution.kind === "Preview" &&
-      preview.resolution.target !== expectedTarget)
+      preview.resolution.target !== input.target)
   ) {
     throw new TypeError("BrowsePreview response changed request identity");
   }

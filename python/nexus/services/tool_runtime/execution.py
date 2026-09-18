@@ -15,8 +15,9 @@ import json
 import time
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Never, cast
 from uuid import UUID
@@ -107,13 +108,14 @@ from nexus.services.durable_step_journal import (
 )
 from nexus.services.retrieval_citation import RetrievalCitation, insert_retrieval_row
 from nexus.services.tool_authority import (
+    ToolAuditProjection,
     ToolAuthority,
     ToolAuthorityRefused,
     ToolPositionRecord,
     ToolPositionRecorder,
 )
 from nexus.services.tool_runtime import declarations as tool_declarations
-from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
+from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS_BY_ID
 
 if TYPE_CHECKING:
     from nexus.services.llm_ledger import LlmCallOwner
@@ -135,26 +137,9 @@ _PRESENT_TOOL_SETTLEMENT = Present[ToolExecutionSettlement]
 @dataclass(frozen=True, slots=True)
 class _ChatExecutionOwner:
     run_id: UUID
-    conversation_id: UUID
-    user_message_id: UUID
-    assistant_message_id: UUID
     tool_call_index: int
-    admitted_resource_uris: frozenset[str]
     provider_wire_name: str
     provider_arguments: dict[str, Any] | None
-
-
-@dataclass(slots=True)
-class _AuditProjection:
-    scope: str
-    requested_types: list[str] = field(default_factory=list)
-    filters: dict[str, Any] = field(default_factory=dict)
-    citations: list[RetrievalCitation] = field(default_factory=list)
-    selected_citations: list[RetrievalCitation] = field(default_factory=list)
-    created_refs: list[dict[str, Any]] = field(default_factory=list)
-    provider_request_ids: list[str] = field(default_factory=list)
-    search_query_fingerprint: str | None = None
-    latency_ms: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,13 +258,12 @@ class ChatToolExecutionProjection:
         authority: ToolAuthority,
         position: ToolPositionRecord,
         result: ToolResult,
-        audit: Mapping[str, object],
+        audit: ToolAuditProjection,
     ) -> None:
         run = self._run(db, authority=authority)
         chat = self._chat_owner(db, authority=authority, position=position)
-        projection = _audit_projection(audit)
         if position.canonical_tool_id == "web.search":
-            projection = _build_web_search_audit(
+            audit = _build_web_search_audit(
                 db,
                 run=run,
                 chat=chat,
@@ -293,7 +277,7 @@ class ChatToolExecutionProjection:
             tool_position=position,
             identity=_tool_execution_identity(authority, position),
             result=result,
-            audit=projection,
+            audit=audit,
         )
         binding = authority.operation.plan.catalog_view.binding(ToolId(position.canonical_tool_id))
         if result["type"] == "Success" and binding.spec.effect is ToolEffect.Write:
@@ -306,7 +290,7 @@ class ChatToolExecutionProjection:
                 viewer_id=authority.user_id,
                 tool_call_id=tool_call_id,
                 position=position,
-                created_refs=projection.created_refs,
+                created_refs=audit.created_refs,
             )
 
     def render_output(
@@ -409,11 +393,7 @@ class ChatToolExecutionProjection:
             raise AssertionError("Chat tool projection lost its provider wire name")
         return _ChatExecutionOwner(
             run_id=run.id,
-            conversation_id=run.conversation_id,
-            user_message_id=run.user_message_id,
-            assistant_message_id=run.assistant_message_id,
             tool_call_index=position.position,
-            admitted_resource_uris=authority.admitted_resource_uris,
             provider_wire_name=provider_wire_name,
             provider_arguments=dict(event_input) if isinstance(event_input, dict) else None,
         )
@@ -468,61 +448,6 @@ def _tool_execution_identity(
     )
 
 
-def _audit_projection(values: Mapping[str, object]) -> _AuditProjection:
-    scope = values.get("scope", "conversation_context")
-    if not isinstance(scope, str) or not scope:
-        raise ValueError("Chat tool audit scope must be nonblank text")
-    requested_types = _audit_sequence(values, "requested_types", str)
-    citations = _audit_sequence(values, "citations", RetrievalCitation)
-    selected_citations = _audit_sequence(values, "selected_citations", RetrievalCitation)
-    provider_request_ids = _audit_sequence(values, "provider_request_ids", str)
-    filters = values.get("filters", {})
-    if not isinstance(filters, Mapping) or any(not isinstance(key, str) for key in filters):
-        raise ValueError("Chat tool audit filters must be a string-keyed mapping")
-    raw_created_refs = values.get("created_refs", ())
-    if not isinstance(raw_created_refs, Sequence) or isinstance(
-        raw_created_refs, (str, bytes, bytearray)
-    ):
-        raise ValueError("Chat tool audit created refs must be a sequence")
-    created_refs: list[dict[str, Any]] = []
-    for raw_ref in raw_created_refs:
-        if not isinstance(raw_ref, Mapping) or any(not isinstance(key, str) for key in raw_ref):
-            raise ValueError("Chat tool audit created refs must be string-keyed mappings")
-        created_refs.append(dict(raw_ref))
-    search_query_fingerprint = values.get("search_query_fingerprint")
-    if search_query_fingerprint is not None and not isinstance(search_query_fingerprint, str):
-        raise ValueError("Chat tool audit query fingerprint must be text")
-    latency_ms = values.get("latency_ms")
-    if latency_ms is not None and (
-        not isinstance(latency_ms, int) or isinstance(latency_ms, bool) or latency_ms < 0
-    ):
-        raise ValueError("Chat tool audit latency must be a non-negative integer")
-    return _AuditProjection(
-        scope=scope,
-        requested_types=cast("list[str]", requested_types),
-        filters=dict(filters),
-        citations=cast("list[RetrievalCitation]", citations),
-        selected_citations=cast("list[RetrievalCitation]", selected_citations),
-        created_refs=created_refs,
-        provider_request_ids=cast("list[str]", provider_request_ids),
-        search_query_fingerprint=search_query_fingerprint,
-        latency_ms=latency_ms,
-    )
-
-
-def _audit_sequence(
-    values: Mapping[str, object],
-    name: str,
-    item_type: type[object],
-) -> list[object]:
-    value = values.get(name, ())
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
-        raise ValueError(f"Chat tool audit {name} must be a sequence")
-    if any(not isinstance(item, item_type) for item in value):
-        raise ValueError(f"Chat tool audit {name} has the wrong item type")
-    return list(value)
-
-
 _BOUNDARY_ERROR_TYPES = {
     "BudgetExceeded",
     "DeadlineExceeded",
@@ -564,12 +489,6 @@ def _position_state(state: StepReplayState, *, catalog_view: PlanCatalogView) ->
         if isinstance(state.terminal_result, Present)
         else None
     )
-    if terminal is not None:
-        _validate_reconciled_result_policy(
-            terminal,
-            tool_id=execution.identity.tool_id,
-            catalog_view=catalog_view,
-        )
     return PositionState(
         terminal_result=terminal,
         uncertain=state.dispatch_phase is Uncertain,
@@ -607,31 +526,6 @@ def _validated_portable_result(
 
 def _journal_policy(policy: PortableReplayPolicy) -> JournalReplayPolicy:
     return JournalReplayPolicy(policy.value)
-
-
-def _validate_reconciled_result_policy(
-    result: ToolResult,
-    *,
-    tool_id: str,
-    catalog_view: PlanCatalogView,
-) -> None:
-    """Enforce binding-owned result bounds on every accepted terminal."""
-
-    if result["type"] != "Success" or tool_id != "web.search":
-        return
-    policy = catalog_view.binding(ToolId(tool_id)).policy_inputs
-    max_results = policy.get("max_results")
-    value = result["value"]
-    results = value.get("results")
-    if (
-        not isinstance(max_results, int)
-        or isinstance(max_results, bool)
-        or max_results < 1
-        or not isinstance(results, list)
-    ):
-        raise AssertionError("frozen web.search binding policy is malformed")
-    if len(results) > max_results:
-        raise AssertionError("web.search result exceeds its binding policy")
 
 
 def _assert_operation_identity(
@@ -693,21 +587,13 @@ def reconcile_uncertain_tool_completion(
     ):
         raise ValueError("attached settlement differs from the reserved tool work")
     try:
-        result = _validated_portable_result(
+        _validated_portable_result(
             raw_result,
             tool_id=identity.tool_id,
             catalog_view=operation.plan.catalog_view,
         )
     except (AssertionError, json.JSONDecodeError) as exc:
         raise ValueError("attached result is not a strict portable tool result") from exc
-    try:
-        _validate_reconciled_result_policy(
-            result,
-            tool_id=identity.tool_id,
-            catalog_view=operation.plan.catalog_view,
-        )
-    except AssertionError as exc:
-        raise ValueError("attached result violates its frozen binding policy") from exc
     completed_execution = execution.model_copy(
         update={
             "dispatch_claim": absent(),
@@ -827,7 +713,6 @@ class NexusPositionRecorder:
         self.job_context = job_context
         self.position = position
         self.catalog_view = catalog_view
-        self.audit = _AuditProjection(scope="durable_operation")
         self.budgets = _DurableBudgetState(self, limits)
 
     @property
@@ -1177,33 +1062,6 @@ class NexusPositionRecorder:
 
         return await self.database.run_sync(operation)
 
-    def stage_audit(
-        self,
-        *,
-        scope: str,
-        requested_types: list[str] | None = None,
-        filters: dict[str, Any] | None = None,
-        citations: list[RetrievalCitation] | None = None,
-        selected_citations: list[RetrievalCitation] | None = None,
-        created_refs: list[dict[str, Any]] | None = None,
-        provider_request_ids: list[str] | None = None,
-        search_query_fingerprint: str | None = None,
-        latency_ms: int | None = None,
-    ) -> None:
-        self.audit = _AuditProjection(
-            scope=scope,
-            requested_types=list(requested_types or ()),
-            filters=dict(filters or {}),
-            citations=list(citations or ()),
-            selected_citations=list(
-                (citations or ()) if selected_citations is None else selected_citations
-            ),
-            created_refs=list(created_refs or ()),
-            provider_request_ids=list(provider_request_ids or ()),
-            search_query_fingerprint=search_query_fingerprint,
-            latency_ms=latency_ms,
-        )
-
     def _required_state(self, job: JobRow) -> StepReplayState:
         state = self._state(job)
         if state is None:
@@ -1251,7 +1109,7 @@ def _stage_chat_terminal_projection(
     tool_position: ToolPositionRecord | None,
     identity: ToolExecutionIdentity,
     result: ToolResult,
-    audit: _AuditProjection,
+    audit: ToolAuditProjection,
 ) -> UUID:
     """Stage the sole Chat row/event/retrieval projection without committing."""
 
@@ -1339,7 +1197,7 @@ def _build_web_search_audit(
     chat: _ChatExecutionOwner,
     result: ToolResult,
     catalog_view: PlanCatalogView,
-) -> _AuditProjection:
+) -> ToolAuditProjection:
     """Mint Nexus snapshot identities for one portable web terminal."""
 
     from nexus.db.models import ResourceExternalSnapshot
@@ -1385,7 +1243,7 @@ def _build_web_search_audit(
     if query is not None and not isinstance(query, str):
         raise AssertionError("web.search projected query is malformed")
     freshness_days = projected_input.get("freshness_days") if projected_input is not None else None
-    audit = _AuditProjection(
+    audit = ToolAuditProjection(
         scope="public_web",
         requested_types=["mixed"],
         filters={
@@ -1503,10 +1361,10 @@ def _selected_web_result_indexes(
 
 
 def _declaration(tool_id: str) -> Any:
-    matches = [entry for entry in CHAT_TOOL_DECLARATIONS if str(entry.spec.id) == tool_id]
-    if len(matches) != 1:
+    declaration = CHAT_TOOL_DECLARATIONS_BY_ID.get(tool_id)
+    if declaration is None:
         raise AssertionError(f"unknown canonical tool declaration: {tool_id!r}")
-    return matches[0]
+    return declaration
 
 
 @asynccontextmanager
@@ -1932,7 +1790,7 @@ async def _run_search(
 
     def prepare(
         _db: Session,
-    ) -> tuple[SearchQuery, list[SearchScope], list[str], dict[str, object]]:
+    ) -> tuple[SearchQuery, list[SearchScope], list[str], dict[str, list[str]]]:
         with recorder.db.begin():
             requested_scopes = list(value.scopes or ())
             if value.scopes is None:
@@ -1973,12 +1831,12 @@ async def _run_search(
     query, scopes, requested_scopes, filters = await recorder.database.run_sync(prepare)
     if not scopes:
         recorder.stage_audit(
-            scope="conversation_context",
-            requested_types=list(query.effective_result_types),
-            filters=filters,
-            citations=[],
-            selected_citations=[],
-            search_query_fingerprint=hash_query(value.query),
+            ToolAuditProjection(
+                scope="conversation_context",
+                requested_types=list(query.effective_result_types),
+                filters=filters,
+                search_query_fingerprint=hash_query(value.query),
+            )
         )
         return HandlerSuccess(
             tool_declarations.NexusSearchSuccess(matches=[], total_candidates=0),
@@ -2022,12 +1880,14 @@ async def _run_search(
             catalog_view=recorder.catalog_view,
         )
         recorder.stage_audit(
-            scope=",".join(requested_scopes) if requested_scopes else "conversation_context",
-            requested_types=list(query.effective_result_types),
-            filters=filters,
-            citations=citations,
-            selected_citations=selected,
-            search_query_fingerprint=hash_query(value.query),
+            ToolAuditProjection(
+                scope=",".join(requested_scopes) if requested_scopes else "conversation_context",
+                requested_types=list(query.effective_result_types),
+                filters=filters,
+                citations=citations,
+                selected_citations=selected,
+                search_query_fingerprint=hash_query(value.query),
+            )
         )
         return HandlerSuccess(
             tool_declarations.NexusSearchSuccess(
@@ -2104,9 +1964,11 @@ def _run_resource_read(
     )
     citations = [citation] if citation is not None else []
     recorder.stage_audit(
-        scope="conversation_context",
-        filters={"uri": value.uri},
-        citations=citations,
+        ToolAuditProjection(
+            scope="conversation_context",
+            filters={"uri": value.uri},
+            citations=citations,
+        )
     )
     return HandlerSuccess(
         tool_declarations.ResourceReadSuccess(
@@ -2180,10 +2042,12 @@ async def _run_document_search(
             )
         ]
         recorder.stage_audit(
-            scope=value.uri,
-            requested_types=list(query.effective_result_types),
-            filters={"uri": value.uri},
-            citations=citations,
+            ToolAuditProjection(
+                scope=value.uri,
+                requested_types=list(query.effective_result_types),
+                filters={"uri": value.uri},
+                citations=citations,
+            )
         )
         return HandlerSuccess(
             tool_declarations.DocumentSearchSuccess(matches=matches, uri=value.uri),
@@ -2254,9 +2118,11 @@ def _run_resource_inspect(
         "total_sections": document_map.total_sections,
     }
     recorder.stage_audit(
-        scope="conversation_context",
-        filters={"uri": value.uri},
-        citations=[citation] if citation is not None else [],
+        ToolAuditProjection(
+            scope="conversation_context",
+            filters={"uri": value.uri},
+            citations=[citation] if citation is not None else [],
+        )
     )
     return HandlerSuccess(
         tool_declarations.ResourceInspectSuccess(
@@ -2330,9 +2196,11 @@ def _run_relations_list(
     )
     material = [item.model_dump(mode="json") for item in relations]
     recorder.stage_audit(
-        scope="conversation_context",
-        filters={"uri": value.uri},
-        citations=[citation] if citation is not None else [],
+        ToolAuditProjection(
+            scope="conversation_context",
+            filters={"uri": value.uri},
+            citations=[citation] if citation is not None else [],
+        )
     )
     return HandlerSuccess(
         tool_declarations.RelationsListSuccess(
@@ -2410,7 +2278,6 @@ def _run_write(
     context: ExecutionContext,
     *,
     tool_id: str,
-    mutate: Callable[[Session, UUID, UUID, dict[str, Any]], Any],
 ) -> HandlerSuccess[Any]:
     from nexus.services.agent_tools import writes
 
@@ -2420,6 +2287,7 @@ def _run_write(
         raise ExecutorConfigurationDefect("read-only tool plan reached a write handler")
     if context.effect_id is None:
         raise ExecutorConfigurationDefect("Nexus write lacks its stable effect id")
+    effect_id = UUID(str(context.effect_id))
     viewer_id = UUID(str(context.principal))
     arguments = value.model_dump(mode="json")
     for key in ("resource_uri", "page_uri", "media_uri", "source_uri", "target_uri"):
@@ -2435,89 +2303,31 @@ def _run_write(
         _declared_failure(tool_declarations.WriteCapReached(type="WriteCapReached"))
     try:
         with recorder.db.begin_nested():
-            effect = mutate(
-                recorder.db,
-                viewer_id,
-                UUID(str(context.effect_id)),
-                arguments,
-            )
+            match tool_id:
+                case "nexus.library.add":
+                    effect = writes.add_to_library(recorder.db, viewer_id, arguments)
+                case "nexus.note.create":
+                    effect = writes.create_note(recorder.db, viewer_id, effect_id, arguments)
+                case "nexus.highlight.create":
+                    effect = writes.create_highlight(recorder.db, viewer_id, effect_id, arguments)
+                case "nexus.edge.create":
+                    effect = writes.create_assistant_edge(recorder.db, viewer_id, arguments)
+                case "nexus.queue.add":
+                    effect = writes.add_to_queue(recorder.db, viewer_id, arguments)
+                case _:
+                    raise ExecutorConfigurationDefect("unknown Nexus write tool")
     except (writes.WriteToolRefusal, ApiError) as exc:
         _write_refusal(exc, tool_id=tool_id)
         raise AssertionError("write refusal translation returned") from exc
     success_type = _declaration(tool_id).spec.success_type
     success = success_type.model_validate(effect.output)
     recorder.stage_audit(
-        scope="assistant_write",
-        created_refs=effect.created_refs,
+        ToolAuditProjection(
+            scope="assistant_write",
+            created_refs=effect.created_refs,
+        )
     )
     return HandlerSuccess(success, actual_attempts=0)
-
-
-def _mutate_library(
-    db: Session, viewer_id: UUID, effect_id: UUID, arguments: dict[str, Any]
-) -> Any:
-    from nexus.services.agent_tools.writes import add_to_library
-
-    del effect_id
-    return add_to_library(db, viewer_id, arguments)
-
-
-def _mutate_note(db: Session, viewer_id: UUID, effect_id: UUID, arguments: dict[str, Any]) -> Any:
-    from nexus.services.agent_tools.writes import create_note
-
-    return create_note(db, viewer_id, effect_id, arguments)
-
-
-def _mutate_highlight(
-    db: Session, viewer_id: UUID, effect_id: UUID, arguments: dict[str, Any]
-) -> Any:
-    from nexus.services.agent_tools.writes import create_highlight
-
-    return create_highlight(db, viewer_id, effect_id, arguments)
-
-
-def _mutate_edge(db: Session, viewer_id: UUID, effect_id: UUID, arguments: dict[str, Any]) -> Any:
-    from nexus.services.agent_tools.writes import create_assistant_edge
-
-    del effect_id
-    return create_assistant_edge(db, viewer_id, arguments)
-
-
-def _mutate_queue(db: Session, viewer_id: UUID, effect_id: UUID, arguments: dict[str, Any]) -> Any:
-    from nexus.services.agent_tools.writes import add_to_queue
-
-    del effect_id
-    return add_to_queue(db, viewer_id, arguments)
-
-
-def _run_library_add(value: Any, context: ExecutionContext) -> HandlerSuccess[Any]:
-    return _run_write(
-        value,
-        context,
-        tool_id="nexus.library.add",
-        mutate=_mutate_library,
-    )
-
-
-def _run_note_create(value: Any, context: ExecutionContext) -> HandlerSuccess[Any]:
-    return _run_write(value, context, tool_id="nexus.note.create", mutate=_mutate_note)
-
-
-def _run_highlight_create(value: Any, context: ExecutionContext) -> HandlerSuccess[Any]:
-    return _run_write(
-        value,
-        context,
-        tool_id="nexus.highlight.create",
-        mutate=_mutate_highlight,
-    )
-
-
-def _run_edge_create(value: Any, context: ExecutionContext) -> HandlerSuccess[Any]:
-    return _run_write(value, context, tool_id="nexus.edge.create", mutate=_mutate_edge)
-
-
-def _run_queue_add(value: Any, context: ExecutionContext) -> HandlerSuccess[Any]:
-    return _run_write(value, context, tool_id="nexus.queue.add", mutate=_mutate_queue)
 
 
 type _NexusHandler = Callable[[Any, ExecutionContext], HandlerSuccess[Any]]
@@ -2527,11 +2337,11 @@ _NEXUS_HANDLERS: Mapping[str, _NexusHandler] = MappingProxyType(
         "nexus.resource.read": _run_resource_read,
         "nexus.resource.inspect": _run_resource_inspect,
         "nexus.relations.list": _run_relations_list,
-        "nexus.library.add": _run_library_add,
-        "nexus.note.create": _run_note_create,
-        "nexus.highlight.create": _run_highlight_create,
-        "nexus.edge.create": _run_edge_create,
-        "nexus.queue.add": _run_queue_add,
+        "nexus.library.add": partial(_run_write, tool_id="nexus.library.add"),
+        "nexus.note.create": partial(_run_write, tool_id="nexus.note.create"),
+        "nexus.highlight.create": partial(_run_write, tool_id="nexus.highlight.create"),
+        "nexus.edge.create": partial(_run_write, tool_id="nexus.edge.create"),
+        "nexus.queue.add": partial(_run_write, tool_id="nexus.queue.add"),
     }
 )
 

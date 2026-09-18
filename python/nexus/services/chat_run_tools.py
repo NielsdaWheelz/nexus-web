@@ -107,12 +107,12 @@ def _digest(value: str | None) -> bool:
 
 
 def _current_declaration(canonical_tool_id: str) -> Any:
-    from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
+    from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS_BY_ID
 
-    matches = [entry for entry in CHAT_TOOL_DECLARATIONS if str(entry.spec.id) == canonical_tool_id]
-    if len(matches) != 1:
+    declaration = CHAT_TOOL_DECLARATIONS_BY_ID.get(canonical_tool_id)
+    if declaration is None:
         raise ValueError(f"unknown current tool id: {canonical_tool_id!r}")
-    return matches[0]
+    return declaration
 
 
 def _validate_current_identity(identity: CurrentToolRecordIdentity) -> None:

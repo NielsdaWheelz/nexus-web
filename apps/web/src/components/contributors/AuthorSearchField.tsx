@@ -26,7 +26,7 @@ import styles from "./AuthorSearchField.module.css";
  * edited and while a sibling confirmation prompt owns focus.
  */
 
-export const MAX_AUTHOR_NAME_CODE_POINTS = 200;
+const MAX_AUTHOR_NAME_CODE_POINTS = 200;
 
 /**
  * Client-side normalized name key (content spec §2.4 / S5): a deliberate

@@ -27,9 +27,7 @@ import {
 } from "@/lib/api/client";
 import {
   addEpisodeFromDiscovery,
-  browsePreviewPath,
   fetchBrowsePreview,
-  fetchBrowsePreviewPath,
 } from "@/lib/browse/client";
 import {
   browsePreviewHref,
@@ -143,18 +141,13 @@ function PodcastEpisodePreviewList({
   const pagination = useCursorPagination({
     firstPage,
     initialMoreError: null,
-    buildMoreHref: (cursor) =>
-      browsePreviewPath({
+    loadMorePage: async (cursor, signal) => {
+      const next = await fetchBrowsePreview({
         target: preview.target,
         limit: PREVIEW_EPISODE_PAGE_SIZE,
         cursor,
-      }),
-    loadMorePage: async (href, signal) => {
-      const next = await fetchBrowsePreviewPath(
-        href as `/api/${string}`,
-        preview.target,
         signal,
-      );
+      });
       if (next.kind !== "Podcast") {
         throw new TypeError("Podcast Preview continuation changed identity");
       }

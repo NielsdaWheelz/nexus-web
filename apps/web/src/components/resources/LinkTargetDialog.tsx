@@ -9,7 +9,11 @@ import ResourceTargetListbox, {
   resourceTargetOptionId,
 } from "@/components/resources/ResourceTargetListbox";
 import type { ResourceTarget } from "@/lib/resources/resourceTargets";
-import type { LinkTarget } from "@/lib/resourceGraph/links";
+import {
+  targetLabel,
+  toLinkTarget,
+  type LinkTarget,
+} from "@/lib/resourceGraph/links";
 import {
   FeedbackNotice,
   type FeedbackActions,
@@ -18,16 +22,6 @@ import {
 import styles from "./LinkTargetDialog.module.css";
 
 const LISTBOX_ID = "link-target-listbox";
-
-function toLinkTarget(target: ResourceTarget): LinkTarget {
-  return target.kind === "resource"
-    ? { kind: "resource", ref: target.item.ref }
-    : { kind: "passage", candidate_ref: target.candidateRef };
-}
-
-function targetLabel(target: ResourceTarget): string {
-  return target.kind === "resource" ? target.item.label : target.label;
-}
 
 export interface LinkTargetDialogProps {
   open: boolean;
