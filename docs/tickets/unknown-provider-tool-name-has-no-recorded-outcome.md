@@ -1,7 +1,7 @@
 # unknown provider tool name has no recorded outcome
 
 status: open · origin: 2026-09-17 slop sweep (claude session), svc-chat-llm SCL-03 · area: chat
-tool runtime · oi-167
+tool runtime · oi-169
 
 `RecordKind.rejected_provider_call` survives in the `record_kind` CHECK and the
 decode branch, but nothing has produced it since before the sweep:

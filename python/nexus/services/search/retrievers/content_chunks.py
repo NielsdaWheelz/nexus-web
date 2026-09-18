@@ -244,7 +244,6 @@ def _search_content_chunks(
                     media_id=row[1],
                     media_kind=str(row[2] or ""),
                 ),
-                resolver=dict(resolution["resolver"]),
                 source=_build_search_source(row[1], row[2], row[3], row[5], row[4]),
                 score=_build_search_score(row[11]),
             )
@@ -314,7 +313,6 @@ def resolve_content_chunk_search_result(
             media_id=row[2],
             media_kind=source_kind,
         ),
-        resolver=dict(resolution["resolver"]),
         source=_build_search_source(
             row[2],
             source_kind,

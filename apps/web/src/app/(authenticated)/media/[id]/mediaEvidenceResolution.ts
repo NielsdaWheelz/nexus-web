@@ -325,7 +325,7 @@ function decodeStringRecord(raw: unknown, name: string): Record<string, string> 
 function decodeResolver(raw: unknown): MediaEvidenceResolver {
   const resolver = expectExactRecord(
     raw,
-    ["kind", "route", "params", "status", "selector", "highlight"],
+    ["kind", "params", "status", "highlight"],
     "media evidence resolver",
   );
   const kind = expectOneOf(
@@ -455,7 +455,7 @@ function decodeMediaEvidenceResolutionResponse(
   const envelope = expectExactRecord(raw, ["data"], "media evidence response");
   const data = expectExactRecord(
     envelope.data,
-    ["evidence_span_id", "media_id", "citation_label", "span_text", "resolver"],
+    ["evidence_span_id", "media_id", "span_text", "resolver"],
     "media evidence response.data",
   );
   const response: MediaEvidenceResolutionResponse = {

@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, FiniteFloat, JsonValue
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, FiniteFloat
 from pydantic.alias_generators import to_camel
 
 from nexus.schemas.collection_page import CollectionRevision
@@ -847,10 +847,8 @@ class MediaEvidenceResolverOut(BaseModel):
     """Backend-owned evidence resolver payload."""
 
     kind: Literal["web", "epub", "pdf", "transcript"]
-    route: str
     params: dict[str, str]
     status: Literal["resolved", "unresolved", "no_geometry"]
-    selector: dict[str, JsonValue]
     highlight: MediaEvidenceHighlightOut | None
 
     model_config = ConfigDict(extra="forbid")
@@ -861,7 +859,6 @@ class MediaEvidenceOut(BaseModel):
 
     evidence_span_id: UUID
     media_id: UUID
-    citation_label: str
     span_text: str
     resolver: MediaEvidenceResolverOut
 

@@ -92,7 +92,6 @@ class _RankedContentChunkResult:
     evidence_span_ids: list[UUID]
     citation_label: str
     locator: dict[str, Any]
-    resolver: dict[str, Any]
     source: SearchResultSourceOut
     score: _SearchScore
     result_type: Literal["content_chunk"] = "content_chunk"
