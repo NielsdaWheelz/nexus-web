@@ -80,12 +80,9 @@ _RETAINED_IMAGE_ATTRIBUTES = ("alt", "title", "id", "name", "hidden", "aria-hidd
 @dataclass(frozen=True, slots=True)
 class OfflineReadingArchive:
     media_type: str
-    compressed_length: int
-    account_independent_digest: str
     content_digest: str
     expanded_length: int
     reader_generation: int
-    reader_revision_key: str
 
 
 class OfflineReadingAssemblyTimeout(TimeoutError):
@@ -97,12 +94,6 @@ class _ProjectedExternalMember:
     path: str
     media_type: str
     reference: ReaderPublicationObjectReference
-
-
-@dataclass(frozen=True, slots=True)
-class _ProjectedPackage:
-    reader_body: bytes
-    external_members: tuple[_ProjectedExternalMember, ...]
 
 
 def build_offline_reading_archive_file(
@@ -130,21 +121,17 @@ def build_offline_reading_archive_file(
                 checkpoint=checkpoint,
             ),
         )
-    manifest, compressed_length = captured.value
+    manifest = captured.value
     digest = hashlib.sha256()
     with Path(path).open("rb") as package_file:
         for chunk in iter(lambda: package_file.read(1024 * 1024), b""):
             checkpoint()
             digest.update(chunk)
-    digest_bytes = digest.digest()
     return OfflineReadingArchive(
         media_type=OFFLINE_READING_ZIP_MEDIA_TYPE,
-        compressed_length=compressed_length,
-        account_independent_digest=digest_bytes.hex(),
-        content_digest=f"sha-256=:{base64.b64encode(digest_bytes).decode('ascii')}:",
+        content_digest=f"sha-256=:{base64.b64encode(digest.digest()).decode('ascii')}:",
         expanded_length=sum(entry.size_bytes for entry in manifest.entries),
         reader_generation=captured.generation,
-        reader_revision_key=manifest.reader_revision_key,
     )
 
 
@@ -157,9 +144,10 @@ def _assemble_publication_to_file(
     checkpoint: Callable[[], None],
 ):
     checkpoint()
-    projected = _project_package(projection)
-    declared_expanded = len(projected.reader_body) + sum(
-        member.reference.size_bytes for member in projected.external_members
+    reader, external_members = _project_reader(projection)
+    reader_body = serialize_offline_reader_document(reader)
+    declared_expanded = len(reader_body) + sum(
+        member.reference.size_bytes for member in external_members
     )
     if declared_expanded > OFFLINE_READING_MAX_EXPANDED_BYTES:
         raise ValueError("captured publication exceeds the offline-reading expanded bound")
@@ -171,11 +159,11 @@ def _assemble_publication_to_file(
             attempt_path,
             path="reader.json",
             media_type="application/json",
-            body=projected.reader_body,
+            body=reader_body,
         )
         entries.append(reader_entry)
         members[reader_entry.path] = reader_path
-        for member in projected.external_members:
+        for member in external_members:
             checkpoint()
             entry, member_path = _stage_reference(
                 attempt_path,
@@ -194,23 +182,13 @@ def _assemble_publication_to_file(
             reader_generation=projection.generation,
             entries=entries,
         )
-        compressed_length = assemble_offline_reading_zip_from_files(
+        assemble_offline_reading_zip_from_files(
             manifest,
             members,
             output_path,
             checkpoint=checkpoint,
         )
-    return manifest, compressed_length
-
-
-def _project_package(
-    projection: ReaderPublicationProjection,
-) -> _ProjectedPackage:
-    reader, external_members = _project_reader(projection)
-    return _ProjectedPackage(
-        reader_body=serialize_offline_reader_document(reader),
-        external_members=external_members,
-    )
+    return manifest
 
 
 def _project_reader(
@@ -245,7 +223,7 @@ def _project_reader(
                 {
                     "fragmentId": str(fragment.fragment_id),
                     "fragmentIdx": fragment.idx,
-                    "htmlSanitized": _offline_html(fragment.html_sanitized, text_only=True),
+                    "htmlSanitized": _offline_html(fragment.html_sanitized),
                     "canonicalText": fragment.canonical_text,
                     "createdAt": fragment.created_at,
                 }
@@ -348,7 +326,7 @@ def _project_epub_reader(
     return reader, members
 
 
-def _offline_html(raw: str, *, text_only: bool) -> str:
+def _offline_html(raw: str) -> str:
     roots = html.fragments_fromstring(raw)
     container = html.Element("div")
     for root in roots:
@@ -364,16 +342,13 @@ def _offline_html(raw: str, *, text_only: bool) -> str:
             element.drop_tree()
             continue
         tag = element.tag.rsplit("}", 1)[-1].lower()
-        if tag == "img" and text_only:
+        if tag == "img":
             _replace_image_with_placeholder(element)
             continue
-        if text_only and tag in _INERT_EXTERNAL_ELEMENTS:
+        if tag in _INERT_EXTERNAL_ELEMENTS or tag == "form":
             element.drop_tag()
             continue
-        if text_only and tag == "form":
-            element.drop_tag()
-            continue
-        if tag in _DROP_ELEMENTS or (text_only and tag == "img"):
+        if tag in _DROP_ELEMENTS:
             element.drop_tree()
             continue
         for attribute in tuple(element.attrib):

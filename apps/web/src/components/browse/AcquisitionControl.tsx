@@ -282,7 +282,6 @@ export default function AcquisitionControl(props: AcquisitionControlProps) {
             `/api/media/${encodeURIComponent(result.mediaId)}/preview-position`,
             {
               method: "POST",
-              headers: { "Idempotency-Key": mutationId() },
               body: JSON.stringify(command.previewPosition),
             },
           );

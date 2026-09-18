@@ -97,34 +97,30 @@ def parse_editable_vault_path(raw_path: str) -> str:
 
 
 def parse_vault_markdown_file(file: EditableVaultFile) -> ParsedVaultFile | VaultFileParseFailure:
+    """Parse one editable vault file, or report why it cannot be applied."""
     try:
-        path = parse_editable_vault_path(file.path)
+        return _parse_vault_markdown_file(file)
     except ValueError as exc:
         return VaultFileParseFailure(file.path, file.content, str(exc))
+
+
+def _parse_vault_markdown_file(file: EditableVaultFile) -> ParsedVaultFile:
+    path = parse_editable_vault_path(file.path)
     content = file.content
     if len(content.encode("utf-8")) > VAULT_FILE_CONTENT_BYTE_LIMIT:
-        return VaultFileParseFailure(
-            path, content, "Vault file content exceeds 1,000,000 UTF-8 bytes"
-        )
-    try:
-        metadata, body = _read_frontmatter(content)
-    except ValueError as exc:
-        return VaultFileParseFailure(path, content, str(exc))
+        raise ValueError("Vault file content exceeds 1,000,000 UTF-8 bytes")
+    metadata, body = _read_frontmatter(content)
 
     nexus_type = metadata.get("nexus_type")
     if path.startswith("Highlights/"):
         if nexus_type != "highlight":
-            return VaultFileParseFailure(
-                path, content, "Vault highlight file needs nexus_type highlight"
-            )
+            raise ValueError("Vault highlight file needs nexus_type highlight")
         return _parse_highlight_file(path, content, body, metadata)
     if path.startswith("Pages/"):
         if nexus_type != "page":
-            return VaultFileParseFailure(path, content, "Vault page file needs nexus_type page")
+            raise ValueError("Vault page file needs nexus_type page")
         return _parse_page_file(path, content, body, metadata)
-    return VaultFileParseFailure(
-        path, content, "Vault uploads must be highlight or page Markdown files"
-    )
+    raise ValueError("Vault uploads must be highlight or page Markdown files")
 
 
 def format_vault_handle(prefix: Literal["med", "frag", "hl", "page"], value: UUID) -> str:
@@ -133,7 +129,7 @@ def format_vault_handle(prefix: Literal["med", "frag", "hl", "page"], value: UUI
 
 def _parse_highlight_file(
     path: str, content: str, body: str, metadata: dict[str, object]
-) -> NewHighlightFile | ExistingHighlightFile | VaultFileParseFailure:
+) -> NewHighlightFile | ExistingHighlightFile:
     unknown = set(metadata) - {
         "nexus_type",
         "highlight_handle",
@@ -151,46 +147,31 @@ def _parse_highlight_file(
         "page",
     }
     if unknown:
-        return VaultFileParseFailure(
-            path, content, f"Vault highlight metadata has unknown field {sorted(unknown)[0]}"
-        )
+        raise ValueError(f"Vault highlight metadata has unknown field {sorted(unknown)[0]}")
 
     path_handle = _highlight_handle_from_path(path)
     handle = metadata.get("highlight_handle")
     if path_handle is None:
         if handle is not None:
-            return VaultFileParseFailure(
-                path, content, "Vault new highlight metadata must not include highlight_handle"
-            )
+            raise ValueError("Vault new highlight metadata must not include highlight_handle")
         return _parse_new_highlight(path, content, body, metadata)
     if not isinstance(handle, str):
-        return VaultFileParseFailure(
-            path, content, "Vault highlight metadata is missing highlight_handle"
-        )
-    try:
-        highlight_id = _parse_handle(handle, "hl")
-    except ValueError as exc:
-        return VaultFileParseFailure(path, content, str(exc))
+        raise ValueError("Vault highlight metadata is missing highlight_handle")
+    highlight_id = _parse_handle(handle, "hl")
     if handle != path_handle:
-        return VaultFileParseFailure(path, content, "Vault highlight handle does not match path")
+        raise ValueError("Vault highlight handle does not match path")
     return _parse_existing_highlight(path, content, body, metadata, highlight_id)
 
 
 def _parse_new_highlight(
     path: str, content: str, body: str, metadata: dict[str, object]
-) -> NewHighlightFile | VaultFileParseFailure:
+) -> NewHighlightFile:
     if "highlight_handle" in metadata:
-        return VaultFileParseFailure(
-            path, content, "Vault new highlight metadata must not include highlight_handle"
-        )
+        raise ValueError("Vault new highlight metadata must not include highlight_handle")
     if "server_updated_at" in metadata:
-        return VaultFileParseFailure(
-            path, content, "Vault new highlight metadata must not include server_updated_at"
-        )
+        raise ValueError("Vault new highlight metadata must not include server_updated_at")
     if metadata.get("selector_kind") != "fragment_offsets":
-        return VaultFileParseFailure(
-            path, content, "Vault highlight metadata has invalid selector_kind"
-        )
+        raise ValueError("Vault highlight metadata has invalid selector_kind")
     unknown = set(metadata) - {
         "nexus_type",
         "media_handle",
@@ -202,23 +183,12 @@ def _parse_new_highlight(
         "end_offset",
     }
     if unknown:
-        return VaultFileParseFailure(
-            path, content, f"Vault new highlight metadata has unknown field {sorted(unknown)[0]}"
-        )
+        raise ValueError(f"Vault new highlight metadata has unknown field {sorted(unknown)[0]}")
     if metadata.get("deleted") is not False:
-        return VaultFileParseFailure(
-            path, content, "Vault new highlight metadata requires deleted false"
-        )
-    color = _required_string(metadata, "color", "highlight", path, content)
-    if isinstance(color, VaultFileParseFailure):
-        return color
-    media_id = _required_handle(metadata, "media_handle", "med", "highlight", path, content)
-    if isinstance(media_id, VaultFileParseFailure):
-        return media_id
-    selector = _fragment_selector(metadata, "highlight", path, content)
-    if isinstance(selector, VaultFileParseFailure):
-        return selector
-    fragment_id, start_offset, end_offset = selector
+        raise ValueError("Vault new highlight metadata requires deleted false")
+    color = _required_string(metadata, "color", "highlight")
+    media_id = _required_handle(metadata, "media_handle", "med", "highlight")
+    fragment_id, start_offset, end_offset = _fragment_selector(metadata, "highlight")
     return NewHighlightFile(
         path=path,
         content=content,
@@ -237,28 +207,14 @@ def _parse_existing_highlight(
     body: str,
     metadata: dict[str, object],
     highlight_id: UUID,
-) -> ExistingHighlightFile | VaultFileParseFailure:
-    media_id = _required_handle(metadata, "media_handle", "med", "highlight", path, content)
-    if isinstance(media_id, VaultFileParseFailure):
-        return media_id
-    color = _required_string(metadata, "color", "highlight", path, content)
-    if isinstance(color, VaultFileParseFailure):
-        return color
-    server_updated_at = _required_string(metadata, "server_updated_at", "highlight", path, content)
-    if isinstance(server_updated_at, VaultFileParseFailure):
-        return server_updated_at
-    deleted = _required_bool(metadata, "deleted", "highlight", path, content)
-    if isinstance(deleted, VaultFileParseFailure):
-        return deleted
-    exact = _required_present_string(metadata, "exact", "highlight", path, content)
-    if isinstance(exact, VaultFileParseFailure):
-        return exact
-    prefix = _required_present_string(metadata, "prefix", "highlight", path, content)
-    if isinstance(prefix, VaultFileParseFailure):
-        return prefix
-    suffix = _required_present_string(metadata, "suffix", "highlight", path, content)
-    if isinstance(suffix, VaultFileParseFailure):
-        return suffix
+) -> ExistingHighlightFile:
+    media_id = _required_handle(metadata, "media_handle", "med", "highlight")
+    color = _required_string(metadata, "color", "highlight")
+    server_updated_at = _required_string(metadata, "server_updated_at", "highlight")
+    deleted = _required(metadata, "deleted", bool, "highlight")
+    exact = _required(metadata, "exact", str, "highlight")
+    prefix = _required(metadata, "prefix", str, "highlight")
+    suffix = _required(metadata, "suffix", str, "highlight")
 
     selector_kind = metadata.get("selector_kind")
     if selector_kind == "fragment_offsets":
@@ -278,15 +234,10 @@ def _parse_existing_highlight(
             "end_offset",
         }
         if unknown:
-            return VaultFileParseFailure(
-                path,
-                content,
-                f"Vault highlight fragment_offsets metadata has unknown field {sorted(unknown)[0]}",
+            raise ValueError(
+                f"Vault highlight fragment_offsets metadata has unknown field {sorted(unknown)[0]}"
             )
-        selector = _fragment_selector(metadata, "highlight", path, content)
-        if isinstance(selector, VaultFileParseFailure):
-            return selector
-        fragment_id, start_offset, end_offset = selector
+        fragment_id, start_offset, end_offset = _fragment_selector(metadata, "highlight")
         return ExistingHighlightFile(
             path=path,
             content=content,
@@ -319,14 +270,10 @@ def _parse_existing_highlight(
             "page",
         }
         if unknown:
-            return VaultFileParseFailure(
-                path,
-                content,
-                f"Vault highlight pdf_page_geometry metadata has unknown field {sorted(unknown)[0]}",
+            raise ValueError(
+                f"Vault highlight pdf_page_geometry metadata has unknown field {sorted(unknown)[0]}"
             )
-        page = _required_int(metadata, "page", "highlight", path, content)
-        if isinstance(page, VaultFileParseFailure):
-            return page
+        page = _required(metadata, "page", int, "highlight")
         return ExistingHighlightFile(
             path=path,
             content=content,
@@ -342,58 +289,37 @@ def _parse_existing_highlight(
             suffix=suffix,
             page=page,
         )
-    return VaultFileParseFailure(
-        path, content, "Vault highlight metadata has invalid selector_kind"
-    )
+    raise ValueError("Vault highlight metadata has invalid selector_kind")
 
 
 def _parse_page_file(
     path: str, content: str, body: str, metadata: dict[str, object]
-) -> NewPageFile | ExistingPageFile | VaultFileParseFailure:
+) -> NewPageFile | ExistingPageFile:
     unknown = set(metadata) - {"nexus_type", "page_handle", "title", "server_updated_at", "deleted"}
     if unknown:
-        return VaultFileParseFailure(
-            path, content, f"Vault page metadata has unknown field {sorted(unknown)[0]}"
-        )
+        raise ValueError(f"Vault page metadata has unknown field {sorted(unknown)[0]}")
 
     path_handle = _page_handle_from_path(path)
     handle = metadata.get("page_handle")
     if path_handle is None:
         if handle is not None:
-            return VaultFileParseFailure(
-                path, content, "Vault new page metadata must not include page_handle"
-            )
+            raise ValueError("Vault new page metadata must not include page_handle")
         if "server_updated_at" in metadata:
-            return VaultFileParseFailure(
-                path, content, "Vault new page metadata must not include server_updated_at"
-            )
+            raise ValueError("Vault new page metadata must not include server_updated_at")
         if metadata.get("deleted") is not False:
-            return VaultFileParseFailure(
-                path, content, "Vault new page metadata requires deleted false"
-            )
-        title = _required_string(metadata, "title", "page", path, content)
-        if isinstance(title, VaultFileParseFailure):
-            return title
+            raise ValueError("Vault new page metadata requires deleted false")
+        title = _required_string(metadata, "title", "page")
         return NewPageFile(path=path, content=content, body=body, title=title)
 
     if not isinstance(handle, str):
-        return VaultFileParseFailure(path, content, "Vault page metadata is missing page_handle")
-    try:
-        page_id = _parse_handle(handle, "page")
-    except ValueError as exc:
-        return VaultFileParseFailure(path, content, str(exc))
+        raise ValueError("Vault page metadata is missing page_handle")
+    page_id = _parse_handle(handle, "page")
     if handle != path_handle:
-        return VaultFileParseFailure(path, content, "Vault page handle does not match path")
+        raise ValueError("Vault page handle does not match path")
 
-    title = _required_string(metadata, "title", "page", path, content)
-    if isinstance(title, VaultFileParseFailure):
-        return title
-    server_updated_at = _required_string(metadata, "server_updated_at", "page", path, content)
-    if isinstance(server_updated_at, VaultFileParseFailure):
-        return server_updated_at
-    deleted = _required_bool(metadata, "deleted", "page", path, content)
-    if isinstance(deleted, VaultFileParseFailure):
-        return deleted
+    title = _required_string(metadata, "title", "page")
+    server_updated_at = _required_string(metadata, "server_updated_at", "page")
+    deleted = _required(metadata, "deleted", bool, "page")
     return ExistingPageFile(
         path=path,
         content=content,
@@ -475,68 +401,29 @@ def _required_handle(
     field: str,
     prefix: Literal["med", "frag", "hl", "page"],
     label: str,
-    path: str,
-    content: str,
-) -> UUID | VaultFileParseFailure:
-    value = _required_string(metadata, field, label, path, content)
-    if isinstance(value, VaultFileParseFailure):
-        return value
-    try:
-        return _parse_handle(value, prefix)
-    except ValueError as exc:
-        return VaultFileParseFailure(path, content, str(exc))
+) -> UUID:
+    return _parse_handle(_required_string(metadata, field, label), prefix)
 
 
-def _required_string(
-    metadata: dict[str, object], field: str, label: str, path: str, content: str
-) -> str | VaultFileParseFailure:
+def _required_string(metadata: dict[str, object], field: str, label: str) -> str:
     value = metadata.get(field)
     if not isinstance(value, str) or not value.strip():
-        return VaultFileParseFailure(path, content, f"Vault {label} metadata is missing {field}")
+        raise ValueError(f"Vault {label} metadata is missing {field}")
     return value.strip()
 
 
-def _required_present_string(
-    metadata: dict[str, object], field: str, label: str, path: str, content: str
-) -> str | VaultFileParseFailure:
+def _required[T](metadata: dict[str, object], field: str, kind: type[T], label: str) -> T:
     value = metadata.get(field)
-    if not isinstance(value, str):
-        return VaultFileParseFailure(path, content, f"Vault {label} metadata is missing {field}")
+    if not isinstance(value, kind):
+        raise ValueError(f"Vault {label} metadata is missing {field}")
     return value
 
 
-def _required_bool(
-    metadata: dict[str, object], field: str, label: str, path: str, content: str
-) -> bool | VaultFileParseFailure:
-    value = metadata.get(field)
-    if not isinstance(value, bool):
-        return VaultFileParseFailure(path, content, f"Vault {label} metadata is missing {field}")
-    return value
-
-
-def _required_int(
-    metadata: dict[str, object], field: str, label: str, path: str, content: str
-) -> int | VaultFileParseFailure:
-    value = metadata.get(field)
-    if not isinstance(value, int):
-        return VaultFileParseFailure(path, content, f"Vault {label} metadata is missing {field}")
-    return value
-
-
-def _fragment_selector(
-    metadata: dict[str, object], label: str, path: str, content: str
-) -> tuple[UUID, int, int] | VaultFileParseFailure:
+def _fragment_selector(metadata: dict[str, object], label: str) -> tuple[UUID, int, int]:
     if metadata.get("selector_kind") != "fragment_offsets":
-        return VaultFileParseFailure(
-            path, content, f"Vault {label} metadata has invalid selector_kind"
-        )
-    fragment_id = _required_handle(metadata, "fragment_handle", "frag", label, path, content)
-    if isinstance(fragment_id, VaultFileParseFailure):
-        return fragment_id
-    start_offset = _required_int(metadata, "start_offset", label, path, content)
-    if isinstance(start_offset, VaultFileParseFailure):
-        return start_offset
-    end_offset = _required_int(metadata, "end_offset", label, path, content)
-    if isinstance(end_offset, VaultFileParseFailure):
-        return end_offset
-    return fragment_id, start_offset, end_offset
+        raise ValueError(f"Vault {label} metadata has invalid selector_kind")
+    return (
+        _required_handle(metadata, "fragment_handle", "frag", label),
+        _required(metadata, "start_offset", int, label),
+        _required(metadata, "end_offset", int, label),
+    )
