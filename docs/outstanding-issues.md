@@ -259,10 +259,8 @@ unexpected timeouts. See
 - [open] oi-160 · runtime health · 2026-09-17 slop sweep · p3 · readyz runs an ingest-reconciler integrity audit that gates public ingress and the interactive worker: [ticket](tickets/readyz-gates-deploys-on-an-ingest-reconciler-audit.md).
 - [open] oi-161 · web panes · 2026-09-17 slop sweep · p3 · four pane bodies are oversized with no split that does not invent abstractions; re-measure after the dedupes land: [ticket](tickets/oversized-pane-bodies-have-no-obvious-split.md).
 - [open] oi-165 · note navigation · 2026-09-17 cleanup audit · p2 · emitted passage links have no navigation consumer: [ticket](tickets/note-passage-links-have-no-navigation-consumer.md).
-- [open] oi-166 · reader evidence · 2026-09-17 slop sweep · p3 · media evidence wire keeps dead `route`/`selector` fields coupled by an exact-key web decoder: [ticket](tickets/media-evidence-wire-keeps-dead-route-and-selector.md).
 - [open] oi-167 · pdf highlights · 2026-09-17 typecheck cleanup · p2 · write-time matching combines cached text with current publication spans: [ticket](tickets/pdf-highlight-matching-mixes-publication-snapshots.md).
 - [open] oi-168 · pdf highlights · 2026-09-17 typecheck cleanup · p3 · three persisted quote-match columns have no current runtime readers: [ticket](tickets/pdf-highlight-match-columns-have-no-readers.md).
-- [open] oi-167 · chat tool runtime · 2026-09-17 slop sweep · p3 · `rejected_provider_call` has no producer, so an unknown provider tool name has no recorded outcome: [ticket](tickets/unknown-provider-tool-name-has-no-recorded-outcome.md).
-||||||| 72af03076e
-- [open] oi-168 · consumption activity · 2026-09-17 slop sweep · p3 · `clientMutationId` on activity uploads is a wire no-op held by the shipped android client: [ticket](tickets/activity-upload-client-mutation-id-is-a-wire-no-op.md).
-||||||| 433ab7b522
+- [open] oi-169 · chat tool runtime · 2026-09-17 slop sweep · p3 · `rejected_provider_call` has no producer, so an unknown provider tool name has no recorded outcome: [ticket](tickets/unknown-provider-tool-name-has-no-recorded-outcome.md).
+- [open] oi-170 · consumption activity · 2026-09-17 slop sweep · p3 · `clientMutationId` on activity uploads is a wire no-op held by the shipped android client: [ticket](tickets/activity-upload-client-mutation-id-is-a-wire-no-op.md).
+- [open] reader evidence · 2026-09-17 cleanup review · p3 · the evidence route ignores its media owner path: [ticket](tickets/media-evidence-route-ignores-owner-path.md).

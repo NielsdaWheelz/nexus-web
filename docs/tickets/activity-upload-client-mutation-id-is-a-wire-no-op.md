@@ -1,7 +1,7 @@
 # activity upload clientMutationId is a wire no-op
 
 status: open · origin: 2026-09-17 slop sweep (claude session), svc-consumption CONS-3 · area:
-consumption activity · oi-168
+consumption activity · oi-170
 
 the activity-capture replay memo in `resource_mutations` is gone, so
 `ActivityRecordIn.client_mutation_id` (`POST /api/consumption/activity`) is
