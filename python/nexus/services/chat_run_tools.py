@@ -28,7 +28,6 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 class RecordKind(StrEnum):
     current_execution = "current_execution"
     historical_execution = "historical_execution"
-    rejected_provider_call = "rejected_provider_call"
     attached_context = "attached_context"
 
 
@@ -179,19 +178,6 @@ def decode_persisted_tool_record(row: MessageToolCall) -> PersistedToolRecord:
             and (tool_revision, binding_revision) == revisions
             and row.tool_call_index >= 1
             and row.status in {"complete", "error", "cancelled"}
-        )
-    elif kind is RecordKind.rejected_provider_call:
-        valid = (
-            canonical is None
-            and isinstance(provider, str)
-            and 1 <= len(provider) <= 128
-            and input_digest is None
-            and tool_revision is None
-            and binding_revision is None
-            and row.scope == "provider_tool"
-            and row.tool_call_index >= 1
-            and row.status == "error"
-            and row.error_code == "unknown_tool"
         )
     elif kind is RecordKind.attached_context:
         valid = (

@@ -635,7 +635,6 @@ BROWSER_TOOL_PROJECTION_CONTRACT = {
         "attached_context",
         "mutation",
         "navigation",
-        "rejected_provider_call",
         "retrieval",
     ),
     "error_types": tuple(
@@ -649,7 +648,6 @@ BROWSER_TOOL_PROJECTION_CONTRACT = {
         "attached_context",
         "current_execution",
         "historical_execution",
-        "rejected_provider_call",
     ),
     "record_shapes": {
         "attached_context": {
@@ -675,15 +673,6 @@ BROWSER_TOOL_PROJECTION_CONTRACT = {
                 "result_kind",
             ),
             "null_fields": ("error_type", "provider_wire_name"),
-        },
-        "rejected_provider_call": {
-            "non_null_fields": (
-                "activity_label",
-                "provider_wire_name",
-                "record_kind",
-                "result_kind",
-            ),
-            "null_fields": ("canonical_tool_id", "effect", "error_type"),
         },
     },
 }

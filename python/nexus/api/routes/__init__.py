@@ -17,7 +17,6 @@ from nexus.api.routes.consumption_activity import router as consumption_activity
 from nexus.api.routes.contributors import router as contributors_router
 from nexus.api.routes.conversation_branches import router as conversation_branches_router
 from nexus.api.routes.conversation_context import router as conversation_context_router
-from nexus.api.routes.conversation_shares import router as conversation_shares_router
 from nexus.api.routes.conversations import router as conversations_router
 from nexus.api.routes.dossiers import router as dossiers_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
@@ -95,7 +94,6 @@ def create_api_router() -> APIRouter:
     api_router.include_router(conversations_router)
     api_router.include_router(conversation_context_router)
     api_router.include_router(conversation_branches_router)
-    api_router.include_router(conversation_shares_router)
     api_router.include_router(messages_router)
     api_router.include_router(contributors_router)
     api_router.include_router(chat_runs_router)

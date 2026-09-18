@@ -500,7 +500,7 @@ engine, API, history contract, and `dossier_build` job own the lifecycle.
 
 **Conversations / chat** — `conversations`, `messages` (the message tree with
 branch pointers), `conversation_branches`, `conversation_active_paths`
-(per-viewer), `conversation_shares`; plus the **chat-run** machinery: `chat_runs`
+(per-viewer); plus the **chat-run** machinery: `chat_runs`
 (carries the exact immutable `generation_spec` and `support_id`;
 authoritative execution provenance lives in its parent `llm_calls` row and
 accepted `llm_model_turns` children),
@@ -1062,7 +1062,7 @@ API is
 `POST /artifact-revisions/{artifact_revision_ref}/make-current`, and
 `POST /artifact-builds/{artifact_build_id}/cancel`. Build streaming is
 `GET /stream/artifact-builds/{artifact_build_id}/events`; persisted
-`Started | Progress | Succeeded | Failed | HistoricalFailed | Cancelled` events are build-keyed
+`Started | Progress | Succeeded | Failed | Cancelled` events are build-keyed
 and replayable. `lib/dossiers/generationAdapter.ts` is the one browser Dossier
 transport boundary: value responses must be the exact `{data: ...}` envelope,
 Make-current and Cancel must be exact HTTP 204 commands, and same-system shape

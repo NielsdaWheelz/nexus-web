@@ -276,39 +276,17 @@ _SCOPE_MATRIX: dict[str, dict[str, str | ScopeUnsupported]] = {
     },
     "message": {
         "media": UNSUPPORTED,
-        "library": """
-            AND m.conversation_id IN (
-                SELECT cs.conversation_id
-                FROM conversation_shares cs
-                JOIN conversations conv ON conv.id = cs.conversation_id
-                WHERE cs.library_id = :scope_id
-                  AND conv.sharing = 'library'
-            )
-        """,
+        "library": UNSUPPORTED,
         "conversation": "AND m.conversation_id = :scope_id",
     },
     "conversation": {
         "media": UNSUPPORTED,
-        "library": """
-            AND c.id IN (
-                SELECT cs.conversation_id
-                FROM conversation_shares cs
-                WHERE cs.library_id = :scope_id
-            )
-        """,
+        "library": UNSUPPORTED,
         "conversation": "AND c.id = :scope_id",
     },
     "web_result": {
         "media": UNSUPPORTED,
-        "library": """
-            AND mtc.conversation_id IN (
-                SELECT cs.conversation_id
-                FROM conversation_shares cs
-                JOIN conversations conv ON conv.id = cs.conversation_id
-                WHERE cs.library_id = :scope_id
-                  AND conv.sharing = 'library'
-            )
-        """,
+        "library": UNSUPPORTED,
         "conversation": "AND mtc.conversation_id = :scope_id",
     },
     "contributor": {

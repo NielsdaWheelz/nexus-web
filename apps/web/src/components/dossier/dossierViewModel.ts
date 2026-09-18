@@ -8,6 +8,7 @@ import { dossierBuildFailureMessage } from "@/lib/dossiers/dossierErrorMessage";
 import type { DurableExecutionPhase } from "@/lib/api/executionAdvisory";
 import type {
   DossierAdmittedGeneration,
+  DossierBuildFailureCode,
   DossierCapacityPause,
   DossierControllerState,
   DossierFreshness,
@@ -17,7 +18,6 @@ import type {
   DossierRevisionSummary,
   DossierTerminalOutcome,
   MediaAbstract,
-  ReadDossierBuildFailureCode,
 } from "@/lib/dossiers/dossierControllerTypes";
 
 /** What occupies the reading area. */
@@ -62,7 +62,7 @@ export type DossierActivityView =
   | { kind: "Suspended" }
   /** Codex quota parked the admission durably (spec 3.4); cancel stays available. */
   | { kind: "CapacityPaused"; pause: DossierCapacityPause }
-  | { kind: "Failed"; code: ReadDossierBuildFailureCode; message: string }
+  | { kind: "Failed"; code: DossierBuildFailureCode; message: string }
   | { kind: "Cancelled" };
 
 interface DossierControls {

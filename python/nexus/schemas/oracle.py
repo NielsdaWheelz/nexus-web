@@ -55,30 +55,6 @@ type OracleReadingFailureCode = Literal[
     "E_GENERATION_SOURCE_CHANGED",
     "E_RATE_LIMITED",
 ]
-type HistoricalOracleReadingFailureCode = Literal[
-    "defect",
-    "E_INTERNAL",
-    "E_BILLING_REQUIRED",
-    "E_TOKEN_BUDGET_EXCEEDED",
-    "budget_exceeded",
-    "invalid_structured_output",
-    "refused",
-    "incomplete",
-    "rate_limited",
-    "provider_unavailable",
-    "stream_interrupted",
-]
-type ReadOracleReadingFailureCode = OracleReadingFailureCode | HistoricalOracleReadingFailureCode
-type OracleWritableEventType = Literal[
-    "meta",
-    "bind",
-    "argument",
-    "plate",
-    "passage",
-    "delta",
-    "omens",
-    "done",
-]
 type OracleReadingEventType = Literal[
     "meta",
     "bind",
@@ -88,29 +64,9 @@ type OracleReadingEventType = Literal[
     "delta",
     "omens",
     "done",
-    "historical_done",
 ]
-
 _ORACLE_FAILURE_CODE_ADAPTER: TypeAdapter[OracleReadingFailureCode] = TypeAdapter(
     OracleReadingFailureCode
-)
-_ORACLE_READ_FAILURE_CODE_ADAPTER: TypeAdapter[ReadOracleReadingFailureCode] = TypeAdapter(
-    ReadOracleReadingFailureCode
-)
-_HISTORICAL_ORACLE_FAILURE_CODES = frozenset(
-    {
-        "defect",
-        "E_INTERNAL",
-        "E_BILLING_REQUIRED",
-        "E_TOKEN_BUDGET_EXCEEDED",
-        "budget_exceeded",
-        "invalid_structured_output",
-        "refused",
-        "incomplete",
-        "rate_limited",
-        "provider_unavailable",
-        "stream_interrupted",
-    }
 )
 _ORACLE_STATUS_ADAPTER: TypeAdapter[OracleReadingStatus] = TypeAdapter(OracleReadingStatus)
 _ORACLE_PHASE_ADAPTER: TypeAdapter[OracleReadingPhase] = TypeAdapter(OracleReadingPhase)
@@ -127,12 +83,6 @@ def oracle_reading_failure_code(value: str) -> OracleReadingFailureCode:
     """Narrow one persisted/product Oracle failure code at its owner boundary."""
 
     return _ORACLE_FAILURE_CODE_ADAPTER.validate_python(value)
-
-
-def oracle_read_failure_code(value: str) -> ReadOracleReadingFailureCode:
-    """Narrow a preserved or current Oracle failure at the database read edge."""
-
-    return _ORACLE_READ_FAILURE_CODE_ADAPTER.validate_python(value)
 
 
 def oracle_reading_status(value: str) -> OracleReadingStatus:
@@ -192,20 +142,6 @@ class OracleFailedDoneEventPayload(BaseModel):
 
 type OracleDoneEventPayload = OracleCompleteDoneEventPayload | OracleFailedDoneEventPayload
 _ORACLE_DONE_ADAPTER: TypeAdapter[OracleDoneEventPayload] = TypeAdapter(OracleDoneEventPayload)
-
-
-class HistoricalOracleFailedDoneEventPayload(BaseModel):
-    """Migration-tagged replay of a pre-cutover failed reading."""
-
-    status: Literal["failed"]
-    error_code: HistoricalOracleReadingFailureCode
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-_HISTORICAL_ORACLE_DONE_ADAPTER: TypeAdapter[HistoricalOracleFailedDoneEventPayload] = TypeAdapter(
-    HistoricalOracleFailedDoneEventPayload
-)
 
 
 def oracle_done_payload(
@@ -329,7 +265,7 @@ class OracleOmensEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-_ORACLE_CURRENT_EVENT_PAYLOAD_ADAPTERS: dict[OracleWritableEventType, TypeAdapter[Any]] = {
+_ORACLE_EVENT_PAYLOAD_ADAPTERS: dict[OracleReadingEventType, TypeAdapter[Any]] = {
     "meta": TypeAdapter(OracleMetaEventPayload),
     "bind": TypeAdapter(OracleBindEventPayload),
     "argument": TypeAdapter(OracleTextEventPayload),
@@ -340,35 +276,15 @@ _ORACLE_CURRENT_EVENT_PAYLOAD_ADAPTERS: dict[OracleWritableEventType, TypeAdapte
     "done": _ORACLE_DONE_ADAPTER,
 }
 
-_ORACLE_READ_EVENT_PAYLOAD_ADAPTERS: dict[OracleReadingEventType, TypeAdapter[Any]] = {
-    **_ORACLE_CURRENT_EVENT_PAYLOAD_ADAPTERS,
-    "historical_done": _HISTORICAL_ORACLE_DONE_ADAPTER,
-}
-
 
 def oracle_event_payload(
-    event_type: OracleWritableEventType,
-    payload: dict[str, Any],
-) -> dict[str, Any]:
-    """Validate one current event before persistence."""
-
-    return (
-        _ORACLE_CURRENT_EVENT_PAYLOAD_ADAPTERS[event_type]
-        .validate_python(payload)
-        .model_dump(mode="json")
-    )
-
-
-def oracle_read_event_payload(
     event_type: OracleReadingEventType,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """Validate one current or migration-tagged event at replay ingress."""
+    """Validate one event at write and at replay ingress."""
 
     return (
-        _ORACLE_READ_EVENT_PAYLOAD_ADAPTERS[event_type]
-        .validate_python(payload)
-        .model_dump(mode="json")
+        _ORACLE_EVENT_PAYLOAD_ADAPTERS[event_type].validate_python(payload).model_dump(mode="json")
     )
 
 
@@ -383,7 +299,7 @@ class OracleReadingEventOut(BaseModel):
 
     @model_validator(mode="after")
     def validate_payload(self) -> OracleReadingEventOut:
-        self.payload = oracle_read_event_payload(self.event_type, self.payload)
+        self.payload = oracle_event_payload(self.event_type, self.payload)
         return self
 
 
@@ -405,7 +321,7 @@ class OracleReadingDetailOut(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     failed_at: datetime | None = None
-    error_code: ReadOracleReadingFailureCode | None = None
+    error_code: OracleReadingFailureCode | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -432,17 +348,14 @@ class OracleReadingDetailOut(BaseModel):
             error_code = self.error_code
             if error_code is None:
                 raise ValueError("failed Oracle reading requires an error code")
-            expected_type = (
-                "historical_done" if error_code in _HISTORICAL_ORACLE_FAILURE_CODES else "done"
-            )
             if (
                 terminal is None
-                or terminal.event_type != expected_type
+                or terminal.event_type != "done"
                 or terminal.payload.get("status") != "failed"
                 or terminal.payload.get("error_code") != error_code
             ):
                 raise ValueError("failed Oracle reading disagrees with its terminal event")
-        elif any(event.event_type in {"done", "historical_done"} for event in self.events):
+        elif any(event.event_type == "done" for event in self.events):
             raise ValueError("non-terminal Oracle reading carries a terminal event")
         return self
 

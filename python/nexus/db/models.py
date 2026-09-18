@@ -112,7 +112,6 @@ class MediaSourceAttemptStatus(str, PyEnum):
     running = "running"
     succeeded = "succeeded"
     failed = "failed"
-    superseded = "superseded"
 
 
 class SemanticStatus(str, PyEnum):
@@ -1327,10 +1326,8 @@ class ArtifactBuildEvent(Base):
     """One sequenced, replayable build-event (the dossier run stream, D-3).
 
     Build-keyed; the strict, ``extra='forbid'`` payload union lives in the
-    schema layer. ``event_type`` is the five-value current-write union plus the
-    migration-only ``HistoricalFailed`` replay tag; the
-    ``(build_id, seq)`` unique + head-lock seq allocation prevent writer
-    collisions and crash-replay duplicates.
+    schema layer. The ``(build_id, seq)`` unique + head-lock seq allocation
+    prevent writer collisions and crash-replay duplicates.
     """
 
     __tablename__ = "artifact_build_events"
@@ -1936,7 +1933,6 @@ class Conversation(Base):
         nullable=False,
     )
     title: Mapped[str] = mapped_column(Text, nullable=False, server_default="Chat")
-    sharing: Mapped[str] = mapped_column(Text, nullable=False, server_default="private")
     next_seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -1954,32 +1950,6 @@ class Conversation(Base):
     messages: Mapped[list["Message"]] = relationship(
         "Message", back_populates="conversation", cascade="all, delete-orphan"
     )
-
-
-class ConversationShare(Base):
-    """ConversationShare model - links conversations to libraries for sharing."""
-
-    __tablename__ = "conversation_shares"
-
-    conversation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("conversations.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    library_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("libraries.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=text("now()"),
-        nullable=False,
-    )
-
-    # Relationships
-    conversation: Mapped["Conversation"] = relationship("Conversation")
-    library: Mapped["Library"] = relationship("Library")
 
 
 class LLMCall(Base):

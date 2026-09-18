@@ -33,7 +33,7 @@ import {
   type OracleReadingDetail,
   type OracleReadingEvent,
   type OracleReadingPhase,
-  type ReadOracleReadingFailureCode,
+  type OracleReadingFailureCode,
 } from "@/lib/oracle/oracleReadingWire";
 import {
   usePaneParam,
@@ -77,7 +77,7 @@ interface ReadingState {
   passages: PassagePayload[];
   delta: string;
   omens: string[];
-  errorCode: ReadOracleReadingFailureCode | null;
+  errorCode: OracleReadingFailureCode | null;
   cursor: number;
 }
 
@@ -233,13 +233,6 @@ function applyEvent(
       }
       return { ...state, cursor, status: "complete" };
     }
-    case "historical_done":
-      return {
-        ...state,
-        cursor,
-        status: "failed",
-        errorCode: event.payload.error_code,
-      };
   }
 }
 
@@ -305,7 +298,7 @@ function ordinalEnglish(day: number): string {
 }
 
 function oracleFailureFeedback(
-  errorCode: ReadOracleReadingFailureCode | null,
+  errorCode: OracleReadingFailureCode | null,
 ): FeedbackContent {
   if (errorCode === null) {
     throw new Error("Failed Oracle reading has no terminal error code");
@@ -385,22 +378,6 @@ function oracleFailureFeedback(
         tone: "Danger",
         title: "The source material changed.",
         message: "Start a new reading from the current material.",
-      };
-    case "defect":
-    case "E_INTERNAL":
-    case "E_BILLING_REQUIRED":
-    case "E_TOKEN_BUDGET_EXCEEDED":
-    case "budget_exceeded":
-    case "invalid_structured_output":
-    case "refused":
-    case "incomplete":
-    case "rate_limited":
-    case "provider_unavailable":
-    case "stream_interrupted":
-      return {
-        tone: "Danger",
-        title: "This earlier reading could not finish.",
-        message: "Start a new reading under the current generation system.",
       };
     default: {
       const exhaustive: never = errorCode;
@@ -542,8 +519,7 @@ export default function OracleReadingPaneBody() {
     kind: "oracle-readings",
     id: shouldStream ? readingId : null,
     decode: decodeOracleStreamEvent,
-    isTerminal: (event) =>
-      event.event_type === "done" || event.event_type === "historical_done",
+    isTerminal: (event) => event.event_type === "done",
     onEvent: onStreamEvent,
     resume: shouldStream
       ? {

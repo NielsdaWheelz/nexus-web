@@ -529,9 +529,8 @@ from the canonical repeatable-read run GET. Rerun and regeneration keep their
 existing rich HTTP responses while sharing the same key/mismatch ledger and
 requiring a fresh exact selection with `ReadOnly` authority.
 
-The unmarked `GET /conversations` primary index and its `scope` variants return
-the strict complete-collection page and drain automatically in
-`ConversationsPaneBody`. The destination picker always sends an explicit `q`
+The unmarked `GET /conversations` primary index returns the strict
+complete-collection page and drains automatically in `ConversationsPaneBody`. The destination picker always sends an explicit `q`
 (including `q=` for recent chats) and retains manual cursor paging.
 `has_context_ref` retains the resource-graph page contract. These three modes
 must not share cursor or response decoding.
@@ -544,9 +543,8 @@ partial pair, an unknown value, a duplicate key, or the explicit default pair is
 `has_context_ref` modes. The title order sorts on the presented title
 `coalesce(nullif(btrim(title), ''), 'Untitled chat')` so the server order and
 the rendered text agree, then on `updated_at DESC, id DESC` in both directions.
-Cursors are the `ConversationIndex:v2:{scope}` family bound to viewer, scope,
-order plan, and collection revision; the retired unversioned family is not
-decodable.
+Cursors are the `ConversationIndex:v2` family bound to viewer, order plan, and
+collection revision; the retired unversioned family is not decodable.
 
 ## Citation Candidates And Final Edges
 

@@ -49,10 +49,7 @@ from nexus.services.artifacts.dossier_types import (
     CancelledEventPayload,
     DossierSubjectLocator,
     FailedEventPayload,
-    HistoricalDossierBuildFailureCode,
-    HistoricalFailedEventPayload,
     InvalidSubjectLocator,
-    ReadFailedEventPayload,
     WebResearchNotConfigured,
 )
 from nexus.services.artifacts.manifests import InputManifestV1
@@ -214,22 +211,17 @@ def _active_build_out(view: engine.DossierActiveBuildView) -> DossierBuildSummar
 def _unsuccessful_build_out(
     view: engine.DossierUnsuccessfulBuildView,
 ) -> DossierBuildSummary:
-    failure: Presence[ReadFailedEventPayload] = absent()
+    failure: Presence[FailedEventPayload] = absent()
     cancellation = absent()
     if view.outcome == "failed":
         if view.failure_code is None:
             raise AssertionError("failed Dossier build has no failure code")
-        if isinstance(view.failure_code, HistoricalDossierBuildFailureCode):
-            failure_payload: ReadFailedEventPayload = HistoricalFailedEventPayload(
+        failure = present(
+            FailedEventPayload(
                 failure_code=view.failure_code,
                 detail=presence_from_nullable(view.failure_detail),
             )
-        else:
-            failure_payload = FailedEventPayload(
-                failure_code=view.failure_code,
-                detail=presence_from_nullable(view.failure_detail),
-            )
-        failure = present(failure_payload)
+        )
     else:
         if view.cancelled_at is None:
             raise AssertionError("cancelled Dossier build has no cancellation time")

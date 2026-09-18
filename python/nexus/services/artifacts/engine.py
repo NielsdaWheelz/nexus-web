@@ -90,13 +90,11 @@ from nexus.services.artifacts.dossier_types import (
     InvalidInstruction,
     InvalidSubjectLocator,
     ProgressEventPayload,
-    ReadDossierBuildFailureCode,
     RevisionNotFound,
     RevisionNotOwnedByHead,
     StartedEventPayload,
     SubjectResource,
     SucceededEventPayload,
-    WritableArtifactBuildEventType,
 )
 from nexus.services.artifacts.generation_step import (
     DOCUMENT_REPAIR_STEP_PATH,
@@ -177,9 +175,6 @@ _IDEA_RESOLUTION_STEP_PATH = "idea-resolution"
 _IDEA_RESOLUTION_CAPACITY_KEY = "generation_capacity_pause"
 _CANCEL_POLL_INTERVAL_SECONDS = 0.25
 _MANIFEST_ADAPTER: TypeAdapter[InputManifestV1] = TypeAdapter(InputManifestV1)
-_FAILURE_CODE_READ_ADAPTER: TypeAdapter[ReadDossierBuildFailureCode] = TypeAdapter(
-    ReadDossierBuildFailureCode
-)
 
 
 class _UncertainReplayDefect(RuntimeError):
@@ -244,7 +239,7 @@ class DossierUnsuccessfulBuildView:
     created_at: datetime
     admitted_generation: DossierBuildAdmittedGeneration | None
     outcome: Literal["failed", "cancelled"]
-    failure_code: ReadDossierBuildFailureCode | None
+    failure_code: DossierBuildFailureCode | None
     failure_detail: str | None
     cancellation_actor_user_id: UUID | None
     cancelled_at: datetime | None
@@ -2544,11 +2539,7 @@ def _read_head_snapshot(
                 created_at=b["created_at"],
                 admitted_generation=_admitted_generation(db, build_id),
                 outcome="failed" if fail else "cancelled",
-                failure_code=(
-                    _FAILURE_CODE_READ_ADAPTER.validate_python(str(b["failure_code"]))
-                    if fail
-                    else None
-                ),
+                failure_code=(DossierBuildFailureCode(str(b["failure_code"])) if fail else None),
                 failure_detail=(
                     str(b["failure_detail"]) if b["failure_detail"] is not None else None
                 ),
@@ -3420,15 +3411,11 @@ def _append_build_event(
     db: Session,
     *,
     build_id: UUID,
-    event_type: WritableArtifactBuildEventType,
+    event_type: ArtifactBuildEventType,
     payload: dict,
 ) -> None:
     """Append one strict build event under the caller-held head lock (the seq is
     allocated + inserted together, so no writer collides — A5 §673)."""
-    if event_type is ArtifactBuildEventType.HistoricalFailed:
-        # justify-defect: this value exists only for rows provenance-tagged by
-        # migration 0224; no post-cutover producer may emit it.
-        raise AssertionError("HistoricalFailed is a migration-only event type")
     build_orm = db.get(ArtifactBuild, build_id)
     if build_orm is None:
         # justify-defect: an event append targets a build the caller just locked.
