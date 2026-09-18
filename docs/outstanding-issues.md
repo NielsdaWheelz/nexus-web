@@ -263,4 +263,3 @@ unexpected timeouts. See
 - [open] oi-168 · pdf highlights · 2026-09-17 typecheck cleanup · p3 · three persisted quote-match columns have no current runtime readers: [ticket](tickets/pdf-highlight-match-columns-have-no-readers.md).
 - [open] oi-169 · chat tool runtime · 2026-09-17 slop sweep · p3 · `rejected_provider_call` has no producer, so an unknown provider tool name has no recorded outcome: [ticket](tickets/unknown-provider-tool-name-has-no-recorded-outcome.md).
 - [open] oi-170 · consumption activity · 2026-09-17 slop sweep · p3 · `clientMutationId` on activity uploads is a wire no-op held by the shipped android client: [ticket](tickets/activity-upload-client-mutation-id-is-a-wire-no-op.md).
-- [open] reader evidence · 2026-09-17 cleanup review · p3 · the evidence route ignores its media owner path: [ticket](tickets/media-evidence-route-ignores-owner-path.md).
