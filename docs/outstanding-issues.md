@@ -74,12 +74,6 @@ A pre-existing defect surfaced while fixing the completion's lock cycle: quote
 completion raises when its ingest job is not running. See
 [docs/tickets/x-quote-completion-defects-when-its-ingest-job-is-not-running.md](tickets/x-quote-completion-defects-when-its-ingest-job-is-not-running.md).
 
-### [OPEN] OI-025 — The `operator_repair` media-reindex reason has no producer
-backend · opened 2026-09-08 by Claude (imports cutover, Track C2) · P3
-`MEDIA_CONTENT_REINDEX_REASONS` admits a payload reason nothing writes; repair
-requeues the existing job and keeps its original reason. See
-[docs/tickets/media-reindex-operator-repair-reason-has-no-producer.md](tickets/media-reindex-operator-repair-reason-has-no-producer.md).
-
 ### [OPEN] OI-030 — the source-refusal sentence duplicates browser copy
 backend · opened 2026-09-09 by Claude (imports cutover, Track C2) · P3
 The repairable-state refusal in `media_source_ingest.py` now repeats, word for
@@ -242,14 +236,10 @@ unexpected timeouts. See
 
 - [open] oi-140 · oracle readings · 2026-09-17 slop sweep · p3 · pre-cutover readings are readable only through eleven retired failure codes and a migration-tagged event; keeping them is an owner decision: [ticket](tickets/pre-cutover-oracle-readings-keep-a-retired-vocabulary.md).
 - [open] oi-141 · settings local vault · 2026-09-17 slop sweep · p3 · export and sync repeat one nine-step ceremony but differ in semantics; the owner decides whether the discard-local pull stays: [ticket](tickets/local-vault-export-and-sync-duplicate-one-ceremony.md).
-- [open] oi-142 · ingest operations · 2026-09-17 slop sweep · p3 · internal ingest routes are callable operator interfaces with no known repository client; decide whether to retain them: [ticket](tickets/operator-repair-surfaces-have-no-entry-point.md).
 - [open] oi-143 · schema and wire vocabularies · 2026-09-17 slop sweep · p3 · four verified deletions each wait on one production count (dossier failure codes, system messages, superseded attempts, pgvector version): [ticket](tickets/items-gated-on-one-production-select.md).
-- [open] oi-145 · auth middleware · 2026-09-17 slop sweep · p3 · five jwt role-claim lookups and the admin plumbing they feed are likely dead; one live token settles it: [ticket](tickets/jwt-role-claim-may-never-be-issued.md).
 - [open] oi-146 · chat fork panel · 2026-09-17 slop sweep · p3 · the graph tab is a second rendering of the same fork set with its own search, labels and switch action: [ticket](tickets/fork-panel-renders-the-same-forks-twice.md).
 - [open] oi-147 · player surfaces · 2026-09-17 slop sweep · p3 · three surfaces measure their own viewport to choose between two renderings of one action set: [ticket](tickets/player-surfaces-carry-two-presentations-of-one-action-set.md).
 - [open] oi-148 · appearance · 2026-09-17 slop sweep · p3 · globals.css declares the light palette twice, the second copy only for the system appearance option: [ticket](tickets/the-system-appearance-option-duplicates-the-light-palette.md).
-- [open] oi-149 · jobs · 2026-09-17 slop sweep · p2 · no deploy starts a maintenance-lane worker, so terminal job rows and expired handoff codes are never pruned: [ticket](tickets/maintenance-worker-lane-never-runs.md).
-- [open] oi-150 · canonicalize service · 2026-09-17 slop sweep · p3 · about 195 lines of service helpers survive only as callers of applied migrations 0208 and 0228: [ticket](tickets/applied-migrations-import-live-service-code.md).
 - [open] oi-151 · conversation sharing · 2026-09-17 slop sweep · p3 · the shares service, routes and table have no bff route and no client; keep for future wiring or delete: [ticket](tickets/conversation-library-sharing-has-no-client.md).
 - [open] oi-153 · web bff · 2026-09-17 slop sweep · p3 · 153 of 175 route files are the same proxy handler; one catch-all plus an explicit denylist replaces them: [ticket](tickets/bff-proxy-routes-are-153-identical-files.md).
 - [open] oi-161 · web panes · 2026-09-17 slop sweep · p3 · four pane bodies are oversized with no split that does not invent abstractions; re-measure after the dedupes land: [ticket](tickets/oversized-pane-bodies-have-no-obvious-split.md).
@@ -258,3 +248,5 @@ unexpected timeouts. See
 - [open] oi-168 · pdf highlights · 2026-09-17 typecheck cleanup · p3 · three persisted quote-match columns have no current runtime readers: [ticket](tickets/pdf-highlight-match-columns-have-no-readers.md).
 - [open] oi-169 · chat tool runtime · 2026-09-17 slop sweep · p3 · `rejected_provider_call` has no producer, so an unknown provider tool name has no recorded outcome: [ticket](tickets/unknown-provider-tool-name-has-no-recorded-outcome.md).
 - [open] oi-170 · consumption activity · 2026-09-17 slop sweep · p3 · `clientMutationId` on activity uploads is a wire no-op held by the shipped android client: [ticket](tickets/activity-upload-client-mutation-id-is-a-wire-no-op.md).
+- [open] oi-172 · contributors · 2026-09-18 owner decisions · p3 · author rename is dead end to end now that no viewer can hold the admin role; delete the feature or grant it to a real principal: [ticket](tickets/author-rename-has-no-principal-who-may-perform-it.md).
+- [open] oi-173 · agent tools · 2026-09-18 owner decisions · p3 · web page read follows a dedupe rehome through a succeeded job row that hourly pruning now deletes after seven days: [ticket](tickets/web-page-read-replay-reads-a-prunable-job-row.md).

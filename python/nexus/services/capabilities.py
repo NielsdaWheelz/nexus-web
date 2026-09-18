@@ -29,7 +29,6 @@ class ViewerRecovery:
     their ``client_mutation_id``."""
 
     viewer_id: UUID
-    is_admin: bool
     client_mutation_id: str
 
 
@@ -40,22 +39,13 @@ class OperatorRecovery:
 
 type RecoveryActor = ViewerRecovery | OperatorRecovery
 
-# Roles that may rename a canonical contributor (spec 6:
-# canRename = isAdministrator OR canCurateContributors).
-CONTRIBUTOR_CURATOR_ROLES = frozenset({"admin", "contributor_curator"})
 
+def can_edit_media_authors(*, can_read: bool, is_creator: bool) -> bool:
+    """Spec 6: canEditAuthors = canReadMedia AND isMediaCreator.
 
-def can_edit_media_authors(*, can_read: bool, is_creator: bool, is_admin: bool) -> bool:
-    """Spec 6: canEditAuthors = canReadMedia AND (isMediaCreator OR isAdministrator).
-
-    Null/system-creator media therefore remains editable only by an administrator.
+    Null/system-creator media therefore has no author editor.
     """
-    return can_read and (is_creator or is_admin)
-
-
-def can_rename_contributor(roles: frozenset[str]) -> bool:
-    """Spec 6: canRename = isAdministrator OR canCurateContributors."""
-    return not CONTRIBUTOR_CURATOR_ROLES.isdisjoint(roles)
+    return can_read and is_creator
 
 
 READABLE_PROCESSING_STATUSES = frozenset(
@@ -178,7 +168,6 @@ def derive_capabilities(
     retrieval_active_ready: bool | None = None,
     can_delete: bool = False,
     is_creator: bool = False,
-    is_admin: bool = False,
     source_refresh_available: bool = False,
     source_recovery: SourceRecoveryAnswer,
     search_recovery: SearchRecoveryAnswer,
@@ -256,9 +245,7 @@ def derive_capabilities(
     # the access term is true by construction here — the same value the PUT
     # enforcement passes after re-checking can_read_media. Author editing must
     # not depend on processing state (a failed ingest still has editable authors).
-    can_edit_authors = can_edit_media_authors(
-        can_read=True, is_creator=is_creator, is_admin=is_admin
-    )
+    can_edit_authors = can_edit_media_authors(can_read=True, is_creator=is_creator)
 
     return CapabilitiesOut(
         can_read=can_read,

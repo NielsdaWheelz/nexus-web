@@ -191,9 +191,9 @@ the application runtime graph:
   subscription live sync, and Oracle generation;
 - `BACKGROUND_WORKER_JOB_KINDS`: source ingest, content indexing, derived units,
   semantic indexing, subscription backfill, Podcast due admission and run
-  retention, ambient generation, teardown, storage cleanup, and reconciliation;
-- `MAINTENANCE_JOB_KINDS`: Gutenberg catalog sync, queue pruning, and expired
-  auth-handoff purge.
+  retention, ambient generation, teardown, storage cleanup, reconciliation,
+  queue pruning, and expired auth-handoff purge;
+- `MAINTENANCE_JOB_KINDS`: Gutenberg catalog sync.
 
 The two production lanes are non-empty, disjoint, and together equal
 `PRODUCTION_ENABLED_JOB_KINDS`. Production plus the maintenance kinds equals the

@@ -266,11 +266,7 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=1,
             retry_delays_seconds=(0,),
             lease_seconds=300,
-            periodic_interval_seconds=(
-                int(settings.background_job_prune_schedule_seconds)
-                if settings.background_job_prune_schedule_seconds > 0
-                else None
-            ),
+            periodic_interval_seconds=3600,
         ),
         "purge_expired_auth_handoff_codes": JobDefinition(
             kind="purge_expired_auth_handoff_codes",

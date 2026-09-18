@@ -136,10 +136,8 @@ class _RawTextBuilder:
 class _CanonicalTextTarget:
     """Stream sanitized HTML into canonical raw text without retaining a DOM."""
 
-    def __init__(self, element_ids: set[str], *, capture_structure: bool = False) -> None:
+    def __init__(self, *, capture_structure: bool = False) -> None:
         self.builder = _RawTextBuilder()
-        self.element_ids = element_ids
-        self.raw_offsets: dict[str, int] = {}
         self._visible_stack: list[bool] = []
         self._tag_stack: list[str] = []
         self.capture_structure = capture_structure
@@ -177,10 +175,6 @@ class _CanonicalTextTarget:
             and self.builder.last_char != "\n"
         ):
             self.builder.append("\n")
-        for attribute in ("id", "name"):
-            value = str(attributes.get(attribute) or "")
-            if value in self.element_ids:
-                self.raw_offsets.setdefault(value, self.builder.length)
         if self.capture_structure and (
             normalized_tag in HEADING_TAGS | STRUCTURAL_TAGS | {"p", "em"}
             or any(attributes.get(attribute) for attribute in ("id", "name"))
@@ -257,39 +251,23 @@ def generate_canonical_text(html_sanitized: str) -> str:
         Canonical text string with proper block boundaries.
 
     """
-    text, _offsets = generate_canonical_text_with_element_offsets(html_sanitized, set())
-    return text
-
-
-def generate_canonical_text_with_element_offsets(
-    html_sanitized: str,
-    element_ids: set[str],
-) -> tuple[str, dict[str, int]]:
-    """Generate canonical text and exact starts for requested element IDs/names."""
     if not html_sanitized or not html_sanitized.strip():
-        return "", {}
+        return ""
 
-    target = _CanonicalTextTarget(element_ids)
+    target = _CanonicalTextTarget()
     parser = HTMLParser(target=target)
     parser.feed("<div>")
     parser.feed(html_sanitized)
     parser.feed("</div>")
     parser.close()
     raw_text = target.builder.build()
-    raw_offsets = target.raw_offsets
     del parser, target
-    if not raw_offsets:
-        return _canonical_text_without_sources(raw_text), {}
-    text, source_offsets = _canonical_text_with_offsets(raw_text, raw_offsets.values())
-    offsets = {
-        element_id: source_offsets[raw_offset] for element_id, raw_offset in raw_offsets.items()
-    }
-    return text, offsets
+    return _canonical_text_without_sources(raw_text)
 
 
 def canonicalize_structure(html_sanitized: str) -> CanonicalStructure:
     """Bind source structure to the same normalization used by text anchors."""
-    target = _CanonicalTextTarget(set(), capture_structure=True)
+    target = _CanonicalTextTarget(capture_structure=True)
     parser = HTMLParser(target=target)
     parser.feed("<div>")
     parser.feed(html_sanitized)
@@ -327,163 +305,6 @@ def _canonical_structure(
         ),
         anchors,
     )
-
-
-def repair_historical_html_structure(html_sanitized: str, canonical_text: str) -> str:
-    """Encode pre-#177 HTML5 text-node boundaries for migration 0228.
-
-    The historical DOM walker normalized adjacent text nodes independently.
-    Neutral spans preserve those boundaries through serialization and current
-    readers without changing persisted text or any structural coordinate.
-    This is a one-time persisted-HTML repair, never an ingestion fallback.
-    """
-    from typing import cast
-    from xml.dom import Node
-    from xml.dom.minidom import Document, Element, Text
-
-    import html5lib
-    from lxml.html import HtmlElement, fragment_fromstring
-
-    from nexus.services.html_tree import inner_html
-
-    def collect(element: Element, target: _CanonicalTextTarget) -> None:
-        target.start(element.tagName, dict(element.attributes.items()))
-        for child in element.childNodes:
-            if isinstance(child, Text) and child.nodeType == Node.TEXT_NODE:
-                target.data(child.data)
-            elif isinstance(child, Element):
-                collect(child, target)
-        target.end(element.tagName)
-
-    def preserve_boundaries(element: Element, owner: Document) -> None:
-        previous_text = False
-        for child in tuple(element.childNodes):
-            is_text = isinstance(child, Text) and child.nodeType == Node.TEXT_NODE
-            if previous_text and is_text:
-                span = owner.createElement("span")
-                element.replaceChild(span, child)
-                span.appendChild(child)
-            elif isinstance(child, Element):
-                preserve_boundaries(child, owner)
-            previous_text = is_text
-
-    document = html5lib.parseFragment(
-        f"<div>{html_sanitized}</div>", treebuilder="dom", namespaceHTMLElements=False
-    )
-    target = _CanonicalTextTarget(set(), capture_structure=True)
-    try:
-        owner = document.ownerDocument
-        if not isinstance(owner, Document):
-            raise ValueError("Historical reader HTML has no document owner")
-        root = next(child for child in document.childNodes if isinstance(child, Element))
-        collect(root, target)
-        preserve_boundaries(root, owner)
-        while root.firstChild is not None:
-            document.insertBefore(root.firstChild, root)
-        document.removeChild(root)
-        rendered = html5lib.serialize(
-            document, tree="dom", quote_attr_values="always", omit_optional_tags=False
-        )
-    finally:
-        document.unlink()
-    raw_text, elements, anchors = target.builder.build(), target.elements, target.anchors
-    del document, owner, root, target
-    historical = _canonical_structure(raw_text, elements, anchors)
-    del raw_text, elements, anchors
-    if historical.text != canonical_text:
-        raise ValueError("Historical reader HTML disagrees with persisted canonical text")
-
-    # justify-type-assertion: create_parent=True always returns an HtmlElement fragment root.
-    repaired = inner_html(cast(HtmlElement, fragment_fromstring(rendered, create_parent=True)))
-    # justify-type-assertion: the same fragment-root contract applies to the fixed-point parse.
-    if inner_html(cast(HtmlElement, fragment_fromstring(repaired, create_parent=True))) != repaired:
-        raise ValueError("Historical reader HTML repair is not a serialization fixed point")
-    if canonicalize_structure(repaired) != historical:
-        raise ValueError("Historical reader HTML repair changed canonical structure")
-
-    document = html5lib.parseFragment(
-        f"<div>{repaired}</div>", treebuilder="dom", namespaceHTMLElements=False
-    )
-    target = _CanonicalTextTarget(set(), capture_structure=True)
-    try:
-        root = next(child for child in document.childNodes if isinstance(child, Element))
-        collect(root, target)
-    finally:
-        document.unlink()
-    raw_text, elements, anchors = target.builder.build(), target.elements, target.anchors
-    del document, root, target
-    if _canonical_structure(raw_text, elements, anchors) != historical:
-        raise ValueError("Historical reader HTML repair changed browser canonical structure")
-    return repaired
-
-
-def repair_epub_body_anchor(html_sanitized: str, canonical_text: str, anchor_id: str) -> str:
-    """Repair a copied body ID without moving the published first browser target.
-
-    Historical EPUB ingestion materialized the body ID as a leading empty span,
-    leaving duplicate IDs on empty publisher divs. Only that projection is repaired;
-    other ambiguous anchor shapes still require an explanation.
-    """
-    from typing import cast
-
-    from lxml.html import HtmlElement, fragment_fromstring
-
-    from nexus.services.html_tree import inner_html
-
-    # justify-type-assertion: create_parent=True always returns an HtmlElement fragment root.
-    root = cast(HtmlElement, fragment_fromstring(html_sanitized, create_parent=True))
-    if not anchor_id or not len(root) or (root.text or "").strip():
-        raise ValueError("EPUB body anchor repair requires a leading empty marker")
-    marker = root[0]
-    if (
-        marker.tag != "span"
-        or dict(marker.attrib) != {"id": anchor_id}
-        or marker.text
-        or len(marker)
-    ):
-        raise ValueError("EPUB body anchor repair requires a leading empty marker")
-
-    matches = [element for element in root.iter() if element.get("id") == anchor_id]
-    if len(matches) < 2 or any(element.get("name") == anchor_id for element in root.iter()):
-        raise ValueError("EPUB body anchor repair requires duplicate IDs without named ambiguity")
-    duplicates = matches[1:]
-    if any(
-        element.tag != "div"
-        or dict(element.attrib) != {"id": anchor_id}
-        or element.text
-        or len(element)
-        for element in duplicates
-    ):
-        raise ValueError("EPUB body anchor repair only removes IDs from empty publisher divs")
-
-    original = canonicalize_structure(html_sanitized)
-    if original.text != canonical_text or anchor_id in original.anchors:
-        raise ValueError(
-            "EPUB body anchor repair lacks persisted text and ambiguous-anchor witnesses"
-        )
-    for element in duplicates:
-        del element.attrib["id"]
-    repaired = inner_html(root)
-    structure = canonicalize_structure(repaired)
-    if (
-        structure.text != canonical_text
-        or structure.anchors.get(anchor_id) != 0
-        or structure.elements[0].tag != "span"
-        or structure.elements[0].start_offset != 0
-        or structure.elements[0].end_offset != 0
-        or structure.anchors.keys() != original.anchors.keys() | {anchor_id}
-    ):
-        raise ValueError("EPUB body anchor repair changed canonical targets")
-    for name, index in original.anchors.items():
-        before = original.elements[index]
-        after = structure.elements[structure.anchors[name]]
-        if (before.tag, before.start_offset, before.end_offset) != (
-            after.tag,
-            after.start_offset,
-            after.end_offset,
-        ):
-            raise ValueError("EPUB body anchor repair moved another canonical target")
-    return repaired
 
 
 def _canonical_text_without_sources(raw_text: str) -> str:
