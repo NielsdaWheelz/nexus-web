@@ -1,7 +1,8 @@
-"""Cycle-free active-subscription playback-preference query."""
+"""Cycle-free active-subscription playback-settings query."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 
@@ -12,35 +13,10 @@ from nexus.schemas.consumption import PauseShorteningMode
 from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
 
 
-def load_subscription_playback_preferences(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    podcast_ids: list[UUID],
-) -> dict[UUID, Absent | Present[float]]:
-    """Return the owned nullable preference for each active subscription."""
-    podcast_ids = list(dict.fromkeys(podcast_ids))
-    if not podcast_ids:
-        return {}
-    rows = db.execute(
-        text(
-            """
-            SELECT podcast_id, default_playback_speed
-            FROM podcast_subscriptions
-            WHERE user_id = :viewer_id
-              AND podcast_id = ANY(:podcast_ids)
-            """
-        ),
-        {"viewer_id": viewer_id, "podcast_ids": podcast_ids},
-    ).mappings()
-    return {
-        UUID(str(row["podcast_id"])): presence_from_nullable(
-            float(row["default_playback_speed"])
-            if row["default_playback_speed"] is not None
-            else None
-        )
-        for row in rows
-    }
+@dataclass(frozen=True, slots=True)
+class SubscriptionPlaybackSettings:
+    playback_rate: Absent | Present[float]
+    pause_shortening_mode: Absent | Present[PauseShorteningMode]
 
 
 def pause_shortening_mode_from_nullable(
@@ -57,20 +33,20 @@ def pause_shortening_mode_from_nullable(
     return present(cast(PauseShorteningMode, stored))
 
 
-def load_subscription_pause_shortening_modes(
+def load_subscription_playback_settings(
     db: Session,
     *,
     viewer_id: UUID,
     podcast_ids: list[UUID],
-) -> dict[UUID, Absent | Present[PauseShorteningMode]]:
-    """Return the owned nullable mode for each active subscription."""
+) -> dict[UUID, SubscriptionPlaybackSettings]:
+    """Return the owned nullable playback settings for each active subscription."""
     podcast_ids = list(dict.fromkeys(podcast_ids))
     if not podcast_ids:
         return {}
     rows = db.execute(
         text(
             """
-            SELECT podcast_id, pause_shortening_mode
+            SELECT podcast_id, default_playback_speed, pause_shortening_mode
             FROM podcast_subscriptions
             WHERE user_id = :viewer_id
               AND podcast_id = ANY(:podcast_ids)
@@ -79,8 +55,13 @@ def load_subscription_pause_shortening_modes(
         {"viewer_id": viewer_id, "podcast_ids": podcast_ids},
     ).mappings()
     return {
-        UUID(str(row["podcast_id"])): pause_shortening_mode_from_nullable(
-            row["pause_shortening_mode"]
+        UUID(str(row["podcast_id"])): SubscriptionPlaybackSettings(
+            playback_rate=presence_from_nullable(
+                float(row["default_playback_speed"])
+                if row["default_playback_speed"] is not None
+                else None
+            ),
+            pause_shortening_mode=pause_shortening_mode_from_nullable(row["pause_shortening_mode"]),
         )
         for row in rows
     }

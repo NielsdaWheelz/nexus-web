@@ -6,13 +6,13 @@ from typing import cast
 from uuid import UUID
 
 from nexus.services.browse.models import BrowseQuery
-from nexus.services.sealed_handles import DiscoveryTargetHandle
-from nexus.services.signed_keyset_cursor import (
+from nexus.services.keyset_cursor import (
     KeysetValue,
     KeysetValueKind,
-    decode_signed_keyset_cursor,
-    encode_signed_keyset_cursor,
+    decode_keyset_cursor,
+    encode_keyset_cursor,
 )
+from nexus.services.sealed_handles import DiscoveryTargetHandle
 
 _SEARCH_FAMILY = "BrowseSearch"
 _PREVIEW_EPISODES_FAMILY = "BrowsePreviewEpisodes"
@@ -44,7 +44,7 @@ def encode_search_cursor(
     after: int | str,
 ) -> str:
     kind = KeysetValueKind.Int if isinstance(after, int) else KeysetValueKind.Text
-    return encode_signed_keyset_cursor(
+    return encode_keyset_cursor(
         family=_SEARCH_FAMILY,
         query=_search_digest(query, viewer_id=viewer_id, provider_contract=provider_contract),
         after=(KeysetValue(kind, after),),
@@ -59,7 +59,7 @@ def decode_search_cursor(
     provider_contract: str,
     kind: KeysetValueKind,
 ) -> int | str:
-    (value,) = decode_signed_keyset_cursor(
+    (value,) = decode_keyset_cursor(
         cursor,
         family=_SEARCH_FAMILY,
         query=_search_digest(query, viewer_id=viewer_id, provider_contract=provider_contract),
@@ -86,7 +86,7 @@ def encode_preview_episodes_cursor(
     before_published: int,
     before_episode_ref: str,
 ) -> str:
-    return encode_signed_keyset_cursor(
+    return encode_keyset_cursor(
         family=_PREVIEW_EPISODES_FAMILY,
         query=_preview_digest(viewer_id=viewer_id, target=target),
         after=(
@@ -102,7 +102,7 @@ def decode_preview_episodes_cursor(
     viewer_id: UUID,
     target: DiscoveryTargetHandle,
 ) -> tuple[int, str]:
-    published, episode_ref = decode_signed_keyset_cursor(
+    published, episode_ref = decode_keyset_cursor(
         cursor,
         family=_PREVIEW_EPISODES_FAMILY,
         query=_preview_digest(viewer_id=viewer_id, target=target),

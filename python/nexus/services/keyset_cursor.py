@@ -143,7 +143,7 @@ def _decode_value(kind: KeysetValueKind, value: object) -> KeysetScalar:
             assert_never(kind)
 
 
-def encode_signed_keyset_cursor(
+def encode_keyset_cursor(
     *,
     family: str,
     query: Mapping[str, object],
@@ -161,7 +161,7 @@ def encode_signed_keyset_cursor(
     return token.decode("ascii")
 
 
-def decode_signed_keyset_cursor(
+def decode_keyset_cursor(
     cursor: str,
     *,
     family: str,

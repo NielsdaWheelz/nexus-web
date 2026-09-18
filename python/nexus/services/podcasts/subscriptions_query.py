@@ -38,15 +38,15 @@ from nexus.services.collection_revisions import (
     read_collection_revision,
     require_collection_revision,
 )
-from nexus.services.consumption import service as consumption_service
+from nexus.services.consumption import _projection
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
+from nexus.services.keyset_cursor import (
+    KeysetValueKind,
+    decode_keyset_cursor,
+    encode_keyset_cursor,
+)
 from nexus.services.podcasts.playback_preferences import (
     pause_shortening_mode_from_nullable,
-)
-from nexus.services.signed_keyset_cursor import (
-    KeysetValueKind,
-    decode_signed_keyset_cursor,
-    encode_signed_keyset_cursor,
 )
 
 PodcastSubscriptionSort = Literal["recent_episode", "unplayed_count", "alpha"]
@@ -355,7 +355,7 @@ def list_subscriptions(
         query_params.update(
             keyset_params(
                 plan,
-                decode_signed_keyset_cursor(
+                decode_keyset_cursor(
                     cursor,
                     family=CollectionFamily.PodcastSubscriptions.value,
                     query=query_identity,
@@ -377,7 +377,7 @@ def list_subscriptions(
                     pe.media_id,
                     pe.published_at,
                     {
-                    consumption_service.episode_state_case_sql(
+                    _projection.episode_state_case_sql(
                         listening_alias="pls", override_alias="co", episode_alias="pe"
                     )
                 } AS episode_state
@@ -385,7 +385,7 @@ def list_subscriptions(
                 JOIN visible_media vm
                   ON vm.media_id = pe.media_id
                 {
-                    consumption_service.episode_state_joins_sql(
+                    _projection.episode_state_joins_sql(
                         user_param=":user_id",
                         media_expr="pe.media_id",
                         listening_alias="pls",
@@ -466,7 +466,7 @@ def list_subscriptions(
         )
     next_cursor = (
         present(
-            encode_signed_keyset_cursor(
+            encode_keyset_cursor(
                 family=CollectionFamily.PodcastSubscriptions.value,
                 query=query_identity,
                 after=after_values(plan, page_rows[-1]),

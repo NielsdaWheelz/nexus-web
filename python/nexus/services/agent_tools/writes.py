@@ -37,6 +37,7 @@ from nexus.services import highlights, library_entries, note_bodies, notes, text
 from nexus.services.chat_run_tools import (
     decode_persisted_tool_record,
 )
+from nexus.services.consumption import _lectern_store
 from nexus.services.consumption import service as consumption_service
 from nexus.services.passage_anchors import normalize_quote_text
 from nexus.services.resource_graph.edges import create_edge, delete_edge
@@ -404,9 +405,7 @@ def add_to_queue(db: Session, viewer_id: UUID, args: dict[str, Any]) -> WriteEff
         viewer_id=viewer_id,
         media_ids=[media_ref.id],
     )
-    resolved = consumption_service.get_lectern_item_for_media(
-        db, viewer_id=viewer_id, media_id=media_ref.id
-    )
+    resolved = _lectern_store.find_item_for_media(db, viewer_id=viewer_id, media_id=media_ref.id)
     if resolved is None:
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     item_id, title = resolved

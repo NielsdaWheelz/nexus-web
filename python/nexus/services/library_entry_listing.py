@@ -53,20 +53,20 @@ from nexus.services.collection_revisions import (
     read_collection_revision,
     require_collection_revision,
 )
-from nexus.services.consumption import service as consumption_service
+from nexus.services.consumption import _projection
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
     primary_creator_rows_sql,
+)
+from nexus.services.keyset_cursor import (
+    KeysetValueKind,
+    decode_keyset_cursor,
+    encode_keyset_cursor,
 )
 from nexus.services.library_entries import library_media_ids_cte_sql
 from nexus.services.media_document_metrics import load_media_word_counts
 from nexus.services.podcasts.playback_preferences import (
     pause_shortening_mode_from_nullable,
-)
-from nexus.services.signed_keyset_cursor import (
-    KeysetValueKind,
-    decode_signed_keyset_cursor,
-    encode_signed_keyset_cursor,
 )
 
 # ---------------------------------------------------------------------------
@@ -314,13 +314,13 @@ def _hydrate_entry_rows(
     document_media_ids = [
         media.id for media in media_by_id.values() if media.listening_state is None
     ]
-    last_engaged_at_by_media_id = consumption_service.listening_recency(
+    last_engaged_at_by_media_id = _projection.listening_recency(
         db,
         viewer_id=viewer_id,
         media_ids=audio_media_ids,
     )
     last_engaged_at_by_media_id.update(
-        consumption_service.reader_engagement_recency(
+        _projection.reader_engagement_recency(
             db,
             viewer_id=viewer_id,
             media_ids=document_media_ids,
@@ -371,7 +371,7 @@ def _hydrate_entry_rows(
                         pe.podcast_id,
                         COUNT(*) FILTER (
                             WHERE {
-                    consumption_service.episode_state_case_sql(
+                    _projection.episode_state_case_sql(
                         listening_alias="pls", override_alias="co", episode_alias="pe"
                     )
                 } = 'unplayed'
@@ -379,7 +379,7 @@ def _hydrate_entry_rows(
                     FROM podcast_episodes pe
                     JOIN visible_media vm ON vm.media_id = pe.media_id
                     {
-                    consumption_service.episode_state_joins_sql(
+                    _projection.episode_state_joins_sql(
                         user_param=":viewer_id",
                         media_expr="pe.media_id",
                         listening_alias="pls",
@@ -658,7 +658,7 @@ def _encode_view_cursor(
     is_default: bool,
     row: Any,
 ) -> str:
-    return encode_signed_keyset_cursor(
+    return encode_keyset_cursor(
         family=CollectionFamily.LibraryEntries.value,
         query=_cursor_query(
             viewer_id=viewer_id,
@@ -680,7 +680,7 @@ def _decode_view_cursor(
     plan: Sequence[SortKey],
     is_default: bool,
 ) -> dict[str, object]:
-    values = decode_signed_keyset_cursor(
+    values = decode_keyset_cursor(
         cursor,
         family=CollectionFamily.LibraryEntries.value,
         query=_cursor_query(
@@ -912,7 +912,7 @@ def _query_view_page(
         )
     if needs_eng:
         facts_joins.append(
-            f"LEFT JOIN ({consumption_service.engagement_fact_rows_sql()}) eng"
+            f"LEFT JOIN ({_projection.engagement_fact_rows_sql()}) eng"
             " ON eng.media_id = membership.media_id"
         )
 

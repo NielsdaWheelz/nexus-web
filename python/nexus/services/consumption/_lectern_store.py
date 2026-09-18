@@ -290,7 +290,7 @@ def item_ids_for_media(db: Session, *, viewer_id: UUID, media_ids: list[UUID]) -
     media carries more than one Lectern row the lowest-position row wins, matching
     the single-media :func:`find_item_for_media`. This is the set-based read the
     action-snapshot aggregator uses so ``LecternMembership.lecternItemId`` never
-    costs one query per ref.
+    costs one query per ref; never loop :func:`find_item_for_media` for this.
     """
     ordered = list(dict.fromkeys(media_ids))
     if not ordered:
@@ -367,6 +367,7 @@ def ensure_missing_in_txn(
     """Append rows for media absent from the viewer's Lectern at the absolute end;
     never move existing rows. Returns the inserted ``(media_id, item_id)`` pairs.
 
+    The caller owns the transaction and must already hold the viewer lock.
     Any teardown intent rejects the whole batch; exceeding the cap is ``E_LIMIT``.
     Naturally idempotent: the unique membership constraint plus the serializable
     retry allowlist absorb concurrent first-sight races (spec §5.3)."""

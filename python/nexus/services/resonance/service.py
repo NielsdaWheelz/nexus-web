@@ -30,6 +30,7 @@ from nexus.schemas.resonance import (
 )
 from nexus.services import library_entries, library_governance
 from nexus.services import media as media_service
+from nexus.services.consumption import _projection
 from nexus.services.consumption import service as consumption_service
 from nexus.services.contributor_credits import visible_author_credit_rows_sql
 from nexus.services.podcasts.episodes import episode_publication_rows_sql
@@ -162,7 +163,7 @@ def build_lectern_slate(db: Session, *, viewer_id: UUID) -> SlateOut:
     as_of = _evidence.capture_as_of(db)
     anchors = _evidence.lectern_anchors(db, viewer_id=viewer_id)
     eligible_media = _eligible_media_relation(
-        consumption_service.lectern_membership_rows_sql(),
+        _projection.lectern_membership_rows_sql(),
         extra_predicate="AND COALESCE(engagement.read_state, 'Unread') <> 'Finished'",
     )
     candidates = _evidence.acquire_slate_candidates(
@@ -218,7 +219,7 @@ def _eligible_media_relation(membership_rows_sql: str, *, extra_predicate: str =
         WITH candidates AS ({media_service.media_candidate_rows_sql()}),
         visible_media AS ({visible_media_ids_cte_sql()}),
         membership AS ({membership_rows_sql}),
-        engagement AS ({consumption_service.engagement_fact_rows_sql()}),
+        engagement AS ({_projection.engagement_fact_rows_sql()}),
         episodes AS ({episode_publication_rows_sql()})
         SELECT
             candidates.media_id,
@@ -277,7 +278,7 @@ def _library_target_relation(eligible_media_relation: str) -> str:
             WHERE episode_publications.published_at <= :as_of
             GROUP BY episode_publications.podcast_id
         ),
-        engagement AS ({consumption_service.engagement_fact_rows_sql()}),
+        engagement AS ({_projection.engagement_fact_rows_sql()}),
         podcast_engagement AS (
             SELECT
                 episode_publications.podcast_id,

@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from nexus.services.signed_keyset_cursor import KeysetScalar, KeysetValue, KeysetValueKind
+from nexus.services.keyset_cursor import KeysetScalar, KeysetValue, KeysetValueKind
 
 type Direction = Literal["asc", "desc"]
 

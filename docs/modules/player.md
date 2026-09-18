@@ -40,15 +40,14 @@ split by storage and query concern:
   claim -> validation -> domain writes -> semantic memo -> snapshot read. Read
   facades (`get_lectern` / `get_listening_state` / `get_reader_cursor`) run on
   the request-scoped session; `put_reader_cursor` owns one transaction for the
-  cursor CAS, engagement projection, and completion transition. Policy-neutral
-  engagement, recent-anchor, complete membership, and item-count ports are
-  consumed by Resonance. Two narrow
-  in-transaction exceptions compose here rather than going
-  through a command: `ensure_missing_items_in_txn` (the auto-subscription
-  watermark step; only caller is the fenced finalization path in
-  `services/podcasts/sync.py`) and
-  `delete_media_consumption_state_in_txn` (media teardown; only caller is
-  `services/media_deletion.py`).
+  cursor CAS, engagement projection, and completion transition. Resonance reads
+  the Lectern capacity predicate `lectern_has_capacity` here; the policy-neutral
+  engagement, recent-anchor, and complete-membership relations it composes come
+  from `_projection` directly. One narrow in-transaction exception composes here
+  rather than going through a command: `delete_media_consumption_state_in_txn`
+  (media teardown; only caller is `services/media_deletion.py`). The
+  auto-subscription watermark step calls `_lectern_store.ensure_missing_in_txn`
+  directly from the fenced finalization path in `services/podcasts/sync.py`.
 - `_lectern_store.py` — sole DML owner of `consumption_queue_items` (Lectern
   membership/order). Builds the canonical `LecternSnapshot`.
 - `_state_store.py` — sole DML owner of `consumption_overrides` (explicit

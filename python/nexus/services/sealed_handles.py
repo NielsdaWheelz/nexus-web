@@ -59,6 +59,11 @@ _LIBRARY_INVITATION = _EntityHandleSpec(
     domain="library-invitation",
 )
 _UPLOAD_SESSION = _EntityHandleSpec(prefix="nup1", domain="upload-session")
+_PODCAST_REFRESH_RUN = _EntityHandleSpec(
+    prefix="prr1",
+    domain="podcast-refresh-run",
+    version="v1",
+)
 _SHARE_TOKEN_RE = re.compile(rf"^nxshr1_[A-Za-z0-9_-]{{{_SHARE_TOKEN_CHARS}}}$")
 
 
@@ -114,6 +119,10 @@ class LibraryInvitationHandle(_CanonicalEntityHandle):
 
 class UploadSessionHandle(_CanonicalEntityHandle):
     _spec = _UPLOAD_SESSION
+
+
+class PodcastRefreshRunHandle(_CanonicalEntityHandle):
+    _spec = _PODCAST_REFRESH_RUN
 
 
 class ShareToken(str):
@@ -313,6 +322,14 @@ def seal_upload_session(session_id: UUID) -> UploadSessionHandle:
 
 def unseal_upload_session(raw: str) -> UUID:
     return _unseal(raw, _UPLOAD_SESSION, "Invalid upload session handle")
+
+
+def seal_podcast_refresh_run(run_id: UUID) -> PodcastRefreshRunHandle:
+    return _seal(run_id, _PODCAST_REFRESH_RUN, PodcastRefreshRunHandle)
+
+
+def unseal_podcast_refresh_run(raw: str) -> UUID:
+    return _unseal(raw, _PODCAST_REFRESH_RUN, "Invalid Podcast refresh run handle")
 
 
 def seal_discovery_target(canonical_payload: bytes) -> DiscoveryTargetHandle:

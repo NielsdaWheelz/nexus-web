@@ -65,12 +65,12 @@ from nexus.services.collection_revisions import (
     read_collection_revision,
     require_collection_revision,
 )
-from nexus.services.sealed_handles import seal_user, unseal_user
-from nexus.services.signed_keyset_cursor import (
+from nexus.services.keyset_cursor import (
     KeysetValueKind,
-    decode_signed_keyset_cursor,
-    encode_signed_keyset_cursor,
+    decode_keyset_cursor,
+    encode_keyset_cursor,
 )
+from nexus.services.sealed_handles import seal_user, unseal_user
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.text import escape_like
 
@@ -680,7 +680,7 @@ def list_libraries(
         params.update(
             keyset_params(
                 plan,
-                decode_signed_keyset_cursor(
+                decode_keyset_cursor(
                     cursor,
                     family=_INDEX_CURSOR_FAMILY,
                     query=cursor_query,
@@ -720,7 +720,7 @@ def list_libraries(
     )
     page_rows = rows[:limit]
     next_cursor = (
-        encode_signed_keyset_cursor(
+        encode_keyset_cursor(
             family=_INDEX_CURSOR_FAMILY,
             query=cursor_query,
             after=after_values(plan, page_rows[-1]),
@@ -775,7 +775,7 @@ def list_writable_library_destinations(
         params.update(
             keyset_params(
                 _DESTINATIONS_PLAN,
-                decode_signed_keyset_cursor(
+                decode_keyset_cursor(
                     cursor,
                     family=_DESTINATIONS_CURSOR_FAMILY,
                     query=cursor_query,
@@ -822,7 +822,7 @@ def list_writable_library_destinations(
     )
     page_rows = rows[:limit]
     next_cursor = (
-        encode_signed_keyset_cursor(
+        encode_keyset_cursor(
             family=_DESTINATIONS_CURSOR_FAMILY,
             query=cursor_query,
             after=after_values(_DESTINATIONS_PLAN, page_rows[-1]),

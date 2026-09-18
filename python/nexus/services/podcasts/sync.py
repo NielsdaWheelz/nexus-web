@@ -17,7 +17,7 @@ from nexus.db.session import get_session_factory, transaction
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import JobExecutionContext, JobRow, lock_and_renew_running_job_claim
 from nexus.logging import get_logger
-from nexus.services.consumption import service as consumption_service
+from nexus.services.consumption import _lectern_store
 
 from ._normalize import parse_iso_datetime
 from .feed import fetch_live_feed_snapshot
@@ -396,7 +396,7 @@ def _finalize_healthy_sync(
                         watermark=watermark,
                     )
                     if eligible:
-                        consumption_service.ensure_missing_items_in_txn(
+                        _lectern_store.ensure_missing_in_txn(
                             fresh,
                             viewer_id=payload.user_id,
                             media_ids=eligible,

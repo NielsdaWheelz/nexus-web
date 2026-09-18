@@ -33,8 +33,8 @@ from nexus.services.browse.models import (
     single_credit,
     youtube_target,
 )
+from nexus.services.keyset_cursor import KeysetValueKind
 from nexus.services.net.http_retry import get_json_with_retry
-from nexus.services.signed_keyset_cursor import KeysetValueKind
 from nexus.services.youtube_identity import classify_youtube_provider_video_id
 
 _PROVIDER_CONTRACT = "YouTubeDataV3VideoSearch"

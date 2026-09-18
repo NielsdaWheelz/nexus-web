@@ -82,6 +82,12 @@ from nexus.services.collection_revisions import (
     read_collection_revision,
     require_collection_revision,
 )
+from nexus.services.keyset_cursor import (
+    KeysetValue,
+    KeysetValueKind,
+    decode_keyset_cursor,
+    encode_keyset_cursor,
+)
 from nexus.services.resource_graph import cleanup as graph_cleanup
 from nexus.services.resource_graph import context as context_service
 from nexus.services.resource_graph.citations import citation_counts_for_sources
@@ -89,12 +95,6 @@ from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceRefParseFailure,
     parse_resource_ref,
-)
-from nexus.services.signed_keyset_cursor import (
-    KeysetValue,
-    KeysetValueKind,
-    decode_signed_keyset_cursor,
-    encode_signed_keyset_cursor,
 )
 
 logger = get_logger(__name__)
@@ -527,7 +527,7 @@ def list_conversation_index(
         params.update(
             keyset_params(
                 plan,
-                decode_signed_keyset_cursor(
+                decode_keyset_cursor(
                     cursor,
                     family=cursor_family,
                     query=cursor_query,
@@ -596,7 +596,7 @@ def list_conversation_index(
     page_rows = rows[:limit]
     next_cursor: CollectionCursor | None = None
     if len(rows) > limit and page_rows:
-        next_cursor = encode_signed_keyset_cursor(
+        next_cursor = encode_keyset_cursor(
             family=cursor_family,
             query=cursor_query,
             after=after_values(plan, page_rows[-1]),
@@ -713,7 +713,7 @@ def _list_conversations_mine(
         "q": normalized_q,
     }
     if cursor is not None:
-        updated_at, conversation_id = decode_signed_keyset_cursor(
+        updated_at, conversation_id = decode_keyset_cursor(
             cursor,
             family="ConversationDestination",
             query=cursor_query,
@@ -793,7 +793,7 @@ def _build_conversation_page(
     next_cursor = None
     if has_more and conversations:
         last = conversations[-1]
-        next_cursor = encode_signed_keyset_cursor(
+        next_cursor = encode_keyset_cursor(
             family="ConversationDestination",
             query=cursor_query,
             after=(

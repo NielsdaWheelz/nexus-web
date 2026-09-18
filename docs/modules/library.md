@@ -199,7 +199,7 @@ episodes immediately resurface with their consumption state intact.
   (read-only shared libraries count as filing; system and inaccessible foreign
   libraries do not). `In Progress` is exactly the canonical consumption
   relation's `read_state = 'InProgress'` (composed from
-  `consumption.service.engagement_fact_rows_sql()`; podcast-show rows never
+  `consumption._projection.engagement_fact_rows_sql()`; podcast-show rows never
   match), and combining it with `completion=unfinished` is
   `400 E_INVALID_REQUEST` — the projection union makes that state
   unrepresentable. Projection applies before completion, ordering, keyset, and

@@ -157,16 +157,16 @@ from nexus.services.contributor_taxonomy import (
     contributor_handle_candidates,
     contributor_match_key,
 )
+from nexus.services.keyset_cursor import (
+    KeysetValueKind,
+    decode_keyset_cursor,
+    encode_keyset_cursor,
+)
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_mutation_replay import (
     canonical_json_bytes,
     lookup_replay,
     record_replay,
-)
-from nexus.services.signed_keyset_cursor import (
-    KeysetValueKind,
-    decode_signed_keyset_cursor,
-    encode_signed_keyset_cursor,
 )
 from nexus.text import escape_like
 
@@ -393,7 +393,7 @@ def list_contributor_works(
         params.update(
             keyset_params(
                 plan,
-                decode_signed_keyset_cursor(
+                decode_keyset_cursor(
                     cursor,
                     family=_WORKS_CURSOR_FAMILY,
                     query=cursor_query,
@@ -443,7 +443,7 @@ def list_contributor_works(
     page = rows[:limit]
     next_cursor: CollectionCursor | None = None
     if len(rows) > limit and page:
-        next_cursor = encode_signed_keyset_cursor(
+        next_cursor = encode_keyset_cursor(
             family=_WORKS_CURSOR_FAMILY,
             query=cursor_query,
             after=after_values(plan, page[-1]),
