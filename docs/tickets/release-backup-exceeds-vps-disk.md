@@ -11,10 +11,19 @@ insufficient even before pulling the candidate. the only existing backup is
 `/var/backups/nexus/823b371332e51244a1fc31632a3234f794288eb4.dump` (363 mib,
 2026-08-12); it is not a fresh release recovery point.
 
-prerequisite: choose sufficient backup storage or explicitly accept the
-runbook's durable `--no-database-backup` waiver for this release. do not reduce
-the capacity gate or remove durable production data to force admission.
+the 16.3-gib reservation is a physical-size heuristic, not a measured archive
+size. on 2026-09-18 the operator selected a separate private cloudflare r2
+bucket and explicitly accepted metered charges. no backup waiver is authorized.
+existing media credentials cannot provision that bucket; the operator is
+creating `nexus-database-backups` and supplying bucket-scoped credentials in
+the ignored `deploy/env/env-prod-backup` file.
 
-acceptance: the default release preflight has sufficient verified disk for a
-fresh stopped-writer backup, and the controller creates and verifies it. a
-one-release waiver permits deployment but does not resolve this capacity gap.
+proposed fix: stream the stopped-writer custom-format dump to r2 with bounded
+memory, retain the source digest before completing the multipart upload, and
+require remote readback/archive verification before migration. keep credentials
+out of ordinary application containers and preserve historical local evidence.
+
+acceptance: a real r2 archive passes a disposable restore rehearsal; the default
+release controller creates and verifies the fresh stopped-writer recovery point
+without storing the full archive on the vps, and deployment succeeds with the
+required backup policy. a waiver does not resolve this capacity gap.

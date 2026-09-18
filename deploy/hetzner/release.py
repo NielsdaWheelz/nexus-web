@@ -43,6 +43,16 @@ from nexus.release_artifact import (
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_R2_BACKUP_ORIGIN = re.compile(r"https://[0-9a-f]{32}\.r2\.cloudflarestorage\.com\Z")
+_R2_BACKUP_BUCKET = re.compile(r"[a-z0-9](?:[a-z0-9-]{1,61})[a-z0-9]\Z")
+_BACKUP_CONFIG_KEYS = frozenset(
+    {
+        "R2_BACKUP_S3_API_ORIGIN",
+        "R2_BACKUP_BUCKET",
+        "R2_BACKUP_ACCESS_KEY_ID",
+        "R2_BACKUP_SECRET_ACCESS_KEY",
+    }
+)
 _IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _IMAGE_REFERENCE = re.compile(r"[^\s@]+@sha256:[0-9a-f]{64}\Z")
 _CONTAINER_ID = re.compile(r"[0-9a-f]{12,64}\Z")
@@ -235,6 +245,7 @@ _RESOURCE_LIMITS = {
     "codex-egress-policy": (32 * 1024 * 1024, 64 * 1024 * 1024, 32),
     _CODEX_AGENT_HOST: (256 * 1024 * 1024, 448 * 1024 * 1024, 64),
     "migration": (256 * 1024 * 1024, 512 * 1024 * 1024, 256),
+    "backup": (128 * 1024 * 1024, 512 * 1024 * 1024, 128),
 }
 _CODEX_SANDBOX_PROBE = ("python", "-m", "apps.codex_agent.sandbox_health")
 _MIGRATION_COMMAND = (
@@ -275,6 +286,7 @@ _LEGACY_ATTEMPT_FIELDS = frozenset(
     }
 )
 _ATTEMPT_FIELDS = _LEGACY_ATTEMPT_FIELDS | {"backup_policy"}
+_R2_ATTEMPT_FIELDS = _ATTEMPT_FIELDS | {"backup_config_path", "backup_config_sha256"}
 _CONTAINER_FIELDS = frozenset({"container_id", "image", "config_sha256"})
 _CADDY_ACTIVATION_FIELDS = frozenset(
     {
@@ -290,6 +302,7 @@ _CADDY_ACTIVATION_FIELDS = frozenset(
 _BACKUP_FIELDS = frozenset(
     {"path", "sha256", "byte_count", "database_identity", "starting_revision"}
 )
+_R2_BACKUP_FIELDS = (_BACKUP_FIELDS - {"path"}) | {"kind", "endpoint", "bucket", "key"}
 _ORACLE_ATTEMPT_FIELDS = frozenset(
     {
         "schema_version",
@@ -575,6 +588,8 @@ class ReleasePaths:
     bundle_root: Path = Path("/opt/nexus/releases")
     config_root: Path = Path("/etc/nexus/config")
     current_config: Path = Path("/etc/nexus/current.env")
+    backup_config_root: Path = Path("/etc/nexus/backup-config")
+    current_backup_config: Path = Path("/etc/nexus/backup.env")
     caddy_config: Path = Path("/etc/nexus/Caddyfile")
     backup_root: Path = Path("/var/backups/nexus")
     lock_path: Path = Path("/run/lock/nexus-release.lock")
@@ -607,6 +622,8 @@ class ReleasePaths:
             bundle_root=root / "opt/nexus/releases",
             config_root=root / "etc/nexus/config",
             current_config=root / "etc/nexus/current.env",
+            backup_config_root=root / "etc/nexus/backup-config",
+            current_backup_config=root / "etc/nexus/backup.env",
             caddy_config=root / "etc/nexus/Caddyfile",
             backup_root=root / "var/backups/nexus",
             lock_path=root / "run/lock/nexus-release.lock",
@@ -1218,6 +1235,49 @@ class BackupEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class R2BackupEvidence:
+    kind: str
+    endpoint: str
+    bucket: str
+    key: str
+    sha256: str
+    byte_count: int
+    database_identity: str
+    starting_revision: str
+
+    def __post_init__(self) -> None:
+        if self.kind != "r2":
+            raise ReleaseDefect("remote backup evidence kind must be r2")
+        _require_match("backup endpoint", self.endpoint, _R2_BACKUP_ORIGIN)
+        _require_match("backup bucket", self.bucket, _R2_BACKUP_BUCKET)
+        if re.fullmatch(r"releases/[0-9a-f]{40}/database\.dump", self.key) is None:
+            raise ReleaseDefect("remote backup key is malformed")
+        _require_match("backup SHA-256", self.sha256, _SHA256)
+        if type(self.byte_count) is not int or self.byte_count < 1:
+            raise ReleaseDefect("backup byte count must be positive")
+        if not self.database_identity or "\n" in self.database_identity:
+            raise ReleaseDefect("database identity is malformed")
+        _require_match("starting database revision", self.starting_revision, _DATABASE_REVISION)
+
+    def as_json(self) -> dict[str, object]:
+        return dataclasses.asdict(self)
+
+    @classmethod
+    def from_json(cls, value: object) -> R2BackupEvidence:
+        mapping = _closed_mapping(value, _R2_BACKUP_FIELDS, "remote backup evidence")
+        return cls(
+            kind=_string(mapping, "kind"),
+            endpoint=_string(mapping, "endpoint"),
+            bucket=_string(mapping, "bucket"),
+            key=_string(mapping, "key"),
+            sha256=_string(mapping, "sha256"),
+            byte_count=_integer(mapping, "byte_count"),
+            database_identity=_string(mapping, "database_identity"),
+            starting_revision=_string(mapping, "starting_revision"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ReleaseAttempt:
     schema_version: int
     source_sha: str
@@ -1229,24 +1289,42 @@ class ReleaseAttempt:
     containers: dict[str, ContainerEvidence]
     config_path: str
     config_sha256: str
+    backup_config_path: str | None
+    backup_config_sha256: str | None
     vercel_deployment_id: str
     production_host: str
     phase: ReleasePhase
     backup_policy: BackupPolicy
-    backup: BackupEvidence | None
+    backup: BackupEvidence | R2BackupEvidence | None
     failure_code: str | None
     created_at: str
     updated_at: str
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not int or self.schema_version not in (1, 2):
-            raise ReleaseDefect("release attempt schema version must be 1 or 2")
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3):
+            raise ReleaseDefect("release attempt schema version must be 1, 2 or 3")
         if not isinstance(self.backup_policy, BackupPolicy):
             raise ReleaseDefect("release backup policy is malformed")
         if self.schema_version == 1 and self.backup_policy is not BackupPolicy.Required:
             raise ReleaseDefect("legacy release attempt requires a database backup")
         if self.backup_policy is BackupPolicy.Waived and self.backup is not None:
             raise ReleaseDefect("waived release attempt cannot contain backup evidence")
+        if self.schema_version == 3 and self.backup_policy is BackupPolicy.Required:
+            if self.backup_config_path is None or self.backup_config_sha256 is None:
+                raise ReleaseDefect("required remote backup has no captured config")
+            if not Path(self.backup_config_path).is_absolute():
+                raise ReleaseDefect("captured backup config path must be absolute")
+            _require_match("backup config SHA-256", self.backup_config_sha256, _SHA256)
+        elif self.backup_config_path is not None or self.backup_config_sha256 is not None:
+            raise ReleaseDefect("legacy or waived attempt cannot contain backup config")
+        if self.backup is not None:
+            if self.schema_version == 3:
+                if not isinstance(self.backup, R2BackupEvidence):
+                    raise ReleaseDefect("new release attempts require remote backup evidence")
+                if self.backup.key != f"releases/{self.source_sha}/database.dump":
+                    raise ReleaseDefect("remote backup key differs from release identity")
+            elif not isinstance(self.backup, BackupEvidence):
+                raise ReleaseDefect("legacy attempt requires local backup evidence")
         _require_match("attempt source SHA", self.source_sha, _SHA)
         _require_match("manifest SHA-256", self.manifest_sha256, _SHA256)
         _require_match("candidate API image id", self.candidate_api_image_id, _IMAGE_ID)
@@ -1312,13 +1390,15 @@ class ReleaseAttempt:
         containers: dict[str, ContainerEvidence],
         config_path: str,
         config_sha256: str,
+        backup_config_path: str | None,
+        backup_config_sha256: str | None,
         vercel_deployment_id: str,
         production_host: str,
         now: str,
         backup_policy: BackupPolicy = BackupPolicy.Required,
     ) -> ReleaseAttempt:
         return cls(
-            schema_version=2,
+            schema_version=3,
             source_sha=source_sha,
             manifest_sha256=manifest_sha256,
             candidate_api_image_id=candidate_api_image_id,
@@ -1328,6 +1408,8 @@ class ReleaseAttempt:
             containers=containers,
             config_path=config_path,
             config_sha256=config_sha256,
+            backup_config_path=backup_config_path,
+            backup_config_sha256=backup_config_sha256,
             vercel_deployment_id=vercel_deployment_id,
             production_host=production_host,
             phase=ReleasePhase.Prepared,
@@ -1367,11 +1449,7 @@ class ReleaseAttempt:
     def with_backup(
         self,
         *,
-        path: str,
-        sha256: str,
-        byte_count: int,
-        database_identity: str,
-        starting_revision: str,
+        evidence: BackupEvidence | R2BackupEvidence,
         now: str,
     ) -> ReleaseAttempt:
         if self.phase is not ReleasePhase.WritersStopped:
@@ -1379,13 +1457,7 @@ class ReleaseAttempt:
         return dataclasses.replace(
             self,
             phase=ReleasePhase.BackupVerified,
-            backup=BackupEvidence(
-                path=path,
-                sha256=sha256,
-                byte_count=byte_count,
-                database_identity=database_identity,
-                starting_revision=starting_revision,
-            ),
+            backup=evidence,
             failure_code=None,
             updated_at=now,
         )
@@ -1412,18 +1484,21 @@ class ReleaseAttempt:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
-        if self.schema_version == 2:
+        if self.schema_version >= 2:
             value["backup_policy"] = self.backup_policy.value
+        if self.schema_version == 3:
+            value["backup_config_path"] = self.backup_config_path
+            value["backup_config_sha256"] = self.backup_config_sha256
         return value
 
     @classmethod
     def from_json(cls, value: object) -> ReleaseAttempt:
         schema_version = _integer(_mapping(value, "release attempt"), "schema_version")
-        if schema_version not in (1, 2):
-            raise ReleaseDefect("release attempt schema version must be 1 or 2")
+        if schema_version not in (1, 2, 3):
+            raise ReleaseDefect("release attempt schema version must be 1, 2 or 3")
         mapping = _closed_mapping(
             value,
-            _LEGACY_ATTEMPT_FIELDS if schema_version == 1 else _ATTEMPT_FIELDS,
+            {1: _LEGACY_ATTEMPT_FIELDS, 2: _ATTEMPT_FIELDS, 3: _R2_ATTEMPT_FIELDS}[schema_version],
             "release attempt",
         )
         try:
@@ -1454,11 +1529,23 @@ class ReleaseAttempt:
             },
             config_path=_string(mapping, "config_path"),
             config_sha256=_string(mapping, "config_sha256"),
+            backup_config_path=(
+                _optional_string(mapping, "backup_config_path") if schema_version == 3 else None
+            ),
+            backup_config_sha256=(
+                _optional_string(mapping, "backup_config_sha256") if schema_version == 3 else None
+            ),
             vercel_deployment_id=_string(mapping, "vercel_deployment_id"),
             production_host=_string(mapping, "production_host"),
             phase=phase,
             backup_policy=backup_policy,
-            backup=None if backup_value is None else BackupEvidence.from_json(backup_value),
+            backup=(
+                None
+                if backup_value is None
+                else R2BackupEvidence.from_json(backup_value)
+                if schema_version == 3
+                else BackupEvidence.from_json(backup_value)
+            ),
             failure_code=_optional_string(mapping, "failure_code"),
             created_at=_string(mapping, "created_at"),
             updated_at=_string(mapping, "updated_at"),
@@ -2331,6 +2418,7 @@ class PreflightEvidence:
     manifest_sha256: str
     bundle: Path
     config: ConfigSnapshot
+    backup_config: ConfigSnapshot | None
     containers: dict[str, ContainerEvidence]
     database_revision: str
     database_identity: str
@@ -2629,14 +2717,50 @@ def publish_config(source: Path, store: ReleaseStore, *, next_source_sha: str) -
     store.require_current_record()
     store.assert_fresh_candidate(next_source_sha)
     values = _read_env(source)
+    if any(
+        key.startswith("R2_BACKUP_")
+        or key in {"NEXUS_BACKUP_CONFIG_FILE", "NEXUS_BACKUP_STATE_DIRECTORY"}
+        for key in values
+    ):
+        raise ReleaseDefect("backup credentials and controls must not enter application config")
     if "NODE_INGEST_SCRIPT" in values:
         raise ReleaseDefect(
             "NODE_INGEST_SCRIPT is image-owned and must not be present in published production config"
         )
+    return _publish_config_snapshot(values, store.paths.config_root, store.paths.current_config)
+
+
+def _backup_config_values(path: Path) -> dict[str, str]:
+    values = _read_env(path)
+    if values.keys() != _BACKUP_CONFIG_KEYS:
+        raise ReleaseDefect("backup config must contain exactly its four R2_BACKUP keys")
+    # Canonical plain values avoid Compose interpolation or quote interpretation
+    # changing the scoped credentials between publication and execution.
+    if any(not value or re.search(r"[\s$'\"\\#]", value) for value in values.values()):
+        raise ReleaseDefect("backup config values must be nonempty plain values")
+    _require_match("backup endpoint", values["R2_BACKUP_S3_API_ORIGIN"], _R2_BACKUP_ORIGIN)
+    _require_match("backup bucket", values["R2_BACKUP_BUCKET"], _R2_BACKUP_BUCKET)
+    return values
+
+
+def publish_backup_config(source: Path, store: ReleaseStore, *, next_source_sha: str) -> str:
+    store.assert_no_oracle_attempt()
+    if store.paths.caddy_activation.exists():
+        raise ReleaseBlocked("pending Caddy activation blocks backup config publication")
+    store.require_current_record()
+    store.assert_fresh_candidate(next_source_sha)
+    return _publish_config_snapshot(
+        _backup_config_values(source),
+        store.paths.backup_config_root,
+        store.paths.current_backup_config,
+    )
+
+
+def _publish_config_snapshot(values: dict[str, str], root: Path, current: Path) -> str:
     canonical = "".join(f"{key}={values[key]}\n" for key in sorted(values)).encode()
     digest = hashlib.sha256(canonical).hexdigest()
-    store.paths.config_root.mkdir(mode=0o750, parents=True, exist_ok=True)
-    destination = store.paths.config_root / f"{digest}.env"
+    root.mkdir(mode=0o750, parents=True, exist_ok=True)
+    destination = root / f"{digest}.env"
     if not destination.exists() and not destination.is_symlink():
         _create_bytes(destination, canonical, mode=0o440)
     metadata = destination.lstat()
@@ -2649,14 +2773,12 @@ def publish_config(source: Path, store: ReleaseStore, *, next_source_sha: str) -
     ):
         raise ReleaseDefect("content-addressed config path is not exact immutable input")
 
-    store.paths.current_config.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
-    temporary = store.paths.current_config.with_name(
-        f".{store.paths.current_config.name}.{os.getpid()}.partial"
-    )
+    current.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
+    temporary = current.with_name(f".{current.name}.{os.getpid()}.partial")
     try:
         os.symlink(destination, temporary)
-        os.replace(temporary, store.paths.current_config)
-        _fsync_directory(store.paths.current_config.parent)
+        os.replace(temporary, current)
+        _fsync_directory(current.parent)
     finally:
         temporary.unlink(missing_ok=True)
     return digest
@@ -2735,6 +2857,8 @@ class HostRelease:
             or config_metadata.st_mode & 0o022
         ):
             raise ReleaseDefect("captured release config is not immutable exact input")
+        if attempt.backup_config_path is not None:
+            self._captured_backup_config(attempt)
         if check_caddy:
             caddy_metadata = self.paths.caddy_config.stat()
             if (
@@ -2772,10 +2896,23 @@ class HostRelease:
         *,
         candidate: CandidateManifest,
         config_path: Path,
+        backup_config_path: Path | None = None,
+        backup_state_directory: Path | None = None,
     ) -> dict[str, str]:
         environment = dict(os.environ)
         for key in _read_env(config_path):
             environment.pop(key, None)
+        for key in (
+            *_BACKUP_CONFIG_KEYS,
+            "NEXUS_BACKUP_CONFIG_FILE",
+            "NEXUS_BACKUP_STATE_DIRECTORY",
+        ):
+            environment.pop(key, None)
+        if (backup_config_path is None) != (backup_state_directory is None):
+            raise ReleaseDefect("backup Compose inputs must be supplied together")
+        if backup_config_path is not None and backup_state_directory is not None:
+            environment["NEXUS_BACKUP_CONFIG_FILE"] = str(backup_config_path)
+            environment["NEXUS_BACKUP_STATE_DIRECTORY"] = str(backup_state_directory)
         environment.update(
             {
                 "API_IMAGE": candidate.images.api,
@@ -2795,6 +2932,8 @@ class HostRelease:
         profiles: tuple[str, ...] = (),
         input_bytes: bytes | None = None,
         timeout_seconds: int = 180,
+        backup_config_path: Path | None = None,
+        backup_state_directory: Path | None = None,
     ) -> subprocess.CompletedProcess[bytes]:
         # Profiles are opted into per invocation, never globally: enabling
         # `release` for every command would put the profile-gated migration
@@ -2818,6 +2957,8 @@ class HostRelease:
             environment=self._compose_environment(
                 candidate=candidate,
                 config_path=config_path,
+                backup_config_path=backup_config_path,
+                backup_state_directory=backup_state_directory,
             ),
             input_bytes=input_bytes,
             timeout_seconds=timeout_seconds,
@@ -2833,12 +2974,14 @@ class HostRelease:
         arguments: tuple[str, ...],
         expected_image_id: str,
         timeout_seconds: int,
+        backup_config_path: Path | None = None,
+        backup_state_directory: Path | None = None,
     ) -> bytes:
         service = arguments[0]
-        if service not in {"migration", "worker-background"}:
+        if service not in {"migration", "worker-background", "backup"}:
             raise ReleaseDefect(f"durable Compose job service {service!r} is unsupported")
         expected_image_reference = (
-            candidate.images.api if service == "migration" else candidate.images.worker
+            candidate.images.worker if service == "worker-background" else candidate.images.api
         )
         expected_command = _MIGRATION_COMMAND if service == "migration" else arguments[1:]
         completed = self._settle_compose_job(
@@ -2847,19 +2990,29 @@ class HostRelease:
             expected_image_reference=expected_image_reference,
             expected_image_id=expected_image_id,
             expected_command=expected_command,
+            backup_config_path=backup_config_path,
+            backup_state_directory=backup_state_directory,
         )
-        if completed is not None:
+        if completed is not None and service != "backup":
             return completed
+
+        # A settled backup container may have finished before this controller
+        # resumed. Its receipt enables recovery, but remote bytes must be read
+        # again in this invocation before they authorize database mutation.
 
         self._compose(
             bundle=bundle,
             candidate=candidate,
             config_path=config_path,
             arguments=("run", "--name", name, "--no-deps", "--no-TTY", *arguments),
-            # Only the migration one-off is profile-gated; other one-off services
-            # are always in scope and need no profile opt-in.
-            profiles=("release",) if service == "migration" else (),
+            profiles=("release",)
+            if service == "migration"
+            else ("backup",)
+            if service == "backup"
+            else (),
             timeout_seconds=timeout_seconds,
+            backup_config_path=backup_config_path,
+            backup_state_directory=backup_state_directory,
         )
         completed = self._settle_compose_job(
             name,
@@ -2867,6 +3020,8 @@ class HostRelease:
             expected_image_reference=expected_image_reference,
             expected_image_id=expected_image_id,
             expected_command=expected_command,
+            backup_config_path=backup_config_path,
+            backup_state_directory=backup_state_directory,
         )
         if completed is None:
             raise ReleaseDefect(f"durable Compose job {name} disappeared after completion")
@@ -2880,6 +3035,8 @@ class HostRelease:
         expected_image_reference: str,
         expected_image_id: str,
         expected_command: tuple[str, ...],
+        backup_config_path: Path | None = None,
+        backup_state_directory: Path | None = None,
     ) -> bytes | None:
         if re.fullmatch(r"nexus-[a-z0-9-]{1,120}", name) is None:
             raise ReleaseDefect("durable Compose job name is malformed")
@@ -2928,6 +3085,28 @@ class HostRelease:
             ):
                 raise ReleaseDefect("durable Compose job identity differs")
             self._validate_resource_limits(service, inspected)
+            if service == "backup":
+                if backup_config_path is None or backup_state_directory is None:
+                    raise ReleaseDefect("backup job has no exact config and receipt directory")
+                expected_values = _backup_config_values(backup_config_path)
+                environment = _environment_mapping(config.get("Env"), "backup job environment")
+                if any(environment.get(key) != value for key, value in expected_values.items()):
+                    raise ReleaseDefect("backup job scoped credentials differ from captured config")
+                mounts = inspected.get("Mounts")
+                if not isinstance(mounts, list):
+                    raise ReleaseDefect("backup job receipt mount is malformed")
+                state_mounts = [
+                    mount
+                    for mount in mounts
+                    if isinstance(mount, dict) and mount.get("Destination") == "/backup-state"
+                ]
+                if (
+                    len(state_mounts) != 1
+                    or state_mounts[0].get("Type") != "bind"
+                    or state_mounts[0].get("Source") != str(backup_state_directory)
+                    or state_mounts[0].get("RW") is not True
+                ):
+                    raise ReleaseDefect("backup job receipt mount differs from its release")
             state = _mapping(inspected.get("State"), f"durable Compose job {name} state")
             if state.get("Running") is True:
                 raise ReleaseBlocked(f"durable Compose job {name} is still running")
@@ -2986,6 +3165,89 @@ class HostRelease:
         if path.name != f"{digest}.env":
             raise ReleaseDefect("current config filename disagrees with its content digest")
         return ConfigSnapshot(path=path, sha256=digest, values=_read_env(path))
+
+    def _backup_config_snapshot(self) -> ConfigSnapshot:
+        if not self.paths.current_backup_config.is_symlink():
+            raise ReleaseBlocked("publish the dedicated backup config before this release")
+        try:
+            path = self.paths.current_backup_config.resolve(strict=True)
+        except OSError as exc:
+            raise ReleaseDefect("current backup config target cannot be resolved") from exc
+        return self._read_backup_config_snapshot(path, path.stem)
+
+    def _captured_backup_config(self, attempt: ReleaseAttempt) -> ConfigSnapshot:
+        if attempt.backup_config_path is None or attempt.backup_config_sha256 is None:
+            raise ReleaseDefect("remote backup attempt has no captured config")
+        return self._read_backup_config_snapshot(
+            Path(attempt.backup_config_path), attempt.backup_config_sha256
+        )
+
+    def _read_backup_config_snapshot(self, path: Path, digest: str) -> ConfigSnapshot:
+        _require_match("backup config SHA-256", digest, _SHA256)
+        try:
+            metadata = path.lstat()
+            root = self.paths.backup_config_root.resolve(strict=True)
+            resolved = path.resolve(strict=True)
+        except OSError as exc:
+            raise ReleaseDefect("captured backup config is unavailable") from exc
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or path != resolved
+            or resolved.parent != root
+            or resolved.name != f"{digest}.env"
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o440
+            or _sha256(path) != digest
+        ):
+            raise ReleaseDefect("backup config is not immutable exact input")
+        return ConfigSnapshot(path=path, sha256=digest, values=_backup_config_values(path))
+
+    def _backup_job(
+        self,
+        *,
+        bundle: Path,
+        candidate: CandidateManifest,
+        config_path: Path,
+        backup_config: ConfigSnapshot,
+        expected_image_id: str,
+        operation: str,
+        arguments: tuple[str, ...],
+    ) -> bytes:
+        if operation not in {"check", "create", "verify"}:
+            raise ReleaseDefect("unsupported remote backup operation")
+        state_root = self.paths.backup_root / "r2"
+        state_root.mkdir(mode=0o750, parents=True, exist_ok=True)
+        state_directory = state_root / candidate.source_sha
+        state_directory.mkdir(mode=0o700, exist_ok=True)
+        metadata = state_directory.lstat()
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise ReleaseDefect("backup receipt directory metadata is invalid")
+        # Complete a crash between directory creation and permission setup.
+        os.chown(state_directory, 10001, 10001)
+        state_directory.chmod(0o700)
+        _fsync_directory(state_directory)
+        _fsync_directory(state_root)
+        if shutil.disk_usage(state_directory).free < 268_435_456:
+            raise ReleaseBlocked("backup receipt filesystem has less than 256 MiB free")
+        return self._compose_job(
+            name=f"nexus-release-{candidate.source_sha}-backup-{operation}",
+            bundle=bundle,
+            candidate=candidate,
+            config_path=config_path,
+            arguments=(
+                "backup",
+                "python",
+                "-m",
+                "nexus.release_backup",
+                operation,
+                *arguments,
+            ),
+            expected_image_id=expected_image_id,
+            timeout_seconds=1900,
+            backup_config_path=backup_config.path,
+            backup_state_directory=state_directory,
+        )
 
     def _container_evidence(
         self,
@@ -4046,23 +4308,34 @@ class HostRelease:
             config_path=config.path,
             sql="SELECT current_database() || ':' || system_identifier FROM pg_control_system()",
         )
-        if backup_policy is BackupPolicy.Required:
-            byte_count = int(
-                self._database_scalar(
-                    bundle=bundle,
-                    candidate=candidate,
-                    config_path=config.path,
-                    sql="SELECT pg_database_size(current_database())",
-                )
+        backup_config = (
+            self._backup_config_snapshot() if backup_policy is BackupPolicy.Required else None
+        )
+        if backup_config is not None and current_revision != candidate.expected_database_revision:
+            ready = _closed_mapping(
+                _read_json_output(
+                    self._backup_job(
+                        bundle=bundle,
+                        candidate=candidate,
+                        config_path=config.path,
+                        backup_config=backup_config,
+                        expected_image_id=api_image_id,
+                        operation="check",
+                        arguments=(),
+                    ),
+                    "remote backup readiness",
+                ),
+                frozenset({"status"}),
+                "remote backup readiness",
             )
-            available = shutil.disk_usage(self.paths.backup_root.parent).free
-            if available < byte_count * 2 + 268_435_456:
-                raise ReleaseBlocked("backup filesystem has insufficient verified capacity")
+            if ready["status"] != "ready":
+                raise ReleaseDefect("remote backup storage is not ready")
         return PreflightEvidence(
             candidate=candidate,
             manifest_sha256=_sha256(bundle / "candidate-manifest.json"),
             bundle=bundle,
             config=config,
+            backup_config=backup_config,
             containers=containers,
             database_revision=current_revision,
             database_identity=identity,
@@ -4191,7 +4464,23 @@ class HostRelease:
             _require_match(f"stopped {service} container id", container_id, _CONTAINER_ID)
             self._assert_running_state(container_id, running=False)
 
+    def _require_backup_jobs_stopped(self, attempt: ReleaseAttempt) -> None:
+        if attempt.schema_version == 3:
+            for operation in ("check", "create", "verify"):
+                running = _stdout(
+                    (
+                        "docker",
+                        "ps",
+                        "--quiet",
+                        "--filter",
+                        f"name=^/nexus-release-{attempt.source_sha}-backup-{operation}$",
+                    )
+                )
+                if running:
+                    raise ReleaseBlocked("running backup job must finish before release settlement")
+
     def _restart_predecessor(self, attempt: ReleaseAttempt) -> None:
+        self._require_backup_jobs_stopped(attempt)
         for service in _WRITERS:
             evidence = attempt.containers[service]
             item = _inspect_one(evidence.container_id, f"rollback {service} inspect")
@@ -4231,7 +4520,15 @@ class HostRelease:
         attempt: ReleaseAttempt,
         database_identity: str,
         starting_revision: str,
-    ) -> BackupEvidence:
+    ) -> BackupEvidence | R2BackupEvidence:
+        if attempt.schema_version == 3:
+            return self._r2_backup(
+                bundle=bundle,
+                candidate=candidate,
+                attempt=attempt,
+                database_identity=database_identity,
+                starting_revision=starting_revision,
+            )
         self.paths.backup_root.mkdir(mode=0o750, parents=True, exist_ok=True)
         os.chown(self.paths.backup_root, 0, 0)
         self.paths.backup_root.chmod(0o750)
@@ -4346,40 +4643,109 @@ class HostRelease:
             starting_revision=starting_revision,
         )
 
+    def _r2_backup(
+        self,
+        *,
+        bundle: Path,
+        candidate: CandidateManifest,
+        attempt: ReleaseAttempt,
+        database_identity: str,
+        starting_revision: str,
+        expected: R2BackupEvidence | None = None,
+    ) -> R2BackupEvidence:
+        backup_config = self._captured_backup_config(attempt)
+        arguments = (
+            "--source-sha",
+            attempt.source_sha,
+            "--database-identity",
+            database_identity,
+            "--starting-revision",
+            starting_revision,
+        )
+        if expected is None:
+            arguments += ("--state-directory", "/backup-state")
+        else:
+            arguments += (
+                "--sha256",
+                expected.sha256,
+                "--byte-count",
+                str(expected.byte_count),
+            )
+        response = _closed_mapping(
+            _read_json_output(
+                self._backup_job(
+                    bundle=bundle,
+                    candidate=candidate,
+                    config_path=Path(attempt.config_path),
+                    backup_config=backup_config,
+                    expected_image_id=attempt.candidate_api_image_id,
+                    operation="create" if expected is None else "verify",
+                    arguments=arguments,
+                ),
+                "verified remote backup",
+            ),
+            _R2_BACKUP_FIELDS - {"kind"},
+            "verified remote backup",
+        )
+        evidence = R2BackupEvidence.from_json({"kind": "r2", **response})
+        if (
+            evidence.endpoint != backup_config.values["R2_BACKUP_S3_API_ORIGIN"]
+            or evidence.bucket != backup_config.values["R2_BACKUP_BUCKET"]
+            or evidence.key != f"releases/{attempt.source_sha}/database.dump"
+            or evidence.database_identity != database_identity
+            or evidence.starting_revision != starting_revision
+            or (expected is not None and evidence != expected)
+        ):
+            raise ReleaseDefect("remote backup proof differs from its captured release identity")
+        return evidence
+
     def _validate_backup_evidence(
         self,
         *,
         bundle: Path,
         candidate: CandidateManifest,
         attempt: ReleaseAttempt,
+        freshly_verified: R2BackupEvidence | None = None,
     ) -> None:
         evidence = attempt.backup
         if evidence is None:
             raise ReleaseDefect("BackupVerified attempt lost its backup evidence")
-        path = Path(evidence.path)
-        if (
-            path != self.paths.backup_root / f"{attempt.source_sha}.dump"
-            or path.is_symlink()
-            or not path.is_file()
-        ):
-            raise ReleaseDefect("recorded release backup path is not exact")
-        metadata = path.lstat()
-        if (
-            not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != 0
-            or metadata.st_gid != 0
-            or stat.S_IMODE(metadata.st_mode) != 0o400
-            or metadata.st_size != evidence.byte_count
-        ):
-            raise ReleaseDefect("recorded release backup metadata changed")
-        if _sha256(path) != evidence.sha256:
-            raise ReleaseDefect("recorded release backup digest changed")
-        self._verify_backup(
-            bundle=bundle,
-            candidate=candidate,
-            config_path=Path(attempt.config_path),
-            path=path,
-        )
+        if isinstance(evidence, R2BackupEvidence):
+            self._captured_backup_config(attempt)
+            if freshly_verified != evidence:
+                self._r2_backup(
+                    bundle=bundle,
+                    candidate=candidate,
+                    attempt=attempt,
+                    database_identity=evidence.database_identity,
+                    starting_revision=evidence.starting_revision,
+                    expected=evidence,
+                )
+        else:
+            path = Path(evidence.path)
+            if (
+                path != self.paths.backup_root / f"{attempt.source_sha}.dump"
+                or path.is_symlink()
+                or not path.is_file()
+            ):
+                raise ReleaseDefect("recorded release backup path is not exact")
+            metadata = path.lstat()
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != 0
+                or metadata.st_gid != 0
+                or stat.S_IMODE(metadata.st_mode) != 0o400
+                or metadata.st_size != evidence.byte_count
+            ):
+                raise ReleaseDefect("recorded release backup metadata changed")
+            if _sha256(path) != evidence.sha256:
+                raise ReleaseDefect("recorded release backup digest changed")
+            self._verify_backup(
+                bundle=bundle,
+                candidate=candidate,
+                config_path=Path(attempt.config_path),
+                path=path,
+            )
         database_identity = self._database_scalar(
             bundle=bundle,
             candidate=candidate,
@@ -5974,6 +6340,14 @@ class HostRelease:
                 containers=preflight.containers,
                 config_path=str(preflight.config.path),
                 config_sha256=preflight.config.sha256,
+                backup_config_path=(
+                    str(preflight.backup_config.path)
+                    if preflight.backup_config is not None
+                    else None
+                ),
+                backup_config_sha256=(
+                    preflight.backup_config.sha256 if preflight.backup_config is not None else None
+                ),
                 vercel_deployment_id=deployment_id,
                 production_host=production_host,
                 now=_now(),
@@ -6038,6 +6412,7 @@ class HostRelease:
             attempt = attempt.advance(ReleasePhase.WritersStopped, now=_now())
             self.store.replace_attempt(attempt)
 
+        freshly_verified: R2BackupEvidence | None = None
         if attempt.phase is ReleasePhase.WritersStopped:
             self._revalidate_attempt_host_capacity(attempt, writers_running=False)
             revisions = self._database_revisions(
@@ -6090,14 +6465,9 @@ class HostRelease:
                         database_identity=database_identity,
                         starting_revision=starting_revision,
                     )
-                    attempt = attempt.with_backup(
-                        path=backup.path,
-                        sha256=backup.sha256,
-                        byte_count=backup.byte_count,
-                        database_identity=backup.database_identity,
-                        starting_revision=backup.starting_revision,
-                        now=_now(),
-                    )
+                    attempt = attempt.with_backup(evidence=backup, now=_now())
+                    if isinstance(backup, R2BackupEvidence):
+                        freshly_verified = backup
                 self.store.replace_attempt(attempt)
 
         if attempt.phase is ReleasePhase.BackupVerified:
@@ -6106,6 +6476,7 @@ class HostRelease:
                 bundle=bundle,
                 candidate=candidate,
                 attempt=attempt,
+                freshly_verified=freshly_verified,
             )
             attempt = attempt.advance(ReleasePhase.DataMutationStarted, now=_now())
             self.store.replace_attempt(attempt)
@@ -6374,6 +6745,7 @@ class HostRelease:
             candidate=candidate,
             config_path=Path(attempt.config_path),
         )
+        self._require_backup_jobs_stopped(attempt)
         failed = attempt.advance(
             ReleasePhase.ForwardFixRequired,
             now=_now(),
@@ -7425,6 +7797,10 @@ def _parser() -> argparse.ArgumentParser:
     config.add_argument("--source", type=Path, required=True)
     config.add_argument("--next-source-sha", required=True)
 
+    backup_config = commands.add_parser("publish-backup-config")
+    backup_config.add_argument("--source", type=Path, required=True)
+    backup_config.add_argument("--next-source-sha", required=True)
+
     oracle = commands.add_parser("reconcile-oracle")
     oracle.add_argument("--source-sha", required=True)
     oracle.add_argument("--execution-source-sha")
@@ -7584,6 +7960,14 @@ def main(argv: list[str] | None = None) -> int:
                 next_source_sha=args.next_source_sha,
             )
             sys.stdout.buffer.write(_canonical_json({"config_sha256": digest}))
+            return 0
+        if args.command == "publish-backup-config":
+            digest = publish_backup_config(
+                args.source,
+                controller.store,
+                next_source_sha=args.next_source_sha,
+            )
+            sys.stdout.buffer.write(_canonical_json({"backup_config_sha256": digest}))
             return 0
         if args.command == "reconcile-oracle":
             result = HostOracleReconcile(paths).reconcile(
