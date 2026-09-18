@@ -1,9 +1,7 @@
 """Shared validation for PDF/EPUB file-ingest paths."""
 
 from nexus.config import get_settings
-from nexus.db.models import MediaFile
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
-from nexus.storage.client import StorageError
+from nexus.errors import ApiErrorCode, InvalidRequestError
 
 _VALID_CONTENT_TYPES = {
     "pdf": {"application/pdf"},
@@ -43,51 +41,3 @@ def validate_file_ingest_request(kind: str, content_type: str, size_bytes: int) 
 def has_valid_file_signature(content: bytes, kind: str) -> bool:
     expected = _MAGIC_BYTES.get(kind)
     return expected is None or content.startswith(expected)
-
-
-def validate_file_source_integrity(
-    storage_client,
-    media_file: MediaFile,
-    kind: str,
-) -> None:
-    """Validate stored file bytes before retrying extraction."""
-    settings = get_settings()
-
-    try:
-        metadata = storage_client.head_object(media_file.storage_path)
-        if metadata is None:
-            raise InvalidRequestError(
-                ApiErrorCode.E_STORAGE_MISSING,
-                "Source file not found in storage.",
-            )
-    except StorageError as exc:
-        raise ApiError(
-            ApiErrorCode.E_STORAGE_ERROR,
-            f"Failed to read source file: {exc.message}",
-        ) from exc
-
-    max_size = settings.max_pdf_bytes if kind == "pdf" else settings.max_epub_bytes
-    try:
-        total_bytes = 0
-        first_chunk = True
-
-        for chunk in storage_client.stream_object(media_file.storage_path):
-            if first_chunk:
-                if not has_valid_file_signature(chunk, kind):
-                    raise InvalidRequestError(
-                        ApiErrorCode.E_INVALID_FILE_TYPE,
-                        f"Invalid file type. Expected {kind}.",
-                    )
-                first_chunk = False
-
-            total_bytes += len(chunk)
-            if total_bytes > max_size:
-                raise InvalidRequestError(
-                    ApiErrorCode.E_FILE_TOO_LARGE,
-                    f"File size exceeds maximum {max_size} bytes for {kind}.",
-                )
-    except StorageError as exc:
-        raise ApiError(
-            ApiErrorCode.E_STORAGE_ERROR,
-            f"Failed to read source file: {exc.message}",
-        ) from exc

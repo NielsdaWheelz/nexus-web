@@ -7,7 +7,6 @@ from urllib.parse import urljoin
 
 import httpx
 
-from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.services.file_ingest_validation import has_valid_file_signature
 from nexus.services.image_validation import (
@@ -34,29 +33,6 @@ class RemoteFileFetchResult:
     size_bytes: int
     sha256_hex: str
     final_url: str
-
-
-def fetch_to_storage(
-    *,
-    url: str,
-    kind: str,
-    storage_path: str,
-    storage_client: StorageClient,
-) -> RemoteFileFetchResult:
-    if kind not in REMOTE_FILE_CONTENT_TYPES:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Remote URL must be a PDF or EPUB.")
-
-    max_bytes = get_settings().max_pdf_bytes if kind == "pdf" else get_settings().max_epub_bytes
-    content_type = REMOTE_FILE_CONTENT_TYPES[kind]
-    return fetch_binary_to_storage(
-        url=url,
-        storage_path=storage_path,
-        storage_client=storage_client,
-        content_type=content_type,
-        max_bytes=max_bytes,
-        accept=f"{content_type},application/octet-stream,*/*;q=0.8",
-        signature_kind=kind,
-    )
 
 
 def fetch_binary_to_storage(

@@ -671,22 +671,6 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
     # prunes any contributor left with no other reference (spec §2.8). Runs on
     # this deletion transaction — the documented composition exception (§3).
     contributors.cleanup_credits_for_deleted_target(db, target=contributors.MediaTarget(media_id))
-    db.execute(
-        text("""
-            UPDATE external_provider_events
-            SET source_attempt_id = NULL
-            WHERE source_attempt_id IN (
-                SELECT id
-                FROM media_source_attempts
-                WHERE media_id = :media_id
-            )
-        """),
-        {"media_id": media_id},
-    )
-    db.execute(
-        text("UPDATE external_provider_events SET media_id = NULL WHERE media_id = :media_id"),
-        {"media_id": media_id},
-    )
     media_upload_sessions.delete_published_media_support_in_current_transaction(
         db,
         media_id=media_id,

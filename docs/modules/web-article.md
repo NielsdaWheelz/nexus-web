@@ -3,7 +3,6 @@
 Web article media is `media.kind = 'web_article'`, but source ownership is split
 by provenance.
 
-- `media_ingest.py`: URL transport into the source lifecycle owner.
 - `media_source_ingest.py`: durable accepted source attempts for generic web
   URLs, X/Twitter URLs, and browser article captures. It creates the media row
   and `media_source_attempts` row before provider fetch, browser-capture
@@ -32,8 +31,8 @@ Routes stay transport-only. X URLs fail closed through `x_ingest.py`; they do
 not fall back to generic web article capture or oEmbed. X author-thread media
 uses provider identity `author-thread:<x_author_id>:<conversation_id>`;
 captured quote posts use `post:<post_id>`. Provider billing, auth, rate-limit,
-timeout, and post-unavailable failures are recorded in `external_provider_events`
-with `source_attempt_id` correlation.
+timeout, and post-unavailable failures surface as their mapped API error and a
+`x_provider_failure` warning log.
 
 Browser article capture persists the raw captured HTML as a private source
 artifact at acceptance time, then queues `ingest_media_source`. Sanitization,

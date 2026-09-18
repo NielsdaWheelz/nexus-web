@@ -35,18 +35,13 @@ columns to drop, with the slice that removes their code side:
   `ck_resource_external_snapshots_source_object` (M-01)
 
 tables to drop: `billing_entitlement_override_events` (SAM-02; write-only audit
-table), `external_provider_events` with `record_external_provider_event`, its
-three `x_ingest.py` call sites (1026, 1065, 1098) and the two FK-nulling UPDATEs
-at `services/media_deletion.py:680,691` (GEN-02), plus the dead tables the py-db
-verifier confirms.
+table), plus the dead tables the py-db verifier confirms.
 
 not in scope: the trust prompt-assembly fields stay in `chat_prompt_assemblies`;
 SCH-10 removes only their wire projection.
 
 prerequisites: every listed slice PR has landed, so no code writes or reads the
-column when the DDL runs. `external_provider_events` additionally contradicts
-`docs/modules/web-article.md:35` and `docs/architecture.md:1093`, which must be
-corrected in the same change. the release controller requires a verified backup
+column when the DDL runs. the release controller requires a verified backup
 while a migration is pending.
 
 fix: one alembic revision holding every DROP above, run after the slice PRs,

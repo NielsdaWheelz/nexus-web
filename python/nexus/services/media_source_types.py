@@ -33,15 +33,6 @@ LOCAL_FILE_SOURCE_TYPES = frozenset(
         BROWSER_EPUB_CAPTURE,
     }
 )
-WEB_ARTICLE_ARTIFACT_SOURCE_TYPES = frozenset(
-    {
-        GENERIC_WEB_URL,
-        BROWSER_ARTICLE_CAPTURE,
-        X_AUTHOR_THREAD,
-        X_POST,
-        EMAIL_MESSAGE,
-    }
-)
 # Non-reacquirable artifacts: the derived HTML stored in R2 is the only copy.
 # Retrying with a new source requires the caller to provide fresh content.
 NON_REACQUIRABLE_ARTIFACT_SOURCE_TYPES = frozenset(

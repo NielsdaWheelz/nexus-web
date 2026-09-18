@@ -257,21 +257,6 @@ def require_source_publication(
     media_ids: tuple[UUID, ...],
 ) -> MediaSourceAttempt:
     """Lock the full source identity and authorize this transaction's writes."""
-    return _require_source_publication(
-        db,
-        fence=fence,
-        media_ids=media_ids,
-        allowed_attempt_statuses={"accepted", "queued", "running"},
-    )
-
-
-def _require_source_publication(
-    db: Session,
-    *,
-    fence: SourcePublicationFence,
-    media_ids: tuple[UUID, ...],
-    allowed_attempt_statuses: set[str],
-) -> MediaSourceAttempt:
     ordered_media_ids = sorted(set(media_ids))
     locked_media_ids = list(
         db.scalars(
@@ -307,7 +292,7 @@ def _require_source_publication(
         attempt is None
         or attempt.job_id != fence.job_id
         or attempt.media_id not in ordered_media_ids
-        or attempt.status not in allowed_attempt_statuses
+        or attempt.status not in {"accepted", "queued", "running"}
     ):
         logger.warning(
             "source_publication_superseded",

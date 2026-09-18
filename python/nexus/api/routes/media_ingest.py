@@ -35,7 +35,6 @@ from nexus.schemas.media import (
 )
 from nexus.services import (
     content_indexing,
-    media_ingest,
     media_source_ingest,
     media_upload_sessions,
     metadata_lifecycle,
@@ -57,7 +56,7 @@ def create_from_url(
     Returns 202 Accepted with media_id, idempotency_outcome, processing_status,
     and ingest_enqueued. Clients poll GET /media/{id} for status.
     """
-    result = media_ingest.enqueue_media_from_url(
+    result = media_source_ingest.accept_url_source(
         db=db,
         viewer_id=viewer.user_id,
         url=request_body.url,
@@ -129,7 +128,7 @@ def create_captured_url(
     db: Annotated[Session, Depends(get_db)],
     request: Request,
 ) -> dict:
-    result = media_ingest.enqueue_media_from_url(
+    result = media_source_ingest.accept_url_source(
         db=db,
         viewer_id=viewer.user_id,
         url=request_body.url,

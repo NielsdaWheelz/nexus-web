@@ -44,7 +44,6 @@ from nexus.schemas.media import (
     UploadRequired,
     UploadRequiredHeaders,
     UploadSessionCapabilities,
-    UploadSessionFailure,
     UploadSessionResponse,
     UploadTransportFailureRequest,
     VerificationFailed,
@@ -73,7 +72,6 @@ from nexus.services.resource_mutation_replay import (
     record_replay,
 )
 from nexus.services.sealed_handles import (
-    UploadSessionHandle,
     seal_upload_session,
     unseal_upload_session,
 )
@@ -118,52 +116,12 @@ UPLOAD_SESSION_DERIVED_STATE_SQL = """
 """The one set-wise expression of §6's derived-session-state precedence.
 
 ``_needs_attention`` is the per-row owner of the same precedence; this expression
-is its set-wise twin so a bounded page and an operator aggregate never re-derive
-the rule independently. Every consumer selects it over ``media_upload_sessions``
-columns only. The two owners are cross-checked at runtime: every row this
-expression classifies as an unresolved obligation must also produce an attention
-projection in :func:`_needs_attention`.
+is its set-wise twin so no consumer re-derives the rule independently. Every
+consumer selects it over ``media_upload_sessions`` columns only.
 """
 
 UPLOAD_SESSION_ATTENTION_STATES = ("VerificationFailed", "TransportFailed", "CapabilityExpired")
 """Derived states that are an unresolved user obligation (spec §4.3)."""
-
-_UNRESOLVED_UPLOAD_SESSION_PAGE_SQL = f"""
-    WITH derived AS (
-        SELECT
-            id,
-            {UPLOAD_SESSION_DERIVED_STATE_SQL} AS derived_state,
-            CASE {UPLOAD_SESSION_DERIVED_STATE_SQL}
-                WHEN 'VerificationFailed' THEN verification_failed_at
-                WHEN 'TransportFailed' THEN transport_failed_at
-                WHEN 'CapabilityExpired' THEN upload_url_expires_at
-            END AS attention_at
-        FROM media_upload_sessions
-        WHERE created_by_user_id = :viewer_id
-    )
-    SELECT id, count(*) OVER () AS unresolved_count
-    FROM derived
-    WHERE derived_state = ANY(CAST(:attention_states AS text[]))
-    ORDER BY attention_at, id
-    LIMIT :limit
-"""
-
-
-@dataclass(frozen=True, slots=True)
-class UploadSessionOwnerProjection:
-    """Narrow Activity-facing projection of one unresolved upload obligation."""
-
-    session_id: UUID
-    session_handle: UploadSessionHandle
-    filename: str
-    kind: Literal["Pdf", "Epub"]
-    expected_size_bytes: int
-    state: Literal["VerificationFailed", "TransportFailed", "CapabilityExpired"]
-    attention_at: datetime
-    failure: UploadSessionFailure
-    capabilities: UploadSessionCapabilities
-    created_at: datetime
-    updated_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,54 +232,6 @@ def _session_destinations(db: Session, session_id: UUID) -> tuple[UUID, ...]:
     )
 
 
-def _assert_valid_persisted_state(session: MediaUploadSession) -> None:
-    lease = (
-        session.verification_token,
-        session.verification_generation,
-        session.verification_expires_at,
-    )
-    if any(value is None for value in lease) != all(value is None for value in lease):
-        # justify-service-invariant-check: upload state is intentionally stored as
-        # orthogonal nullable facts rather than a database status/check constraint.
-        raise AssertionError("partial upload verification lease")
-    publication = (
-        session.published_media_id,
-        session.published_source_attempt_id,
-        session.published_at,
-    )
-    if any(value is None for value in publication) != all(value is None for value in publication):
-        # justify-service-invariant-check: publication facts must become visible atomically.
-        raise AssertionError("partial upload publication fact")
-    if (session.transport_failure_kind is None) != (session.transport_failed_at is None):
-        # justify-service-invariant-check: transport kind and occurrence time are one fact.
-        raise AssertionError("partial upload transport failure fact")
-    if session.transport_failure_kind == "HttpRejected":
-        if session.transport_http_status is None:
-            raise AssertionError("HTTP upload rejection has no status")
-    elif session.transport_http_status is not None:
-        raise AssertionError("non-HTTP upload failure has an HTTP status")
-    if (session.verification_error_code is None) != (session.verification_failed_at is None):
-        # justify-service-invariant-check: verification code and occurrence time are one fact.
-        raise AssertionError("partial upload verification failure fact")
-    if (
-        session.verification_error_code is not None
-        and session.verification_error_code not in _TERMINAL_VERIFICATION_CODES
-    ):
-        raise AssertionError("unknown terminal upload verification code")
-    if session.verification_error_code is not None and session.verification_token is not None:
-        raise AssertionError("terminal upload verification retains a live lease")
-    if session.verification_error_code is not None and session.transport_failure_kind is not None:
-        raise AssertionError("terminal upload verification retains a transport failure")
-    if session.verification_generation not in {None, session.upload_generation}:
-        raise AssertionError("upload verification lease belongs to another generation")
-    if session.published_at is not None and (
-        session.verification_token is not None
-        or session.transport_failed_at is not None
-        or session.verification_failed_at is not None
-    ):
-        raise AssertionError("published upload retains unresolved facts")
-
-
 def _owned_session_for_update(
     db: Session, viewer_id: UUID, session_handle: str
 ) -> MediaUploadSession:
@@ -337,7 +247,6 @@ def _owned_session_for_update(
     ).scalar_one_or_none()
     if session is None:
         raise NotFoundError(ApiErrorCode.E_UPLOAD_SESSION_NOT_FOUND, "Upload session not found.")
-    _assert_valid_persisted_state(session)
     return session
 
 
@@ -371,9 +280,11 @@ def _transport_failure(session: MediaUploadSession) -> TransportFailed:
 
 
 def _needs_attention(session: MediaUploadSession, now: datetime) -> NeedsAttention | None:
-    _assert_valid_persisted_state(session)
     capabilities = UploadSessionCapabilities(can_retry_upload=True, can_remove=True)
     if session.verification_error_code is not None:
+        if session.verification_error_code not in _TERMINAL_VERIFICATION_CODES:
+            # justify-service-invariant-check: the cast below closes this union.
+            raise AssertionError("unknown terminal upload verification code")
         if session.verification_failed_at is None:
             raise AssertionError("terminal verification has no timestamp")
         return NeedsAttention(
@@ -564,7 +475,6 @@ def create_upload_session(
                 failure_code=absent(),
             )
         else:
-            _assert_valid_persisted_state(session)
             matches = (
                 session.kind == intent.kind
                 and session.filename == intent.filename
@@ -1000,7 +910,6 @@ def _renew_verification_lease(
             raise NotFoundError(
                 ApiErrorCode.E_UPLOAD_SESSION_NOT_FOUND, "Upload session not found."
             )
-        _assert_valid_persisted_state(session)
         if session.published_at is not None:
             return _AlreadyPublished(_published(session, "Reused"))
         if session.verification_token != token:
@@ -1402,7 +1311,6 @@ def delete_upload_session(
             raise NotFoundError(
                 ApiErrorCode.E_UPLOAD_SESSION_NOT_FOUND, "Upload session not found."
             )
-        _assert_valid_persisted_state(session)
         if session.published_at is not None:
             raise ConflictError(
                 ApiErrorCode.E_UPLOAD_ALREADY_PUBLISHED, "Upload is already published."
@@ -1471,7 +1379,6 @@ def delete_published_media_support_in_current_transaction(
     if not sessions:
         return
     session = sessions[0]
-    _assert_valid_persisted_state(session)
     if session.published_media_id != media_id:
         raise AssertionError("published upload support points at another media")
     db.execute(
@@ -1489,85 +1396,3 @@ def delete_published_media_support_in_current_transaction(
     )
     if deleted_ids != [session.id]:
         raise AssertionError("published upload support deletion did not remove its exact row")
-
-
-@dataclass(frozen=True, slots=True)
-class UnresolvedUploadSessionPage:
-    """One bounded page of viewer obligations plus the exact unresolved total."""
-
-    items: tuple[UploadSessionOwnerProjection, ...]
-    total: int
-
-
-def list_viewer_unresolved_upload_sessions(
-    db: Session, *, viewer_id: UUID, limit: int
-) -> UnresolvedUploadSessionPage:
-    """Return at most ``limit`` unresolved obligations and their exact total.
-
-    Selection, ordering, the page bound, and the badge total share one query over
-    :data:`UPLOAD_SESSION_DERIVED_STATE_SQL`, so an unbounded backlog of abandoned
-    sessions can never make a single Activity read scan or hydrate more than a page.
-    """
-    if limit < 1:
-        raise ValueError("Upload-session page limit must be positive.")
-    rows = list(
-        db.execute(
-            text(_UNRESOLVED_UPLOAD_SESSION_PAGE_SQL),
-            {
-                "viewer_id": viewer_id,
-                "limit": limit,
-                "attention_states": list(UPLOAD_SESSION_ATTENTION_STATES),
-            },
-        ).mappings()
-    )
-    if not rows:
-        return UnresolvedUploadSessionPage(items=(), total=0)
-    total = int(rows[0]["unresolved_count"])
-    ordered_ids = [UUID(str(row["id"])) for row in rows]
-    sessions = {
-        session.id: session
-        for session in db.execute(
-            select(MediaUploadSession)
-            .where(MediaUploadSession.id.in_(ordered_ids))
-            .execution_options(populate_existing=True)
-        ).scalars()
-    }
-    # Read the clock after the selection so the per-row classifier can only observe
-    # a later instant: every derived state it must agree with is monotonic in time.
-    now = _db_now(db)
-    projections: list[UploadSessionOwnerProjection] = []
-    for session_id in ordered_ids:
-        session = sessions[session_id]
-        attention = _needs_attention(session, now)
-        if attention is None:
-            # justify-service-invariant-check: the set-wise precedence expression and
-            # the per-row classifier are two owners of one rule; disagreement is drift.
-            raise AssertionError("selected upload obligation has no attention projection")
-        failure = attention.failure
-        if isinstance(failure, VerificationFailed):
-            state = "VerificationFailed"
-            attention_at = failure.failed_at
-        elif isinstance(failure, TransportFailed):
-            state = "TransportFailed"
-            attention_at = failure.failed_at
-        elif isinstance(failure, CapabilityExpired):
-            state = "CapabilityExpired"
-            attention_at = failure.expired_at
-        else:
-            raise AssertionError("unknown upload attention projection")
-        projections.append(
-            UploadSessionOwnerProjection(
-                session_id=session.id,
-                session_handle=seal_upload_session(session.id),
-                filename=session.filename,
-                kind=cast(Literal["Pdf", "Epub"], session.kind.title()),
-                expected_size_bytes=session.expected_size_bytes,
-                state=state,
-                attention_at=attention_at,
-                failure=failure,
-                capabilities=attention.capabilities,
-                created_at=session.created_at,
-                updated_at=session.updated_at,
-            )
-        )
-    return UnresolvedUploadSessionPage(items=tuple(projections), total=total)

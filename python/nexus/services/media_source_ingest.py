@@ -131,7 +131,6 @@ from nexus.services.reader_publication import ReaderPublicationSourceFile
 from nexus.services.remote_file_client import (
     REMOTE_FILE_CONTENT_TYPES,
     fetch_binary_to_storage,
-    fetch_to_storage,
 )
 from nexus.services.remote_file_ingest import arxiv_pdf_source_from_url, remote_file_kind_from_url
 from nexus.services.resource_mutation_replay import (
@@ -1361,24 +1360,16 @@ def run_source_attempt(
         db.close()
 
 
-@dataclass(frozen=True, slots=True)
-class _SourceAdapterRun:
-    session_factory: sessionmaker[Session]
-    media_id: UUID
-    attempt: MediaSourceAttempt
-    actor_user_id: UUID
-    request_id: str | None
-    fence: SourcePublicationFence
-
-
-def _run_source_adapter(run: _SourceAdapterRun) -> dict[str, object]:
+def _run_source_adapter(
+    *,
+    session_factory: sessionmaker[Session],
+    media_id: UUID,
+    attempt: MediaSourceAttempt,
+    actor_user_id: UUID,
+    request_id: str | None,
+    fence: SourcePublicationFence,
+) -> dict[str, object]:
     """Dispatch one detached source snapshot to its acquisition adapter."""
-    session_factory = run.session_factory
-    media_id = run.media_id
-    attempt = run.attempt
-    actor_user_id = run.actor_user_id
-    request_id = run.request_id
-    fence = run.fence
     if attempt.source_type == source_types.GENERIC_WEB_URL:
         return _run_generic_web_article(
             session_factory, media_id, attempt, actor_user_id, request_id, fence
@@ -1609,14 +1600,12 @@ def _run_claimed_source_attempt(
     superseded_storage_paths: list[str] = []
     try:
         result = _run_source_adapter(
-            _SourceAdapterRun(
-                session_factory=session_factory,
-                media_id=media_id,
-                attempt=attempt,
-                actor_user_id=actor_user_id,
-                request_id=request_id,
-                fence=fence,
-            )
+            session_factory=session_factory,
+            media_id=media_id,
+            attempt=attempt,
+            actor_user_id=actor_user_id,
+            request_id=request_id,
+            fence=fence,
         )
         result_media_id = _superseded_media_id(result)
         terminal_media_id = media_id
@@ -2061,28 +2050,9 @@ def refresh_source_for_viewer(
     viewer_id: UUID,
     media_id: UUID,
     request_id: str | None,
-    idempotency_key: str | None = None,
 ) -> dict[str, object]:
     """Refresh source-backed media through the durable attempt owner."""
     media = _load_owned_media_for_source_action(db, viewer_id, media_id)
-    clean_idempotency_key = _clean_idempotency_key(idempotency_key)
-    if clean_idempotency_key is not None:
-        _lock_idempotency_key(db, viewer_id, clean_idempotency_key)
-        existing_attempt = _find_idempotent_source_action_attempt(
-            db,
-            viewer_id=viewer_id,
-            idempotency_key=clean_idempotency_key,
-            media_id=media.id,
-            action="refresh",
-        )
-        if existing_attempt is not None:
-            return _source_action_attempt_response(
-                db,
-                viewer_id=viewer_id,
-                media=media,
-                attempt=existing_attempt,
-                idempotency_outcome="reused",
-            )
     if media.processing_status not in _REFRESHABLE_STATUSES:
         raise ConflictError(
             ApiErrorCode.E_MEDIA_NOT_READY,
@@ -2109,7 +2079,6 @@ def refresh_source_for_viewer(
         intent_key=_source_action_intent_key(
             "refresh", media_id=media.id, previous_attempt_id=attempt.id
         ),
-        idempotency_key=clean_idempotency_key,
     )
     _mark_source_requeue_payload(refresh_attempt)
     db.commit()
@@ -3148,7 +3117,6 @@ def _run_x_post(
         viewer_id=actor_user_id,
         media_id=media_id,
         post_id=post_id,
-        source_attempt_id=attempt.id,
         request_id=request_id,
         publication_fence=fence,
     )
@@ -3632,11 +3600,17 @@ def _run_remote_file(
         )
     finally:
         reservation_db.close()
-    fetched = fetch_to_storage(
+    content_type = REMOTE_FILE_CONTENT_TYPES[kind]
+    fetched = fetch_binary_to_storage(
         url=requested_url,
-        kind=kind,
         storage_path=storage_path,
         storage_client=storage_client,
+        content_type=content_type,
+        max_bytes=(
+            get_settings().max_pdf_bytes if kind == "pdf" else get_settings().max_epub_bytes
+        ),
+        accept=f"{content_type},application/octet-stream,*/*;q=0.8",
+        signature_kind=kind,
     )
     validate_file_ingest_request(kind, fetched.content_type, fetched.size_bytes)
     source_package, source_package_diagnostics, source_package_storage_path = (
@@ -4206,26 +4180,6 @@ def _find_idempotent_attempt(
     )
 
 
-def _find_idempotent_source_action_attempt(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    idempotency_key: str,
-    media_id: UUID,
-    action: str,
-) -> MediaSourceAttempt | None:
-    attempt = _find_idempotent_attempt(db, viewer_id, idempotency_key)
-    if attempt is None:
-        return None
-    intent = _parse_source_action_intent_key(attempt.intent_key)
-    if intent is None or intent.get("media_id") != str(media_id) or intent.get("action") != action:
-        raise ConflictError(
-            ApiErrorCode.E_IDEMPOTENCY_KEY_REPLAY_MISMATCH,
-            "Idempotency key was reused for a different source ingest request.",
-        )
-    return attempt
-
-
 def _lock_idempotency_key(db: Session, viewer_id: UUID, idempotency_key: str) -> None:
     db.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
@@ -4249,29 +4203,6 @@ def _source_action_intent_key(
         sort_keys=True,
         separators=(",", ":"),
     )
-
-
-def _parse_source_action_intent_key(intent_key: str) -> dict[str, str] | None:
-    try:
-        payload = json.loads(intent_key)
-    except (TypeError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    if payload.get("source_type") != "media_source_action":
-        return None
-    action = payload.get("action")
-    media_id = payload.get("media_id")
-    previous_attempt_id = payload.get("previous_attempt_id")
-    if not all(
-        isinstance(value, str) and value for value in (action, media_id, previous_attempt_id)
-    ):
-        return None
-    return {
-        "action": str(action),
-        "media_id": str(media_id),
-        "previous_attempt_id": str(previous_attempt_id),
-    }
 
 
 def build_intent_key(
@@ -4332,40 +4263,9 @@ def _source_action_response_with_capabilities(
     }
 
 
-def _source_action_attempt_response(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    media: Media,
-    attempt: MediaSourceAttempt,
-    idempotency_outcome: str,
-) -> dict[str, object]:
-    return _source_action_response_with_capabilities(
-        db,
-        viewer_id=viewer_id,
-        media_id=media.id,
-        payload={
-            "media_id": str(media.id),
-            "source_attempt_id": str(attempt.id),
-            "source_type": attempt.source_type,
-            "source_attempt_status": attempt.status,
-            "idempotency_outcome": idempotency_outcome,
-            "processing_status": _status_to_str(media.processing_status),
-            "ingest_enqueued": attempt.status in {_ATTEMPT_ACCEPTED, _ATTEMPT_QUEUED},
-        },
-    )
-
-
 def _remote_file_name(url: str, kind: str) -> str:
     name = unquote(posixpath.basename(urlparse(url).path)).strip()
     return name or f"download.{get_file_extension(kind)}"
-
-
-def _delete_storage_object(storage_client, storage_path: str) -> None:
-    try:
-        storage_client.delete_object(storage_path)
-    except StorageError:
-        pass
 
 
 def _status_to_str(value: object) -> MediaProcessingStatus:
