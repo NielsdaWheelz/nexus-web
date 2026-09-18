@@ -330,6 +330,9 @@ export default function NoteBodyEditor({
       if (!view) return;
       view.dispatch(view.state.tr.setMeta(notePulseDecorationKey, target));
       if (!target) return;
+      view.dom
+        .querySelector<HTMLElement>("[data-note-pulse-range]")
+        ?.scrollIntoView({ block: "center" });
       notePulseTimeoutRef.current = window.setTimeout(() => {
         notePulseTimeoutRef.current = null;
         viewRef.current?.dispatch(

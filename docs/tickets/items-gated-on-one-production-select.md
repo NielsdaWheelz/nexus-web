@@ -8,8 +8,10 @@ cannot read production. each is pure code deletion if its count is zero.
 
 2026-09-17 cleanup verification: the documented batch-mode operator connection
 `ssh nexus@5.78.194.235` failed with `connect to host 5.78.194.235 port 22:
-Operation timed out` (exit 255) before any remote command or sql ran. all
-production counts, controller release pointer, extension version and the planned literal
+Operation timed out` (exit 255) before any remote command or sql ran.
+the second batch-mode attempt in this session also timed out before execution
+(`/tmp/nexus-cleanup.3vgYE2/production-cleanup-counts-retry.log`, exit 255).
+all production counts, controller release pointer, extension version and the planned literal
 `avg(vector)` capability check remain `NOT_RUN`. local pgvector fixtures do not
 satisfy this prerequisite. retry the read-only snapshot when connectivity returns;
 record the deployed revision and audit its writers before deleting vocabulary.

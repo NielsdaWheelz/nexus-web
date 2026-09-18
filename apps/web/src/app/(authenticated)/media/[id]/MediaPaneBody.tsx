@@ -537,6 +537,7 @@ export default function MediaPaneBody() {
     status: targetStatus,
     markActive,
     clearTarget,
+    passageResolution,
   } = useReaderTarget(id);
   // Fresh feature-owned targets (hash/pulse) versus coarse cold-query fields:
   // a Positioned canonical cursor beats the cold query, never the fresh target.
@@ -1030,6 +1031,28 @@ export default function MediaPaneBody() {
   >([]);
   const [pdfHighlightNavigation, setPdfHighlightNavigation] =
     useState<PdfHighlightNavigationRequest | null>(null);
+  const [passageTextHighlight, setPassageTextHighlight] =
+    useState<(HighlightInput & { fragmentId: string }) | null>(null);
+  useEffect(() => {
+    if (target?.origin !== "passage" || !freshTextTarget) {
+      setPassageTextHighlight(null);
+      return;
+    }
+    setPassageTextHighlight((current) =>
+      current?.fragmentId === freshTextTarget.fragmentId &&
+      current.start_offset === freshTextTarget.startOffset &&
+      current.end_offset === freshTextTarget.endOffset
+        ? current
+        : {
+            id: "passage-target",
+            fragmentId: freshTextTarget.fragmentId,
+            start_offset: freshTextTarget.startOffset,
+            end_offset: freshTextTarget.endOffset,
+            color: "yellow",
+            created_at: new Date(0).toISOString(),
+          },
+    );
+  }, [freshTextTarget, target?.origin]);
 
   const resolvedEvidenceResource = useResource<MediaEvidenceResolutionResponse>({
     cacheKey: requestedEvidenceId ? `${id}:${requestedEvidenceId}` : null,
@@ -1335,6 +1358,31 @@ export default function MediaPaneBody() {
     textRestoreSettledRef.current = true;
     setEpubRestoreRequest(null);
   }, []);
+  const pdfPassageControlsReady =
+    pdfControlsState !== null && pdfControlsState.numPages > 0;
+  useEffect(() => {
+    if (target?.origin !== "passage" || target.kind !== "page" || targetStatus !== "pending") {
+      return;
+    }
+    const controls = pdfControlsRef.current;
+    if (!controls || !pdfPassageControlsReady) return;
+    cancelRestoreSession();
+    const sessionId = restoreSessionIdRef.current;
+    let cancelled = false;
+    void controls.applyResumeState(
+      {
+        kind: "pdf",
+        page: Number(target.value),
+        page_progression: 0,
+        zoom: null,
+        position: null,
+      },
+      () => !cancelled && sessionId === restoreSessionIdRef.current,
+    ).then((positioned) => {
+      if (positioned && !cancelled && sessionId === restoreSessionIdRef.current) markActive();
+    });
+    return () => { cancelled = true; };
+  }, [cancelRestoreSession, markActive, pdfPassageControlsReady, target, targetStatus]);
 
   const clearRetainedSelection = useCallback(() => {
     clearRetainedSelectionState();
@@ -3111,6 +3159,9 @@ export default function MediaPaneBody() {
             created_at: highlight.created_at,
           })),
           ...(evidenceTextHighlight ? [evidenceTextHighlight] : []),
+          ...(passageTextHighlight && activeContent.fragmentId === passageTextHighlight.fragmentId
+            ? [passageTextHighlight]
+            : []),
         ] as HighlightInput[],
       );
       const output = renderDocumentEmbedsInHtml(
@@ -3135,7 +3186,7 @@ export default function MediaPaneBody() {
       return output;
     };
     return { decorate };
-  }, [activeContent, evidenceTextHighlight, highlights]);
+  }, [activeContent, evidenceTextHighlight, highlights, passageTextHighlight]);
   const renderedHtml = useMemo(
     () =>
       activeContent
@@ -3143,6 +3194,16 @@ export default function MediaPaneBody() {
         : "",
     [activeContent, textReaderDecorator],
   );
+  useEffect(() => {
+    if (
+      !passageTextHighlight ||
+      targetStatus !== "active" ||
+      !readerLayoutReady ||
+      activeContent?.fragmentId !== passageTextHighlight.fragmentId
+    ) return;
+    const timeout = window.setTimeout(() => setPassageTextHighlight(null), 2400);
+    return () => window.clearTimeout(timeout);
+  }, [activeContent?.fragmentId, passageTextHighlight, readerLayoutReady, targetStatus]);
 
   // ==========================================================================
   // Canonical Cursor Building
@@ -3203,17 +3264,22 @@ export default function MediaPaneBody() {
   ]);
 
   useEffect(() => {
-    if (!freshTextTarget || targetStatus !== "pending" ||
-        activeContent?.fragmentId !== freshTextTarget.fragmentId ||
+    const textTarget = freshTextTarget ?? (
+      target?.origin === "passage" && target.kind === "t" && activeTranscriptFragment
+        ? { fragmentId: activeTranscriptFragment.id, startOffset: 0, endOffset: 0 }
+        : null
+    );
+    if (!textTarget || targetStatus !== "pending" ||
+        activeContent?.fragmentId !== textTarget.fragmentId ||
         !readerLayoutReady || isMismatchDisabled || textHighlightInitialLoading) return;
     const cursor = cursorRef.current;
     const viewport = textViewportRef.current;
     if (!cursor || !viewport) return;
-    if (freshTextTarget.endOffset > canonicalCpLength(activeContent.canonicalText)) {
+    if (textTarget.endOffset > canonicalCpLength(activeContent.canonicalText)) {
       setError({ tone: "Warning", title: "The requested text range is outside this source." });
       return;
     }
-    const offset = freshTextTarget.startOffset;
+    const offset = textTarget.startOffset;
     mediaFindPreviewLease.armCaptureSuppressionUntilGenuineInput();
     const sessionId = beginRestoreSession("restoring_exact");
     let cancelled = false;
@@ -3229,9 +3295,9 @@ export default function MediaPaneBody() {
       void settleRestoreSession(sessionId);
     });
     return () => { cancelled = true; };
-  }, [activeContent, beginRestoreSession, freshTextTarget, isMismatchDisabled,
+  }, [activeContent, activeTranscriptFragment, beginRestoreSession, freshTextTarget, isMismatchDisabled,
     markActive, mediaFindPreviewLease, readerLayoutReady, readerScrollPositioner,
-    settleRestoreSession, targetStatus, textHighlightInitialLoading]);
+    settleRestoreSession, target, targetStatus, textHighlightInitialLoading]);
 
   useEffect(() => {
     mismatchLoggedFragmentRef.current = null;
@@ -6890,6 +6956,18 @@ export default function MediaPaneBody() {
   });
   const readerBanners = (
     <>
+      {passageResolution.status === "ready" && passageResolution.data.kind === "Absent" ? (
+        <FeedbackNotice
+          content={{ tone: "Warning", title: "This passage is no longer available." }}
+          announcement="Polite"
+        />
+      ) : passageResolution.status === "error" ? (
+        <FeedbackNotice
+          content={{ tone: "Danger", title: "The passage could not be opened." }}
+          announcement="Assertive"
+          actions={[{ label: "Retry", onClick: passageResolution.retry }]}
+        />
+      ) : null}
       {!isPdf && isMismatchDisabled ? (
         <div className={styles.mismatchBanner}>
           Highlights disabled due to content mismatch. Try reloading.
