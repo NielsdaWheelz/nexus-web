@@ -7,10 +7,9 @@ removed after serialization.
 
 from __future__ import annotations
 
-import math
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator, model_validator
 
 from nexus.schemas.presence import Presence
 
@@ -47,32 +46,14 @@ class PublicMediaSubjectOut(PublicSchemaModel):
 
 
 class PublicPdfQuad(PublicSchemaModel):
-    x1: float
-    y1: float
-    x2: float
-    y2: float
-    x3: float
-    y3: float
-    x4: float
-    y4: float
-
-    @model_validator(mode="after")
-    def validate_finite(self) -> PublicPdfQuad:
-        if not all(
-            math.isfinite(value)
-            for value in (
-                self.x1,
-                self.y1,
-                self.x2,
-                self.y2,
-                self.x3,
-                self.y3,
-                self.x4,
-                self.y4,
-            )
-        ):
-            raise ValueError("PDF quad coordinates must be finite")
-        return self
+    x1: FiniteFloat
+    y1: FiniteFloat
+    x2: FiniteFloat
+    y2: FiniteFloat
+    x3: FiniteFloat
+    y3: FiniteFloat
+    x4: FiniteFloat
+    y4: FiniteFloat
 
 
 class PublicArticleTextAnchorOut(PublicSchemaModel):

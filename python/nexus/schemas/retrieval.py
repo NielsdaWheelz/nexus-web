@@ -28,24 +28,29 @@ class RetrievalContextRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class MediaRetrievalResultRef(BaseModel):
-    type: Literal["media"]
-    id: UUID | str
-    result_type: Literal["media"]
-    source_id: str
+class RetrievalResultRefBase(BaseModel):
+    """Envelope fields shared by every typed retrieval result ref."""
+
     title: str
     source_label: str | None = None
     snippet: str
     deep_link: str
     citation_target: str | None = None
     context_ref: RetrievalContextRef
-    locator: None = None
-    media_id: UUID | str | None = None
-    media_kind: str | None = None
     score: float | None = None
     selected: bool = False
 
     model_config = ConfigDict(extra="forbid")
+
+
+class MediaRetrievalResultRef(RetrievalResultRefBase):
+    type: Literal["media"]
+    id: UUID | str
+    result_type: Literal["media"]
+    source_id: str
+    locator: None = None
+    media_id: UUID | str | None = None
+    media_kind: str | None = None
 
     @model_validator(mode="after")
     def validate_media_ref(self) -> MediaRetrievalResultRef:
@@ -54,25 +59,15 @@ class MediaRetrievalResultRef(BaseModel):
         return self
 
 
-class PodcastRetrievalResultRef(BaseModel):
+class PodcastRetrievalResultRef(RetrievalResultRefBase):
     type: Literal["podcast"]
     id: UUID | str
     result_type: Literal["podcast"]
     source_id: str
-    title: str
-    source_label: str | None = None
-    snippet: str
-    deep_link: str
-    citation_target: str | None = None
-    context_ref: RetrievalContextRef
     locator: None = None
     media_id: None = None
     media_kind: None = None
     contributors: list[dict[str, Any]] = Field(default_factory=list)
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_podcast_ref(self) -> PodcastRetrievalResultRef:
@@ -81,24 +76,14 @@ class PodcastRetrievalResultRef(BaseModel):
         return self
 
 
-class EpisodeRetrievalResultRef(BaseModel):
+class EpisodeRetrievalResultRef(RetrievalResultRefBase):
     type: Literal["episode"]
     id: UUID | str
     result_type: Literal["episode"]
     source_id: str
-    title: str
-    source_label: str | None = None
-    snippet: str
-    deep_link: str
-    citation_target: str | None = None
-    context_ref: RetrievalContextRef
     locator: None = None
     media_id: UUID | str | None = None
     media_kind: str | None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_episode_ref(self) -> EpisodeRetrievalResultRef:
@@ -107,24 +92,14 @@ class EpisodeRetrievalResultRef(BaseModel):
         return self
 
 
-class VideoRetrievalResultRef(BaseModel):
+class VideoRetrievalResultRef(RetrievalResultRefBase):
     type: Literal["video"]
     id: UUID | str
     result_type: Literal["video"]
     source_id: str
-    title: str
-    source_label: str | None = None
-    snippet: str
-    deep_link: str
-    citation_target: str | None = None
-    context_ref: RetrievalContextRef
     locator: None = None
     media_id: UUID | str | None = None
     media_kind: str | None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_video_ref(self) -> VideoRetrievalResultRef:
@@ -133,28 +108,18 @@ class VideoRetrievalResultRef(BaseModel):
         return self
 
 
-class ContentChunkRetrievalResultRef(BaseModel):
+class ContentChunkRetrievalResultRef(RetrievalResultRefBase):
     type: Literal["content_chunk"]
     id: UUID | str
     result_type: Literal["content_chunk"]
     source_id: str
     source_kind: str
-    title: str
-    source_label: str | None = None
-    snippet: str
-    deep_link: str
-    citation_target: str | None = None
     citation_label: str
-    context_ref: RetrievalContextRef
     evidence_span_id: UUID | str | None = None
     evidence_span_ids: list[UUID | str] = Field(default_factory=list)
     locator: RetrievalLocator
     media_id: UUID | str | None = None
     media_kind: str | None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_content_chunk_ref(self) -> ContentChunkRetrievalResultRef:
@@ -164,25 +129,15 @@ class ContentChunkRetrievalResultRef(BaseModel):
         return self
 
 
-class FragmentRetrievalResultRef(BaseModel):
+class FragmentRetrievalResultRef(RetrievalResultRefBase):
     type: Literal["fragment"]
     id: UUID | str
     result_type: Literal["fragment"]
     source_id: str
-    title: str
-    source_label: str | None = None
-    snippet: str
-    deep_link: str
-    citation_target: str | None = None
     citation_label: str | None = None
-    context_ref: RetrievalContextRef
     locator: RetrievalLocator
     media_id: UUID | str | None = None
     media_kind: str | None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_fragment_ref(self) -> FragmentRetrievalResultRef:
@@ -192,25 +147,15 @@ class FragmentRetrievalResultRef(BaseModel):
         return self
 
 
-class ContributorRetrievalResultRef(BaseModel):
+class ContributorRetrievalResultRef(RetrievalResultRefBase):
     type: Literal["contributor"]
     id: str
     result_type: Literal["contributor"]
     source_id: str
     contributor_handle: str
-    title: str
-    source_label: str | None = None
-    snippet: str
-    deep_link: str
-    citation_target: str | None = None
-    context_ref: RetrievalContextRef
     locator: None = None
     media_id: None = None
     media_kind: None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_contributor_ref(self) -> ContributorRetrievalResultRef:
@@ -219,24 +164,14 @@ class ContributorRetrievalResultRef(BaseModel):
         return self
 
 
-class PageRetrievalResultRef(BaseModel):
+class PageRetrievalResultRef(RetrievalResultRefBase):
     type: Literal["page"]
     id: UUID | str
     result_type: Literal["page"]
     source_id: str
-    title: str
-    source_label: str | None = None
-    snippet: str
-    deep_link: str
-    citation_target: str | None = None
-    context_ref: RetrievalContextRef
     locator: None = None
     media_id: None = None
     media_kind: None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_page_ref(self) -> PageRetrievalResultRef:
@@ -245,26 +180,16 @@ class PageRetrievalResultRef(BaseModel):
         return self
 
 
-class NoteBlockRetrievalResultRef(BaseModel):
+class NoteBlockRetrievalResultRef(RetrievalResultRefBase):
     type: Literal["note_block"]
     id: UUID | str
     result_type: Literal["note_block"]
     source_id: str
     body_text: str
     highlight_excerpt: str | None = None
-    title: str
-    source_label: str | None = None
-    snippet: str
-    deep_link: str
-    citation_target: str | None = None
-    context_ref: RetrievalContextRef
     locator: RetrievalLocator
     media_id: None = None
     media_kind: None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_note_block_ref(self) -> NoteBlockRetrievalResultRef:
@@ -274,27 +199,17 @@ class NoteBlockRetrievalResultRef(BaseModel):
         return self
 
 
-class HighlightRetrievalResultRef(BaseModel):
+class HighlightRetrievalResultRef(RetrievalResultRefBase):
     type: Literal["highlight"]
     id: UUID | str
     result_type: Literal["highlight"]
     source_id: str
     color: str
     exact: str
-    title: str
-    source_label: str | None = None
-    snippet: str
-    deep_link: str
-    citation_target: str | None = None
     citation_label: str | None = None
-    context_ref: RetrievalContextRef
     locator: RetrievalLocator
     media_id: UUID | str | None = None
     media_kind: str | None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_highlight_ref(self) -> HighlightRetrievalResultRef:
@@ -304,26 +219,16 @@ class HighlightRetrievalResultRef(BaseModel):
         return self
 
 
-class MessageRetrievalResultRef(BaseModel):
+class MessageRetrievalResultRef(RetrievalResultRefBase):
     type: Literal["message"]
     id: UUID | str
     result_type: Literal["message"]
     source_id: str
     conversation_id: UUID | str
     seq: int
-    title: str
-    source_label: str | None = None
-    snippet: str
-    deep_link: str
-    citation_target: str | None = None
-    context_ref: RetrievalContextRef
     locator: RetrievalLocator
     media_id: None = None
     media_kind: None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_message_ref(self) -> MessageRetrievalResultRef:
@@ -333,18 +238,14 @@ class MessageRetrievalResultRef(BaseModel):
         return self
 
 
-class WebRetrievalResultRef(BaseModel):
+class WebRetrievalResultRef(RetrievalResultRefBase):
     type: Literal["web_result"]
     id: ExternalSnapshotId
     result_type: Literal["web_result"]
     result_ref: ProviderResultRef
     source_id: ExternalSnapshotId
-    title: str
     url: str
     display_url: str | None = None
-    deep_link: str
-    citation_target: str | None = None
-    snippet: str
     extra_snippets: list[str] = Field(default_factory=list)
     published_at: str | None = None
     source_name: str | None = None
@@ -352,13 +253,8 @@ class WebRetrievalResultRef(BaseModel):
     provider: str | None = None
     provider_request_id: str | None = None
     locator: RetrievalLocator
-    context_ref: RetrievalContextRef
     media_id: None = None
     media_kind: None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_web_ref(self) -> WebRetrievalResultRef:
@@ -373,26 +269,16 @@ class WebRetrievalResultRef(BaseModel):
         return self
 
 
-class EvidenceSpanRetrievalResultRef(BaseModel):
+class EvidenceSpanRetrievalResultRef(RetrievalResultRefBase):
     type: Literal["evidence_span"]
     id: UUID | str
     result_type: Literal["evidence_span"]
     source_id: str
-    title: str
-    source_label: str | None = None
-    snippet: str
-    deep_link: str
-    citation_target: str | None = None
     citation_label: str
-    context_ref: RetrievalContextRef
     evidence_span_id: UUID | str
     locator: RetrievalLocator
     media_id: UUID | str
     media_kind: str | None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_evidence_span_ref(self) -> EvidenceSpanRetrievalResultRef:
@@ -402,25 +288,15 @@ class EvidenceSpanRetrievalResultRef(BaseModel):
         return self
 
 
-class ReaderApparatusItemRetrievalResultRef(BaseModel):
+class ReaderApparatusItemRetrievalResultRef(RetrievalResultRefBase):
     type: Literal["reader_apparatus_item"]
     id: UUID | str
     result_type: Literal["reader_apparatus_item"]
     source_id: str
-    title: str
-    source_label: str | None = None
-    snippet: str
-    deep_link: str
-    citation_target: str | None = None
     apparatus_kind: str
-    context_ref: RetrievalContextRef
     locator: RetrievalLocator
     media_id: UUID | str
     media_kind: str | None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_reader_apparatus_item_ref(self) -> ReaderApparatusItemRetrievalResultRef:
@@ -430,24 +306,14 @@ class ReaderApparatusItemRetrievalResultRef(BaseModel):
         return self
 
 
-class ConversationRetrievalResultRef(BaseModel):
+class ConversationRetrievalResultRef(RetrievalResultRefBase):
     type: Literal["conversation"]
     id: UUID | str
     result_type: Literal["conversation"]
     source_id: str
-    title: str
-    source_label: str | None = None
-    snippet: str
-    deep_link: str
-    citation_target: str | None = None
-    context_ref: RetrievalContextRef
     locator: None = None
     media_id: None = None
     media_kind: None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_conversation_ref(self) -> ConversationRetrievalResultRef:
@@ -456,26 +322,16 @@ class ConversationRetrievalResultRef(BaseModel):
         return self
 
 
-class ArtifactRetrievalResultRef(BaseModel):
+class ArtifactRetrievalResultRef(RetrievalResultRefBase):
     type: Literal["artifact"]
     id: UUID | str
     result_type: Literal["artifact"]
     source_id: str
     revision_id: UUID | str
     subject_ref: str
-    title: str
-    source_label: str | None = None
-    snippet: str
-    deep_link: str
-    citation_target: str | None = None
-    context_ref: RetrievalContextRef
     locator: None = None
     media_id: None = None
     media_kind: None = None
-    score: float | None = None
-    selected: bool = False
-
-    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_artifact_ref(self) -> ArtifactRetrievalResultRef:
@@ -603,8 +459,8 @@ class TranscriptTimeRangeLocator(BaseModel):
         return self
 
 
-class AudioTimeRangeLocator(BaseModel):
-    type: Literal["audio_time_range"]
+class PlaybackTimeRangeLocator(BaseModel):
+    type: Literal["audio_time_range", "video_time_range"]
     media_id: UUID | str
     t_start_ms: int = Field(ge=0)
     t_end_ms: int = Field(ge=0)
@@ -612,22 +468,7 @@ class AudioTimeRangeLocator(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
-    def validate_time_range(self) -> AudioTimeRangeLocator:
-        if self.t_end_ms <= self.t_start_ms:
-            raise ValueError("t_end_ms must be greater than t_start_ms")
-        return self
-
-
-class VideoTimeRangeLocator(BaseModel):
-    type: Literal["video_time_range"]
-    media_id: UUID | str
-    t_start_ms: int = Field(ge=0)
-    t_end_ms: int = Field(ge=0)
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def validate_time_range(self) -> VideoTimeRangeLocator:
+    def validate_time_range(self) -> PlaybackTimeRangeLocator:
         if self.t_end_ms <= self.t_start_ms:
             raise ValueError("t_end_ms must be greater than t_start_ms")
         return self
@@ -665,8 +506,7 @@ MediaRetrievalLocator = Annotated[
     | EpubFragmentOffsetsLocator
     | PdfPageGeometryLocator
     | TranscriptTimeRangeLocator
-    | AudioTimeRangeLocator
-    | VideoTimeRangeLocator,
+    | PlaybackTimeRangeLocator,
     Field(discriminator="type"),
 ]
 
@@ -677,8 +517,7 @@ RetrievalLocator = Annotated[
     | NoteBlockOffsetsLocator
     | PdfPageGeometryLocator
     | TranscriptTimeRangeLocator
-    | AudioTimeRangeLocator
-    | VideoTimeRangeLocator
+    | PlaybackTimeRangeLocator
     | MessageOffsetsLocator
     | ExternalUrlLocator,
     Field(discriminator="type"),

@@ -32,6 +32,7 @@ from nexus.services.capabilities import is_document_status_ready
 from nexus.services.highlights import (
     project_highlight,
     project_highlights_with_links,
+    require_pdf_highlight_or_404,
 )
 from nexus.services.pdf_highlight_geometry import (
     CanonicalGeometry,
@@ -102,7 +103,8 @@ def _compute_write_time_match(
     """
     from nexus.services.pdf_readiness import is_pdf_quote_text_ready
 
-    if not is_pdf_quote_text_ready(db, media.id):
+    plain_text = media.plain_text
+    if plain_text is None or not is_pdf_quote_text_ready(db, media.id):
         return {
             "match_status": "pending",
             "start_offset": None,
@@ -117,7 +119,7 @@ def _compute_write_time_match(
 
     result = compute_match(
         exact=exact,
-        plain_text=media.plain_text,
+        plain_text=plain_text,
         page_span_start=span_start,
         page_span_end=span_end,
     )
@@ -403,6 +405,7 @@ def update_pdf_highlight_bounds(
 
     Caller must have already verified ownership + media readability.
     """
+    pa = require_pdf_highlight_or_404(highlight)
     media = db.get(Media, highlight.anchor_media_id)
     if media is None or media.kind != "pdf":
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
@@ -433,7 +436,7 @@ def update_pdf_highlight_bounds(
 
     dup_key = derive_duplicate_lock_key(
         viewer_id,
-        highlight.anchor_media_id,
+        media.id,
         canonical.page_number,
         canonical.quads,
     )
@@ -442,7 +445,7 @@ def update_pdf_highlight_bounds(
     dup = _find_duplicate_pdf_anchor(
         db,
         viewer_id,
-        highlight.anchor_media_id,
+        media.id,
         canonical,
         exclude_highlight_id=highlight.id,
     )
@@ -460,7 +463,6 @@ def update_pdf_highlight_bounds(
 
     highlight.updated_at = func.now()
 
-    pa = highlight.pdf_anchor
     pa.page_number = canonical.page_number
     pa.sort_top = canonical.sort_top
     pa.sort_left = canonical.sort_left

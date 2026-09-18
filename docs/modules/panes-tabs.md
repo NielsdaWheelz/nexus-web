@@ -25,6 +25,15 @@ viewport. Mobile additionally maps a primary-touch horizontal swipe on the
 Nexus control to the same command. No input restores, creates, reorders, or ranks
 panes.
 
+## refresh
+
+`usePaneRefresh` owns the refresh command, gesture, source cancellation, and
+settled announcement. `useResource` owns fetch identity and retries. Collection
+panes use `useRevalidationSettlement` to own one pending promise and its abort
+listener. Each pane keeps its source checks, committed-result marker, and
+cancellation restoration; it resolves the promise only after its matching
+result is committed. The settlement helper owns no data, fetch, or commit effect.
+
 ## Mobile Contract
 
 Mobile workspace mode mounts exactly one active visible primary pane in the main

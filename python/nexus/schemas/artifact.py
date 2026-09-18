@@ -173,20 +173,8 @@ class ConversationDossierCoverageOut(ArtifactSchemaModel):
     context_refs: list[str]
 
 
-class LibraryDossierCoverageOut(ArtifactSchemaModel):
-    kind: Literal["library"] = "library"
-    included: list[str]
-    omitted: list[tuple[str, MediaDisposition]]
-
-
-class PodcastDossierCoverageOut(ArtifactSchemaModel):
-    kind: Literal["podcast"] = "podcast"
-    included: list[str]
-    omitted: list[tuple[str, MediaDisposition]]
-
-
-class ContributorDossierCoverageOut(ArtifactSchemaModel):
-    kind: Literal["contributor"] = "contributor"
+class CollectionDossierCoverageOut(ArtifactSchemaModel):
+    kind: Literal["library", "podcast", "contributor"]
     included: list[str]
     omitted: list[tuple[str, MediaDisposition]]
 
@@ -214,9 +202,7 @@ class IdeaDossierCoverageOut(ArtifactSchemaModel):
 DossierCoverageOut = Annotated[
     MediaDossierCoverageOut
     | ConversationDossierCoverageOut
-    | LibraryDossierCoverageOut
-    | PodcastDossierCoverageOut
-    | ContributorDossierCoverageOut
+    | CollectionDossierCoverageOut
     | PageDossierCoverageOut
     | NoteDossierCoverageOut
     | IdeaDossierCoverageOut,

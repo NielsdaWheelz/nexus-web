@@ -14,7 +14,7 @@ from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -233,17 +233,10 @@ class ToolModelOutput(_ToolStepModel):
     is_error: bool
 
 
-class ToolStepRequest(_ToolStepModel):
-    provider_call_id: str = Field(min_length=1)
-    canonical_tool_id: str = Field(min_length=1, max_length=128)
-    tool_call_index: int = Field(ge=1)
-    arguments: dict[str, JsonValue]
-
-
 class ToolStepResult(_ToolStepModel):
     tool_call_id: UUID
     canonical_tool_id: str = Field(min_length=1, max_length=128)
-    record_kind: Literal[RecordKind.current_execution, RecordKind.historical_execution]
+    record_kind: Literal[RecordKind.current_execution]
     canonical_input_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     tool_contract_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
     binding_policy_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -251,18 +244,6 @@ class ToolStepResult(_ToolStepModel):
     model_output: ToolModelOutput
     next_citation_ordinal: int = Field(ge=1)
     result_event: ChatRunToolResultEventPayload
-
-
-def _prune_tool_call_retrievals(
-    db: Session, *, tool_call_id: UUID, min_ordinal: int | None = None
-) -> None:
-    from nexus.services.chat_run_citations import prune_tool_call_retrievals
-
-    prune_tool_call_retrievals(
-        db,
-        tool_call_id=tool_call_id,
-        min_ordinal=min_ordinal,
-    )
 
 
 def _assert_current_position(
@@ -474,99 +455,10 @@ def persist_tool_call_start(
         status="running",
         error_code=None,
     )
-    _prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
+    from nexus.services.chat_run_citations import prune_tool_call_retrievals
+
+    prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
     return tool_call_id
-
-
-def persist_rejected_provider_tool_call(
-    db: Session,
-    *,
-    run: ChatRun,
-    tool_call_index: int,
-    provider_wire_name: str,
-) -> UUID:
-    if not 1 <= len(provider_wire_name) <= 128:
-        raise ValueError("provider tool name must contain 1-128 characters")
-    if tool_call_index < 1:
-        raise ValueError("rejected provider tool-call index must be positive")
-    existing = (
-        db.execute(
-            text(
-                """
-                SELECT id, canonical_tool_id, record_kind, provider_wire_name,
-                       canonical_input_sha256, tool_contract_revision,
-                       binding_policy_revision, scope, status, error_code
-                FROM message_tool_calls
-                WHERE assistant_message_id = :assistant_message_id
-                  AND tool_call_index = :tool_call_index
-                FOR UPDATE
-                """
-            ),
-            {
-                "assistant_message_id": run.assistant_message_id,
-                "tool_call_index": tool_call_index,
-            },
-        )
-        .mappings()
-        .first()
-    )
-    expected = (
-        None,
-        RecordKind.rejected_provider_call,
-        provider_wire_name,
-        None,
-        None,
-        None,
-        "provider_tool",
-        "error",
-        "unknown_tool",
-    )
-    if existing is not None:
-        observed = tuple(
-            existing[key]
-            for key in (
-                "canonical_tool_id",
-                "record_kind",
-                "provider_wire_name",
-                "canonical_input_sha256",
-                "tool_contract_revision",
-                "binding_policy_revision",
-                "scope",
-                "status",
-                "error_code",
-            )
-        )
-        if observed != expected:
-            raise AssertionError("occupied tool position is not the same rejected provider call")
-        return existing["id"]
-    return db.execute(
-        text(
-            """
-            INSERT INTO message_tool_calls (
-                conversation_id, user_message_id, assistant_message_id,
-                canonical_tool_id, record_kind, provider_wire_name,
-                canonical_input_sha256, tool_contract_revision,
-                binding_policy_revision, tool_call_index, scope,
-                requested_types, result_refs, selected_context_refs,
-                provider_request_ids, status, error_code
-            ) VALUES (
-                :conversation_id, :user_message_id, :assistant_message_id,
-                NULL, 'rejected_provider_call', :provider_wire_name,
-                NULL, NULL, NULL, :tool_call_index, 'provider_tool',
-                '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
-                'error', 'unknown_tool'
-            )
-            RETURNING id
-            """
-        ),
-        {
-            "conversation_id": run.conversation_id,
-            "user_message_id": run.user_message_id,
-            "assistant_message_id": run.assistant_message_id,
-            "provider_wire_name": provider_wire_name,
-            "tool_call_index": tool_call_index,
-        },
-    ).scalar_one()
 
 
 def upsert_attached_context_tool_call(db: Session, *, run: ChatRun) -> UUID:

@@ -464,9 +464,6 @@ def build_assistant_trust_trails(
             ),
             prompt=(
                 TrustPromptAssemblyOut(
-                    id=prompt.id,
-                    prompt_block_manifest=cast(dict[str, Any], prompt.prompt_block_manifest),
-                    max_context_tokens=prompt.max_context_tokens,
                     reserved_output_tokens=prompt.reserved_output_tokens,
                     input_budget_tokens=prompt.input_budget_tokens,
                     estimated_input_tokens=prompt.estimated_input_tokens,
@@ -474,8 +471,6 @@ def build_assistant_trust_trails(
                     included_retrieval_ids=prompt.included_retrieval_ids,
                     included_context_refs=cast(list[dict[str, Any]], prompt.included_context_refs),
                     dropped_items=cast(list[dict[str, Any]], prompt.dropped_items),
-                    budget_breakdown=cast(dict[str, Any], prompt.budget_breakdown),
-                    created_at=prompt.created_at,
                 )
                 if prompt is not None
                 else None

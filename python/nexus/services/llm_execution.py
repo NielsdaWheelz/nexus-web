@@ -52,7 +52,7 @@ from provider_runtime.types import (
 from provider_runtime.types import (
     Succeeded as ProviderSucceeded,
 )
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.jobs.queue import (
@@ -67,7 +67,6 @@ from nexus.jobs.queue import (
 from nexus.schemas.llm import CapacityPaused
 from nexus.schemas.presence import Absent, Present, absent, present
 from nexus.services.codex_generation_contract import (
-    GenerationCommandDraft,
     GenerationTerminal,
     NormalizedFailureCode,
     normalized_failure,
@@ -76,7 +75,6 @@ from nexus.services.codex_generation_contract import (
 from nexus.services.durable_step_journal import (
     Completed,
     Prepared,
-    ProveNotDispatched,
     StepReplayState,
     Uncertain,
     checkpoint_step_state,
@@ -139,7 +137,6 @@ from nexus.services.llm_ledger import (
     open_generation_continuation_in_current_transaction,
     read_model_turns,
     read_pending_generation_continuation_in_current_transaction,
-    reset_generation_after_proven_non_dispatch_in_current_transaction,
     start_generation_in_current_transaction,
     start_model_turn_in_current_transaction,
     stop_generation_in_current_transaction,
@@ -333,9 +330,7 @@ class JobGenerationJournal:
             )
         observed = self.read_admission(db)
         if observed is not None:
-            _assert_frozen_admission(
-                observed, generation_id=generation_id, spec=spec, intent=intent
-            )
+            _assert_frozen_admission(observed, spec=spec, intent=intent)
             self.clear_capacity_pause(db)
             return observed
         if read_step_states(job).get(self.step_path) is not None:
@@ -492,26 +487,6 @@ class GenerationExecutionRequest:
             raise ValueError("only tool-bearing ProviderApi accepts a direct tool executor")
 
 
-class AttachReconciledGenerationTerminal(BaseModel):
-    """Digest-bound raw Codex host transcript captured by an operator."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-    raw_stream: bytes = Field(min_length=1)
-    raw_stream_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    latency_ms: int = Field(ge=0)
-
-
-type GenerationUncertainResolution = ProveNotDispatched | AttachReconciledGenerationTerminal
-
-
-@dataclass(frozen=True, slots=True)
-class GenerationReconciliationRequest:
-    owner: LlmCallOwner
-    draft: GenerationCommandDraft
-    state: StepReplayState
-    resolution: GenerationUncertainResolution
-
-
 @dataclass(frozen=True, slots=True)
 class CompletedGeneration:
     terminal_result: str
@@ -625,12 +600,10 @@ async def admit_job_generation(
             db.commit()
     else:
         spec, frozen_intent = observed
-    _assert_frozen_admission(
-        (spec, frozen_intent),
-        generation_id=generation_id,
-        spec=spec,
-        intent=intent,
-    )
+    if frozen_intent != intent:
+        raise GenerationAdmissionInputsChanged(
+            "domain prompt changed after the generation was Prepared"
+        )
     if spec.operation != operation or spec.selection_source != "BackgroundPolicy":
         raise AssertionError("frozen job admission has the wrong operation identity")
     has_tools = isinstance(spec.model_tool_plan_snapshot, Present)
@@ -857,8 +830,6 @@ class _LedgerChildLifecycle:
                     db,
                     source_model_turn_id=pending.source_turn.id,
                     successor=start,
-                    expected_context=pending.context,
-                    cipher=self._cipher,
                 )
             db.commit()
 
@@ -1134,11 +1105,9 @@ def _assert_identity(
 def _assert_frozen_admission(
     observed: tuple[GenerationSpec, GenerationIntent],
     *,
-    generation_id: UUID,
     spec: GenerationSpec,
     intent: GenerationIntent,
 ) -> None:
-    del generation_id
     observed_spec, observed_intent = observed
     if observed_spec != spec:
         raise AssertionError("frozen generation admission changed concurrently")
@@ -1413,51 +1382,15 @@ class _NeverCancelled:
         return False
 
 
-def prove_uncertain_generation_not_dispatched_in_current_transaction(
-    db: Session,
-    *,
-    owner: LlmCallOwner,
-    state: StepReplayState,
-) -> StepReplayState:
-    """Accept proof only when no model child was durably armed."""
-
-    lock_generation_owner_in_current_transaction(db, owner)
-    if state.dispatch_phase is not Uncertain:
-        raise AssertionError("generation reconciliation requires Uncertain")
-    if not isinstance(state.request_fingerprint, Present):
-        raise AssertionError("generation reconciliation has no fingerprint")
-    generation = lock_generation_for_authority_in_current_transaction(
-        db,
-        owner=owner,
-        generation_id=state.generation_id,
-    )
-    if generation is None or generation.spec.fingerprint != state.request_fingerprint.value:
-        raise AssertionError("generation reconciliation identity drifted")
-    reset_generation_after_proven_non_dispatch_in_current_transaction(
-        db,
-        owner=owner,
-        generation_id=state.generation_id,
-        generation_fingerprint=state.request_fingerprint.value,
-    )
-    return StepReplayState(
-        generation_id=state.generation_id,
-        dispatch_phase=Prepared,
-        request_fingerprint=state.request_fingerprint,
-        terminal_result=absent(),
-    )
-
-
 def cancel_prepared_generation_without_dispatch_in_current_transaction(
     db: Session,
     *,
     owner: LlmCallOwner,
     state: StepReplayState,
     terminal_result: str,
-    reason: str,
 ) -> StepReplayState:
     """Close a Prepared owner only when no model child was armed."""
 
-    del reason
     lock_generation_owner_in_current_transaction(db, owner)
     if state.dispatch_phase is not Prepared:
         raise AssertionError("pre-admission cancellation requires Prepared")
@@ -1476,97 +1409,6 @@ def cancel_prepared_generation_without_dispatch_in_current_transaction(
     )
 
 
-def reconcile_uncertain_generation_in_current_transaction(
-    db: Session,
-    request: GenerationReconciliationRequest,
-    *,
-    encode_terminal: EncodeTerminal,
-) -> StepReplayState:
-    """Stage one exact Codex terminal repair in the caller-owned transaction."""
-
-    if isinstance(request.resolution, ProveNotDispatched):
-        return prove_uncertain_generation_not_dispatched_in_current_transaction(
-            db,
-            owner=request.owner,
-            state=request.state,
-        )
-    state = request.state
-    if state.dispatch_phase is not Uncertain:
-        raise AssertionError("generation reconciliation requires Uncertain")
-    if request.draft.request_id != state.generation_id:
-        raise AssertionError("generation reconciliation draft identity drifted")
-    _assert_identity(
-        state,
-        generation_id=request.draft.request_id,
-        fingerprint=request.draft.spec.fingerprint,
-    )
-    if request.resolution.latency_ms > (
-        request.draft.spec.bounds.transport_deadline_seconds * 1_000
-    ):
-        raise ValueError("reconciled generation latency exceeds its transport deadline")
-    from nexus.services.codex_generation_client import (
-        decode_reconciled_generation_terminal_evidence,
-    )
-
-    native = decode_reconciled_generation_terminal_evidence(
-        raw_stream=request.resolution.raw_stream,
-        raw_stream_sha256=request.resolution.raw_stream_sha256,
-        command=request.draft,
-    )
-    terminal = _terminal_for_durable_landing(
-        BackendTerminal(
-            route="CodexPersonal",
-            child_seq=1,
-            backend_seq=1,
-            evidence=CodexTerminalEvidence(native=native),
-        )
-    )
-    encoded = encode_terminal(terminal)
-    lock_generation_owner_in_current_transaction(db, request.owner)
-    generation = lock_generation_for_authority_in_current_transaction(
-        db,
-        owner=request.owner,
-        generation_id=state.generation_id,
-    )
-    if generation is None or generation.spec.fingerprint != request.draft.spec.fingerprint:
-        raise AssertionError("generation reconciliation ledger identity drifted")
-    turns = read_model_turns(db, generation_id=state.generation_id)
-    if len(turns) != 1 or turns[0].turn_seq != 1:
-        raise AssertionError("Codex reconciliation requires exactly one model child")
-    if turns[0].dispatch_started_at is None or turns[0].terminal is not None:
-        raise AssertionError("Codex reconciliation child is not unresolved and armed")
-    child_terminal, usage, billability, accepted_at = _child_terminal_documents(terminal)
-    complete_model_turn_in_current_transaction(
-        db,
-        generation_id=state.generation_id,
-        model_turn_id=turns[0].id,
-        completion=ModelTurnCompletion(
-            terminal=child_terminal,
-            usage=usage,
-            billability=billability,
-            accepted_at=accepted_at,
-            successor=absent(),
-        ),
-    )
-    complete_generation_in_current_transaction(
-        db,
-        owner=request.owner,
-        generation_id=state.generation_id,
-        terminal=_parent_terminal_document(
-            child_terminal,
-            final_child_seq=1,
-            accepted_failure=encoded.accepted_failure,
-            orchestration_stop=encoded.orchestration_stop,
-        ),
-    )
-    return StepReplayState(
-        generation_id=state.generation_id,
-        dispatch_phase=Completed,
-        request_fingerprint=state.request_fingerprint,
-        terminal_result=present(encoded.terminal_result),
-    )
-
-
 def _assert_expected_state(observed: StepReplayState | None, expected: StepReplayState) -> None:
     if observed != expected:
         raise AssertionError("generation journal changed during checkpoint transition")
@@ -1574,7 +1416,6 @@ def _assert_expected_state(observed: StepReplayState | None, expected: StepRepla
 
 __all__ = [
     "AcceptedGenerationFailure",
-    "AttachReconciledGenerationTerminal",
     "BindAdmission",
     "CancellationSignal",
     "CompletedGeneration",
@@ -1588,15 +1429,11 @@ __all__ = [
     "GenerationExecutionRequest",
     "GenerationExecutionResult",
     "GenerationJournal",
-    "GenerationReconciliationRequest",
     "GenerationUncertain",
-    "GenerationUncertainResolution",
     "JobGenerationJournal",
     "admit_job_generation",
     "cancel_prepared_generation_without_dispatch_in_current_transaction",
     "codex_terminal_evidence",
     "execute_generation",
-    "prove_uncertain_generation_not_dispatched_in_current_transaction",
     "read_capacity_pauses",
-    "reconcile_uncertain_generation_in_current_transaction",
 ]

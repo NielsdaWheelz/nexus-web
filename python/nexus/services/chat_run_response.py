@@ -75,13 +75,12 @@ def build_chat_run_response(
     rerunnable_ids = rerunnable_assistant_message_ids(
         db,
         viewer_id=viewer_id,
-        assistant_message_ids=[user_message.id, assistant_message.id],
+        assistant_message_ids=[assistant_message.id],
     )
     user_message_out = message_to_out(
         db,
         user_message,
         viewer_id=viewer_id,
-        can_rerun=user_message.id in rerunnable_ids,
     )
     trust_trail = build_assistant_trust_trail(
         db,

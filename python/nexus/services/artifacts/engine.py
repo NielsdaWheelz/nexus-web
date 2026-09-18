@@ -24,11 +24,9 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, assert_never, cast
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
-from llm_tools import ReplayPolicy as PortableReplayPolicy
-from llm_tools import ToolId
 from pydantic import BaseModel, TypeAdapter
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -37,7 +35,7 @@ from nexus.db.errors import TransactionRestart
 from nexus.db.models import ArtifactBuild
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import (
     SUCCEEDED,
     JobExecutionContext,
@@ -48,7 +46,6 @@ from nexus.jobs.queue import (
     get_job,
     lock_job,
     lock_running_job_claim,
-    requeue_dead_job,
     revoke_jobs_by_dedupe_keys,
     running_job_claim_is_current,
 )
@@ -156,7 +153,6 @@ from nexus.services.llm_execution import (
     cancel_prepared_generation_without_dispatch_in_current_transaction,
     codex_terminal_evidence,
     execute_generation,
-    prove_uncertain_generation_not_dispatched_in_current_transaction,
     read_capacity_pauses,
 )
 from nexus.services.llm_ledger import (
@@ -173,8 +169,6 @@ from nexus.services.structured_synthesis import (
     decode_structured_synthesis,
 )
 from nexus.services.tool_authority import read_tool_positions
-from nexus.services.tool_runtime.composition import compose_product_tool_runtime
-from nexus.services.tool_runtime.execution import reconcile_uncertain_tool_completion
 
 logger = get_logger(__name__)
 
@@ -182,14 +176,6 @@ _MAX_INSTRUCTION_CHARS = 4000
 _JOB_KIND = "dossier_build"
 _IDEA_RESOLUTION_STEP_PATH = "idea-resolution"
 _IDEA_RESOLUTION_CAPACITY_KEY = "generation_capacity_pause"
-_WEB_SEARCH_STEP_PATHS = frozenset(
-    {
-        "research/web-search/0",
-        "research/web-search/1",
-        "research/web-search/2",
-    }
-)
-_WEB_SEARCH_TOOL_ID = ToolId("web.search")
 _CANCEL_POLL_INTERVAL_SECONDS = 0.25
 _MANIFEST_ADAPTER: TypeAdapter[InputManifestV1] = TypeAdapter(InputManifestV1)
 _FAILURE_CODE_READ_ADAPTER: TypeAdapter[ReadDossierBuildFailureCode] = TypeAdapter(
@@ -221,160 +207,6 @@ type _StreamEventWriteResult = Literal["written", "inactive", "inputs_changed"]
 class _StreamGuard:
     cancel_signal: asyncio.Event
     stop_reason: _StreamStopReason | None = None
-
-
-def reconcile_uncertain_build(
-    db: Session,
-    *,
-    build_id: UUID,
-    resolution: step_journal.UncertainStepResolution,
-) -> None:
-    """Repair one suspended external step, then requeue the same build.
-
-    Tool results can be attached through their frozen execution contract.
-    Generations retain only their request fingerprint, so they support the
-    command-free non-dispatch proof and never reconstruct mutable dossier input.
-    This transition never dispatches.
-    """
-
-    def op() -> None:
-        owner = LlmCallOwner(kind="artifact_build", id=build_id)
-        lock_generation_owner_in_current_transaction(db, owner)
-        head_id = _lock_head_id_for_build(db, build_id)
-        if head_id is None or _existing_terminal_child(db, build_id) is not None:
-            raise BuildNotActive()
-        head = _head_row(db, head_id)
-        if head is None:
-            raise BuildNotActive()
-        registration = dossier_registration(head.subject_scheme)
-        if registration is None:
-            raise AssertionError(f"no registration for subject scheme {head.subject_scheme!r}")
-        row = (
-            db.execute(
-                text(
-                    "SELECT id, payload FROM background_jobs "
-                    "WHERE kind = :kind AND dedupe_key = :key AND status = 'dead' "
-                    "FOR UPDATE"
-                ),
-                {"kind": _JOB_KIND, "key": _dispatch_key(build_id)},
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if row is None:
-            raise BuildNotActive()
-        payload = dict(row["payload"])
-        if str(payload.get("build_id")) != str(build_id):
-            raise AssertionError("dead dossier job payload identity changed")
-        states = step_journal.decode_step_states(payload)
-        uncertain_states = [
-            (path, state)
-            for path, state in states.items()
-            if state.dispatch_phase is step_journal.Uncertain
-        ]
-        if not uncertain_states:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Build has no uncertain external step to reconcile",
-            )
-        if len(uncertain_states) != 1:
-            raise AssertionError("Dossier build has multiple uncertain external steps")
-        step_path, state = uncertain_states[0]
-        is_tool_execution = isinstance(state.tool_execution, Present)
-        if step_path in GENERATION_STEP_PATHS:
-            if is_tool_execution:
-                raise AssertionError("uncertain Dossier generation contains tool metadata")
-        elif step_path in _WEB_SEARCH_STEP_PATHS:
-            if not is_tool_execution:
-                raise AssertionError("uncertain Dossier Web position lacks bound tool metadata")
-        else:
-            raise AssertionError(f"unknown uncertain Dossier step {step_path!r}")
-        if state.generation_id != step_journal.stable_generation_id(build_id, step_path):
-            raise AssertionError("dead dossier replay generation identity changed")
-        if not isinstance(state.request_fingerprint, Present):
-            raise AssertionError("uncertain dossier step has no request fingerprint")
-        if isinstance(state.terminal_result, Present):
-            raise AssertionError("uncertain dossier step already has a terminal result")
-        tool_operation = None
-        if is_tool_execution:
-            assert isinstance(state.tool_execution, Present)
-            identity = state.tool_execution.value.identity
-            tool_operation = compose_product_tool_runtime(None).operations["idea_dossier_research"]
-            web_search_binding = tool_operation.plan.catalog_view.binding(_WEB_SEARCH_TOOL_ID)
-            if (
-                identity.tool_id != str(_WEB_SEARCH_TOOL_ID)
-                or identity.tool_contract_revision != web_search_binding.spec.tool_contract_revision
-                or identity.policy_revision != web_search_binding.policy_revision
-                or identity.plan_revision != tool_operation.plan.plan_revision
-                or identity.replay_policy is not step_journal.ReplayPolicy.BilledOnce
-                or web_search_binding.replay_policy is not PortableReplayPolicy.BilledOnce
-            ):
-                raise AssertionError(
-                    "uncertain Dossier tool metadata differs from frozen web.search authority"
-                )
-        if isinstance(resolution, step_journal.AttachReconciledResult):
-            if tool_operation is not None:
-                if not isinstance(resolution.tool_settlement, Present):
-                    raise InvalidRequestError(
-                        ApiErrorCode.E_INVALID_REQUEST,
-                        "Recovered Web search usage requires an executor settlement",
-                    )
-                try:
-                    next_state = reconcile_uncertain_tool_completion(
-                        operation=tool_operation,
-                        state=state,
-                        raw_result=resolution.terminal_result,
-                        settlement=resolution.tool_settlement.value,
-                    )
-                except ValueError as exc:
-                    raise InvalidRequestError(
-                        ApiErrorCode.E_INVALID_REQUEST,
-                        "Recovered Web search result or settlement is invalid",
-                    ) from exc
-            else:
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "Dossier generation attachment requires immutable original command facts",
-                )
-        elif isinstance(resolution, step_journal.ProveNotDispatched):
-            if tool_operation is not None:
-                assert isinstance(state.tool_execution, Present)
-                next_state = state.model_copy(
-                    update={
-                        "dispatch_phase": step_journal.Prepared,
-                        "terminal_result": absent(),
-                        "tool_execution": present(
-                            state.tool_execution.value.model_copy(
-                                update={"dispatch_claim": absent()}
-                            )
-                        ),
-                    }
-                )
-            else:
-                next_state = prove_uncertain_generation_not_dispatched_in_current_transaction(
-                    db,
-                    owner=owner,
-                    state=state,
-                )
-        else:
-            assert_never(resolution)
-        next_state = step_journal.StepReplayState.model_validate(
-            next_state.model_dump(mode="python")
-        )
-        payload = step_journal.payload_with_step_state(
-            payload,
-            step_path=step_path,
-            state=next_state,
-        )
-        db.execute(
-            text("UPDATE background_jobs SET payload = CAST(:payload AS jsonb) WHERE id = :job_id"),
-            {"payload": json.dumps(payload), "job_id": row["id"]},
-        )
-        if not requeue_dead_job(db, job_id=UUID(str(row["id"]))):
-            raise AssertionError("locked dead dossier job could not be requeued")
-        db.commit()
-
-    retry_serializable(db, "reconcile_uncertain_build", op)
 
 
 # ---------------------------------------------------------------------------
@@ -1121,84 +953,6 @@ def _encode_idea_resolution_failure(
 ) -> str:
     del code, detail
     return _unresolved_idea_envelope().model_dump_json()
-
-
-def reconcile_uncertain_idea_resolution(
-    db: Session,
-    *,
-    request_id: UUID,
-    requester_user_id: UUID,
-    resolution: step_journal.UncertainStepResolution,
-) -> None:
-    """Restore one abandoned request-scoped Idea resolution after proof.
-
-    The request deliberately retains no rendered resolver prompt, so recovered
-    terminal attachment is unsafe. The next authorized replay may dispatch only
-    after the journal and exact nonterminal ledger start agree under one lock.
-    """
-
-    if not isinstance(resolution, step_journal.ProveNotDispatched):
-        raise ValueError(
-            "Idea-resolution attachment requires immutable rendered inputs, which are absent"
-        )
-
-    def op() -> None:
-        owner = LlmCallOwner(kind="artifact_learn_request", id=request_id)
-        lock_generation_owner_in_current_transaction(db, owner)
-        row = (
-            db.execute(
-                text(
-                    "SELECT user_id, coordination FROM artifact_learn_requests "
-                    "WHERE id = :id FOR UPDATE"
-                ),
-                {"id": request_id},
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if row is None or UUID(str(row["user_id"])) != requester_user_id:
-            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Highlight not found")
-        current = learn_service.load_learn_request(db, request_id=request_id)
-        if not isinstance(current, learn_service.PendingLearnRequest):
-            raise ValueError("Idea resolution is already terminal")
-        state = step_journal.decode_step_states({"coordination": row["coordination"]}).get(
-            _IDEA_RESOLUTION_STEP_PATH
-        )
-        if state is None or state.dispatch_phase is not step_journal.Uncertain:
-            raise ValueError("Idea resolution is not uncertain")
-        expected_generation_id = step_journal.stable_generation_id(
-            request_id,
-            _IDEA_RESOLUTION_STEP_PATH,
-        )
-        if state.generation_id != expected_generation_id:
-            raise AssertionError("Idea-resolution generation identity changed")
-        next_state = prove_uncertain_generation_not_dispatched_in_current_transaction(
-            db,
-            owner=owner,
-            state=state,
-        )
-        payload = step_journal.payload_with_step_state(
-            {"coordination": row["coordination"]},
-            step_path=_IDEA_RESOLUTION_STEP_PATH,
-            state=next_state,
-        )
-        coordination = payload.get("coordination")
-        if not isinstance(coordination, dict):
-            raise AssertionError("Idea-resolution coordination is not an object")
-        learn_service.checkpoint_learn_coordination(
-            db,
-            request_id=request_id,
-            coordination=coordination,
-        )
-        db.execute(
-            text(
-                "UPDATE artifact_learn_requests SET resolver_lease_expires_at = NULL WHERE id = :id"
-            ),
-            {"id": request_id},
-        )
-        db.commit()
-
-    retry_serializable(db, "reconcile_uncertain_idea_resolution", op)
 
 
 def _idea_resolution_intent(*, user_content: str) -> GenerationIntent:
@@ -2201,7 +1955,6 @@ def _terminal_failure(
             owner=owner,
             build_id=build_id,
             ctx=ctx,
-            reason="dossier build terminalized before host acceptance",
         ):
             db.rollback()
             return
@@ -2248,7 +2001,6 @@ def _cancel_prepared_build_generation_in_current_transaction(
     owner: LlmCallOwner,
     build_id: UUID,
     ctx: JobExecutionContext | None,
-    reason: str,
 ) -> bool:
     """Close the one prepared Dossier generation before its owner becomes terminal.
 
@@ -2295,7 +2047,6 @@ def _cancel_prepared_build_generation_in_current_transaction(
         owner=owner,
         state=state,
         terminal_result=ArtifactGenerationCancelled().model_dump_json(),
-        reason=reason,
     )
     db.execute(
         text("UPDATE background_jobs SET payload = CAST(:payload AS jsonb) WHERE id = :job_id"),
@@ -2526,7 +2277,6 @@ def cancel_build(db: Session, *, build_id: UUID, actor_user_id: UUID) -> None:
             owner=owner,
             build_id=build_id,
             ctx=None,
-            reason="dossier build was cancelled before host acceptance",
         ):
             raise AssertionError("unfenced dossier cancellation lost queue ownership")
         existing = _existing_terminal_child(db, build_id)
@@ -3045,8 +2795,6 @@ def _lock_cleanup_head_ids_in_order(
 def _cancel_prepared_learn_requests_before_purge(
     db: Session,
     request_ids: Sequence[UUID],
-    *,
-    reason: str,
 ) -> None:
     if not request_ids:
         return
@@ -3091,7 +2839,6 @@ def _cancel_prepared_learn_requests_before_purge(
             owner=owner,
             state=state,
             terminal_result=_unresolved_idea_envelope().model_dump_json(),
-            reason=reason,
         )
         payload = step_journal.payload_with_step_state(
             {"coordination": coordination},
@@ -3278,7 +3025,6 @@ def _delete_heads(db: Session, head_ids: list[UUID]) -> None:
     _cancel_prepared_learn_requests_before_purge(
         db,
         learn_request_ids,
-        reason="Dossier Idea resolution was purged before host acceptance",
     )
     for build_id in build_ids:
         if not _cancel_prepared_build_generation_in_current_transaction(
@@ -3286,7 +3032,6 @@ def _delete_heads(db: Session, head_ids: list[UUID]) -> None:
             owner=LlmCallOwner(kind="artifact_build", id=build_id),
             build_id=build_id,
             ctx=None,
-            reason="dossier build was purged before host acceptance",
         ):
             raise AssertionError("Dossier purge lost queue ownership")
 

@@ -33,26 +33,6 @@ def is_object_type(value: str) -> TypeGuard[OBJECT_TYPES]:
     return value in OBJECT_TYPE_VALUES
 
 
-class ObjectRef(BaseModel):
-    object_type: OBJECT_TYPES = Field(
-        validation_alias=AliasChoices("object_type", "objectType", "type"),
-        serialization_alias="objectType",
-    )
-    object_id: UUID = Field(
-        validation_alias=AliasChoices("object_id", "objectId", "id"),
-        serialization_alias="objectId",
-    )
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class HydratedObjectRef(ObjectRef):
-    label: str
-    route: str | None = None
-    snippet: str | None = None
-    icon: str | None = None
-
-
 def validate_note_body_pm_json(value: dict[str, Any] | None) -> dict[str, Any] | None:
     if value is None:
         return None

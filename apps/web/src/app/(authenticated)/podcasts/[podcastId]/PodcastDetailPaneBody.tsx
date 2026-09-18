@@ -89,6 +89,7 @@ import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { matchesPaneFilterQuery } from "@/lib/panes/paneRowFilter";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { isAbortError } from "@/lib/errors";
+import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
 import { runPodcastRefresh } from "@/lib/podcasts/refresh";
 import {
   isPodcastSubscriptionLifecycleProtocolError,
@@ -210,14 +211,6 @@ interface PodcastDetailSnapshot {
   readonly nextCursor: Presence<CollectionCursor>;
   readonly exhaustion: "Partial" | "Complete";
   readonly podcastLibraries: readonly LibraryPlacementOption[];
-}
-
-interface PendingPodcastDetailRevalidation {
-  readonly nonce: number;
-  readonly sourceKey: string | null;
-  readonly resolve: () => void;
-  readonly reject: (error: unknown) => void;
-  readonly removeAbortListener: () => void;
 }
 
 const PODCAST_DETAIL_VISIT_DATA = definePaneVisitDataKey<PodcastDetailSnapshot>(
@@ -369,8 +362,8 @@ export default function PodcastDetailPaneBody() {
   );
   const [reloadNonce, setReloadNonce] = useState(0);
   const reloadNonceRef = useRef(0);
-  const pendingPodcastDetailRevalidationRef =
-    useRef<PendingPodcastDetailRevalidation | null>(null);
+  const revalidation = useRevalidationSettlement();
+  const revalidationSourceKeyRef = useRef<string | null>(null);
   const completedPodcastDetailRevalidationNonceRef =
     useRef<number | null>(null);
   const [backfillRetryBusy, setBackfillRetryBusy] = useState(false);
@@ -407,17 +400,10 @@ export default function PodcastDetailPaneBody() {
     episodeQueryIdentity !== null && !suppressInitialLoad
       ? ["podcast-detail", episodeQueryIdentity, reloadNonce].join(":")
       : null;
-  const rejectPendingPodcastDetailRevalidation = useCallback(
-    (refreshError: unknown) => {
-      const pending = pendingPodcastDetailRevalidationRef.current;
-      pendingPodcastDetailRevalidationRef.current = null;
-      completedPodcastDetailRevalidationNonceRef.current = null;
-      if (!pending) return;
-      pending.removeAbortListener();
-      pending.reject(refreshError);
-    },
-    [],
-  );
+  const rejectPendingPodcastDetailRevalidation = useCallback((refreshError: unknown) => {
+    completedPodcastDetailRevalidationNonceRef.current = null;
+    revalidation.reject(refreshError);
+  }, [revalidation]);
   // Abandons the committed chain so the next first page is adopted afresh. A
   // view change needs only this: the view is already part of the request
   // identity.
@@ -452,36 +438,21 @@ export default function PodcastDetailPaneBody() {
       reload();
       const nonce = reloadNonceRef.current;
       const sourceKey = episodeQueryIdentity;
-      return new Promise<void>((resolve, reject) => {
-        const onAbort = () => {
-          const pending = pendingPodcastDetailRevalidationRef.current;
-          if (pending?.nonce !== nonce) return;
-          pendingPodcastDetailRevalidationRef.current = null;
+      revalidationSourceKeyRef.current = sourceKey;
+      return revalidation.wait({
+        requestId: nonce,
+        signal,
+        onAbort: () => {
           completedPodcastDetailRevalidationNonceRef.current = null;
-          pending.removeAbortListener();
           reconciliationPendingRef.current = false;
           setSuppressInitialLoad(true);
           committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
           refreshFallbackSnapshotRef.current = null;
           setLoading(false);
-          reject(
-            signal.reason ??
-              new DOMException("Podcast refresh was aborted.", "AbortError"),
-          );
-        };
-        signal.addEventListener("abort", onAbort, { once: true });
-        pendingPodcastDetailRevalidationRef.current = {
-          nonce,
-          sourceKey,
-          resolve,
-          reject,
-          removeAbortListener: () =>
-            signal.removeEventListener("abort", onAbort),
-        };
-        if (signal.aborted) onAbort();
+        },
       });
     },
-    [episodeQueryIdentity, reload],
+    [episodeQueryIdentity, reload, revalidation],
   );
   useEffect(
     () => () => {
@@ -629,12 +600,12 @@ export default function PodcastDetailPaneBody() {
       applyPodcastDetailLoad(podcastDetailResource.data);
       setError(null);
       setLoading(false);
-      const pending = pendingPodcastDetailRevalidationRef.current;
+
       if (
-        pending?.nonce === reloadNonce &&
-        pending.sourceKey === episodeQueryIdentity
+        revalidation.isPending(reloadNonce) &&
+        revalidationSourceKeyRef.current === episodeQueryIdentity
       ) {
-        completedPodcastDetailRevalidationNonceRef.current = pending.nonce;
+        completedPodcastDetailRevalidationNonceRef.current = reloadNonce;
       }
       return;
     }
@@ -644,17 +615,18 @@ export default function PodcastDetailPaneBody() {
       setSuppressInitialLoad(true);
       committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
       refreshFallbackSnapshotRef.current = null;
-      const pending = pendingPodcastDetailRevalidationRef.current;
+
       captureDetailError(
         podcastDetailResource.error,
-        pending?.nonce === reloadNonce ? "PaneRefresh" : "Load",
+        revalidation.isPending(reloadNonce) ? "PaneRefresh" : "Load",
       );
       setLoading(false);
-      if (pending?.nonce === reloadNonce) {
+      if (revalidation.isPending(reloadNonce)) {
         rejectPendingPodcastDetailRevalidation(podcastDetailResource.error);
       }
     }
   }, [
+    revalidation,
     applyPodcastDetailLoad,
     captureDetailError,
     episodeQueryIdentity,
@@ -670,22 +642,20 @@ export default function PodcastDetailPaneBody() {
     committedSnapshotRef.current = reconciliationPendingRef.current
       ? null
       : controller;
-    const pending = pendingPodcastDetailRevalidationRef.current;
+    const completedNonce = completedPodcastDetailRevalidationNonceRef.current;
     if (
       controller === null ||
-      pending === null ||
-      completedPodcastDetailRevalidationNonceRef.current !== pending.nonce ||
-      pending.sourceKey !== episodeQueryIdentity ||
+      completedNonce === null ||
+      !revalidation.isPending(completedNonce) ||
+      revalidationSourceKeyRef.current !== episodeQueryIdentity ||
       controller.queryIdentity !== episodeQueryIdentity ||
       reconciliationPendingRef.current
     ) {
       return;
     }
     completedPodcastDetailRevalidationNonceRef.current = null;
-    pendingPodcastDetailRevalidationRef.current = null;
-    pending.removeAbortListener();
-    pending.resolve();
-  }, [controller, episodeQueryIdentity]);
+    revalidation.resolve(completedNonce);
+  }, [revalidation, controller, episodeQueryIdentity]);
 
   const subscriptionLifecycleSnapshot = useMemo<PodcastSubscriptionLifecycleSnapshot | null>(
     () =>

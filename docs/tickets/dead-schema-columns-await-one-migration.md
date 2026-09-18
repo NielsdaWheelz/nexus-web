@@ -19,6 +19,7 @@ columns to drop, with the slice that removes their code side:
 - `passage_anchors.selector_version`, recreating `uq_passage_anchors_identity`
   (SVC-14)
 - `stripe_webhook_events.processed_at` (py-db M-05)
+- `chat_runs.error_detail` (svc-chat-llm SCL-24; only ever written NULL, no reader)
 - `document_embed_artifact_states.extraction_error_code` +
   `extraction_error_message` (SVCDOC-04)
 - `fragment_blocks.block_type` + `is_empty` (SVCDOC-10)

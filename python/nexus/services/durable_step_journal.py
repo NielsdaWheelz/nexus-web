@@ -245,24 +245,6 @@ def _is_sha256(value: str) -> bool:
     return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
 
 
-class ProveNotDispatched(BaseModel):
-    """Operator evidence that an uncertain request never reached its provider."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class AttachReconciledResult(BaseModel):
-    """An out-of-band result normalized by the owning step binding."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    terminal_result: str
-    tool_settlement: Presence[ToolExecutionSettlement] = Absent()
-
-
-UncertainStepResolution = ProveNotDispatched | AttachReconciledResult
-
-
 _GENERATION_NAMESPACE: Final = UUID("6f1d3f2e-6a3b-5c7d-8e9f-0a1b2c3d4e5f")
 _COORDINATION_KEY: Final = "coordination"
 

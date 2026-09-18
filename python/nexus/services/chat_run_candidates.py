@@ -31,6 +31,10 @@ from nexus.services.chat_runs import (
     admit_chat_selection,
     persist_frozen_chat_admission_in_current_transaction,
 )
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_revisions,
+)
 from nexus.services.conversation_branches import ensure_branch_metadata, persist_active_leaf
 from nexus.services.generation_catalog import GenerationCatalogService, ResolvedCatalogPair
 from nexus.services.generation_service import GenerationService
@@ -40,59 +44,7 @@ from nexus.services.tool_runtime.composition import ComposedToolRuntime
 type RepeatOperation = Literal["rerun", "regenerate"]
 
 
-async def rerun_assistant_response(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    assistant_message_id: UUID,
-    catalog_definition_revision: str,
-    selection: ExactChatSelection,
-    tool_authority: Literal["ReadOnly"],
-    idempotency_key: str | None,
-    catalog: GenerationCatalogService,
-    tool_runtime: ComposedToolRuntime,
-) -> ChatRunResponse:
-    return await _repeat_assistant_response(
-        db,
-        operation="rerun",
-        viewer_id=viewer_id,
-        assistant_message_id=assistant_message_id,
-        catalog_definition_revision=catalog_definition_revision,
-        selection=selection,
-        tool_authority=tool_authority,
-        idempotency_key=idempotency_key,
-        catalog=catalog,
-        tool_runtime=tool_runtime,
-    )
-
-
-async def regenerate_assistant_response(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    assistant_message_id: UUID,
-    catalog_definition_revision: str,
-    selection: ExactChatSelection,
-    tool_authority: Literal["ReadOnly"],
-    idempotency_key: str | None,
-    catalog: GenerationCatalogService,
-    tool_runtime: ComposedToolRuntime,
-) -> ChatRunResponse:
-    return await _repeat_assistant_response(
-        db,
-        operation="regenerate",
-        viewer_id=viewer_id,
-        assistant_message_id=assistant_message_id,
-        catalog_definition_revision=catalog_definition_revision,
-        selection=selection,
-        tool_authority=tool_authority,
-        idempotency_key=idempotency_key,
-        catalog=catalog,
-        tool_runtime=tool_runtime,
-    )
-
-
-async def _repeat_assistant_response(
+async def repeat_assistant_response(
     db: Session,
     *,
     operation: RepeatOperation,
@@ -113,22 +65,6 @@ async def _repeat_assistant_response(
         selection=selection,
         tool_authority=tool_authority,
     )
-    try:
-        lock_idempotency_key(db, viewer_id, normalized_key)
-        receipt = lookup_chat_admission(
-            db, viewer_id=viewer_id, idempotency_key=normalized_key, request_bytes=request_bytes
-        )
-    finally:
-        db.rollback()
-    if receipt is not None:
-        if not isinstance(receipt.outcome, AcceptedChatAdmission):
-            raise AssertionError("candidate admission has a rejected receipt")
-        log_chat_admission(receipt, viewer_id=viewer_id, replayed=True)
-        snapshot = await catalog.read_chat()
-        return read_chat_run_response(
-            db, viewer_id, receipt.outcome.run_id, catalog_snapshot=snapshot
-        )
-
     pair: ResolvedCatalogPair | None = None
     catalog_error: ApiError | None = None
     try:
@@ -282,6 +218,7 @@ def _create_sibling_candidate(
         conversation_id=source_run.conversation_id,
         active_leaf_message_id=assistant_message.id,
     )
+    bump_all_collection_revisions(db, family=CollectionFamily.ConversationIndex)
 
     run = ChatRun(
         id=uuid4(),

@@ -528,88 +528,6 @@ def _journal_policy(policy: PortableReplayPolicy) -> JournalReplayPolicy:
     return JournalReplayPolicy(policy.value)
 
 
-def _assert_operation_identity(
-    operation: FrozenToolOperation,
-    identity: ToolExecutionIdentity,
-) -> Any:
-    try:
-        binding = operation.plan.catalog_view.binding(ToolId(identity.tool_id))
-    except (KeyError, ValueError) as exc:
-        raise ValueError("stored tool identity is absent from the frozen operation") from exc
-    if (
-        identity.tool_contract_revision != binding.spec.tool_contract_revision
-        or identity.policy_revision != binding.policy_revision
-        or identity.plan_revision != operation.plan.plan_revision
-        or identity.replay_policy is not _journal_policy(binding.replay_policy)
-    ):
-        raise ValueError("stored tool identity differs from the frozen operation")
-    return binding
-
-
-def reconcile_uncertain_tool_completion(
-    *,
-    operation: FrozenToolOperation,
-    state: StepReplayState,
-    raw_result: str,
-    settlement: ToolExecutionSettlement,
-) -> StepReplayState:
-    """Validate an operator-attached BilledOnce result into Completed state.
-
-    This is deliberately pure: Chat and Dossier own their dead-job locking,
-    journal checkpoint, requeue, and commit boundaries. They share this exact
-    result/identity/accounting validator instead of growing parallel decoders.
-    """
-
-    if state.dispatch_phase is not Uncertain or not isinstance(state.tool_execution, Present):
-        raise ValueError("only an uncertain tool position can attach a result")
-    execution = state.tool_execution.value
-    identity = execution.identity
-    binding = _assert_operation_identity(operation, identity)
-    if binding.replay_policy is not PortableReplayPolicy.BilledOnce:
-        raise ValueError("attached result differs from the stored tool authority")
-    if (
-        not isinstance(state.request_fingerprint, Present)
-        or state.request_fingerprint.value != identity.input_digest
-        or isinstance(state.terminal_result, Present)
-        or not isinstance(execution.reservation, Present)
-        or not execution.reservation.value.accepted
-        or isinstance(execution.settlement, Present)
-        or not isinstance(execution.dispatch_claim, Present)
-    ):
-        raise ValueError("uncertain tool position is not attachable")
-
-    reservation = execution.reservation.value
-    if (
-        settlement.actual_attempts < max(1, execution.abandoned_attempts)
-        or settlement.actual_attempts > reservation.max_attempts
-        or settlement.actual_output_bytes != len(raw_result.encode("utf-8"))
-        or settlement.actual_output_bytes > reservation.max_output_bytes
-    ):
-        raise ValueError("attached settlement differs from the reserved tool work")
-    try:
-        _validated_portable_result(
-            raw_result,
-            tool_id=identity.tool_id,
-            catalog_view=operation.plan.catalog_view,
-        )
-    except (AssertionError, json.JSONDecodeError) as exc:
-        raise ValueError("attached result is not a strict portable tool result") from exc
-    completed_execution = execution.model_copy(
-        update={
-            "dispatch_claim": absent(),
-            "settlement": _PRESENT_TOOL_SETTLEMENT(value=settlement),
-        }
-    )
-    completed = state.model_copy(
-        update={
-            "dispatch_phase": Completed,
-            "terminal_result": _PRESENT_STR(value=raw_result),
-            "tool_execution": _PRESENT_TOOL_EXECUTION(value=completed_execution),
-        }
-    )
-    return StepReplayState.model_validate(completed.model_dump(mode="python"))
-
-
 def _reservation_is_within_run_limits(
     states: Sequence[StepReplayState],
     *,
@@ -2377,5 +2295,4 @@ __all__ = [
     "NexusPositionRecorder",
     "NexusToolExecution",
     "open_durable_execution_context",
-    "reconcile_uncertain_tool_completion",
 ]

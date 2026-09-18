@@ -226,9 +226,6 @@ export interface AssistantTrustTrail {
     completed_at: string | null;
   } | null;
   prompt: {
-    id: string;
-    prompt_block_manifest: Record<string, unknown>;
-    max_context_tokens: number;
     reserved_output_tokens: number;
     input_budget_tokens: number;
     estimated_input_tokens: number;
@@ -236,8 +233,6 @@ export interface AssistantTrustTrail {
     included_retrieval_ids: string[];
     included_context_refs: Array<Record<string, unknown>>;
     dropped_items: Array<Record<string, unknown>>;
-    budget_breakdown: Record<string, unknown>;
-    created_at: string;
   } | null;
   tool_calls: MessageToolCall[];
   citations: Array<{

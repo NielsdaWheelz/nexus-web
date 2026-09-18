@@ -17,7 +17,6 @@ from sqlalchemy.orm import Session
 from nexus.db.models import ChatRun
 from nexus.schemas.conversation import (
     ChatRunToolResultEventPayload,
-    StoredToolProjection,
     chat_run_event_payload_json,
 )
 from nexus.services import run_kit
@@ -135,87 +134,6 @@ class ChatRunEventEmitter:
                 "assistant_message_id": str(self._run.assistant_message_id),
                 "phase": phase,
                 "label": None,
-                "provider_event_seq_start": provider_event_seq_start,
-                "provider_event_seq_end": provider_event_seq_end,
-            },
-            lease_fence=self._lease_fence,
-        )
-
-    def tool_call_start(
-        self,
-        *,
-        projection: StoredToolProjection,
-        tool_call_index: int,
-        provider_tool_call_id: str,
-        provider_event_seq_start: int,
-        provider_event_seq_end: int,
-    ) -> None:
-        append_and_commit(
-            self._db,
-            self._run.id,
-            "tool_call_start",
-            {
-                **projection.model_dump(mode="json"),
-                "tool_call_id": None,
-                "assistant_message_id": str(self._run.assistant_message_id),
-                "tool_call_index": tool_call_index,
-                "provider_tool_call_id": provider_tool_call_id,
-                "provider_event_seq_start": provider_event_seq_start,
-                "provider_event_seq_end": provider_event_seq_end,
-            },
-            lease_fence=self._lease_fence,
-        )
-
-    def tool_call_delta(
-        self,
-        *,
-        projection: StoredToolProjection,
-        tool_call_index: int,
-        provider_tool_call_id: str,
-        input_delta: str,
-        input_preview: str | None,
-        provider_event_seq_start: int,
-        provider_event_seq_end: int,
-    ) -> None:
-        append_and_commit(
-            self._db,
-            self._run.id,
-            "tool_call_delta",
-            {
-                **projection.model_dump(mode="json"),
-                "tool_call_id": None,
-                "assistant_message_id": str(self._run.assistant_message_id),
-                "tool_call_index": tool_call_index,
-                "provider_tool_call_id": provider_tool_call_id,
-                "input_delta": input_delta,
-                "input_preview": input_preview,
-                "provider_event_seq_start": provider_event_seq_start,
-                "provider_event_seq_end": provider_event_seq_end,
-            },
-            lease_fence=self._lease_fence,
-        )
-
-    def tool_call_done(
-        self,
-        *,
-        projection: StoredToolProjection,
-        tool_call_index: int,
-        provider_tool_call_id: str,
-        input: dict[str, Any],
-        provider_event_seq_start: int,
-        provider_event_seq_end: int,
-    ) -> None:
-        append_and_commit(
-            self._db,
-            self._run.id,
-            "tool_call_done",
-            {
-                **projection.model_dump(mode="json"),
-                "tool_call_id": None,
-                "assistant_message_id": str(self._run.assistant_message_id),
-                "tool_call_index": tool_call_index,
-                "provider_tool_call_id": provider_tool_call_id,
-                "input": input,
                 "provider_event_seq_start": provider_event_seq_start,
                 "provider_event_seq_end": provider_event_seq_end,
             },

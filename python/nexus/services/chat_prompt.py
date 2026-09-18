@@ -18,15 +18,6 @@ if TYPE_CHECKING:
 MAX_PROMPT_CHARS = 100_000
 
 
-class PromptTooLargeError(Exception):
-    """Raised when rendered prompt text exceeds the provider-neutral limit."""
-
-    def __init__(self, actual_size: int, max_size: int):
-        self.actual_size = actual_size
-        self.max_size = max_size
-        super().__init__(f"Prompt size {actual_size} exceeds max {max_size}")
-
-
 @dataclass(frozen=True)
 class PromptTurn:
     role: Literal["system", "user", "assistant"]
@@ -141,15 +132,11 @@ def validate_prompt_plan_budget(plan: PromptPlan, input_budget_tokens: int) -> i
 
     estimated_tokens = estimate_block_tokens(plan.blocks()) + len(plan.turns) * 4
     if estimated_tokens > input_budget_tokens:
-        raise ContextBudgetError(
-            "Assembled prompt exceeds the model input budget",
-            requested_tokens=estimated_tokens,
-            remaining_tokens=input_budget_tokens,
-        )
+        raise ContextBudgetError("Assembled prompt exceeds the model input budget")
     return estimated_tokens
 
 
 def validate_prompt_size(plan: PromptPlan, max_chars: int = MAX_PROMPT_CHARS) -> None:
     total = plan.text_char_count()
     if total > max_chars:
-        raise PromptTooLargeError(total, max_chars)
+        raise ContextBudgetError(f"Prompt size {total} exceeds max {max_chars}")

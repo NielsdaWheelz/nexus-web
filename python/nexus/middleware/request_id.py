@@ -19,7 +19,6 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from nexus.logging import clear_request_context, get_logger, set_request_context
-from nexus.services.redact import safe_kv
 
 REQUEST_ID_HEADER = "X-Request-ID"
 logger = get_logger(__name__)
@@ -78,10 +77,8 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
             logger.info(
                 "http.request.completed",
-                **safe_kv(
-                    status_code=response.status_code,
-                    duration_ms=round(duration_ms, 2),
-                ),
+                status_code=response.status_code,
+                duration_ms=round(duration_ms, 2),
             )
 
             return response

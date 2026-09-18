@@ -52,6 +52,7 @@ import {
   usePaneVisitData,
 } from "@/lib/panes/paneRuntime";
 import { isAbortError } from "@/lib/errors";
+import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
 import {
   CANONICAL_PODCAST_SUBSCRIPTION_VIEW,
   SUBSCRIPTION_FILTERS,
@@ -150,13 +151,6 @@ interface PodcastsSnapshot {
   readonly libraries: readonly MemberLibrary[];
 }
 
-interface PendingPodcastsRevalidation {
-  readonly nonce: number;
-  readonly resolve: () => void;
-  readonly reject: (error: unknown) => void;
-  readonly removeAbortListener: () => void;
-}
-
 const PODCASTS_VISIT_DATA =
   definePaneVisitDataKey<PodcastsSnapshot>("Podcasts.Subscriptions");
 const EMPTY_SUBSCRIPTIONS: readonly PodcastSubscriptionListItem[] = [];
@@ -208,8 +202,7 @@ export default function PodcastsPaneBody() {
   const [initialLoadEnabled, setInitialLoadEnabled] = useState(restored === null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const reloadNonceRef = useRef(0);
-  const pendingPodcastsRevalidationRef =
-    useRef<PendingPodcastsRevalidation | null>(null);
+  const revalidation = useRevalidationSettlement();
   const completedPodcastsRevalidationNonceRef = useRef<number | null>(null);
   const clearAllVisitData = useClearAllPaneVisitData();
   const initialPageRef = useRef<
@@ -221,13 +214,9 @@ export default function PodcastsPaneBody() {
   );
   const allowInitialAdoptionRef = useRef(restored === null);
   const rejectPendingPodcastsRevalidation = useCallback((error: unknown) => {
-    const pending = pendingPodcastsRevalidationRef.current;
-    pendingPodcastsRevalidationRef.current = null;
     completedPodcastsRevalidationNonceRef.current = null;
-    if (!pending) return;
-    pending.removeAbortListener();
-    pending.reject(error);
-  }, []);
+    revalidation.reject(error);
+  }, [revalidation]);
   // Abandons the committed chain so the next first page is adopted afresh. A
   // view change needs only this: the view is already part of the request
   // identity.
@@ -262,34 +251,19 @@ export default function PodcastsPaneBody() {
       }
       refreshSubscriptions();
       const nonce = reloadNonceRef.current;
-      return new Promise<void>((resolve, reject) => {
-        const onAbort = () => {
-          const pending = pendingPodcastsRevalidationRef.current;
-          if (pending?.nonce !== nonce) return;
-          pendingPodcastsRevalidationRef.current = null;
+      return revalidation.wait({
+        requestId: nonce,
+        signal,
+        onAbort: () => {
           completedPodcastsRevalidationNonceRef.current = null;
-          pending.removeAbortListener();
           allowInitialAdoptionRef.current = false;
           setInitialLoadEnabled(false);
           committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
           refreshFallbackSnapshotRef.current = null;
-          reject(
-            signal.reason ??
-              new DOMException("Podcasts refresh was aborted.", "AbortError"),
-          );
-        };
-        signal.addEventListener("abort", onAbort, { once: true });
-        pendingPodcastsRevalidationRef.current = {
-          nonce,
-          resolve,
-          reject,
-          removeAbortListener: () =>
-            signal.removeEventListener("abort", onAbort),
-        };
-        if (signal.aborted) onAbort();
+        },
       });
     },
-    [refreshSubscriptions],
+    [refreshSubscriptions, revalidation],
   );
   useEffect(
     () => () => {
@@ -323,11 +297,11 @@ export default function PodcastsPaneBody() {
     refreshFallbackSnapshotRef.current = null;
     setController(snapshot);
     setChainEpoch((epoch) => epoch + 1);
-    const pending = pendingPodcastsRevalidationRef.current;
-    if (pending?.nonce === initialPageNonceRef.current) {
-      completedPodcastsRevalidationNonceRef.current = pending.nonce;
+
+    if (revalidation.isPending(initialPageNonceRef.current)) {
+      completedPodcastsRevalidationNonceRef.current = initialPageNonceRef.current;
     }
-  }, [subscriptionQueryIdentity]);
+  }, [revalidation, subscriptionQueryIdentity]);
   const setRows = useCallback(
     (update: SetStateAction<PodcastSubscriptionListItem[]>) => {
       setController((current) => {
@@ -437,16 +411,17 @@ export default function PodcastsPaneBody() {
       setInitialLoadEnabled(false);
       committedSnapshotRef.current = refreshFallbackSnapshotRef.current;
       refreshFallbackSnapshotRef.current = null;
-      const pending = pendingPodcastsRevalidationRef.current;
+
       captureLoadError(
         subscriptionListResource.error,
-        pending?.nonce === reloadNonce ? "Revalidate" : "Subscriptions",
+        revalidation.isPending(reloadNonce) ? "Revalidate" : "Subscriptions",
       );
-      if (pending?.nonce === reloadNonce) {
+      if (revalidation.isPending(reloadNonce)) {
         rejectPendingPodcastsRevalidation(subscriptionListResource.error);
       }
     }
   }, [
+    revalidation,
     commitInitialController,
     captureLoadError,
     rejectPendingPodcastsRevalidation,
@@ -482,20 +457,18 @@ export default function PodcastsPaneBody() {
   useLayoutEffect(() => {
     committedSnapshotRef.current = controller;
     controllerRef.current = controller;
-    const pending = pendingPodcastsRevalidationRef.current;
+    const completedNonce = completedPodcastsRevalidationNonceRef.current;
     if (
       controller === null ||
-      pending === null ||
-      completedPodcastsRevalidationNonceRef.current !== pending.nonce ||
+      completedNonce === null ||
+      !revalidation.isPending(completedNonce) ||
       controller.queryIdentity !== subscriptionQueryIdentity
     ) {
       return;
     }
     completedPodcastsRevalidationNonceRef.current = null;
-    pendingPodcastsRevalidationRef.current = null;
-    pending.removeAbortListener();
-    pending.resolve();
-  }, [controller, subscriptionQueryIdentity]);
+    revalidation.resolve(completedNonce);
+  }, [revalidation, controller, subscriptionQueryIdentity]);
 
   usePaneReturnReady(controller !== null || error !== null);
 

@@ -44,12 +44,9 @@ from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
     RescheduleRequested,
-    current_dead_job_for_payload,
     enqueue_unique_job,
     get_job,
     lock_running_job_claim,
-    replace_dead_job_payload,
-    requeue_dead_job,
 )
 from nexus.logging import get_logger
 from nexus.schemas.presence import Present
@@ -74,13 +71,11 @@ from nexus.services.llm_execution import (
     GenerationDispatchAborted,
     GenerationFailureCode,
     GenerationUncertain,
-    GenerationUncertainResolution,
     JobGenerationJournal,
     admit_job_generation,
     cancel_prepared_generation_without_dispatch_in_current_transaction,
     codex_terminal_evidence,
     execute_generation,
-    prove_uncertain_generation_not_dispatched_in_current_transaction,
 )
 from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
 from nexus.services.media_intelligence import NotReady, get_current
@@ -309,7 +304,6 @@ def _apply_completed_synapse(
                 owner=owner,
                 state=current,
                 terminal_result=terminal_result,
-                reason=preaccept_reason,
             )
             if not step_journal.checkpoint_step_state(
                 db,
@@ -370,65 +364,6 @@ def _apply_completed_synapse(
 
 
 # ---------- public contract -------------------------------------------------
-
-
-def reconcile_uncertain_synapse_generation(
-    db: Session,
-    *,
-    user_id: UUID,
-    ref: ResourceRef,
-    resolution: GenerationUncertainResolution,
-) -> None:
-    """Return one suspended Synapse generation to Prepared and requeue it.
-
-    A scan stores its immutable generation fingerprint but not the dossier,
-    retrieval result, or candidate list that made up its original prompt.
-    Those projections are intentionally mutable, so a recovered host terminal
-    cannot be attached safely.  Prove-not-dispatched remains fully durable.
-    """
-
-    if not isinstance(resolution, step_journal.ProveNotDispatched):
-        raise ValueError(
-            "synapse generation attachment requires durable dossier and candidate facts, which are absent"
-        )
-
-    def op() -> None:
-        owner = LlmCallOwner(kind="synapse_scan", id=ref.id)
-        # Owner advisory lock precedes the source object and the dead job.
-        lock_generation_owner_in_current_transaction(db, owner)
-        _lock_synapse_source_for_reconciliation(db, user_id=user_id, ref=ref)
-        job = current_dead_job_for_payload(
-            db,
-            kind="synapse_scan",
-            expected_payload_match={"user_id": str(user_id), "ref": ref.uri},
-        )
-        if job is None:
-            raise ValueError("synapse source has no suspended generation job")
-        state = step_journal.read_step_states(job).get(_SYNTHESIS_STEP_PATH)
-        if state is None or state.dispatch_phase is not step_journal.Uncertain:
-            raise ValueError("synapse generation is not uncertain")
-        expected_generation_id = step_journal.stable_generation_id(job.id, _SYNTHESIS_STEP_PATH)
-        if state.generation_id != expected_generation_id:
-            raise AssertionError("synapse reconciliation generation identity changed")
-        if not isinstance(state.request_fingerprint, Present):
-            raise AssertionError("synapse reconciliation has no request fingerprint")
-        next_state = prove_uncertain_generation_not_dispatched_in_current_transaction(
-            db,
-            owner=owner,
-            state=state,
-        )
-        payload = step_journal.payload_with_step_state(
-            job.payload,
-            step_path=_SYNTHESIS_STEP_PATH,
-            state=next_state,
-        )
-        if not replace_dead_job_payload(db, job_id=job.id, payload=payload):
-            raise AssertionError("suspended synapse job changed while locked")
-        if not requeue_dead_job(db, job_id=job.id):
-            raise AssertionError("suspended synapse job could not be requeued")
-        db.commit()
-
-    retry_serializable(db, "reconcile_uncertain_synapse_generation", op)
 
 
 def _lock_synapse_source_for_reconciliation(

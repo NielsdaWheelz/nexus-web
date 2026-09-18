@@ -33,7 +33,6 @@ from nexus.db.session import get_session_factory
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
-    InvalidRequestError,
     NotFoundError,
 )
 from nexus.jobs.queue import (
@@ -44,8 +43,6 @@ from nexus.jobs.queue import (
     get_job,
     lock_job,
     lock_running_job_claim,
-    replace_dead_job_payload,
-    requeue_dead_job,
 )
 from nexus.logging import get_logger
 from nexus.schemas.citation import CitationOut
@@ -91,13 +88,11 @@ from nexus.services.llm_execution import (
     GenerationDispatchAborted,
     GenerationFailureCode,
     GenerationUncertain,
-    GenerationUncertainResolution,
     JobGenerationJournal,
     admit_job_generation,
     cancel_prepared_generation_without_dispatch_in_current_transaction,
     codex_terminal_evidence,
     execute_generation,
-    prove_uncertain_generation_not_dispatched_in_current_transaction,
 )
 from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
 from nexus.services.oracle_plates import oracle_plate_url
@@ -567,94 +562,6 @@ def assert_reading_owner(db: Session, *, viewer_id: UUID, reading_id: UUID) -> N
     _get_reading_owned_by(db, viewer_id=viewer_id, reading_id=reading_id)
 
 
-def reconcile_uncertain_oracle_reading(
-    db: Session,
-    *,
-    reading_id: UUID,
-    resolution: GenerationUncertainResolution,
-) -> None:
-    """Prove non-dispatch for one suspended Oracle generation and requeue it.
-
-    Oracle intentionally retains no raw prompt, embedding, ranked retrieval, or
-    plate-selection snapshot. Those inputs cannot be reproduced without new
-    external or mutable reads, so terminal attachment is not a safe operation.
-    This entrypoint owns only the evidence-backed non-dispatch transition. It
-    locks the generation owner before the reading and exact dead job, validates
-    the persisted journal fingerprint against the nonterminal ledger start, and
-    returns that same job to Pending without dispatching.
-    """
-
-    def invalid(message: str) -> InvalidRequestError:
-        return InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, message)
-
-    if not isinstance(resolution, step_journal.ProveNotDispatched):
-        raise invalid("Oracle reconciliation can only prove generation was not dispatched")
-
-    owner = LlmCallOwner(kind="oracle_reading", id=reading_id)
-
-    def op() -> None:
-        # The shared generation-owner key is the first lock in live and repair
-        # paths; domain and queue rows follow it in their established order.
-        lock_generation_owner_in_current_transaction(db, owner)
-        reading = db.scalar(
-            select(OracleReading).where(OracleReading.id == reading_id).with_for_update()
-        )
-        if reading is None or reading.status != "pending":
-            raise invalid("Oracle reading is not suspended and pending")
-
-        rows = (
-            db.execute(
-                text(
-                    "SELECT id, payload FROM background_jobs "
-                    "WHERE kind = 'oracle_reading_generate' "
-                    "AND payload ->> 'reading_id' = :reading_id "
-                    "AND status = 'dead' FOR UPDATE"
-                ),
-                {"reading_id": str(reading_id)},
-            )
-            .mappings()
-            .all()
-        )
-        if not rows:
-            raise invalid("Oracle has no dead generation job to reconcile")
-        if len(rows) != 1:
-            raise AssertionError("Oracle reading has multiple dead generation jobs")
-        row = rows[0]
-        payload = dict(row["payload"])
-        if payload.get("reading_id") != str(reading_id):
-            raise AssertionError("dead Oracle job payload identity changed")
-        state = step_journal.decode_step_states(payload).get(_SYNTHESIS_STEP_PATH)
-        if state is None:
-            raise invalid("Oracle has no uncertain generation step to reconcile")
-        if state.dispatch_phase is not step_journal.Uncertain:
-            raise invalid("Oracle generation step is not uncertain")
-        expected_generation_id = step_journal.stable_generation_id(
-            reading_id,
-            _SYNTHESIS_STEP_PATH,
-        )
-        if state.generation_id != expected_generation_id:
-            raise AssertionError("dead Oracle generation identity changed")
-
-        next_state = prove_uncertain_generation_not_dispatched_in_current_transaction(
-            db,
-            owner=owner,
-            state=state,
-        )
-        next_payload = step_journal.payload_with_step_state(
-            payload,
-            step_path=_SYNTHESIS_STEP_PATH,
-            state=next_state,
-        )
-        job_id = UUID(str(row["id"]))
-        if not replace_dead_job_payload(db, job_id=job_id, payload=next_payload):
-            raise AssertionError("locked dead Oracle job changed during reconciliation")
-        if not requeue_dead_job(db, job_id=job_id):
-            raise AssertionError("locked dead Oracle job could not be requeued")
-        db.commit()
-
-    retry_serializable(db, "reconcile_uncertain_oracle_reading", op)
-
-
 # ---------- worker entrypoint -----------------------------------------------
 
 
@@ -1072,7 +979,6 @@ def _finish_oracle_terminal_without_dispatch(
     *,
     reading_id: UUID,
     context: JobExecutionContext,
-    reason: str,
     error_code: OracleReadingFailureCode | None = None,
     error_detail: str | None = None,
 ) -> dict[str, Any]:
@@ -1125,7 +1031,6 @@ def _finish_oracle_terminal_without_dispatch(
             owner=owner,
             state=state,
             terminal_result=_COMPLETED_ORACLE_ADAPTER.dump_json(completed).decode("utf-8"),
-            reason=reason,
         )
         if not step_journal.checkpoint_step_state(
             db,
@@ -1194,7 +1099,6 @@ async def execute_reading(
             db,
             reading_id=reading_id,
             context=context,
-            reason="oracle reading became terminal before dispatch",
         )
 
     question = reading.question_text
@@ -1213,7 +1117,6 @@ async def execute_reading(
             db,
             reading_id=reading_id,
             context=context,
-            reason="oracle corpus was not ready before dispatch",
             error_code=oracle_reading_failure_code(E_ORACLE_CORPUS_NOT_READY),
             error_detail=detail,
         )
@@ -1258,7 +1161,6 @@ async def execute_reading(
             db,
             reading_id=reading_id,
             context=context,
-            reason="oracle retrieval failed before dispatch",
             error_code=oracle_reading_failure_code(exc.code.value),
             error_detail=exc.message,
         )
@@ -1276,7 +1178,6 @@ async def execute_reading(
             db,
             reading_id=reading_id,
             context=context,
-            reason="oracle user content was unavailable before dispatch",
             error_code=oracle_reading_failure_code(ApiErrorCode.E_APP_SEARCH_FAILED.value),
             error_detail=detail,
         )
@@ -1342,7 +1243,6 @@ async def execute_reading(
             db,
             reading_id=reading_id,
             context=context,
-            reason="oracle input changed before dispatch",
             error_code=oracle_reading_failure_code(ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value),
             error_detail="Oracle input changed after the generation was prepared",
         )
@@ -1351,7 +1251,6 @@ async def execute_reading(
             db,
             reading_id=reading_id,
             context=context,
-            reason="oracle dispatch invalidated before acceptance",
         )
     if isinstance(execution_result, RescheduleRequested):
         return execution_result
