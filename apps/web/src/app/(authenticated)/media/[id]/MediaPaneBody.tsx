@@ -6301,14 +6301,6 @@ export default function MediaPaneBody() {
       const locator = resolution.anchor.locator;
       const { itemId, highlightId, apparatusStableKey, snippet } =
         targetIdentity;
-      const target: ReaderPulseTarget = {
-        mediaId: id,
-        highlightId,
-        locator,
-        snippet,
-        highlightBehavior: "pulse",
-        focusBehavior: "scroll_into_view",
-      };
       const completeActivation = () => {
         if (highlightId) focusHighlight(highlightId);
         if (apparatusStableKey) setFocusedApparatusItemId(itemId);
@@ -6316,10 +6308,21 @@ export default function MediaPaneBody() {
         if (!targetIdentity.keepMapOpen) closeSecondaryOnMobile();
       };
 
+      if (locator.type === "pdf_page") {
+        const arrival = positionFromDocumentMap(() => applyReaderLocator({
+          kind: "pdf",
+          page: locator.page_number,
+          page_progression: 0,
+          position: null,
+          zoom: null,
+        }));
+        void arrival.then((arrived) => { if (arrived) completeActivation(); });
+        return true;
+      }
+
       if (locator.type === "pdf_page_geometry") {
         const quads = parseRawPdfQuads(locator.quads);
         const arrival = positionFromDocumentMap(() => {
-          if (quads.length === 0) return applyReaderLocator({ kind: "pdf", page: locator.page_number, page_progression: 0, position: locator.page_number, zoom: null });
           cancelRestoreSession();
           const requestId = restoreSessionIdRef.current;
           return new Promise<ApplyCursorResult>((resolve) => {
@@ -6333,6 +6336,15 @@ export default function MediaPaneBody() {
         void arrival.then((arrived) => { if (arrived) completeActivation(); });
         return true;
       }
+
+      const target: ReaderPulseTarget = {
+        mediaId: id,
+        highlightId,
+        locator,
+        snippet,
+        highlightBehavior: "pulse",
+        focusBehavior: "scroll_into_view",
+      };
 
       if (
         locator.type === "transcript_time_range" ||

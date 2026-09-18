@@ -39,8 +39,16 @@ ReaderDocumentMapMarkerTone = Literal[
 ]
 
 
+class ReaderPdfPageLocatorOut(BaseModel):
+    type: Literal["pdf_page"] = "pdf_page"
+    media_id: UUID
+    page_number: int = Field(ge=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ReaderEvidenceAnchorOut(BaseModel):
-    locator: MediaRetrievalLocator
+    locator: MediaRetrievalLocator | ReaderPdfPageLocatorOut
     passage_anchor_id: UUID | None = None
 
     model_config = ConfigDict(extra="forbid")
