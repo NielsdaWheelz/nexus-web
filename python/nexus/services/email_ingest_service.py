@@ -396,17 +396,17 @@ def accept_email_message(
             db, media_id=media.id, storage_path=storage_path, storage_client=storage_client
         )
     except StorageError as exc:
-        from nexus.services.media_processing_state import mark_failed
+        from nexus.services.media_processing_state import mark_media_failed_by_id
 
         db.rollback()
-        media_obj = db.get(Media, media.id)
-        if media_obj is not None:
-            mark_failed(
+        if db.get(Media, media.id) is not None:
+            mark_media_failed_by_id(
                 db,
-                media_obj,
+                media_id=media.id,
                 stage="upload",
                 error_code=ApiErrorCode.E_STORAGE_ERROR.value,
                 error_message=str(exc),
+                now=datetime.now(UTC),
             )
             bump_all_collection_families(
                 db,

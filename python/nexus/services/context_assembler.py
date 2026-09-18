@@ -427,71 +427,54 @@ def persist_prompt_assembly(db: Session, *, run: ChatRun, assembly: ContextAssem
         "dropped_items": [dict(item) for item in ledger.dropped_items],
         "budget_breakdown": dict(ledger.budget_breakdown),
     }
-    existing = db.execute(
-        text(
-            """
-            SELECT id, generation_intent_digest
-            FROM chat_prompt_assemblies
-            WHERE chat_run_id = :chat_run_id
-            FOR UPDATE
-            """
-        ),
-        {"chat_run_id": run.id},
-    ).first()
-
-    if existing is None:
-        insert_statement = text(
-            """
-            INSERT INTO chat_prompt_assemblies (
-                chat_run_id,
-                conversation_id,
-                assistant_message_id,
-                prompt_block_manifest,
-                generation_intent,
-                generation_intent_digest,
-                max_context_tokens,
-                reserved_output_tokens,
-                input_budget_tokens,
-                estimated_input_tokens,
-                included_message_ids,
-                included_retrieval_ids,
-                included_context_refs,
-                dropped_items,
-                budget_breakdown
-            )
-            VALUES (
-                :chat_run_id,
-                :conversation_id,
-                :assistant_message_id,
-                :prompt_block_manifest,
-                :generation_intent,
-                :generation_intent_digest,
-                :max_context_tokens,
-                :reserved_output_tokens,
-                :input_budget_tokens,
-                :estimated_input_tokens,
-                :included_message_ids,
-                :included_retrieval_ids,
-                :included_context_refs,
-                :dropped_items,
-                :budget_breakdown
-            )
-            """
-        ).bindparams(
-            bindparam("included_message_ids", type_=JSONB),
-            bindparam("included_retrieval_ids", type_=JSONB),
-            bindparam("included_context_refs", type_=JSONB),
-            bindparam("dropped_items", type_=JSONB),
-            bindparam("budget_breakdown", type_=JSONB),
-            bindparam("prompt_block_manifest", type_=JSONB),
-            bindparam("generation_intent", type_=JSONB),
+    insert_statement = text(
+        """
+        INSERT INTO chat_prompt_assemblies (
+            chat_run_id,
+            conversation_id,
+            assistant_message_id,
+            prompt_block_manifest,
+            generation_intent,
+            generation_intent_digest,
+            max_context_tokens,
+            reserved_output_tokens,
+            input_budget_tokens,
+            estimated_input_tokens,
+            included_message_ids,
+            included_retrieval_ids,
+            included_context_refs,
+            dropped_items,
+            budget_breakdown
         )
-        result = cast(Any, db.execute(insert_statement, payload))
-        assert result.rowcount == 1  # justify-service-invariant-check: ledger insert is one row.
-        return
-
-    if existing.generation_intent_digest != intent_digest:
-        raise AssertionError("Chat prompt assembly changed after admission")
+        VALUES (
+            :chat_run_id,
+            :conversation_id,
+            :assistant_message_id,
+            :prompt_block_manifest,
+            :generation_intent,
+            :generation_intent_digest,
+            :max_context_tokens,
+            :reserved_output_tokens,
+            :input_budget_tokens,
+            :estimated_input_tokens,
+            :included_message_ids,
+            :included_retrieval_ids,
+            :included_context_refs,
+            :dropped_items,
+            :budget_breakdown
+        )
+        """
+    ).bindparams(
+        bindparam("included_message_ids", type_=JSONB),
+        bindparam("included_retrieval_ids", type_=JSONB),
+        bindparam("included_context_refs", type_=JSONB),
+        bindparam("dropped_items", type_=JSONB),
+        bindparam("budget_breakdown", type_=JSONB),
+        bindparam("prompt_block_manifest", type_=JSONB),
+        bindparam("generation_intent", type_=JSONB),
+    )
+    result = cast(Any, db.execute(insert_statement, payload))
+    assert result.rowcount == 1  # justify-service-invariant-check: ledger insert is one row.
 
 
 def _build_subject_block(

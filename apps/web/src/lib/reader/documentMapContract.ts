@@ -60,7 +60,6 @@ export function decodeReaderDocumentMapContract(
       "media_kind",
       "title",
       "status",
-      "source_version",
       "navigation",
       "embeds",
       "evidence",
@@ -73,16 +72,6 @@ export function decodeReaderDocumentMapContract(
     value.status,
     ["ready", "empty", "partial"] as const,
     "ReaderDocumentMap.status",
-  );
-  const sourceVersion = expectExactRecord(
-    value.source_version,
-    [
-      "media_updated_at",
-      "apparatus_source_fingerprint",
-      "graph_max_updated_at",
-      "highlights_max_updated_at",
-    ],
-    "ReaderDocumentMap.source_version",
   );
   const diagnostics = expectExactRecord(
     value.diagnostics,
@@ -103,24 +92,6 @@ export function decodeReaderDocumentMapContract(
     media_kind: expectString(value.media_kind, "ReaderDocumentMap.media_kind"),
     title: expectString(value.title, "ReaderDocumentMap.title"),
     status,
-    source_version: {
-      media_updated_at: decodeStringPresence(
-        sourceVersion.media_updated_at,
-        "ReaderDocumentMap.source_version.media_updated_at",
-      ),
-      apparatus_source_fingerprint: decodeStringPresence(
-        sourceVersion.apparatus_source_fingerprint,
-        "ReaderDocumentMap.source_version.apparatus_source_fingerprint",
-      ),
-      graph_max_updated_at: decodeStringPresence(
-        sourceVersion.graph_max_updated_at,
-        "ReaderDocumentMap.source_version.graph_max_updated_at",
-      ),
-      highlights_max_updated_at: decodeStringPresence(
-        sourceVersion.highlights_max_updated_at,
-        "ReaderDocumentMap.source_version.highlights_max_updated_at",
-      ),
-    },
     navigation: decodeNavigationPresence(value.navigation),
     embeds: decodeDocumentEmbeds(value.embeds, "ReaderDocumentMap.embeds"),
     evidence: decodeEvidence(value.evidence),

@@ -187,12 +187,7 @@ def set_active_path(
     catalog_snapshot: GenerationCatalogSnapshot,
 ) -> ConversationTreeOut:
     get_conversation_for_visible_read_or_404(db, viewer_id, conversation_id)
-    load_leaf_message_path(
-        db,
-        conversation_id=conversation_id,
-        leaf_message_id=active_leaf_message_id,
-    )
-    _persist_active_leaf(
+    persist_active_leaf(
         db,
         viewer_id=viewer_id,
         conversation_id=conversation_id,
@@ -348,9 +343,8 @@ def list_forks(
     search: str | None = None,
 ) -> ConversationForksOut:
     get_conversation_for_visible_read_or_404(db, viewer_id, conversation_id)
-    active_path = set(
-        active_path_message_ids(db, viewer_id=viewer_id, conversation_id=conversation_id)
-    )
+    messages = _conversation_messages(db, conversation_id)
+    messages_by_id = {message.id: message for message in messages}
     search_text = search.strip() if search else ""
     search_sql = ""
     params: dict[str, object] = {"conversation_id": conversation_id}
@@ -380,15 +374,21 @@ def list_forks(
         ),
         params,
     ).fetchall()
-    options = [
-        _fork_option_for_user_message(
+    return ConversationForksOut(
+        forks=_fork_options_from_loaded(
             db,
-            branch_user_message_id=row[0],
-            active_path_message_ids=active_path,
+            conversation_id=conversation_id,
+            branch_user_messages=[messages_by_id[row[0]] for row in rows],
+            messages=messages,
+            active_path_message_ids=_active_path_message_ids_from_loaded(
+                db,
+                viewer_id=viewer_id,
+                conversation_id=conversation_id,
+                messages=messages,
+                messages_by_id=messages_by_id,
+            ),
         )
-        for row in rows
-    ]
-    return ConversationForksOut(forks=options)
+    )
 
 
 def rename_branch(
@@ -417,13 +417,25 @@ def rename_branch(
     get_repeatable_read_db(db)
     db.expire_all()
     try:
-        return _fork_option_for_user_message(
+        messages = _conversation_messages(db, conversation_id)
+        messages_by_id = {message.id: message for message in messages}
+        user_message = messages_by_id.get(branch_user_message_id)
+        if user_message is None:
+            raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Branch message not found")
+        options = _fork_options_from_loaded(
             db,
-            branch_user_message_id=branch_user_message_id,
-            active_path_message_ids=set(
-                active_path_message_ids(db, viewer_id=viewer_id, conversation_id=conversation_id)
+            conversation_id=conversation_id,
+            branch_user_messages=[user_message],
+            messages=messages,
+            active_path_message_ids=_active_path_message_ids_from_loaded(
+                db,
+                viewer_id=viewer_id,
+                conversation_id=conversation_id,
+                messages=messages,
+                messages_by_id=messages_by_id,
             ),
         )
+        return options[0]
     finally:
         db.rollback()
 
@@ -467,10 +479,13 @@ def delete_branch(
         )
 
     subtree_id_set = set(subtree_ids)
-    current_viewer_active_leaf_id = active_leaf_for_viewer(
+    messages = _conversation_messages(db, conversation_id)
+    current_viewer_active_leaf_id = _active_leaf_for_viewer_from_loaded(
         db,
         viewer_id=viewer_id,
         conversation_id=conversation_id,
+        messages=messages,
+        messages_by_id={message.id: message for message in messages},
     )
     if current_viewer_active_leaf_id in subtree_id_set:
         raise ApiError(
@@ -522,46 +537,31 @@ def delete_branch(
     db.commit()
 
 
-def active_leaf_for_viewer(
+def _active_path_message_ids_from_loaded(
     db: Session,
     *,
     viewer_id: UUID,
     conversation_id: UUID,
-) -> UUID | None:
-    active_leaf_id = db.scalar(
-        select(ConversationActivePath.active_leaf_message_id).where(
-            ConversationActivePath.conversation_id == conversation_id,
-            ConversationActivePath.viewer_user_id == viewer_id,
-        )
+    messages: Sequence[Message],
+    messages_by_id: Mapping[UUID, Message],
+) -> set[UUID]:
+    leaf_id = _active_leaf_for_viewer_from_loaded(
+        db,
+        viewer_id=viewer_id,
+        conversation_id=conversation_id,
+        messages=messages,
+        messages_by_id=messages_by_id,
     )
-    if active_leaf_id is not None:
-        message = db.get(Message, active_leaf_id)
-        if message is not None and message.conversation_id == conversation_id:
-            return active_leaf_id
-
-    return db.scalar(
-        select(Message.id)
-        .where(Message.conversation_id == conversation_id)
-        .order_by(Message.seq.desc(), Message.id.desc())
-        .limit(1)
-    )
-
-
-def active_path_message_ids(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    conversation_id: UUID,
-) -> list[UUID]:
-    leaf_id = active_leaf_for_viewer(db, viewer_id=viewer_id, conversation_id=conversation_id)
     if leaf_id is None:
-        return []
-    return [
+        return set()
+    return {
         message.id
-        for message in load_message_path(
-            db, conversation_id=conversation_id, leaf_message_id=leaf_id
+        for message in _message_path_from_loaded(
+            messages_by_id,
+            conversation_id=conversation_id,
+            leaf_message_id=leaf_id,
         )
-    ]
+    }
 
 
 def load_message_path(
@@ -600,7 +600,6 @@ def _message_path_from_loaded(
     if message is None:
         raise ApiError(ApiErrorCode.E_BRANCH_PATH_INVALID, "Invalid conversation path")
     path.reverse()
-    _validate_message_path(path)
     return path
 
 
@@ -656,35 +655,6 @@ def branch_subtree_message_ids(
     return [row[0] for row in rows]
 
 
-def _validate_message_path(path: Sequence[Message]) -> None:
-    if not path:
-        raise ApiError(ApiErrorCode.E_BRANCH_PATH_INVALID, "Invalid conversation path")
-    root = path[0]
-    if root.role != "user" or root.parent_message_id is not None:
-        raise ApiError(
-            ApiErrorCode.E_BRANCH_PATH_INVALID,
-            "Conversation paths must start with a root user message",
-        )
-    for index, message in enumerate(path):
-        if message.role not in {"user", "assistant"}:
-            raise ApiError(ApiErrorCode.E_BRANCH_PATH_INVALID, "Invalid message role in path")
-        if index == 0:
-            continue
-        parent = path[index - 1]
-        if message.parent_message_id != parent.id:
-            raise ApiError(ApiErrorCode.E_BRANCH_PATH_INVALID, "Invalid parent chain")
-        if message.role == "user" and parent.role != "assistant":
-            raise ApiError(
-                ApiErrorCode.E_BRANCH_PATH_INVALID,
-                "User messages must follow assistant messages",
-            )
-        if message.role == "assistant" and parent.role != "user":
-            raise ApiError(
-                ApiErrorCode.E_BRANCH_PATH_INVALID,
-                "Assistant messages must follow user messages",
-            )
-
-
 def fork_options_by_parent(
     db: Session,
     *,
@@ -699,53 +669,75 @@ def fork_options_by_parent(
         list(messages) if messages is not None else _conversation_messages(db, conversation_id)
     )
     children_by_parent_id = _children_by_parent_id(loaded_messages)
-    branch_user_messages = [
-        child
-        for parent_id in parent_message_ids
-        for child in children_by_parent_id.get(parent_id, [])
-        if child.role == "user"
-    ]
+    options_by_parent: dict[UUID, list[ForkOptionOut]] = {
+        parent_id: [] for parent_id in parent_message_ids
+    }
+    options = _fork_options_from_loaded(
+        db,
+        conversation_id=conversation_id,
+        branch_user_messages=[
+            child
+            for parent_id in parent_message_ids
+            for child in children_by_parent_id.get(parent_id, [])
+            if child.role == "user"
+        ],
+        messages=loaded_messages,
+        active_path_message_ids=active_path_message_ids,
+    )
+    for option in options:
+        options_by_parent.setdefault(option.parent_message_id, []).append(option)
+    return options_by_parent
+
+
+def _fork_options_from_loaded(
+    db: Session,
+    *,
+    conversation_id: UUID,
+    branch_user_messages: Sequence[Message],
+    messages: Sequence[Message],
+    active_path_message_ids: set[UUID],
+) -> list[ForkOptionOut]:
+    if not branch_user_messages:
+        return []
+    children_by_parent_id = _children_by_parent_id(messages)
     branch_by_user_message_id = _branches_by_user_message_id(
         db,
         conversation_id=conversation_id,
         user_message_ids=[message.id for message in branch_user_messages],
     )
-    assistant_messages: list[Message] = []
-    for user_message in branch_user_messages:
-        assistant = _first_assistant_child(children_by_parent_id.get(user_message.id, []))
-        if assistant is not None:
-            assistant_messages.append(assistant)
+    assistant_by_user_message_id = {
+        user_message.id: _first_assistant_child(children_by_parent_id.get(user_message.id, []))
+        for user_message in branch_user_messages
+    }
     run_status_by_assistant_id = _run_status_by_assistant_id(
         db,
-        [message.id for message in assistant_messages],
+        [
+            assistant.id
+            for assistant in assistant_by_user_message_id.values()
+            if assistant is not None
+        ],
     )
     roots = children_by_parent_id.get(None, [])
     _leaf_by_message_id, subtree_count_by_message_id = _subtree_metadata(
         children_by_parent_id,
-        roots or loaded_messages[:1],
+        roots or list(messages[:1]),
     )
-    options_by_parent: dict[UUID, list[ForkOptionOut]] = {
-        parent_id: [] for parent_id in parent_message_ids
-    }
+    options: list[ForkOptionOut] = []
     for user_message in branch_user_messages:
         branch = branch_by_user_message_id.get(user_message.id)
         if branch is None:
             raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Branch not found")
-        assistant_message = _first_assistant_child(children_by_parent_id.get(user_message.id, []))
-        parent_message_id = user_message.parent_message_id
-        if parent_message_id is None:
-            raise ApiError(ApiErrorCode.E_BRANCH_PATH_INVALID, "Branch user message has no parent")
-        options_by_parent.setdefault(parent_message_id, []).append(
+        options.append(
             _fork_option_from_loaded(
                 branch=branch,
                 user_message=user_message,
-                assistant_message=assistant_message,
+                assistant_message=assistant_by_user_message_id[user_message.id],
                 run_status_by_assistant_id=run_status_by_assistant_id,
                 subtree_count_by_message_id=subtree_count_by_message_id,
                 active_path_message_ids=active_path_message_ids,
             )
         )
-    return options_by_parent
+    return options
 
 
 def build_path_cache_by_leaf_id(
@@ -1047,82 +1039,6 @@ def _branch_for_owner(db: Session, conversation_id: UUID, branch_id: UUID) -> Co
     if branch is None or branch.conversation_id != conversation_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Branch not found")
     return branch
-
-
-def _fork_option_for_user_message(
-    db: Session,
-    *,
-    branch_user_message_id: UUID,
-    active_path_message_ids: set[UUID],
-) -> ForkOptionOut:
-    user_message = db.get(Message, branch_user_message_id)
-    if user_message is None or user_message.parent_message_id is None:
-        raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Branch message not found")
-    branch = db.scalar(
-        select(ConversationBranch).where(
-            ConversationBranch.conversation_id == user_message.conversation_id,
-            ConversationBranch.branch_user_message_id == user_message.id,
-        )
-    )
-    if branch is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Branch not found")
-    assistant_message = db.scalar(
-        select(Message)
-        .where(
-            Message.conversation_id == user_message.conversation_id,
-            Message.parent_message_id == user_message.id,
-            Message.role == "assistant",
-        )
-        .order_by(Message.seq.asc(), Message.id.asc())
-        .limit(1)
-    )
-    status = _fork_status(db, assistant_message)
-    leaf_message_id = assistant_message.id if assistant_message is not None else user_message.id
-    subtree_count = len(
-        branch_subtree_message_ids(
-            db,
-            conversation_id=user_message.conversation_id,
-            root_message_id=user_message.id,
-        )
-    )
-    return ForkOptionOut(
-        id=branch.id,
-        parent_message_id=user_message.parent_message_id,
-        user_message_id=user_message.id,
-        assistant_message_id=assistant_message.id if assistant_message is not None else None,
-        leaf_message_id=leaf_message_id,
-        title=branch.title,
-        preview=_preview(user_message.content),
-        branch_anchor_kind=cast(BRANCH_ANCHOR_KINDS, user_message.branch_anchor_kind),
-        branch_anchor_preview=_branch_anchor_preview(
-            user_message.branch_anchor_kind, user_message.branch_anchor
-        ),
-        status=status,
-        message_count=subtree_count,
-        created_at=branch.created_at,
-        updated_at=branch.updated_at,
-        active=user_message.id in active_path_message_ids,
-    )
-
-
-def _fork_status(
-    db: Session,
-    assistant_message: Message | None,
-) -> Literal["complete", "pending", "error", "cancelled"]:
-    if assistant_message is None:
-        return "pending"
-    run_status = db.execute(
-        select(ChatRun.status).where(ChatRun.assistant_message_id == assistant_message.id)
-    ).scalar_one_or_none()
-    if run_status == "cancelled":
-        return "cancelled"
-    if assistant_message.status == "pending":
-        return "pending"
-    if assistant_message.status == "error":
-        return "error"
-    if assistant_message.status == "complete":
-        return "complete"
-    raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Invalid assistant status")
 
 
 def _message_outs_by_id(

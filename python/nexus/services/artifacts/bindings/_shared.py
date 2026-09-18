@@ -50,7 +50,7 @@ from nexus.services.media_intelligence import (
     NotReady,
     current_content_fingerprint,
     ensure_current_many,
-    get_current,
+    get_media_unit,
     media_unit_build_is_suspended,
 )
 from nexus.services.resource_graph.refs import ResourceRef
@@ -352,7 +352,7 @@ class AggregateMediaBinding(DossierBindingBase):
                 )
                 continue
 
-            unit = get_current(db, media_id=media_id)
+            unit = get_media_unit(db, media_id=media_id)
             if not isinstance(unit, MediaUnit) or not unit.claims:
                 entries.append(
                     MediaManifestEntry(
@@ -520,7 +520,7 @@ class AggregateMediaBinding(DossierBindingBase):
             elif not can_read_media(db, viewer_id, media_id):
                 disposition = MediaDisposition.OmittedNotAudienceVisible
             else:
-                unit = get_current(db, media_id=media_id)
+                unit = get_media_unit(db, media_id=media_id)
                 if isinstance(unit, MediaUnit) and unit.claims:
                     disposition = MediaDisposition.Included
                 elif unit is NotReady.Failed:

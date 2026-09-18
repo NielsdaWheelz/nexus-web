@@ -51,7 +51,6 @@ from nexus.services.podcasts.handles import (
     PodcastRefreshRunHandle,
     unseal_podcast_refresh_run,
 )
-from nexus.services.redact import safe_kv
 
 router = APIRouter(tags=["streaming"])
 logger = get_logger(__name__)
@@ -169,14 +168,12 @@ async def stream_chat_run_events(
     attempt = _parse_sse_attempt(sse_attempt)
     logger.info(
         "chat_run.sse.connected",
-        **safe_kv(
-            chat_run_id=str(run_id),
-            viewer_id=str(viewer_id),
-            sse_attempt=attempt,
-            is_reconnect=attempt > 0 or cursor > 0,
-            cursor=cursor,
-            cursor_source="after" if after is not None else "last_event_id" if cursor else "none",
-        ),
+        chat_run_id=str(run_id),
+        viewer_id=str(viewer_id),
+        sse_attempt=attempt,
+        is_reconnect=attempt > 0 or cursor > 0,
+        cursor=cursor,
+        cursor_source="after" if after is not None else "last_event_id" if cursor else "none",
     )
     return await make_cursor_stream_response(
         _CHAT_RUN_KIND, request=request, entity_id=run_id, viewer_id=viewer_id, after=cursor

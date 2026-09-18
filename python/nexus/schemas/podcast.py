@@ -100,9 +100,12 @@ class PodcastOpmlImportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+PodcastBackfillState = Literal["Pending", "Running", "Complete", "SourceLimited", "Failed"]
+
+
 class PodcastBackfillOut(BaseModel):
     id: UUID
-    state: Literal["Pending", "Running", "Complete", "SourceLimited", "Failed"]
+    state: PodcastBackfillState
     processed_count: int = Field(ge=0)
     added_count: int = Field(ge=0)
 
@@ -230,7 +233,7 @@ class PodcastSubscriptionLifecycleBackfillOut(BaseModel):
     """The lifecycle stream's stable, browser-shaped backfill projection."""
 
     id: UUID
-    state: Literal["Pending", "Running", "Complete", "SourceLimited", "Failed"]
+    state: PodcastBackfillState
     processed_count: int = Field(ge=0)
     added_count: int = Field(ge=0)
 

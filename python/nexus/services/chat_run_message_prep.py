@@ -12,6 +12,10 @@ from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.conversation import BranchAnchorRequest
 from nexus.services.chat_run_message_blocks import message_document
 from nexus.services.chat_run_validation import load_valid_parent_for_send
+from nexus.services.collection_revisions import (
+    CollectionFamily,
+    bump_all_collection_revisions,
+)
 from nexus.services.conversation_branches import (
     branch_anchor_for_message,
     ensure_branch_metadata,
@@ -101,6 +105,7 @@ def prepare_messages(
         conversation_id=conversation.id,
         active_leaf_message_id=assistant_message.id,
     )
+    bump_all_collection_revisions(db, family=CollectionFamily.ConversationIndex)
 
     return PreparedMessages(
         conversation=conversation,

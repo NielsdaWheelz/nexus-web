@@ -1,8 +1,5 @@
 """Shared DB-backed PDF quote-readiness predicate.
 
-Provides single-media and batch helpers used by media.py and libraries.py
-to determine whether a PDF has full pdf_quote_text_ready(media) semantics.
-
 Does NOT perform heavy contiguity revalidation on reads; relies on write-time
 enforcement in pdf_ingest and pdf_lifecycle.
 """
@@ -18,47 +15,8 @@ logger = get_logger(__name__)
 
 
 def is_pdf_quote_text_ready(db: Session, media_id: UUID) -> bool:
-    """Check if a single PDF media has full quote-text readiness.
-
-    True iff:
-    1. media.plain_text has at least one canonical word
-    2. media.page_count is present and >= 1
-    3. pdf_page_text_spans row count == page_count (coverage check)
-
-    Uses a lightweight fail-closed check. A span-count mismatch means quote
-    text cannot be safely matched yet, so the predicate returns False with
-    observability logging.
-    """
-    result = db.execute(
-        text("""
-            SELECT
-                m.page_count,
-                (m.plain_text_word_count > 0) as has_quote_text,
-                (SELECT count(*) FROM pdf_page_text_spans p WHERE p.media_id = m.id) as span_count
-            FROM media m
-            WHERE m.id = :media_id
-        """),
-        {"media_id": media_id},
-    )
-    row = result.fetchone()
-    if row is None:
-        return False
-
-    page_count, has_quote_text, span_count = row
-
-    if not has_quote_text or page_count is None or page_count < 1:
-        return False
-
-    if span_count != page_count:
-        logger.warning(
-            "pdf_readiness_span_count_mismatch",
-            media_id=str(media_id),
-            page_count=page_count,
-            span_count=span_count,
-        )
-        return False
-
-    return True
+    """Check quote-text readiness for one PDF."""
+    return batch_pdf_quote_text_ready(db, [media_id])[media_id]
 
 
 def batch_pdf_quote_text_ready(
@@ -67,7 +25,9 @@ def batch_pdf_quote_text_ready(
 ) -> dict[UUID, bool]:
     """Check quote-text readiness for multiple PDF media in one query.
 
-    Returns a dict mapping media_id -> ready boolean.
+    A PDF is ready when its canonical text has at least one word, its page
+    count is positive, and its text-span count matches that page count.
+    A span-count mismatch is logged only when text and page count are present.
     Non-PDF media or missing IDs return False.
     """
     if not media_ids:
@@ -87,21 +47,19 @@ def batch_pdf_quote_text_ready(
         {"media_ids": list(media_ids)},
     )
 
-    readiness = {}
+    readiness = dict.fromkeys(media_ids, False)
     for row in result.fetchall():
         mid, page_count, has_quote_text, span_count = row
-        if (
-            has_quote_text
-            and page_count is not None
-            and page_count >= 1
-            and span_count == page_count
-        ):
-            readiness[mid] = True
-        else:
-            readiness[mid] = False
-
-    for mid in media_ids:
-        if mid not in readiness:
-            readiness[mid] = False
+        if not has_quote_text or page_count is None or page_count < 1:
+            continue
+        if span_count != page_count:
+            logger.warning(
+                "pdf_readiness_span_count_mismatch",
+                media_id=str(mid),
+                page_count=page_count,
+                span_count=span_count,
+            )
+            continue
+        readiness[mid] = True
 
     return readiness

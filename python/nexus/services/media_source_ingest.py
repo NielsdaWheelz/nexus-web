@@ -113,12 +113,12 @@ from nexus.services.media_deletion import (
     delete_duplicate_document_media,
 )
 from nexus.services.media_fact_revisions import bump_all_media_fact_collections
-from nexus.services.media_failure_projection import require_media_failure_stage
 from nexus.services.media_processing_state import (
     begin_extraction,
     mark_ready_for_reading,
     mark_source_queued,
     mark_stage_warning,
+    require_media_failure_stage,
 )
 from nexus.services.metadata_dispatch import try_enqueue_metadata_enrichment
 from nexus.services.pdf_ingest import PdfSourcePackageArtifact

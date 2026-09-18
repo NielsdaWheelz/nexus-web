@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from nexus.errors import ApiErrorCode
 from nexus.services.media_fact_revisions import bump_all_media_fact_collections
-from nexus.services.media_failure_projection import mark_media_failed_by_id
+from nexus.services.media_processing_state import mark_media_failed_by_id
 from nexus.services.transcripts.state import set_media_transcript_state
 
 from .transcription_reservation_settlement import release_transcription_reservation
