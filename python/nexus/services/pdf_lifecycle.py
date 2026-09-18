@@ -127,7 +127,7 @@ def publish_pdf_source(
     def replace_projection(locked_media: Media) -> dict[str, object]:
         result = publish_pdf_extraction_plan(db, media_id=media_id, plan=plan)
         assert isinstance(result, PdfExtractionResult)
-        persist_pdf_metadata(db, locked_media, result)
+        persist_pdf_metadata(locked_media, result)
         bump_all_collection_families(
             db,
             families=(

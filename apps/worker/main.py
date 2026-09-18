@@ -293,8 +293,7 @@ def main() -> None:
                 required_listener=mcp_listener[1] if mcp_listener is not None else None,
             ),
         )
-        if publisher is not None:
-            publisher.clear()
+        publisher.clear()
 
     worker = create_worker(
         stop_event=stop_event,
@@ -344,7 +343,7 @@ def main() -> None:
         lane=settings.worker_lane,
         source_sha=identity.source_sha,
         task_contract_digest=get_task_contract_digest(),
-        allowed_job_kinds=list(worker.allowed_kinds or ()),
+        allowed_job_kinds=list(worker.allowed_kinds),
     )
     try:
         worker.run_forever()
@@ -354,12 +353,11 @@ def main() -> None:
             mcp_listener[0].should_exit = True
             mcp_listener[1].join(timeout=10)
             if mcp_listener[1].is_alive():
-                raise RuntimeError("agent-tool listener did not stop within its shutdown bound")
-            if mcp_supervisor is None:
-                raise AssertionError("agent-tool listener has no supervisor")
-            mcp_supervisor.join(timeout=1)
-            if mcp_supervisor.is_alive():
-                raise RuntimeError("agent-tool listener supervisor did not stop")
+                logger.warning("agent_tools_listener_did_not_stop")
+            if mcp_supervisor is not None:
+                mcp_supervisor.join(timeout=1)
+                if mcp_supervisor.is_alive():
+                    logger.warning("agent_tools_listener_supervisor_did_not_stop")
             from nexus.services.agent_tools_mcp import set_active_agent_tool_registry
 
             set_active_agent_tool_registry(None)

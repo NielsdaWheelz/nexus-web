@@ -36,12 +36,11 @@ export default function DawnWriteBlock({ write }: DawnWriteBlockProps) {
   };
 
   return (
-    <div className={styles.dawnWriteShell} data-testid="dawn-write-block">
+    <div className={styles.dawnWriteShell}>
       <MachineText
         origin={{ label: "Dawn" }}
         {...signature}
         variant="block"
-        data-testid="dawn-write-machine"
       >
         <MarkdownMessage content={write.body_md} />
       </MachineText>

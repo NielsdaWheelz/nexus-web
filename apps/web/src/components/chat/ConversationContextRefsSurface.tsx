@@ -71,7 +71,6 @@ function ContextRefRow({
     <ItemCard
       unavailable={contextRef.missing}
       content={{
-        kind: "resource",
         title: contextRef.label,
         icon: <Icon size={14} aria-hidden="true" />,
       }}

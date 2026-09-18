@@ -769,8 +769,7 @@ def _replace_x_thread_snapshot_projection(
             for prepared in prepared_fragments
             for occurrence in prepared.quote_occurrences
         ],
-        extraction_error_code=None,
-        extraction_error_message=None,
+        extraction_failed=False,
         request_id=request_id,
         locked_existing_target_media_ids=frozenset(locked_existing_quote_ids),
     )

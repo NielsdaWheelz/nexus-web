@@ -126,7 +126,7 @@ def publish_epub_source(
             plan=plan,
         )
         assert isinstance(result, EpubExtractionResult)
-        persist_epub_metadata(db, locked_media, result)
+        persist_epub_metadata(locked_media, result)
         bump_all_collection_families(
             db,
             families=(

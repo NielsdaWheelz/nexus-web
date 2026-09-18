@@ -25,25 +25,6 @@ class MatchStatus(str, PyEnum):
     empty_exact = "empty_exact"
 
 
-class MatcherAnomalyKind(str, PyEnum):
-    """Typed recoverable anomaly classifications from the pure matcher."""
-
-    page_span_offset_out_of_range = "page_span_offset_out_of_range"
-    page_span_inconsistent = "page_span_inconsistent"
-
-
-class MatcherAnomaly(Exception):
-    """Recoverable classified anomaly from the pure matcher.
-
-    Callers should handle via pdf_quote_match_policy, not catch-and-ignore.
-    """
-
-    def __init__(self, kind: MatcherAnomalyKind, detail: str):
-        self.kind = kind
-        self.detail = detail
-        super().__init__(f"{kind.value}: {detail}")
-
-
 @dataclass(frozen=True, slots=True)
 class MatchResult:
     """Structured result of PDF quote-match computation."""
@@ -57,7 +38,6 @@ class MatchResult:
 
 def compute_match(
     exact: str,
-    page_number: int,
     plain_text: str,
     page_span_start: int | None,
     page_span_end: int | None,
@@ -66,16 +46,12 @@ def compute_match(
 
     Args:
         exact: Highlight exact text (may be empty).
-        page_number: 1-based page number of the highlight.
         plain_text: Full normalized media.plain_text.
         page_span_start: Start offset of this page in plain_text (None if unavailable).
         page_span_end: End offset of this page in plain_text (None if unavailable).
 
     Returns:
         MatchResult with status, offsets, prefix, suffix.
-
-    Raises:
-        MatcherAnomaly: On recoverable classified inconsistency.
     """
     if not exact:
         return MatchResult(
@@ -86,26 +62,7 @@ def compute_match(
             suffix="",
         )
 
-    text_len = len(plain_text)
-
     if page_span_start is not None and page_span_end is not None:
-        if page_span_start < 0 or page_span_end < 0:
-            raise MatcherAnomaly(
-                MatcherAnomalyKind.page_span_offset_out_of_range,
-                f"negative offsets: start={page_span_start}, end={page_span_end}",
-            )
-        if page_span_start > text_len or page_span_end > text_len:
-            raise MatcherAnomaly(
-                MatcherAnomalyKind.page_span_offset_out_of_range,
-                f"offsets exceed text length {text_len}: "
-                f"start={page_span_start}, end={page_span_end}",
-            )
-        if page_span_start > page_span_end:
-            raise MatcherAnomaly(
-                MatcherAnomalyKind.page_span_inconsistent,
-                f"start > end: {page_span_start} > {page_span_end}",
-            )
-
         page_text = plain_text[page_span_start:page_span_end]
         matches = _find_all_occurrences(page_text, exact)
 

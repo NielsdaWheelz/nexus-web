@@ -186,7 +186,6 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             max_attempts=3,
             retry_delays_seconds=(30, 120, 300),
             lease_seconds=900,
-            dead_letter_projection="DossierBuild",
             never_prune_dead=True,
         ),
         "podcast_sync_subscription_job": JobDefinition(

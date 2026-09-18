@@ -19,10 +19,6 @@ interface ResourceActionMenuProps {
   readonly align?: ActionMenuProps["align"];
   /** Custom trigger (e.g. a player/header overflow control). Presentation only. */
   readonly renderTrigger?: ActionMenuProps["renderTrigger"];
-  /** Composite-widget attributes forwarded to the shared trigger. */
-  readonly triggerAttributes?: ActionMenuProps["triggerAttributes"];
-  /** Shares the trigger node with presentation behavior such as dragging. */
-  readonly triggerRef?: ActionMenuProps["triggerRef"];
   /** A direct menu at an existing interaction target, with no overflow trigger. */
   readonly anchored?: ActionMenuProps["anchored"];
 }
@@ -45,8 +41,6 @@ export default function ResourceActionMenu({
   placement,
   align,
   renderTrigger,
-  triggerAttributes,
-  triggerRef,
   anchored,
 }: ResourceActionMenuProps) {
   const model = useResourceActionMenuModel(actionSubject);
@@ -60,8 +54,6 @@ export default function ResourceActionMenu({
       placement={placement}
       align={align}
       renderTrigger={renderTrigger}
-      triggerAttributes={triggerAttributes}
-      triggerRef={triggerRef}
       anchored={anchored}
       onOpenChange={onOpenChange}
     />

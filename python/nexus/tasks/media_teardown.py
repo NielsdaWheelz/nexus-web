@@ -48,8 +48,6 @@ from nexus.tasks.storage_object_cleanup import STORAGE_OBJECT_CLEANUP_JOB_KIND
 
 logger = get_logger(__name__)
 
-MEDIA_TEARDOWN_JOB_KIND = "media_teardown"
-
 # Checkpoint discriminators.
 _UNPREPARED = "Unprepared"
 _PATHS_PREPARED = "PathsPrepared"

@@ -94,7 +94,6 @@ export function presentMedia(
     ),
     exceptionalStatus: exceptionalStatus(item.processing_status),
     localAvailability: absent(),
-    connections: absent(),
     relatedMediaId: present(item.id),
     actionSubject: {
       ref: canonicalResourceRef({ scheme: "media", id: item.id }),

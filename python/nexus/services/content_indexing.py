@@ -852,8 +852,6 @@ def build_pdf_indexable_blocks(
     media_id: UUID,
     plain_text: str,
     page_spans: Sequence[Any],
-    extraction_method: str | None = None,
-    ocr_confidence: float | None = None,
 ) -> list[IndexableBlock]:
     """Build the single current PDF evidence JSON shape."""
 
@@ -906,12 +904,6 @@ def build_pdf_indexable_blocks(
             "page_text_end_offset": len(page_text),
             "text_quote": _text_quote(plain_text, start, end),
         }
-        metadata: dict[str, object] = {
-            "page_number": page_number,
-            "page_label": page_label,
-        }
-        if extraction_method is not None:
-            metadata["extraction_method"] = extraction_method
         blocks.append(
             IndexableBlock(
                 owner=IndexOwner("media", media_id),
@@ -919,13 +911,13 @@ def build_pdf_indexable_blocks(
                 block_idx=len(blocks),
                 block_kind="pdf_text_block",
                 canonical_text=page_text,
-                extraction_confidence=ocr_confidence,
+                extraction_confidence=None,
                 source_start_offset=start,
                 source_end_offset=end,
                 locator=locator,
                 selector=selector,
                 heading_path=(f"p. {page_label or page_number}",),
-                metadata=metadata,
+                metadata={"page_number": page_number, "page_label": page_label},
             )
         )
     return blocks

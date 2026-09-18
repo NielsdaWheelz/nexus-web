@@ -80,7 +80,6 @@ export function presentSlateItem(item: SlateItem): CollectionRowView {
     activity,
     exceptionalStatus: absent(),
     localAvailability: absent(),
-    connections: absent(),
     relatedMediaId: absent(),
     actionSubject: target.actionSubject,
     selected: false,

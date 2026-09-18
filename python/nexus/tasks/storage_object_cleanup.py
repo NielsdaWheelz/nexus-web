@@ -156,27 +156,6 @@ def reserve_storage_object_write(db: Session, *, media_id: UUID, storage_path: s
             ) from exc
 
 
-def reserve_upload_session_storage_object_write(
-    db: Session,
-    *,
-    upload_session_id: UUID,
-    storage_path: str,
-    retain_until: datetime,
-) -> None:
-    """Reserve a final-sweep for staged/candidate bytes under upload intent.
-
-    Raises :class:`StoragePathCleanupInFlight` when this exact path is already
-    being swept; the upload owner maps that condition in its own domain.
-    """
-    with transaction(db):
-        reserve_upload_session_storage_object_write_in_current_transaction(
-            db,
-            upload_session_id=upload_session_id,
-            storage_path=storage_path,
-            retain_until=retain_until,
-        )
-
-
 def reserve_upload_session_storage_object_write_in_current_transaction(
     db: Session,
     *,

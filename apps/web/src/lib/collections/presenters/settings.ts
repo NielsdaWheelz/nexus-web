@@ -34,7 +34,6 @@ export function presentSettingsRow(item: SettingsPresenterItem): CollectionRowVi
     activity: absent(),
     exceptionalStatus: absent(),
     localAvailability: absent(),
-    connections: absent(),
     relatedMediaId: absent(),
     // Settings rows are not resources: they carry an explicit, non-resource flat
     // menu (no snapshot, no canonical resource dropdown).

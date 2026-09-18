@@ -27,19 +27,17 @@ export default function ResourceActivation({
   primary,
   className,
   children,
-  dataRowFocusable = true,
 }: {
   primary: ResourceRowPrimary;
   className: string;
   children: ReactNode;
-  dataRowFocusable?: boolean;
 }) {
   if (primary.kind === "link") {
     const secondaryActivation = primary.secondaryActivation;
     return (
       <a
         className={className}
-        data-row-focusable={dataRowFocusable ? "" : undefined}
+        data-row-focusable=""
         href={primary.href}
         data-pane-label-hint={primary.paneLabelHint}
         data-view-transition={primary.viewTransition}
@@ -62,7 +60,7 @@ export default function ResourceActivation({
     return (
       <button
         className={className}
-        data-row-focusable={dataRowFocusable ? "" : undefined}
+        data-row-focusable=""
         type="button"
         disabled={primary.disabled || primary.busy}
         aria-busy={primary.busy || undefined}

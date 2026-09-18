@@ -69,7 +69,6 @@ export function presentPaneFindResult({
     activity: absent(),
     exceptionalStatus: absent(),
     localAvailability: absent(),
-    connections: absent(),
     relatedMediaId: absent(),
     actionSubject: null,
     selected: active,

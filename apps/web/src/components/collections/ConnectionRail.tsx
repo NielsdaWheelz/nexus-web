@@ -6,27 +6,20 @@ import { cx } from "@/lib/ui/cx";
 import styles from "./ConnectionRail.module.css";
 
 /**
- * In-row reveal of deterministic peers: provenance connections plus optional
- * similarity/shared-author related items. Deleted or forbidden peers render as
- * inert "Unavailable" chips, never as a leaked link.
+ * In-row reveal of a resource's similarity/shared-author related items.
+ * Deleted or forbidden peers render as inert "Unavailable" chips, never as a
+ * leaked link.
  */
 export default function ConnectionRail({
-  peers,
   related,
-  relatedStatus = "idle",
+  relatedStatus,
 }: {
-  peers: ConnectionEndpointOut[];
-  related?: ConnectionEndpointOut[];
-  relatedStatus?: "idle" | "loading" | "error" | "ready";
+  related: ConnectionEndpointOut[];
+  relatedStatus: "idle" | "loading" | "error" | "ready";
 }) {
-  const connectedRefs = new Set(peers.map((peer) => peer.ref));
-  const distinctRelated = (related ?? []).filter(
-    (peer) => !connectedRefs.has(peer.ref),
-  );
   return (
     <div className={styles.rail}>
-      <PeerGroup label="Connected" peers={peers} />
-      <RelatedGroup peers={distinctRelated} status={relatedStatus} />
+      <RelatedGroup peers={related} status={relatedStatus} />
     </div>
   );
 }

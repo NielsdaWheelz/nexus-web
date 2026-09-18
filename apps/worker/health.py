@@ -40,7 +40,6 @@ _HEARTBEAT_KEYS = frozenset(
         "successful_cycle_monotonic_seconds",
     }
 )
-_MAX_HEARTBEAT_BYTES = 16_384
 
 
 class WorkerHeartbeatError(RuntimeError):
@@ -141,61 +140,12 @@ def expected_job_kinds(lane: WorkerLane) -> tuple[str, ...]:
     return tuple(sorted(BACKGROUND_WORKER_JOB_KINDS))
 
 
-def validate_worker_heartbeat(
-    payload: object,
-    *,
-    expected_lane: WorkerLane,
-    expected_allowed_job_kinds: Sequence[str],
-    expected_source_sha: str,
-    expected_database_revision: str,
-    expected_oracle_manifest_digest: str,
-    expected_task_contract_digest: str,
-    now_monotonic: float,
-    process_is_alive: Callable[[int], bool],
-) -> WorkerHeartbeat:
-    """Validate freshness, process identity, lane, kinds, and release identity."""
-    heartbeat = validate_worker_heartbeat_record(
-        payload,
-        expected_lane=expected_lane,
-        expected_allowed_job_kinds=expected_allowed_job_kinds,
-        now_monotonic=now_monotonic,
-        process_is_alive=process_is_alive,
-    )
-    expected_kinds = _closed_job_kinds(expected_allowed_job_kinds)
-    expected_digest = _require_digest(expected_task_contract_digest)
-    if (
-        heartbeat.allowed_job_kinds != expected_kinds
-        or heartbeat.source_sha != _require_source_sha(expected_source_sha)
-        or heartbeat.expected_database_revision
-        != _require_database_revision(expected_database_revision)
-        or heartbeat.expected_oracle_manifest_digest
-        != _require_oracle_digest(expected_oracle_manifest_digest)
-        or heartbeat.task_contract_digest != expected_digest
-    ):
-        raise WorkerHeartbeatError("identity_mismatch")
-    return heartbeat
-
-
 def check_worker_health(*, lane: WorkerLane, heartbeat_path: Path | None = None) -> WorkerHeartbeat:
     """Validate the recent self-published worker health record."""
     path = heartbeat_path or WORKER_HEARTBEAT_PATHS[lane]
     try:
-        encoded = path.read_bytes()
-        if len(encoded) > _MAX_HEARTBEAT_BYTES:
-            raise WorkerHeartbeatError("heartbeat_invalid")
-        payload = json.loads(
-            encoded,
-            object_pairs_hook=_unique_object,
-            parse_constant=_reject_json_constant,
-        )
-        if encoded != _canonical_json_bytes(payload):
-            raise WorkerHeartbeatError("heartbeat_invalid")
-    except (
-        OSError,
-        UnicodeDecodeError,
-        json.JSONDecodeError,
-        WorkerHeartbeatError,
-    ) as exc:
+        payload = json.loads(path.read_bytes())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise WorkerHeartbeatError("heartbeat_invalid") from exc
 
     return validate_worker_heartbeat_record(
@@ -337,19 +287,6 @@ def _process_is_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
-
-
-def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    value: dict[str, Any] = {}
-    for key, item in pairs:
-        if key in value:
-            raise WorkerHeartbeatError("heartbeat_invalid")
-        value[key] = item
-    return value
-
-
-def _reject_json_constant(_value: str) -> None:
-    raise WorkerHeartbeatError("heartbeat_invalid")
 
 
 def _canonical_json_bytes(value: object) -> bytes:
