@@ -262,7 +262,6 @@ unexpected timeouts. See
 - [open] oi-159 · python static gates · 2026-09-17 slop sweep · p3 · pyright's include list omits seven service packages; checking all of nexus yields 17 errors: [ticket](tickets/pyright-checks-a-hand-maintained-file-list.md).
 - [open] oi-160 · runtime health · 2026-09-17 slop sweep · p3 · readyz runs an ingest-reconciler integrity audit that gates public ingress and the interactive worker: [ticket](tickets/readyz-gates-deploys-on-an-ingest-reconciler-audit.md).
 - [open] oi-161 · web panes · 2026-09-17 slop sweep · p3 · four pane bodies are oversized with no split that does not invent abstractions; re-measure after the dedupes land: [ticket](tickets/oversized-pane-bodies-have-no-obvious-split.md).
-- [open] oi-162 · web collections · 2026-09-17 cleanup audit · p2 · pagination splits request ownership and misclassifies defects: [ticket](tickets/cursor-pagination-duplicates-request-ownership.md).
 - [open] oi-163 · note anchors · 2026-09-17 cleanup audit · p2 · normalized quote offsets can address the wrong stored text: [ticket](tickets/note-quote-offsets-assume-normalized-source.md).
 - [open] oi-164 · note citations · 2026-09-17 cleanup audit · p2 · citation ranges count trimmed text against untrimmed editor positions: [ticket](tickets/note-citation-pulse-counts-untrimmed-text.md).
 - [open] oi-165 · note navigation · 2026-09-17 cleanup audit · p2 · emitted passage links have no navigation consumer: [ticket](tickets/note-passage-links-have-no-navigation-consumer.md).
