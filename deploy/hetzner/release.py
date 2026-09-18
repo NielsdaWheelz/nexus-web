@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -2740,6 +2741,14 @@ def _backup_config_values(path: Path) -> dict[str, str]:
         raise ReleaseDefect("backup config values must be nonempty plain values")
     _require_match("backup endpoint", values["R2_BACKUP_S3_API_ORIGIN"], _R2_BACKUP_ORIGIN)
     _require_match("backup bucket", values["R2_BACKUP_BUCKET"], _R2_BACKUP_BUCKET)
+    _require_match(
+        "backup S3 access key id", values["R2_BACKUP_ACCESS_KEY_ID"], re.compile(r"[0-9a-f]{32}\Z")
+    )
+    _require_match(
+        "backup S3 secret access key (not the API token)",
+        values["R2_BACKUP_SECRET_ACCESS_KEY"],
+        _SHA256,
+    )
     return values
 
 
@@ -4311,6 +4320,14 @@ class HostRelease:
         backup_config = (
             self._backup_config_snapshot() if backup_policy is BackupPolicy.Required else None
         )
+        if backup_config is not None and (
+            urllib.parse.urlsplit(backup_config.values["R2_BACKUP_S3_API_ORIGIN"]).hostname
+            == urllib.parse.urlsplit(_unquote_env(config.values["R2_S3_API_ORIGIN"])).hostname
+            and backup_config.values["R2_BACKUP_BUCKET"] == _unquote_env(config.values["R2_BUCKET"])
+        ):
+            raise ReleaseBlocked(
+                "database backups require a separate bucket from application media"
+            )
         if backup_config is not None and current_revision != candidate.expected_database_revision:
             ready = _closed_mapping(
                 _read_json_output(

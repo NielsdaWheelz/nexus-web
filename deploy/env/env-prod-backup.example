@@ -3,4 +3,4 @@
 R2_BACKUP_S3_API_ORIGIN=https://<account-id>.r2.cloudflarestorage.com
 R2_BACKUP_BUCKET=nexus-database-backups
 R2_BACKUP_ACCESS_KEY_ID=<backup-access-key-id>
-R2_BACKUP_SECRET_ACCESS_KEY=<backup-secret-access-key>
+R2_BACKUP_SECRET_ACCESS_KEY=<64-hex-s3-secret-access-key-not-api-token>

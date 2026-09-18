@@ -39,6 +39,8 @@ manifest.
 scoped to object read/write access in that bucket. these values never enter
 the three application inputs, vercel settings, api, or workers. the bounded
 backup container receives them only during backup operations.
+the access key id is 32 lowercase hexadecimal characters; its secret is 64.
+copy the s3 secret access key, not the separate cloudflare api token value.
 
 ## Publication
 
