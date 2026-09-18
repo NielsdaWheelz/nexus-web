@@ -447,6 +447,9 @@ note quotes match in normalized text, then project unique hits into raw stored
 codepoint offsets. projection preserves the matched unicode component
 occurrences; a hit that cannot form one exact raw interval remains unresolved.
 resolution never rewrites the note body or chooses among ambiguous matches.
+the backend derives note text from the single-block prosemirror body. the
+frontend's note-body projection mirrors that text and owns editor positions;
+editing, transport decoding, and range decoration consume the same projection.
 
 **Libraries / sharing** — `libraries`, `memberships`, `library_entries`, and
 `library_invitations`. There is no separate provenance, closure, or backfill-job

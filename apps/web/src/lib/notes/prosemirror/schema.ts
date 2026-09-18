@@ -4,6 +4,7 @@ import {
   type Node as ProseMirrorNode,
   type NodeSpec,
 } from "prosemirror-model";
+import { projectNoteBody } from "@/lib/notes/prosemirror/noteBodyProjection";
 import { expectRecord, expectString, isRecord } from "@/lib/validation";
 
 function requiredDomAttribute(dom: HTMLElement, name: string): string | false {
@@ -209,7 +210,7 @@ export interface NoteBodyValue {
   bodyText: string;
 }
 
-export function paragraphFromText(text: string): ProseMirrorNode {
+function paragraphFromText(text: string): ProseMirrorNode {
   return noteBodySchema.nodes.paragraph!.create(
     null,
     text ? noteBodySchema.text(text) : null,
@@ -250,14 +251,6 @@ function decodeNoteBodyNode(raw: unknown, name: string): ProseMirrorNode {
   return body;
 }
 
-/** Strict decoder for a persisted note-body ProseMirror value. */
-export function decodeNoteBodyPmJson(
-  raw: unknown,
-  name: string,
-): Record<string, unknown> {
-  return noteBodyValueFromNode(decodeNoteBodyNode(raw, name)).bodyPmJson;
-}
-
 /** Strict decoder for persisted note bodies; recovery never invents text. */
 export function decodeNoteBodyValue(
   rawPmJson: unknown,
@@ -274,7 +267,7 @@ export function decodeNoteBodyValue(
   return value;
 }
 
-export function noteBodyNodeFromJson(
+function noteBodyNodeFromJson(
   bodyPmJson: Record<string, unknown> | undefined,
   fallbackBodyText = "",
 ): ProseMirrorNode {
@@ -289,6 +282,6 @@ function noteBodyValueFromNode(body: ProseMirrorNode): NoteBodyValue {
   }
   return {
     bodyPmJson,
-    bodyText: body.textContent.trim(),
+    bodyText: projectNoteBody(body).text,
   };
 }
