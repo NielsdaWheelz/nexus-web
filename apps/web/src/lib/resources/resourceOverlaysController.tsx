@@ -32,13 +32,6 @@ import type {
   ResourceActionMutationBoundary,
   ResourceActionMutationLease,
 } from "@/lib/actions/resourceActionMutation";
-import {
-  observeCanonicalResourceMissing,
-  publishObservedDestructiveActionCommit,
-  settleDestructiveAction,
-  unconfirmedDestructiveActionFeedback,
-  type CachedDestructiveActionObservation,
-} from "@/lib/actions/destructiveActionSettlement";
 import { settleDeletedResourcePanes } from "@/lib/actions/resourceDeletionLifecycle";
 import type { LibraryOut } from "@/lib/libraries/contract";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
@@ -72,28 +65,18 @@ interface ResourceOverlaySession {
   readonly mutation: ResourceActionMutationBoundary;
 }
 
-interface LibrarySettingsOverlaySession extends ResourceOverlaySession {
-  readonly reconcileUnconfirmedDeletion: () => Promise<CachedDestructiveActionObservation>;
-}
-
 type OpenResourceOverlay = (
   id: string,
   mutation: ResourceActionMutationBoundary,
 ) => void;
 
-type OpenLibrarySettingsOverlay = (
-  id: string,
-  mutation: ResourceActionMutationBoundary,
-  reconcileUnconfirmedDeletion: () => Promise<CachedDestructiveActionObservation>,
-) => void;
-
 interface ResourceOverlaysContextValue {
   readonly openAuthorsEditor: OpenResourceOverlay;
-  readonly openLibrarySettings: OpenLibrarySettingsOverlay;
+  readonly openLibrarySettings: OpenResourceOverlay;
   readonly openPodcastSettings: OpenResourceOverlay;
   readonly openSubscribe: OpenResourceOverlay;
   readonly authors: ResourceOverlaySession | null;
-  readonly librarySettings: LibrarySettingsOverlaySession | null;
+  readonly librarySettings: ResourceOverlaySession | null;
   readonly podcastSettings: ResourceOverlaySession | null;
   readonly subscribe: ResourceOverlaySession | null;
   readonly closeAuthors: () => void;
@@ -138,59 +121,25 @@ export function useResourceOverlaysController(): Pick<
   );
 }
 
-type OpenOverlaySession<TExtraArgs extends unknown[]> = (
-  id: string,
-  mutation: ResourceActionMutationBoundary,
-  ...extraArgs: TExtraArgs
-) => void;
-
-function createResourceOverlaySession(
-  key: number,
-  id: string,
-  mutation: ResourceActionMutationBoundary,
-): ResourceOverlaySession {
-  return { key, id, mutation };
-}
-
-function createLibrarySettingsOverlaySession(
-  key: number,
-  id: string,
-  mutation: ResourceActionMutationBoundary,
-  reconcileUnconfirmedDeletion: () => Promise<CachedDestructiveActionObservation>,
-): LibrarySettingsOverlaySession {
-  return { key, id, mutation, reconcileUnconfirmedDeletion };
-}
-
-function useOverlaySession<
-  TSession extends ResourceOverlaySession,
-  TExtraArgs extends unknown[],
->(
-  createSession: (
-    key: number,
-    id: string,
-    mutation: ResourceActionMutationBoundary,
-    ...extraArgs: TExtraArgs
-  ) => TSession,
-): [TSession | null, OpenOverlaySession<TExtraArgs>, () => void] {
-  const [session, setSession] = useState<TSession | null>(null);
-  const sessionRef = useRef<TSession | null>(null);
+function useOverlaySession(): [
+  ResourceOverlaySession | null,
+  OpenResourceOverlay,
+  () => void,
+] {
+  const [session, setSession] = useState<ResourceOverlaySession | null>(null);
+  const sessionRef = useRef<ResourceOverlaySession | null>(null);
   const nextKeyRef = useRef(0);
-  const open = useCallback<OpenOverlaySession<TExtraArgs>>(
-    (id, mutation, ...extraArgs) => {
+  const open = useCallback<OpenResourceOverlay>(
+    (id, mutation) => {
       // Preserve the visible editor and its draft. In particular, no later menu
       // invocation may unmount an in-flight mutation owner.
       if (sessionRef.current !== null) return;
       nextKeyRef.current += 1;
-      const next = createSession(
-        nextKeyRef.current,
-        id,
-        mutation,
-        ...extraArgs,
-      );
+      const next = { key: nextKeyRef.current, id, mutation };
       sessionRef.current = next;
       setSession(next);
     },
-    [createSession],
+    [],
   );
   const close = useCallback(() => {
     const current = sessionRef.current;
@@ -206,16 +155,12 @@ export function ResourceOverlaysProvider({
 }: {
   children: ReactNode;
 }) {
-  const [authors, openAuthorsEditor, closeAuthors] = useOverlaySession(
-    createResourceOverlaySession,
-  );
+  const [authors, openAuthorsEditor, closeAuthors] = useOverlaySession();
   const [librarySettings, openLibrarySettings, closeLibrarySettings] =
-    useOverlaySession(createLibrarySettingsOverlaySession);
+    useOverlaySession();
   const [podcastSettings, openPodcastSettings, closePodcastSettings] =
-    useOverlaySession(createResourceOverlaySession);
-  const [subscribe, openSubscribe, closeSubscribe] = useOverlaySession(
-    createResourceOverlaySession,
-  );
+    useOverlaySession();
+  const [subscribe, openSubscribe, closeSubscribe] = useOverlaySession();
 
   const value = useMemo<ResourceOverlaysContextValue>(
     () => ({
@@ -302,9 +247,6 @@ export function ResourceActionOverlays() {
           key={librarySettings.key}
           libraryId={librarySettings.id}
           mutation={librarySettings.mutation}
-          reconcileUnconfirmedDeletion={
-            librarySettings.reconcileUnconfirmedDeletion
-          }
           onClose={closeLibrarySettings}
         />
       ) : null}
@@ -437,12 +379,10 @@ function AuthorsEditorOverlay({
 function LibrarySettingsOverlay({
   libraryId,
   mutation,
-  reconcileUnconfirmedDeletion,
   onClose,
 }: {
   libraryId: string;
   mutation: ResourceActionMutationBoundary;
-  reconcileUnconfirmedDeletion: () => Promise<CachedDestructiveActionObservation>;
   onClose: () => void;
 }) {
   const feedback = useFeedback();
@@ -527,38 +467,7 @@ function LibrarySettingsOverlay({
         if (lease === null) return;
         const libraryRef = assumeCanonicalResourceRef(`library:${libraryId}`);
         try {
-          let settlement = await settleDestructiveAction({
-            command: () => deleteMemberLibrary(libraryId),
-            observeMissing: () => observeCanonicalResourceMissing(libraryRef),
-          });
-          if (settlement.kind === "Unconfirmed") {
-            const cachedObservation = await reconcileUnconfirmedDeletion();
-            if (cachedObservation === "Missing") {
-              settlement = {
-                kind: "Committed",
-                evidence: "ObservedMissing",
-              };
-            } else if (cachedObservation === "Present") {
-              settlement = {
-                kind: "NotCommitted",
-                commandError: settlement.commandError,
-              };
-            }
-          }
-          if (settlement.kind === "NotCommitted") {
-            throw settlement.commandError;
-          }
-          if (settlement.kind === "Unconfirmed") {
-            lease.abort();
-            feedback.publish({
-              kind: "Hud",
-              content: unconfirmedDestructiveActionFeedback(settlement),
-            });
-            return;
-          }
-          if (settlement.evidence === "ObservedMissing") {
-            publishObservedDestructiveActionCommit("DeleteLibrary");
-          }
+          await deleteMemberLibrary(libraryId);
           settleDeletedResourcePanes({
             workspace: workspaceRef.current,
             deletedRef: libraryRef,

@@ -6,8 +6,7 @@ import {
   MOUNTED_ACTION_ACCEPTED,
   MOUNTED_ACTION_DEFERRED,
   type CommittingMountedActionIntentBase,
-  type DestructiveCommittingMountedActionIntentBase,
-  type DestructiveMountedMutationOutcome,
+  type CommittedMountedMutationOutcome,
   type MountedActionIntentBase,
   type MountedActionRequest,
 } from "@/lib/actions/mountedActionHandoff";
@@ -24,29 +23,22 @@ export type MessageActionIntent =
         | { readonly kind: "RerunMessage" }
         | { readonly kind: "RegenerateMessage" }
       ))
-  | (DestructiveCommittingMountedActionIntentBase & {
+  | (CommittingMountedActionIntentBase & {
       readonly kind: "DeleteMessage";
       readonly settleDeletedConversation: SettleDeletedMessageConversation;
     });
 
 export type MessageActionMutationOutcome = "Committed" | "Failed";
 
-export type ExecuteDeleteMessageMutation = (
-  command: () => Promise<unknown>,
-  projectCommitted: (
-    evidence: "Acknowledged" | "ObservedMissing",
-  ) => void | Promise<void>,
-) => Promise<DestructiveMountedMutationOutcome>;
+export type ExecuteDeleteMessageMutation = <T>(
+  command: () => Promise<T>,
+  projectCommitted: (receipt: T) => void | Promise<void>,
+) => Promise<CommittedMountedMutationOutcome>;
 
-export interface DeletedMessageConversationSettlement {
+export type SettleDeletedMessageConversation = (input: {
   readonly conversationRef: CanonicalResourceRef;
-  readonly messageEvidence: "Acknowledged" | "ObservedMissing";
-  readonly receiptConversationDeleted: boolean | "Unknown";
-}
-
-export type SettleDeletedMessageConversation = (
-  input: DeletedMessageConversationSettlement,
-) => Promise<void>;
+  readonly conversationDeleted: boolean;
+}) => void;
 
 export type DeleteMessageMutation = (
   messageId: string,

@@ -152,6 +152,11 @@ order, and danger-last come from the server action snapshot and pure planner,
 so the pane menu includes `Open`. Pane bodies never build resource action
 arrays.
 
+Deletion updates panes and reconciles action snapshots after the command
+succeeds. Mounted owners still reconcile when their local projection fails.
+A failed or lost response reports the command error and leaves the view for
+refresh; the browser neither retries the delete nor reads a commit witness.
+
 Desktop and mobile primary headers keep stable Back and Forward positions,
 render the optional typed Companion action, and expose exactly one **More**
 trigger when contextual commands exist. Search/Return, Refresh, route Share,

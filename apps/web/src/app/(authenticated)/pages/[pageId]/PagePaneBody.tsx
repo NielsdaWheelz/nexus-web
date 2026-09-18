@@ -55,7 +55,7 @@ import {
 } from "@/lib/notes/actionIntents";
 import {
   createMountedEditorIntentController,
-  executeDestructiveMountedMutation,
+  executeCommittingMountedMutation,
   type MountedEditorIntentController,
 } from "@/lib/actions/mountedActionHandoff";
 
@@ -290,12 +290,11 @@ export default function PagePaneBody({
       void (async () => {
         let deleted = false;
         try {
-          const outcome = await executeDestructiveMountedMutation(
+          await executeCommittingMountedMutation(
             intent,
             () => apiFetch(`/api/notes/pages/${page.id}`, { method: "DELETE" }),
             () => setPage(null),
           );
-          if (outcome.kind !== "Committed") return;
           deleted = true;
           activateTarget({
             target: { href: "/notes", labelHint: "Notes" },

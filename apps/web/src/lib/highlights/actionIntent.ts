@@ -6,26 +6,21 @@ import {
   MOUNTED_ACTION_ACCEPTED,
   MOUNTED_ACTION_DEFERRED,
   type CommittingMountedActionIntentBase,
-  type DestructiveCommittingMountedActionIntentBase,
   type MountedActionRequest,
 } from "@/lib/actions/mountedActionHandoff";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 
-export type HighlightActionIntent =
-  | (CommittingMountedActionIntentBase &
-      (
-        | { readonly kind: "EditHighlight" }
-        | { readonly kind: "AddHighlightNote" }
-        | {
-            readonly kind: "EditHighlightNote";
-            readonly noteBlockId: string;
-          }
-        | { readonly kind: "LinkHighlight" }
-        | { readonly kind: "EditHighlightBounds" }
-      ))
-  | (DestructiveCommittingMountedActionIntentBase & {
-      readonly kind: "DeleteHighlight";
-    });
+export type HighlightActionIntent = CommittingMountedActionIntentBase & (
+  | { readonly kind: "EditHighlight" }
+  | { readonly kind: "AddHighlightNote" }
+  | {
+      readonly kind: "EditHighlightNote";
+      readonly noteBlockId: string;
+    }
+  | { readonly kind: "LinkHighlight" }
+  | { readonly kind: "EditHighlightBounds" }
+  | { readonly kind: "DeleteHighlight" }
+);
 
 const handoff = createMountedActionHandoff<HighlightActionIntent>();
 

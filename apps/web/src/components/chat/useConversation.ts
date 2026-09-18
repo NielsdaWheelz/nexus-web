@@ -78,10 +78,7 @@ import type {
   DeleteMessageMutation,
   MessageActionMutationOutcome,
 } from "@/lib/chat/messageActionIntent";
-import {
-  deleteConversationMessage,
-  type MessageDeleteReceipt,
-} from "@/lib/chat/messageDeletion";
+import { deleteConversationMessage } from "@/lib/chat/messageDeletion";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 
 type ChatRunData = ChatRunResponse["data"];
@@ -1068,15 +1065,13 @@ export function useConversation(
             "Mounted Message deletion has no Conversation identity",
           );
         }
-        let receipt: MessageDeleteReceipt | null = null;
         const outcome = await execute(
-          async () => {
-            receipt = await deleteConversationMessage({
+          () =>
+            deleteConversationMessage({
               messageId,
               conversationId: currentConversationId,
-            });
-          },
-          async (evidence) => {
+            }),
+          async (receipt) => {
             let localProjectionError: unknown;
             try {
               const remainingMessages = messageUpdateReducer(messages, {
@@ -1105,32 +1100,19 @@ export function useConversation(
               localProjectionError = error;
             }
 
-            const receiptConversationDeleted =
-              evidence === "ObservedMissing"
-                ? "Unknown"
-                : receipt?.conversationDeleted;
-            if (receiptConversationDeleted === undefined) {
-              throw new Error(
-                "Acknowledged Message deletion is missing its receipt",
-              );
-            }
-            await settleConversation({
+            settleConversation({
               conversationRef: canonicalResourceRef({
                 scheme: "conversation",
                 id: currentConversationId,
               }),
-              messageEvidence: evidence,
-              receiptConversationDeleted,
+              conversationDeleted: receipt.conversationDeleted,
             });
             if (localProjectionError !== undefined) {
               throw localProjectionError;
             }
           },
         );
-        if (
-          outcome.kind === "Committed" &&
-          outcome.projectionError !== undefined
-        ) {
+        if (outcome.projectionError !== undefined) {
           const error = outcome.projectionError;
           if (handleUnauthenticatedApiError(error)) return;
           if (!isApiError(error) || isSameSystemApiDefect(error)) {

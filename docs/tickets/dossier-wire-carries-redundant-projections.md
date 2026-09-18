@@ -3,8 +3,8 @@
 status: open · origin: 2026-09-17 slop sweep (claude session) · area: dossiers ·
 oi-157
 
-three wire-side removals fall out of the artifacts slice and belong together,
-ahead of the DDL in oi-152.
+two wire-side removals remain in the artifacts slice. pair ART-05 with the DDL
+in oi-152 and the persisted-event rewrite below.
 
 ART-05: `support` is projected but carries nothing a reader uses. drop it from
 `FailedEventPayload` and `HistoricalFailedEventPayload`
@@ -14,9 +14,17 @@ three TS decoders (`lib/dossiers/eventDecoder.ts:104-116`,
 `dossierWire.ts:659-665`, `dossierControllerTypes.ts:191-196`). the
 `artifact_build_failures.support` column and its CHECK then go in oi-152.
 
-ART-16: `artifact_learn_failures.error_code` is NOT NULL and
-`record_learn_unresolved` writes a literal into it until the column is dropped;
-remove the code side here, the column in oi-152.
+2026-09-17 cleanup verification at `0763b3672`: ART-16 is already resolved;
+migration 0234 dropped `artifact_learn_failures.error_code`, and
+`record_learn_unresolved` no longer writes it.
+
+ART-05 also changes persisted events, not just their wire projection.
+`schemas/artifact.py:386-396` validates stored payload dictionaries with the
+exact event model; `FailedEventPayload` and `HistoricalFailedEventPayload`
+currently require `support`. deleting that model field without rewriting
+`artifact_build_events.payload` makes existing failure-event replay reject the
+extra key. migrate both event types in the same cutover and verify old-row
+replay through the current schema and browser decoder.
 
 ART-13: `IdeaInputManifestOut` (`services/artifacts/manifests.py:166-174`) is
 `IdeaInputManifestV1` minus `idea_subject_id`, `InputManifestOut` (176-186)
@@ -36,7 +44,8 @@ also in this change: rename `seal_artifact_build` / `unseal_artifact_build`,
 which no longer seal anything, and correct
 `docs/architecture.md:1046-1047`, which still describes a `{sealed_handle}`.
 
-prerequisite: none for the wire removals. the matching DDL waits for oi-152.
+prerequisite: none. ART-05 requires its matching data migration in the same
+change; do not ship an intermediate event format.
 
 acceptance: load an idea dossier revision in the pane after the ART-13 commit
 and see it render; no `support` or `failure_support` symbol remains in python or

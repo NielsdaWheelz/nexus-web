@@ -117,7 +117,7 @@ import {
   useHighlightActionIntentOwners,
   type HighlightActionIntent,
 } from "@/lib/highlights/actionIntent";
-import { executeDestructiveMountedMutation } from "@/lib/actions/mountedActionHandoff";
+import { executeCommittingMountedMutation } from "@/lib/actions/mountedActionHandoff";
 import { createRandomId } from "@/lib/createRandomId";
 import { isEditableTarget } from "@/lib/ui/isEditableTarget";
 import { useMediaReaderViewTransition } from "@/lib/ui/viewTransitions";
@@ -6024,32 +6024,30 @@ export default function MediaPaneBody() {
           void (async () => {
             let deleted = false;
             try {
-              const outcome = await executeDestructiveMountedMutation(
+              const outcome = await executeCommittingMountedMutation(
                 intent,
                 () => deleteHighlight(highlight.id),
                 () => projectDeletedHighlight(highlight.id),
               );
-              if (outcome.kind === "Committed") {
-                deleted = true;
-                if (outcome.projectionError !== undefined) {
-                  const error = outcome.projectionError;
-                  if (handleUnauthenticatedApiError(error)) return;
-                  if (!isApiError(error) || isSameSystemApiDefect(error)) {
-                    setAsyncDefect({ error });
-                    return;
-                  }
-                  feedback.publish({
-                    kind: "Hud",
-                    key: `highlight-refresh-after-delete:${highlight.id}`,
-                    content: {
-                      tone: "Warning",
-                      title: "Highlight deleted; reader couldn’t refresh",
-                      message:
-                        "Refresh the pane to load the latest highlights.",
-                      requestId: error.requestId,
-                    },
-                  });
+              deleted = true;
+              if (outcome.projectionError !== undefined) {
+                const error = outcome.projectionError;
+                if (handleUnauthenticatedApiError(error)) return;
+                if (!isApiError(error) || isSameSystemApiDefect(error)) {
+                  setAsyncDefect({ error });
+                  return;
                 }
+                feedback.publish({
+                  kind: "Hud",
+                  key: `highlight-refresh-after-delete:${highlight.id}`,
+                  content: {
+                    tone: "Warning",
+                    title: "Highlight deleted; reader couldn’t refresh",
+                    message:
+                      "Refresh the pane to load the latest highlights.",
+                    requestId: error.requestId,
+                  },
+                });
               }
             } catch (error) {
               if (handleUnauthenticatedApiError(error)) return;

@@ -50,20 +50,7 @@ import {
   createResourceActionMutationBoundary,
   type ResourceActionMutationBoundary,
 } from "@/lib/actions/resourceActionMutation";
-import {
-  isAmbiguousDestructiveActionError,
-  observeCanonicalResourceMissing,
-  publishObservedDestructiveActionCommit,
-  settleDestructiveAction,
-  unconfirmedDestructiveActionFeedback,
-  type CachedDestructiveActionObservation,
-  type DestructiveActionSettlement,
-  type DestructiveResourceActionKind,
-} from "@/lib/actions/destructiveActionSettlement";
-import {
-  settleDeletedMessageConversation as settleDeletedMessageConversationLifecycle,
-  settleDeletedResourcePanes,
-} from "@/lib/actions/resourceDeletionLifecycle";
+import { settleDeletedResourcePanes } from "@/lib/actions/resourceDeletionLifecycle";
 import type { MountedActionRequest } from "@/lib/actions/mountedActionHandoff";
 import {
   executeResourceChat,
@@ -109,7 +96,7 @@ import {
   refreshMediaSource,
   retryMediaMetadata,
 } from "@/lib/media/ingestionClient";
-import { confirmAndDeleteMedia } from "@/lib/media/mediaLibraries";
+import { deleteMedia } from "@/lib/media/mediaLibraries";
 import { deleteMemberLibrary } from "@/lib/libraries/client";
 import { deleteConversation } from "@/lib/conversations/indexMutation";
 import {
@@ -138,7 +125,6 @@ import {
   requestMessageActionIntent,
   type SettleDeletedMessageConversation,
 } from "@/lib/chat/messageActionIntent";
-import { publishConversationIndexChange } from "@/lib/conversations/indexRevision";
 import {
   requestNoteBlockActionIntent,
   requestPageActionIntent,
@@ -287,9 +273,6 @@ interface RuntimePorts {
     ref: CanonicalResourceRef,
     actionId: ResourceActionId,
   ) => ResourceActionMutationBoundary;
-  readonly reconcileUnconfirmedDeletionSubject: (
-    ref: CanonicalResourceRef,
-  ) => Promise<CachedDestructiveActionObservation>;
   readonly settleDeletedMessageConversation: SettleDeletedMessageConversation;
   readonly reconcile: ResourceActionSnapshotCache["reconcile"];
   readonly lectern: LecternCapability;
@@ -446,9 +429,7 @@ function activateResourceInWorkspace(
 
 interface ResourceDeletionEffectOutcome {
   readonly kind: "ResourceDeletion";
-  readonly actionKind: DestructiveResourceActionKind;
   readonly fallbackHref: string;
-  readonly settlement: DestructiveActionSettlement;
 }
 
 interface MountedMutationCompletion {
@@ -787,55 +768,15 @@ async function runResourceActionEffect(
       if (!lecternCommandIsReady(ports, false)) return;
       await ports.lectern.removeItem(intent.lecternItemId);
       return;
-    case "RemoveMedia": {
-      // The shared danger confirm already gated this dispatch, so pass a
-      // pre-confirmed removal; the domain command reauthorizes on the server.
-      const settlement = await settleDestructiveAction({
-        command: async () => {
-          const outcome = await confirmAndDeleteMedia({
-            mediaId: requireRefId(target),
-            mediaTitle: "",
-            confirmRemoval: () => true,
-          });
-          if (outcome.kind === "Cancelled") {
-            // justify-defect: this dispatch supplies an unconditional
-            // pre-confirmation after the shared confirm has already succeeded.
-            throw new Error("Pre-confirmed Media deletion was cancelled");
-          }
-        },
-        observeMissing: () => observeCanonicalResourceMissing(target.ref),
-      });
-      return {
-        kind: "ResourceDeletion",
-        actionKind: "RemoveMedia",
-        fallbackHref: "/libraries",
-        settlement,
-      };
-    }
-    case "DeleteLibrary": {
-      const settlement = await settleDestructiveAction({
-        command: () => deleteMemberLibrary(requireRefId(target)),
-        observeMissing: () => observeCanonicalResourceMissing(target.ref),
-      });
-      return {
-        kind: "ResourceDeletion",
-        actionKind: "DeleteLibrary",
-        fallbackHref: "/libraries",
-        settlement,
-      };
-    }
-    case "DeleteConversation": {
-      const settlement = await settleDestructiveAction({
-        command: () => deleteConversation(requireRefId(target)),
-        observeMissing: () => observeCanonicalResourceMissing(target.ref),
-      });
-      return {
-        kind: "ResourceDeletion",
-        actionKind: "DeleteConversation",
-        fallbackHref: "/conversations",
-        settlement,
-      };
-    }
+    case "RemoveMedia":
+      await deleteMedia(requireRefId(target));
+      return { kind: "ResourceDeletion", fallbackHref: "/libraries" };
+    case "DeleteLibrary":
+      await deleteMemberLibrary(requireRefId(target));
+      return { kind: "ResourceDeletion", fallbackHref: "/libraries" };
+    case "DeleteConversation":
+      await deleteConversation(requireRefId(target));
+      return { kind: "ResourceDeletion", fallbackHref: "/conversations" };
     case "Unsubscribe":
       await unsubscribeFromPodcast(requireRefId(target));
       return;
@@ -873,7 +814,6 @@ async function runResourceActionEffect(
       ports.openLibrarySettings(
         requireRefId(target),
         ports.createOverlayMutationBoundary(target.ref, actionId),
-        () => ports.reconcileUnconfirmedDeletionSubject(target.ref),
       );
       return;
     case "PodcastSettings":
@@ -933,8 +873,6 @@ async function runResourceActionEffect(
             kind: intent.kind,
             ref: target.ref,
             activation,
-            settleDeletionCommand: (command) =>
-              settleMountedDeletionCommand({ command, ref: target.ref, ports }),
             settleDeletedConversation: ports.settleDeletedMessageConversation,
             onCommitted: completion.onCommitted,
             onAborted: completion.onAborted,
@@ -997,8 +935,6 @@ async function runResourceActionEffect(
             kind: intent.kind,
             ref: target.ref,
             activation,
-            settleDeletionCommand: (command) =>
-              settleMountedDeletionCommand({ command, ref: target.ref, ports }),
             onCommitted: completion.onCommitted,
             onAborted: completion.onAborted,
           }),
@@ -1056,8 +992,6 @@ async function runResourceActionEffect(
             kind: intent.kind,
             ref: target.ref,
             activation,
-            settleDeletionCommand: (command) =>
-              settleMountedDeletionCommand({ command, ref: target.ref, ports }),
             onCommitted: completion.onCommitted,
             onAborted: completion.onAborted,
           }),
@@ -1241,75 +1175,6 @@ function dispatchErrorContent(
     message,
     requestId,
   };
-}
-
-/**
- * If the independent witness is also unavailable, force the retained subject
- * through the cache barrier. A second transport failure installs Error so a
- * stale inverse Delete cannot re-enable when global Busy clears.
- */
-async function reconcileUnconfirmedDeletionSubject(
-  cache: ResourceActionSnapshotCache,
-  ref: CanonicalResourceRef,
-): Promise<CachedDestructiveActionObservation> {
-  const release = cache.retain(ref);
-  try {
-    await cache.reconcile({ kind: "Subjects", refs: [ref] });
-    const entry = cache.peek(ref);
-    if (entry?.status === "Ready") {
-      return entry.snapshot.missing ? "Missing" : "Present";
-    }
-    if (entry?.status === "Error") {
-      if (!isAmbiguousDestructiveActionError(entry.error)) throw entry.error;
-      return "Unconfirmed";
-    }
-    // A concurrent retained-cache read may supersede this exact generation.
-    // Its public Loading/Reconciling phase still blocks the stale action.
-    return "Unconfirmed";
-  } finally {
-    release();
-  }
-}
-
-async function finalizeDestructiveActionSettlement(input: {
-  readonly settlement: DestructiveActionSettlement;
-  readonly ref: CanonicalResourceRef;
-  readonly ports: RuntimePorts;
-}): Promise<DestructiveActionSettlement> {
-  const settlement = input.settlement;
-  if (settlement.kind !== "Unconfirmed") return settlement;
-
-  const cachedObservation =
-    await input.ports.reconcileUnconfirmedDeletionSubject(input.ref);
-  if (cachedObservation === "Missing") {
-    return { kind: "Committed", evidence: "ObservedMissing" };
-  }
-  if (cachedObservation === "Present") {
-    return {
-      kind: "NotCommitted",
-      commandError: settlement.commandError,
-    };
-  }
-  input.ports.feedback.publish({
-    kind: "Hud",
-    content: unconfirmedDestructiveActionFeedback(settlement),
-  });
-  return settlement;
-}
-
-async function settleMountedDeletionCommand(input: {
-  readonly command: () => Promise<unknown>;
-  readonly ref: CanonicalResourceRef;
-  readonly ports: RuntimePorts;
-}): Promise<DestructiveActionSettlement> {
-  return finalizeDestructiveActionSettlement({
-    settlement: await settleDestructiveAction({
-      command: input.command,
-      observeMissing: () => observeCanonicalResourceMissing(input.ref),
-    }),
-    ref: input.ref,
-    ports: input.ports,
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1498,23 +1363,15 @@ export function ResourceActionRuntimeProvider({
     },
     [busyStore, cache],
   );
-  const resolveUnconfirmedDeletionSubject = useCallback(
-    (ref: CanonicalResourceRef) =>
-      reconcileUnconfirmedDeletionSubject(cache, ref),
-    [cache],
-  );
   const settleDeletedMessageConversation =
-    useCallback<SettleDeletedMessageConversation>(
-      (input) =>
-        settleDeletedMessageConversationLifecycle({
-          ...input,
-          observeConversationMissing: () =>
-            observeCanonicalResourceMissing(input.conversationRef),
-          publishConversationIndexChange,
-          workspace: workspaceRef.current,
-        }),
-      [],
-    );
+    useCallback<SettleDeletedMessageConversation>((input) => {
+      if (!input.conversationDeleted) return;
+      settleDeletedResourcePanes({
+        deletedRef: input.conversationRef,
+        fallbackHref: "/conversations",
+        workspace: workspaceRef.current,
+      });
+    }, []);
 
   const ports: RuntimePorts = {
     workspace,
@@ -1526,7 +1383,6 @@ export function ResourceActionRuntimeProvider({
     openPodcastSettings,
     openSubscribe,
     createOverlayMutationBoundary,
-    reconcileUnconfirmedDeletionSubject: resolveUnconfirmedDeletionSubject,
     settleDeletedMessageConversation,
     reconcile: cache.reconcile,
     lectern,
@@ -1564,29 +1420,6 @@ export function ResourceActionRuntimeProvider({
             currentPorts,
           );
           if (effectOutcome?.kind === "ResourceDeletion") {
-            const settlement = await finalizeDestructiveActionSettlement({
-              settlement: effectOutcome.settlement,
-              ref: input.ref,
-              ports: currentPorts,
-            });
-
-            if (settlement.kind === "NotCommitted") {
-              currentPorts.feedback.publish({
-                kind: "Hud",
-                content: dispatchErrorContent(
-                  input.intent,
-                  input.label,
-                  settlement.commandError,
-                ),
-              });
-              return;
-            }
-            if (settlement.kind === "Unconfirmed") {
-              return;
-            }
-            if (settlement.evidence === "ObservedMissing") {
-              publishObservedDestructiveActionCommit(effectOutcome.actionKind);
-            }
             // Read the current workspace after the awaited command. The user
             // may have navigated or opened another copy while the request was
             // in flight; every pane that still targets the deleted ref settles.
