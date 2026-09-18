@@ -129,7 +129,7 @@ def execute_surface_command(
             required=required,
         )
 
-        changed_refs = _apply_command(
+        _apply_command(
             db,
             viewer_id=viewer_id,
             source=source,
@@ -140,10 +140,6 @@ def execute_surface_command(
             client_mutation_id=request.client_mutation_id,
             surface=get_surface(db, viewer_id=viewer_id, source=source),
         )
-        changed_lanes = {
-            ref.uri: versions.versions_for_ref(db, viewer_id=viewer_id, ref=ref)
-            for ref in changed_refs | {source}
-        }
         record_replay(
             db,
             viewer_id=viewer_id,
@@ -151,7 +147,6 @@ def execute_surface_command(
             client_mutation_id=request.client_mutation_id,
             request_bytes=request_bytes,
             response_json=response.model_dump(mode="json"),
-            changed_lanes=changed_lanes,
         )
         db.commit()
         return response
@@ -170,10 +165,10 @@ def _apply_command(
     source: ResourceRef,
     command: object,
     edges: list[ResourceEdge],
-) -> set[ResourceRef]:
+) -> None:
     match command:
         case InsertNoteSurfaceCommand():
-            note = insert_note_occurrence_without_commit(
+            insert_note_occurrence_without_commit(
                 db,
                 viewer_id=viewer_id,
                 source=source,
@@ -182,7 +177,6 @@ def _apply_command(
                 position=command.position,
                 reindex_reason="surface_insert_note",
             )
-            return {ResourceRef(scheme="note_block", id=note.id)}
         case SplitNoteSurfaceCommand():
             left_edge = graph_adjacency.ordered_edge_for_occurrence(
                 db,
@@ -208,7 +202,7 @@ def _apply_command(
                 body_pm_json=command.left_body_pm_json,
             )
             enqueue_note_reindex(db, note_block_id=left.id, reason="surface_split_note")
-            right = insert_note_occurrence_without_commit(
+            insert_note_occurrence_without_commit(
                 db,
                 viewer_id=viewer_id,
                 source=source,
@@ -217,7 +211,6 @@ def _apply_command(
                 position=right_position,
                 reindex_reason="surface_split_note",
             )
-            return {left_ref, ResourceRef(scheme="note_block", id=right.id)}
         case InsertResourceSurfaceCommand():
             target = _parse_ref_or_error(command.target_ref)
             insertion_index = _insertion_index(edges, command.position)
@@ -234,7 +227,6 @@ def _apply_command(
                 edges=_insert_at_index(edges, edge, insertion_index),
             )
             versions.bump_version(db, viewer_id=viewer_id, ref=source, lane="outgoing_edges")
-            return set()
         case MoveOccurrenceSurfaceCommand():
             edge = graph_adjacency.ordered_edge_for_occurrence(
                 db,
@@ -255,7 +247,6 @@ def _apply_command(
                 edges=reordered,
             )
             versions.bump_version(db, viewer_id=viewer_id, ref=source, lane="outgoing_edges")
-            return set()
         case RemoveOccurrenceSurfaceCommand():
             graph_adjacency.remove_ordered_edge(
                 db,
@@ -270,7 +261,6 @@ def _apply_command(
                 edges=graph_adjacency.ordered_edges(db, user_id=viewer_id, source=source),
             )
             versions.bump_version(db, viewer_id=viewer_id, ref=source, lane="outgoing_edges")
-            return set()
         case _:
             raise AssertionError("unreachable surface command")
 

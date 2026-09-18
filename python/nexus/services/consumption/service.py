@@ -686,7 +686,6 @@ def _run_lectern_command_op(db: Session, viewer_id: UUID, command: LecternComman
         client_mutation_id=client_mutation_id,
         request_bytes=request_bytes,
         response_json={"outcome": outcome.model_dump(mode="json", by_alias=True)},
-        changed_lanes={},
     )
     db.commit()
     return LecternResult(outcome=outcome, lectern=snapshot)
@@ -813,7 +812,6 @@ def _run_consumption_command_op(
             if effect.completion_handle is not None
             else None,
         },
-        changed_lanes={},
     )
     db.commit()
     return result
@@ -1428,7 +1426,6 @@ def _apply_activity_exclusion_op(
         client_mutation_id=str(command.client_mutation_id),
         request_bytes=request_bytes,
         response_json=response.model_dump(mode="json", by_alias=True),
-        changed_lanes={},
     )
     db.commit()
     return response

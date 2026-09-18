@@ -34,8 +34,6 @@ from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.text_quote import QuoteStatus
 
-SELECTOR_VERSION = 1
-
 PASSAGE_ANCHOR_OWNER_SCHEMES = ("media", "note_block")
 
 _QUAD_KEYS = ("x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4")
@@ -171,7 +169,6 @@ def materialize_or_reuse(
             PassageAnchor.user_id == user_id,
             PassageAnchor.owner_scheme == owner_scheme,
             PassageAnchor.owner_id == owner_id,
-            PassageAnchor.selector_version == SELECTOR_VERSION,
             PassageAnchor.anchor_key == anchor_key,
         )
     ).scalar_one_or_none()
@@ -186,7 +183,6 @@ def materialize_or_reuse(
         user_id=user_id,
         owner_scheme=owner_scheme,
         owner_id=owner_id,
-        selector_version=SELECTOR_VERSION,
         anchor_key=anchor_key,
         selector={
             "quote": {

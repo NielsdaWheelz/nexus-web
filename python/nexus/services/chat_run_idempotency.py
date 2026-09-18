@@ -138,7 +138,6 @@ def record_chat_admission(
         client_mutation_id=hashlib.sha256(receipt.idempotency_key.encode("utf-8")).hexdigest(),
         request_bytes=request_bytes,
         response_json=receipt.model_dump(mode="json"),
-        changed_lanes={},
     )
 
 

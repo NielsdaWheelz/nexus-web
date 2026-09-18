@@ -1908,7 +1908,6 @@ def retry_source_for_viewer(
             client_mutation_id=client_mutation_id,
             request_bytes=request_bytes,
             response_json=admission.model_dump(mode="json"),
-            changed_lanes={},
         )
         db.commit()
         return admission
@@ -2010,7 +2009,6 @@ def repair_dead_source_execution(
                 client_mutation_id=actor.client_mutation_id,
                 request_bytes=request_bytes,
                 response_json=admission.model_dump(mode="json"),
-                changed_lanes={},
             )
         db.commit()
         return admission

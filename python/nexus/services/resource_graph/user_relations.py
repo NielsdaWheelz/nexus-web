@@ -177,7 +177,6 @@ def create_link(db: Session, *, viewer_id: UUID, request: CreateLinkRequest) -> 
             client_mutation_id=request.client_mutation_id,
             request_bytes=request_bytes,
             response_json=response.model_dump(mode="json", by_alias=True),
-            changed_lanes={connection.edge_id.hex: True},
         )
         db.commit()
         return response
@@ -285,7 +284,6 @@ def put_link_note(
             client_mutation_id=request.client_mutation_id,
             request_bytes=request_bytes,
             response_json=response.model_dump(mode="json", by_alias=True),
-            changed_lanes={scope: True},
         )
         db.commit()
         return response

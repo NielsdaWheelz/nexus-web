@@ -835,8 +835,6 @@ def _put_media_authors_op(
         author_mode = "automatic"
 
     response = _media_authors_out(db, media_id=media_id, author_mode=author_mode)
-    # changed_lanes is intentionally empty: author mutations do not participate
-    # in the resource-item lane-version protocol.
     record_replay(
         db,
         viewer_id=viewer.user_id,
@@ -844,7 +842,6 @@ def _put_media_authors_op(
         client_mutation_id=request.client_mutation_id,
         request_bytes=request_bytes,
         response_json=response.model_dump(mode="json", by_alias=True),
-        changed_lanes={},
     )
     if dropped:
         prune_contributors_if_orphaned(db, contributor_ids=dropped)
@@ -1034,8 +1031,6 @@ def _ensure_display_name_op(
         viewer_id=viewer.user_id,
         can_rename=True,
     )
-    # changed_lanes is intentionally empty: author mutations do not participate
-    # in the resource-item lane-version protocol.
     record_replay(
         db,
         viewer_id=viewer.user_id,
@@ -1043,7 +1038,6 @@ def _ensure_display_name_op(
         client_mutation_id=request.client_mutation_id,
         request_bytes=request_bytes,
         response_json=response.model_dump(mode="json", by_alias=True),
-        changed_lanes={},
     )
     db.commit()
     return response

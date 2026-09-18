@@ -366,7 +366,6 @@ def _existing_anchor_id(
             PassageAnchor.user_id == viewer_id,
             PassageAnchor.owner_scheme == owner_ref.scheme,
             PassageAnchor.owner_id == owner_ref.id,
-            PassageAnchor.selector_version == passage_anchors.SELECTOR_VERSION,
             PassageAnchor.anchor_key == anchor_key,
         )
     ).scalar_one_or_none()

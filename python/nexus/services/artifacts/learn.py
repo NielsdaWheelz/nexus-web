@@ -422,12 +422,7 @@ def record_learn_unresolved(
     request_id: UUID,
 ) -> FailedLearnRequest:
     _assert_pending(db, request_id=request_id)
-    db.add(
-        ArtifactLearnFailure(
-            request_id=request_id,
-            error_code=ApiErrorCode.E_DOSSIER_IDEA_UNRESOLVED.value,
-        )
-    )
+    db.add(ArtifactLearnFailure(request_id=request_id))
     db.flush()
     return FailedLearnRequest(request_id=request_id)
 

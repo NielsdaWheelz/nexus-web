@@ -72,7 +72,6 @@ def update_title(
             client_mutation_id=request.client_mutation_id,
             request_bytes=request_bytes,
             response_json=response.model_dump(mode="json", by_alias=True),
-            changed_lanes=response.versions,
         )
         db.commit()
         return response
@@ -133,7 +132,6 @@ def update_body(
             client_mutation_id=request.client_mutation_id,
             request_bytes=request_bytes,
             response_json=response.model_dump(mode="json", by_alias=True),
-            changed_lanes=response.versions,
         )
         db.commit()
         return response
