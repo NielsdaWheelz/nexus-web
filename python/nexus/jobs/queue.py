@@ -1472,29 +1472,6 @@ def reschedule_running_job(
     return updated is not None
 
 
-def replace_dead_job_payload(
-    db: Session,
-    *,
-    job_id: UUID,
-    payload: Mapping[str, Any],
-) -> bool:
-    """Replace one locked dead job's payload before its repair transition."""
-    updated = db.execute(
-        text(
-            """
-            UPDATE background_jobs
-            SET payload = CAST(:payload AS jsonb),
-                updated_at = now()
-            WHERE id = :job_id
-              AND status = 'dead'
-            RETURNING id
-            """
-        ),
-        {"job_id": job_id, "payload": json.dumps(dict(payload))},
-    ).first()
-    return updated is not None
-
-
 def requeue_dead_job(db: Session, *, job_id: UUID) -> bool:
     """Operator/system repair transition: dead -> pending with a fresh full budget.
 

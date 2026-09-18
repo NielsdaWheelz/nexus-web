@@ -41,8 +41,6 @@ from nexus.db.models import MediaSummary
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import (
-    ApiErrorCode,
-    InvalidRequestError,
     NotFoundError,
 )
 from nexus.jobs.queue import (
@@ -51,8 +49,6 @@ from nexus.jobs.queue import (
     RescheduleRequested,
     get_job,
     lock_jobs_for_payload,
-    replace_dead_job_payload,
-    requeue_dead_job,
     running_job_claim_is_current,
 )
 from nexus.logging import get_logger
@@ -61,38 +57,30 @@ from nexus.schemas.presence import Presence, Present, absent, nullable_from_pres
 from nexus.services import durable_step_journal as step_journal
 from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
-    GenerationCommandDraft,
     GenerationTerminal,
 )
 from nexus.services.generation_intent import GenerationIntent
 from nexus.services.generation_spec import (
     ImmutablePromptPayloadRef,
-    decode_generation_spec_document,
     generation_fact_digest,
 )
 from nexus.services.llm_execution import (
     AcceptedGenerationFailure,
-    AttachReconciledGenerationTerminal,
     CompletedGeneration,
     EncodedGenerationTerminal,
     ExecutionRuntime,
     GenerationAdmissionInputsChanged,
     GenerationDispatchAborted,
     GenerationFailureCode,
-    GenerationReconciliationRequest,
     GenerationUncertain,
-    GenerationUncertainResolution,
     JobGenerationJournal,
     admit_job_generation,
     cancel_prepared_generation_without_dispatch_in_current_transaction,
     codex_terminal_evidence,
     execute_generation,
-    prove_uncertain_generation_not_dispatched_in_current_transaction,
-    reconcile_uncertain_generation_in_current_transaction,
 )
 from nexus.services.llm_ledger import (
     LlmCallOwner,
-    lock_generation_owner_in_current_transaction,
 )
 from nexus.services.media_intelligence_lifecycle import (
     MEDIA_UNIT_JOB_KIND as _MEDIA_UNIT_JOB_KIND,
@@ -686,168 +674,6 @@ def _encode_media_unit_failure(
 
 class _UncertainMediaUnitReplayDefect(RuntimeError):
     """A generation dispatch may have landed and has no reconciliation key."""
-
-
-def reconcile_uncertain_media_unit(
-    db: Session,
-    *,
-    media_id: UUID,
-    content_fingerprint: str,
-    resolution: GenerationUncertainResolution,
-) -> None:
-    """Repair one dead uncertain generation and requeue the same durable job.
-
-    ``ProveNotDispatched`` returns the step to Prepared so the next claimed
-    attempt may dispatch. Terminal attachment accepts only the raw, strict host
-    terminal and routes it through the same ledger + domain codec used by live
-    landing. The serializable snapshot must reproduce the original command
-    fingerprint from the still-current content version before attachment can
-    land. The non-dispatch proof uses only journal/ledger identity. Ledger
-    terminalization, journal completion, and same-job requeue share one
-    caller-owned transaction; publication remains the worker's later replay.
-    """
-
-    def invalid(message: str) -> InvalidRequestError:
-        return InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, message)
-
-    if not isinstance(
-        resolution,
-        (step_journal.ProveNotDispatched, AttachReconciledGenerationTerminal),
-    ):
-        raise invalid("Media Intelligence requires generation reconciliation evidence")
-
-    def op() -> None:
-        summary_id = db.execute(
-            text("SELECT id FROM media_summaries WHERE media_id = :media_id"),
-            {"media_id": media_id},
-        ).scalar_one_or_none()
-        if summary_id is None:
-            raise invalid("Media Intelligence version is not suspended and current")
-        summary_id = UUID(str(summary_id))
-        owner = LlmCallOwner(kind="media_summary", id=summary_id)
-        # The shared owner key is the first lock in every live and repair path.
-        lock_generation_owner_in_current_transaction(db, owner)
-        summary = (
-            db.execute(
-                text(
-                    "SELECT id, status, content_fingerprint FROM media_summaries "
-                    "WHERE id = :summary_id AND media_id = :media_id FOR UPDATE"
-                ),
-                {"summary_id": summary_id, "media_id": media_id},
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if (
-            summary is None
-            or summary["status"] != "building"
-            or summary["content_fingerprint"] != content_fingerprint
-            or current_content_fingerprint(db, media_id=media_id) != content_fingerprint
-        ):
-            raise invalid("Media Intelligence version is not suspended and current")
-
-        dedupe_key = f"{_MEDIA_UNIT_JOB_KIND}:{media_id}:{content_fingerprint}"
-        row = (
-            db.execute(
-                text(
-                    "SELECT id, payload FROM background_jobs "
-                    "WHERE kind = :kind AND dedupe_key = :dedupe_key AND status = 'dead' "
-                    "FOR UPDATE"
-                ),
-                {
-                    "kind": _MEDIA_UNIT_JOB_KIND,
-                    "dedupe_key": dedupe_key,
-                },
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if row is None:
-            raise invalid("Media Intelligence has no dead generation step to reconcile")
-        payload = dict(row["payload"])
-        if (
-            str(payload.get("media_id")) != str(media_id)
-            or str(payload.get("summary_id")) != str(summary_id)
-            or payload.get("content_fingerprint") != content_fingerprint
-        ):
-            raise AssertionError("dead media unit job payload identity changed")
-
-        raw_states = dict(payload.get("coordination") or {})
-        raw_state = raw_states.get(_MEDIA_UNIT_STEP_PATH)
-        if raw_state is None:
-            raise invalid("Media Intelligence has no uncertain generation step to reconcile")
-        state = step_journal.StepReplayState.model_validate(raw_state)
-        if state.dispatch_phase is not step_journal.Uncertain:
-            raise invalid("Media Intelligence generation step is not uncertain")
-        expected_generation_id = step_journal.stable_generation_id(
-            media_id, f"{content_fingerprint}:{_MEDIA_UNIT_STEP_PATH}"
-        )
-        if state.generation_id != expected_generation_id:
-            raise AssertionError("dead media unit replay generation identity changed")
-        if not isinstance(state.request_fingerprint, Present):
-            raise AssertionError("uncertain media unit step has no request fingerprint")
-        if isinstance(state.terminal_result, Present):
-            raise AssertionError("uncertain media unit step already has a terminal result")
-
-        if isinstance(resolution, step_journal.ProveNotDispatched):
-            next_state = prove_uncertain_generation_not_dispatched_in_current_transaction(
-                db,
-                owner=owner,
-                state=state,
-            )
-        else:
-            candidates = _load_candidates(db, media_id=media_id)
-            raw_admissions = payload.get("generation_admissions")
-            if not isinstance(raw_admissions, dict):
-                raise invalid("Media Intelligence has no frozen generation admission")
-            raw_admission = raw_admissions.get(_MEDIA_UNIT_STEP_PATH)
-            if not isinstance(raw_admission, dict) or set(raw_admission) != {
-                "spec",
-                "intent",
-            }:
-                raise invalid("Media Intelligence frozen admission is invalid")
-            spec = decode_generation_spec_document(raw_admission["spec"])
-            raw_intent = raw_admission["intent"]
-            if not isinstance(raw_intent, dict):
-                raise invalid("Media Intelligence frozen intent is invalid")
-            intent = GenerationIntent.model_validate(raw_intent)
-            current_intent = _media_unit_intent(
-                user_content=_build_media_unit_user_content(candidates)
-            )
-            if state.request_fingerprint.value != spec.fingerprint or intent != current_intent:
-                raise invalid("Media Intelligence inputs changed since generation dispatch")
-            draft = GenerationCommandDraft(
-                request_id=state.generation_id,
-                spec=spec,
-                intent=intent,
-            )
-            next_state = reconcile_uncertain_generation_in_current_transaction(
-                db,
-                GenerationReconciliationRequest(
-                    owner=owner,
-                    draft=draft,
-                    state=state,
-                    resolution=resolution,
-                ),
-                encode_terminal=lambda terminal: _encode_media_unit_terminal(
-                    codex_terminal_evidence(terminal),
-                    candidates=candidates,
-                ),
-            )
-
-        payload = step_journal.payload_with_step_state(
-            payload,
-            step_path=_MEDIA_UNIT_STEP_PATH,
-            state=next_state,
-        )
-        job_id = UUID(str(row["id"]))
-        if not replace_dead_job_payload(db, job_id=job_id, payload=payload):
-            raise AssertionError("locked dead media unit job changed during reconciliation")
-        if not requeue_dead_job(db, job_id=job_id):
-            raise AssertionError("locked dead media unit job could not be requeued")
-        db.commit()
-
-    retry_serializable(db, "reconcile_uncertain_media_unit", op)
 
 
 async def run_media_unit_build(

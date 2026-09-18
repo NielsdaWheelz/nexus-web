@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import importlib.metadata
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -432,31 +431,6 @@ def validate_generation_terminal_frame(
     return terminal
 
 
-def decode_reconciled_generation_terminal_evidence(
-    *,
-    raw_stream: bytes,
-    raw_stream_sha256: str,
-    command: GenerationCommand | GenerationCommandDraft,
-) -> GenerationTerminal:
-    """Decode a raw transcript through the exact live frame-stream validator."""
-
-    if len(raw_stream) > command.spec.bounds.stream.max_stream_bytes:
-        raise CodexGenerationProtocolDefect(
-            "Codex generation attachment exceeded its stream byte bound"
-        )
-    if hashlib.sha256(raw_stream).hexdigest() != raw_stream_sha256:
-        raise CodexGenerationProtocolDefect(
-            "Codex generation attachment digest does not match its raw evidence"
-        )
-    validator = _GenerationFrameStreamValidator(command)
-    validator.feed(raw_stream)
-    frame = validator.finish()
-    terminal = frame.event
-    if not isinstance(terminal, GenerationTerminal):
-        raise AssertionError("validated generation transcript retained no terminal")
-    return terminal
-
-
 def _validate_generation_frame_request(
     frame: GenerationFrame,
     command: GenerationCommand | GenerationCommandDraft,
@@ -522,5 +496,4 @@ __all__ = [
     "CodexGenerationTransportAmbiguous",
     "CodexGenerationUnavailable",
     "validate_generation_terminal_frame",
-    "decode_reconciled_generation_terminal_evidence",
 ]
