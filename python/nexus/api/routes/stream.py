@@ -42,7 +42,6 @@ from nexus.services import media as media_service
 from nexus.services import oracle as oracle_service
 from nexus.services import run_kit
 from nexus.services.artifacts import engine as artifact_engine
-from nexus.services.artifacts.handles import unseal_artifact_build
 from nexus.services.chat_run_execution import chat_run_execution_phase
 from nexus.services.durable_step_journal import DurableExecutionPhase
 from nexus.services.podcasts import refresh as podcast_refresh_service
@@ -198,20 +197,19 @@ async def stream_oracle_reading_events(
     )
 
 
-@router.get("/stream/artifact-builds/{artifact_build_handle}/events")
+@router.get("/stream/artifact-builds/{artifact_build_id}/events")
 async def stream_artifact_build_events(
     request: Request,
-    artifact_build_handle: str,
+    artifact_build_id: UUID,
     viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
     after: int | None = Query(default=None, ge=0),
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     cursor = after if after is not None else _parse_last_event_id(last_event_id)
-    build_id = unseal_artifact_build(artifact_build_handle)
     return await make_cursor_stream_response(
         _ARTIFACT_BUILD_KIND,
         request=request,
-        entity_id=build_id,
+        entity_id=artifact_build_id,
         viewer_id=viewer_id,
         after=cursor,
     )

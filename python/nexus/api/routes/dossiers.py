@@ -55,12 +55,7 @@ from nexus.services.artifacts.dossier_types import (
     ReadFailedEventPayload,
     WebResearchNotConfigured,
 )
-from nexus.services.artifacts.handles import seal_artifact_build, unseal_artifact_build
-from nexus.services.artifacts.manifests import (
-    InputManifestOut,
-    InputManifestV1,
-    project_manifest_to_wire,
-)
+from nexus.services.artifacts.manifests import InputManifestV1
 from nexus.services.artifacts.registry import dossier_registration
 from nexus.services.artifacts.subject_policy import ResolvedIdeaSubject
 from nexus.services.llm_execution import ExecutionRuntime
@@ -164,15 +159,13 @@ def _revision_summary_out(
 def _manifest_and_coverage(
     subject_scheme: str,
     raw_manifest: dict,
-) -> tuple[InputManifestOut, DossierCoverageOut]:
+) -> tuple[InputManifestV1, DossierCoverageOut]:
     manifest = _MANIFEST_ADAPTER.validate_python(raw_manifest)
     registration = dossier_registration(subject_scheme)
     if registration is None:
         raise AssertionError(f"no Dossier registration for subject scheme {subject_scheme!r}")
     coverage = registration.binding.coverage(manifest)
-    return project_manifest_to_wire(manifest), _COVERAGE_ADAPTER.validate_python(
-        {"kind": manifest.kind, **asdict(coverage)}
-    )
+    return manifest, _COVERAGE_ADAPTER.validate_python({"kind": manifest.kind, **asdict(coverage)})
 
 
 def _admitted_generation_out(
@@ -230,13 +223,11 @@ def _unsuccessful_build_out(
             failure_payload: ReadFailedEventPayload = HistoricalFailedEventPayload(
                 failure_code=view.failure_code,
                 detail=presence_from_nullable(view.failure_detail),
-                support=presence_from_nullable(view.failure_support),
             )
         else:
             failure_payload = FailedEventPayload(
                 failure_code=view.failure_code,
                 detail=presence_from_nullable(view.failure_detail),
-                support=presence_from_nullable(view.failure_support),
             )
         failure = present(failure_payload)
     else:
@@ -394,7 +385,7 @@ async def learn_dossier(
     return ok(
         LearnDossierBuildAcceptedOut(
             artifact_ref=artifact_ref,
-            build_handle=seal_artifact_build(outcome.build_id),
+            build_handle=str(outcome.build_id),
         )
     )
 
@@ -485,15 +476,15 @@ def make_dossier_revision_current(
     return Response(status_code=204)
 
 
-@router.post("/artifact-builds/{artifact_build_handle}/cancel", status_code=204)
+@router.post("/artifact-builds/{artifact_build_id}/cancel", status_code=204)
 def cancel_dossier_build(
-    artifact_build_handle: str,
+    artifact_build_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     engine.cancel_build(
         db,
-        build_id=unseal_artifact_build(artifact_build_handle),
+        build_id=artifact_build_id,
         actor_user_id=viewer.user_id,
     )
     return Response(status_code=204)

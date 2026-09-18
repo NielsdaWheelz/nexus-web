@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -188,15 +188,10 @@ class SucceededEventPayload(_StrictModel):
 
 
 class FailedEventPayload(_StrictModel):
-    """Failed{DossierBuildFailureCode, detail/support Presence}.
-
-    ``support`` mirrors the ``artifact_build_failures.support`` blob; its concrete
-    shape is code-owned (migration supports live in ``manifests.py``), so it stays
-    an opaque owned-absence JSON object here to avoid a layering cycle."""
+    """A failed build and its optional diagnostic detail."""
 
     failure_code: DossierBuildFailureCode
     detail: Presence[str]
-    support: Presence[dict[str, Any]]
 
 
 class HistoricalFailedEventPayload(_StrictModel):
@@ -208,7 +203,6 @@ class HistoricalFailedEventPayload(_StrictModel):
 
     failure_code: HistoricalDossierBuildFailureCode
     detail: Presence[str]
-    support: Presence[dict[str, Any]]
 
 
 type ReadFailedEventPayload = FailedEventPayload | HistoricalFailedEventPayload

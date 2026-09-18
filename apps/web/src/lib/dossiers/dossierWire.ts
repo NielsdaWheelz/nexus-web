@@ -340,6 +340,7 @@ function decodeInputManifest(value: unknown): DossierInputManifest {
         [
           "version",
           "kind",
+          "idea_subject_id",
           "included_seed_refs",
           "nexus_query_fingerprints",
           "web_query_fingerprints",
@@ -351,6 +352,7 @@ function decodeInputManifest(value: unknown): DossierInputManifest {
       return {
         version: "v1",
         kind: "idea",
+        ideaSubjectId: decodeString(manifest.idea_subject_id, "idea_subject_id"),
         includedSeedRefs: decodeStringArray(
           manifest.included_seed_refs,
           "included_seed_refs",
@@ -421,11 +423,6 @@ function decodeIdeaOmittedSources(
       reason: decodeString(source.reason, "omitted_sources.reason"),
     };
   });
-}
-
-function decodeSupport(value: unknown): Record<string, unknown> {
-  // Failure support is intentionally an opaque code-owned JSON object.
-  return expectRecord(value, "failure support");
 }
 
 function decodeOmittedCoverage(
@@ -656,13 +653,12 @@ export function decodeDossierRevisionSummaries(
 function decodeFailedFacts(raw: unknown): DossierFailedFacts {
   const failure = expectExactRecord(
     raw,
-    ["failure_code", "detail", "support"],
+    ["failure_code", "detail"],
     "failure facts",
   );
   return {
     failureCode: decodeReadDossierBuildFailureCode(failure.failure_code),
     detail: decodePresence(failure.detail, (v) => decodeString(v, "detail")),
-    support: decodePresence(failure.support, decodeSupport),
   };
 }
 

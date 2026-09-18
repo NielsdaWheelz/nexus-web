@@ -35,7 +35,7 @@ from nexus.services.artifacts.dossier_types import (
     StartedEventPayload,
     SucceededEventPayload,
 )
-from nexus.services.artifacts.manifests import InputManifestOut, MediaDisposition
+from nexus.services.artifacts.manifests import InputManifestV1, MediaDisposition
 from nexus.services.durable_step_journal import DurableExecutionPhase
 from nexus.services.generation_selection import GenerationSelectionSpec
 
@@ -229,7 +229,7 @@ class DossierRevisionOut(ArtifactSchemaModel):
     content_html: str
     content_text: str
     citations: list[CitationOut]
-    input_manifest: InputManifestOut
+    input_manifest: InputManifestV1
     coverage: DossierCoverageOut
     instruction: Presence[_InstructionText]
     creator_user_id: Presence[UUID]
@@ -254,7 +254,7 @@ class DossierRevisionSummaryOut(ArtifactSchemaModel):
     revision_ref: str
     is_current: bool
     citation_count: int = Field(ge=0)
-    input_manifest: InputManifestOut
+    input_manifest: InputManifestV1
     coverage: DossierCoverageOut
     instruction: Presence[_InstructionText]
     creator_user_id: Presence[UUID]
