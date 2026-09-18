@@ -17,7 +17,7 @@ import {
   Selection,
   TextSelection,
 } from "prosemirror-state";
-import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
+import { DecorationSet, EditorView } from "prosemirror-view";
 import { history } from "prosemirror-history";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
@@ -45,7 +45,7 @@ import {
   captureSourceUrl,
   isSourceUrlCaptureDefect,
 } from "@/lib/media/sourceUrlCapture";
-import { codepointLength, codepointToUtf16 } from "@/lib/highlights/codepoints";
+import { notePulseDecorations } from "@/lib/notes/prosemirror/notePulse";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import type { WorkspaceTargetDisposition } from "@/lib/workspace/targetActivation";
 import {
@@ -869,76 +869,6 @@ function createNotePulseDecorationPlugin(): Plugin<DecorationSet> {
       },
     },
   });
-}
-
-function notePulseDecorations(
-  doc: ProseMirrorNode,
-  target: NotePulseEditorTarget,
-): DecorationSet {
-  const fromOffset = Math.max(0, Math.floor(target.startOffset));
-  const toOffset = Math.max(fromOffset, Math.floor(target.endOffset));
-  const body = doc.firstChild;
-  if (!body || toOffset <= fromOffset) return DecorationSet.empty;
-
-  const decorations: Decoration[] = [];
-  let logicalOffset = 0;
-  body.forEach((child, childOffset) => {
-    const logicalLength = notePulseLogicalLength(child);
-    const logicalFrom = logicalOffset;
-    const logicalTo = logicalOffset + logicalLength;
-    logicalOffset = logicalTo;
-    if (
-      logicalLength <= 0 ||
-      toOffset <= logicalFrom ||
-      fromOffset >= logicalTo
-    ) {
-      return;
-    }
-    const childFrom = 1 + childOffset;
-    let decorationFrom = childFrom;
-    let decorationTo = childFrom + child.nodeSize;
-    if (child.isText) {
-      const text = child.text ?? "";
-      decorationFrom += codepointToUtf16(
-        text,
-        Math.max(0, fromOffset - logicalFrom),
-      );
-      decorationTo =
-        childFrom +
-        codepointToUtf16(
-          text,
-          Math.min(logicalLength, toOffset - logicalFrom),
-        );
-    }
-    if (decorationTo > decorationFrom) {
-      decorations.push(
-        Decoration.inline(decorationFrom, decorationTo, {
-          class: "nexus-note-range-pulse",
-          "data-note-pulse-range": "true",
-        }),
-      );
-    }
-  });
-  return DecorationSet.create(doc, decorations);
-}
-
-function notePulseLogicalLength(node: ProseMirrorNode): number {
-  if (node.isText) return codepointLength(node.text ?? "");
-  if (node.type === noteBodySchema.nodes.hard_break) return 1;
-  if (
-    (node.type === noteBodySchema.nodes.object_ref ||
-      node.type === noteBodySchema.nodes.object_embed) &&
-    typeof node.attrs.label === "string"
-  ) {
-    return codepointLength(node.attrs.label);
-  }
-  if (
-    node.type === noteBodySchema.nodes.image &&
-    typeof node.attrs.alt === "string"
-  ) {
-    return codepointLength(node.attrs.alt);
-  }
-  return 0;
 }
 
 function objectRefTriggerFromState(

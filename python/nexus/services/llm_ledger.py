@@ -823,47 +823,6 @@ def lock_active_generation_for_authority_in_current_transaction(
     return None if record is None or record.outcome is not None else record
 
 
-def reset_generation_after_proven_non_dispatch_in_current_transaction(
-    db: Session,
-    *,
-    owner: LlmCallOwner,
-    generation_id: UUID,
-    generation_fingerprint: str,
-) -> None:
-    """Remove only an externally proven, never-dispatched open attempt.
-
-    The journal transition back to Prepared is committed by the caller in the
-    same transaction. This operator-only repair is deliberately unavailable to
-    automatic replay and refuses any terminal child or continuation evidence.
-    """
-
-    _require_sha256(generation_fingerprint, label="generation fingerprint")
-    call = _lock_owned_generation(db, owner=owner, generation_id=generation_id)
-    _assert_parent_open(call)
-    if call.generation_fingerprint != generation_fingerprint:
-        _ledger_defect(call, "proven non-dispatch fingerprint drifted")
-    turns = db.scalars(
-        select(LLMModelTurn)
-        .where(LLMModelTurn.generation_id == generation_id)
-        .order_by(LLMModelTurn.turn_seq)
-        .with_for_update()
-    ).all()
-    if not turns:
-        _ledger_defect(call, "proven non-dispatch has no prepared model child")
-    if any(turn.terminal is not None or turn.completed_at is not None for turn in turns):
-        _ledger_defect(call, "proven non-dispatch has terminal model evidence")
-    continuation = db.scalar(
-        select(LLMModelTurnContinuation.id)
-        .where(LLMModelTurnContinuation.generation_id == generation_id)
-        .limit(1)
-    )
-    if continuation is not None:
-        _ledger_defect(call, "proven non-dispatch has a successor continuation")
-    db.execute(delete(LLMModelTurn).where(LLMModelTurn.generation_id == generation_id))
-    db.delete(call)
-    db.flush()
-
-
 def _start_model_turn_under_parent_lock(
     db: Session,
     *,
@@ -1377,7 +1336,6 @@ __all__ = [
     "read_model_turns",
     "read_model_turns_for_generations",
     "read_pending_generation_continuation_in_current_transaction",
-    "reset_generation_after_proven_non_dispatch_in_current_transaction",
     "arm_resumed_model_turn_dispatch_in_current_transaction",
     "stop_generation_in_current_transaction",
     "start_generation_in_current_transaction",

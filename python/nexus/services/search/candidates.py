@@ -36,12 +36,12 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import (
     highlight_visibility_sql,
+    visible_content_credit_rows_sql,
     visible_conversation_ids_cte_sql,
     visible_media_ids_cte_sql,
     visible_podcast_ids_cte_sql,
 )
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.services.contributor_credits import visible_credit_rows_sql
 from nexus.services.contributors import resolve_contributor_ids_by_handles
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.search.constants import CANDIDATES_PER_TYPE
@@ -446,7 +446,7 @@ def _reference_candidates(
                 WITH
                     visible_credits AS MATERIALIZED (
                         SELECT contributor_id, credited_name
-                        FROM ({visible_credit_rows_sql()}) visible_credit
+                        FROM ({visible_content_credit_rows_sql()}) visible_credit
                     ),
                     visible_credit_text AS MATERIALIZED (
                         SELECT

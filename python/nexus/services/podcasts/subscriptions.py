@@ -28,6 +28,7 @@ from nexus.schemas.podcast import (
     PodcastAlreadyUnsubscribedOut,
     PodcastBackfillOut,
     PodcastBackfillRetryOut,
+    PodcastBackfillState,
     PodcastCanonicalCommitTarget,
     PodcastDiscoveryCommitTarget,
     PodcastOpmlImportErrorOut,
@@ -743,7 +744,7 @@ def _backfill_state(
     completed_at: datetime | None,
     source_limited_at: datetime | None,
     failed_at: datetime | None,
-) -> str:
+) -> PodcastBackfillState:
     if failed_at is not None:
         return "Failed"
     if source_limited_at is not None:

@@ -14,7 +14,7 @@ dynamic routes (/libraries/{library_id}) to prevent UUID path capture.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
@@ -31,7 +31,12 @@ from nexus.schemas.library import (
     UpdateLibraryMemberRequest,
     UpdateLibraryRequest,
 )
-from nexus.services import library_entries, library_governance, library_invitations
+from nexus.services import (
+    library_entries,
+    library_entry_listing,
+    library_governance,
+    library_invitations,
+)
 from nexus.services.resonance import service as resonance_service
 from nexus.services.sealed_handles import InvalidSealedHandle, unseal_user
 
@@ -396,10 +401,10 @@ def list_library_entries(
     ``entry_type=web_article|epub|pdf|video|podcast_episode|podcast`` selects one
     exact type; omission means all types. Podcast shows support only the complete
     all-items view. The whole query is parsed strictly (see
-    ``library_entries.parse_entries_query``).
+    ``library_entry_listing.parse_entries_query``).
     """
-    view, query = library_entries.parse_entries_query(request.query_params.multi_items())
-    page = library_entries.list_library_entries(
+    view, query = library_entry_listing.parse_entries_query(request.query_params.multi_items())
+    page = library_entry_listing.list_library_entries(
         db,
         viewer.user_id,
         library_id,
@@ -447,7 +452,6 @@ def remove_podcast_from_library(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=120)],
 ) -> dict:
     """Remove a podcast reference from one non-default library."""
     result = library_entries.remove_podcast_from_library(
@@ -455,7 +459,6 @@ def remove_podcast_from_library(
         viewer.user_id,
         library_id,
         podcast_id,
-        idempotency_key=idempotency_key,
     )
     return ok(result, by_alias=True)
 
@@ -466,7 +469,6 @@ def add_subscribed_podcast_to_library(
     podcast_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=120)],
 ) -> dict:
     """Place an existing active Podcast subscription in one named Library."""
     result = library_entries.place_subscribed_podcast_in_named_library(
@@ -474,6 +476,5 @@ def add_subscribed_podcast_to_library(
         viewer.user_id,
         library_id,
         podcast_id,
-        idempotency_key=idempotency_key,
     )
     return ok(result, by_alias=True)

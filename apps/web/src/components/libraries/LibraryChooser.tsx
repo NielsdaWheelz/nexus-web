@@ -7,7 +7,6 @@ import {
   type FeedbackContent,
 } from "@/components/feedback/Feedback";
 import Input from "@/components/ui/Input";
-import LibraryColorDot from "@/components/LibraryColorDot";
 import styles from "./LibraryChooser.module.css";
 
 export type LibraryChooserItemInteraction =
@@ -18,7 +17,6 @@ export type LibraryChooserItemInteraction =
 export interface LibraryChooserItem {
   id: string;
   name: string;
-  color: string | null;
   description?: string;
   selected: boolean;
   interaction: LibraryChooserItemInteraction;
@@ -224,9 +222,6 @@ export default function LibraryChooser({
         onMouseMove={() => setActiveId(optionId)}
         onClick={() => activate(optionId)}
       >
-        <span className={styles.dotSlot}>
-          <LibraryColorDot color={item.color} size="sm" />
-        </span>
         <span className={styles.optionText}>
           <span className={styles.optionName}>{item.name}</span>
           {item.description ? (

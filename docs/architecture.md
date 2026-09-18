@@ -1514,9 +1514,10 @@ credit junction: canonical credit relation + visible-work queries). Every final
 `contributors` row is active — there is no self-FK, status, merge, split, or
 tombstone; duplicates were collapsed once by migration 0179 and never merge at
 runtime. `contributor_aliases` (searchable names, `resolves_identity` marks
-which ones bind a future observation) and `contributor_external_ids` (orcid/
-isni/viaf/…, globally unique per authority) support identity; `contributor_credits`
-attaches a contributor to exactly one media/podcast/Gutenberg-ebook role slice.
+which ones bind a future observation) and `contributor_external_ids` (email
+address / X user / YouTube channel, globally unique per authority) support
+identity; `contributor_credits` attaches a contributor to exactly one
+media/podcast/Gutenberg-ebook role slice.
 Credit resolution prefers explicit id → exact stable key → confirmed alias →
 new contributor, and runs inline inside the same fresh SERIALIZABLE-retried
 transaction (`retry_serializable`, D-11 constraint allowlist) that replaces a

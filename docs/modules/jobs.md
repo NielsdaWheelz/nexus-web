@@ -311,15 +311,13 @@ never inherits Chat's MCP catalog. Research tools remain domain-owned journal
 steps and never become Codex built-ins; synthesis uses the fixed `Synthesis`
 capability. Stored binding metadata owns its `BilledOnce` replay policy, so an
 uncertain public-Web search is never automatically redispatched. Synthesis and
-document repair likewise stay suspended after uncertainty; the operator can
-prove either dispatch never
-occurred or attach a recovered schema-valid result, and both paths then requeue
-the same build without an automatic generation dispatch. Direct Nexus-search
+document repair remain suspended after an unresolved dispatch; a sealed
+provider successor continuation permits safe resumption. Direct Nexus-search
 and page accept/readiness/read observations are `ReDispatchable`, and pages
 awaiting ingest yield the worker. The artifact head is the database
 serialization point; the build is the replay identity. Build success, modeled
 failure, and cancellation are terminal children, while exhausted or
-unreconciled execution remains a visible, operator-repairable suspended build.
+unresolved execution remains a visible suspended build requiring incident repair.
 Dead `dossier_build` rows are never pruned.
 
 `services/durable_step_journal.py` owns the shared strict replay-state codec,

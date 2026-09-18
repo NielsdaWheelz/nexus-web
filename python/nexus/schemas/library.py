@@ -81,7 +81,6 @@ _LIBRARY_PLACEMENT_OUT_CONFIG = ConfigDict(
 class LibraryIdentityOut(BaseModel):
     id: UUID
     name: str
-    color: str | None = None
 
     model_config = _LIBRARY_PLACEMENT_OUT_CONFIG
 
@@ -194,7 +193,6 @@ class TransferLibraryOwnershipRequest(BaseModel):
 class LibraryOut(BaseModel):
     id: UUID
     name: str
-    color: str | None = None
     owner_user_handle: UserHandle
     is_default: bool
     role: LibraryRole
@@ -242,7 +240,6 @@ class LibraryGovernancePageInfo(BaseModel):
 class LibraryDestinationOut(BaseModel):
     id: UUID
     name: str
-    color: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -421,21 +418,8 @@ class UserLibraryInvitee(BaseModel):
     )
 
 
-class EmailLibraryInvitee(BaseModel):
-    kind: Literal["Email"]
-    email: str
-
-    model_config = ConfigDict(extra="forbid")
-
-
-LibraryInvitee = Annotated[
-    UserLibraryInvitee | EmailLibraryInvitee,
-    Field(discriminator="kind"),
-]
-
-
 class CreateLibraryInviteRequest(BaseModel):
-    invitee: LibraryInvitee
+    invitee: UserLibraryInvitee
     role: LibraryRole = Field(
         ..., description="Role to assign to the invitee ('admin' or 'member')"
     )

@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import MediaRetrievalLocator
@@ -29,13 +29,6 @@ MAX_READER_SELECTION_SOURCE_LABEL = 1_000
 # answer/display fields — a live compare-on-send precondition, never part of the
 # idempotency identity.
 ReaderSelectionRevision = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-
-_REVISION_ADAPTER: TypeAdapter[str] = TypeAdapter(ReaderSelectionRevision)
-
-
-def parse_reader_selection_revision(value: str) -> str:
-    """Validate a wire/trusted revision digest; raises on a noncanonical value."""
-    return _REVISION_ADAPTER.validate_python(value)
 
 
 class ReaderSelectionKey(BaseModel):
@@ -64,7 +57,7 @@ class ReaderSelectionSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ReaderSelectionOut(BaseModel):
+class ReaderSelectionOut(ReaderSelectionSnapshot):
     """Message-wire projection of a quoted user turn.
 
     Present only on a quoted user message. Snapshot fields are immutable;
@@ -72,34 +65,17 @@ class ReaderSelectionOut(BaseModel):
     visibility and may be ``kind="none"``.
     """
 
-    key: ReaderSelectionKey
-    source_label: str = Field(min_length=1, max_length=MAX_READER_SELECTION_SOURCE_LABEL)
-    exact: str = Field(min_length=1, max_length=MAX_READER_SELECTION_EXACT)
-    prefix: str = Field(default="", max_length=MAX_READER_SELECTION_AFFIX)
-    suffix: str = Field(default="", max_length=MAX_READER_SELECTION_AFFIX)
-    locator: MediaRetrievalLocator
     activation: ResourceActivationOut
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ReaderSelectionPreview(BaseModel):
+class ReaderSelectionPreview(ReaderSelectionOut):
     """Pending-card projection returned by the reader-selection preview endpoint.
 
     Identical to ``ReaderSelectionOut`` plus the ``revision`` precondition digest
     the composer replays on send.
     """
 
-    key: ReaderSelectionKey
-    source_label: str = Field(min_length=1, max_length=MAX_READER_SELECTION_SOURCE_LABEL)
-    exact: str = Field(min_length=1, max_length=MAX_READER_SELECTION_EXACT)
-    prefix: str = Field(default="", max_length=MAX_READER_SELECTION_AFFIX)
-    suffix: str = Field(default="", max_length=MAX_READER_SELECTION_AFFIX)
-    locator: MediaRetrievalLocator
-    activation: ResourceActivationOut
     revision: ReaderSelectionRevision
-
-    model_config = ConfigDict(extra="forbid")
 
 
 class ReaderSelectionInput(BaseModel):

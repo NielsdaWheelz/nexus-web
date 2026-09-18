@@ -36,11 +36,8 @@ export interface LibraryEntryEditorProps {
 
 function destinationPresentation(destination: LibraryPlacementDestination) {
   return destination.kind === "SavedInNexus"
-    ? { name: "Saved in Nexus", color: null }
-    : {
-        name: destination.library.name,
-        color: destination.library.color,
-      };
+    ? { name: "Saved in Nexus" }
+    : { name: destination.library.name };
 }
 
 function blockedReason(reason: LibraryPlacementBlockedReason): string {
@@ -107,7 +104,6 @@ export default function LibraryEntryEditor({
       return {
         id: key,
         name: presentation.name,
-        color: presentation.color,
         description: placementDescription(option),
         selected: option.relation.kind !== "Absent",
         interaction,

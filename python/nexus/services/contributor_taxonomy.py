@@ -33,15 +33,6 @@ CONTRIBUTOR_ROLES_ORDERED: Final[tuple[str, ...]] = (
 CONTRIBUTOR_ROLE_SET: Final[frozenset[str]] = frozenset(CONTRIBUTOR_ROLES_ORDERED)
 
 
-def normalize_contributor_role(value: str | None) -> str:
-    role = " ".join(str(value or "author").strip().lower().replace("_", " ").split())
-    return role if role in CONTRIBUTOR_ROLE_SET else "unknown"
-
-
-def display_contributor_name(value: str) -> str:
-    return " ".join(value.strip().split())
-
-
 # One shared adapter/domain/UI cap (per role slice, not per target).
 MAX_CREDITS_PER_MANAGED_ROLE: Final = 20
 MAX_CONTRIBUTOR_NAME_CODE_POINTS: Final = 200
@@ -52,42 +43,13 @@ MAX_RAW_ROLE_LENGTH: Final = 80
 # Identity keys
 # ---------------------------------------------------------------------------
 
-# Authority precedence for selecting a single identity key on an observation:
-# bibliographic name-authority files first, then stable self-asserted single
-# authorities. Lower index wins.
+# Authority precedence for selecting a single identity key on an observation.
+# Lower index wins.
 CONTRIBUTOR_KEY_AUTHORITIES: Final[tuple[str, ...]] = (
-    "orcid",
-    "isni",
-    "viaf",
-    "wikidata",
-    "openalex",
-    "lcnaf",
     "email_address",
     "x_user",
     "youtube_channel",
 )
-
-
-def _orcid_check_digit(base_digits: str) -> str:
-    # ISO 7064 MOD 11-2 check character over the 15 leading digits.
-    total = 0
-    for ch in base_digits:
-        total = (total + int(ch)) * 2
-    result = (12 - total % 11) % 11
-    return "X" if result == 10 else str(result)
-
-
-def _canonicalize_orcid(key: str) -> str | None:
-    raw = key.strip().upper().rsplit("/", 1)[-1]
-    digits = raw.replace("-", "").replace(" ", "")
-    if len(digits) != 16:
-        return None
-    body, check = digits[:15], digits[15]
-    if re.fullmatch(r"[0-9]{15}", body) is None or check not in "0123456789X":
-        return None
-    if _orcid_check_digit(body) != check:
-        return None
-    return f"{digits[0:4]}-{digits[4:8]}-{digits[8:12]}-{digits[12:16]}"
 
 
 def _canonicalize_email_address(key: str) -> str | None:
@@ -106,8 +68,6 @@ def canonicalize_identity_key(authority: str, key: str) -> str | None:
     ``None`` means "omit this key" — the observation carries no identity claim.
     """
 
-    if authority == "orcid":
-        return _canonicalize_orcid(key)
     if authority == "email_address":
         return _canonicalize_email_address(key)
     if authority == "x_user":
@@ -116,9 +76,6 @@ def canonicalize_identity_key(authority: str, key: str) -> str | None:
     if authority == "youtube_channel":
         value = key.strip()
         return value if re.fullmatch(r"UC[0-9A-Za-z_-]{22}", value) else None
-    if authority in ("isni", "viaf", "wikidata", "openalex", "lcnaf"):
-        trimmed = key.strip()
-        return trimmed or None
     return None
 
 

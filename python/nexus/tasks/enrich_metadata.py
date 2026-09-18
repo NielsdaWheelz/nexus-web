@@ -21,12 +21,9 @@ from nexus.jobs.queue import (
     JobExecutionContext,
     JobRow,
     RescheduleRequested,
-    current_dead_job_for_payload,
     get_job,
     lock_and_renew_running_job_claim,
     lock_jobs_for_payload,
-    replace_dead_job_payload,
-    requeue_dead_job,
 )
 from nexus.logging import get_logger
 from nexus.schemas.presence import Presence, Present, absent, present
@@ -40,7 +37,7 @@ from nexus.services.codex_generation_contract import (
     retained_terminal_error_detail,
 )
 from nexus.services.collection_revisions import (
-    CollectionFamily,
+    ENTRY_VISIBILITY_FAMILIES,
     bump_all_collection_families,
 )
 from nexus.services.contributors import (
@@ -50,13 +47,11 @@ from nexus.services.contributors import (
 from nexus.services.durable_step_journal import (
     Completed,
     Prepared,
-    ProveNotDispatched,
     StepReplayState,
     Uncertain,
     checkpoint_step_state,
     decode_step_result,
     encode_step_result,
-    payload_with_step_state,
     read_step_states,
     stable_generation_id,
 )
@@ -78,12 +73,10 @@ from nexus.services.llm_execution import (
     GenerationDispatchAborted,
     GenerationFailureCode,
     GenerationUncertain,
-    GenerationUncertainResolution,
     JobGenerationJournal,
     admit_job_generation,
     codex_terminal_evidence,
     execute_generation,
-    prove_uncertain_generation_not_dispatched_in_current_transaction,
 )
 from nexus.services.llm_ledger import (
     LlmCallOwner,
@@ -113,12 +106,6 @@ _LEASE_SECONDS = 300
 _PRE_DISPATCH_SOURCE_CHANGED_DETAIL = "metadata request fingerprint changed before dispatch"
 _PRE_DISPATCH_MEDIA_MISSING_DETAIL = "metadata media no longer exists before dispatch"
 _PRE_DISPATCH_NOT_READY_DETAIL = "metadata media is no longer ready before dispatch"
-_COLLECTION_FAMILIES = (
-    CollectionFamily.AuthorWorks,
-    CollectionFamily.LibraryEntries,
-    CollectionFamily.PodcastEpisodes,
-    CollectionFamily.PodcastSubscriptions,
-)
 _METADATA_TASK_SPEC = LlmTaskSpec(label="metadata_generation")
 
 
@@ -201,67 +188,6 @@ class _PreDispatchMetadataTerminal(RuntimeError):
     def __init__(self, reason: _PreDispatchTerminalReason) -> None:
         super().__init__(reason)
         self.reason: _PreDispatchTerminalReason = reason
-
-
-def reconcile_uncertain_metadata_generation(
-    db: Session,
-    *,
-    media_id: UUID,
-    resolution: GenerationUncertainResolution,
-) -> None:
-    """Return one suspended metadata generation to Prepared and requeue it.
-
-    The metadata job persists a request fingerprint but intentionally never
-    stores its source-derived prompt.  That is enough to prove no dispatch
-    against the ledger start, but not enough to reconstruct an exact command
-    after mutable media facts may have changed; attachment is therefore
-    rejected rather than re-reading those facts.
-    """
-
-    if not isinstance(resolution, ProveNotDispatched):
-        raise ValueError(
-            "metadata generation attachment requires an exact durable command, which is absent"
-        )
-
-    def op() -> None:
-        owner = LlmCallOwner(kind="media_enrichment", id=media_id)
-        # Canonical order: owner advisory lock, domain row, then suspended job.
-        lock_generation_owner_in_current_transaction(db, owner)
-        db.scalar(select(Media.id).where(Media.id == media_id).with_for_update())
-        job = current_dead_job_for_payload(
-            db,
-            kind="enrich_metadata",
-            expected_payload_match={"media_id": str(media_id)},
-        )
-        if job is None:
-            raise ValueError("metadata media has no suspended generation job")
-        state = read_step_states(job).get(METADATA_STEP_PATH)
-        if state is None or state.dispatch_phase is not Uncertain:
-            raise ValueError("metadata generation is not uncertain")
-        generation_id = stable_generation_id(job.id, METADATA_STEP_PATH)
-        request_fingerprint = _persisted_request_fingerprint(
-            state,
-            generation_id=generation_id,
-        )
-        next_state = prove_uncertain_generation_not_dispatched_in_current_transaction(
-            db,
-            owner=owner,
-            state=state,
-        )
-        if next_state.request_fingerprint != present(request_fingerprint):
-            raise AssertionError("metadata reconciliation changed request identity")
-        payload = payload_with_step_state(
-            job.payload,
-            step_path=METADATA_STEP_PATH,
-            state=next_state,
-        )
-        if not replace_dead_job_payload(db, job_id=job.id, payload=payload):
-            raise AssertionError("suspended metadata job changed while locked")
-        if not requeue_dead_job(db, job_id=job.id):
-            raise AssertionError("suspended metadata job could not be requeued")
-        db.commit()
-
-    retry_serializable(db, "reconcile_uncertain_metadata_generation", op)
 
 
 def _metadata_generation_intent(*, input: str) -> GenerationIntent:
@@ -721,7 +647,7 @@ def _stage_pre_dispatch_terminal(
                 # media_not_found before source_changed.
                 raise AssertionError("source-changed terminal has no media")
             _record_metadata_failure(media, code, _PRE_DISPATCH_SOURCE_CHANGED_DETAIL)
-            bump_all_collection_families(db, families=_COLLECTION_FAMILIES)
+            bump_all_collection_families(db, families=ENTRY_VISIBILITY_FAMILIES)
         case "media_not_found":
             result = _SkippedPublication(reason="media_not_found")
             completed = _CompletedSkip(
@@ -925,7 +851,7 @@ def _publish_completed_transaction(
             and media.last_error_message == completed.error_detail
         ):
             _record_metadata_failure(media, completed.error_code, completed.error_detail)
-            bump_all_collection_families(db, families=_COLLECTION_FAMILIES)
+            bump_all_collection_families(db, families=ENTRY_VISIBILITY_FAMILIES)
         return _commit_publication_result(
             db,
             context=context,
@@ -944,7 +870,7 @@ def _publish_completed_transaction(
         code = ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value
         detail = "media facts changed before metadata publication"
         _record_metadata_failure(media, code, detail)
-        bump_all_collection_families(db, families=_COLLECTION_FAMILIES)
+        bump_all_collection_families(db, families=ENTRY_VISIBILITY_FAMILIES)
         return _commit_publication_result(
             db,
             context=context,
@@ -966,7 +892,7 @@ def _publish_completed_transaction(
         media.failure_stage = None
         media.last_error_code = None
         media.last_error_message = None
-    bump_all_collection_families(db, families=_COLLECTION_FAMILIES)
+    bump_all_collection_families(db, families=ENTRY_VISIBILITY_FAMILIES)
     result = _success_result(merge_result.accepted_fields)
     persisted = _commit_publication_result(
         db,

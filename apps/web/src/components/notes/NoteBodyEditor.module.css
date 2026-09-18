@@ -36,31 +36,9 @@
 }
 
 .editorView :global(.nexus-note-range-pulse) {
-  animation: noteRangePulse 1200ms var(--ease-glide) 0s 2;
-  background: var(--highlight-yellow);
   border-radius: var(--radius-xs);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
-}
-
-@keyframes noteRangePulse {
-  0%,
-  100% {
-    background-color: var(--highlight-yellow);
-  }
-  50% {
-    background-color: color-mix(
-      in srgb,
-      var(--highlight-yellow) 24%,
-      transparent
-    );
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .editorView :global(.nexus-note-range-pulse) {
-    animation: none;
-  }
 }
 
 .editorView :global(.note-object-ref) {
@@ -81,6 +59,32 @@
   border-radius: var(--radius-lg);
   margin: var(--space-2) 0;
   padding: var(--space-2) var(--space-3);
+}
+
+/* Pulse color overrides object backgrounds; their geometry stays intact. */
+.editorView :global(.nexus-note-range-pulse) {
+  animation: noteRangePulse 1200ms var(--ease-glide) 0s 2;
+  background: var(--highlight-yellow);
+}
+
+@keyframes noteRangePulse {
+  0%,
+  100% {
+    background-color: var(--highlight-yellow);
+  }
+  50% {
+    background-color: color-mix(
+      in srgb,
+      var(--highlight-yellow) 24%,
+      transparent
+    );
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editorView :global(.nexus-note-range-pulse) {
+    animation: none;
+  }
 }
 
 .compact {

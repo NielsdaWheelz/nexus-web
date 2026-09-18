@@ -51,6 +51,7 @@ import {
   RESERVED_LIBRARY_NAME_MESSAGE,
 } from "@/lib/libraries/presentation";
 import { isAbortError } from "@/lib/errors";
+import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
 import { useHydrationPreservedInput } from "@/lib/ui/useHydrationPreservedInput";
 import { createLibrary, fetchLibrariesPage } from "@/lib/libraries/client";
 import {
@@ -98,13 +99,6 @@ interface LibrariesSnapshot {
   readonly exhaustion: "Partial" | "Complete";
 }
 
-interface PendingLibrariesRevalidation {
-  readonly version: number;
-  readonly resolve: () => void;
-  readonly reject: (error: unknown) => void;
-  readonly removeAbortListener: () => void;
-}
-
 const LIBRARIES_VISIT_DATA = definePaneVisitDataKey<LibrariesSnapshot>(
   "Libraries.CompleteCollection",
 );
@@ -122,8 +116,7 @@ export default function LibrariesPaneBody() {
   );
   const [librariesRefreshVersion, setLibrariesRefreshVersion] = useState(0);
   const librariesRefreshVersionRef = useRef(0);
-  const pendingLibrariesRevalidationRef =
-    useRef<PendingLibrariesRevalidation | null>(null);
+  const revalidation = useRevalidationSettlement();
   const completedLibrariesRevalidationVersionRef = useRef<number | null>(null);
   const [chainEpoch, setChainEpoch] = useState(0);
   const clearAllVisitData = useClearAllPaneVisitData();
@@ -275,13 +268,9 @@ export default function LibrariesPaneBody() {
   );
 
   const rejectPendingLibrariesRevalidation = useCallback((error: unknown) => {
-    const pending = pendingLibrariesRevalidationRef.current;
-    pendingLibrariesRevalidationRef.current = null;
     completedLibrariesRevalidationVersionRef.current = null;
-    if (!pending) return;
-    pending.removeAbortListener();
-    pending.reject(error);
-  }, []);
+    revalidation.reject(error);
+  }, [revalidation]);
   const refreshLibraries = useCallback(() => {
     rejectPendingLibrariesRevalidation(
       new DOMException("Libraries refresh was superseded.", "AbortError"),
@@ -316,38 +305,15 @@ export default function LibrariesPaneBody() {
       }
       refreshLibraries();
       const version = librariesRefreshVersionRef.current;
-      return new Promise<void>((resolve, reject) => {
-        const onAbort = () => {
-          const pending = pendingLibrariesRevalidationRef.current;
-          if (pending?.version !== version) return;
-          pendingLibrariesRevalidationRef.current = null;
+      return revalidation.wait({
+        requestId: version,
+        signal,
+        onAbort: () => {
           completedLibrariesRevalidationVersionRef.current = null;
-          pending.removeAbortListener();
-          reject(
-            signal.reason ??
-              new DOMException("Libraries refresh was aborted.", "AbortError"),
-          );
-        };
-        signal.addEventListener("abort", onAbort, { once: true });
-        pendingLibrariesRevalidationRef.current = {
-          version,
-          resolve,
-          reject,
-          removeAbortListener: () =>
-            signal.removeEventListener("abort", onAbort),
-        };
-        if (signal.aborted) onAbort();
+        },
       });
     },
-    [refreshLibraries],
-  );
-  useEffect(
-    () => () => {
-      rejectPendingLibrariesRevalidation(
-        new DOMException("Libraries refresh was replaced.", "AbortError"),
-      );
-    },
-    [rejectPendingLibrariesRevalidation],
+    [refreshLibraries, revalidation],
   );
 
   // Latest-wins atomic commit: the resource reports a result only under the
@@ -367,20 +333,21 @@ export default function LibrariesPaneBody() {
       setController(next);
       setChainEpoch((epoch) => epoch + 1);
       focusPendingSortControl();
-      const pending = pendingLibrariesRevalidationRef.current;
-      if (pending?.version === librariesRefreshVersion) {
-        completedLibrariesRevalidationVersionRef.current = pending.version;
+
+      if (revalidation.isPending(librariesRefreshVersion)) {
+        completedLibrariesRevalidationVersionRef.current = librariesRefreshVersion;
       }
       return;
     }
     if (firstPage.status === "error") {
       if (isInvalidViewError(firstPage.error)) setViewInvalid(true);
-      const pending = pendingLibrariesRevalidationRef.current;
-      if (pending?.version === librariesRefreshVersion) {
+
+      if (revalidation.isPending(librariesRefreshVersion)) {
         rejectPendingLibrariesRevalidation(firstPage.error);
       }
     }
   }, [
+    revalidation,
     firstPage,
     focusPendingSortControl,
     librariesRefreshVersion,
@@ -393,19 +360,17 @@ export default function LibrariesPaneBody() {
 
   useLayoutEffect(() => {
     committedSnapshotRef.current = requestsFirstPage ? null : controller;
-    const pending = pendingLibrariesRevalidationRef.current;
+    const completedVersion = completedLibrariesRevalidationVersionRef.current;
     if (
       controller === null ||
-      pending === null ||
-      completedLibrariesRevalidationVersionRef.current !== pending.version
+      completedVersion === null ||
+      !revalidation.isPending(completedVersion)
     ) {
       return;
     }
     completedLibrariesRevalidationVersionRef.current = null;
-    pendingLibrariesRevalidationRef.current = null;
-    pending.removeAbortListener();
-    pending.resolve();
-  }, [controller, requestsFirstPage]);
+    revalidation.resolve(completedVersion);
+  }, [revalidation, controller, requestsFirstPage]);
 
   useEffect(() => {
     if (readyViewerInvites) {
