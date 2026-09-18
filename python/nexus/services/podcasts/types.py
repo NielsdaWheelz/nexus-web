@@ -11,9 +11,7 @@ type PodcastSyncStatus = Literal[
     "SourceLimited",
     "Failed",
 ]
-type PodcastActiveSyncStatus = Literal["Pending", "Running"]
 type PodcastHealthySyncStatus = Literal["Complete", "SourceLimited"]
-type PodcastTerminalSyncStatus = Literal["Complete", "SourceLimited", "Failed"]
 
 type PodcastRefreshRunStatus = Literal["Running", "Complete", "Partial", "Failed"]
 type PodcastRefreshRunItemStatus = Literal[
@@ -34,7 +32,4 @@ PODCAST_HEALTHY_SYNC_JITTER_MAX_SECONDS = 30 * 60
 PODCAST_SYNC_FAILURE_BACKOFF_SECONDS = (15 * 60, 60 * 60, 6 * 60 * 60, 24 * 60 * 60)
 
 PODCAST_REFRESH_DUE_MAX_LIMIT = 100
-PODCAST_REFRESH_RUN_PRUNE_LIMIT = 1_000
-PODCAST_REFRESH_RUN_RETENTION_DAYS = 30
-PODCAST_REFRESH_RUN_PRUNE_INTERVAL_SECONDS = 24 * 60 * 60
 PODCAST_REFRESH_ERROR_MESSAGE_MAX_LENGTH = 1_000

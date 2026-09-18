@@ -6,23 +6,15 @@ import json
 import re
 from typing import Any
 
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
+from nexus.errors import ApiError, InvalidRequestError
 from nexus.logging import get_logger
 from nexus.services.net.safe_fetch import safe_get
-from nexus.services.podcasts._normalize import normalize_language_tag
 from nexus.services.url_normalize import validate_requested_url
 
 logger = get_logger(__name__)
 
 _TRANSCRIPT_TIMEOUT_SECONDS = 15.0
 _MAX_TRANSCRIPT_BYTES = 5 * 1024 * 1024
-
-_SOURCE_TYPE_PRIORITY = {
-    "vtt": 0,
-    "srt": 1,
-    "json": 2,
-    "text": 3,
-}
 
 _VTT_CONTENT_TYPES = {"text/vtt"}
 _SRT_CONTENT_TYPES = {
@@ -48,152 +40,63 @@ _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
-def fetch_rss_transcript(
-    refs: list[dict[str, Any]] | None,
-    *,
-    episode_duration_ms: int | None = None,
-    episode_language: str | None = None,
-    feed_language: str | None = None,
-) -> dict[str, Any]:
-    """Fetch and parse RSS transcript references in preference order."""
-    ordered_refs = _order_transcript_refs(
-        refs or [],
-        episode_language=episode_language,
-        feed_language=feed_language,
-    )
-    if not ordered_refs:
-        return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
+def fetch_rss_transcript(url: str, *, episode_duration_ms: int | None) -> list[dict[str, Any]]:
+    """Fetch and parse one publisher transcript sidecar URL.
 
-    for ref in ordered_refs:
-        content, fetch_error = _fetch_transcript_text(
-            ref["url"],
-            source_type=ref["source_type"],
+    Returns no segments when the sidecar is unavailable or unparseable.
+    """
+    try:
+        validate_requested_url(url)
+    except InvalidRequestError:
+        return []
+
+    source_type = _classify_source_type(url)
+    if source_type is None:
+        return []
+
+    content, fetch_error = _fetch_transcript_text(url, source_type=source_type)
+    if content is None:
+        logger.warning(
+            "rss_transcript_fetch_failed",
+            transcript_url=url,
+            source_type=source_type,
+            error=fetch_error,
         )
-        if content is None:
-            logger.warning(
-                "rss_transcript_fetch_failed",
-                transcript_url=ref["url"],
-                source_type=ref["source_type"],
-                error=fetch_error,
-            )
-            continue
+        return []
 
-        source_type = ref["source_type"]
-        if source_type == "vtt":
-            segments = parse_vtt_transcript(content)
-        elif source_type == "srt":
-            segments = parse_srt_transcript(content)
-        elif source_type == "json":
-            try:
-                payload = json.loads(content)
-            except ValueError as exc:
-                logger.warning(
-                    "rss_transcript_parse_failed",
-                    transcript_url=ref["url"],
-                    source_type=source_type,
-                    error=str(exc),
-                )
-                continue
-            segments = parse_json_transcript(payload)
-        else:
-            segments = parse_plain_text_transcript(
-                content,
-                episode_duration_ms=episode_duration_ms,
-            )
-
-        if not segments:
+    if source_type == "vtt":
+        segments = parse_vtt_transcript(content)
+    elif source_type == "srt":
+        segments = parse_srt_transcript(content)
+    elif source_type == "json":
+        try:
+            payload = json.loads(content)
+        except ValueError as exc:
             logger.warning(
                 "rss_transcript_parse_failed",
-                transcript_url=ref["url"],
+                transcript_url=url,
                 source_type=source_type,
-                error="no_segments",
+                error=str(exc),
             )
-            continue
+            return []
+        segments = parse_json_transcript(payload)
+    else:
+        segments = parse_plain_text_transcript(content, episode_duration_ms=episode_duration_ms)
 
-        return {
-            "status": "completed",
-            "segments": segments,
-            "error_code": None,
-            "error_message": None,
-            "source_type": source_type,
-        }
-
-    return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
-
-
-def _order_transcript_refs(
-    refs: list[dict[str, Any]],
-    *,
-    episode_language: str | None,
-    feed_language: str | None,
-) -> list[dict[str, Any]]:
-    ordered: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str | None]] = set()
-    normalized_episode_language = normalize_language_tag(episode_language)
-    normalized_feed_language = normalize_language_tag(feed_language)
-
-    for idx, ref in enumerate(refs):
-        if not isinstance(ref, dict):
-            continue
-        url = str(ref.get("url") or "").strip()
-        if not url:
-            continue
-        try:
-            validate_requested_url(url)
-        except InvalidRequestError:
-            continue
-
-        source_type = _classify_source_type(ref.get("type"), url)
-        if source_type is None:
-            continue
-
-        language = normalize_language_tag(ref.get("language"))
-        dedupe_key = (url, source_type, language)
-        if dedupe_key in seen:
-            continue
-        seen.add(dedupe_key)
-
-        ordered.append(
-            {
-                "url": url,
-                "source_type": source_type,
-                "language": language,
-                "_sort_idx": idx,
-                "_language_rank": _language_rank(
-                    language,
-                    episode_language=normalized_episode_language,
-                    feed_language=normalized_feed_language,
-                ),
-            }
+    if not segments:
+        logger.warning(
+            "rss_transcript_parse_failed",
+            transcript_url=url,
+            source_type=source_type,
+            error="no_segments",
         )
+        return []
 
-    ordered.sort(
-        key=lambda ref: (
-            _SOURCE_TYPE_PRIORITY.get(ref["source_type"], 100),
-            ref["_language_rank"],
-            ref["_sort_idx"],
-        )
-    )
-    for ref in ordered:
-        ref.pop("_sort_idx", None)
-        ref.pop("_language_rank", None)
-    return ordered
+    return segments
 
 
-def _classify_source_type(raw_type: Any, url: str) -> str | None:
-    normalized_type = _normalize_content_type(raw_type)
-    if normalized_type in _VTT_CONTENT_TYPES:
-        return "vtt"
-    if normalized_type in _SRT_CONTENT_TYPES:
-        return "srt"
-    if normalized_type in _JSON_CONTENT_TYPES or (
-        normalized_type is not None and normalized_type.endswith("+json")
-    ):
-        return "json"
-    if normalized_type == "text/plain":
-        return "text"
-
-    lowered_url = str(url or "").strip().lower()
+def _classify_source_type(url: str) -> str | None:
+    lowered_url = url.strip().lower()
     if lowered_url.endswith(".vtt"):
         return "vtt"
     if lowered_url.endswith(".srt"):
@@ -203,33 +106,6 @@ def _classify_source_type(raw_type: Any, url: str) -> str | None:
     if lowered_url.endswith(".txt") or lowered_url.endswith(".text"):
         return "text"
     return None
-
-
-def _language_rank(
-    language: str | None,
-    *,
-    episode_language: str | None,
-    feed_language: str | None,
-) -> int:
-    if language is None:
-        return 4
-    if _language_matches(language, episode_language):
-        return 0
-    if _language_matches(language, feed_language):
-        return 1
-    if _language_matches(language, "en"):
-        return 2
-    return 3
-
-
-def _language_matches(language: str | None, preferred: str | None) -> bool:
-    if language is None or preferred is None:
-        return False
-    if language == preferred:
-        return True
-    language_base = language.split("-", 1)[0]
-    preferred_base = preferred.split("-", 1)[0]
-    return language_base == preferred_base
 
 
 def _fetch_transcript_text(url: str, *, source_type: str) -> tuple[str | None, str | None]:
@@ -544,22 +420,3 @@ def _strip_html_and_collapse(raw_value: Any) -> str:
     text_value = _HTML_TAG_RE.sub(" ", text_value)
     text_value = _WHITESPACE_RE.sub(" ", text_value)
     return text_value.strip()
-
-
-def _normalize_content_type(raw_value: Any) -> str | None:
-    if raw_value is None:
-        return None
-    normalized = str(raw_value).strip().lower()
-    if not normalized:
-        return None
-    return normalized.split(";", 1)[0].strip() or None
-
-
-def _failure(error_code: str, error_message: str) -> dict[str, Any]:
-    return {
-        "status": "failed",
-        "segments": [],
-        "error_code": error_code,
-        "error_message": error_message,
-        "source_type": None,
-    }

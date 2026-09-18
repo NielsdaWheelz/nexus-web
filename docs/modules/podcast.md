@@ -189,15 +189,13 @@ Manual refresh is `POST /podcasts/refresh-runs` with a required
 `Idempotency-Key`; canonical snapshots are available by sealed run handle.
 Run changes notify `podcast_refresh_events`, and the snapshot SSE route
 rechecks ownership on each fresh read before emitting changed `state` frames
-and one terminal `done`. Terminal runs/items are pruned child-first after 30
-days by the daily bounded `podcast_refresh_run_prune_job`.
+and one terminal `done`.
 
 Subscribe also creates one `podcast_subscription_backfills` row and enqueues
 `podcast_backfill_subscription`. Its immutable cutoff separates pre-subscription
-history from live sync. Each job names the backfill ID, expected step, and cursor
-digest; the queue claim plus row fence makes replay `Applied`,
-`AlreadyApplied`, `StaleJobAttempt`, or `StaleOrUnsubscribed` without a second
-write. Every committed nonterminal page enqueues exactly one successor. Exhausted
+history from live sync. Each job names the backfill ID and expected step; the
+queue claim plus row fence makes replay `Applied`, `AlreadyApplied`,
+`StaleJobAttempt`, or `StaleOrUnsubscribed` without a second write. Every committed nonterminal page enqueues exactly one successor. Exhausted
 retries stamp the current fence Failed and retain the dead job for operator
 repair; the idempotent Retry command replaces only that failed fence. Live sync
 continues while backfill is running, source-limited, or failed.
@@ -235,18 +233,18 @@ precedence. Current transcript lifecycle persistence, artifact publication, and
 semantic-job admission have separate owners under `services/transcripts/`.
 Semantic repair is zero-cost indexing work: it serializes on Media, inventories
 the canonical queue, never invalidates collection rows, and a repeat against a
-live repair job is audit-only idempotency.
+live repair job is a no-op.
 
 Single-Episode and fingerprinted query admission share that private owner but
-have different transaction boundaries: a single quota rejection commits only
-its immutable audit, while a query admits every selected Episode or none. Each
+have different transaction boundaries: a single quota rejection writes nothing,
+while a query admits every selected Episode or none. Each
 request locks Media before mutable admission decisions, and source ingest binds
 the accepted attempt plus durable job inside the caller-owned transaction.
 Enqueue defects propagate and roll the transaction back; there is no failed
-enqueue response, fallback state, or `enqueue_failed` audit compatibility path.
+enqueue response and no fallback state.
 If a publisher sidecar cannot produce segments, generated-fallback admission
 returns `Admitted | RejectedQuota` through the source fence. Rejected quota
-commits the immutable request audit first; the worker then publishes terminal
+writes no transcript work state; the worker then publishes terminal
 source/transcript failure under its next exact fence without charging usage.
 Generated fallback and operator requeue reserve usage and reset the execution
 job without deleting current segments/fragments or downgrading readable
