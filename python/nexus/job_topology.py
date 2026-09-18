@@ -22,15 +22,13 @@ BACKGROUND_WORKER_JOB_KINDS: tuple[str, ...] = (
     "storage_object_cleanup",
     "storage_orphan_sweep",
     "reconcile_stale_ingest_media_job",
+    "prune_background_jobs_job",
+    "purge_expired_auth_handoff_codes",
 )
 PRODUCTION_ENABLED_JOB_KINDS: tuple[str, ...] = (
     INTERACTIVE_WORKER_JOB_KINDS + BACKGROUND_WORKER_JOB_KINDS
 )
-MAINTENANCE_JOB_KINDS: tuple[str, ...] = (
-    "sync_gutenberg_catalog_job",
-    "prune_background_jobs_job",
-    "purge_expired_auth_handoff_codes",
-)
+MAINTENANCE_JOB_KINDS: tuple[str, ...] = ("sync_gutenberg_catalog_job",)
 ORACLE_RECONCILE_JOB_KINDS: tuple[str, ...] = (
     "ingest_media_source",
     "media_content_reindex_job",

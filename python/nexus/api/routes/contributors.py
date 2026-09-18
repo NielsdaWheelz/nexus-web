@@ -72,7 +72,6 @@ def get_contributor(
         db,
         viewer_id=viewer.user_id,
         contributor_handle=_parse_handle(contributor_handle),
-        viewer_roles=viewer.roles,
     )
     return ok(detail, by_alias=True)
 
@@ -108,6 +107,5 @@ def rename_contributor(
     detail = contributors_service.ensure_contributor_display_name(
         viewer=viewer,
         contributor_handle=_parse_handle(contributor_handle),
-        request=request,
     )
     return ok(detail, by_alias=True)

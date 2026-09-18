@@ -59,7 +59,6 @@ from nexus.schemas.resource_action_snapshots import (
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services import conversations, highlights, library_governance, reader_apparatus
 from nexus.services.artifacts import engine as artifact_engine
-from nexus.services.capabilities import can_rename_contributor
 from nexus.services.consumption import _lectern_store, _projection
 from nexus.services.media import (
     CollectionMedia,
@@ -157,7 +156,6 @@ def resolve_action_snapshots(
     *,
     viewer_id: UUID,
     refs: list[ResourceRef],
-    viewer_roles: frozenset[str] = frozenset(),
 ) -> ResourceActionSnapshotResolveResponse:
     """Resolve one action-facts snapshot per ref, in request order.
 
@@ -172,7 +170,6 @@ def resolve_action_snapshots(
     facts = _ResolvedFacts.load(
         db,
         viewer_id=viewer_id,
-        viewer_roles=viewer_roles,
         refs_by_scheme=refs_by_scheme,
     )
     missing_uris = _missing_uris(db, viewer_id=viewer_id, refs=refs, facts=facts)
@@ -251,7 +248,6 @@ class _ResolvedFacts:
     highlight_action: dict[UUID, highlights.HighlightActionFacts]
     artifact_action: dict[UUID, artifact_engine.ArtifactActionFacts]
     artifact_revision_action: dict[UUID, artifact_engine.ArtifactActionFacts]
-    can_rename_contributor: bool
     visible_evidence_span_ids: set[UUID]
     visible_content_chunk_ids: set[UUID]
     visible_fragment_ids: set[UUID]
@@ -263,7 +259,6 @@ class _ResolvedFacts:
         db: Session,
         *,
         viewer_id: UUID,
-        viewer_roles: frozenset[str],
         refs_by_scheme: dict[ResourceScheme, list[ResourceRef]],
     ) -> _ResolvedFacts:
         def ids(scheme: ResourceScheme) -> list[UUID]:
@@ -278,7 +273,6 @@ class _ResolvedFacts:
                 db,
                 viewer_id=viewer_id,
                 media_ids=media_ids,
-                is_admin="admin" in viewer_roles,
             )
         }
         artifact_candidates, artifact_revision_candidates = (
@@ -378,7 +372,6 @@ class _ResolvedFacts:
             ),
             artifact_action=artifact_action,
             artifact_revision_action=artifact_revision_action,
-            can_rename_contributor=can_rename_contributor(viewer_roles),
             visible_evidence_span_ids=visible_evidence_span_ids(
                 db, viewer_id=viewer_id, evidence_span_ids=ids("evidence_span")
             ),
@@ -438,9 +431,9 @@ def _authorized(allowed: bool) -> ServerActionAvailabilityOut:
 
 
 def _recovery(media: CollectionMedia) -> RecoveryResourceActionCapabilityOut | None:
-    """The viewer's own offer is actionable; the offer a creator or admin would
-    be given stays discoverable but permission-blocked, like every other
-    authorized capability."""
+    """The viewer's own offer is actionable; the offer a creator would be given
+    stays discoverable but permission-blocked, like every other authorized
+    capability."""
     if isinstance(media.recovery, Present):
         return RecoveryResourceActionCapabilityOut(
             availability=_available(), offer=_recovery_offer_out(media.recovery.value)
@@ -530,7 +523,7 @@ def _capabilities_for_ref(
     elif ref.scheme == "external_snapshot":
         pass
     elif ref.scheme == "contributor":
-        capabilities.append(_simple("RenameContributor", _authorized(facts.can_rename_contributor)))
+        capabilities.append(_simple("RenameContributor", _blocked("PermissionDenied")))
     elif ref.scheme == "podcast":
         _extend_podcast(ref, capability=capability, facts=facts, capabilities=capabilities)
     elif ref.scheme == "reader_apparatus_item":

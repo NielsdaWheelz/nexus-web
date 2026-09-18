@@ -73,7 +73,6 @@ MEDIA_CONTENT_REINDEX_REASONS = frozenset(
     {
         "source_success",
         "reconciliation",
-        "operator_repair",
         "oracle_corpus_seed",
     }
 )
@@ -1187,14 +1186,14 @@ class SearchRecoveryFacts:
     revision: int
     dead_job_id: UUID | None
     is_creator: bool
-    is_admin: bool
+    is_operator: bool
 
 
 def search_recovery(facts: SearchRecoveryFacts) -> SearchRecoveryAnswer:
     """The one recovery answer for a media's search-index obligation (contract D6)."""
     if facts.dead_job_id is None:
         return None
-    if not (facts.is_creator or facts.is_admin):
+    if not (facts.is_creator or facts.is_operator):
         return "NotOwner"
     return RepairSearchOffer(expected_revision=facts.revision, expected_job_id=facts.dead_job_id)
 
@@ -1218,7 +1217,7 @@ def repair_dead_media_reindex(
 
     def admit() -> SearchRepairAdmission:
         match actor:
-            case ViewerRecovery(viewer_id=viewer_id, is_admin=is_admin):
+            case ViewerRecovery(viewer_id=viewer_id):
                 if not can_read_media(db, viewer_id, media_id):
                     raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
                 creator_id = db.execute(
@@ -1228,7 +1227,8 @@ def repair_dead_media_reindex(
                 if creator_id is None:
                     raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
                 is_creator = creator_id == viewer_id
-                if not (is_creator or is_admin):
+                is_operator = False
+                if not is_creator:
                     raise ForbiddenError(ApiErrorCode.E_OWNER_REQUIRED, "Media owner required")
                 replay = lookup_replay(
                     db,
@@ -1241,7 +1241,7 @@ def repair_dead_media_reindex(
                     db.rollback()
                     return SearchRepairAdmission.model_validate(replay)
             case OperatorRecovery():
-                is_creator, is_admin = False, True
+                is_creator, is_operator = False, True
         _lock_media_for_reindex(db, media_id)
         state = _lock_media_index_state(db, media_id)
         if state is None:
@@ -1259,7 +1259,7 @@ def repair_dead_media_reindex(
                 revision=revision,
                 dead_job_id=None if dead is None else dead.id,
                 is_creator=is_creator,
-                is_admin=is_admin,
+                is_operator=is_operator,
             )
         )
         if offer == "NotOwner":
@@ -1301,53 +1301,6 @@ def repair_dead_media_reindex(
         return admission
 
     return admit_serializable(db, "repair_dead_media_reindex", admit)
-
-
-def current_search_repair_offer(db: Session, *, media_id: UUID) -> RepairSearchOffer:
-    """The search repair an operator must admit for this media right now, or the
-    refusal that says why there is none. The read ends here: an internal route
-    resolves the identity it will name, then the admission opens its own
-    serializable transaction."""
-    indexed = (
-        db.execute(
-            text(
-                """
-                SELECT cis.revision
-                FROM media m
-                LEFT JOIN content_index_states cis
-                  ON cis.owner_kind = 'media' AND cis.owner_id = m.id
-                WHERE m.id = :media_id
-                """
-            ),
-            {"media_id": media_id},
-        )
-        .mappings()
-        .one_or_none()
-    )
-    offer = None
-    if indexed is not None and indexed["revision"] is not None:
-        revision = _validated_media_revision(indexed["revision"])
-        dead = current_dead_job_for_payload(
-            db,
-            kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
-            expected_payload_match={"media_id": str(media_id), "revision": revision},
-        )
-        offer = search_recovery(
-            SearchRecoveryFacts(
-                revision=revision,
-                dead_job_id=None if dead is None else dead.id,
-                is_creator=False,
-                is_admin=True,
-            )
-        )
-    db.rollback()
-    if indexed is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if not isinstance(offer, RepairSearchOffer):
-        raise ConflictError(
-            ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no dead content-index job to repair."
-        )
-    return offer
 
 
 def _lock_media_for_reindex(db: Session, media_id: UUID) -> None:

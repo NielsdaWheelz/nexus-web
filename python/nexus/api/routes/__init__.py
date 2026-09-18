@@ -22,7 +22,6 @@ from nexus.api.routes.dossiers import router as dossiers_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
 from nexus.api.routes.highlights import router as highlights_router
 from nexus.api.routes.imports import router as imports_router
-from nexus.api.routes.internal_ingest import router as internal_ingest_router
 from nexus.api.routes.lectern import router as lectern_router
 from nexus.api.routes.libraries import router as libraries_router
 from nexus.api.routes.listening_state import router as listening_state_router
@@ -114,7 +113,6 @@ def create_api_router() -> APIRouter:
     settings = get_settings()
     if settings.podcasts_enabled:
         api_router.include_router(podcasts_router)
-    api_router.include_router(internal_ingest_router)
     if settings.email_ingest_enabled:
         from nexus.api.routes.email_ingest import router as email_ingest_router
 

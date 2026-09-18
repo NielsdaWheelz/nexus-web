@@ -35,7 +35,7 @@ from typing import Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import delete, func, or_, select, text
+from sqlalchemy import delete, or_, select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer
@@ -74,7 +74,6 @@ from nexus.schemas.collection_page import (
 )
 from nexus.schemas.contributors import (
     ContributorDetailOut,
-    ContributorRenameRequest,
     ContributorRole,
     ContributorRoleFactOut,
     ContributorSearchItemOut,
@@ -124,7 +123,7 @@ from nexus.services._contributor_identity import (
 from nexus.services._contributor_identity import (
     resolve_observation_credits as _resolve_observation_credits,
 )
-from nexus.services.capabilities import can_edit_media_authors, can_rename_contributor
+from nexus.services.capabilities import can_edit_media_authors
 from nexus.services.chat_context_refs import contributor_is_referenced_in_persisted_context
 from nexus.services.collection_keyset import (
     SortKey,
@@ -274,21 +273,10 @@ def get_contributor_detail(
     *,
     viewer_id: UUID,
     contributor_handle: ContributorHandle,
-    viewer_roles: frozenset[str] = frozenset(),
 ) -> ContributorDetailOut:
-    """Detail view under broad visibility. ``viewer_roles`` shapes ``canRename``.
-
-    Roles ride the viewer's token (they are not database-derivable from
-    ``viewer_id``), so the route passes ``viewer.roles``; the default keeps the
-    capability truthfully false for role-less callers.
-    """
+    """Detail view under broad visibility."""
     contributor = _load_visible_contributor_by_handle(db, str(contributor_handle), viewer_id)
-    return _contributor_detail_out(
-        db,
-        contributor,
-        viewer_id=viewer_id,
-        can_rename=can_rename_contributor(viewer_roles),
-    )
+    return _contributor_detail_out(db, contributor, viewer_id=viewer_id)
 
 
 _WORKS_VIEW_KEYS = frozenset({"sort", "direction"})
@@ -600,18 +588,15 @@ def ensure_contributor_display_name(
     *,
     viewer: Viewer,
     contributor_handle: ContributorHandle,
-    request: ContributorRenameRequest,
 ) -> ContributorDetailOut:
-    """Replayable display-name rename; an already-equal cleaned name is success."""
+    """Display-name rename; no viewer carries the authority to rename an author."""
     fresh = _fresh_author_session()
     try:
-        return retry_serializable(
-            fresh,
-            "ensure_contributor_display_name",
-            partial(_ensure_display_name_op, fresh, viewer, contributor_handle, request),
-        )
+        # D-44 order: load via broad visibility (404) -> authorize (403).
+        _load_visible_contributor_by_handle(fresh, str(contributor_handle), viewer.user_id)
     finally:
         fresh.close()
+    raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Renaming an author is not available")
 
 
 # ---------------------------------------------------------------------------
@@ -791,11 +776,10 @@ def _put_media_authors_op(
     if not can_edit_media_authors(
         can_read=True,
         is_creator=media.created_by_user_id == viewer.user_id,
-        is_admin="admin" in viewer.roles,
     ):
         raise ForbiddenError(
             ApiErrorCode.E_FORBIDDEN,
-            "Only the media creator or an administrator can edit authors",
+            "Only the media creator can edit authors",
         )
     scope = f"media:{media_id}:authors"
     # Alias-free hash basis (spec 4/D-21), deliberately unlike other scopes'
@@ -983,72 +967,11 @@ def _media_authors_out(
     return MediaAuthorsOut(authorMode=author_mode, authors=authors, canEditAuthors=True)
 
 
-def _ensure_display_name_op(
-    db: Session,
-    viewer: Viewer,
-    contributor_handle: ContributorHandle,
-    request: ContributorRenameRequest,
-) -> ContributorDetailOut:
-    # D-44 order: load via broad visibility (404) -> authorize (403) -> replay.
-    contributor = _load_visible_contributor_by_handle(db, str(contributor_handle), viewer.user_id)
-    if not can_rename_contributor(viewer.roles):
-        raise ForbiddenError(
-            ApiErrorCode.E_FORBIDDEN,
-            "Renaming an author requires an administrator or curator role",
-        )
-    scope = f"contributor:{contributor.id}:display-name"
-    # Alias-free hash basis (spec 4/D-21), deliberately unlike other scopes'
-    # by_alias=True: keys the memo to the request's meaning, not its camelCase
-    # wire spelling, so a wire-alias rename never masquerades as a different
-    # mutation.
-    request_bytes = canonical_json_bytes(request.model_dump(mode="json", by_alias=False))
-    stored = lookup_replay(
-        db,
-        viewer_id=viewer.user_id,
-        scope=scope,
-        client_mutation_id=request.client_mutation_id,
-        request_bytes=request_bytes,
-    )
-    if stored is not None:
-        return _revalidated_memo(ContributorDetailOut, stored)
-
-    new_display = clean_contributor_display(request.display_name)
-    if new_display and new_display != contributor.display_name:
-        old_display = contributor.display_name
-        contributor.display_name = new_display
-        contributor.updated_at = func.now()
-        # Old and new canonical spellings both resolve future identity; the
-        # handle and existing credited spellings never change (spec 2.6). The
-        # new spelling is ensured LAST so a same-match-key rename (case or
-        # ignorable-codepoint variant) leaves the shared alias row's literal
-        # equal to the new display name.
-        _ensure_alias(db, contributor_id=contributor.id, alias=old_display, resolves_identity=True)
-        _ensure_alias(db, contributor_id=contributor.id, alias=new_display, resolves_identity=True)
-
-    response = _contributor_detail_out(
-        db,
-        contributor,
-        viewer_id=viewer.user_id,
-        can_rename=True,
-    )
-    record_replay(
-        db,
-        viewer_id=viewer.user_id,
-        scope=scope,
-        client_mutation_id=request.client_mutation_id,
-        request_bytes=request_bytes,
-        response_json=response.model_dump(mode="json", by_alias=True),
-    )
-    db.commit()
-    return response
-
-
 def _contributor_detail_out(
     db: Session,
     contributor: Contributor,
     *,
     viewer_id: UUID,
-    can_rename: bool,
 ) -> ContributorDetailOut:
     other_names = list(
         db.scalars(
@@ -1066,7 +989,7 @@ def _contributor_detail_out(
         href=f"/authors/{contributor.handle}",
         displayName=contributor.display_name,
         otherNames=other_names,
-        canRename=can_rename,
+        canRename=False,
         actionSubject=ResourceActionSubjectOut(ref=ref.uri),
     )
 

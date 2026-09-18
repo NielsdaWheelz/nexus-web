@@ -521,9 +521,7 @@ def read_import_summary(db: Session, *, viewer_id: UUID) -> ImportSummary:
     )
 
 
-def read_import_page(
-    db: Session, *, viewer_id: UUID, query: ImportListQuery, is_admin: bool
-) -> ImportPage:
+def read_import_page(db: Session, *, viewer_id: UUID, query: ImportListQuery) -> ImportPage:
     """One page of the view's imports; counts and groups cover the whole
     filtered set, and the cursor is bound to this viewer, filter set, and order."""
     match query.view:
@@ -605,7 +603,7 @@ def read_import_page(
                 family=family, query=cursor_query, after=after_values(plan, page[-1])
             )
         )
-    media = _hydrate_media(db, viewer_id=viewer_id, rows=page, is_admin=is_admin)
+    media = _hydrate_media(db, viewer_id=viewer_id, rows=page)
     stage_counts = cast(dict[str, int], totals["stage_counts"])
     return ImportPage(
         observed_at=totals["observed_at"],
@@ -619,7 +617,6 @@ def read_import_page(
             _item(
                 row,
                 media=_linked_media(row, media),
-                is_admin=is_admin,
                 matched_event=(
                     present(
                         history_entry(
@@ -669,14 +666,10 @@ def _history_owner(row: RowMapping) -> HistoryOwner:
     return MediaHistoryOwner(media_id=row["media_id"])
 
 
-def read_import_detail(
-    db: Session, *, viewer_id: UUID, ref: ParsedImportRef, is_admin: bool
-) -> ImportDetail:
+def read_import_detail(db: Session, *, viewer_id: UUID, ref: ParsedImportRef) -> ImportDetail:
     """One import's current row plus its readiness and history coverage."""
     row = _import_row(db, viewer_id=viewer_id, ref=ref)
-    media = _linked_media(
-        row, _hydrate_media(db, viewer_id=viewer_id, rows=[row], is_admin=is_admin)
-    )
+    media = _linked_media(row, _hydrate_media(db, viewer_id=viewer_id, rows=[row]))
     readiness = (
         ImportReadiness(can_read=False, can_search=False, can_play=False)
         if media is None
@@ -687,7 +680,7 @@ def read_import_detail(
         )
     )
     return ImportDetail(
-        item=_item(row, media=media, is_admin=is_admin, matched_event=absent()),
+        item=_item(row, media=media, matched_event=absent()),
         readiness=readiness,
         history_coverage=history_coverage(db, owner=_history_owner(row)),
     )
@@ -740,13 +733,10 @@ def _linked_media(row: RowMapping, media: dict[UUID, MediaOut]) -> MediaOut | No
 
 
 def _hydrate_media(
-    db: Session, *, viewer_id: UUID, rows: Sequence[RowMapping], is_admin: bool
+    db: Session, *, viewer_id: UUID, rows: Sequence[RowMapping]
 ) -> dict[UUID, MediaOut]:
     media_ids = [media_id for row in rows if (media_id := _media_id(row)) is not None]
-    media = {
-        item.id: item
-        for item in list_media_for_viewer_by_ids(db, viewer_id, media_ids, is_admin=is_admin)
-    }
+    media = {item.id: item for item in list_media_for_viewer_by_ids(db, viewer_id, media_ids)}
     if any(media_id not in media for media_id in media_ids):
         # justify-defect: every media id came from the visible-media CTE above.
         raise AssertionError("Imports media hydration lost viewer-visible rows")
@@ -824,7 +814,7 @@ def _state(row: RowMapping, media: MediaOut | None) -> ImportState:
             raise AssertionError(f"import row carries an unknown classification {other!r}")
 
 
-def _media_capabilities(row: RowMapping, media: MediaOut, *, is_admin: bool) -> Capabilities:
+def _media_capabilities(row: RowMapping, media: MediaOut) -> Capabilities:
     is_creator = bool(row["is_creator"])
     source = source_recovery(
         SourceRecoveryFacts(
@@ -836,7 +826,7 @@ def _media_capabilities(row: RowMapping, media: MediaOut, *, is_admin: bool) -> 
             job_id=row["attempt_job_id"],
             repairable=bool(row["source_repairable"]),
             is_creator=is_creator,
-            is_admin=is_admin,
+            is_operator=False,
         )
     )
     search = (
@@ -847,7 +837,7 @@ def _media_capabilities(row: RowMapping, media: MediaOut, *, is_admin: bool) -> 
                 revision=int(row["index_revision"]),
                 dead_job_id=row["index_job_id"] if row["index_job_status"] == "dead" else None,
                 is_creator=is_creator,
-                is_admin=is_admin,
+                is_operator=False,
             )
         )
     )
@@ -891,7 +881,6 @@ def _item(
     row: RowMapping,
     *,
     media: MediaOut | None,
-    is_admin: bool,
     matched_event: Absent | Present[HistoryEntry],
 ) -> ImportItem:
     if row["source_job_id"] is not None and (
@@ -923,8 +912,6 @@ def _item(
         updated_at=row["updated_at"],
         matched_event=matched_event,
         capabilities=(
-            _upload_capabilities(row)
-            if media is None
-            else _media_capabilities(row, media, is_admin=is_admin)
+            _upload_capabilities(row) if media is None else _media_capabilities(row, media)
         ),
     )

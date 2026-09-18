@@ -274,7 +274,7 @@ class SourceRecoveryFacts:
     job_id: UUID | None
     repairable: bool
     is_creator: bool
-    is_admin: bool
+    is_operator: bool
 
 
 def _source_recovery_input(source_type: str) -> SourceRecoveryInput:
@@ -309,7 +309,7 @@ def source_recovery(facts: SourceRecoveryFacts) -> SourceRecoveryAnswer:
         if facts.job_id is None:
             # justify-defect: repairable joins the attempt to its exact dead job.
             raise AssertionError("repairable source attempt has no job")
-        if not (facts.is_creator or facts.is_admin):
+        if not (facts.is_creator or facts.is_operator):
             return "NotOwner"
         return RepairSourceOffer(
             expected_attempt_id=facts.attempt_id,
@@ -336,7 +336,7 @@ def _source_recovery_facts(
     media: Media,
     attempt: MediaSourceAttempt,
     is_creator: bool,
-    is_admin: bool,
+    is_operator: bool,
 ) -> SourceRecoveryFacts:
     """Per-row facts inside an admission; the dead job, when exact, stays locked."""
     repairable = False
@@ -356,7 +356,7 @@ def _source_recovery_facts(
         job_id=attempt.job_id,
         repairable=repairable,
         is_creator=is_creator,
-        is_admin=is_admin,
+        is_operator=is_operator,
     )
 
 
@@ -1845,7 +1845,7 @@ def retry_source_for_viewer(
             )
         offer = source_recovery(
             _source_recovery_facts(
-                db, media=media, attempt=attempt, is_creator=True, is_admin=False
+                db, media=media, attempt=attempt, is_creator=True, is_operator=False
             )
         )
         match offer:
@@ -1931,14 +1931,15 @@ def repair_dead_source_execution(
 
     def admit() -> SourceRepairAdmission:
         match actor:
-            case ViewerRecovery(viewer_id=viewer_id, is_admin=is_admin):
+            case ViewerRecovery(viewer_id=viewer_id):
                 if not can_read_media(db, viewer_id, media_id):
                     raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
                 creator_id = db.scalar(select(Media.created_by_user_id).where(Media.id == media_id))
                 if creator_id is None:
                     raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
                 is_creator = creator_id == viewer_id
-                if not (is_creator or is_admin):
+                is_operator = False
+                if not is_creator:
                     raise ForbiddenError(ApiErrorCode.E_OWNER_REQUIRED, "Media owner required")
                 replay = lookup_replay(
                     db,
@@ -1951,7 +1952,7 @@ def repair_dead_source_execution(
                     db.rollback()
                     return SourceRepairAdmission.model_validate(replay)
             case OperatorRecovery():
-                is_creator, is_admin = False, True
+                is_creator, is_operator = False, True
         media = db.execute(
             select(Media).where(Media.id == media_id).with_for_update(key_share=True)
         ).scalar()
@@ -1965,7 +1966,7 @@ def repair_dead_source_execution(
             )
         offer = source_recovery(
             _source_recovery_facts(
-                db, media=media, attempt=attempt, is_creator=is_creator, is_admin=is_admin
+                db, media=media, attempt=attempt, is_creator=is_creator, is_operator=is_operator
             )
         )
         if offer == "NotOwner":
@@ -2014,32 +2015,6 @@ def repair_dead_source_execution(
         return admission
 
     return admit_serializable(db, "repair_dead_source_execution", admit)
-
-
-def current_source_repair_offer(db: Session, *, media_id: UUID) -> RepairSourceOffer:
-    """The source repair an operator must admit for this media right now, or the
-    refusal that says why there is none. The read ends here: an internal route
-    resolves the identity it will name, then the admission opens its own
-    serializable transaction."""
-    media = db.get(Media, media_id)
-    attempt = None if media is None else _latest_source_attempt(db, media_id)
-    offer = (
-        None
-        if media is None or attempt is None
-        else source_recovery(
-            _source_recovery_facts(
-                db, media=media, attempt=attempt, is_creator=False, is_admin=True
-            )
-        )
-    )
-    db.rollback()
-    if media is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    if not isinstance(offer, RepairSourceOffer):
-        raise ConflictError(
-            ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no dead source job to repair."
-        )
-    return offer
 
 
 def refresh_source_for_viewer(

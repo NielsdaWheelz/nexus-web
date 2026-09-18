@@ -358,9 +358,6 @@ class Settings(BaseSettings):
     sync_gutenberg_catalog_schedule_seconds: int = Field(
         default=0, alias="SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS", ge=0
     )
-    background_job_prune_schedule_seconds: int = Field(
-        default=0, alias="BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS", ge=0
-    )
     background_job_prune_succeeded_after_days: int = Field(
         default=7, alias="BACKGROUND_JOB_PRUNE_SUCCEEDED_AFTER_DAYS", ge=1
     )

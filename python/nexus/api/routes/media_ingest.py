@@ -266,7 +266,6 @@ def repair_media(
     """Requeue the exact dead job the viewer inspected: source or search."""
     actor = ViewerRecovery(
         viewer_id=viewer.user_id,
-        is_admin="admin" in viewer.roles,
         client_mutation_id=body.client_mutation_id,
     )
     match body:

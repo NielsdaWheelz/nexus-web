@@ -411,10 +411,9 @@ require_worker_defaults() {
     fi
   done
 
-  for key in SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS; do
-    value="$(normalize_env_value "$(env_value "$key" "$file" || true)")"
-    [ "$value" = "0" ] || die "${key} must be 0 in the normal production worker env"
-  done
+  value="$(normalize_env_value "$(env_value "SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS" "$file" || true)")"
+  [ "$value" = "0" ] || \
+    die "SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS must be 0 in the normal production worker env"
 
   for key in PODCAST_REFRESH_DUE_SCHEDULE_SECONDS PODCAST_REFRESH_DUE_LIMIT; do
     value="$(normalize_env_value "$(env_value "$key" "$file" || true)")"

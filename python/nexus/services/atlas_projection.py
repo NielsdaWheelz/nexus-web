@@ -9,11 +9,10 @@ coordinates at render time (§4.2).
 from __future__ import annotations
 
 import math
-from collections import defaultdict
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.exc import ProgrammingError, SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.jobs.queue import enqueue_unique_job
@@ -54,70 +53,29 @@ def _parse_pgvector_literal(raw: object) -> list[float]:
 def fetch_mean_embeddings(db: Session, user_id: UUID) -> list[tuple[UUID, list[float]]]:
     """Return ``(media_id, mean_vector)`` for each visible work with embeddings.
 
-    Uses the pgvector ``avg()`` aggregate (§D-1); falls back to Python averaging
-    if the installed image lacks ``avg(vector)`` (§R-3). Scoped to the user's
-    personal Default virtual relation (AC2) — a user with no Default library
-    yet has nothing to project.
+    Uses the pgvector ``avg()`` aggregate (§D-1). Scoped to the user's personal
+    Default virtual relation (AC2) — a user with no Default library yet has
+    nothing to project.
     """
     default_library_id = governance.find_default_library_id(db, user_id)
     if default_library_id is None:
         return []
-    params = {"viewer_id": user_id, "library_id": default_library_id}
-    try:
-        rows = db.execute(
-            text(
-                f"""
-                SELECT c.owner_id AS media_id, avg(e.embedding_vector) AS mean
-                FROM content_chunks c
-                JOIN content_embeddings e ON e.chunk_id = c.id
-                WHERE c.owner_kind = 'media'
-                  AND c.owner_id IN ({library_media_ids_cte_sql()})
-                  AND e.embedding_vector IS NOT NULL
-                GROUP BY c.owner_id
-                HAVING count(e.id) > 0
-                """
-            ),
-            params,
-        ).all()
-        return [(row.media_id, _parse_pgvector_literal(row.mean)) for row in rows]
-    except ProgrammingError as exc:
-        if "avg(vector)" not in str(exc) and "function avg" not in str(exc):
-            raise
-        logger.warning("atlas_avg_vector_unavailable_fallback_python", error=str(exc))
-        db.rollback()
-        return _fetch_mean_embeddings_python(db, user_id, default_library_id)
-
-
-def _fetch_mean_embeddings_python(
-    db: Session, user_id: UUID, default_library_id: UUID
-) -> list[tuple[UUID, list[float]]]:
     rows = db.execute(
         text(
             f"""
-            SELECT c.owner_id AS media_id, e.embedding_vector AS vec
+            SELECT c.owner_id AS media_id, avg(e.embedding_vector) AS mean
             FROM content_chunks c
             JOIN content_embeddings e ON e.chunk_id = c.id
             WHERE c.owner_kind = 'media'
               AND c.owner_id IN ({library_media_ids_cte_sql()})
               AND e.embedding_vector IS NOT NULL
+            GROUP BY c.owner_id
+            HAVING count(e.id) > 0
             """
         ),
         {"viewer_id": user_id, "library_id": default_library_id},
     ).all()
-    sums: dict[UUID, list[float]] = {}
-    counts: dict[UUID, int] = defaultdict(int)
-    for row in rows:
-        vec = _parse_pgvector_literal(row.vec)
-        if row.media_id not in sums:
-            sums[row.media_id] = [0.0] * len(vec)
-        acc = sums[row.media_id]
-        for i, value in enumerate(vec):
-            acc[i] += value
-        counts[row.media_id] += 1
-    return [
-        (media_id, [component / counts[media_id] for component in acc])
-        for media_id, acc in sums.items()
-    ]
+    return [(row.media_id, _parse_pgvector_literal(row.mean)) for row in rows]
 
 
 # ---------- pure-Python PCA -------------------------------------------------

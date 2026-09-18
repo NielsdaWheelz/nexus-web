@@ -66,7 +66,6 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml 
 - `PODCAST_REFRESH_DUE_LIMIT`
 - `INGEST_RECONCILE_SCHEDULE_SECONDS`
 - `SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS`
-- `BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS`
 
 See root `.env.example` for example values and related ingest controls.
 
@@ -75,14 +74,14 @@ Maintenance is a one-off process, never a deployed service:
 ```bash
 WORKER_LANE=maintenance \
 NEXUS_ALLOW_WORKER_MAINTENANCE=1 \
-WORKER_ALLOWED_JOB_KINDS=prune_background_jobs_job \
-BACKGROUND_JOB_PRUNE_SCHEDULE_SECONDS=3600 \
+WORKER_ALLOWED_JOB_KINDS=sync_gutenberg_catalog_job \
+SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS=86400 \
 uv run python -m apps.worker.main
 ```
 
-The raw allowlist must be a non-empty subset of the three
-`MAINTENANCE_JOB_KINDS`. Normal lanes reject it. Stop the process when the
-bounded maintenance operation is complete.
+The raw allowlist must be a non-empty subset of `MAINTENANCE_JOB_KINDS`.
+Normal lanes reject it. Stop the process when the bounded maintenance
+operation is complete.
 
 ## Contract
 

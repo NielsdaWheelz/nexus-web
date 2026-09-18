@@ -33,11 +33,7 @@ def list_imports(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
-    return ok(
-        read_import_page(
-            db, viewer_id=viewer.user_id, query=query, is_admin="admin" in viewer.roles
-        )
-    )
+    return ok(read_import_page(db, viewer_id=viewer.user_id, query=query))
 
 
 @router.get("/imports/{ref}")
@@ -46,14 +42,7 @@ def get_import(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
-    return ok(
-        read_import_detail(
-            db,
-            viewer_id=viewer.user_id,
-            ref=parse_import_ref(ref),
-            is_admin="admin" in viewer.roles,
-        )
-    )
+    return ok(read_import_detail(db, viewer_id=viewer.user_id, ref=parse_import_ref(ref)))
 
 
 @router.get("/imports/{ref}/history")

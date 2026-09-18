@@ -1549,7 +1549,7 @@ and never degrades to empty authorship. Visibility predicates
 persisted-chat-ref checks live in `chat_context_refs.py`. There is no `/authors`
 directory or root Authors pane; author search lives in desktop Nexus
 at `/search?kinds=people`, and author chips link to the `/authors/{handle}`
-detail-only pane (works list, curator-gated rename).
+detail-only pane (works list).
 
 ### 8.7 Notes and pages
 

@@ -35,10 +35,6 @@ from nexus.services.resource_graph.schemas import ConnectionEndpoint
 
 router = APIRouter(tags=["media"])
 
-# The administrator role that widens author-editing to null/other-creator media
-# (spec 6: canEditAuthors = canReadMedia AND (isMediaCreator OR isAdministrator)).
-_ADMIN_ROLE = "admin"
-
 # Clamp for GET /media/{id}/related ``limit`` (spec S5).
 _RELATED_LIMIT_MIN = 1
 _RELATED_LIMIT_MAX = 20
@@ -77,7 +73,6 @@ def list_media(
         search=search,
         cursor=cursor,
         limit=limit,
-        is_admin=_ADMIN_ROLE in viewer.roles,
     )
     # by_alias=True: MediaOut.player_descriptor is the sole aliased field
     # (playerDescriptor, spec §6); every sibling stays snake_case (D-1).
@@ -91,9 +86,7 @@ def get_media(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Get media by ID. Returns 404 if it does not exist or the viewer cannot read it."""
-    result = media_service.get_media_for_viewer(
-        db, viewer.user_id, media_id, is_admin=_ADMIN_ROLE in viewer.roles
-    )
+    result = media_service.get_media_for_viewer(db, viewer.user_id, media_id)
     # by_alias=True: MediaOut.player_descriptor is the sole aliased field
     # (playerDescriptor, spec §6); every sibling stays snake_case (D-1).
     return ok(result, by_alias=True)
