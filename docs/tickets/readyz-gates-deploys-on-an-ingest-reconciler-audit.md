@@ -1,42 +1,34 @@
-# /readyz gates the deploy on an ingest-reconciler audit
+# readiness depends on an ingest health audit
 
-status: open · origin: 2026-09-17 slop sweep (claude session) · area: runtime
-health · oi-160
+status: open · origin: 2026-09-17 slop sweep, rechecked at `719f32173` · area:
+runtime health · oi-160
 
-`GET /readyz` (`python/nexus/api/routes/operational.py:22-43`) runs, on every
-probe, the 29-line correlated-subquery proof
-`ACCEPTED_SOURCE_JOB_DEFECT_COUNT_SQL` (`runtime_health.py:21`) that every
-in-flight `media_source_attempt` points at exactly one matching `background_jobs`
-row, plus a freshness check on the reconcile job, behind a
-`threading.BoundedSemaphore(1)` (`_database_readiness_slot`). that is a
-data-integrity audit on a readiness path, for one user on one box with immediate
-rollback and live repair. `rg -n
-'ACCEPTED_SOURCE_JOB_DEFECT_COUNT_SQL|reconciler_max_age_seconds'` returns only
-`runtime_health.py` and `operational.py:27-37`; the other call sites are
-`apps/worker/main.py:84-92` and `services/ingest_recovery.py:21,197`.
+`runtime_health.py:24-51` defines a correlated audit of accepted source attempts
+and their exact ingest jobs. `is_database_ready` runs it and queries the last
+successful reconciler when given `reconciler_max_age_seconds`.
+`api/routes/operational.py:27-35` and `apps/worker/main.py:74-82` enable that
+condition in staging and production. stale or missing ingest reconciliation
+therefore makes the api and both worker lanes unready even when their database
+and schema are available. compose gates public ingress and the interactive
+worker on the api healthcheck. the earlier ticket's semaphore no longer exists.
 
-it is not stray code. `deploy/hetzner/docker-compose.yml` gates `caddy` (public
-ingress, :40-42) and `worker-interactive` (:121-125) on `api:
-service_healthy`, and the api healthcheck is `curl
-http://127.0.0.1:8000/readyz` (:97); `release.py:4550,6522` assert the exact
-`{"data":{"status":"ready"}}` body, and
-`docs/cutovers/immutable-production-release-hard-cutover.md:242` states the
-/readyz contract. so the branch ties public ingress and the interactive worker
-to ingest-reconciler liveness. removing it only loosens the gate — a deploy
-cannot start failing because of this.
+`services/ingest_recovery.py:197` also uses the audit for its explicit operator
+health projection. that is a live consumer; deleting the audit outright would
+break an existing diagnostic contract. the internal ingest routes decision in
+oi-142 need not block separating those responsibilities.
 
-fix: cut all four call sites together — delete
-`ACCEPTED_SOURCE_JOB_DEFECT_COUNT_SQL`, the `reconciler_max_age_seconds`
-parameter of `is_database_ready` and every branch under it, and
-`operational.py:26-30`'s `2 * ingest_reconcile_schedule_seconds` computation,
-reducing `is_database_ready` to the alembic-head identity check. delete
-`_database_readiness_slot` regardless of whether the reconciler branch stays.
-update the cutover doc's /readyz contract in the same change.
+prerequisites: none for the separation. keep the operator interface and scheduled
+reconciler. make readiness own bounded database reachability and exact schema
+identity; move the audit sql to its one remaining ingest-health consumer. remove
+the reconciler-age argument and api/worker computations, and update the release
+readiness contract. retain worker listener/cgroup requirements and database
+connection/statement deadlines.
 
-prerequisite: tied to the internal-ingest routes decision in oi-142 —
-`services/ingest_recovery.py`'s operator aggregate feeds those routes, so settle
-(b) there before cutting here.
+trade-off: an ingest defect will remain visible through ingest health but will
+stop blocking unrelated reads, ingress and interactive work during deployment.
 
-acceptance: `/readyz` reports readiness from the alembic head alone, a deploy
-still brings caddy and the interactive worker up, and `release.py`'s exact-body
-assertions still pass.
+acceptance: a real-db proof shows missing/stale reconciliation and a defective
+source-job link do not change readiness with the correct schema; wrong/missing
+schema and database failure still do. ingest health still reports the defect.
+verify the actual api response and worker predicate, including their retained
+requirements; preserve the deployment controller's exact response body.
