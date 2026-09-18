@@ -33,8 +33,9 @@ expected Oracle manifest digest, task contract, and captured VPS config.
 
 - `deploy/hetzner/deploy.sh <source-sha> [--no-database-backup]` is the only
   application release entrypoint. Rerun it unchanged to resume.
-- Release only a clean checkout where `HEAD == origin/main == source-sha` and
-  the exact SHA's immutable backend bundle exists.
+- new candidates require a clean checkout where `HEAD == origin/main == source-sha`
+  and the exact sha's immutable backend bundle exists. replay requires clean
+  `HEAD == source-sha` and the installed immutable bundle.
 - The post-merge publisher builds each backend target once. Production pulls
   manifest-selected GHCR digests and never builds an application image.
 - Vercel produces a `READY` production-target candidate with no production or
@@ -43,8 +44,9 @@ expected Oracle manifest digest, task contract, and captured VPS config.
   The controller explicitly assigns the committed custom domain to that exact
   deployment and proves the binding through Vercel's alias resource plus the
   public no-store `/version` contract.
-- Application release changes only `api`, `worker-interactive`, and
-  `worker-background`. It does not recreate Postgres or Caddy.
+- application activation owns `api`, `worker-interactive`, `worker-background`,
+  `codex-egress-policy`, and `nexus-codex-agent-host`. it does not recreate
+  postgres or caddy.
 - Config publication and Oracle reconcile are explicit operations. Application
   release neither performs nor waits for them.
 - Never edit an attempt, record, pointer, backup, bundle, or content-addressed
@@ -270,12 +272,13 @@ health checks. Existing archives remain untouched and are not represented as a
 fresh release backup. Database mutation still requires forward recovery;
 reverting application images cannot restore deleted data.
 
-Freeze `main` from this first invocation until the attempt is durably
-`Succeeded`, `RolledBack`, or `ForwardFixRequired`. Every ordinary replay
-requires clean `HEAD == origin/main == source_sha`; settle the active SHA before
-landing its successor. The only code-level exception is provider-free settlement
-of an already durable `RollbackRequired` or `ForwardFixPending` attempt from its
-installed bundle; this is recovery authority, not permission to unfreeze main.
+freeze `main` from this first invocation until the attempt is durably
+`Succeeded`, `RolledBack`, or `ForwardFixRequired`; settle the active sha before
+landing its successor. installed resume and current-release verification require
+clean `HEAD == source_sha` and use the immutable host bundle without consulting
+mutable github state. settlement of an already durable `RollbackRequired` or
+`ForwardFixPending` attempt also runs before any vercel dependency. this recovery
+authority does not relax the operational freeze on main.
 
 For the chat-admission hard cutover, keep the no-use window closed until the
 operator has inventoried every outstanding browser `nx_chat_draft.v3:` command.

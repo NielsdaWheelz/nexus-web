@@ -6,6 +6,10 @@ transaction and commits nothing: an owner appends the event in the same
 transaction that commits the fact it documents, so a committed failure without
 its history is impossible.
 
+Source-supersession facts retain their immutable payload, id and time, while
+their owning media follows canonical dedupe so loser teardown cannot erase
+the accepted source identity's resolution.
+
 No policy, no scheduling, no domain decisions — these are the final insert
 adapters for the two tables, which is why they convert owned `Presence` to
 column `NULL` (`docs/rules/boundaries.md`).
@@ -34,6 +38,7 @@ from nexus.schemas.import_history import (
     PartialHistoryCoverage,
     SafeFailureCode,
     SourceFacts,
+    SourceSuperseded,
     Stage,
     UploadFacts,
     UploadHistoryOwner,
@@ -120,6 +125,51 @@ def delete_processing_history_in_current_transaction(db: Session, *, media_id: U
         text("DELETE FROM media_processing_events WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
+
+
+def rehome_source_supersessions(
+    db: Session, *, loser_media_id: UUID, winner_media_id: UUID
+) -> None:
+    """Keep accepted source identities reachable through canonical dedupe chains.
+
+    The payload keeps the historical winner; the event's owning media is the
+    current winner and retains the event when the duplicate is torn down.
+    """
+    db.execute(
+        text(
+            "UPDATE media_processing_events SET media_id = :winner_media_id "
+            "WHERE media_id = :loser_media_id AND event_type = 'Superseded' "
+            "AND payload ? 'source_attempt_id'"
+        ),
+        {"loser_media_id": loser_media_id, "winner_media_id": winner_media_id},
+    )
+
+
+def source_supersession_media_id(db: Session, *, source_attempt_id: UUID) -> Presence[UUID]:
+    """Resolve a superseded acceptance independently of its retired attempt/job.
+
+    Repeated executions may record the same supersession. Distinct surviving
+    owners for one accepted attempt are a defect, never a latest-event choice.
+    """
+    rows = db.execute(
+        text(
+            "SELECT media_id, event_type, payload FROM media_processing_events "
+            "WHERE event_type = 'Superseded' "
+            "AND payload ->> 'source_attempt_id' = :source_attempt_id FOR SHARE"
+        ),
+        {"source_attempt_id": str(source_attempt_id)},
+    ).all()
+    owners: set[UUID] = set()
+    for row in rows:
+        facts = history_facts(
+            table=PROCESSING_EVENTS_TABLE, event_type=row.event_type, payload=row.payload
+        )
+        if not isinstance(facts, SourceSuperseded) or facts.source_attempt_id != source_attempt_id:
+            raise AssertionError("source supersession history identity is malformed")
+        owners.add(row.media_id)
+    if len(owners) > 1:
+        raise AssertionError("accepted source attempt has multiple canonical media owners")
+    return presence_from_nullable(next(iter(owners), None))
 
 
 def _owner_sources(owner: HistoryOwner) -> tuple[list[tuple[HistoryTable, str]], dict[str, object]]:

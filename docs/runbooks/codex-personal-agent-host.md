@@ -363,10 +363,11 @@ through `resume-codex-agent-host`. Retain the retired artifact encrypted until
 the new host passes release admission, then unlink it. Never edit, print,
 restore, or copy credential contents, and never re-enroll while the host runs.
 
-Application rollback is permitted only before database mutation starts. After
-the 0224 migration begins, recovery is forward-fix only. The dedicated encrypted
-state remains untouched in either case. Do not bypass health, policy, sandbox,
-environment, mcp-origin, or resource-limit checks.
+application rollback is permitted only before either database mutation or
+backend activation begins. after either boundary, recovery moves forward under
+the [canonical release recovery contract](../../deployment.md#failure-and-recovery).
+the dedicated encrypted state remains untouched in either case. do not bypass
+health, policy, sandbox, environment, mcp-origin, or resource-limit checks.
 
 ## Incident boundaries
 

@@ -52,7 +52,10 @@ from nexus.services.content_indexing import IndexOwner, delete_content_index
 from nexus.services.document_embeds import (
     reconcile_document_embed_parent_edges_for_viewer,
 )
-from nexus.services.import_history import delete_processing_history_in_current_transaction
+from nexus.services.import_history import (
+    delete_processing_history_in_current_transaction,
+    rehome_source_supersessions,
+)
 from nexus.services.reader_apparatus import delete_media_apparatus
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
@@ -387,6 +390,7 @@ def delete_duplicate_document_media(
         winner_media_id=winner_media_id,
     )
     resource_grants.delete_media_and_child_highlight_subjects(db, loser_media_id)
+    rehome_source_supersessions(db, loser_media_id=loser_media_id, winner_media_id=winner_media_id)
     return _claim_document_media_teardown(db, loser_media_id)
 
 
