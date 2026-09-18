@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from sqlalchemy.orm import Session
-
 from nexus.db.models import Media
 from nexus.services.contributor_taxonomy import (
     ContributorObservationBatch,
@@ -13,7 +11,7 @@ from nexus.services.contributor_taxonomy import (
 from nexus.services.pdf_ingest import PdfExtractionResult
 
 
-def persist_pdf_metadata(db: Session, media: Media, result: PdfExtractionResult) -> None:
+def persist_pdf_metadata(media: Media, result: PdfExtractionResult) -> None:
     """Persist PDF document metadata (title/description) — never credits.
 
     Author credits are no longer written here: the source lifecycle emits a

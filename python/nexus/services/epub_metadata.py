@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from sqlalchemy.orm import Session
-
 from nexus.db.models import Media
 from nexus.schemas.presence import Present
 from nexus.services.contributor_taxonomy import (
@@ -14,7 +12,7 @@ from nexus.services.contributor_taxonomy import (
 from nexus.services.epub_ingest import EpubExtractionResult
 
 
-def persist_epub_metadata(db: Session, media: Media, result: EpubExtractionResult) -> None:
+def persist_epub_metadata(media: Media, result: EpubExtractionResult) -> None:
     """Persist EPUB OPF metadata (title/publisher/language/…) — never credits.
 
     Author credits are no longer written here: the source lifecycle emits a

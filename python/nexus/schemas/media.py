@@ -141,7 +141,7 @@ DocumentEmbedKind = Literal["video", "post", "audio", "link_preview", "unknown"]
 DocumentEmbedSourceShape = Literal[
     "iframe", "blockquote", "anchor", "video_tag", "provider_json", "unknown"
 ]
-DocumentEmbedResolutionStatus = Literal["pending", "resolving", "resolved", "unsupported", "failed"]
+DocumentEmbedResolutionStatus = Literal["resolving", "resolved", "unsupported", "failed"]
 
 
 class DocumentEmbedSummaryOut(BaseModel):
