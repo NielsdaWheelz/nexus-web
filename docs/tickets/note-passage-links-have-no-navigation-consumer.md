@@ -9,8 +9,8 @@ targets but does not resolve passage hashes; the live passage resolution in
 
 establish whether note passage navigation is a present product requirement.
 give it one route-to-resolution-to-editor owner, or remove the unused locator
-path. do not add another durable offset source. the separate nfc/raw offset
-defect is tracked in `note-quote-offsets-assume-normalized-source.md`.
+path. do not add another durable offset source. quote resolution already maps
+normalized note matches back into raw stored-text offsets.
 
 acceptance: a created note passage link navigates and marks its intended text,
 or the unsupported link capability and its dead consumers are removed together.
