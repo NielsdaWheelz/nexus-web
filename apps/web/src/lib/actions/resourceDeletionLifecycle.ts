@@ -56,32 +56,3 @@ export function settleDeletedResourcePanes(input: {
     }
   }
 }
-
-/**
- * Settle the owning Conversation after a committed Message delete. An
- * acknowledged receipt is authoritative; a lost receipt observes the parent
- * afresh. Index publication is synthesized only when the response-owning
- * client could not publish its acknowledged collection revision.
- */
-export async function settleDeletedMessageConversation(input: {
-  readonly conversationRef: CanonicalResourceRef;
-  readonly messageEvidence: "Acknowledged" | "ObservedMissing";
-  readonly receiptConversationDeleted: boolean | "Unknown";
-  readonly observeConversationMissing: () => Promise<boolean>;
-  readonly publishConversationIndexChange: () => void;
-  readonly workspace: DeletedResourceWorkspace;
-}): Promise<void> {
-  if (input.messageEvidence === "ObservedMissing") {
-    input.publishConversationIndexChange();
-  }
-  const conversationDeleted =
-    input.receiptConversationDeleted === "Unknown"
-      ? await input.observeConversationMissing()
-      : input.receiptConversationDeleted;
-  if (!conversationDeleted) return;
-  settleDeletedResourcePanes({
-    deletedRef: input.conversationRef,
-    fallbackHref: "/conversations",
-    workspace: input.workspace,
-  });
-}

@@ -1,6 +1,5 @@
 import type { ResourceActivation } from "@/lib/resources/activation";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
-import type { DestructiveActionSettlement } from "@/lib/actions/destructiveActionSettlement";
 
 /** Shared delivery mechanics only; domain modules own every action vocabulary. */
 export interface MountedActionIntentBase {
@@ -15,64 +14,35 @@ export interface CommittingMountedActionIntentBase extends MountedActionIntentBa
   readonly onAborted: () => void;
 }
 
-/** Delete-only port supplied by the canonical runtime; no mounted owner retries. */
-export interface DestructiveCommittingMountedActionIntentBase extends CommittingMountedActionIntentBase {
-  readonly settleDeletionCommand: (
-    command: () => Promise<unknown>,
-  ) => Promise<DestructiveActionSettlement>;
+export interface CommittedMountedMutationOutcome {
+  readonly projectionError?: unknown;
 }
 
-export type DestructiveMountedMutationOutcome =
-  | {
-      readonly kind: "Committed";
-      readonly evidence: "Acknowledged" | "ObservedMissing";
-      readonly projectionError?: unknown;
-    }
-  | { readonly kind: "Unconfirmed" };
-
 /**
- * Keep the authoritative delete and its best-effort mounted projection as two
- * ordered boundaries. A committed delete always crosses canonical
- * reconciliation even when the local refresh fails; an unconfirmed delete has
- * already crossed the runtime's retained-cache barrier before it aborts Busy.
+ * Reconcile a successful command even when its mounted projection fails.
+ * Command failure aborts the invocation without changing local state.
  */
-export async function executeDestructiveMountedMutation(
-  intent: DestructiveCommittingMountedActionIntentBase,
-  command: () => Promise<unknown>,
-  projectCommitted: (
-    evidence: "Acknowledged" | "ObservedMissing",
-  ) => void | Promise<void>,
-): Promise<DestructiveMountedMutationOutcome> {
-  let settlement: DestructiveActionSettlement;
+export async function executeCommittingMountedMutation<T>(
+  intent: CommittingMountedActionIntentBase,
+  command: () => Promise<T>,
+  projectCommitted: (receipt: T) => void | Promise<void>,
+): Promise<CommittedMountedMutationOutcome> {
+  let receipt: T;
   try {
-    settlement = await intent.settleDeletionCommand(command);
+    receipt = await command();
   } catch (error) {
     intent.onAborted();
     throw error;
   }
 
-  switch (settlement.kind) {
-    case "NotCommitted":
-      intent.onAborted();
-      throw settlement.commandError;
-    case "Unconfirmed":
-      intent.onAborted();
-      return { kind: "Unconfirmed" };
-    case "Committed": {
-      let projectionError: unknown;
-      try {
-        await projectCommitted(settlement.evidence);
-      } catch (error) {
-        projectionError = error;
-      }
-      await intent.onCommitted();
-      return {
-        kind: "Committed",
-        evidence: settlement.evidence,
-        ...(projectionError === undefined ? {} : { projectionError }),
-      };
-    }
+  let projectionError: unknown;
+  try {
+    await projectCommitted(receipt);
+  } catch (error) {
+    projectionError = error;
   }
+  await intent.onCommitted();
+  return { projectionError };
 }
 
 export interface MountedEditorMutationLease {

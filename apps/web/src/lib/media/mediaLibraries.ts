@@ -30,10 +30,6 @@ export type MediaDeleteResult =
     }
   | { kind: "Deleting" };
 
-export type MediaRemovalOutcome =
-  | { kind: "Cancelled" }
-  | { kind: "Completed"; result: MediaDeleteResult };
-
 function requireExactKeys(
   value: Record<string, unknown>,
   expectedKeys: readonly string[],
@@ -102,7 +98,7 @@ function decodeMediaDeleteResult(raw: unknown): MediaDeleteResult {
   );
 }
 
-async function deleteMedia(mediaId: string): Promise<MediaDeleteResult> {
+export async function deleteMedia(mediaId: string): Promise<MediaDeleteResult> {
   const response = await apiFetch<unknown>(`/api/media/${mediaId}`, {
     method: "DELETE",
   });
@@ -112,26 +108,4 @@ async function deleteMedia(mediaId: string): Promise<MediaDeleteResult> {
   // not enumerated here, so publish Unknown so every mounted pane reconciles.
   publishLibraryPlacementChange("Unknown");
   return result;
-}
-
-export async function confirmAndDeleteMedia({
-  mediaId,
-  mediaTitle,
-  confirmRemoval,
-}: {
-  mediaId: string;
-  mediaTitle: string;
-  confirmRemoval: (message: string) => boolean;
-}): Promise<MediaRemovalOutcome> {
-  if (
-    !confirmRemoval(
-      `Delete "${mediaTitle}" from All and libraries you manage? This cannot be undone.`,
-    )
-  ) {
-    return { kind: "Cancelled" };
-  }
-  return {
-    kind: "Completed",
-    result: await deleteMedia(mediaId),
-  };
 }

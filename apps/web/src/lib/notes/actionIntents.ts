@@ -6,16 +6,14 @@ import {
   MOUNTED_ACTION_ACCEPTED,
   MOUNTED_ACTION_DEFERRED,
   type CommittingMountedActionIntentBase,
-  type DestructiveCommittingMountedActionIntentBase,
   type MountedActionRequest,
 } from "@/lib/actions/mountedActionHandoff";
 import type { CanonicalResourceRef } from "@/lib/sharing/types";
 
-export type PageActionIntent =
-  | (CommittingMountedActionIntentBase & { readonly kind: "EditPageTitle" })
-  | (DestructiveCommittingMountedActionIntentBase & {
-      readonly kind: "DeletePage";
-    });
+export type PageActionIntent = CommittingMountedActionIntentBase & (
+  | { readonly kind: "EditPageTitle" }
+  | { readonly kind: "DeletePage" }
+);
 
 export type NoteBlockActionIntent = CommittingMountedActionIntentBase & {
   readonly kind: "EditNoteBody";

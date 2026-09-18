@@ -20,7 +20,7 @@ import {
   type MessageActionIntent,
   type MessageActionMutationOutcome,
 } from "@/lib/chat/messageActionIntent";
-import { executeDestructiveMountedMutation } from "@/lib/actions/mountedActionHandoff";
+import { executeCommittingMountedMutation } from "@/lib/actions/mountedActionHandoff";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { conversationMessageText } from "@/lib/conversations/types";
 import AssistantMessage from "./AssistantMessage";
@@ -134,7 +134,7 @@ export const MessageRow = memo(function MessageRow({
           void onDeleteMessage(
             message.id,
             (command, projectCommitted) =>
-              executeDestructiveMountedMutation(
+              executeCommittingMountedMutation(
                 intent,
                 command,
                 projectCommitted,
