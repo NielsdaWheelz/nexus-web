@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useLayoutEffect, useRef, type RefObject } from "react";
 import { Ellipsis, Gauge, SkipBack, SkipForward, X } from "lucide-react";
 import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
@@ -23,7 +23,6 @@ import {
   PlayerRecordingActionsMenu,
   PlayerStatus,
   PlayerTransport,
-  playerCaptureAction,
   playerContentsAction,
   playerOpenLecternAction,
   playerPreviewActions,
@@ -61,7 +60,6 @@ export default function MobileMiniPlayer({
   const commands = usePlayerCommands();
   const settings = usePlayerSettings();
   const playerRef = useRef<HTMLElement>(null);
-  const [captureInMenu, setCaptureInMenu] = useState(false);
   const hidden = suspended || rootTextEntryFocused;
   const locked = playerTransportLocked(model);
 
@@ -70,15 +68,7 @@ export default function MobileMiniPlayer({
     return mobileViewport.registerBottomSurface("Player", playerRef.current);
   }, [hidden, mobileViewport]);
 
-  useLayoutEffect(() => {
-    const update = () => setCaptureInMenu(window.innerWidth <= 360);
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
-
   const options: ActionDescriptor[] = [
-    ...(captureInMenu ? playerCaptureAction(model, capture) : []),
     ...playerReviewCapturesAction(model, capture),
     {
       id: "Player.Playback",
@@ -142,7 +132,7 @@ export default function MobileMiniPlayer({
           buttonRef={openerRef}
           onOpen={onOpenNowPlaying}
         />
-        {model.kind === "Canonical" && !captureInMenu ? (
+        {model.kind === "Canonical" ? (
           <PlayerCaptureButton model={model} capture={capture} />
         ) : null}
         <PlayerTransport model={model} compact />

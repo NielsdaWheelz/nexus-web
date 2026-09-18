@@ -12,64 +12,40 @@ import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 import { elvishInscriptions } from "@/lib/theme/elvishInscriptions";
 import styles from "./page.module.css";
 
-type Selection = AppTheme | "system";
-
-// The room a doorway looks into. "system" has no room of its own — there is no
-// `prefers-color-scheme: elvish` and the OS knows only day and night — so its
-// plate is built from the two rooms the OS can name.
-type Room = "light" | "dark" | "elvish" | "system";
-
-const DOORWAYS: { value: Selection; room: Room; name: string; hint: string }[] = [
+const DOORWAYS: { value: AppTheme; name: string; hint: string }[] = [
   {
     value: "light",
-    room: "light",
     name: "Study",
     hint: "Warm paper, dark ink — day.",
   },
   {
     value: "dark",
-    room: "dark",
     name: "Press",
     hint: "Near-black canvas, warm ink — night.",
   },
   {
     value: "elvish",
-    room: "elvish",
     name: "Solar",
     hint: "Green twilight, brass ink — dusk.",
-  },
-  {
-    value: "system",
-    room: "system",
-    name: "System",
-    hint: "Match your operating-system preference.",
   },
 ];
 
 const INSCRIPTION = elvishInscriptions.elenSila;
 
 export default function SettingsAppearancePaneBody() {
-  const [selection, setSelection] = useState<Selection | null>(null);
+  const [selection, setSelection] = useState<AppTheme | null>(null);
 
   useEffect(() => {
     const value = document.cookie.match(
-      /(?:^|;\s*)nx-theme=(light|dark|elvish)/,
+      /(?:^|;\s*)nx-theme=(light|elvish)/,
     )?.[1];
-    setSelection(
-      value === "light" || value === "dark" || value === "elvish"
-        ? value
-        : "system",
-    );
+    setSelection(value === "light" || value === "elvish" ? value : "dark");
   }, []);
   usePaneReturnReady(selection !== null);
 
-  async function handleChange(next: Selection) {
+  async function handleChange(next: AppTheme) {
     setSelection(next);
-    if (next === "system") {
-      delete document.documentElement.dataset.theme;
-    } else {
-      document.documentElement.dataset.theme = next;
-    }
+    document.documentElement.dataset.theme = next;
     await setAppearanceAction(next);
   }
 
@@ -82,7 +58,7 @@ export default function SettingsAppearancePaneBody() {
           <legend className={styles.legend}>Choose how Nexus looks.</legend>
           {DOORWAYS.map((doorway) => (
             <label key={doorway.value} className={styles.doorway}>
-              <Plate room={doorway.room} />
+              <Plate room={doorway.value} />
               <span className={styles.caption}>
                 <input
                   type="radio"
@@ -97,7 +73,7 @@ export default function SettingsAppearancePaneBody() {
               {/* The plaque's caption, hidden from the accessible name so the
                   radio still announces exactly "Solar" and its hint; the
                   colophon below carries the Latin as real, readable text. */}
-              {doorway.room === "elvish" ? (
+              {doorway.value === "elvish" ? (
                 <span className={styles.latinCaption} aria-hidden="true">
                   {INSCRIPTION.latin}
                 </span>
@@ -145,39 +121,18 @@ export default function SettingsAppearancePaneBody() {
 // plate carries that room's `data-theme`, so every token below repaints
 // natively and this file holds no colour of its own. Decorative — the room's
 // name and hint beside it carry the meaning.
-function Plate({ room }: { room: Room }) {
-  if (room === "system") {
-    return (
-      <span className={styles.plate} data-theme="light" aria-hidden="true">
-        <PlateLines />
-        {/* The OS knows day and night, so the plate is both, cut on one
-            diagonal. The night half repeats the day half's geometry exactly,
-            so the lines run across the seam and only their room changes. */}
-        <span className={styles.nightHalf} data-theme="dark">
-          <PlateLines />
-        </span>
-      </span>
-    );
-  }
+function Plate({ room }: { room: AppTheme }) {
   return (
     <span className={styles.plate} data-theme={room} aria-hidden="true">
       {room === "elvish" ? <span className={styles.lamp} /> : null}
-      <PlateLines />
-      {room === "elvish" ? (
-        <Inscription className={styles.plaque} />
-      ) : null}
-    </span>
-  );
-}
-
-function PlateLines() {
-  return (
-    <>
       <span className={`${styles.line} ${styles.lineFirst}`} />
       <span className={`${styles.line} ${styles.lineSecond}`} />
       <span className={`${styles.line} ${styles.lineThird}`} />
       <span className={styles.accentLine} />
-    </>
+      {room === "elvish" ? (
+        <Inscription className={styles.plaque} />
+      ) : null}
+    </span>
   );
 }
 
