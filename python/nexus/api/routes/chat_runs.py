@@ -118,7 +118,7 @@ async def cancel_chat_run(
 
 
 @router.post("/messages/{assistant_message_id}/rerun", status_code=200)
-async def rerun_assistant_response(
+async def rerun_assistant_message(
     assistant_message_id: UUID,
     request: Request,
     body: ChatRunRepeatRequest,
@@ -127,8 +127,9 @@ async def rerun_assistant_response(
     catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict:
-    result = await chat_run_candidates.rerun_assistant_response(
+    result = await chat_run_candidates.repeat_assistant_response(
         db=db,
+        operation="rerun",
         viewer_id=viewer.user_id,
         assistant_message_id=assistant_message_id,
         catalog_definition_revision=body.catalog_definition_revision,
@@ -142,7 +143,7 @@ async def rerun_assistant_response(
 
 
 @router.post("/messages/{assistant_message_id}/regenerate", status_code=200)
-async def regenerate_assistant_response(
+async def regenerate_assistant_message(
     assistant_message_id: UUID,
     request: Request,
     body: ChatRunRepeatRequest,
@@ -151,8 +152,9 @@ async def regenerate_assistant_response(
     catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict:
-    result = await chat_run_candidates.regenerate_assistant_response(
+    result = await chat_run_candidates.repeat_assistant_response(
         db=db,
+        operation="regenerate",
         viewer_id=viewer.user_id,
         assistant_message_id=assistant_message_id,
         catalog_definition_revision=body.catalog_definition_revision,

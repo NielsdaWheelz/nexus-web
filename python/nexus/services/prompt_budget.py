@@ -43,25 +43,11 @@ LANE_ORDER: tuple[BudgetLane, ...] = (
 class ContextBudgetError(ValueError):
     """Raised when mandatory assembled context cannot fit the model input budget.
 
-    Caught owner-side (chat_runs.py) before any generation attempt begins and
-    folded to the ``context_too_large`` closed §10 code — a ledgerless expected
-    failure (no llm_calls row: the intent never reached ``execute_generation``).
+    Caught in ``persist_frozen_chat_admission_in_current_transaction`` before any
+    generation attempt begins and folded to ``E_GENERATION_CONTEXT_TOO_LARGE`` — a
+    ledgerless expected failure (no llm_calls row: the intent never reached
+    ``execute_generation``).
     """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        lane: BudgetLane | None = None,
-        item_key: str | None = None,
-        requested_tokens: int | None = None,
-        remaining_tokens: int | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.lane = lane
-        self.item_key = item_key
-        self.requested_tokens = requested_tokens
-        self.remaining_tokens = remaining_tokens
 
 
 @dataclass(frozen=True)
@@ -197,9 +183,7 @@ def build_prompt_budget(
     input_budget_tokens = max_context_tokens - reserved_output_tokens
     if input_budget_tokens <= 0:
         raise ContextBudgetError(
-            "Model context window is exhausted by the requested output allowance",
-            requested_tokens=reserved_output_tokens,
-            remaining_tokens=max_context_tokens,
+            "Model context window is exhausted by the requested output allowance"
         )
     return PromptBudget(
         max_context_tokens=max_context_tokens,
@@ -255,13 +239,7 @@ def allocate_budget(items: Sequence[BudgetItem], budget: PromptBudget) -> Budget
             continue
 
         if item.mandatory:
-            raise ContextBudgetError(
-                "Mandatory prompt context cannot fit the model input budget",
-                lane=item.lane,
-                item_key=item.key,
-                requested_tokens=item_tokens,
-                remaining_tokens=remaining,
-            )
+            raise ContextBudgetError("Mandatory prompt context cannot fit the model input budget")
 
         dropped.append(
             DroppedBudgetItem(

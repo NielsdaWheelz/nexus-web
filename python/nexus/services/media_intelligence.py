@@ -575,7 +575,6 @@ def _complete_prepared_media_unit_without_dispatch(
     ctx: JobExecutionContext,
     state: step_journal.StepReplayState,
     result: _CompletedResult,
-    reason: str,
 ) -> bool:
     """Atomically cancel a preaccept start and complete the owner journal."""
 
@@ -588,7 +587,6 @@ def _complete_prepared_media_unit_without_dispatch(
         owner=owner,
         state=state,
         terminal_result=terminal_result,
-        reason=reason,
     )
     job = get_job(db, ctx.job_id)
     if job is None or step_journal.read_step_states(job).get(_MEDIA_UNIT_STEP_PATH) != state:
@@ -741,7 +739,6 @@ async def run_media_unit_build(
                 ctx=ctx,
                 state=state,
                 result=_CompletedSkip(reason="summary_missing"),
-                reason="media summary was removed before redispatch",
             )
             return "ok"
         db.commit()
@@ -756,7 +753,6 @@ async def run_media_unit_build(
                 ctx=ctx,
                 state=state,
                 result=_CompletedSkip(reason="summary_superseded"),
-                reason="media summary fingerprint was superseded before redispatch",
             )
         else:
             db.commit()
@@ -769,7 +765,6 @@ async def run_media_unit_build(
                 ctx=ctx,
                 state=state,
                 result=_CompletedSkip(reason="content_fingerprint_changed"),
-                reason="media content fingerprint changed before redispatch",
             )
         else:
             db.commit()
@@ -783,7 +778,6 @@ async def run_media_unit_build(
                 ctx=ctx,
                 state=state,
                 result=_CompletedSkip(reason="summary_not_building"),
-                reason="media summary was no longer building before redispatch",
             )
         else:
             db.commit()
@@ -805,7 +799,6 @@ async def run_media_unit_build(
                 ctx=ctx,
                 state=state,
                 result=completed,
-                reason="media owner was absent before redispatch",
             ):
                 return "ok"
         else:
@@ -834,7 +827,6 @@ async def run_media_unit_build(
                 ctx=ctx,
                 state=state,
                 result=completed,
-                reason="media candidates were absent before redispatch",
             ):
                 return "ok"
         else:
@@ -948,7 +940,6 @@ async def run_media_unit_build(
                 ctx=ctx,
                 state=current_state,
                 result=_CompletedSkip(reason="request_fingerprint_changed"),
-                reason="media synthesis inputs changed before redispatch",
             )
         return "ok"
     except GenerationDispatchAborted:
@@ -959,7 +950,6 @@ async def run_media_unit_build(
                 ctx=ctx,
                 state=state,
                 result=_CompletedSkip(reason="dispatch_aborted"),
-                reason="media owner fence aborted generation before redispatch",
             )
         return "ok"
     except GenerationUncertain as exc:
