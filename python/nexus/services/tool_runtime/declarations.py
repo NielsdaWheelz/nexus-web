@@ -7,8 +7,10 @@ durable execution, and provider lowering are composed by later runtime owners.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from types import MappingProxyType
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -599,6 +601,9 @@ CHAT_TOOL_DECLARATIONS: tuple[PresentedToolDeclaration, ...] = (
     ),
     *NEXUS_TOOL_DECLARATIONS,
 )
+CHAT_TOOL_DECLARATIONS_BY_ID: Mapping[str, PresentedToolDeclaration] = MappingProxyType(
+    {str(entry.spec.id): entry for entry in CHAT_TOOL_DECLARATIONS}
+)
 
 
 def _error_tags(schema: object) -> set[str]:
@@ -650,7 +655,6 @@ BROWSER_TOOL_PROJECTION_CONTRACT = {
         "attached_context": {
             "non_null_fields": ("activity_label", "record_kind", "result_kind"),
             "null_fields": ("canonical_tool_id", "effect", "error_type", "provider_wire_name"),
-            "nullable_fields": (),
         },
         "current_execution": {
             "non_null_fields": (
@@ -661,9 +665,6 @@ BROWSER_TOOL_PROJECTION_CONTRACT = {
                 "result_kind",
             ),
             "null_fields": (),
-            # Pre-cutover audit rows may be null; every newly admitted MCP
-            # execution persists its declared canonical wire name.
-            "nullable_fields": ("error_type", "provider_wire_name"),
         },
         "historical_execution": {
             "non_null_fields": (
@@ -674,7 +675,6 @@ BROWSER_TOOL_PROJECTION_CONTRACT = {
                 "result_kind",
             ),
             "null_fields": ("error_type", "provider_wire_name"),
-            "nullable_fields": (),
         },
         "rejected_provider_call": {
             "non_null_fields": (
@@ -684,7 +684,6 @@ BROWSER_TOOL_PROJECTION_CONTRACT = {
                 "result_kind",
             ),
             "null_fields": ("canonical_tool_id", "effect", "error_type"),
-            "nullable_fields": (),
         },
     },
 }
@@ -719,30 +718,12 @@ BROWSER_TOOL_PROJECTION_REVISION = browser_tool_projection_revision(
 )
 
 
-def tool_surface_documentation_revision(
-    declarations: tuple[PresentedToolDeclaration, ...],
-) -> str:
-    value = [
-        {
-            "activity_label": entry.activity_label,
-            "documentation_revision": entry.spec.documentation_revision,
-            "result_kind": entry.result_kind,
-        }
-        for entry in declarations
-    ]
-    return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
-
-
-TOOL_SURFACE_DOCUMENTATION_REVISION = tool_surface_documentation_revision(CHAT_TOOL_DECLARATIONS)
-
-
 __all__ = [
     "BROWSER_TOOL_PROJECTION_CONTRACT",
     "BROWSER_TOOL_PROJECTION_REVISION",
     "CHAT_TOOL_DECLARATIONS",
+    "CHAT_TOOL_DECLARATIONS_BY_ID",
     "NEXUS_TOOL_DECLARATIONS",
     "PresentedToolDeclaration",
-    "TOOL_SURFACE_DOCUMENTATION_REVISION",
     "browser_tool_projection_revision",
-    "tool_surface_documentation_revision",
 ]
