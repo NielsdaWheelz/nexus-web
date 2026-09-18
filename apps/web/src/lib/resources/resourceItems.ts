@@ -28,6 +28,7 @@ import {
   expectRecord,
   expectString,
 } from "@/lib/validation";
+import { decodeNoteBodyValue } from "@/lib/notes/prosemirror/schema";
 
 // Wire shape of `ResourceUserRelationPolicyOut`
 // (python/nexus/schemas/resource_items.py) — replaces the scalar `linkable`
@@ -332,16 +333,14 @@ function normalizeResourceSurfaceContent(raw: unknown): ResourceSurfaceContent {
         ["kind", "body_pm_json", "body_text"],
         "note body surface content",
       );
+      const body = decodeNoteBodyValue(
+        content.body_pm_json,
+        content.body_text,
+        "note body surface content",
+      );
       return {
         kind: "note_body",
-        bodyPmJson: expectRecord(
-          content.body_pm_json,
-          "note body surface content.body_pm_json",
-        ),
-        bodyText: expectString(
-          content.body_text,
-          "note body surface content.body_text",
-        ),
+        ...body,
       };
     }
     case "resource_summary":
@@ -414,16 +413,14 @@ function decodeResourceSurfaceSnapshotContent(
         ["kind", "bodyPmJson", "bodyText"],
         "note body resource surface snapshot content",
       );
+      const body = decodeNoteBodyValue(
+        content.bodyPmJson,
+        content.bodyText,
+        "note body resource surface snapshot content",
+      );
       return {
         kind: "note_body",
-        bodyPmJson: expectRecord(
-          content.bodyPmJson,
-          "note body resource surface snapshot content.bodyPmJson",
-        ),
-        bodyText: expectString(
-          content.bodyText,
-          "note body resource surface snapshot content.bodyText",
-        ),
+        ...body,
       };
     }
     case "resource_summary":

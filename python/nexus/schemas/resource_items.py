@@ -60,6 +60,8 @@ def _validate_pm_node(node: object, *, path: str, top_level: bool = False) -> st
     if node_type == "text":
         if not isinstance(node.get("text"), str):
             raise ValueError(f"{path}.text must be a string")
+        if not node["text"]:
+            raise ValueError(f"{path}.text must not be empty")
         if "content" in node:
             raise ValueError(f"{path}.content is not valid on text nodes")
         return node_type

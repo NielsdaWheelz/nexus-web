@@ -9,6 +9,7 @@ import {
   expectRecord,
   expectString,
 } from "@/lib/validation";
+import { decodeNoteBodyValue } from "@/lib/notes/prosemirror/schema";
 import {
   HIGHLIGHT_COLORS,
   type HighlightColor,
@@ -89,10 +90,15 @@ export function decodeHighlightLinkedNoteBlock(
     ["note_block_id", "body_pm_json", "body_text"],
     name,
   );
+  const body = decodeNoteBodyValue(
+    value.body_pm_json,
+    value.body_text,
+    name,
+  );
   return {
     note_block_id: expectString(value.note_block_id, `${name}.note_block_id`),
-    body_pm_json: expectRecord(value.body_pm_json, `${name}.body_pm_json`),
-    body_text: expectString(value.body_text, `${name}.body_text`),
+    body_pm_json: body.bodyPmJson,
+    body_text: body.bodyText,
   };
 }
 
