@@ -41,25 +41,8 @@ def timeline_rows_sql(bucket: str) -> str:
     ``bucket`` is a closed internal literal. Callers reject a generated series
     above 400 rows before materializing this relation.
     """
-    if bucket not in {"Hour", "Day", "Week", "Month", "Year"}:
-        raise ValueError(f"unknown activity bucket: {bucket}")
-    if bucket == "Hour":
-        series = "generate_series(:start, :end - interval '1 microsecond', interval '1 hour')"
-        step = "interval '1 hour'"
-    else:
-        trunc = {"Day": "day", "Week": "week", "Month": "month", "Year": "year"}[bucket]
-        step = {
-            "Day": "interval '1 day'",
-            "Week": "interval '1 week'",
-            "Month": "interval '1 month'",
-            "Year": "interval '1 year'",
-        }[bucket]
-        series = f"generate_series(date_trunc('{trunc}', :start AT TIME ZONE :time_zone), date_trunc('{trunc}', (:end - interval '1 microsecond') AT TIME ZONE :time_zone), {step}) AT TIME ZONE :time_zone"
     return f"""
-        WITH buckets AS (
-            SELECT bucket_start, lead(bucket_start, 1, :end) OVER (ORDER BY bucket_start) AS bucket_end
-            FROM (SELECT {series} AS bucket_start) generated
-        ), clipped AS ({visible_effective_activity_sql()}), intersections AS (
+        WITH buckets AS ({_bucket_boundaries_sql(bucket)}), clipped AS ({visible_clipped_spans_sql()}), intersections AS (
             SELECT b.bucket_start, b.bucket_end, c.id, c.modality,
                    greatest(c.clipped_start, b.bucket_start) AS overlap_start,
                    least(c.clipped_end, b.bucket_end) AS overlap_end,
@@ -100,18 +83,10 @@ def require_bucket_ceiling(
     db: Session, *, bucket: str, start: datetime, end: datetime, time_zone: str
 ) -> None:
     """Reject, never truncate, a timeline whose requested grain exceeds 400 rows."""
-    if bucket == "Hour":
-        count_sql = "SELECT count(*) FROM generate_series(:start, :end - interval '1 microsecond', interval '1 hour')"
-    else:
-        trunc = {"Day": "day", "Week": "week", "Month": "month", "Year": "year"}[bucket]
-        step = {
-            "Day": "interval '1 day'",
-            "Week": "interval '1 week'",
-            "Month": "interval '1 month'",
-            "Year": "interval '1 year'",
-        }[bucket]
-        count_sql = f"SELECT count(*) FROM generate_series(date_trunc('{trunc}', :start AT TIME ZONE :time_zone), date_trunc('{trunc}', (:end - interval '1 microsecond') AT TIME ZONE :time_zone), {step})"
-    count = db.scalar(text(count_sql), {"start": start, "end": end, "time_zone": time_zone})
+    count = db.scalar(
+        text(f"SELECT count(*) FROM ({_bucket_boundaries_sql(bucket)}) b"),
+        {"start": start, "end": end, "time_zone": time_zone},
+    )
     if count > 400:
         raise InvalidRequestError(message="Consumption timeline exceeds 400 buckets")
 
@@ -156,7 +131,7 @@ def activity_totals_sql() -> str:
 def local_hours_sql() -> str:
     """Exactly 24 wall-clock rows; repeated fall-back hours intentionally fold."""
     return f"""
-        WITH clipped AS ({visible_effective_activity_sql()}), pieces AS (
+        WITH clipped AS ({visible_clipped_spans_sql()}), pieces AS (
             SELECT clipped.id,
                    minute_start,
                    least(clipped.clipped_end, minute_start + interval '1 minute') AS piece_end,
@@ -182,7 +157,7 @@ def local_hours_sql() -> str:
 def local_days_sql() -> str:
     """Local calendar-day activity rows from the same clipped bucket facts."""
     return f"""
-        WITH clipped AS ({visible_effective_activity_sql()}), pieces AS (
+        WITH clipped AS ({visible_clipped_spans_sql()}), pieces AS (
             SELECT (minute_start AT TIME ZONE :time_zone)::date AS local_date,
                    greatest(clipped.clipped_start, minute_start) AS piece_start,
                    least(
@@ -349,24 +324,27 @@ def _cursor_key() -> bytes:
     ).digest()
 
 
-def _filters(query: ActivityQuery) -> tuple[str, dict[str, Any]]:
+def _filters(
+    query: ActivityQuery, *, alias: str = "s", with_device: bool = True
+) -> tuple[str, dict[str, Any]]:
+    """Trailing AND-clauses for one relation's alias, plus their bound values."""
     clauses: list[str] = []
     params: dict[str, Any] = {}
     if query.modality is not None:
-        clauses.append("s.modality = :modality")
+        clauses.append(f"{alias}.modality = :modality")
         params["modality"] = query.modality
     if query.media_id is not None:
-        clauses.append("s.media_id = :media_id")
+        clauses.append(f"{alias}.media_id = :media_id")
         params["media_id"] = query.media_id
-    if query.device_id is not None:
-        clauses.append("s.device_id = :device_id")
+    if with_device and query.device_id is not None:
+        clauses.append(f"{alias}.device_id = :device_id")
         params["device_id"] = query.device_id
     if query.contributor_handle is not None:
         clauses.append(
             f"""EXISTS (
                 SELECT 1
                 FROM ({current_media_contributor_rows_sql()}) current_credit
-                WHERE current_credit.media_id = s.media_id
+                WHERE current_credit.media_id = {alias}.media_id
                   AND current_credit.handle = :contributor_handle
             )"""
         )
@@ -426,11 +404,6 @@ def visible_recorded_clipped_spans_sql() -> str:
 def visible_clipped_spans_sql() -> str:
     """Visible range-clipped observed facts after active exclusions."""
     return _visible_clipped_spans_sql(exclude_corrected=True)
-
-
-def visible_effective_activity_sql() -> str:
-    """Visible observed facts after exact active exclusions."""
-    return visible_clipped_spans_sql()
 
 
 def sessionized_spans_sql() -> str:
@@ -623,7 +596,7 @@ def _media_activity_rows(
     """All currently visible media activity, deterministically ranked."""
     start = query.start or datetime(1970, 1, 1, tzinfo=UTC)
     filters, filter_params = _filters(query)
-    relation = visible_effective_activity_sql().replace(
+    relation = visible_clipped_spans_sql().replace(
         "AND s.created_at <= :as_of_created_at", "AND s.created_at <= :as_of_created_at" + filters
     )
     return [
@@ -708,28 +681,7 @@ def active_exclusion_rows(
     db: Session, *, viewer_id: UUID, query: ActivityQuery, as_of: datetime
 ) -> list[dict[str, Any]]:
     """Active visible exclusions and their effective removed duration."""
-    clauses: list[str] = []
-    params: dict[str, Any] = {}
-    if query.modality is not None:
-        clauses.append("x.modality = :modality")
-        params["modality"] = query.modality
-    if query.media_id is not None:
-        clauses.append("x.media_id = :media_id")
-        params["media_id"] = query.media_id
-    if query.device_id is not None:
-        clauses.append("x.device_id = :device_id")
-        params["device_id"] = query.device_id
-    if query.contributor_handle is not None:
-        clauses.append(
-            f"""EXISTS (
-                SELECT 1
-                FROM ({current_media_contributor_rows_sql()}) current_credit
-                WHERE current_credit.media_id = x.media_id
-                  AND current_credit.handle = :contributor_handle
-            )"""
-        )
-        params["contributor_handle"] = query.contributor_handle
-    filters = (" AND " + " AND ".join(clauses)) if clauses else ""
+    filters, params = _filters(query, alias="x")
     start = query.start or datetime(1970, 1, 1, tzinfo=UTC)
     return [
         dict(row)
@@ -1046,30 +998,8 @@ def session_count(db: Session, *, viewer_id: UUID, query: ActivityQuery, as_of: 
     )
 
 
-def _completion_filters(query: ActivityQuery) -> tuple[str, dict[str, Any]]:
-    clauses: list[str] = []
-    params: dict[str, Any] = {}
-    if query.modality is not None:
-        clauses.append("f.modality = :modality")
-        params["modality"] = query.modality
-    if query.media_id is not None:
-        clauses.append("f.media_id = :media_id")
-        params["media_id"] = query.media_id
-    if query.contributor_handle is not None:
-        clauses.append(
-            f"""EXISTS (
-                SELECT 1
-                FROM ({current_media_contributor_rows_sql()}) current_credit
-                WHERE current_credit.media_id = f.media_id
-                  AND current_credit.handle = :contributor_handle
-            )"""
-        )
-        params["contributor_handle"] = query.contributor_handle
-    return (" AND " + " AND ".join(clauses)) if clauses else "", params
-
-
 def _visible_completion_facts_sql(query: ActivityQuery) -> tuple[str, dict[str, Any]]:
-    filters, params = _completion_filters(query)
+    filters, params = _filters(query, alias="f", with_device=False)
     return (
         f"""
             WITH visible_media AS ({visible_media_ids_cte_sql()})

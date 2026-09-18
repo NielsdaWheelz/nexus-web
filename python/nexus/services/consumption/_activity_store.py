@@ -24,41 +24,6 @@ from nexus.schemas.consumption_activity import (
 from nexus.schemas.presence import nullable_from_presence
 
 
-@dataclass(frozen=True)
-class ActivitySpanRow:
-    id: UUID
-    capture_key: UUID
-    user_id: UUID
-    media_id: UUID
-    modality: ActivityModality
-    device_id: str
-    device_class: ActivityDeviceClass
-    occurred_at: datetime
-    duration_ms: int
-    progress_start: float | None
-    progress_end: float | None
-    word_start: int | None
-    word_end: int | None
-    media_position_start_ms: int | None
-    media_position_end_ms: int | None
-    created_at: datetime
-
-
-@dataclass(frozen=True)
-class CompletionFactRow:
-    id: UUID
-    user_id: UUID
-    media_id: UUID
-    modality: ActivityModality
-    created_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class ActivityBatchInsertResult:
-    accepted_count: int
-    deduplicated_count: int
-
-
 @dataclass(frozen=True, slots=True)
 class ObservedSessionRow:
     started_at: datetime
@@ -130,7 +95,7 @@ def insert_activity_batch_in_txn(
     device_id: str,
     device_class: ActivityDeviceClass,
     batch: ActivityBatchIn,
-) -> ActivityBatchInsertResult:
+) -> None:
     """Insert only unseen capture facts after exact semantic comparison."""
     submitted = [
         _span_values(
@@ -193,10 +158,6 @@ def insert_activity_batch_in_txn(
             ),
             missing,
         )
-    return ActivityBatchInsertResult(
-        accepted_count=len(missing),
-        deduplicated_count=len(submitted) - len(missing),
-    )
 
 
 def observed_session_in_txn(

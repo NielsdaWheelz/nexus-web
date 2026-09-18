@@ -163,11 +163,11 @@ completes in the same transaction. Exact Lectern origin may advance; Direct or
 stale origin completes state only. Replay returns a fresh canonical projection
 from the recorded terminal outcome without repeating domain writes.
 
-The Preview-position POST is a replayable post-acquisition command keyed by the
-required `Idempotency-Key` header. It accepts only an owned Podcast-episode
-Media, clamps the observed position to a present duration, and installs it only
-when no positive listening position or completion exists. It is the sole
-permitted bridge from ephemeral Browse playback into owned progress.
+The Preview-position POST is a post-acquisition command. It accepts only an
+owned Podcast-episode Media, clamps the observed position to a present
+duration, and installs it only when no positive listening position or
+completion exists. It is the sole permitted bridge from ephemeral Browse
+playback into owned progress.
 
 `SetUnread` and batch Unread change only explicit status. `ResetProgress` is
 the sole progress-clearing command: it clears the override, writes a revisioned

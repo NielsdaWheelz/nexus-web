@@ -53,3 +53,7 @@ with the doc corrections in the same commit.
 acceptance: `pg_dump --schema-only` shows none of the listed columns, tables,
 constraints or indexes; the migration is at the new head; `./scripts/test`
 passes and an import, a reader open and a dossier build still work.
+
+data cleanup in the same revision: `DELETE FROM resource_mutations WHERE scope
+IN ('Consumption.Activity', 'Consumption.PreviewPosition')` (svc-consumption
+CONS-3; those replay memos have no writer and no reader now).
