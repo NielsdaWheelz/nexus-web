@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Mapping
 from datetime import datetime
@@ -29,19 +28,6 @@ from .ingest import sync_subscription_ingest
 
 BACKFILL_JOB_KIND = "podcast_backfill_subscription"
 BACKFILL_JOB_LEASE_SECONDS = 900
-_ERROR_DETAIL_MAX_LENGTH = 500
-
-
-def cursor_digest(cursor: Mapping[str, object] | None) -> str:
-    """Canonical replay-fence digest for a provider continuation."""
-    payload = json.dumps(
-        dict(cursor) if cursor is not None else None,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
 
 
 def seed_subscription_backfill_in_current_transaction(
@@ -89,7 +75,6 @@ def seed_subscription_backfill_in_current_transaction(
         db,
         backfill_id=backfill_id,
         step_no=0,
-        cursor=None,
     )
     return backfill_id
 
@@ -99,7 +84,6 @@ def enqueue_backfill_step_in_current_transaction(
     *,
     backfill_id: UUID,
     step_no: int,
-    cursor: Mapping[str, object] | None,
 ) -> bool:
     _, inserted = enqueue_unique_job(
         db,
@@ -107,7 +91,6 @@ def enqueue_backfill_step_in_current_transaction(
         payload={
             "backfillId": str(backfill_id),
             "expectedStepNo": int(step_no),
-            "expectedCursorDigest": cursor_digest(cursor),
         },
         dedupe_key=f"podcast-backfill:{backfill_id}:{step_no}",
         max_attempts=3,
@@ -122,7 +105,7 @@ def run_backfill_step(
     context: JobExecutionContext,
 ) -> dict[str, Any]:
     """Fetch outside a transaction, then apply one exactly-once fenced step."""
-    backfill_id, expected_step_no, expected_digest = _decode_payload(payload)
+    backfill_id, expected_step_no = _decode_payload(payload)
     preflight = (
         db.execute(
             text(
@@ -158,11 +141,6 @@ def run_backfill_step(
         # justify-defect: a job naming a step ahead of the fence is corruption.
         raise RuntimeError("Podcast backfill job names a future step")
     current_cursor = _coerce_cursor(preflight["cursor"])
-    if cursor_digest(current_cursor) != expected_digest:
-        # justify-service-invariant-check: the cursor and its step are written in one
-        # fenced update, so a step-matched digest must equal the enqueued digest.
-        # justify-defect: a step-matched digest mismatch is fence corruption.
-        raise RuntimeError("Podcast backfill cursor fence mismatch")
 
     fetched = fetch_feed_backfill_page(
         feed_url=str(preflight["feed_url"]),
@@ -214,7 +192,6 @@ def run_backfill_step(
                 return {"status": "StaleOrUnsubscribed"}
 
             actual_step_no = int(row["step_no"])
-            actual_cursor = _coerce_cursor(row["cursor"])
             if actual_step_no > expected_step_no:
                 return {"status": "AlreadyApplied"}
             if actual_step_no < expected_step_no:
@@ -222,11 +199,6 @@ def run_backfill_step(
                 # forward, never behind a job that named its step.
                 # justify-defect: a job naming a step ahead of the locked fence is corruption.
                 raise RuntimeError("Podcast backfill job names a future step")
-            if cursor_digest(actual_cursor) != expected_digest:
-                # justify-service-invariant-check: step and cursor advance in one locked
-                # update, so a step-matched digest must equal the enqueued digest.
-                # justify-defect: a step-matched digest mismatch is fence corruption.
-                raise RuntimeError("Podcast backfill cursor fence mismatch")
             if any(
                 row[field] is not None
                 for field in ("completed_at", "source_limited_at", "failed_at")
@@ -331,7 +303,6 @@ def run_backfill_step(
                     db,
                     backfill_id=backfill_id,
                     step_no=next_step_no,
-                    cursor=next_cursor,
                 )
             return {
                 "status": "Applied",
@@ -343,13 +314,12 @@ def run_backfill_step(
     return retry_read_committed(db, "podcast_backfill_step", apply)
 
 
-def _decode_payload(payload: Mapping[str, Any]) -> tuple[UUID, int, str]:
+def _decode_payload(payload: Mapping[str, Any]) -> tuple[UUID, int]:
     backfill_id = UUID(str(payload["backfillId"]))
     expected_step_no = int(payload["expectedStepNo"])
-    expected_digest = str(payload["expectedCursorDigest"])
-    if expected_step_no < 0 or len(expected_digest) != 64:
+    if expected_step_no < 0:
         raise ValueError("Invalid Podcast backfill fence")
-    return backfill_id, expected_step_no, expected_digest
+    return backfill_id, expected_step_no
 
 
 def _coerce_cursor(value: object) -> dict[str, object] | None:

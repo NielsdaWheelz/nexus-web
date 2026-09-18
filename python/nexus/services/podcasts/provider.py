@@ -171,8 +171,7 @@ class PodcastIndexClient:
                     "audio_url": audio_url,
                     "published_at": published_at,
                     "duration_seconds": duration_seconds,
-                    "transcript_segments": None,
-                    "rss_transcript_refs": None,
+                    "rss_transcript_url": None,
                     "language": None,
                     "feed_language": None,
                 }

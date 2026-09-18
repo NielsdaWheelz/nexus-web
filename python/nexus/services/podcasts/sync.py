@@ -16,7 +16,6 @@ from nexus.db.session import get_session_factory, transaction
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import JobExecutionContext, JobRow, lock_and_renew_running_job_claim
 from nexus.logging import get_logger
-from nexus.services.collection_revisions import CollectionFamily, bump_collection_families
 from nexus.services.consumption import service as consumption_service
 
 from ._normalize import parse_iso_datetime
@@ -111,14 +110,14 @@ def _require_exact_queue_attempt(
     *,
     payload: PodcastSyncPayload,
     context: JobExecutionContext,
-) -> JobRow | None:
+) -> bool:
     job = lock_and_renew_running_job_claim(
         db,
         context=context,
         lease_seconds=PODCAST_SYNC_JOB_LEASE_SECONDS,
     )
     if job is None:
-        return None
+        return False
     if (
         job.kind != PODCAST_SYNC_JOB_KIND
         or job.payload != payload.wire()
@@ -126,7 +125,7 @@ def _require_exact_queue_attempt(
         != podcast_sync_dedupe_key(payload.subscription_id, payload.sync_generation)
     ):
         raise RuntimeError("Podcast sync queue attempt does not match its exact operation")
-    return job
+    return True
 
 
 def _lock_subscription_epoch(
@@ -193,7 +192,7 @@ def _claim_sync_attempt(
     context: JobExecutionContext,
 ) -> _Claim | None:
     with transaction(db):
-        if _require_exact_queue_attempt(db, payload=payload, context=context) is None:
+        if not _require_exact_queue_attempt(db, payload=payload, context=context):
             return None
         row = _lock_subscription_epoch(db, payload=payload)
         if (
@@ -269,7 +268,7 @@ def _write_ingest_checkpoint(
     source_limited: bool,
 ) -> _SyncCheckpoint | None:
     with transaction(db):
-        if _require_exact_queue_attempt(db, payload=payload, context=context) is None:
+        if not _require_exact_queue_attempt(db, payload=payload, context=context):
             return None
         row = _lock_subscription_epoch(db, payload=payload)
         if (
@@ -363,7 +362,7 @@ def _finalize_healthy_sync(
 
     def attempt() -> bool:
         with transaction(fresh):
-            if _require_exact_queue_attempt(fresh, payload=payload, context=context) is None:
+            if not _require_exact_queue_attempt(fresh, payload=payload, context=context):
                 return False
             row = _lock_subscription_epoch(fresh, payload=payload)
             if (
@@ -470,6 +469,74 @@ def _finalize_healthy_sync(
         fresh.close()
 
 
+def _publish_terminal_sync_failure(
+    db: Session,
+    *,
+    payload: PodcastSyncPayload,
+    error_code: str,
+    error_message: str,
+    new_episode_count: int,
+    completed_at: datetime,
+) -> None:
+    """Write the one terminal Failed epoch inside the caller's transaction."""
+    failures = int(
+        db.execute(
+            text(
+                """
+                UPDATE podcast_subscriptions
+                SET
+                    sync_status = 'Failed',
+                    sync_error_code = :error_code,
+                    sync_error_message = :error_message,
+                    sync_completed_at = :completed_at,
+                    last_checked_at = :completed_at,
+                    consecutive_sync_failures = consecutive_sync_failures + 1,
+                    sync_job_id = NULL,
+                    sync_job_attempt_no = NULL,
+                    sync_checkpoint_status = NULL,
+                    sync_checkpoint_cutoff_at = NULL,
+                    sync_checkpoint_new_episode_count = NULL,
+                    sync_checkpoint_completed_at = NULL,
+                    updated_at = :completed_at
+                WHERE id = :subscription_id
+                RETURNING consecutive_sync_failures
+                """
+            ),
+            {
+                "subscription_id": payload.subscription_id,
+                "error_code": error_code,
+                "error_message": error_message[:PODCAST_REFRESH_ERROR_MESSAGE_MAX_LENGTH],
+                "completed_at": completed_at,
+            },
+        ).scalar_one()
+    )
+    db.execute(
+        text(
+            """
+            UPDATE podcast_subscriptions
+            SET next_sync_at = :next_sync_at, updated_at = :completed_at
+            WHERE id = :subscription_id
+            """
+        ),
+        {
+            "subscription_id": payload.subscription_id,
+            "next_sync_at": failed_next_sync_at(failures, completed_at),
+            "completed_at": completed_at,
+        },
+    )
+    finish_joined_items_in_txn(
+        db,
+        subscription_id=payload.subscription_id,
+        sync_generation=payload.sync_generation,
+        status="Failed",
+        new_episode_count=new_episode_count,
+        error_code=error_code,
+        error_message=error_message,
+        completed_at=completed_at,
+    )
+    bump_refresh_collections_in_txn(db, (payload.user_id,))
+
+
 def _terminalize_modeled_failure(
     db: Session,
     *,
@@ -479,7 +546,7 @@ def _terminalize_modeled_failure(
     error_message: str,
 ) -> bool:
     with transaction(db):
-        if _require_exact_queue_attempt(db, payload=payload, context=context) is None:
+        if not _require_exact_queue_attempt(db, payload=payload, context=context):
             return False
         row = _lock_subscription_epoch(db, payload=payload)
         if (
@@ -490,64 +557,14 @@ def _terminalize_modeled_failure(
         ):
             return False
         checkpoint = _checkpoint_from_row(row)
-        new_episode_count = checkpoint.new_episode_count if checkpoint is not None else 0
-        completed_at = _database_now(db)
-        failures = int(
-            db.execute(
-                text(
-                    """
-                    UPDATE podcast_subscriptions
-                    SET
-                        sync_status = 'Failed',
-                        sync_error_code = :error_code,
-                        sync_error_message = :error_message,
-                        sync_completed_at = :completed_at,
-                        last_checked_at = :completed_at,
-                        consecutive_sync_failures = consecutive_sync_failures + 1,
-                        sync_job_id = NULL,
-                        sync_job_attempt_no = NULL,
-                        sync_checkpoint_status = NULL,
-                        sync_checkpoint_cutoff_at = NULL,
-                        sync_checkpoint_new_episode_count = NULL,
-                        sync_checkpoint_completed_at = NULL,
-                        updated_at = :completed_at
-                    WHERE id = :subscription_id
-                    RETURNING consecutive_sync_failures
-                    """
-                ),
-                {
-                    "subscription_id": payload.subscription_id,
-                    "error_code": error_code,
-                    "error_message": error_message[:PODCAST_REFRESH_ERROR_MESSAGE_MAX_LENGTH],
-                    "completed_at": completed_at,
-                },
-            ).scalar_one()
-        )
-        db.execute(
-            text(
-                """
-                UPDATE podcast_subscriptions
-                SET next_sync_at = :next_sync_at, updated_at = :completed_at
-                WHERE id = :subscription_id
-                """
-            ),
-            {
-                "subscription_id": payload.subscription_id,
-                "next_sync_at": failed_next_sync_at(failures, completed_at),
-                "completed_at": completed_at,
-            },
-        )
-        finish_joined_items_in_txn(
+        _publish_terminal_sync_failure(
             db,
-            subscription_id=payload.subscription_id,
-            sync_generation=payload.sync_generation,
-            status="Failed",
-            new_episode_count=new_episode_count,
+            payload=payload,
             error_code=error_code,
             error_message=error_message,
-            completed_at=completed_at,
+            new_episode_count=checkpoint.new_episode_count if checkpoint is not None else 0,
+            completed_at=_database_now(db),
         )
-        bump_refresh_collections_in_txn(db, (payload.user_id,))
         return True
 
 
@@ -654,69 +671,11 @@ def dead_letter_podcast_subscription_sync(db: Session, job: JobRow) -> None:
         return
 
     checkpoint = _checkpoint_from_row(row)
-    new_episode_count = checkpoint.new_episode_count if checkpoint is not None else 0
-    completed_at = _database_now(db)
-    failures = int(
-        db.execute(
-            text(
-                """
-                UPDATE podcast_subscriptions
-                SET
-                    sync_status = 'Failed',
-                    sync_error_code = :error_code,
-                    sync_error_message = :error_message,
-                    sync_completed_at = :completed_at,
-                    last_checked_at = :completed_at,
-                    consecutive_sync_failures = consecutive_sync_failures + 1,
-                    sync_job_id = NULL,
-                    sync_job_attempt_no = NULL,
-                    sync_checkpoint_status = NULL,
-                    sync_checkpoint_cutoff_at = NULL,
-                    sync_checkpoint_new_episode_count = NULL,
-                    sync_checkpoint_completed_at = NULL,
-                    updated_at = :completed_at
-                WHERE id = :subscription_id
-                RETURNING consecutive_sync_failures
-                """
-            ),
-            {
-                "subscription_id": payload.subscription_id,
-                "error_code": ApiErrorCode.E_PODCAST_SYNC_RETRY_EXHAUSTED.value,
-                "error_message": (job.last_error or "Podcast sync exhausted its retry budget")[
-                    :PODCAST_REFRESH_ERROR_MESSAGE_MAX_LENGTH
-                ],
-                "completed_at": completed_at,
-            },
-        ).scalar_one()
-    )
-    db.execute(
-        text(
-            """
-            UPDATE podcast_subscriptions
-            SET next_sync_at = :next_sync_at
-            WHERE id = :subscription_id
-            """
-        ),
-        {
-            "subscription_id": payload.subscription_id,
-            "next_sync_at": failed_next_sync_at(failures, completed_at),
-        },
-    )
-    finish_joined_items_in_txn(
+    _publish_terminal_sync_failure(
         db,
-        subscription_id=payload.subscription_id,
-        sync_generation=payload.sync_generation,
-        status="Failed",
-        new_episode_count=new_episode_count,
+        payload=payload,
         error_code=ApiErrorCode.E_PODCAST_SYNC_RETRY_EXHAUSTED.value,
         error_message=job.last_error or "Podcast sync exhausted its retry budget",
-        completed_at=completed_at,
-    )
-    bump_collection_families(
-        db,
-        viewer_ids=(payload.user_id,),
-        families=(
-            CollectionFamily.LibraryEntries,
-            CollectionFamily.PodcastSubscriptions,
-        ),
+        new_episode_count=checkpoint.new_episode_count if checkpoint is not None else 0,
+        completed_at=_database_now(db),
     )

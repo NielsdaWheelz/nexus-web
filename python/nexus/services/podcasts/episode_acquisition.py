@@ -106,7 +106,7 @@ def acquire_episode_from_discovery(
         "published_at": resolved.published_at,
         "duration_seconds": resolved.duration_seconds,
         "authors": None,
-        "rss_transcript_refs": None,
+        "rss_transcript_url": None,
         "rss_chapters": None,
         "language": None,
         "feed_language": None,

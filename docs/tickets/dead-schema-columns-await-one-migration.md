@@ -37,7 +37,6 @@ columns to drop, with the slice that removes their code side:
 
 tables to drop: `content_chunk_parts` (+ `ix_content_chunk_parts_block_id`,
 `ix_content_chunk_parts_chunk`; derived data, rebuilt by reindex),
-`podcast_transcript_request_audits` (POD-01; write-only audit ledger),
 `billing_entitlement_override_events` (SAM-02; write-only audit table),
 `external_provider_events` with `record_external_provider_event`, its three
 `x_ingest.py` call sites (1026, 1065, 1098) and the two FK-nulling UPDATEs at

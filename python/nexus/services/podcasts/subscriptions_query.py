@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -26,6 +25,14 @@ from nexus.schemas.podcast import (
 )
 from nexus.schemas.presence import Absent, Present, absent, presence_from_nullable, present
 from nexus.services import library_entries
+from nexus.services.collection_keyset import (
+    SortKey,
+    after_values,
+    expected_kinds,
+    keyset_clause,
+    keyset_params,
+    order_by_sql,
+)
 from nexus.services.collection_revisions import (
     CollectionFamily,
     read_collection_revision,
@@ -37,7 +44,6 @@ from nexus.services.podcasts.playback_preferences import (
     pause_shortening_mode_from_nullable,
 )
 from nexus.services.signed_keyset_cursor import (
-    KeysetValue,
     KeysetValueKind,
     decode_signed_keyset_cursor,
     encode_signed_keyset_cursor,
@@ -237,124 +243,22 @@ def _subscription_query_identity(
     }
 
 
-def _subscription_order(
-    sort: PodcastSubscriptionSort,
-) -> tuple[str, tuple[KeysetValueKind, ...]]:
+def _subscription_plan(sort: PodcastSubscriptionSort) -> list[SortKey]:
+    """The one total order behind this listing's ORDER BY, page predicate and cursor."""
     if sort == "alpha":
-        return (
-            "title_key ASC, podcast_id ASC",
-            (KeysetValueKind.Text, KeysetValueKind.Uuid),
-        )
+        return [
+            SortKey("title_key", "asc", KeysetValueKind.Text),
+            SortKey("podcast_id", "asc", KeysetValueKind.Uuid),
+        ]
+    recency = [
+        SortKey("latest_missing", "asc", KeysetValueKind.Int),
+        SortKey("latest_published_at", "desc", KeysetValueKind.DateTimeOrNull),
+        SortKey("subscription_updated_at", "desc", KeysetValueKind.DateTime),
+        SortKey("podcast_id", "desc", KeysetValueKind.Uuid),
+    ]
     if sort == "unplayed_count":
-        return (
-            "unplayed_count DESC, latest_missing ASC, latest_published_at DESC, "
-            "subscription_updated_at DESC, podcast_id DESC",
-            (
-                KeysetValueKind.Int,
-                KeysetValueKind.Int,
-                KeysetValueKind.DateTimeOrNull,
-                KeysetValueKind.DateTime,
-                KeysetValueKind.Uuid,
-            ),
-        )
-    return (
-        "latest_missing ASC, latest_published_at DESC, "
-        "subscription_updated_at DESC, podcast_id DESC",
-        (
-            KeysetValueKind.Int,
-            KeysetValueKind.DateTimeOrNull,
-            KeysetValueKind.DateTime,
-            KeysetValueKind.Uuid,
-        ),
-    )
-
-
-def _subscription_keyset_predicate(
-    sort: PodcastSubscriptionSort,
-    after: tuple[object, ...] | None,
-    params: dict[str, object],
-) -> str:
-    if after is None:
-        return "TRUE"
-    if sort == "alpha":
-        title, podcast_id = after
-        params.update(after_title=title, after_podcast_id=podcast_id)
-        return """
-            title_key > :after_title
-            OR (title_key = :after_title AND podcast_id > :after_podcast_id)
-        """
-
-    if sort == "unplayed_count":
-        unplayed, missing, published, updated, podcast_id = after
-        params.update(
-            after_unplayed=unplayed,
-            after_latest_missing=missing,
-            after_latest_published=published,
-            after_subscription_updated=updated,
-            after_podcast_id=podcast_id,
-        )
-        return """
-            unplayed_count < :after_unplayed
-            OR (unplayed_count = :after_unplayed
-                AND latest_missing > :after_latest_missing)
-            OR (unplayed_count = :after_unplayed
-                AND latest_missing = :after_latest_missing
-                AND :after_latest_missing = 0
-                AND latest_published_at < :after_latest_published)
-            OR (unplayed_count = :after_unplayed
-                AND latest_missing = :after_latest_missing
-                AND latest_published_at IS NOT DISTINCT FROM :after_latest_published
-                AND subscription_updated_at < :after_subscription_updated)
-            OR (unplayed_count = :after_unplayed
-                AND latest_missing = :after_latest_missing
-                AND latest_published_at IS NOT DISTINCT FROM :after_latest_published
-                AND subscription_updated_at = :after_subscription_updated
-                AND podcast_id < :after_podcast_id)
-        """
-
-    missing, published, updated, podcast_id = after
-    params.update(
-        after_latest_missing=missing,
-        after_latest_published=published,
-        after_subscription_updated=updated,
-        after_podcast_id=podcast_id,
-    )
-    return """
-        latest_missing > :after_latest_missing
-        OR (latest_missing = :after_latest_missing
-            AND :after_latest_missing = 0
-            AND latest_published_at < :after_latest_published)
-        OR (latest_missing = :after_latest_missing
-            AND latest_published_at IS NOT DISTINCT FROM :after_latest_published
-            AND subscription_updated_at < :after_subscription_updated)
-        OR (latest_missing = :after_latest_missing
-            AND latest_published_at IS NOT DISTINCT FROM :after_latest_published
-            AND subscription_updated_at = :after_subscription_updated
-            AND podcast_id < :after_podcast_id)
-    """
-
-
-def _subscription_after_values(
-    sort: PodcastSubscriptionSort,
-    row: Any,
-) -> tuple[KeysetValue, ...]:
-    if sort == "alpha":
-        return (
-            KeysetValue(KeysetValueKind.Text, str(row["title_key"])),
-            KeysetValue(KeysetValueKind.Uuid, UUID(str(row["podcast_id"]))),
-        )
-    common = (
-        KeysetValue(KeysetValueKind.Int, int(row["latest_missing"])),
-        KeysetValue(KeysetValueKind.DateTimeOrNull, row["latest_published_at"]),
-        KeysetValue(
-            KeysetValueKind.DateTime,
-            cast(datetime, row["subscription_updated_at"]),
-        ),
-        KeysetValue(KeysetValueKind.Uuid, UUID(str(row["podcast_id"]))),
-    )
-    if sort == "unplayed_count":
-        return (KeysetValue(KeysetValueKind.Int, int(row["unplayed_count"])), *common)
-    return common
+        return [SortKey("unplayed_count", "desc", KeysetValueKind.Int), *recency]
+    return recency
 
 
 def list_subscriptions(
@@ -384,17 +288,7 @@ def list_subscriptions(
         filter=filter,
         library_id=library_id,
     )
-    order_by_sql, cursor_kinds = _subscription_order(sort)
-    after = (
-        decode_signed_keyset_cursor(
-            cursor,
-            family=CollectionFamily.PodcastSubscriptions.value,
-            query=query_identity,
-            expected_kinds=cursor_kinds,
-        )
-        if cursor is not None
-        else None
-    )
+    plan = _subscription_plan(sort)
     revision = (
         read_collection_revision(
             db,
@@ -455,7 +349,20 @@ def list_subscriptions(
         "in_library_podcast_ids": in_library_podcast_ids,
         "scoped_podcast_ids": scoped_podcast_ids,
     }
-    keyset_sql = _subscription_keyset_predicate(sort, after, query_params)
+    keyset_sql = ""
+    if cursor is not None:
+        keyset_sql = keyset_clause(plan, alias="os")
+        query_params.update(
+            keyset_params(
+                plan,
+                decode_signed_keyset_cursor(
+                    cursor,
+                    family=CollectionFamily.PodcastSubscriptions.value,
+                    query=query_identity,
+                    expected_kinds=expected_kinds(plan),
+                ),
+            )
+        )
 
     rows = (
         db.execute(
@@ -518,10 +425,11 @@ def list_subscriptions(
                   AND {filter_sql}
                   AND {library_scope_sql}
             )
-            SELECT *
-            FROM ordered_subscriptions
-            WHERE ({keyset_sql})
-            ORDER BY {order_by_sql}
+            SELECT os.*
+            FROM ordered_subscriptions os
+            WHERE TRUE
+            {keyset_sql}
+            ORDER BY {order_by_sql(plan, alias="os")}
             LIMIT :page_limit
             """
             ),
@@ -561,7 +469,7 @@ def list_subscriptions(
             encode_signed_keyset_cursor(
                 family=CollectionFamily.PodcastSubscriptions.value,
                 query=query_identity,
-                after=_subscription_after_values(sort, page_rows[-1]),
+                after=after_values(plan, page_rows[-1]),
             )
         )
         if has_next and page_rows
