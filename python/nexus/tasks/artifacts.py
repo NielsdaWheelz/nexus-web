@@ -27,27 +27,15 @@ from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
 from nexus.db.models import ArtifactBuild
-from nexus.jobs.queue import JobExecutionContext, JobRow, RescheduleRequested, get_job
-from nexus.logging import get_logger
+from nexus.jobs.queue import JobExecutionContext, RescheduleRequested, get_job
 from nexus.services.artifacts import engine
 from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.llm_execution import ExecutionRuntime
 from nexus.services.tool_runtime.composition import (
-    ComposedToolRuntime,
     compose_configured_web_search_provider,
     compose_product_tool_runtime,
 )
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
-
-logger = get_logger(__name__)
-
-
-def compose_dossier_tool_runtime(
-    web_search_provider: WebSearchProvider | None,
-) -> ComposedToolRuntime:
-    """Compose the exact product runtime consumed by a Dossier worker attempt."""
-
-    return compose_product_tool_runtime(web_search_provider)
 
 
 def dossier_build(
@@ -84,7 +72,7 @@ def dossier_build(
                 client,
                 settings=settings,
             )
-            tool_runtime = compose_dossier_tool_runtime(web_provider)
+            tool_runtime = compose_product_tool_runtime(web_provider)
             dossier_runtime = DossierBuildRuntime(
                 build_id=build_id,
                 artifact_id=build.artifact_id,
@@ -105,22 +93,3 @@ def dossier_build(
         return {"status": "ok", "build_id": str(build_id)}
 
     return run_llm_task(spec, _handler)
-
-
-def dead_letter_dossier_build(db: Session, job: JobRow) -> None:
-    """Diagnostic-only dead-letter hook for a dead-lettered ``dossier_build`` job.
-
-    A dead job row IS the Suspended signal (it stays queryable forever --
-    ``JobDefinition.never_prune_dead=True``); this hook writes no domain state
-    and never touches the build. It only surfaces the build id in the
-    operator-facing dead-letter log line (``jobs/worker.py`` logs the generic
-    ``worker_job_dead_letter_handled`` line right after this returns). Repair
-    is an operator ``requeue_dead_job`` once the underlying cause is fixed, or
-    a user Cancel to terminalize the suspended build and unlock a new
-    Generate -- this hook must never synthesize a failure or redispatch.
-    """
-    logger.warning(
-        "dossier_build_dead_lettered",
-        job_id=str(job.id),
-        build_id=str(job.payload.get("build_id")),
-    )

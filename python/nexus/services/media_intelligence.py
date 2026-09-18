@@ -1154,43 +1154,6 @@ async def run_media_unit_build(
     )
 
 
-def _media_unit_attempt_active(
-    db: Session,
-    *,
-    media_id: UUID,
-    content_fingerprint: str,
-    ctx: JobExecutionContext,
-) -> bool:
-    if not running_job_claim_is_current(
-        db,
-        job_id=ctx.job_id,
-        worker_id=ctx.worker_id,
-        attempt_no=ctx.attempt_no,
-    ):
-        return False
-    if current_content_fingerprint(db, media_id=media_id) != content_fingerprint:
-        return False
-    return bool(
-        db.execute(
-            text(
-                """
-                SELECT EXISTS(
-                    SELECT 1
-                    FROM media_summaries
-                    WHERE media_id = :media_id
-                      AND status = 'building'
-                      AND content_fingerprint = :content_fingerprint
-                )
-                """
-            ),
-            {
-                "media_id": media_id,
-                "content_fingerprint": content_fingerprint,
-            },
-        ).scalar_one()
-    )
-
-
 def _apply_completed_result(
     db: Session,
     *,

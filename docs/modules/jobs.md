@@ -145,7 +145,7 @@ background-lane projections are pure SQL in that module; the three interactive-l
 projections keep their existing owners and are imported inside their own branch,
 which the background lane never reaches.
 
-Six kinds declare a projection:
+Five kinds declare a projection:
 
 - `ChatRun` (`chat_run`) leaves the run, assistant message, and event stream
   nonterminal and records safe suspension diagnostics. It requeues only when
@@ -153,9 +153,6 @@ Six kinds declare a projection:
   cancelled fold.
 - `NoteContentIndex` (`note_reindex_job`) marks the note's content index `failed`
   so a stranded reindex is observable instead of stuck `pending`.
-- `DossierBuild` (`dossier_build`) preserves the active build and projects it as
-  suspended; it does not invent a modeled Dossier failure or unlock another
-  Generate.
 - `MediaTeardownIntent` (`media_teardown`) voids only the exact still-current
   teardown intent so a newer lifecycle cannot be overwritten.
 - `PodcastBackfill` (`podcast_backfill_subscription`) stamps the current backfill

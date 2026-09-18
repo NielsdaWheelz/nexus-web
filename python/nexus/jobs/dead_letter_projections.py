@@ -40,7 +40,6 @@ type DeadLetterProjection = Literal[
     "MediaTeardownIntent",
     "PodcastBackfill",
     "ChatRun",
-    "DossierBuild",
     "PodcastSubscriptionSync",
 ]
 """Closed set of repairs a dead-lettered job kind may declare."""
@@ -69,11 +68,6 @@ def apply_dead_letter_projection(
         from nexus.tasks.chat_run import record_dead_lettered_chat_run
 
         record_dead_lettered_chat_run(db, job)
-        return
-    if projection == "DossierBuild":
-        from nexus.tasks.artifacts import dead_letter_dossier_build
-
-        dead_letter_dossier_build(db, job)
         return
     if projection == "PodcastSubscriptionSync":
         from nexus.services.podcasts.sync import dead_letter_podcast_subscription_sync
