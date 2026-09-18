@@ -20,7 +20,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.config import (
     BACKGROUND_WORKER_MEMORY_LIMIT_BYTES,
-    Environment,
     Settings,
     get_settings,
     parse_agent_tools_mcp_listen,
@@ -71,15 +70,9 @@ def _worker_readiness_check(
             )
         except BackgroundProcessProtocolDefect:
             return False
-    reconciler_max_age_seconds = (
-        2 * int(settings.ingest_reconcile_schedule_seconds)
-        if settings.nexus_env in (Environment.STAGING, Environment.PROD)
-        else None
-    )
     return is_database_ready(
         database_url=settings.database_url,
         expected_revision=expected_database_revision,
-        reconciler_max_age_seconds=reconciler_max_age_seconds,
     )
 
 

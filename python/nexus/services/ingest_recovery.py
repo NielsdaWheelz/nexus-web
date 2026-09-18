@@ -18,7 +18,6 @@ from nexus.job_topology import (
 )
 from nexus.jobs.queue import enqueue_job, ingest_operation_health
 from nexus.logging import get_logger
-from nexus.runtime_health import ACCEPTED_SOURCE_JOB_DEFECT_COUNT_SQL
 from nexus.schemas.presence import Presence, absent, present
 from nexus.services.media_upload_sessions import UPLOAD_SESSION_DERIVED_STATE_SQL
 
@@ -194,7 +193,37 @@ def get_ingest_recovery_health(db: Session) -> IngestRecoveryHealth:
         .one()
     )
     accepted_source_job_defect_count = int(
-        db.scalar(text(ACCEPTED_SOURCE_JOB_DEFECT_COUNT_SQL)) or 0
+        db.execute(
+            text(
+                """
+                WITH in_flight_source AS (
+                    SELECT msa.id, msa.media_id, msa.job_id
+                    FROM media_source_attempts AS msa
+                    WHERE msa.status IN ('accepted', 'queued', 'running')
+                )
+                SELECT count(*)
+                FROM in_flight_source AS source
+                LEFT JOIN background_jobs AS owned_job
+                  ON owned_job.id = source.job_id
+                 AND owned_job.kind = 'ingest_media_source'
+                 AND owned_job.status IN ('pending', 'failed', 'running', 'dead')
+                 AND owned_job.payload @> jsonb_build_object(
+                        'media_id', source.media_id::text,
+                        'attempt_id', source.id::text
+                    )
+                CROSS JOIN LATERAL (
+                    SELECT count(*) AS exact_count
+                    FROM background_jobs AS exact_job
+                    WHERE exact_job.kind = 'ingest_media_source'
+                      AND exact_job.payload @> jsonb_build_object(
+                            'media_id', source.media_id::text,
+                            'attempt_id', source.id::text
+                          )
+                ) AS exact_jobs
+                WHERE owned_job.id IS NULL OR exact_jobs.exact_count <> 1
+                """
+            )
+        ).scalar_one()
     )
     queue = ingest_operation_health(
         db,
