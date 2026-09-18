@@ -14,17 +14,15 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.schemas.reader_apparatus import ReaderApparatusLocatorStatus
 from nexus.schemas.resource_items import ResourceActivationOut
-from nexus.services.artifacts.registry import visible_persisted_subject
+from nexus.services.artifacts.registry import visible_persisted_subject_sql
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.resolve import (
-    oracle_anchor_current_target,
-    reader_target_for_citation_target,
-)
 
-_BATCHED_ROUTE_SCHEMES = frozenset({"highlight", "message", "fragment", "reader_apparatus_item"})
-_BATCHED_ACTIVATION_ROUTE_SCHEMES = frozenset(
+_BATCHED_ROUTE_SCHEMES = frozenset(
     {
-        *_BATCHED_ROUTE_SCHEMES,
+        "highlight",
+        "message",
+        "fragment",
+        "reader_apparatus_item",
         "content_chunk",
         "evidence_span",
         "artifact",
@@ -60,36 +58,8 @@ def route_for_visible_apparatus_item(
     return f"/media/{media_id}?{params}"
 
 
-def _artifact_standalone_route(
-    db: Session,
-    row: Any,
-    *,
-    viewer_id: UUID,
-    revision_id: UUID | None = None,
-) -> str | None:
-    """Authorize and route a Dossier head/revision to its standalone pane."""
-    if row is None:
-        return None
-    artifact_id, subject_scheme, raw_subject_id, audience_scheme, audience_id = row
-    subject_id = UUID(str(raw_subject_id))
-    if (
-        visible_persisted_subject(
-            db,
-            subject_scheme=str(subject_scheme),
-            subject_id=subject_id,
-            audience_scheme=str(audience_scheme),
-            audience_id=str(audience_id),
-            viewer_id=viewer_id,
-        )
-        is None
-    ):
-        return None
-    base = f"/artifacts/artifact:{artifact_id}"
-    return f"{base}?revision=artifact_revision:{revision_id}" if revision_id is not None else base
-
-
 def resource_activation_for_ref(
-    db: Session, *, viewer_id: UUID, ref: ResourceRef, missing: bool = False
+    db: Session, *, viewer_id: UUID, ref: ResourceRef, missing: bool
 ) -> ResourceActivationOut:
     if missing:
         return ResourceActivationOut(
@@ -117,7 +87,7 @@ def resource_activation_for_ref(
             unresolved_reason=None if isinstance(url, str) and url else "not_routeable",
         )
 
-    route = route_for_ref(db, viewer_id=viewer_id, ref=ref)
+    route = route_for_ref(db, viewer_id=viewer_id, ref=ref, missing=False)
     return ResourceActivationOut(
         resource_ref=ref.uri,
         kind="route" if route is not None else "none",
@@ -232,7 +202,7 @@ def _routes_for_refs(
 ) -> dict[str, str]:
     by_scheme: dict[str, list[ResourceRef]] = defaultdict(list)
     for ref in refs:
-        if ref.scheme in _BATCHED_ACTIVATION_ROUTE_SCHEMES:
+        if ref.scheme in _BATCHED_ROUTE_SCHEMES:
             by_scheme[ref.scheme].append(ref)
 
     routes: dict[str, str] = {}
@@ -336,13 +306,18 @@ def _dynamic_routes_for_refs(
     if artifact_refs:
         rows = db.execute(
             text(
-                """
-                SELECT id
-                FROM artifacts
-                WHERE id = ANY(:ids)
+                f"""
+                SELECT a.id
+                FROM artifacts a
+                WHERE a.id = ANY(:ids)
+                  AND {visible_persisted_subject_sql("a")}
                 """
             ),
-            {"ids": [ref.id for ref in artifact_refs]},
+            {
+                "ids": [ref.id for ref in artifact_refs],
+                "viewer_id": viewer_id,
+                "viewer_id_text": str(viewer_id),
+            },
         ).all()
         routes.update({f"artifact:{row[0]}": f"/artifacts/artifact:{row[0]}" for row in rows})
 
@@ -350,15 +325,20 @@ def _dynamic_routes_for_refs(
     if revision_refs:
         rows = db.execute(
             text(
-                """
+                f"""
                 SELECT r.id, a.id
                 FROM artifact_revisions r
                 JOIN artifact_builds b ON b.id = r.build_id
                 JOIN artifacts a ON a.id = b.artifact_id
                 WHERE r.id = ANY(:ids)
+                  AND {visible_persisted_subject_sql("a")}
                 """
             ),
-            {"ids": [ref.id for ref in revision_refs]},
+            {
+                "ids": [ref.id for ref in revision_refs],
+                "viewer_id": viewer_id,
+                "viewer_id_text": str(viewer_id),
+            },
         ).all()
         routes.update(
             {
@@ -554,92 +534,14 @@ def _route_for_content_chunk_row(
     return f"/notes/{block_id}"
 
 
-def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> str | None:
-    static_route = _static_route(ref)
-    if static_route is not None:
-        return static_route
-    if ref.scheme in _BATCHED_ROUTE_SCHEMES:
-        return _routes_for_refs(db, viewer_id=viewer_id, refs=[ref]).get(ref.uri)
-    if ref.scheme == "content_chunk":
-        span_id = db.scalar(
-            text("SELECT primary_evidence_span_id FROM content_chunks WHERE id = :id"),
-            {"id": ref.id},
-        )
-        if span_id is not None:
-            return route_for_ref(
-                db,
-                viewer_id=viewer_id,
-                ref=ResourceRef(scheme="evidence_span", id=span_id),
-            )
-        media_id, locator = reader_target_for_citation_target(db, viewer_id=viewer_id, target=ref)
-        if media_id is not None:
-            if isinstance(locator, dict) and isinstance(locator.get("fragment_id"), str):
-                return f"/media/{media_id}#fragment-{locator['fragment_id']}"
-            return f"/media/{media_id}"
-        if isinstance(locator, dict) and isinstance(locator.get("block_id"), str):
-            return f"/notes/{locator['block_id']}"
+def route_for_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef, missing: bool) -> str | None:
+    """The one route for a single ref.
+
+    ``missing`` is the caller's own hydration verdict for this ref. Routing owns
+    no per-ref visibility predicate: a ref the caller has not proven visible must
+    arrive ``missing=True`` or its route leaks the parent's identity. The
+    parameter has no default so a new caller cannot skip the obligation.
+    """
+    if missing:
         return None
-    if ref.scheme == "evidence_span":
-        media_id, locator = reader_target_for_citation_target(db, viewer_id=viewer_id, target=ref)
-        if media_id is not None:
-            return f"/media/{media_id}#evidence-{ref.id}"
-        if isinstance(locator, dict) and isinstance(locator.get("block_id"), str):
-            return f"/notes/{locator['block_id']}"
-        return None
-    if ref.scheme == "artifact":
-        row = db.execute(
-            text(
-                "SELECT id, subject_scheme, subject_id, audience_scheme, audience_id "
-                "FROM artifacts WHERE id = :id"
-            ),
-            {"id": ref.id},
-        ).first()
-        return _artifact_standalone_route(db, row, viewer_id=viewer_id)
-    if ref.scheme == "artifact_revision":
-        row = db.execute(
-            text(
-                """
-                SELECT a.id, a.subject_scheme, a.subject_id,
-                       a.audience_scheme, a.audience_id
-                FROM artifact_revisions r
-                JOIN artifact_builds b ON b.id = r.build_id
-                JOIN artifacts a ON a.id = b.artifact_id
-                WHERE r.id = :id
-                """
-            ),
-            {"id": ref.id},
-        ).first()
-        return _artifact_standalone_route(
-            db,
-            row,
-            viewer_id=viewer_id,
-            revision_id=ref.id,
-        )
-    if ref.scheme == "contributor":
-        handle = db.scalar(text("SELECT handle FROM contributors WHERE id = :id"), {"id": ref.id})
-        return f"/authors/{quote(str(handle), safe='')}" if handle is not None else None
-    if ref.scheme == "oracle_passage_anchor":
-        current = oracle_anchor_current_target(db, ref.id)
-        return route_for_ref(db, viewer_id=viewer_id, ref=current) if current is not None else None
-    if ref.scheme == "passage_anchor":
-        row = db.execute(
-            text(
-                "SELECT owner_scheme, owner_id FROM passage_anchors"
-                " WHERE id = :id AND user_id = :viewer_id"
-            ),
-            {"id": ref.id, "viewer_id": viewer_id},
-        ).first()
-        if row is None:
-            return None
-        owner_scheme, owner_id = row[0], row[1]
-        # Activation opens the owner resource at the anchor (highlight precedent):
-        # a passage anchor has no reader surface of its own.
-        if owner_scheme == "media":
-            return f"/media/{owner_id}#passage-{ref.id}"
-        if owner_scheme == "note_block":
-            return f"/notes/{owner_id}#passage-{ref.id}"
-        return None
-    if ref.scheme == "external_snapshot":
-        return None
-    # Static and batched schemes are handled by the shared route owners above.
-    return None
+    return _static_route(ref) or _routes_for_refs(db, viewer_id=viewer_id, refs=[ref]).get(ref.uri)

@@ -263,7 +263,9 @@ def _passage_target(
         source=source_item,
         label=source_item.label,
         excerpt=excerpt if excerpt is not None else _truncate_snippet(exact),
-        activation=resource_activation_for_ref(db, viewer_id=viewer_id, ref=candidate_ref),
+        activation=resource_activation_for_ref(
+            db, viewer_id=viewer_id, ref=candidate_ref, missing=False
+        ),
         existing_link_id=existing_link_id,
     )
 

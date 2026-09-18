@@ -31,7 +31,6 @@ _SHARE_TOKEN_BYTES = 32
 _SHARE_TOKEN_CHARS = 43
 _ENTITY_HANDLE_INPUT_PREFIX = b"nexus-handle\0"
 _ENTITY_KEY_INPUT_PREFIX = b"nexus-handle-key\0"
-_SHARE_TOKEN_HASH_PREFIX = b"nexus-share-token\0v1\0"
 _DISCOVERY_TARGET_INPUT_PREFIX = b"nexus-discovery-target\0"
 _DISCOVERY_TARGET_KEY_INPUT = b"nexus-handle-key\0browse-discovery-target"
 _B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -288,14 +287,6 @@ def seal_resource_grant(grant_id: UUID) -> ResourceGrantHandle:
     return _seal(grant_id, _RESOURCE_GRANT, ResourceGrantHandle)
 
 
-def parse_resource_grant_handle(raw: str) -> ResourceGrantHandle:
-    try:
-        _parse_entity_wire(raw, _RESOURCE_GRANT)
-    except ValueError as exc:
-        raise InvalidSealedHandle("Invalid resource grant handle") from exc
-    return ResourceGrantHandle(raw)
-
-
 def unseal_resource_grant(raw: str) -> UUID:
     return _unseal(raw, _RESOURCE_GRANT, "Invalid resource grant handle")
 
@@ -304,28 +295,12 @@ def seal_user(user_id: UUID) -> UserHandle:
     return _seal(user_id, _USER, UserHandle)
 
 
-def parse_user_handle(raw: str) -> UserHandle:
-    try:
-        _parse_entity_wire(raw, _USER)
-    except ValueError as exc:
-        raise InvalidSealedHandle("Invalid user handle") from exc
-    return UserHandle(raw)
-
-
 def unseal_user(raw: str) -> UUID:
     return _unseal(raw, _USER, "Invalid user handle")
 
 
 def seal_library_invitation(invitation_id: UUID) -> LibraryInvitationHandle:
     return _seal(invitation_id, _LIBRARY_INVITATION, LibraryInvitationHandle)
-
-
-def parse_library_invitation_handle(raw: str) -> LibraryInvitationHandle:
-    try:
-        _parse_entity_wire(raw, _LIBRARY_INVITATION)
-    except ValueError as exc:
-        raise InvalidSealedHandle("Invalid library invitation handle") from exc
-    return LibraryInvitationHandle(raw)
 
 
 def unseal_library_invitation(raw: str) -> UUID:
@@ -371,7 +346,3 @@ def parse_share_token(raw: str) -> ShareToken:
     except ValueError as exc:
         raise InvalidShareToken from exc
     return ShareToken(raw)
-
-
-def share_token_hash(token: ShareToken) -> bytes:
-    return hashlib.sha256(_SHARE_TOKEN_HASH_PREFIX + token.encode("ascii")).digest()

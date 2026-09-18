@@ -27,7 +27,10 @@ columns to drop, with the slice that removes their code side:
   (SVCDOC-16 / M-01)
 - `libraries.color` (SVCLIB-03; always NULL)
 - `resource_versions.content_hash` + its CHECK (RS-11)
-- `resource_grants.share_token_hash` + its unique index (RS-12)
+- `resource_grants.share_token_hash` + its unique index
+  `uq_resource_grants_share_token_hash` (RS-12; the same revision adds a
+  unique index on `resource_grants.share_token`, which now carries the
+  link lookup)
 - `resource_external_snapshots.source_snapshot` +
   `ck_resource_external_snapshots_source_object` (M-01)
 

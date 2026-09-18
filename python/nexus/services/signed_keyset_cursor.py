@@ -1,11 +1,10 @@
-"""One strict authenticated codec for collection keyset cursors."""
+"""One strict codec for collection keyset cursors."""
 
 from __future__ import annotations
 
 import base64
 import binascii
 import hashlib
-import hmac
 import json
 import re
 from collections.abc import Mapping, Sequence
@@ -15,11 +14,8 @@ from enum import Enum
 from typing import assert_never
 from uuid import UUID
 
-from nexus.config import get_settings
 from nexus.errors import ApiErrorCode, InvalidRequestError
 
-_DOMAIN = b"nexus:signed-keyset-cursor:v1"
-_MAC_BYTES = hashlib.sha256().digest_size
 _MAX_CURSOR_CHARS = 16_384
 _INT64_MIN = -(2**63)
 _INT64_MAX = 2**63 - 1
@@ -56,14 +52,6 @@ def _canonical_json(payload: object) -> bytes:
 
 def _query_digest(query: Mapping[str, object]) -> str:
     return hashlib.sha256(_canonical_json(query)).hexdigest()
-
-
-def _signing_key() -> bytes:
-    root = base64.b64decode(
-        get_settings().effective_stream_token_signing_key,
-        validate=True,
-    )
-    return hashlib.sha256(root + _DOMAIN).digest()
 
 
 def _require_family(family: str) -> None:
@@ -167,10 +155,7 @@ def encode_signed_keyset_cursor(
         "family": family,
         "queryDigest": _query_digest(query),
     }
-    raw = _canonical_json(body)
-    token = base64.urlsafe_b64encode(
-        raw + hmac.new(_signing_key(), raw, hashlib.sha256).digest()
-    ).rstrip(b"=")
+    token = base64.urlsafe_b64encode(_canonical_json(body)).rstrip(b"=")
     if len(token) > _MAX_CURSOR_CHARS:
         raise ValueError("Signed keyset cursor is too large")
     return token.decode("ascii")
@@ -188,21 +173,13 @@ def decode_signed_keyset_cursor(
     try:
         if not cursor or len(cursor) > _MAX_CURSOR_CHARS or not _CURSOR_PATTERN.fullmatch(cursor):
             raise ValueError
-        packed = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
-        if base64.urlsafe_b64encode(packed).rstrip(b"=").decode("ascii") != cursor:
-            raise ValueError
-        if len(packed) <= _MAC_BYTES:
-            raise ValueError
-        raw, supplied_mac = packed[:-_MAC_BYTES], packed[-_MAC_BYTES:]
-        expected_mac = hmac.new(_signing_key(), raw, hashlib.sha256).digest()
-        if not hmac.compare_digest(supplied_mac, expected_mac):
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+        if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != cursor:
             raise ValueError
         body = json.loads(
             raw,
             parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
         )
-        if _canonical_json(body) != raw:
-            raise ValueError
         if (
             not isinstance(body, dict)
             or set(body) != {"after", "family", "queryDigest"}

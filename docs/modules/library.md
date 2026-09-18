@@ -38,7 +38,7 @@ created_at DESC, id DESC"`), the locked `ensure_entry` append, deletes and
   all-items/unfiled/in-progress projections and the hide-finished completion
   filter — see
   [`cutovers/library-sorting-hard-cutover.md`](../cutovers/library-sorting-hard-cutover.md)),
-  the sort-key plan and signed keyset cursor, `count_default_root_inventory`,
+  the sort-key plan and strict keyset cursor codec, `count_default_root_inventory`,
   `list_library_entries`, and hydration into the wire DTOs. It reads through
   `library_entries` and writes nothing; `library_entries` never imports it.
 - **`services/library_invitations.py`** owns the `library_invitations` table:
@@ -170,10 +170,11 @@ episodes immediately resurface with their consumption state intact.
   another membership can still be explicitly filed; that direct row is what
   survives a later membership loss that would otherwise have removed it from
   view.
-- **Stateless keyset pagination, one authenticated cursor codec.** Listing any
-  library never touches a snapshot table. Every listing uses the shared signed
-  keyset cursor bound to `LibraryEntries` and the exact
-  `(viewer, library, view)` query. Continuation also requires the unchanged
+- **Stateless keyset pagination, one strict cursor codec.** Listing any
+  library never touches a snapshot table. Every listing uses the shared unsigned
+  keyset cursor, whose body carries the `LibraryEntries` family and a digest of
+  the exact `(viewer, library, view)` query, and whose decode range-checks every
+  typed sort-key value it carries. Continuation also requires the unchanged
   `collectionRevision`; concurrent membership or ordering changes return
   `409 E_COLLECTION_CHANGED`. A cursor from the wrong viewer, library, view, or
   pre-cutover family is `400 E_INVALID_CURSOR`, never reinterpreted.

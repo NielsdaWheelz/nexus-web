@@ -165,22 +165,6 @@ def delete_orphaned_external_snapshots(db: Session, *, snapshot_ids: Iterable[UU
         )
 
 
-def assert_no_dangling_bare_edges(db: Session, *, ref: ResourceRef) -> None:
-    """Invariant check after cleanup: no bare edge may still touch ``ref``."""
-    dangling = db.execute(
-        select(ResourceEdge.id)
-        .where(
-            ResourceEdge.ordinal.is_(None),
-            or_(_source_is(ref), _target_is(ref)),
-        )
-        .limit(1)
-    ).scalar_one_or_none()
-    if dangling is not None:
-        # justify-defect: a bare edge to a deleted resource means a deletion
-        # path skipped graph cleanup — a code defect, not an input failure.
-        raise AssertionError(f"dangling bare edge {dangling} still touches {ref.uri}")
-
-
 def clear_edge_view_state(db: Session, *, edge_id: UUID) -> None:
     """Delete the ``resource_view_states`` referencing one edge before it is removed.
 

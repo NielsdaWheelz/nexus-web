@@ -11,7 +11,12 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from nexus.auth.permissions import is_library_member
+from nexus.auth.permissions import (
+    is_library_member,
+    visible_contributor_ids_cte_sql,
+    visible_media_ids_cte_sql,
+    visible_podcast_ids_cte_sql,
+)
 from nexus.errors import NotFoundError
 from nexus.services.artifacts.idea_seeds import get_idea_subject
 from nexus.services.artifacts.subject_policy import (
@@ -138,3 +143,69 @@ def visible_persisted_subject(
     except NotFoundError:
         return None
     return resolved
+
+
+def visible_persisted_subject_sql(artifact_alias: str) -> str:
+    """The set-membership SQL twin of :func:`visible_persisted_subject`.
+
+    A boolean predicate over an ``artifacts`` row alias, binding ``:viewer_id``
+    and ``:viewer_id_text``. Co-located with the Python form so a batched reader
+    filters its artifact rows inside its own set query instead of reauthorizing
+    one row at a time, and so the two spellings of the one rule cannot drift.
+    Each subject branch spells the same relation its policy's ``authorize_read``
+    applies, through that domain's own SQL where the domain publishes one. A
+    subject scheme outside the closed registration map is not visible here.
+    """
+    artifact = artifact_alias
+    return f"""(
+        (
+            (
+                {artifact}.audience_scheme = 'user'
+                AND {artifact}.audience_id = :viewer_id_text
+            )
+            OR (
+                {artifact}.audience_scheme = 'library'
+                AND EXISTS (
+                    SELECT 1 FROM memberships vps_audience
+                    WHERE vps_audience.library_id::text = {artifact}.audience_id
+                      AND vps_audience.user_id = :viewer_id
+                )
+            )
+        )
+        AND CASE {artifact}.subject_scheme
+            WHEN 'idea' THEN (
+                {artifact}.audience_scheme = 'user'
+                AND EXISTS (
+                    SELECT 1 FROM artifact_idea_subjects vps_idea
+                    WHERE vps_idea.id = {artifact}.subject_id
+                      AND vps_idea.user_id = :viewer_id
+                )
+            )
+            WHEN 'media' THEN {artifact}.subject_id IN ({visible_media_ids_cte_sql()})
+            WHEN 'podcast' THEN {artifact}.subject_id IN ({visible_podcast_ids_cte_sql()})
+            WHEN 'contributor' THEN (
+                {artifact}.subject_id IN ({visible_contributor_ids_cte_sql()})
+            )
+            WHEN 'library' THEN EXISTS (
+                SELECT 1 FROM memberships vps_library
+                WHERE vps_library.library_id = {artifact}.subject_id
+                  AND vps_library.user_id = :viewer_id
+            )
+            WHEN 'conversation' THEN EXISTS (
+                SELECT 1 FROM conversations vps_conversation
+                WHERE vps_conversation.id = {artifact}.subject_id
+                  AND vps_conversation.owner_user_id = :viewer_id
+            )
+            WHEN 'page' THEN EXISTS (
+                SELECT 1 FROM pages vps_page
+                WHERE vps_page.id = {artifact}.subject_id
+                  AND vps_page.user_id = :viewer_id
+            )
+            WHEN 'note_block' THEN EXISTS (
+                SELECT 1 FROM note_blocks vps_note
+                WHERE vps_note.id = {artifact}.subject_id
+                  AND vps_note.user_id = :viewer_id
+            )
+            ELSE FALSE
+        END
+    )"""

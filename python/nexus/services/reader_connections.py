@@ -20,8 +20,8 @@ from nexus.services.reader_locations import (
     order_key_from_locator,
 )
 from nexus.services.resource_graph.connections import query_connections
+from nexus.services.resource_graph.reader_targets import reader_target_for_citation_target
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.resolve import reader_target_for_citation_target
 from nexus.services.resource_graph.schemas import (
     Connection,
     ConnectionFilters,

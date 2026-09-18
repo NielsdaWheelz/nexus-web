@@ -7,7 +7,6 @@
 - DELETE /resource-graph/links/{id}/note   delete the Link's note
 - PUT    /resource-graph/stances      replace the one directed stance on a pair
 - DELETE /resource-graph/stances/{id} remove a stance (idempotent)
-- POST   /resource-graph/resolve      batch ref hydration for UI display
 
 Routes parse ref strings and the kind/origin vocabulary at the boundary, call
 graph services, and return envelopes. Graph semantics (dedup, permission checks,
@@ -32,13 +31,10 @@ from nexus.schemas.resource_graph import (
     CreateLinkRequest,
     PutLinkNoteRequest,
     PutStanceRequest,
-    ResolvedResourceOut,
-    ResolveRefsRequest,
     connection_out,
 )
 from nexus.services.resource_graph import connections as connections_service
 from nexus.services.resource_graph import refs as refs_service
-from nexus.services.resource_graph import resolve as resolve_service
 from nexus.services.resource_graph import user_relations as user_relations_service
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.schemas import (
@@ -186,32 +182,6 @@ def delete_stance(
     """
     user_relations_service.delete_stance(db, viewer_id=viewer.user_id, stance_id=stance_id)
     return Response(status_code=204)
-
-
-@router.post("/resolve")
-def resolve_refs(
-    body: ResolveRefsRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Batch-hydrate refs for UI display. Unknown/forbidden refs resolve missing.
-
-    Errors:
-        E_INVALID_REQUEST (400): a ref is malformed.
-    """
-    parsed = [_parse_ref_or_400(raw) for raw in body.refs]
-    resolved = resolve_service.resolve_refs(db, viewer_id=viewer.user_id, refs=parsed)
-    return ok(
-        [
-            ResolvedResourceOut(
-                ref=ref.uri,
-                label=item.label,
-                summary=item.summary,
-                missing=item.missing,
-            )
-            for ref, item in zip(parsed, resolved, strict=True)
-        ]
-    )
 
 
 def _connection_filters(body: ConnectionFiltersRequest) -> ConnectionFilters:

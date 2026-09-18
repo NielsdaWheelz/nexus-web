@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hmac
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, cast
@@ -35,7 +34,6 @@ from nexus.services.sealed_handles import (
     new_share_token,
     parse_share_token,
     seal_resource_grant,
-    share_token_hash,
     unseal_resource_grant,
 )
 
@@ -95,8 +93,7 @@ def _record_from_row(row: ResourceGrant) -> ResourceGrantRecord:
     subject = _subject_from_parts(row.subject_scheme, row.subject_id)
     has_user = row.grantee_user_id is not None
     has_raw_token = row.share_token is not None
-    has_token_hash = row.share_token_hash is not None
-    if has_user and not has_raw_token and not has_token_hash:
+    if has_user and not has_raw_token:
         return ResourceGrantRecord(
             grant_id=row.id,
             subject=subject,
@@ -105,22 +102,13 @@ def _record_from_row(row: ResourceGrant) -> ResourceGrantRecord:
             share_token=None,
             created_at=row.created_at,
         )
-    if not has_user and has_raw_token and has_token_hash:
-        token = parse_share_token(cast(str, row.share_token))
-        stored_hash = cast(bytes, row.share_token_hash)
-        if len(stored_hash) != 32 or not hmac.compare_digest(
-            stored_hash,
-            share_token_hash(token),
-        ):
-            # justify-defect: the typed writer always persists the canonical
-            # token and its exact 32-byte verifier together.
-            raise AssertionError("resource grant link verifier does not match its token")
+    if not has_user and has_raw_token:
         return ResourceGrantRecord(
             grant_id=row.id,
             subject=subject,
             creator_id=row.created_by_user_id,
             audience=LinkGrantAudience(),
-            share_token=token,
+            share_token=parse_share_token(cast(str, row.share_token)),
             created_at=row.created_at,
         )
     # justify-defect: trusted storage contains exactly one of the two audience
@@ -233,15 +221,6 @@ def media_grant_path_exists(
     media_id: UUID,
 ) -> bool:
     return bool(db.scalar(select(media_grant_path_exists_expr(viewer_user_id, media_id))))
-
-
-def highlight_grant_path_exists(
-    db: Session,
-    *,
-    viewer_user_id: UUID,
-    highlight_id: UUID,
-) -> bool:
-    return bool(db.scalar(select(highlight_grant_path_exists_expr(viewer_user_id, highlight_id))))
 
 
 def count_for_media(db: Session, media_id: UUID) -> int:
@@ -487,7 +466,6 @@ def _existing_for_audience(
             [
                 ResourceGrant.grantee_user_id == audience.user_id,
                 ResourceGrant.share_token.is_(None),
-                ResourceGrant.share_token_hash.is_(None),
             ]
         )
     else:
@@ -495,7 +473,6 @@ def _existing_for_audience(
             [
                 ResourceGrant.grantee_user_id.is_(None),
                 ResourceGrant.share_token.is_not(None),
-                ResourceGrant.share_token_hash.is_not(None),
             ]
         )
     return db.scalar(select(ResourceGrant).where(*predicates).limit(1))
@@ -590,7 +567,6 @@ def create_grant(
                     audience.user_id if isinstance(audience, UserGrantAudience) else None
                 ),
                 share_token=str(token) if token is not None else None,
-                share_token_hash=share_token_hash(token) if token is not None else None,
             )
             db.add(grant)
             db.flush()
@@ -664,19 +640,14 @@ def delete_grant(
 
 def resolve_link_token(db: Session, raw_token: str) -> ResolvedLinkGrant:
     token = parse_share_token(raw_token)
-    row = db.scalar(
-        select(ResourceGrant).where(ResourceGrant.share_token_hash == share_token_hash(token))
-    )
+    row = db.scalar(select(ResourceGrant).where(ResourceGrant.share_token == str(token)))
     if row is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Share unavailable")
     record = _record_from_row(row)
     if not isinstance(record.audience, LinkGrantAudience) or record.share_token is None:
-        # justify-defect: verifier lookup can only resolve the link audience
-        # branch written by this service.
+        # justify-defect: token lookup can only resolve the link audience branch
+        # written by this service.
         raise AssertionError("share token resolved a non-link resource grant")
-    if not hmac.compare_digest(record.share_token, token):
-        # justify-defect: SHA-256 collisions are not modeled product behavior.
-        raise AssertionError("share token verifier collision")
     return ResolvedLinkGrant(
         grant_id=record.grant_id,
         subject=record.subject,

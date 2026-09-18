@@ -30,9 +30,6 @@ from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotF
 from nexus.schemas.conversation import ConversationOut, PageInfo
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_graph.edges import create_edge
-from nexus.services.resource_graph.policy import (
-    SEARCH_SCOPE_EDGE_KIND,
-)
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceScheme,
@@ -41,8 +38,6 @@ from nexus.services.resource_graph.resolve import ResolvedResource, resolve_ref,
 from nexus.services.resource_graph.schemas import EdgeCreate, EdgeOrigin
 from nexus.services.resource_items.capabilities import (
     CONVERSATION_CONTEXT_EDGE_ORIGINS,
-    app_search_scope_schemes,
-    conversation_search_scope_schemes,
     resource_can_attach,
 )
 from nexus.services.resource_items.routing import resource_activation_for_ref
@@ -172,7 +167,9 @@ def add_context_ref_without_commit(
         target=target,
         origin=origin,
         resolved=resolved,
-        activation=resource_activation_for_ref(db, viewer_id=viewer_id, ref=target),
+        activation=resource_activation_for_ref(
+            db, viewer_id=viewer_id, ref=target, missing=resolved.missing
+        ),
         created_at=created.created_at,
     )
 
@@ -335,62 +332,6 @@ def batch_conversations_with_any_edge_to_ref(
     for target_id, conversation in rows:
         result.setdefault(target_id, []).append(conversation)
     return result
-
-
-def search_scope_refs_for_conversation(
-    db: Session, *, viewer_id: UUID, conversation_id: UUID
-) -> list[ResourceRef]:
-    """The conversation's app-search scope edge targets, first-attached order."""
-    rows = db.execute(
-        select(ResourceEdge.target_scheme, ResourceEdge.target_id)
-        .join(Conversation, Conversation.id == ResourceEdge.source_id)
-        .where(
-            ResourceEdge.source_scheme == "conversation",
-            ResourceEdge.source_id == conversation_id,
-            ResourceEdge.target_scheme.in_(app_search_scope_schemes()),
-            ResourceEdge.kind == SEARCH_SCOPE_EDGE_KIND,
-            ResourceEdge.origin.in_(CONVERSATION_CONTEXT_EDGE_ORIGINS),
-            ResourceEdge.user_id == viewer_id,
-            ResourceEdge.ordinal.is_(None),
-            Conversation.owner_user_id == viewer_id,
-        )
-        .order_by(
-            ResourceEdge.source_order_key.asc().nulls_last(),
-            ResourceEdge.created_at.asc(),
-            ResourceEdge.id.asc(),
-        )
-    ).all()
-    out: list[ResourceRef] = []
-    seen: set[tuple[str, UUID]] = set()
-    for scheme, resource_id in rows:
-        if (scheme, resource_id) in seen:
-            continue
-        seen.add((scheme, resource_id))
-        out.append(ResourceRef(scheme=cast("ResourceScheme", scheme), id=resource_id))
-    return out
-
-
-def conversation_has_note_search_scope_refs(
-    db: Session, *, viewer_id: UUID, conversation_id: UUID
-) -> bool:
-    return (
-        db.execute(
-            select(ResourceEdge.id)
-            .join(Conversation, Conversation.id == ResourceEdge.source_id)
-            .where(
-                ResourceEdge.source_scheme == "conversation",
-                ResourceEdge.source_id == conversation_id,
-                ResourceEdge.target_scheme.in_(conversation_search_scope_schemes()),
-                ResourceEdge.kind == SEARCH_SCOPE_EDGE_KIND,
-                ResourceEdge.origin.in_(CONVERSATION_CONTEXT_EDGE_ORIGINS),
-                ResourceEdge.user_id == viewer_id,
-                ResourceEdge.ordinal.is_(None),
-                Conversation.owner_user_id == viewer_id,
-            )
-            .limit(1)
-        ).scalar_one_or_none()
-        is not None
-    )
 
 
 # ---------- internals ---------------------------------------------------------

@@ -15,11 +15,9 @@ from uuid import UUID, uuid4
 
 import jwt
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError
 
 from nexus.config import get_settings
-from nexus.db.errors import integrity_constraint_name
-from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory, transaction
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
@@ -237,24 +235,36 @@ def _decode_token(token: str, *, required_claims: tuple[str, ...]) -> dict[str, 
 
 
 def _claim_jti_once(*, jti: str, user_id: UUID, exp_epoch: int) -> None:
-    expires_at = datetime.fromtimestamp(exp_epoch, tz=UTC)
     db = get_session_factory()()
-
-    def op() -> None:
-        try:
-            _claim_jti_once_transaction(db, jti=jti, user_id=user_id, expires_at=expires_at)
-        except IntegrityError as exc:
-            db.rollback()
-            if _is_jti_primary_key_conflict(exc):
+    try:
+        with transaction(db):
+            db.execute(text("DELETE FROM stream_token_jti_claims WHERE expires_at <= now()"))
+            result = db.execute(
+                text(
+                    """
+                    INSERT INTO stream_token_jti_claims (
+                        jti,
+                        user_id,
+                        expires_at,
+                        created_at
+                    )
+                    VALUES (:jti, :user_id, :expires_at, now())
+                    ON CONFLICT (jti) DO NOTHING
+                    RETURNING jti
+                    """
+                ),
+                {
+                    "jti": jti,
+                    "user_id": user_id,
+                    "expires_at": datetime.fromtimestamp(exp_epoch, tz=UTC),
+                },
+            )
+            if result.first() is None:
                 logger.warning("stream.jti_replay_blocked", jti=jti)
                 raise ApiError(
                     ApiErrorCode.E_STREAM_TOKEN_REPLAYED,
                     "Stream token has already been used",
-                ) from exc
-            raise
-
-    try:
-        retry_serializable(db, "stream_token_jti_claim", op)
+                )
     except ApiError:
         raise
     except SQLAlchemyError as exc:
@@ -264,37 +274,3 @@ def _claim_jti_once(*, jti: str, user_id: UUID, exp_epoch: int) -> None:
         ) from exc
     finally:
         db.close()
-
-
-def _claim_jti_once_transaction(db, *, jti: str, user_id: UUID, expires_at: datetime) -> None:
-    with transaction(db):
-        db.execute(text("DELETE FROM stream_token_jti_claims WHERE expires_at <= now()"))
-        existing = db.execute(
-            text("SELECT 1 FROM stream_token_jti_claims WHERE jti = :jti"),
-            {"jti": jti},
-        ).first()
-        if existing is not None:
-            logger.warning("stream.jti_replay_blocked", jti=jti)
-            raise ApiError(
-                ApiErrorCode.E_STREAM_TOKEN_REPLAYED, "Stream token has already been used"
-            )
-        result = db.execute(
-            text(
-                """
-                INSERT INTO stream_token_jti_claims (
-                    jti,
-                    user_id,
-                    expires_at,
-                    created_at
-                )
-                VALUES (:jti, :user_id, :expires_at, now())
-                """
-            ),
-            {"jti": jti, "user_id": user_id, "expires_at": expires_at},
-        )
-        if getattr(result, "rowcount", None) != 1:
-            raise RuntimeError("stream token JTI claim insert affected an unexpected row count")
-
-
-def _is_jti_primary_key_conflict(exc: IntegrityError) -> bool:
-    return integrity_constraint_name(exc) == "stream_token_jti_claims_pkey"

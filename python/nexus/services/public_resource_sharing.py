@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Literal, NoReturn
 from uuid import UUID
@@ -78,7 +78,6 @@ from nexus.storage.client import StorageClient, StorageError, get_storage_client
 from nexus.storage.read import read_object_checked
 
 _MAX_PAGE_BYTES = 8 * 1024 * 1024
-_MAX_ARTICLE_FIELD_BYTES = 2 * 1024 * 1024
 _MAX_EPUB_FIELD_BYTES = 4 * 1024 * 1024
 _MAX_EPUB_ASSET_BYTES = 25 * 1024 * 1024
 _DEFAULT_LIMIT = 50
@@ -271,74 +270,57 @@ def get_public_fragments(
     has_more = len(rows) > limit
     rows = rows[:limit]
     if projection.media.kind == "web_article":
-        items: list[PublicArticleFragmentOut] = []
-        for index, row in enumerate(rows):
-            html = sanitize_public_article_html(str(row["html_sanitized"]))
-            canonical_text = str(row["canonical_text"])
-            candidate = PublicArticleFragmentOut(
-                ordinal=int(row["idx"]),
-                html_sanitized=html,
-                canonical_text=canonical_text,
+
+        def article_page(
+            items: list[PublicArticleFragmentOut], more: bool
+        ) -> PublicArticleFragmentPageOut:
+            return PublicArticleFragmentPageOut(
+                items=items,
+                page_info=_page_info(items[-1].ordinal if more and items else None, projection),
             )
-            candidate_items = [*items, candidate]
-            candidate_has_more = has_more or index < len(rows) - 1
-            candidate_page = PublicArticleFragmentPageOut(
-                items=candidate_items,
-                page_info=_page_info(
-                    candidate.ordinal if candidate_has_more else None,
-                    projection,
+
+        article_items, article_more = _budgeted_items(
+            [
+                PublicArticleFragmentOut(
+                    ordinal=int(row["idx"]),
+                    html_sanitized=sanitize_public_article_html(str(row["html_sanitized"])),
+                    canonical_text=str(row["canonical_text"]),
+                )
+                for row in rows
+            ],
+            has_more=has_more,
+            page_factory=article_page,
+        )
+        return _HANDLE_ADAPTERS["fragments"].validate_python(
+            article_page(article_items, article_more)
+        )
+
+    def transcript_page(
+        items: list[PublicTranscriptSegmentOut], more: bool
+    ) -> PublicTranscriptSegmentPageOut:
+        return PublicTranscriptSegmentPageOut(
+            items=items,
+            page_info=_page_info(items[-1].ordinal if more and items else None, projection),
+        )
+
+    transcript_items, transcript_more = _budgeted_items(
+        [
+            PublicTranscriptSegmentOut(
+                ordinal=int(row["idx"]),
+                canonical_text=str(row["canonical_text"]),
+                time_range=_time_range_presence(row["t_start_ms"], row["t_end_ms"]),
+                speaker=presence_from_nullable(
+                    str(row["speaker_label"]) if row["speaker_label"] is not None else None
                 ),
             )
-            if _serialized_envelope_size(candidate_page) > _MAX_PAGE_BYTES:
-                if not items:
-                    _masked_not_found()
-                has_more = True
-                break
-            items.append(candidate)
-        result = PublicArticleFragmentPageOut(
-            items=items,
-            page_info=_page_info(items[-1].ordinal if has_more and items else None, projection),
-        )
-        if _serialized_envelope_size(result) > _MAX_PAGE_BYTES:
-            _masked_not_found()
-        return _HANDLE_ADAPTERS["fragments"].validate_python(result)
-
-    transcript_items: list[PublicTranscriptSegmentOut] = []
-    for index, row in enumerate(rows):
-        canonical_text = str(row["canonical_text"])
-        candidate = PublicTranscriptSegmentOut(
-            ordinal=int(row["idx"]),
-            canonical_text=canonical_text,
-            time_range=_time_range_presence(row["t_start_ms"], row["t_end_ms"]),
-            speaker=presence_from_nullable(
-                str(row["speaker_label"]) if row["speaker_label"] is not None else None
-            ),
-        )
-        candidate_items = [*transcript_items, candidate]
-        candidate_has_more = has_more or index < len(rows) - 1
-        candidate_page = PublicTranscriptSegmentPageOut(
-            items=candidate_items,
-            page_info=_page_info(
-                candidate.ordinal if candidate_has_more else None,
-                projection,
-            ),
-        )
-        if _serialized_envelope_size(candidate_page) > _MAX_PAGE_BYTES:
-            if not transcript_items:
-                _masked_not_found()
-            has_more = True
-            break
-        transcript_items.append(candidate)
-    result = PublicTranscriptSegmentPageOut(
-        items=transcript_items,
-        page_info=_page_info(
-            transcript_items[-1].ordinal if has_more and transcript_items else None,
-            projection,
-        ),
+            for row in rows
+        ],
+        has_more=has_more,
+        page_factory=transcript_page,
     )
-    if _serialized_envelope_size(result) > _MAX_PAGE_BYTES:
-        _masked_not_found()
-    return _HANDLE_ADAPTERS["fragments"].validate_python(result)
+    return _HANDLE_ADAPTERS["fragments"].validate_python(
+        transcript_page(transcript_items, transcript_more)
+    )
 
 
 def get_public_navigation(
@@ -539,23 +521,31 @@ def _resolve_public_projection(db: Session, *, raw_token: str) -> _Projection:
         _masked_not_found()
     if not _projection_shape_supported(db, media=media, highlight_id=highlight_id):
         _masked_not_found()
-    revision_bytes = _source_revision_bytes(db, media=media)
+    handle_context = PublicHandleContext(
+        grant_id=resolved.grant_id,
+        parent_media_id=media.media_id,
+        source_revision_bytes=_source_revision_bytes(db, media=media),
+    )
+    highlight = None
+    if highlight_id is not None:
+        highlight = _project_highlight(
+            db,
+            highlight_id=highlight_id,
+            media=media,
+            section_handle_for_ordinal=lambda ordinal: seal_public_handle(
+                "section",
+                ordinal=ordinal,
+                context=handle_context,
+            ),
+        )
+        if highlight is None:
+            _masked_not_found()
     return _Projection(
         grant_id=resolved.grant_id,
         subject=resolved.subject,
         media=media,
-        handle_context=PublicHandleContext(
-            grant_id=resolved.grant_id,
-            parent_media_id=media.media_id,
-            source_revision_bytes=revision_bytes,
-        ),
-        highlight=_project_highlight(
-            db,
-            subject=resolved.subject,
-            media=media,
-            grant_id=resolved.grant_id,
-            revision_bytes=revision_bytes,
-        ),
+        handle_context=handle_context,
+        highlight=highlight,
     )
 
 
@@ -675,7 +665,21 @@ def _projection_shape_supported(
     media: _MediaFacts,
     highlight_id: UUID | None,
 ) -> bool:
-    if not _bootstrap_shape_supported(db, media=media):
+    if media.kind not in {"web_article", "epub", "pdf", "video", "podcast_episode"}:
+        return False
+    bylines = _load_bylines_if_supported(db, media_id=media.media_id)
+    if bylines is None:
+        return False
+    try:
+        PublicMediaOut(
+            title=media.title,
+            media_kind=_public_media_kind(media.kind),
+            source_url=presence_from_nullable(
+                current_public_source_url(db, media_id=media.media_id)
+            ),
+            bylines=bylines,
+        )
+    except (TypeError, ValueError, ValidationError):
         return False
     if media.source_attempt_id is None or media.source_attempt_no is None or not media.source_type:
         return False
@@ -793,61 +797,15 @@ def _projection_shape_supported(
     else:
         return False
     if highlight_id is not None:
-        return _highlight_shape_supported(
-            db,
-            media=media,
-            highlight_id=highlight_id,
-        )
-    return True
-
-
-def _bootstrap_shape_supported(db: Session, *, media: _MediaFacts) -> bool:
-    if media.kind not in {
-        "web_article",
-        "epub",
-        "pdf",
-        "video",
-        "podcast_episode",
-    }:
-        return False
-    bylines = _load_bylines_if_supported(db, media_id=media.media_id)
-    if bylines is None:
-        return False
-    try:
-        media_kind = _public_media_kind(media.kind)
-        PublicMediaOut(
-            title=media.title,
-            media_kind=media_kind,
-            source_url=presence_from_nullable(
-                current_public_source_url(db, media_id=media.media_id)
-            ),
-            bylines=bylines,
-        )
-        if media.kind == "web_article":
-            PublicArticleReaderOut()
-        elif media.kind == "epub":
-            PublicEpubReaderOut()
-        elif media.kind == "pdf":
-            source = _validated_public_pdf_source(
+        return (
+            _project_highlight(
                 db,
-                media_id=media.media_id,
-                storage_client=get_storage_client(),
+                highlight_id=highlight_id,
+                media=media,
+                section_handle_for_ordinal=lambda _: _PLACEHOLDER_SECTION_HANDLE,
             )
-            if source is None:
-                return False
-            PublicPdfReaderOut(
-                byte_length=source.size_bytes,
-                filename=_pdf_filename(media.title),
-            )
-        elif media.kind in {"video", "podcast_episode"}:
-            PublicTranscriptReaderOut(
-                source_kind="Video" if media.kind == "video" else "PodcastEpisode",
-                duration_ms=presence_from_nullable(media.duration_ms),
-            )
-        else:
-            return False
-    except (TypeError, ValueError, ValidationError):
-        return False
+            is not None
+        )
     return True
 
 
@@ -879,12 +837,14 @@ def _validated_public_pdf_source(
     return source
 
 
-def _highlight_shape_supported(
+def _project_highlight(
     db: Session,
     *,
-    media: _MediaFacts,
     highlight_id: UUID,
-) -> bool:
+    media: _MediaFacts,
+    section_handle_for_ordinal: Callable[[int], str],
+) -> PublicHighlightOut | None:
+    """Project one highlight anchor, or ``None`` when it cannot be projected."""
     target = locator_resolver.resolve_highlight_reader_target(
         db,
         highlight_id=highlight_id,
@@ -905,120 +865,7 @@ def _highlight_shape_supported(
         .first()
     )
     if target is None or metadata is None:
-        return False
-    try:
-        if isinstance(target, WebTextOffsetsTargetOut):
-            ordinal = db.execute(
-                text(
-                    """
-                    SELECT idx FROM fragments
-                    WHERE id = :fragment_id AND media_id = :media_id
-                    """
-                ),
-                {"fragment_id": target.fragment_id, "media_id": media.media_id},
-            ).scalar()
-            if ordinal is None:
-                return False
-            anchor = PublicArticleTextAnchorOut(
-                fragment_ordinal=int(ordinal),
-                start_offset=target.start_offset,
-                end_offset=target.end_offset,
-            )
-        elif isinstance(target, EpubTextOffsetsTargetOut):
-            section_ordinal = db.execute(
-                text(
-                    """
-                    SELECT idx FROM fragments
-                    WHERE media_id = :media_id AND id = :fragment_id
-                    """
-                ),
-                {"media_id": media.media_id, "fragment_id": target.fragment_id},
-            ).scalar()
-            if section_ordinal is None:
-                return False
-            anchor = PublicEpubTextAnchorOut(
-                section_handle=_PLACEHOLDER_SECTION_HANDLE,
-                start_offset=target.start_offset,
-                end_offset=target.end_offset,
-            )
-        elif isinstance(target, TranscriptTextOffsetsTargetOut):
-            ordinal = db.execute(
-                text(
-                    """
-                    SELECT idx FROM fragments
-                    WHERE id = :fragment_id AND media_id = :media_id
-                    """
-                ),
-                {"fragment_id": target.fragment_id, "media_id": media.media_id},
-            ).scalar()
-            if ordinal is None:
-                return False
-            anchor = PublicTranscriptTextAnchorOut.model_validate(
-                {
-                    "segment_ordinal": int(ordinal),
-                    "start_offset": target.start_offset,
-                    "end_offset": target.end_offset,
-                    "time_range": target.time_range.model_dump(mode="python"),
-                }
-            )
-        elif isinstance(target, PdfPageGeometryTargetOut):
-            anchor = PublicPdfGeometryAnchorOut.model_validate(
-                {
-                    "page_number": target.page_number,
-                    "quads": [quad.model_dump(mode="python") for quad in target.quads],
-                }
-            )
-        else:
-            return False
-        exact = str(metadata["exact"])
-        PublicHighlightOut.model_validate(
-            {
-                "quote": presence_from_nullable(exact if exact else None),
-                "color": str(metadata["color"]).capitalize(),
-                "anchor": anchor,
-            }
-        )
-    except (TypeError, ValueError, ValidationError):
-        return False
-    return True
-
-
-def _project_highlight(
-    db: Session,
-    *,
-    subject: ResourceRef,
-    media: _MediaFacts,
-    grant_id: UUID,
-    revision_bytes: bytes,
-) -> PublicHighlightOut | None:
-    if subject.scheme != "highlight":
         return None
-    target = locator_resolver.resolve_highlight_reader_target(
-        db,
-        highlight_id=subject.id,
-    )
-    metadata = (
-        db.execute(
-            text(
-                """
-                SELECT exact, color
-                FROM highlights
-                WHERE id = :highlight_id
-                  AND anchor_media_id = :media_id
-                """
-            ),
-            {"highlight_id": subject.id, "media_id": media.media_id},
-        )
-        .mappings()
-        .first()
-    )
-    if target is None or metadata is None:
-        _masked_not_found()
-    handle_context = PublicHandleContext(
-        grant_id=grant_id,
-        parent_media_id=media.media_id,
-        source_revision_bytes=revision_bytes,
-    )
     try:
         if isinstance(target, WebTextOffsetsTargetOut):
             ordinal = db.execute(
@@ -1031,7 +878,7 @@ def _project_highlight(
                 {"fragment_id": target.fragment_id, "media_id": media.media_id},
             ).scalar()
             if ordinal is None:
-                _masked_not_found()
+                return None
             anchor = PublicArticleTextAnchorOut(
                 fragment_ordinal=int(ordinal),
                 start_offset=target.start_offset,
@@ -1050,13 +897,9 @@ def _project_highlight(
                 {"media_id": media.media_id, "fragment_id": target.fragment_id},
             ).scalar()
             if section_ordinal is None:
-                _masked_not_found()
+                return None
             anchor = PublicEpubTextAnchorOut(
-                section_handle=seal_public_handle(
-                    "section",
-                    ordinal=int(section_ordinal),
-                    context=handle_context,
-                ),
+                section_handle=section_handle_for_ordinal(int(section_ordinal)),
                 start_offset=target.start_offset,
                 end_offset=target.end_offset,
             )
@@ -1071,7 +914,7 @@ def _project_highlight(
                 {"fragment_id": target.fragment_id, "media_id": media.media_id},
             ).scalar()
             if ordinal is None:
-                _masked_not_found()
+                return None
             anchor = PublicTranscriptTextAnchorOut.model_validate(
                 {
                     "segment_ordinal": int(ordinal),
@@ -1088,7 +931,7 @@ def _project_highlight(
                 }
             )
         else:
-            _masked_not_found()
+            return None
         exact = str(metadata["exact"])
         return PublicHighlightOut.model_validate(
             {
@@ -1098,7 +941,7 @@ def _project_highlight(
             }
         )
     except (TypeError, ValueError, ValidationError):
-        _masked_not_found()
+        return None
 
 
 def _source_revision_bytes(db: Session, *, media: _MediaFacts) -> bytes:
@@ -1234,6 +1077,24 @@ def _serialized_envelope_size(model: BaseModel) -> int:
             separators=(",", ":"),
         ).encode("utf-8")
     )
+
+
+def _budgeted_items[ItemT: BaseModel](
+    candidates: list[ItemT],
+    *,
+    has_more: bool,
+    page_factory: Callable[[list[ItemT], bool], BaseModel],
+) -> tuple[list[ItemT], bool]:
+    """Trim ``candidates`` to the longest prefix whose page fits ``_MAX_PAGE_BYTES``."""
+    kept: list[ItemT] = []
+    for index, candidate in enumerate(candidates):
+        page = page_factory([*kept, candidate], has_more or index < len(candidates) - 1)
+        if _serialized_envelope_size(page) > _MAX_PAGE_BYTES:
+            if not kept:
+                _masked_not_found()
+            return kept, True
+        kept.append(candidate)
+    return kept, has_more
 
 
 def _load_bylines(db: Session, *, media_id: UUID) -> list[str]:
