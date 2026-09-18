@@ -48,6 +48,8 @@ def resolve_media_evidence(
         viewer_id=viewer.user_id,
         evidence_span_id=evidence_span_id,
     )
+    del result["citation_label"]
+    del result["resolver"]["selector"]
     return success_response(result)
 
 

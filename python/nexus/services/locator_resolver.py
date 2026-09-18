@@ -371,7 +371,6 @@ def _resolve_media_evidence_span(
         "span_text": str(row["span_text"] or ""),
         "resolver": {
             "kind": resolver_kind,
-            "route": f"/media/{media_id}",
             "params": params,
             "status": resolution.status,
             "selector": selector,
@@ -411,7 +410,6 @@ def _resolve_note_evidence_span(
         "span_text": str(row["span_text"] or ""),
         "resolver": {
             "kind": "note",
-            "route": f"/notes/{route_note_block_id}",
             "params": params,
             "status": resolution.status,
             "selector": selector,
