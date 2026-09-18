@@ -17,11 +17,13 @@ import { canonicalResourceRef } from "@/lib/sharing/targets";
 import type { ResourceSurface } from "@/lib/resources/resourceItems";
 import {
   requirePaneRuntime,
+  usePaneHash,
   usePaneParam,
   usePaneReturnReady,
   usePaneRuntime,
   useSetPaneLabel,
 } from "@/lib/panes/paneRuntime";
+import { usePassageResolution } from "@/lib/reader/passageResolution";
 import { resourceSurfaceFilterFields } from "@/components/resource-surface/resourceSurfaceFilterFields";
 import {
   notifyNoteBlockActionIntentOwnerReady,
@@ -36,10 +38,17 @@ import {
 export default function NotePaneBody() {
   const blockId = usePaneParam("blockId");
   if (!blockId) throw new Error("note route requires a block id");
-  const activateTarget = requirePaneRuntime(
+  const paneRuntime = requirePaneRuntime(
     usePaneRuntime(),
     "NotePaneBody",
-  ).activateTarget;
+  );
+  const activateTarget = paneRuntime.activateTarget;
+  const paneHash = usePaneHash();
+  const passageResolution = usePassageResolution({
+    hash: paneHash,
+    ownerScheme: "note_block",
+    ownerId: blockId,
+  });
   const sourceRef = `note_block:${blockId}`;
   const [filterRowsState, setFilterRowsState] = useState<{
     sourceRef: string;
@@ -138,6 +147,25 @@ export default function NotePaneBody() {
     pulseIdRef.current = next;
     setPulse({ ...target, pulseId: next });
   }, []);
+  const appliedPassageRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!paneHash) appliedPassageRef.current = null;
+  }, [paneHash]);
+  useEffect(() => {
+    if (passageResolution.status !== "ready" || passageResolution.data.kind !== "Present") return;
+    const target = passageResolution.data.value;
+    if (target.kind !== "NoteTextOffsets" || appliedPassageRef.current === paneHash) return;
+    appliedPassageRef.current = paneHash;
+    setPulseTarget({
+      blockId,
+      startOffset: target.startOffset,
+      endOffset: target.endOffset,
+      snippet: null,
+      highlightBehavior: "pulse",
+      focusBehavior: "scroll_into_view",
+    });
+    paneRuntime.router.replace(paneRuntime.pathname + (paneRuntime.searchParams.size ? `?${paneRuntime.searchParams}` : ""));
+  }, [blockId, paneHash, paneRuntime, passageResolution, setPulseTarget]);
   useNotePulseHighlight((target) => {
     if (target.blockId === blockId) setPulseTarget(target);
   });
@@ -191,6 +219,12 @@ export default function NotePaneBody() {
       {!ready && filterQuery.trim() ? (
         <p role="status">No matching item found so far.</p>
       ) : null}
+      {passageResolution.status === "ready" && passageResolution.data.kind === "Absent" ? (
+        <p role="status">This passage is no longer available.</p>
+      ) : null}
+      {passageResolution.status === "error" ? (
+        <p role="alert">The passage could not be opened.</p>
+      ) : null}
       <ResourceSurfaceEditor
         sourceRef={sourceRef}
         rowFilterQuery={filterQuery}
@@ -199,7 +233,7 @@ export default function NotePaneBody() {
         onSourceBodyMutationStarted={beginBodyIntentMutation}
         onSourceBodyEditAborted={abortBodyIntent}
         activateTarget={activateTarget}
-        notePulseTarget={pulse}
+        notePulseTarget={pulse?.blockId === blockId ? pulse : null}
       />
     </>
   );

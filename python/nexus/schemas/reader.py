@@ -13,24 +13,24 @@ FocusModeValue = Literal["off", "distraction_free", "paragraph", "sentence"]
 HyphenationValue = Literal["auto", "off"]
 
 
-class ResolvedHighlightTargetModel(BaseModel):
-    """Strict wire base for the one current, format-total highlight target."""
+class ReaderTargetModel(BaseModel):
+    """Strict wire base for current reader navigation targets."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
-class HighlightTargetTimeRangeOut(ResolvedHighlightTargetModel):
+class ReaderTimeRange(ReaderTargetModel):
     start_ms: Annotated[int, Field(ge=0, le=2**53 - 1)]
     end_ms: Annotated[int, Field(ge=0, le=2**53 - 1)]
 
     @model_validator(mode="after")
-    def validate_order(self) -> "HighlightTargetTimeRangeOut":
+    def validate_order(self) -> "ReaderTimeRange":
         if self.start_ms >= self.end_ms:
             raise ValueError("start_ms must be less than end_ms")
         return self
 
 
-class HighlightTargetPdfQuadOut(ResolvedHighlightTargetModel):
+class HighlightTargetPdfQuadOut(ReaderTargetModel):
     x1: FiniteFloat
     y1: FiniteFloat
     x2: FiniteFloat
@@ -41,47 +41,34 @@ class HighlightTargetPdfQuadOut(ResolvedHighlightTargetModel):
     y4: FiniteFloat
 
 
-class WebTextOffsetsTargetOut(ResolvedHighlightTargetModel):
+class ReaderTextOffsets(ReaderTargetModel):
+    start_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
+    end_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
+
+    @model_validator(mode="after")
+    def validate_offsets(self) -> "ReaderTextOffsets":
+        if self.start_offset >= self.end_offset:
+            raise ValueError("start_offset must be less than end_offset")
+        return self
+
+
+class WebTextOffsetsTargetOut(ReaderTextOffsets):
     kind: Literal["WebTextOffsets"] = "WebTextOffsets"
     fragment_id: UUID
-    start_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
-    end_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
-
-    @model_validator(mode="after")
-    def validate_offsets(self) -> "WebTextOffsetsTargetOut":
-        if self.start_offset >= self.end_offset:
-            raise ValueError("start_offset must be less than end_offset")
-        return self
 
 
-class EpubTextOffsetsTargetOut(ResolvedHighlightTargetModel):
+class EpubTextOffsetsTargetOut(ReaderTextOffsets):
     kind: Literal["EpubTextOffsets"] = "EpubTextOffsets"
     fragment_id: UUID
-    start_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
-    end_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
-
-    @model_validator(mode="after")
-    def validate_offsets(self) -> "EpubTextOffsetsTargetOut":
-        if self.start_offset >= self.end_offset:
-            raise ValueError("start_offset must be less than end_offset")
-        return self
 
 
-class TranscriptTextOffsetsTargetOut(ResolvedHighlightTargetModel):
+class TranscriptTextOffsetsTargetOut(ReaderTextOffsets):
     kind: Literal["TranscriptTextOffsets"] = "TranscriptTextOffsets"
     fragment_id: UUID
-    start_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
-    end_offset: Annotated[int, Field(ge=0, le=2**31 - 1)]
-    time_range: Presence[HighlightTargetTimeRangeOut]
-
-    @model_validator(mode="after")
-    def validate_offsets(self) -> "TranscriptTextOffsetsTargetOut":
-        if self.start_offset >= self.end_offset:
-            raise ValueError("start_offset must be less than end_offset")
-        return self
+    time_range: Presence[ReaderTimeRange]
 
 
-class PdfPageGeometryTargetOut(ResolvedHighlightTargetModel):
+class PdfPageGeometryTargetOut(ReaderTargetModel):
     kind: Literal["PdfPageGeometry"] = "PdfPageGeometry"
     page_number: Annotated[int, Field(ge=1, le=2**31 - 1)]
     quads: Annotated[list[HighlightTargetPdfQuadOut], Field(min_length=1, max_length=512)]
@@ -96,7 +83,7 @@ ResolvedHighlightReaderTarget = Annotated[
 ]
 
 
-class ResolvedHighlightReaderTargetResponse(ResolvedHighlightTargetModel):
+class ResolvedHighlightReaderTargetResponse(ReaderTargetModel):
     data: ResolvedHighlightReaderTarget
 
 

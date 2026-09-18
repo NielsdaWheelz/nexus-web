@@ -12,8 +12,8 @@ from nexus.schemas.presence import absent, present
 from nexus.schemas.reader import (
     EpubTextOffsetsTargetOut,
     HighlightTargetPdfQuadOut,
-    HighlightTargetTimeRangeOut,
     PdfPageGeometryTargetOut,
+    ReaderTimeRange,
     ResolvedHighlightReaderTarget,
     TranscriptTextOffsetsTargetOut,
     WebTextOffsetsTargetOut,
@@ -258,7 +258,7 @@ def resolved_highlight_reader_target(
                 if t_start_ms is None or t_end_ms is None:
                     return None
                 time_range = present(
-                    HighlightTargetTimeRangeOut(
+                    ReaderTimeRange(
                         start_ms=t_start_ms,
                         end_ms=t_end_ms,
                     )

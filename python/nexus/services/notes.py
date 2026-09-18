@@ -485,15 +485,8 @@ def append_note_block_to_page_in_current_transaction(
     return response
 
 
-def get_note_block_for_owner_or_404(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlock:
-    block = db.get(NoteBlock, block_id)
-    if block is None or block.user_id != viewer_id:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
-    return block
-
-
 def get_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockOut:
-    block = get_note_block_for_owner_or_404(db, viewer_id, block_id)
+    block = note_bodies.get_note_block_for_owner_or_404(db, viewer_id, block_id)
     return NoteBlockOut(
         id=block.id,
         body_pm_json=block.body_pm_json,

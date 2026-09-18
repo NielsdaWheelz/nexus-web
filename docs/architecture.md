@@ -435,6 +435,14 @@ row). None of the highlight-family FKs cascade; ordinary deletion is explicit
 child-first cleanup, and reindex/refresh never delete Highlights or passage
 anchors — unresolved locators stay visible rather than disappearing.
 
+passage routes retain `#passage-{anchor_id}`. on activation, the owner pane reads
+`GET /passage-anchors/{id}/resolution?owner_ref=...`; the service checks anchor
+ownership, the requested owner, and current owner access before resolving the
+quote. the response is a present navigation target or absent when no unique
+current location exists. text targets use current raw codepoint offsets; pdf
+targets name the current page without claiming stored hint geometry is current.
+no offsets or resolution status are persisted. each pane uses its existing positioning owner.
+
 note quotes match in normalized text, then project unique hits into raw stored
 codepoint offsets. projection preserves the matched unicode component
 occurrences; a hit that cannot form one exact raw interval remains unresolved.
