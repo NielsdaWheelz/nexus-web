@@ -2,7 +2,6 @@
 
 import { useRef, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { cx } from "@/lib/ui/cx";
 import type { DismissDecision } from "@/lib/ui/useHistoryDismiss";
 import type { ReturnFocusTarget } from "@/lib/ui/useReturnFocus";
 import {
@@ -35,10 +34,6 @@ interface MobileSheetProps {
   layer?: "overlay" | "modal" | "palette";
   /** Scrim token. Default "default" (--overlay-scrim); "soft" for context sheets. */
   scrim?: "default" | "soft";
-  /** Grabber + drag-to-dismiss. Default true. */
-  grabber?: boolean;
-  /** Back-button dismissal. Default true. */
-  historyDismiss?: boolean;
 
   /** Forwarded to useDialogOverlay. */
   initialFocus?: (container: HTMLElement) => HTMLElement | null;
@@ -48,13 +43,8 @@ interface MobileSheetProps {
   skipReturnFocus?: () => boolean;
   focusKey?: unknown;
 
-  /** Skin on the panel (e.g. palette glass). Geometry stays in MobileSheet.module.css. */
-  panelClassName?: string;
   /** Stable controlled-region ID carried by the active sheet panel. */
   panelId?: string;
-  /** Stable test ids for backdrop/panel (existing tests keep their selectors). */
-  backdropTestId?: string;
-  panelTestId?: string;
 }
 
 /**
@@ -76,17 +66,12 @@ export default function MobileSheet({
   children,
   layer = "modal",
   scrim = "default",
-  grabber = true,
-  historyDismiss = true,
   initialFocus,
   returnFocusTo,
   returnFocusFallback,
   skipReturnFocus,
   focusKey,
-  panelClassName,
   panelId,
-  backdropTestId,
-  panelTestId,
 }: MobileSheetProps) {
   const panelRef = useRef<HTMLElement>(null);
   const dragStartRef = useRef<number | null>(null);
@@ -96,7 +81,6 @@ export default function MobileSheet({
     onDismiss,
     onDismissRequest,
     onEscape,
-    historyDismiss,
     initialFocus,
     returnFocusTo,
     returnFocusFallback,
@@ -137,29 +121,28 @@ export default function MobileSheet({
         data-layer={layer}
         data-scrim={scrim}
         {...modalBackdropProjection(lifecycle.isTopmost)}
-        data-testid={backdropTestId}
         role="presentation"
         onClick={lifecycle.requestDismiss}
       >
         <section
           id={panelId}
           ref={panelRef}
-          className={cx(styles.panel, panelClassName)}
+          className={styles.panel}
           role="dialog"
           aria-label={ariaLabel}
           tabIndex={-1}
-          data-testid={panelTestId}
           style={
             {
               "--keyboard-inset": "var(--mobile-overlay-keyboard-inset)",
             } as CSSProperties
           }
           onClick={(event) => event.stopPropagation()}
-          {...(grabber
-            ? { onPointerDown, onPointerMove, onPointerUp, onPointerCancel }
-            : null)}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerCancel}
         >
-          {grabber ? <div className={styles.grabber} data-grabber aria-hidden="true" /> : null}
+          <div className={styles.grabber} data-grabber aria-hidden="true" />
           <div className={styles.content}>{children}</div>
         </section>
       </div>

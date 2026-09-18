@@ -10,6 +10,7 @@ import { apiFetch } from "@/lib/api/client";
 import { createRandomId } from "@/lib/createRandomId";
 import type { HighlightColor } from "@/lib/highlights/segmenter";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
+import type { ResourceTarget } from "@/lib/resources/resourceTargets";
 import { decodeConnectionOut, type ConnectionOut } from "./connections";
 import {
   expectBoolean,
@@ -56,6 +57,16 @@ export interface LinkPassageTarget {
 }
 
 export type LinkTarget = LinkResourceTarget | LinkPassageTarget;
+
+export function toLinkTarget(target: ResourceTarget): LinkTarget {
+  return target.kind === "resource"
+    ? { kind: "resource", ref: target.item.ref }
+    : { kind: "passage", candidate_ref: target.candidateRef };
+}
+
+export function targetLabel(target: ResourceTarget): string {
+  return target.kind === "resource" ? target.item.label : target.label;
+}
 
 export interface CreateLinkInput {
   clientMutationId: string;

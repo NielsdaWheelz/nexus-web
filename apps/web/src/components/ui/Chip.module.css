@@ -48,19 +48,6 @@ button.chip.pressable:disabled {
   display: inline-block;
 }
 
-.labelTruncate {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-.leadingIcon {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-
 .removeButton {
   display: inline-flex;
   align-items: center;

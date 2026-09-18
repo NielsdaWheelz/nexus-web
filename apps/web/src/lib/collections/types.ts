@@ -8,10 +8,6 @@ import type { LocalAvailability } from "@/lib/offlineMedia/contract";
 import type { EmphasisSegment } from "@/lib/ui/emphasis";
 import type { Presence } from "@/lib/api/presence";
 import type { ContributorCredit } from "@/lib/contributors/types";
-import type {
-  ConnectionEndpointOut,
-  EdgeKind,
-} from "@/lib/resourceGraph/connections";
 import type { MediaProcessingStatus } from "@/lib/status/mediaProcessing";
 import type { PodcastSyncStatus } from "@/lib/podcasts/types";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
@@ -89,12 +85,6 @@ export type ExceptionalStatus =
       readonly status: Extract<PodcastSyncStatus, "Failed">;
     };
 
-export interface ConnectionSummaryView {
-  readonly total: number;
-  readonly dominantKind: Presence<EdgeKind>;
-  readonly topPeers: readonly ConnectionEndpointOut[];
-}
-
 export interface CollectionRowView {
   readonly id: string;
   readonly kind: CollectionItemKind;
@@ -109,7 +99,6 @@ export interface CollectionRowView {
   readonly activity: Presence<CollectionActivity>;
   readonly exceptionalStatus: Presence<ExceptionalStatus>;
   readonly localAvailability: Presence<LocalAvailability>;
-  readonly connections: Presence<ConnectionSummaryView>;
   readonly relatedMediaId: Presence<string>;
   /**
    * The canonical resource suffix for this row's one contextual More menu.

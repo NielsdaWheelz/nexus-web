@@ -11,6 +11,7 @@ from uuid import UUID
 
 from lxml.html import HtmlElement, fragment_fromstring
 
+from nexus.logging import get_logger
 from nexus.schemas.presence import Presence, Present, absent, present
 from nexus.services.canonicalize import (
     HEADING_TAGS,
@@ -29,6 +30,8 @@ from nexus.services.html_tree import inner_html, serialize_html
 from nexus.services.reader_apparatus import extract_html_apparatus
 from nexus.services.sanitize_html import sanitize_html
 from nexus.text import normalize_whitespace
+
+logger = get_logger(__name__)
 
 WEB_ARTICLE_HTML_MAX_BYTES = 2 * 1024 * 1024
 
@@ -66,8 +69,7 @@ class WebArticlePreparedFragment:
     apparatus_items: list[dict[str, object]]
     apparatus_edges: list[dict[str, object]]
     document_embeds: list[WebArticleDocumentEmbed]
-    document_embed_extraction_error_code: str | None = None
-    document_embed_extraction_error_message: str | None = None
+    document_embed_extraction_failed: bool = False
 
 
 @dataclass(frozen=True)
@@ -136,8 +138,7 @@ def prepare_web_article_fragment(
     embed_source_html: str | None = None,
 ) -> WebArticlePreparedFragment:
     detected_embeds: list[DetectedDocumentEmbed] = []
-    document_embed_extraction_error_code: str | None = None
-    document_embed_extraction_error_message: str | None = None
+    document_embed_extraction_failed = False
     if extract_embeds:
         try:
             extracted = extract_document_embeds(html, base_url)
@@ -150,9 +151,9 @@ def prepare_web_article_fragment(
                 )
             html = next_html
             detected_embeds = next_detected_embeds
-        except Exception as exc:
-            document_embed_extraction_error_code = "E_EMBED_EXTRACTION_FAILED"
-            document_embed_extraction_error_message = str(exc)[:1000]
+        except Exception:
+            logger.warning("document_embed_extraction_failed", exc_info=True)
+            document_embed_extraction_failed = True
     html, apparatus_items, apparatus_edges = extract_html_apparatus(
         html,
         source_kind=f"web:{fragment_idx}",
@@ -173,13 +174,12 @@ def prepare_web_article_fragment(
         return WebArticlePreparedFragment(
             html_sanitized=html_sanitized,
             canonical_text=canonical_text,
-            fragment_blocks=[FragmentBlockSpec(0, 0, 0, True)],
+            fragment_blocks=[FragmentBlockSpec(0, 0, 0)],
             index_blocks=[],
             apparatus_items=[],
             apparatus_edges=[],
             document_embeds=document_embeds,
-            document_embed_extraction_error_code=document_embed_extraction_error_code,
-            document_embed_extraction_error_message=document_embed_extraction_error_message,
+            document_embed_extraction_failed=document_embed_extraction_failed,
         )
     index_blocks = build_web_article_index_blocks(
         html_sanitized=html_sanitized,
@@ -189,13 +189,12 @@ def prepare_web_article_fragment(
     return WebArticlePreparedFragment(
         html_sanitized=html_sanitized,
         canonical_text=canonical_text,
-        fragment_blocks=_fragment_blocks(canonical_text, index_blocks),
+        fragment_blocks=_fragment_blocks(canonical_text),
         index_blocks=index_blocks,
         apparatus_items=apparatus_items,
         apparatus_edges=apparatus_edges,
         document_embeds=document_embeds,
-        document_embed_extraction_error_code=document_embed_extraction_error_code,
-        document_embed_extraction_error_message=document_embed_extraction_error_message,
+        document_embed_extraction_failed=document_embed_extraction_failed,
     )
 
 
@@ -429,27 +428,15 @@ def _headings(
     return resolved
 
 
-def _fragment_blocks(
-    canonical_text: str,
-    index_blocks: list[WebArticleIndexBlockSpec],
-) -> list[FragmentBlockSpec]:
-    type_by_start = {block.start_offset: block.block_kind for block in index_blocks}
+def _fragment_blocks(canonical_text: str) -> list[FragmentBlockSpec]:
     blocks: list[FragmentBlockSpec] = []
     cursor = 0
     for idx, part in enumerate(canonical_text.splitlines(keepends=True)):
         start = cursor
         end = start + len(part)
         cursor = end
-        blocks.append(
-            FragmentBlockSpec(
-                block_idx=idx,
-                start_offset=start,
-                end_offset=end,
-                is_empty=part.strip() == "",
-                block_type=type_by_start.get(start),
-            )
-        )
-    return blocks or [FragmentBlockSpec(0, 0, 0, True)]
+        blocks.append(FragmentBlockSpec(block_idx=idx, start_offset=start, end_offset=end))
+    return blocks or [FragmentBlockSpec(0, 0, 0)]
 
 
 def _line_ranges(canonical_text: str) -> list[tuple[int, int, str]]:

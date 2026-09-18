@@ -8,8 +8,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
-  type RefObject,
 } from "react";
 import { Fragment, type Node as ProseMirrorNode } from "prosemirror-model";
 import {
@@ -23,7 +21,6 @@ import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
 import { history } from "prosemirror-history";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { useUnauthenticatedApiHandler } from "@/lib/auth/UnauthenticatedApiBoundary";
-import { usePaneReturnDescendantReady } from "@/lib/panes/paneRuntime";
 import { workspaceTargetClickIntent } from "@/lib/panes/targetLinkActivation";
 import {
   createNoteBodyKeymap,
@@ -90,7 +87,6 @@ export interface NoteBodyEditorProps {
   resourceKey: string;
   initialBodyPmJson: Record<string, unknown>;
   fallbackBodyText?: string;
-  returnScope?: "Notes.EditorBlocks";
   editable?: boolean;
   ariaLabel?: string;
   compact?: boolean;
@@ -143,32 +139,10 @@ const PAGE_NOTE_SCHEMES = [
   "note_block",
 ] as const satisfies readonly ResourceScheme[];
 
-function PaneReturnEditorScope({
-  rootRef,
-  ready,
-  children,
-}: {
-  readonly rootRef: RefObject<HTMLDivElement | null>;
-  readonly ready: boolean;
-  readonly children: ReactNode;
-}) {
-  usePaneReturnDescendantReady({ rootRef, ready });
-  return (
-    <div
-      ref={rootRef}
-      className={styles.editorShell}
-      data-pane-return-scope="Notes.EditorBlocks"
-    >
-      {children}
-    </div>
-  );
-}
-
 export default function NoteBodyEditor({
   resourceKey,
   initialBodyPmJson,
   fallbackBodyText = "",
-  returnScope,
   editable = true,
   ariaLabel = "Note content",
   compact = false,
@@ -802,17 +776,10 @@ export default function NoteBodyEditor({
     </>
   );
 
-  if (returnScope === undefined) {
-    return (
-      <div ref={shellRef} className={styles.editorShell}>
-        {editorContents}
-      </div>
-    );
-  }
   return (
-    <PaneReturnEditorScope rootRef={shellRef} ready={editorReady}>
+    <div ref={shellRef} className={styles.editorShell}>
       {editorContents}
-    </PaneReturnEditorScope>
+    </div>
   );
 }
 

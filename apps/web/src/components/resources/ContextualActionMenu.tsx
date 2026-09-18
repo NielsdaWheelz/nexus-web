@@ -27,58 +27,6 @@ type ContextualActionMenuProps = Pick<
   readonly actionSubject?: ResourceActionSubject;
 };
 
-function defectDuplicate(kind: "section" | "action", id: string): never {
-  throw new Error(`Contextual action menu has duplicate ${kind} ID: ${id}`);
-}
-
-function defectLocalDanger(message: string): never {
-  throw new Error(`Contextual action menu ${message}`);
-}
-
-function validateSections(
-  sections: readonly ContextActionSection[],
-): readonly ContextActionSection[] {
-  const sectionIds = new Set<string>();
-  const actionIds = new Set<string>();
-  const nonEmpty: ContextActionSection[] = [];
-  for (const section of sections) {
-    if (sectionIds.has(section.id)) defectDuplicate("section", section.id);
-    sectionIds.add(section.id);
-    if (section.actions.length === 0) continue;
-    for (const action of section.actions) {
-      if (actionIds.has(action.id)) defectDuplicate("action", action.id);
-      actionIds.add(action.id);
-    }
-    nonEmpty.push(section);
-  }
-  return nonEmpty;
-}
-
-function validateLocalDangerPolicy(
-  sections: readonly ContextActionSection[],
-  hasResourceSubject: boolean,
-): void {
-  for (const section of sections) {
-    let dangerSeen = false;
-    for (const action of section.actions) {
-      if (action.tone === "danger") {
-        if (hasResourceSubject) {
-          defectLocalDanger(
-            `local danger action ${action.id} cannot precede a resource-action suffix`,
-          );
-        }
-        dangerSeen = true;
-        continue;
-      }
-      if (dangerSeen) {
-        defectLocalDanger(
-          `action ${action.id} cannot follow a danger action in its section`,
-        );
-      }
-    }
-  }
-}
-
 function localDescriptors(
   sections: readonly ContextActionSection[],
 ): readonly ActionDescriptor[] {
@@ -89,14 +37,6 @@ function localDescriptors(
         : action,
     ),
   );
-}
-
-function assertUniqueActionIds(actions: readonly ActionDescriptor[]): void {
-  const ids = new Set<string>();
-  for (const action of actions) {
-    if (ids.has(action.id)) defectDuplicate("action", action.id);
-    ids.add(action.id);
-  }
 }
 
 function resourceLoadingDescriptor(): ActionDescriptor {
@@ -122,9 +62,9 @@ export default function ContextualActionMenu({
   actionSubject,
   ...props
 }: ContextualActionMenuProps) {
-  const nonEmptySections = validateSections(sections);
-  validateLocalDangerPolicy(nonEmptySections, actionSubject !== undefined);
-  const local = localDescriptors(nonEmptySections);
+  const local = localDescriptors(
+    sections.filter((section) => section.actions.length > 0),
+  );
   const resource = useOptionalResourceActionMenuModel(actionSubject);
   const { onOpenChange } = useMobileChromeActionMenuLock();
   const resourceDescriptors =
@@ -139,7 +79,6 @@ export default function ContextualActionMenu({
     index === 0 ? { ...action, separatorBefore: true } : action,
   );
   const options = [...local, ...suffix];
-  assertUniqueActionIds(options);
   const resourceOnly = actionSubject !== undefined && local.length === 0;
 
   return (

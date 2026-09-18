@@ -47,7 +47,6 @@ export default function LibraryPlacementOverlay({
         }
         title="Libraries"
         focusKey={session?.key}
-        panelTestId="library-placement-sheet"
       >
         {session ? (
           <LibraryEntryEditor

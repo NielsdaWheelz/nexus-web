@@ -235,7 +235,6 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
               <Button
                 variant="pill"
                 size="sm"
-                data-testid="chat-scroll-latest"
                 leadingIcon={<ArrowDown size={14} aria-hidden="true" />}
                 onClick={scrollToLatest}
               >
@@ -247,7 +246,6 @@ const ChatSurface = forwardRef<ChatScrollHandle, ChatSurfaceProps>(
 
         <div
           className={styles.composerSlot}
-          data-testid="chat-composer-dock"
           onWheel={onComposerWheel}
           onFocusCapture={() => setReadingFocusTarget(null)}
         >

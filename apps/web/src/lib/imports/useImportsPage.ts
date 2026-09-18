@@ -194,7 +194,6 @@ export function useImportsPage(
   const pagination = useCursorPagination<ImportItem>({
     firstPage,
     initialMoreError: null,
-    buildMoreHref: (cursor) => cursor,
     loadMorePage: async (cursor, signal) =>
       cursorPage(
         await fetchImportPage({

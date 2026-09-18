@@ -8,6 +8,8 @@
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-wider);
   white-space: nowrap;
+  border-radius: var(--radius-full);
+  text-transform: uppercase;
 }
 
 .label {
@@ -15,16 +17,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* Shape is the corner only. Padding belongs to the size scale, which is where
-   the two shapes' identical padding now lives. */
-.shapePill {
-  border-radius: var(--radius-full);
-}
-
-.shapeSquare {
-  border-radius: var(--radius-sm);
 }
 
 /* The smallest pill: a count in icon-only chrome, where the whole control is
@@ -40,15 +32,6 @@
 .sizeSm {
   padding: 2px var(--space-2);
   font-size: var(--text-xs);
-}
-
-.sizeMd {
-  padding: 2px var(--space-2);
-  font-size: var(--text-sm);
-}
-
-.uppercase {
-  text-transform: uppercase;
 }
 
 .toneNeutral {
@@ -87,10 +70,4 @@
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
-}
-
-.toneSubtle {
-  background: var(--surface-2);
-  color: var(--ink-muted);
-  border-color: var(--edge-subtle);
 }

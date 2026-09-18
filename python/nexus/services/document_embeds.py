@@ -128,8 +128,7 @@ def replace_document_embed_artifact(
     media_id: UUID,
     source_attempt_id: UUID,
     occurrences: Sequence[DocumentEmbedArtifactOccurrence],
-    extraction_error_code: str | None,
-    extraction_error_message: str | None,
+    extraction_failed: bool,
     request_id: str | None,
     locked_existing_target_media_ids: frozenset[UUID],
 ) -> list[tuple[UUID, UUID]]:
@@ -224,8 +223,7 @@ def replace_document_embed_artifact(
         media_id=media_id,
         source_attempt_id=source_attempt_id,
         rows=rows,
-        extraction_error_code=extraction_error_code,
-        extraction_error_message=extraction_error_message,
+        extraction_failed=extraction_failed,
     )
     for viewer_id in sorted(edge_viewer_ids):
         _replace_graph_edges(db, viewer_id=viewer_id, media_id=media_id, rows=rows)
@@ -247,15 +245,6 @@ def document_embed_summaries_for_media(
         .all()
     )
     return {row.media_id: _summary_out(row) for row in rows}
-
-
-def document_embed_summary_for_media(
-    db: Session, *, media_id: UUID
-) -> DocumentEmbedSummaryOut | None:
-    row = db.execute(
-        select(DocumentEmbedArtifactState).where(DocumentEmbedArtifactState.media_id == media_id)
-    ).scalar_one_or_none()
-    return _summary_out(row) if row is not None else None
 
 
 def reconcile_document_embed_parent_edges_for_viewer(
@@ -380,20 +369,18 @@ def sync_document_embed_targets_for_media(db: Session, *, target_media_id: UUID)
         status = "failed"
         error_code = "E_MEDIA_NOT_FOUND"
         error_message = "Embedded media target was removed."
+    elif target.processing_status is ProcessingStatus.ready_for_reading:
+        status = "resolved"
+        error_code = None
+        error_message = None
+    elif target.processing_status is ProcessingStatus.failed:
+        status = "failed"
+        error_code = target.last_error_code
+        error_message = target.last_error_message
     else:
-        target_status = getattr(target.processing_status, "value", target.processing_status)
-        if target_status == ProcessingStatus.ready_for_reading.value:
-            status = "resolved"
-            error_code = None
-            error_message = None
-        elif target_status == ProcessingStatus.failed.value:
-            status = "failed"
-            error_code = target.last_error_code
-            error_message = target.last_error_message
-        else:
-            status = "resolving"
-            error_code = None
-            error_message = None
+        status = "resolving"
+        error_code = None
+        error_message = None
     media_ids = {row.media_id for row in rows}
     for row in rows:
         row.resolution_status = status
@@ -427,18 +414,15 @@ def _write_state(
     media_id: UUID,
     source_attempt_id: UUID | None,
     rows: Sequence[DocumentEmbed],
-    extraction_error_code: str | None,
-    extraction_error_message: str | None,
+    extraction_failed: bool,
 ) -> None:
     state = DocumentEmbedArtifactState(
         media_id=media_id,
         source_attempt_id=source_attempt_id,
         status="empty",
-        extraction_error_code=extraction_error_code,
-        extraction_error_message=extraction_error_message,
         diagnostics={},
     )
-    if extraction_error_code is not None:
+    if extraction_failed:
         state.total_count = 0
         state.resolved_count = 0
         state.unsupported_count = 0
@@ -595,7 +579,7 @@ def _target_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> Document
     if row.target_media_id is None:
         if row.resolution_status == "unsupported":
             return DocumentEmbedTargetOut(status="unsupported")
-        if row.resolution_status in {"pending", "resolving"}:
+        if row.resolution_status == "resolving":
             return DocumentEmbedTargetOut(status="partial")
         return DocumentEmbedTargetOut(status="missing")
     resource_ref = f"media:{row.target_media_id}"
@@ -649,7 +633,7 @@ def _display(row: DocumentEmbed, target: DocumentEmbedTargetOut) -> DocumentEmbe
     if row.resolution_status == "resolved" and target.href:
         mode = "resolved"
         description = target.title or "Saved in Nexus"
-    elif row.resolution_status in {"pending", "resolving"}:
+    elif row.resolution_status == "resolving":
         mode = "pending"
         description = "Resolving embedded media"
     elif row.resolution_status == "failed":

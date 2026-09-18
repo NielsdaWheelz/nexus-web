@@ -76,7 +76,6 @@ export function useWorkspacePrimaryMetrics(): {
       <div
         ref={probeRef}
         aria-hidden="true"
-        data-testid="workspace-primary-width-probe"
         style={{ ...probeBaseStyle, ...readerSurfaceStyle }}
       />
     ),

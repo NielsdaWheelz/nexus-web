@@ -61,10 +61,3 @@ function getContributorCreditLabel(credit: ContributorCredit): string | null {
   }
   return credit.contributor_display_name?.trim() || null;
 }
-
-export function formatContributorRole(
-  role: string | null | undefined,
-): string | null {
-  const trimmed = role?.trim();
-  return trimmed ? trimmed.replace(/_/g, " ") : null;
-}

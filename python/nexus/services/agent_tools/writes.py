@@ -455,16 +455,9 @@ def undo_tool_call(
     if row is None:
         raise ApiError(ApiErrorCode.E_NOT_FOUND, "Write tool call not found")
     record = decode_persisted_tool_record(row)
-    from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
+    from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS_BY_ID
 
-    declaration = next(
-        (
-            entry
-            for entry in CHAT_TOOL_DECLARATIONS
-            if str(entry.spec.id) == record.canonical_tool_id
-        ),
-        None,
-    )
+    declaration = CHAT_TOOL_DECLARATIONS_BY_ID.get(record.canonical_tool_id or "")
     if declaration is None or declaration.spec.effect is not ToolEffect.Write:
         raise ApiError(ApiErrorCode.E_NOT_FOUND, "Write tool call not found")
 

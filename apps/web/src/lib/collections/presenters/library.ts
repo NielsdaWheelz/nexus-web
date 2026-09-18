@@ -41,7 +41,6 @@ export function presentLibrary(
     activity: absent(),
     exceptionalStatus: absent(),
     localAvailability: absent(),
-    connections: absent(),
     relatedMediaId: absent(),
     actionSubject: {
       ref: canonicalResourceRef({ scheme: "library", id: item.id }),

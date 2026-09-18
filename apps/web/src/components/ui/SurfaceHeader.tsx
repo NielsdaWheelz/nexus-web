@@ -27,7 +27,6 @@ interface SurfaceHeaderProps {
   menuActions?: readonly ActionDescriptor[];
   actionSubject?: ResourceActionSubject;
   navigation: SurfaceHeaderNavigation;
-  className?: string;
 }
 
 /**
@@ -45,11 +44,9 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
       menuActions = [],
       actionSubject,
       navigation,
-      className,
     }: SurfaceHeaderProps,
     ref,
   ) {
-    const headerClassName = [styles.header, className].filter(Boolean).join(" ");
     const hasMoreContent =
       paneActions.length > 0 ||
       menuActions.length > 0 ||
@@ -58,7 +55,7 @@ const SurfaceHeader = forwardRef<HTMLElement, SurfaceHeaderProps>(
     return (
       <header
         ref={ref}
-        className={headerClassName}
+        className={styles.header}
         data-surface-header="true"
       >
         <div className={styles.navigationControls}>

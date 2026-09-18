@@ -22,6 +22,7 @@ from nexus.services.llm_ledger import LlmCallOwner
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.resource_graph.schemas import CitationSnapshot
 from nexus.services.tool_authority import (
+    ToolAuditProjection,
     ToolAuthority,
     ToolAuthorityRefused,
     ToolPositionRecord,
@@ -75,7 +76,7 @@ class DossierToolExecutionProjection:
         authority: ToolAuthority,
         position: ToolPositionRecord,
         result: ToolResult,
-        audit: Mapping[str, object],
+        audit: ToolAuditProjection,
     ) -> None:
         del db, authority, position, result, audit
 

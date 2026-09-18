@@ -10,7 +10,6 @@ Block contract:
 - Delimiter (\n\n) is included at the END of the preceding block's range
 - block[n].end == block[n+1].start (contiguous, no gaps)
 - Final block ends at len(canonical_text) with no trailing delimiter
-- Empty blocks are flagged with is_empty=True to preserve contiguity
 
 Invariants:
 - block[0].start == 0
@@ -39,8 +38,6 @@ class FragmentBlockSpec:
     block_idx: int
     start_offset: int
     end_offset: int
-    is_empty: bool
-    block_type: str | None = None
 
 
 def parse_fragment_blocks(canonical_text: str) -> list[FragmentBlockSpec]:
@@ -63,7 +60,7 @@ def parse_fragment_blocks(canonical_text: str) -> list[FragmentBlockSpec]:
     """
     if not canonical_text:
         # Empty text gets a single empty block
-        return [FragmentBlockSpec(block_idx=0, start_offset=0, end_offset=0, is_empty=True)]
+        return [FragmentBlockSpec(block_idx=0, start_offset=0, end_offset=0)]
 
     blocks: list[FragmentBlockSpec] = []
     text_len = len(canonical_text)
@@ -76,31 +73,23 @@ def parse_fragment_blocks(canonical_text: str) -> list[FragmentBlockSpec]:
 
         if delim_pos == -1:
             # No more delimiters - this is the final block
-            end_offset = text_len
-            block_text = canonical_text[current_start:end_offset]
-            is_empty = block_text.strip() == ""
-
             blocks.append(
                 FragmentBlockSpec(
                     block_idx=block_idx,
                     start_offset=current_start,
-                    end_offset=end_offset,
-                    is_empty=is_empty,
+                    end_offset=text_len,
                 )
             )
             break
         else:
             # Include the delimiter in this block's range
             end_offset = delim_pos + len(BLOCK_DELIMITER)
-            block_text = canonical_text[current_start:delim_pos]  # Text before delimiter
-            is_empty = block_text.strip() == ""
 
             blocks.append(
                 FragmentBlockSpec(
                     block_idx=block_idx,
                     start_offset=current_start,
                     end_offset=end_offset,
-                    is_empty=is_empty,
                 )
             )
 
@@ -156,8 +145,6 @@ def insert_fragment_blocks(
             block_idx=spec.block_idx,
             start_offset=spec.start_offset,
             end_offset=spec.end_offset,
-            block_type=spec.block_type,
-            is_empty=spec.is_empty,
         )
         db.add(block)
         created_blocks.append(block)

@@ -250,7 +250,6 @@ export default function LibraryMembersSurface({
       ref={surfaceRef}
       className={styles.surface}
       aria-labelledby={headingId}
-      data-testid="library-members-surface"
     >
       <div className={styles.header}>
         <div>
@@ -581,7 +580,6 @@ function MemberRow({
   return (
     <div
       className={styles.row}
-      data-testid={`library-member-${member.userHandle}`}
       data-confirmation-subject={member.userHandle}
     >
       <div className={styles.identity}>
