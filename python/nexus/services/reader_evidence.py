@@ -815,7 +815,9 @@ def _resolved(
     passage_anchor_id: UUID | None = None,
 ) -> ReaderEvidenceResolvedOut:
     return ReaderEvidenceResolvedOut(
-        anchor=ReaderEvidenceAnchorOut(locator=locator, passage_anchor_id=passage_anchor_id),
+        anchor=ReaderEvidenceAnchorOut.model_validate(
+            {"locator": locator, "passage_anchor_id": passage_anchor_id}
+        ),
         order_key=order_key,
     )
 
