@@ -136,6 +136,7 @@ import type { PaneHeaderMeta } from "@/lib/panes/paneHeaderModel";
 import type { PaneRefreshExecute } from "@/lib/panes/panePublications";
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { isAbortError } from "@/lib/errors";
+import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
 import { runPodcastRefresh } from "@/lib/podcasts/refresh";
 import {
   decodeLibraryEntryListItem,
@@ -172,14 +173,6 @@ interface EntryReconciliationRequest {
 interface EntryReconciliationResult {
   request: EntryReconciliationRequest;
   page: LibraryEntryPage;
-}
-
-interface PendingLibraryRevalidation {
-  readonly serial: number;
-  readonly sourceKey: string;
-  readonly resolve: () => void;
-  readonly reject: (error: unknown) => void;
-  readonly removeAbortListener: () => void;
 }
 
 type EntryMutationEffect = "SafeRebase" | "Unknown";
@@ -503,8 +496,8 @@ export default function LibraryPaneBody() {
   // requested view refetches once against current truth (coalesced follow-up).
   const [firstPageNonce, setFirstPageNonce] = useState(0);
   const entryReconciliationSerialRef = useRef(0);
-  const pendingLibraryRevalidationRef =
-    useRef<PendingLibraryRevalidation | null>(null);
+  const revalidation = useRevalidationSettlement();
+  const revalidationSourceKeyRef = useRef<string | null>(null);
   const completedLibraryRevalidationSerialRef = useRef<number | null>(null);
   const [entryReconciliationRequest, setEntryReconciliationRequest] =
     useState<EntryReconciliationRequest | null>(null);
@@ -810,13 +803,9 @@ export default function LibraryPaneBody() {
 
   const { clear: clearRemovedEntryIds } = removedEntryIds;
   const rejectPendingLibraryRevalidation = useCallback((error: unknown) => {
-    const pending = pendingLibraryRevalidationRef.current;
-    pendingLibraryRevalidationRef.current = null;
     completedLibraryRevalidationSerialRef.current = null;
-    if (!pending) return;
-    pending.removeAbortListener();
-    pending.reject(error);
-  }, []);
+    revalidation.reject(error);
+  }, [revalidation]);
   const requestEntryReconciliation = useCallback(
     (
       requestedView: LibraryEntryView,
@@ -875,36 +864,21 @@ export default function LibraryPaneBody() {
         placement: placementRevisionRef.current,
         consumption: consumptionRevisionRef.current,
       });
-      return new Promise<void>((resolve, reject) => {
-        const onAbort = () => {
-          const pending = pendingLibraryRevalidationRef.current;
-          if (pending?.serial !== serial) return;
-          pendingLibraryRevalidationRef.current = null;
-          pending.removeAbortListener();
+      revalidationSourceKeyRef.current = sourceKey;
+      return revalidation.wait({
+        requestId: serial,
+        signal,
+        onAbort: () => {
           completedLibraryRevalidationSerialRef.current = null;
           entryReconciliationSerialRef.current += 1;
           setEntryReconciliationRequest((request) =>
             request?.serial === serial ? null : request,
           );
           committedSnapshotRef.current = controllerRef.current;
-          reject(
-            signal.reason ??
-              new DOMException("Library refresh was aborted.", "AbortError"),
-          );
-        };
-        signal.addEventListener("abort", onAbort, { once: true });
-        pendingLibraryRevalidationRef.current = {
-          serial,
-          sourceKey,
-          resolve,
-          reject,
-          removeAbortListener: () =>
-            signal.removeEventListener("abort", onAbort),
-        };
-        if (signal.aborted) onAbort();
+        },
       });
     },
-    [id, requestEntryReconciliation, requestedViewKey],
+    [id, requestEntryReconciliation, requestedViewKey, revalidation],
   );
   useEffect(
     () => () => {
@@ -986,11 +960,10 @@ export default function LibraryPaneBody() {
   useEffect(() => {
     const request = entryReconciliationRequest;
     const requestError = entryReconciliationFetch.error;
-    const pending = pendingLibraryRevalidationRef.current;
     if (
       request === null ||
       requestError === null ||
-      pending?.serial !== request.serial
+      !revalidation.isPending(request.serial)
     ) {
       return;
     }
@@ -999,6 +972,7 @@ export default function LibraryPaneBody() {
     committedSnapshotRef.current = controllerRef.current;
     rejectPendingLibraryRevalidation(requestError);
   }, [
+    revalidation,
     entryReconciliationFetch.error,
     entryReconciliationRequest,
     rejectPendingLibraryRevalidation,
@@ -1048,7 +1022,7 @@ export default function LibraryPaneBody() {
       // The requested view moved on: the first-page path owns the new view. Drop
       // this result; the revision trigger re-fires if the current view is still
       // behind its committed baseline.
-      if (pendingLibraryRevalidationRef.current?.serial === request.serial) {
+      if (revalidation.isPending(request.serial)) {
         rejectPendingLibraryRevalidation(
           new DOMException(
             "Library refresh source was replaced.",
@@ -1087,12 +1061,13 @@ export default function LibraryPaneBody() {
     // reconciliation was requested, so a mutation that landed while it was in
     // flight surfaces as exactly one coalesced follow-up.
     committedRevisionsRef.current = result.request.revisions;
-    if (pendingLibraryRevalidationRef.current?.serial === request.serial) {
+    if (revalidation.isPending(request.serial)) {
       completedLibraryRevalidationSerialRef.current = request.serial;
     }
     setEntryReconciliationRequest(null);
     focusPendingControl();
   }, [
+    revalidation,
     cancelEntryLoadMore,
     clearRemovedEntryIds,
     committedViewKey,
@@ -1317,21 +1292,19 @@ export default function LibraryPaneBody() {
         : null;
   }, [controller, entriesState?.kind, entryReconciliationRequest]);
   useEffect(() => {
-    const pending = pendingLibraryRevalidationRef.current;
+    const completedSerial = completedLibraryRevalidationSerialRef.current;
     if (
-      pending === null ||
-      completedLibraryRevalidationSerialRef.current !== pending.serial ||
+      completedSerial === null ||
+      !revalidation.isPending(completedSerial) ||
       entryReconciliationRequest !== null ||
-      requestedViewKey !== pending.sourceKey ||
+      requestedViewKey !== revalidationSourceKeyRef.current ||
       committedSnapshotRef.current === null
     ) {
       return;
     }
-    pendingLibraryRevalidationRef.current = null;
     completedLibraryRevalidationSerialRef.current = null;
-    pending.removeAbortListener();
-    pending.resolve();
-  }, [controller, entryReconciliationRequest, requestedViewKey]);
+    revalidation.resolve(completedSerial);
+  }, [revalidation, controller, entryReconciliationRequest, requestedViewKey]);
   usePaneReturnReady(
     entriesState?.kind === "Ready" ||
       entriesState?.kind === "RefreshFailed" ||

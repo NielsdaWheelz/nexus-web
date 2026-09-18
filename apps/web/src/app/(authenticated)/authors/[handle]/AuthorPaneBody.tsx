@@ -101,6 +101,7 @@ import SelectField from "@/components/ui/SelectField";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import { findPaneLandmarkFocusTarget } from "@/lib/workspace/paneDom";
 import { isAbortError } from "@/lib/errors";
+import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
 import styles from "./page.module.css";
 
 type AuthorConnectionsResource =
@@ -177,13 +178,6 @@ function authorRenameErrorMessage(error: unknown): FeedbackContent {
   }
 }
 
-interface PendingAuthorRevalidation {
-  readonly version: number;
-  readonly resolve: () => void;
-  readonly reject: (error: unknown) => void;
-  readonly removeAbortListener: () => void;
-}
-
 function resolveAuthorConnectionsResource(
   resourceRef: string | null,
   resourceStatus: PaneResourceStatus,
@@ -256,8 +250,7 @@ export default function AuthorPaneBody() {
   const clearAllVisitData = useClearAllPaneVisitData();
   const [firstPageVersion, setFirstPageVersion] = useState(0);
   const firstPageVersionRef = useRef(0);
-  const pendingAuthorRevalidationRef =
-    useRef<PendingAuthorRevalidation | null>(null);
+  const revalidation = useRevalidationSettlement();
   const completedAuthorRevalidationVersionRef = useRef<number | null>(null);
   const [chainEpoch, setChainEpoch] = useState(0);
   const [data, setData] = useState<CommittedAuthorWorks | null>(initialRestored);
@@ -403,9 +396,9 @@ export default function AuthorPaneBody() {
       setChainEpoch((epoch) => epoch + 1);
       setError(null);
       focusPendingSortControl();
-      const pending = pendingAuthorRevalidationRef.current;
-      if (pending?.version === firstPageVersion) {
-        completedAuthorRevalidationVersionRef.current = pending.version;
+
+      if (revalidation.isPending(firstPageVersion)) {
+        completedAuthorRevalidationVersionRef.current = firstPageVersion;
       }
       return;
     }
@@ -419,15 +412,14 @@ export default function AuthorPaneBody() {
           setDefect({ error: caughtDefect });
         }
       }
-      const pending = pendingAuthorRevalidationRef.current;
-      if (pending?.version === firstPageVersion) {
-        pendingAuthorRevalidationRef.current = null;
+
+      if (revalidation.isPending(firstPageVersion)) {
         completedAuthorRevalidationVersionRef.current = null;
-        pending.removeAbortListener();
-        pending.reject(firstPage.error);
+        revalidation.reject(firstPage.error);
       }
     }
   }, [
+    revalidation,
     data?.detail,
     firstPage,
     firstPageVersion,
@@ -464,32 +456,26 @@ export default function AuthorPaneBody() {
 
   useLayoutEffect(() => {
     committedSnapshotRef.current = requestsFirstPage ? null : data;
-    const pending = pendingAuthorRevalidationRef.current;
+    const completedVersion = completedAuthorRevalidationVersionRef.current;
     if (
       data === null ||
-      pending === null ||
-      completedAuthorRevalidationVersionRef.current !== pending.version
+      completedVersion === null ||
+      !revalidation.isPending(completedVersion)
     ) {
       return;
     }
     completedAuthorRevalidationVersionRef.current = null;
-    pendingAuthorRevalidationRef.current = null;
-    pending.removeAbortListener();
-    pending.resolve();
-  }, [data, requestsFirstPage]);
+    revalidation.resolve(completedVersion);
+  }, [revalidation, data, requestsFirstPage]);
 
   const loading = !invalidView && error === null && data === null;
   usePaneReturnReady(data !== null || error !== null || invalidView);
   useSetPaneLabel(loading ? null : (data?.detail.displayName ?? "Author"));
 
   const rejectPendingAuthorRevalidation = useCallback((error: unknown) => {
-    const pending = pendingAuthorRevalidationRef.current;
-    pendingAuthorRevalidationRef.current = null;
     completedAuthorRevalidationVersionRef.current = null;
-    if (!pending) return;
-    pending.removeAbortListener();
-    pending.reject(error);
-  }, []);
+    revalidation.reject(error);
+  }, [revalidation]);
   // Refresh reloads the committed works view, never the canonical seed: the
   // author detail is stable and a refreshed canonical page would contradict the
   // requested view.
@@ -517,38 +503,15 @@ export default function AuthorPaneBody() {
       }
       refreshWorks();
       const version = firstPageVersionRef.current;
-      return new Promise<void>((resolve, reject) => {
-        const onAbort = () => {
-          const pending = pendingAuthorRevalidationRef.current;
-          if (pending?.version !== version) return;
-          pendingAuthorRevalidationRef.current = null;
+      return revalidation.wait({
+        requestId: version,
+        signal,
+        onAbort: () => {
           completedAuthorRevalidationVersionRef.current = null;
-          pending.removeAbortListener();
-          reject(
-            signal.reason ??
-              new DOMException("Author refresh was aborted.", "AbortError"),
-          );
-        };
-        signal.addEventListener("abort", onAbort, { once: true });
-        pendingAuthorRevalidationRef.current = {
-          version,
-          resolve,
-          reject,
-          removeAbortListener: () =>
-            signal.removeEventListener("abort", onAbort),
-        };
-        if (signal.aborted) onAbort();
+        },
       });
     },
-    [refreshWorks],
-  );
-  useEffect(
-    () => () => {
-      rejectPendingAuthorRevalidation(
-        new DOMException("Author refresh source was replaced.", "AbortError"),
-      );
-    },
-    [rejectPendingAuthorRevalidation],
+    [refreshWorks, revalidation],
   );
   const commitWorksPage = useCallback(
     (page: CollectionPage<ContributorWorkItem>): number => {
