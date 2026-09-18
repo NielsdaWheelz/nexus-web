@@ -17,7 +17,6 @@ from nexus.api.routes.consumption_activity import router as consumption_activity
 from nexus.api.routes.contributors import router as contributors_router
 from nexus.api.routes.conversation_branches import router as conversation_branches_router
 from nexus.api.routes.conversation_context import router as conversation_context_router
-from nexus.api.routes.conversation_shares import router as conversation_shares_router
 from nexus.api.routes.conversations import router as conversations_router
 from nexus.api.routes.dossiers import router as dossiers_router
 from nexus.api.routes.extension_sessions import router as extension_sessions_router
@@ -36,6 +35,7 @@ from nexus.api.routes.notes import router as notes_router
 from nexus.api.routes.offline_reading import router as offline_reading_router
 from nexus.api.routes.operational import router as operational_router
 from nexus.api.routes.oracle import router as oracle_router
+from nexus.api.routes.passage_anchors import router as passage_anchors_router
 from nexus.api.routes.podcast_transcripts import router as podcast_transcripts_router
 from nexus.api.routes.podcasts import router as podcasts_router
 from nexus.api.routes.public_resource_shares import router as public_resource_shares_router
@@ -83,6 +83,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(offline_reading_router)
     api_router.include_router(media_router)
     api_router.include_router(notes_router)
+    api_router.include_router(passage_anchors_router)
     api_router.include_router(resource_items_router)
     api_router.include_router(resource_shares_router)
     api_router.include_router(resource_graph_router)
@@ -92,7 +93,6 @@ def create_api_router() -> APIRouter:
     api_router.include_router(conversations_router)
     api_router.include_router(conversation_context_router)
     api_router.include_router(conversation_branches_router)
-    api_router.include_router(conversation_shares_router)
     api_router.include_router(messages_router)
     api_router.include_router(contributors_router)
     api_router.include_router(chat_runs_router)

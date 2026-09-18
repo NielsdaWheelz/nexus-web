@@ -17,7 +17,6 @@ import {
 } from "@/lib/conversations/citationOut";
 import {
   DOSSIER_BUILD_FAILURE_CODES,
-  HISTORICAL_DOSSIER_BUILD_FAILURE_CODES,
   type DossierAdmittedGeneration,
   type DossierBuildFailureCode,
   type DossierBuildSummary,
@@ -26,14 +25,12 @@ import {
   type DossierCapacityPause,
   type DossierFailedFacts,
   type DossierFreshness,
-  type HistoricalDossierBuildFailureCode,
   type DossierInputManifest,
   type DossierMediaDisposition,
   type DossierMediaManifestEntry,
   type DossierRevision,
   type DossierRevisionSummary,
   type MediaAbstract,
-  type ReadDossierBuildFailureCode,
 } from "@/lib/dossiers/dossierControllerTypes";
 import {
   normalizeResourceActivation,
@@ -76,24 +73,6 @@ export function decodeFailureCode(value: unknown): DossierBuildFailureCode {
     return value;
   }
   return fail(`unknown current failure code ${JSON.stringify(value)}`);
-}
-
-export function decodeReadDossierBuildFailureCode(
-  value: unknown,
-): ReadDossierBuildFailureCode {
-  return isListedString(value, HISTORICAL_DOSSIER_BUILD_FAILURE_CODES)
-    ? value
-    : decodeFailureCode(value);
-}
-
-/** Decode only migration-tagged, read-only historical failure vocabulary. */
-export function decodeHistoricalDossierBuildFailureCode(
-  value: unknown,
-): HistoricalDossierBuildFailureCode {
-  if (isListedString(value, HISTORICAL_DOSSIER_BUILD_FAILURE_CODES)) {
-    return value;
-  }
-  return fail(`unknown historical failure code ${JSON.stringify(value)}`);
 }
 
 function decodeFreshness(value: unknown): DossierFreshness {
@@ -657,7 +636,7 @@ function decodeFailedFacts(raw: unknown): DossierFailedFacts {
     "failure facts",
   );
   return {
-    failureCode: decodeReadDossierBuildFailureCode(failure.failure_code),
+    failureCode: decodeFailureCode(failure.failure_code),
     detail: decodePresence(failure.detail, (v) => decodeString(v, "detail")),
   };
 }

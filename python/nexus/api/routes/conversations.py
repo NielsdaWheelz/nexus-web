@@ -43,12 +43,12 @@ def list_conversations(
     An explicit ``q`` selects the retained owned destination picker. An explicit
     ``has_context_ref`` selects the retained resource-graph mode; neither owns
     the ``sort``/``direction`` view keys. Every unmarked request, with optional
-    ``scope`` and view keys, selects the finite primary index.
+    view keys, selects the finite primary index.
 
     Errors:
-        E_INVALID_REQUEST (400): Invalid scope value, a view state outside the
-            advertised inventory, malformed has_context_ref URI, or ``q``
-            combined with another filter / over its length bound.
+        E_INVALID_REQUEST (400): A view state outside the advertised inventory,
+            malformed has_context_ref URI, or ``q`` combined with another filter
+            / over its length bound.
         E_INVALID_CURSOR (400): Cursor is malformed or unparseable.
     """
     raw_keys = {key for key, _value in request.query_params.multi_items()}
@@ -65,7 +65,6 @@ def list_conversations(
             viewer_id=viewer.user_id,
             limit=query.limit,
             cursor=query.cursor,
-            scope=None,
             has_context_ref=query.parameters.get("has_context_ref"),
             q=query.parameters.get("q"),
         )
@@ -80,7 +79,6 @@ def list_conversations(
         limit=query.limit,
         cursor=query.cursor,
         collection_revision=query.collection_revision,
-        scope=query.parameters.get("scope"),
         view=view,
     )
     return ok(page, by_alias=True)
@@ -190,8 +188,8 @@ def delete_conversation(
 ) -> dict:
     """Delete a conversation.
 
-    Explicitly deletes its resource-graph edges, messages, conversation_shares,
-    and chat runs in the service layer.
+    Explicitly deletes its resource-graph edges, messages, and chat runs in the
+    service layer.
 
     Errors:
         E_CONVERSATION_NOT_FOUND (404): Conversation doesn't exist or viewer is not owner.

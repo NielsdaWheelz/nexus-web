@@ -4259,7 +4259,6 @@ def _source_attempt_status(value: object) -> MediaSourceAttemptStatus:
         "running",
         "succeeded",
         "failed",
-        "superseded",
     }:
         raise AssertionError("source attempt has an invalid status")
     return cast(MediaSourceAttemptStatus, value)

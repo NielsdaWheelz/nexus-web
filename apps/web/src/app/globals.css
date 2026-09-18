@@ -145,8 +145,7 @@
   --highlight-pink: rgba(233, 30, 99, 0.35);
   --highlight-purple: rgba(156, 39, 176, 0.35);
 
-  /* Default semantic colors = dark (overridden by [data-theme="light"] and
-     prefers-color-scheme: light below) */
+  /* Default semantic colors = dark (overridden by [data-theme="light"] below). */
   --surface-canvas: #0e0e10;
   --surface-1: #161618;
   --surface-2: #1c1c1f;
@@ -241,53 +240,7 @@
   --canvas-grain-image: none;
 }
 
-/* === System-preference fallback when no explicit theme is set === */
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme]) {
-    --surface-canvas: #faf8f3;
-    --surface-1: #ffffff;
-    --surface-2: #f4f4f0;
-    --surface-3: #ededea;
-    --surface-hover: #f0f0ec;
-    --surface-active: #e6e6e1;
-    --surface-sunken: #f1f1ed;
-    --ink: #1a1a1c;
-    --ink-muted: #525258;
-    --ink-faint: #7a7a80;
-    /* Machine voice ink + apparatus rail — cool slate, AAA on light surfaces. */
-    --ink-machine: #3c4a57;
-    --rail-machine: color-mix(in srgb, var(--ink-machine) 30%, transparent);
-    --ink-on-accent: #fafaf7;
-    --edge: #d4d4cf;
-    --edge-subtle: #e8e8e3;
-    --edge-strong: #87878d;
-    --accent: var(--brand-fg-on-light);
-    --accent-hover: #634a29;
-    --accent-active: #4a371d;
-    --accent-muted: rgba(125, 94, 53, 0.12);
-    --ring: #4a371d;
-    --success: #2f7a3e;
-    --warning: #8a6618;
-    --danger: #a83a44;
-    --info: #3b6b8f;
-    --success-ink: #255f30;
-    --warning-ink: #6c5013;
-    --info-ink: #305875;
-    --shadow-1: 0 1px 2px rgba(20, 20, 30, 0.06);
-    --shadow-2: 0 4px 8px rgba(20, 20, 30, 0.1);
-    --shadow-3: 0 8px 18px rgba(20, 20, 30, 0.12);
-    --shadow-4: 0 18px 40px rgba(20, 20, 30, 0.16);
-    --shadow-5: 0 32px 80px rgba(20, 20, 30, 0.22);
-    /* Two Rooms — Study-specific typography + grain */
-    --stroke-hairline: 1px;
-    --body-font-size: var(--text-base);    /* 0.9375rem — paper-tuned optical size */
-    --tracking-body: 0;
-    --canvas-grain-opacity: 0;
-    --canvas-grain-image: none;
-  }
-}
-
-/* === The Solar — explicit user choice, no system-preference route === */
+/* === The Solar — explicit user choice === */
 [data-theme="elvish"] {
   /* Native controls (selects, date pickers, autofill, UA scrollbar arrows) must
      not punch white through the canopy. */

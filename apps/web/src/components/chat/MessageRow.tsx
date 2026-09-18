@@ -24,7 +24,6 @@ import { executeCommittingMountedMutation } from "@/lib/actions/mountedActionHan
 import { canonicalResourceRef } from "@/lib/sharing/targets";
 import { conversationMessageText } from "@/lib/conversations/types";
 import AssistantMessage from "./AssistantMessage";
-import SystemMessage from "./SystemMessage";
 import UserMessage from "./UserMessage";
 
 interface MessageRowProps {
@@ -203,14 +202,6 @@ export const MessageRow = memo(function MessageRow({
               revision,
             )) === "Committed"
           }
-          timestampLabel={timestampLabel}
-        />
-      );
-    case "system":
-      return (
-        <SystemMessage
-          message={message}
-          messageOrdinal={messageOrdinal}
           timestampLabel={timestampLabel}
         />
       );

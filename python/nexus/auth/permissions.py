@@ -38,7 +38,6 @@ from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from nexus.db.models import (
     Conversation,
-    ConversationShare,
     Fragment,
     Highlight,
     HighlightFragmentAnchor,
@@ -289,77 +288,27 @@ def visible_conversation_ids_cte_sql() -> str:
     """Conversation IDs visible to a viewer (binds :viewer_id, returns conversation_id).
 
     The SQL set-membership twin of :func:`can_read_conversation`; co-located here so the
-    two forms of the same rule cannot drift. A conversation is visible iff:
-    - owner_user_id = viewer_id, OR
-    - sharing = 'library' AND a conversation_share targets a library where both viewer
-      AND owner are current members (dual-membership check).
+    two forms of the same rule cannot drift. A conversation is visible to its owner only.
     """
     return """
         SELECT c.id AS conversation_id
         FROM conversations c
         WHERE c.owner_user_id = :viewer_id
-
-        UNION
-
-        SELECT c.id AS conversation_id
-        FROM conversations c
-        JOIN conversation_shares cs ON cs.conversation_id = c.id
-        JOIN memberships vm ON vm.library_id = cs.library_id
-                            AND vm.user_id = :viewer_id
-        JOIN memberships om ON om.library_id = cs.library_id
-                            AND om.user_id = c.owner_user_id
-        WHERE c.sharing = 'library'
     """
 
 
 def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_id: UUID) -> bool:
-    """Check if viewer can read a conversation under visibility rules.
-
-    True iff:
-    - Viewer is the conversation owner, OR
-    - Conversation sharing is 'library' and exists a share-target library
-      where both viewer and owner are current members.
+    """Check if viewer owns the conversation.
 
     Returns False if conversation_id does not exist (no existence leak).
     """
-    # Path 1: owner
-    owner_path = exists().where(
-        Conversation.id == conversation_id,
-        Conversation.owner_user_id == viewer_user_id,
+    query = select(
+        exists().where(
+            Conversation.id == conversation_id,
+            Conversation.owner_user_id == viewer_user_id,
+        )
     )
-
-    # Path 2: library-shared with active dual membership
-    # Use aliased approach to check both viewer and owner membership in the same library
-    viewer_membership = Membership.__table__.alias("viewer_m")
-    owner_membership = Membership.__table__.alias("owner_m")
-
-    library_path = (
-        select(literal(1))
-        .select_from(Conversation.__table__)
-        .join(
-            ConversationShare.__table__,
-            ConversationShare.__table__.c.conversation_id == Conversation.__table__.c.id,
-        )
-        .join(
-            viewer_membership,
-            viewer_membership.c.library_id == ConversationShare.__table__.c.library_id,
-        )
-        .join(
-            owner_membership,
-            (owner_membership.c.library_id == ConversationShare.__table__.c.library_id)
-            & (owner_membership.c.user_id == Conversation.__table__.c.owner_user_id),
-        )
-        .where(
-            Conversation.__table__.c.id == conversation_id,
-            Conversation.__table__.c.sharing == "library",
-            viewer_membership.c.user_id == viewer_user_id,
-        )
-        .exists()
-    )
-
-    query = select(owner_path | library_path)
-    result = session.execute(query)
-    return bool(result.scalar())
+    return bool(session.execute(query).scalar())
 
 
 def highlight_library_intersection_exists(

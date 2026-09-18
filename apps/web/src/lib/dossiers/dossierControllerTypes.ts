@@ -45,21 +45,6 @@ export const DOSSIER_BUILD_FAILURE_CODES = [
 export type DossierBuildFailureCode =
   (typeof DOSSIER_BUILD_FAILURE_CODES)[number];
 
-/** Retired persisted spellings accepted only by dossier read boundaries. */
-export const HISTORICAL_DOSSIER_BUILD_FAILURE_CODES = [
-  "EntitlementDenied",
-  "BudgetExceeded",
-  "ProviderRefused",
-  "ProviderIncomplete",
-] as const;
-
-export type HistoricalDossierBuildFailureCode =
-  (typeof HISTORICAL_DOSSIER_BUILD_FAILURE_CODES)[number];
-
-export type ReadDossierBuildFailureCode =
-  | DossierBuildFailureCode
-  | HistoricalDossierBuildFailureCode;
-
 /** A decoded same-system API/transport error, kept near the screen boundary
  * for `dossierErrorMessage`. `code` is the `ApiError.code`; `message` the
  * backend-authored human message (used as the exhaustive-map fallback). */
@@ -192,7 +177,7 @@ export interface DossierRevisionSummary {
 /** Failed{code, detail} facts, shared by the head snapshot and the SSE
  * `Failed` event (one shape for one fact). */
 export interface DossierFailedFacts {
-  failureCode: ReadDossierBuildFailureCode;
+  failureCode: DossierBuildFailureCode;
   detail: Presence<string>;
 }
 

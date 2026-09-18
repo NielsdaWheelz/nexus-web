@@ -435,6 +435,14 @@ row). None of the highlight-family FKs cascade; ordinary deletion is explicit
 child-first cleanup, and reindex/refresh never delete Highlights or passage
 anchors — unresolved locators stay visible rather than disappearing.
 
+passage routes retain `#passage-{anchor_id}`. on activation, the owner pane reads
+`GET /passage-anchors/{id}/resolution?owner_ref=...`; the service checks anchor
+ownership, the requested owner, and current owner access before resolving the
+quote. the response is a present navigation target or absent when no unique
+current location exists. text targets use current raw codepoint offsets; pdf
+targets name the current page without claiming stored hint geometry is current.
+no offsets or resolution status are persisted. each pane uses its existing positioning owner.
+
 note quotes match in normalized text, then project unique hits into raw stored
 codepoint offsets. projection preserves the matched unicode component
 occurrences; a hit that cannot form one exact raw interval remains unresolved.
@@ -492,7 +500,7 @@ engine, API, history contract, and `dossier_build` job own the lifecycle.
 
 **Conversations / chat** — `conversations`, `messages` (the message tree with
 branch pointers), `conversation_branches`, `conversation_active_paths`
-(per-viewer), `conversation_shares`; plus the **chat-run** machinery: `chat_runs`
+(per-viewer); plus the **chat-run** machinery: `chat_runs`
 (carries the exact immutable `generation_spec` and `support_id`;
 authoritative execution provenance lives in its parent `llm_calls` row and
 accepted `llm_model_turns` children),
@@ -1054,7 +1062,7 @@ API is
 `POST /artifact-revisions/{artifact_revision_ref}/make-current`, and
 `POST /artifact-builds/{artifact_build_id}/cancel`. Build streaming is
 `GET /stream/artifact-builds/{artifact_build_id}/events`; persisted
-`Started | Progress | Succeeded | Failed | HistoricalFailed | Cancelled` events are build-keyed
+`Started | Progress | Succeeded | Failed | Cancelled` events are build-keyed
 and replayable. `lib/dossiers/generationAdapter.ts` is the one browser Dossier
 transport boundary: value responses must be the exact `{data: ...}` envelope,
 Make-current and Cancel must be exact HTTP 204 commands, and same-system shape

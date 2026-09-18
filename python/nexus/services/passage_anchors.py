@@ -2,7 +2,7 @@
 
 Sole owner of user-owned durable passage identity
 (universal-link-authoring-hard-cutover.md, Passage Anchor). An anchor's owner,
-selector version, normalized quote, and ``anchor_key`` are immutable; only the
+normalized quote and ``anchor_key`` are immutable; only the
 selector's ``locator_hint`` is replaceable. There is no persisted resolution
 status, daemon, or current-row pointer — current locators are resolved LIVE
 against owner text through the shared ``locator_resolver``.
@@ -27,9 +27,18 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import can_read_media
 from nexus.db.models import PassageAnchor
-from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
-from nexus.services import locator_resolver, text_quote
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.schemas.passage_anchors import (
+    FragmentPassageTarget,
+    NotePassageTarget,
+    PassageTarget,
+    PdfPassageTarget,
+    TimePassageTarget,
+)
+from nexus.schemas.presence import Presence, absent, present
+from nexus.services import locator_resolver, note_bodies, text_quote
 from nexus.services.resource_graph import cleanup
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.text_quote import QuoteStatus
@@ -303,3 +312,51 @@ def resolve_current_location(
         resolved=resolved,
         locator=resolution.locator if resolved else None,
     )
+
+
+def get_navigation_target(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    passage_anchor_id: UUID,
+    owner: ResourceRef,
+) -> Presence[PassageTarget]:
+    """Authorize both identities, then resolve the quote without persisting offsets."""
+    anchor = db.get(PassageAnchor, passage_anchor_id)
+    if (
+        anchor is None
+        or anchor.user_id != viewer_id
+        or (anchor.owner_scheme, anchor.owner_id) != (owner.scheme, owner.id)
+    ):
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Passage not found")
+    if owner.scheme == "note_block":
+        note_bodies.get_note_block_for_owner_or_404(db, viewer_id, owner.id)
+    elif not can_read_media(db, viewer_id, owner.id):
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Passage not found")
+
+    location = resolve_current_location(
+        db, viewer_id=viewer_id, passage_anchor_id=passage_anchor_id
+    )
+    if location is None or location.locator is None:
+        return absent()
+    locator = location.locator
+    if owner.scheme == "note_block":
+        return present(
+            NotePassageTarget(
+                start_offset=locator["start_offset"], end_offset=locator["end_offset"]
+            )
+        )
+    if locator["kind"] == "text":
+        return present(
+            FragmentPassageTarget(
+                fragment_id=UUID(locator["fragment_id"]),
+                start_offset=locator["start_offset"],
+                end_offset=locator["end_offset"],
+            )
+        )
+    if locator["kind"] == "time":
+        return present(
+            TimePassageTarget(start_ms=locator["t_start_ms"], end_ms=locator["t_end_ms"])
+        )
+    # A matching page does not prove stored geometry survived content replacement.
+    return present(PdfPassageTarget(page_number=locator["page_number"]))

@@ -183,69 +183,50 @@ export default function SettingsLocalVaultPaneBody() {
     }
   }, [showError]);
 
-  const exportVault = useCallback(async () => {
-    if (!directoryHandle) {
-      setStatus("notConnected");
-      setMessage("Connect a local folder first.");
-      return;
-    }
-    setFailure(null);
-    setBusy(true);
-    setStatus("syncing");
-    try {
-      if (!(await hasVaultPermission(directoryHandle, true))) {
-        setStatus("needsPermission");
-        setMessage("Reconnect folder access to keep this vault current.");
+  // One pull; syncing first uploads the folder's editable files.
+  const runVault = useCallback(
+    async (operation: "ExportVault" | "SyncVault") => {
+      if (!directoryHandle) {
+        setStatus("notConnected");
+        setMessage("Connect a local folder first.");
         return;
       }
-      const response = await apiFetch<{ data: VaultSyncPayload }>("/api/vault");
-      await writeVaultPayload(directoryHandle, response.data);
-      setStatus(response.data.conflicts.length ? "conflicts" : "synced");
-      setMessage(
-        response.data.conflicts.length
-          ? `${pluralize(response.data.conflicts.length, "conflict file")} written.`
-          : "Vault written to the connected folder."
-      );
-    } catch (error) {
-      showError(error, "ExportVault");
-    } finally {
-      setBusy(false);
-    }
-  }, [directoryHandle, showError]);
-
-  const syncVault = useCallback(async () => {
-    if (!directoryHandle) {
-      setStatus("notConnected");
-      setMessage("Connect a local folder first.");
-      return;
-    }
-    setFailure(null);
-    setBusy(true);
-    setStatus("syncing");
-    try {
-      if (!(await hasVaultPermission(directoryHandle, true))) {
-        setStatus("needsPermission");
-        setMessage("Reconnect folder access to keep this vault current.");
-        return;
+      setFailure(null);
+      setBusy(true);
+      setStatus("syncing");
+      try {
+        if (!(await hasVaultPermission(directoryHandle, true))) {
+          setStatus("needsPermission");
+          setMessage("Reconnect folder access to keep this vault current.");
+          return;
+        }
+        const files =
+          operation === "SyncVault"
+            ? await readEditableVaultFiles(directoryHandle)
+            : null;
+        const response = await apiFetch<{ data: VaultSyncPayload }>(
+          "/api/vault",
+          files
+            ? { method: "POST", body: JSON.stringify({ files }) }
+            : undefined,
+        );
+        await writeVaultPayload(directoryHandle, response.data);
+        setStatus(response.data.conflicts.length ? "conflicts" : "synced");
+        setMessage(
+          response.data.conflicts.length
+            ? `${pluralize(response.data.conflicts.length, "conflict file")} written.`
+            : files
+              ? `Applied ${pluralize(files.length, "local edit")} and refreshed the folder.`
+              : "Vault written to the connected folder."
+        );
+      } catch (error) {
+        showError(error, operation);
+      } finally {
+        setBusy(false);
       }
-      const files = await readEditableVaultFiles(directoryHandle);
-      const response = await apiFetch<{ data: VaultSyncPayload }>("/api/vault", {
-        method: "POST",
-        body: JSON.stringify({ files }),
-      });
-      await writeVaultPayload(directoryHandle, response.data);
-      setStatus(response.data.conflicts.length ? "conflicts" : "synced");
-      setMessage(
-        response.data.conflicts.length
-          ? `${pluralize(response.data.conflicts.length, "conflict file")} written.`
-          : `Applied ${pluralize(files.length, "local edit")} and refreshed the folder.`
-      );
-    } catch (error) {
-      showError(error, "SyncVault");
-    } finally {
-      setBusy(false);
-    }
-  }, [directoryHandle, showError]);
+    },
+    [directoryHandle, showError],
+  );
 
   const toggleAutoSync = useCallback((checked: boolean) => {
     setVaultAutoSync(checked);
@@ -309,9 +290,12 @@ export default function SettingsLocalVaultPaneBody() {
                       }
                     : failure.operation === "ConnectFolder"
                       ? () => void connectFolder()
-                      : failure.operation === "ExportVault"
-                        ? () => void exportVault()
-                        : () => void syncVault(),
+                      : () =>
+                          void runVault(
+                            failure.operation === "ExportVault"
+                              ? "ExportVault"
+                              : "SyncVault",
+                          ),
               },
             ]}
           />
@@ -344,7 +328,7 @@ export default function SettingsLocalVaultPaneBody() {
           <Button
             variant="secondary"
             leadingIcon={<UploadCloud size={16} />}
-            onClick={exportVault}
+            onClick={() => void runVault("ExportVault")}
             disabled={busy || !directoryHandle}
           >
             Export vault
@@ -352,7 +336,7 @@ export default function SettingsLocalVaultPaneBody() {
           <Button
             variant="primary"
             leadingIcon={<RefreshCcw size={16} />}
-            onClick={syncVault}
+            onClick={() => void runVault("SyncVault")}
             disabled={busy || !directoryHandle}
           >
             Sync now

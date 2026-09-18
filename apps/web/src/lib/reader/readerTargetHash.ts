@@ -4,7 +4,7 @@ import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
 import {
   expectExactRecord,
   expectFiniteNumber,
-  expectInteger,
+  expectBoundedInteger,
   expectRecord,
   expectString,
 } from "@/lib/validation";
@@ -21,7 +21,7 @@ export type ReaderTargetKind =
 export interface ReaderTarget {
   kind: ReaderTargetKind;
   value: string;
-  origin: "hash" | "pulse" | "manual";
+  origin: "hash" | "passage" | "pulse" | "manual";
 }
 
 interface TextOffsets {
@@ -82,19 +82,6 @@ export function parseReaderTextTarget(value: string): TextOffsets | null {
   return { fragmentId: match[1]!, startOffset, endOffset };
 }
 
-function decodeBoundedInteger(
-  raw: unknown,
-  name: string,
-  minimum: number,
-  maximum: number,
-): number {
-  const value = expectInteger(raw, name);
-  if (value < minimum || value > maximum) {
-    throw new TypeError(`${name} is outside its supported range`);
-  }
-  return value;
-}
-
 function decodeTextOffsets(
   row: Record<string, unknown>,
   name: string,
@@ -103,13 +90,13 @@ function decodeTextOffsets(
   if (!fragmentId) {
     throw new TypeError(`${name}.fragment_id must not be empty`);
   }
-  const startOffset = decodeBoundedInteger(
+  const startOffset = expectBoundedInteger(
     row.start_offset,
     `${name}.start_offset`,
     0,
     2 ** 31 - 1,
   );
-  const endOffset = decodeBoundedInteger(
+  const endOffset = expectBoundedInteger(
     row.end_offset,
     `${name}.end_offset`,
     0,
@@ -193,13 +180,13 @@ export function decodeResolvedHighlightReaderTarget(
         ["start_ms", "end_ms"],
         "highlight reader target.time_range.value",
       );
-      const startMs = decodeBoundedInteger(
+      const startMs = expectBoundedInteger(
         range.start_ms,
         "highlight reader target.time_range.value.start_ms",
         0,
         Number.MAX_SAFE_INTEGER,
       );
-      const endMs = decodeBoundedInteger(
+      const endMs = expectBoundedInteger(
         range.end_ms,
         "highlight reader target.time_range.value.end_ms",
         0,
@@ -231,7 +218,7 @@ export function decodeResolvedHighlightReaderTarget(
     }
     return {
       kind,
-      pageNumber: decodeBoundedInteger(
+      pageNumber: expectBoundedInteger(
         row.page_number,
         "highlight reader target.page_number",
         1,

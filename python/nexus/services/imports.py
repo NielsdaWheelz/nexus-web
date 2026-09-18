@@ -227,9 +227,9 @@ WITH visible_media AS (
 ), media_classified AS (
     SELECT
         media_work.*,
-        attempt_status IN ('succeeded', 'superseded') AS source_published,
+        attempt_status = 'succeeded' AS source_published,
         CASE
-            WHEN attempt_status NOT IN ('succeeded', 'superseded')
+            WHEN attempt_status <> 'succeeded'
              AND source_job_status = 'dead'
                 THEN 'NeedsAttention'
             WHEN attempt_status = 'failed'
@@ -238,7 +238,7 @@ WITH visible_media AS (
                 OR source_job_status NOT IN ('pending', 'failed', 'running')
              )
                 THEN 'NeedsAttention'
-            WHEN attempt_status NOT IN ('succeeded', 'superseded')
+            WHEN attempt_status <> 'succeeded'
                 THEN 'Active'
             WHEN index_job_status = 'dead'
                 THEN 'NeedsAttention'

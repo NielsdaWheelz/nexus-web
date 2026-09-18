@@ -58,7 +58,6 @@ from nexus.schemas.oracle import (
     oracle_event_payload,
     oracle_folio_theme,
     oracle_passage_payload,
-    oracle_read_failure_code,
     oracle_reading_event_type,
     oracle_reading_failure_code,
     oracle_reading_phase,
@@ -412,7 +411,7 @@ def get_reading_detail(
         completed_at=reading.completed_at,
         failed_at=reading.failed_at,
         error_code=(
-            None if reading.error_code is None else oracle_read_failure_code(reading.error_code)
+            None if reading.error_code is None else oracle_reading_failure_code(reading.error_code)
         ),
     )
 

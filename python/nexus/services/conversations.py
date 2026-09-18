@@ -199,7 +199,6 @@ def conversation_to_out(
         title=conversation.title,
         owner_user_id=conversation.owner_user_id,
         is_owner=(viewer_id is not None and conversation.owner_user_id == viewer_id),
-        sharing=conversation.sharing,
         message_count=message_count,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
@@ -318,7 +317,6 @@ def create_conversation(
     conversation = Conversation(
         owner_user_id=viewer_id,
         title=DEFAULT_CONVERSATION_TITLE,
-        sharing="private",
         next_seq=1,
     )
 
@@ -373,9 +371,6 @@ def get_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> Con
     return conversation_to_out(db, conversation, message_count, viewer_id=viewer_id)
 
 
-VALID_SCOPES = {"mine", "all", "shared"}
-
-
 @dataclass(frozen=True, slots=True)
 class ChatsUpdatedNewest:
     """Canonical: the most recently updated chat first."""
@@ -393,7 +388,7 @@ class ChatsTitle:
 
 type ConversationIndexView = ChatsUpdatedNewest | ChatsUpdatedOldest | ChatsTitle
 
-_INDEX_QUERY_KEYS = frozenset({"scope", "sort", "direction"})
+_INDEX_QUERY_KEYS = frozenset({"sort", "direction"})
 # Versioned family: a cursor minted under the single unordered index carried no
 # plan and no revision, so none is decodable against a chosen order.
 _INDEX_CURSOR_FAMILY = f"{CollectionFamily.ConversationIndex.value}:v2"
@@ -449,29 +444,6 @@ def _index_plan(view: ConversationIndexView) -> list[SortKey]:
             assert_never(view)
 
 
-def _build_visibility_cte(viewer_id: UUID) -> str:
-    """Return a SQL CTE that selects conversation IDs visible to viewer.
-
-    Visible means:
-    - Owner, OR
-    - Library-shared with active dual membership (viewer + owner in share-target library)
-    """
-    return """
-        visible_conversations AS (
-            SELECT c.id
-            FROM conversations c
-            WHERE c.owner_user_id = :viewer_id
-            UNION
-            SELECT c.id
-            FROM conversations c
-            JOIN conversation_shares cs ON cs.conversation_id = c.id
-            JOIN memberships vm ON vm.library_id = cs.library_id AND vm.user_id = :viewer_id
-            JOIN memberships om ON om.library_id = cs.library_id AND om.user_id = c.owner_user_id
-            WHERE c.sharing = 'library'
-        )
-    """
-
-
 def list_conversation_index(
     db: Session,
     *,
@@ -479,21 +451,13 @@ def list_conversation_index(
     limit: int,
     cursor: CollectionCursor | None,
     collection_revision: CollectionRevision | None,
-    scope: str | None,
     view: ConversationIndexView,
 ) -> CollectionPage[ConversationListItemOut]:
     """One revision-consistent page of the finite primary conversation index, in
     the requested total order. The ``facts`` wrapper projects the derived sort
     columns once so ORDER BY, the keyset, and the cursor read identical
-    expressions; the returned cursor is bound to this exact viewer, scope, plan,
-    and revision."""
-    effective_scope = scope if scope is not None else "mine"
-    if effective_scope not in VALID_SCOPES:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Invalid scope: {effective_scope}. Must be one of: mine, all, shared",
-        )
-
+    expressions; the returned cursor is bound to this exact viewer, plan, and
+    revision."""
     current_revision = (
         read_collection_revision(
             db,
@@ -509,12 +473,10 @@ def list_conversation_index(
         )
     )
     plan = _index_plan(view)
-    cursor_family = f"{_INDEX_CURSOR_FAMILY}:{effective_scope}"
     cursor_query = {
-        "family": cursor_family,
+        "family": _INDEX_CURSOR_FAMILY,
         "plan": plan_json(plan),
         "revision": current_revision,
-        "scope": effective_scope,
         "viewerId": str(viewer_id),
     }
     params: dict[str, object] = {
@@ -529,34 +491,18 @@ def list_conversation_index(
                 plan,
                 decode_keyset_cursor(
                     cursor,
-                    family=cursor_family,
+                    family=_INDEX_CURSOR_FAMILY,
                     query=cursor_query,
                     expected_kinds=expected_kinds(plan),
                 ),
             )
         )
 
-    if effective_scope == "mine":
-        relation = """
-            FROM conversations c
-            WHERE c.owner_user_id = :viewer_id
-        """
-    else:
-        scope_filter = "AND c.owner_user_id != :viewer_id" if effective_scope == "shared" else ""
-        relation = f"""
-            FROM conversations c
-            JOIN visible_conversations vc ON vc.id = c.id
-            WHERE true
-              {scope_filter}
-        """
-
-    visibility_cte = "" if effective_scope == "mine" else f"{_build_visibility_cte(viewer_id)},"
     rows = (
         db.execute(
             text(
                 f"""
-                WITH {visibility_cte}
-                chats AS (
+                WITH chats AS (
                     SELECT
                         c.id,
                         c.title,
@@ -567,7 +513,8 @@ def list_conversation_index(
                             FROM messages m
                             WHERE m.conversation_id = c.id
                         ) AS message_count
-                    {relation}
+                    FROM conversations c
+                    WHERE c.owner_user_id = :viewer_id
                 ),
                 facts AS (
                     SELECT chats.*, lower(chats.presented_title) AS title_key
@@ -597,7 +544,7 @@ def list_conversation_index(
     next_cursor: CollectionCursor | None = None
     if len(rows) > limit and page_rows:
         next_cursor = encode_keyset_cursor(
-            family=cursor_family,
+            family=_INDEX_CURSOR_FAMILY,
             query=cursor_query,
             after=after_values(plan, page_rows[-1]),
         )
@@ -622,45 +569,42 @@ def list_retained_conversations(
     viewer_id: UUID,
     limit: int = DEFAULT_LIMIT,
     cursor: str | None = None,
-    scope: str | None = None,
     has_context_ref: str | None = None,
     q: str | None = None,
 ) -> tuple[list[ConversationOut], PageInfo]:
     """List conversations for one retained manual-paging route mode.
 
-    When ``q`` is supplied (the destination-picker title search), the scope is
-    forced to owned and the query composes only with ``cursor``/``limit``; any
-    ``scope`` or ``has_context_ref`` filter is rejected. ``q`` is trimmed and
-    length-bounded; a blank query applies no title filter. Ordering stays
-    ``(updated_at DESC, id DESC)`` so a cursor stays stable while ``q`` is fixed
-    (changing ``q`` clears the cursor caller-side).
+    When ``q`` is supplied (the destination-picker title search), the query
+    composes only with ``cursor``/``limit``; a ``has_context_ref`` filter is
+    rejected. ``q`` is trimmed and length-bounded; a blank query applies no
+    title filter. Ordering stays ``(updated_at DESC, id DESC)`` so a cursor
+    stays stable while ``q`` is fixed (changing ``q`` clears the cursor
+    caller-side).
 
     When ``has_context_ref`` is supplied, returns conversations with any edge to
-    that resource URI (single-user: viewer-owned only); ``scope`` is meaningless
-    there and is neither validated nor applied (pinned bypass). Unmarked primary
-    index reads are owned exclusively by ``list_conversation_index``.
+    that resource URI (single-user: viewer-owned only). Unmarked primary index
+    reads are owned exclusively by ``list_conversation_index``.
 
     Args:
         db: Database session.
         viewer_id: The ID of the viewer.
         limit: Maximum number of results (clamped to 1-100).
         cursor: Opaque pagination cursor.
-        scope: One of 'mine' (default), 'all', 'shared'.
         has_context_ref: Resource URI to filter conversations by context edge.
-        q: Owned-scope title search (destination picker); composes only with
+        q: Owner-scoped title search (destination picker); composes only with
             cursor/limit.
 
     Returns:
         Tuple of (conversations, page_info).
 
     Raises:
-        InvalidRequestError(E_INVALID_REQUEST): If scope is invalid, the
-            has_context_ref URI is malformed, or ``q`` is combined with another
-            scope/context filter or exceeds its length bound.
+        InvalidRequestError(E_INVALID_REQUEST): If the has_context_ref URI is
+            malformed, or ``q`` is combined with a context filter or exceeds its
+            length bound.
         InvalidRequestError(E_INVALID_CURSOR): If cursor is malformed.
     """
     if q is not None:
-        if scope is not None or has_context_ref is not None:
+        if has_context_ref is not None:
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "q composes only with cursor and limit",
@@ -701,7 +645,7 @@ def _list_conversations_mine(
     cursor: str | None,
     normalized_q: str,
 ) -> tuple[list[ConversationOut], PageInfo]:
-    """List only conversations owned by viewer (scope=mine).
+    """List only conversations owned by viewer.
 
     When ``title_search`` is set, applies a case-insensitive literal-substring
     title match alongside the same cursor/order so pagination stays stable.
@@ -740,7 +684,7 @@ def _list_conversations_mine(
 
     result = db.execute(
         text(f"""
-            SELECT c.id, c.owner_user_id, c.title, c.sharing, c.created_at, c.updated_at,
+            SELECT c.id, c.owner_user_id, c.title, c.created_at, c.updated_at,
                    (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
             FROM conversations c
             WHERE c.owner_user_id = :viewer_id
@@ -769,8 +713,8 @@ def _build_conversation_page(
 ) -> tuple[list[ConversationOut], PageInfo]:
     """Build paginated response from raw rows.
 
-    Row columns (in order): id, owner_user_id, title, sharing, created_at,
-    updated_at, message_count.
+    Row columns (in order): id, owner_user_id, title, created_at, updated_at,
+    message_count.
     """
     has_more = len(rows) > limit
     if has_more:
@@ -782,10 +726,9 @@ def _build_conversation_page(
             owner_user_id=row[1],
             title=row[2],
             is_owner=(row[1] == viewer_id),
-            sharing=row[3],
-            created_at=row[4],
-            updated_at=row[5],
-            message_count=row[6],
+            created_at=row[3],
+            updated_at=row[4],
+            message_count=row[5],
         )
         for row in rows
     ]
@@ -1086,10 +1029,6 @@ def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) 
     )
     db.execute(
         text("DELETE FROM conversation_branches WHERE conversation_id = :conversation_id"),
-        {"conversation_id": conversation_id},
-    )
-    db.execute(
-        text("DELETE FROM conversation_shares WHERE conversation_id = :conversation_id"),
         {"conversation_id": conversation_id},
     )
     db.execute(delete(Conversation).where(Conversation.id == conversation_id))

@@ -48,7 +48,6 @@ const SOURCE_ATTEMPT_STATUSES = [
   "running",
   "succeeded",
   "failed",
-  "superseded",
 ] as const;
 
 type SourceAttemptStatus = (typeof SOURCE_ATTEMPT_STATUSES)[number];

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePaneRouter, usePaneRuntime } from "@/lib/panes/paneRuntime";
+import { passageAnchorIdFromHash, usePassageResolution } from "./passageResolution";
 import {
   consumePendingReaderPulse,
   useReaderPulseHighlight,
@@ -18,6 +19,7 @@ export interface ReaderTargetState {
   setTarget: (target: ReaderTarget) => void;
   markActive: () => void;
   clearTarget: () => void;
+  passageResolution: ReturnType<typeof usePassageResolution>;
 }
 
 function targetFromPulse(detail: ReaderPulseTarget): ReaderTarget | null {
@@ -55,6 +57,16 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
   const paneRuntime = usePaneRuntime();
   const paneHref = paneRuntime?.href ?? null;
   const hasPaneRuntime = paneRuntime !== null;
+  const paneHash = typeof window === "undefined"
+    ? ""
+    : hasPaneRuntime
+      ? hashFromPaneHref(paneHref)
+      : window.location.hash;
+  const passageResolution = usePassageResolution({
+    hash: paneHash,
+    ownerScheme: "media",
+    ownerId: mediaId,
+  });
   const [state, setState] = useState<{
     target: ReaderTarget | null;
     status: ReaderTargetState["status"];
@@ -66,18 +78,31 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
   useEffect(() => {
     const mediaChanged = mediaIdRef.current !== mediaId;
     mediaIdRef.current = mediaId;
-    const hash =
-      typeof window === "undefined"
-        ? ""
-        : hasPaneRuntime
-          ? hashFromPaneHref(paneHref)
-          : window.location.hash;
+    const hash = paneHash;
     const parsed = parseReaderTargetHash(hash);
-    const pendingPulse = consumePendingReaderPulse(mediaId);
     if (parsed) {
       setState({ target: { ...parsed, origin: "hash" }, status: "pending" });
       return;
     }
+    if (passageAnchorIdFromHash(hash)) {
+      if (passageResolution.status === "ready" && passageResolution.data.kind === "Present") {
+        const passage = passageResolution.data.value;
+        if (passage.kind === "FragmentTextOffsets") {
+          setState({ target: { kind: "text", value: `${passage.fragmentId}:${passage.startOffset}:${passage.endOffset}`, origin: "passage" }, status: "pending" });
+        } else if (passage.kind === "TimeRange") {
+          setState({ target: { kind: "t", value: String(passage.startMs), origin: "passage" }, status: "pending" });
+        } else if (passage.kind === "PdfPage") {
+          setState({ target: { kind: "page", value: String(passage.pageNumber), origin: "passage" }, status: "pending" });
+        }
+      } else {
+        setState({ target: null, status: "idle" });
+      }
+      return;
+    }
+    if (hash && stateRef.current.target?.origin === "passage") {
+      setState({ target: null, status: "idle" });
+    }
+    const pendingPulse = consumePendingReaderPulse(mediaId);
     if (pendingPulse) {
       const pendingTarget = targetFromPulse(pendingPulse);
       if (pendingTarget) {
@@ -88,7 +113,7 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
     if (mediaChanged) {
       setState({ target: null, status: "idle" });
     }
-  }, [hasPaneRuntime, mediaId, paneHref]);
+  }, [mediaId, paneHash, passageResolution]);
 
   const onReaderPulse = useCallback(
     (detail: ReaderPulseTarget) => {
@@ -121,7 +146,7 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
   const markActive = useCallback(() => {
     const prev = stateRef.current.target;
     setState((s) => ({ ...s, status: "active" }));
-    if (prev?.origin === "hash") {
+    if (prev?.origin === "hash" || prev?.origin === "passage") {
       const pathname = paneRuntime?.pathname ?? window.location.pathname;
       const search =
         paneRuntime?.searchParams
@@ -137,5 +162,5 @@ export function useReaderTarget(mediaId: string): ReaderTargetState {
     setState({ target: null, status: "dismissed" });
   }, []);
 
-  return { target: state.target, status: state.status, setTarget, markActive, clearTarget };
+  return { target: state.target, status: state.status, setTarget, markActive, clearTarget, passageResolution };
 }

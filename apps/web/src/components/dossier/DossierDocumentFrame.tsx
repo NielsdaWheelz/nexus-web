@@ -232,33 +232,23 @@ function randomToken(): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+// The sealed document knows only day and night; the Solar is a dark room.
 function currentTheme(): DossierDocumentTheme {
   if (typeof document === "undefined") return "dark";
-  const explicit = document.documentElement.dataset.theme;
-  if (explicit === "light" || explicit === "dark") return explicit;
-  // The sealed document knows only day and night; the Solar is a dark room.
-  if (explicit === "elvish") return "dark";
-  return window.matchMedia("(prefers-color-scheme: light)").matches
-    ? "light"
-    : "dark";
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
 }
 
 function useNexusDocumentTheme(): DossierDocumentTheme {
   const [theme, setTheme] = useState<DossierDocumentTheme>(currentTheme);
   useEffect(() => {
-    const media = window.matchMedia("(prefers-color-scheme: light)");
     const update = () => setTheme(currentTheme());
     const observer = new MutationObserver(update);
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
     });
-    media.addEventListener("change", update);
     update();
-    return () => {
-      observer.disconnect();
-      media.removeEventListener("change", update);
-    };
+    return () => observer.disconnect();
   }, []);
   return theme;
 }

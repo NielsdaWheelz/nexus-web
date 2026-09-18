@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  useLayoutEffect,
-  useRef,
-  useState,
-  type RefObject,
-} from "react";
+import type { RefObject } from "react";
 import { Ellipsis, List, X } from "lucide-react";
 import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import type { PlayerCaptureController } from "@/lib/walknotes/usePlayerCapture";
@@ -20,7 +15,6 @@ import {
   PlayerStatus,
   PlayerTransport,
   PlayerVolumeControl,
-  playerCaptureAction,
   playerChapters,
   playerNextProvenance,
   playerOpenLecternAction,
@@ -50,27 +44,10 @@ export default function DesktopListeningShelf({
   readonly suspended: boolean;
   readonly playbackButtonRef: RefObject<HTMLButtonElement | null>;
 }) {
-  const shelfRef = useRef<HTMLElement>(null);
-  const [compactActions, setCompactActions] = useState(false);
   const chapters = playerChapters(model);
   const provenance = playerNextProvenance(model);
   const options: ActionDescriptor[] = [
-    ...(compactActions ? playerCaptureAction(model, capture) : []),
     ...playerReviewCapturesAction(model, capture),
-    ...(compactActions
-      ? [
-          {
-            id: "Player.PlaybackSettings",
-            kind: "custom" as const,
-            label: "Volume",
-            render: () => (
-              <div className={styles.menuSettings}>
-                <PlayerVolumeControl />
-              </div>
-            ),
-          },
-        ]
-      : []),
     ...(chapters.length > 0
       ? [
           {
@@ -86,19 +63,8 @@ export default function DesktopListeningShelf({
     ...playerOpenLecternAction(model, onOpenLectern),
   ];
 
-  useLayoutEffect(() => {
-    const shelf = shelfRef.current;
-    if (!shelf) return;
-    const update = () => setCompactActions(shelf.clientWidth < 1088);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(shelf);
-    return () => observer.disconnect();
-  }, []);
-
   return (
     <footer
-      ref={shelfRef}
       className={styles.shelf}
       role="region"
       aria-label="Media player"
@@ -119,18 +85,14 @@ export default function DesktopListeningShelf({
       </div>
 
       <div className={styles.actionField}>
-        {model.kind === "Canonical" && !compactActions ? (
+        {model.kind === "Canonical" ? (
           <PlayerCaptureButton model={model} capture={capture} />
         ) : null}
         <PlayerPlaybackRateButton
           ref={playbackButtonRef}
           onClick={onOpenPlayback}
         />
-        {!compactActions ? (
-          <span className={styles.desktopSetting}>
-            <PlayerVolumeControl />
-          </span>
-        ) : null}
+        <PlayerVolumeControl />
         <PlayerRecordingActionsMenu
           model={model}
           renderTrigger={(props) => (
