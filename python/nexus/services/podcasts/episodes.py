@@ -28,6 +28,15 @@ from nexus.schemas.podcast import (
 )
 from nexus.schemas.presence import absent, present
 from nexus.services import media as media_service
+from nexus.services.collection_keyset import (
+    Direction,
+    SortKey,
+    after_values,
+    expected_kinds,
+    keyset_clause,
+    keyset_params,
+    order_by_sql,
+)
 from nexus.services.collection_revisions import (
     CollectionFamily,
     read_collection_revision,
@@ -35,7 +44,6 @@ from nexus.services.collection_revisions import (
 )
 from nexus.services.consumption import service as consumption_service
 from nexus.services.signed_keyset_cursor import (
-    KeysetValue,
     KeysetValueKind,
     decode_signed_keyset_cursor,
     encode_signed_keyset_cursor,
@@ -78,117 +86,25 @@ def _episode_query_identity(
     }
 
 
-def _episode_order(
-    sort: PodcastEpisodeSort,
-) -> tuple[str, tuple[KeysetValueKind, ...]]:
-    published = (
-        KeysetValueKind.Int,
-        KeysetValueKind.DateTimeOrNull,
-        KeysetValueKind.Uuid,
-    )
-    if sort == "oldest":
-        return (
-            "published_missing ASC, published_at ASC, media_id ASC",
-            published,
-        )
-    if sort == "newest":
-        return (
-            "published_missing ASC, published_at DESC, media_id DESC",
-            published,
-        )
-    kinds = (
-        KeysetValueKind.Int,
-        KeysetValueKind.Int,
-        KeysetValueKind.Int,
-        KeysetValueKind.DateTimeOrNull,
-        KeysetValueKind.Uuid,
-    )
-    duration_direction = "ASC" if sort == "duration_asc" else "DESC"
-    return (
-        f"duration_missing ASC, duration_seconds {duration_direction}, "
-        "published_missing ASC, published_at DESC, media_id DESC",
-        kinds,
-    )
-
-
-def _episode_keyset_predicate(
-    sort: PodcastEpisodeSort,
-    after: tuple[object, ...] | None,
-    params: dict[str, object],
-) -> str:
-    if after is None:
-        return "TRUE"
-    if sort in {"newest", "oldest"}:
-        missing, published, media_id = after
-        params.update(
-            after_published_missing=missing,
-            after_published=published,
-            after_media_id=media_id,
-        )
-        published_operator = ">" if sort == "oldest" else "<"
-        id_operator = ">" if sort == "oldest" else "<"
-        return f"""
-            published_missing > :after_published_missing
-            OR (published_missing = :after_published_missing
-                AND :after_published_missing = 0
-                AND published_at {published_operator} :after_published)
-            OR (published_missing = :after_published_missing
-                AND published_at IS NOT DISTINCT FROM :after_published
-                AND media_id {id_operator} :after_media_id)
-        """
-
-    duration_missing, duration, published_missing, published, media_id = after
-    params.update(
-        after_duration_missing=duration_missing,
-        after_duration=duration,
-        after_published_missing=published_missing,
-        after_published=published,
-        after_media_id=media_id,
-    )
-    duration_operator = ">" if sort == "duration_asc" else "<"
-    return f"""
-        duration_missing > :after_duration_missing
-        OR (duration_missing = :after_duration_missing
-            AND :after_duration_missing = 0
-            AND duration_seconds {duration_operator} :after_duration)
-        OR (duration_missing = :after_duration_missing
-            AND (duration_seconds IS NOT DISTINCT FROM
-                 CASE WHEN :after_duration_missing = 1 THEN NULL ELSE :after_duration END)
-            AND published_missing > :after_published_missing)
-        OR (duration_missing = :after_duration_missing
-            AND (duration_seconds IS NOT DISTINCT FROM
-                 CASE WHEN :after_duration_missing = 1 THEN NULL ELSE :after_duration END)
-            AND published_missing = :after_published_missing
-            AND :after_published_missing = 0
-            AND published_at < :after_published)
-        OR (duration_missing = :after_duration_missing
-            AND (duration_seconds IS NOT DISTINCT FROM
-                 CASE WHEN :after_duration_missing = 1 THEN NULL ELSE :after_duration END)
-            AND published_missing = :after_published_missing
-            AND published_at IS NOT DISTINCT FROM :after_published
-            AND media_id < :after_media_id)
-    """
-
-
-def _episode_after_values(
-    sort: PodcastEpisodeSort,
-    row: RowMapping,
-) -> tuple[KeysetValue, ...]:
-    published = (
-        KeysetValue(KeysetValueKind.Int, int(row["published_missing"])),
-        KeysetValue(KeysetValueKind.DateTimeOrNull, row["published_at"]),
-        KeysetValue(KeysetValueKind.Uuid, UUID(str(row["media_id"]))),
-    )
+def _episode_plan(sort: PodcastEpisodeSort) -> list[SortKey]:
+    """The one total order behind this listing's ORDER BY, page predicate and cursor."""
+    published_direction: Direction = "asc" if sort == "oldest" else "desc"
+    published = [
+        SortKey("published_missing", "asc", KeysetValueKind.Int),
+        SortKey("published_at", published_direction, KeysetValueKind.DateTimeOrNull),
+        SortKey("media_id", published_direction, KeysetValueKind.Uuid),
+    ]
     if sort in {"newest", "oldest"}:
         return published
-    return (
-        KeysetValue(KeysetValueKind.Int, int(row["duration_missing"])),
-        KeysetValue(
+    return [
+        SortKey("duration_missing", "asc", KeysetValueKind.Int),
+        SortKey(
+            "duration_sort",
+            "asc" if sort == "duration_asc" else "desc",
             KeysetValueKind.Int,
-            int(row["duration_seconds"]) if row["duration_seconds"] is not None else 0,
         ),
         *published,
-    )
+    ]
 
 
 def _episode_state_predicate(
@@ -365,17 +281,7 @@ def list_podcast_episodes_for_viewer(
         state=state,
         sort=sort,
     )
-    order_by_sql, cursor_kinds = _episode_order(sort)
-    after = (
-        decode_signed_keyset_cursor(
-            cursor,
-            family=CollectionFamily.PodcastEpisodes.value,
-            query=query_identity,
-            expected_kinds=cursor_kinds,
-        )
-        if cursor is not None
-        else None
-    )
+    plan = _episode_plan(sort)
     revision = (
         read_collection_revision(
             db,
@@ -399,7 +305,20 @@ def list_podcast_episodes_for_viewer(
         state=state,
         params=params,
     )
-    keyset_sql = _episode_keyset_predicate(sort, after, params)
+    keyset_sql = ""
+    if cursor is not None:
+        keyset_sql = keyset_clause(plan, alias="er")
+        params.update(
+            keyset_params(
+                plan,
+                decode_signed_keyset_cursor(
+                    cursor,
+                    family=CollectionFamily.PodcastEpisodes.value,
+                    query=query_identity,
+                    expected_kinds=expected_kinds(plan),
+                ),
+            )
+        )
 
     episode_rows = (
         db.execute(
@@ -413,6 +332,7 @@ def list_podcast_episodes_for_viewer(
                     pe.media_id,
                     pe.published_at,
                     pe.duration_seconds,
+                    COALESCE(pe.duration_seconds, 0) AS duration_sort,
                     CASE WHEN pe.published_at IS NULL THEN 1 ELSE 0 END
                         AS published_missing,
                     CASE WHEN pe.duration_seconds IS NULL THEN 1 ELSE 0 END
@@ -437,11 +357,11 @@ def list_podcast_episodes_for_viewer(
                 }
                 WHERE pe.podcast_id = :podcast_id
             )
-            SELECT *
-            FROM episode_rows
+            SELECT er.*
+            FROM episode_rows er
             WHERE ({state_sql})
-              AND ({keyset_sql})
-            ORDER BY {order_by_sql}
+            {keyset_sql}
+            ORDER BY {order_by_sql(plan, alias="er")}
             LIMIT :page_limit
             """
             ),
@@ -537,7 +457,7 @@ def list_podcast_episodes_for_viewer(
             encode_signed_keyset_cursor(
                 family=CollectionFamily.PodcastEpisodes.value,
                 query=query_identity,
-                after=_episode_after_values(sort, page_rows[-1]),
+                after=after_values(plan, page_rows[-1]),
             )
         )
         if has_next

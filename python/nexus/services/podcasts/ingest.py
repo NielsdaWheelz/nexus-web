@@ -45,7 +45,6 @@ from ._normalize import (
     parse_iso_datetime,
 )
 from .episode_identity import (
-    EpisodeAlias,
     EpisodeIdentityConflict,
     attach_episode_aliases_in_current_transaction,
     diagnostic_episode_alias,
@@ -69,7 +68,6 @@ class SubscriptionIngestResult:
     """Result of one fenced Podcast episode batch."""
 
     ingested_episode_count: int
-    reused_episode_count: int
     added_to_subscriber_all_count: int
     source_limited: bool
 
@@ -91,13 +89,17 @@ def _build_episode_author_observation(author_names: list[str]) -> ContributorObs
     return batch
 
 
-def lock_subscription_ingest_parent_in_current_transaction(
-    db: Session,
+def sync_subscription_ingest(
     *,
+    db: Session,
+    viewer_id: UUID,
     podcast_id: UUID,
+    feed_url: str,
     selected_episodes: list[dict[str, Any]],
-) -> tuple[tuple[EpisodeAlias, ...], ...]:
-    """Acquire the shared alias -> Podcast prefix before Media/Library mutation."""
+    now: datetime,
+) -> SubscriptionIngestResult:
+    # Acquire the shared alias -> Podcast lock prefix before Media/Library mutation:
+    # backfill.py relies on this being the first action, in canonical alias order.
     aliases_by_episode = validate_episode_alias_batch(selected_episodes)
     lock_episode_aliases(
         db,
@@ -112,25 +114,7 @@ def lock_subscription_ingest_parent_in_current_transaction(
         is None
     ):
         raise EpisodeIdentityConflict("episode Podcast identity is missing")
-    return aliases_by_episode
-
-
-def sync_subscription_ingest(
-    *,
-    db: Session,
-    viewer_id: UUID,
-    podcast_id: UUID,
-    feed_url: str,
-    selected_episodes: list[dict[str, Any]],
-    now: datetime,
-) -> SubscriptionIngestResult:
-    aliases_by_episode = lock_subscription_ingest_parent_in_current_transaction(
-        db,
-        podcast_id=podcast_id,
-        selected_episodes=selected_episodes,
-    )
     ingested_episode_count = 0
-    reused_episode_count = 0
     added_to_subscriber_all_count = 0
     source_limited = False
     enrichment_media_ids: set[UUID] = set()
@@ -168,17 +152,7 @@ def sync_subscription_ingest(
                     author_names.append(name)
         if not author_names:
             author_names.extend(podcast_author_names)
-        rss_transcript_refs = episode.get("rss_transcript_refs")
-        rss_transcript_url = None
-        if isinstance(rss_transcript_refs, list):
-            for ref in rss_transcript_refs:
-                if not isinstance(ref, dict):
-                    continue
-                candidate_url = str(ref.get("url") or "").strip()
-                if not candidate_url:
-                    continue
-                rss_transcript_url = candidate_url
-                break
+        rss_transcript_url = str(episode.get("rss_transcript_url") or "").strip() or None
         existing_media_id = resolve_episode_aliases_in_current_transaction(
             db,
             podcast_id=podcast_id,
@@ -264,7 +238,6 @@ def sync_subscription_ingest(
                 )
             if not author_names:
                 enrichment_media_ids.add(media_id)
-            reused_episode_count += 1
         else:
             media_id = new_uuid7()
             audio_url = str(episode.get("audio_url") or "").strip() or None
@@ -449,7 +422,6 @@ def sync_subscription_ingest(
 
     return SubscriptionIngestResult(
         ingested_episode_count=ingested_episode_count,
-        reused_episode_count=reused_episode_count,
         added_to_subscriber_all_count=added_to_subscriber_all_count,
         source_limited=source_limited,
     )
@@ -466,104 +438,55 @@ def _upsert_podcast_episode_chapters(
     if normalized_rows is None:
         return
 
-    for chapter_idx, chapter in enumerate(normalized_rows):
-        existing_chapter_id = db.scalar(
-            text(
-                """
-                SELECT id
-                FROM podcast_episode_chapters
-                WHERE media_id = :media_id
-                  AND chapter_idx = :chapter_idx
-                """
-            ),
-            {"media_id": media_id, "chapter_idx": chapter_idx},
-        )
-        if existing_chapter_id is None:
-            db.execute(
-                text(
-                    """
-                    INSERT INTO podcast_episode_chapters (
-                        media_id,
-                        chapter_idx,
-                        title,
-                        t_start_ms,
-                        t_end_ms,
-                        url,
-                        image_url,
-                        source,
-                        created_at
-                    )
-                    VALUES (
-                        :media_id,
-                        :chapter_idx,
-                        :title,
-                        :t_start_ms,
-                        :t_end_ms,
-                        :url,
-                        :image_url,
-                        :source,
-                        :created_at
-                    )
-                    """
-                ),
-                {
-                    "media_id": media_id,
-                    "chapter_idx": chapter_idx,
-                    "title": chapter["title"],
-                    "t_start_ms": chapter["t_start_ms"],
-                    "t_end_ms": chapter["t_end_ms"],
-                    "url": chapter["url"],
-                    "image_url": chapter["image_url"],
-                    "source": chapter["source"],
-                    "created_at": now,
-                },
-            )
-        else:
-            db.execute(
-                text(
-                    """
-                    UPDATE podcast_episode_chapters
-                    SET
-                        title = :title,
-                        t_start_ms = :t_start_ms,
-                        t_end_ms = :t_end_ms,
-                        url = :url,
-                        image_url = :image_url,
-                        source = :source
-                    WHERE id = :id
-                    """
-                ),
-                {
-                    "id": existing_chapter_id,
-                    "title": chapter["title"],
-                    "t_start_ms": chapter["t_start_ms"],
-                    "t_end_ms": chapter["t_end_ms"],
-                    "url": chapter["url"],
-                    "image_url": chapter["image_url"],
-                    "source": chapter["source"],
-                },
-            )
+    db.execute(
+        text("DELETE FROM podcast_episode_chapters WHERE media_id = :media_id"),
+        {"media_id": media_id},
+    )
+    if not normalized_rows:
+        return
 
-    if normalized_rows:
-        keep_indices = list(range(len(normalized_rows)))
-        db.execute(
-            text(
-                """
-                DELETE FROM podcast_episode_chapters
-                WHERE media_id = :media_id
-                  AND NOT (chapter_idx = ANY(:keep_indices))
-                """
-            ),
+    db.execute(
+        text(
+            """
+            INSERT INTO podcast_episode_chapters (
+                media_id,
+                chapter_idx,
+                title,
+                t_start_ms,
+                t_end_ms,
+                url,
+                image_url,
+                source,
+                created_at
+            )
+            VALUES (
+                :media_id,
+                :chapter_idx,
+                :title,
+                :t_start_ms,
+                :t_end_ms,
+                :url,
+                :image_url,
+                :source,
+                :created_at
+            )
+            """
+        ),
+        [
             {
                 "media_id": media_id,
-                "keep_indices": keep_indices,
-            },
-        )
-    else:
-        db.execute(
-            text("DELETE FROM podcast_episode_chapters WHERE media_id = :media_id"),
-            {"media_id": media_id},
-        )
+                "chapter_idx": chapter_idx,
+                "title": chapter["title"],
+                "t_start_ms": chapter["t_start_ms"],
+                "t_end_ms": chapter["t_end_ms"],
+                "url": chapter["url"],
+                "image_url": chapter["image_url"],
+                "source": chapter["source"],
+                "created_at": now,
+            }
+            for chapter_idx, chapter in enumerate(normalized_rows)
+        ],
+    )
 
 
 def _normalize_chapter_rows_for_persistence(
@@ -591,8 +514,6 @@ def _normalize_chapter_rows_for_persistence(
         if source not in {
             PODCAST_CHAPTER_SOURCE_PODCASTING20,
             PODCAST_CHAPTER_SOURCE_PODLOVE,
-            "embedded_mp4",
-            "embedded_id3",
         }:
             continue
         normalized.append(

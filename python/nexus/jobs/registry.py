@@ -20,10 +20,7 @@ from nexus.jobs.queue import (
     JobResourceClass,
     RescheduleRequested,
 )
-from nexus.services.podcasts.types import (
-    PODCAST_REFRESH_RUN_PRUNE_INTERVAL_SECONDS,
-    PODCAST_SYNC_JOB_LEASE_SECONDS,
-)
+from nexus.services.podcasts.types import PODCAST_SYNC_JOB_LEASE_SECONDS
 
 JobHandler = Callable[..., Mapping[str, Any] | RescheduleRequested | None]
 type ResourceFailureProjection = Literal["Job", "SourceAttemptMedia"]
@@ -234,15 +231,6 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             retry_delays_seconds=(0,),
             lease_seconds=300,
             periodic_interval_seconds=int(settings.podcast_refresh_due_schedule_seconds),
-        ),
-        "podcast_refresh_run_prune_job": JobDefinition(
-            kind="podcast_refresh_run_prune_job",
-            handler_path="nexus.jobs.registry:_run_podcast_refresh_run_prune",
-            resource_class="Light",
-            max_attempts=1,
-            retry_delays_seconds=(0,),
-            lease_seconds=300,
-            periodic_interval_seconds=PODCAST_REFRESH_RUN_PRUNE_INTERVAL_SECONDS,
         ),
         "reconcile_stale_ingest_media_job": JobDefinition(
             kind="reconcile_stale_ingest_media_job",
@@ -495,14 +483,6 @@ def _run_podcast_refresh_due(
     from nexus.tasks.podcast_refresh_due import podcast_refresh_due_job
 
     return podcast_refresh_due_job()
-
-
-def _run_podcast_refresh_run_prune(
-    *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | None:
-    from nexus.tasks.podcast_refresh_run_prune import podcast_refresh_run_prune_job
-
-    return podcast_refresh_run_prune_job()
 
 
 def _run_reconcile_stale_ingest_media(

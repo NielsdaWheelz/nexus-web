@@ -53,7 +53,7 @@ _CHAPTER_TIMESTAMP_PATTERN = re.compile(
     r"^(?:(?P<hours>\d+):)?(?P<minutes>[0-5]?\d):(?P<seconds>[0-5]?\d(?:\.\d+)?)$"
 )
 _PODCAST_CONTENT_ENCODED_XPATH = "*[local-name()='encoded']"
-_ENRICHMENT_NONE_GUARD_FIELDS = ("rss_chapters", "rss_transcript_refs", "authors")
+_ENRICHMENT_NONE_GUARD_FIELDS = ("rss_chapters", "rss_transcript_url", "authors")
 _ENRICHMENT_FALSY_GUARD_FIELDS = (
     "description_html",
     "description_text",
@@ -348,7 +348,7 @@ def _episode_from_feed_item(
                 authors.append(normalized_name)
 
     chapter_rows = _extract_rss_chapters_from_feed_item(item, base_url=base_url)
-    transcript_refs = _extract_rss_transcript_refs_from_feed_item(item, base_url=base_url)
+    transcript_url = _extract_rss_transcript_url_from_feed_item(item, base_url=base_url)
     episode_language = normalize_language_tag(item.xpath("string(./language)")) or feed_language
 
     return {
@@ -361,9 +361,8 @@ def _episode_from_feed_item(
         "duration_seconds": duration_seconds,
         "description_html": description_html,
         "description_text": description_text,
-        "transcript_segments": None,
         "rss_chapters": chapter_rows,
-        "rss_transcript_refs": transcript_refs,
+        "rss_transcript_url": transcript_url,
         "language": episode_language,
         "feed_language": feed_language,
     }
@@ -441,44 +440,19 @@ def _extract_rss_chapters_from_feed_item(
     return _parse_podlove_chapters(item, base_url=base_url)
 
 
-def _extract_rss_transcript_refs_from_feed_item(
+def _extract_rss_transcript_url_from_feed_item(
     item: Any,
     *,
     base_url: str | None,
-) -> list[dict[str, Any]] | None:
-    transcript_nodes = item.xpath("./*[local-name()='transcript' and @url]")
-    if not transcript_nodes:
-        return None
-
-    refs: list[dict[str, Any]] = []
-    for transcript_node in transcript_nodes:
+) -> str | None:
+    for transcript_node in item.xpath("./*[local-name()='transcript' and @url]"):
         resolved_url = normalize_podcast_chapter_link(
             transcript_node.attrib.get("url"),
             base_url=base_url,
         )
-        if resolved_url is None:
-            continue
-        if not _is_safe_feed_page_url(resolved_url):
-            continue
-        transcript_type = str(transcript_node.attrib.get("type") or "").strip().lower() or None
-        transcript_language = normalize_language_tag(transcript_node.attrib.get("language"))
-        refs.append(
-            {
-                "url": resolved_url,
-                "type": transcript_type,
-                "language": transcript_language,
-            }
-        )
-
-    if not refs:
-        return None
-
-    logger.info(
-        "rss_transcript_extracted",
-        transcript_ref_count=len(refs),
-        base_url=base_url,
-    )
-    return refs
+        if resolved_url is not None and _is_safe_feed_page_url(resolved_url):
+            return resolved_url
+    return None
 
 
 def _extract_podcasting20_chapter_url(item: Any, *, base_url: str | None) -> str | None:
@@ -714,14 +688,6 @@ def _parse_feed_duration_seconds(raw_value: Any) -> int | None:
 
     hours, minutes, seconds = values
     return (hours * 3600) + (minutes * 60) + seconds
-
-
-def _episode_dedupe_key(episode: dict[str, Any]) -> tuple[str, str, str, str]:
-    guid = normalize_optional_text(episode.get("guid")) or ""
-    audio_url = str(episode.get("audio_url") or "").strip().lower()
-    title = str(episode.get("title") or "").strip().lower()
-    published_at = str(episode.get("published_at") or "").strip().lower()
-    return (guid, audio_url, title, published_at)
 
 
 def _episode_match_keys(episode: dict[str, Any]) -> list[str]:
