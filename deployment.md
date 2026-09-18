@@ -379,8 +379,17 @@ The command performs the complete protocol:
 
 Resource convergence is the permanent release-owned entry to the hard-cut
 envelope. It is safe to replay after process death, skips already exact
-containers, never recreates Postgres or Caddy, and has no manual or legacy
-alternative.
+containers, and includes existing Codex runtime services without starting or
+recreating them. It never recreates Postgres or Caddy; do not apply limits
+manually outside this owner.
+
+If convergence reports retained swap before an attempt exists, its prescribed
+repair is an exact-container restart during a no-use window, under the release
+lock. Stop background first, then interactive and API; prove all writers
+stopped before restarting Postgres. Allow clean database shutdown, preserve
+container IDs, images and configuration, and restore the existing services in
+dependency order. Prove health and zero retained swap before rerunning the same
+release. Do not recreate containers or edit release state.
 
 success ends the no-use window. no separate migration, compose, or promotion
 command is part of the normal path.

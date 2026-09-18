@@ -3396,14 +3396,53 @@ class HostRelease:
             raise PermanentReleaseFailure(
                 "live predecessor containers differ from the current release record"
             )
+        # These services share the resource envelope, but their activation is
+        # separate from the five containers retained in durable attempt evidence.
+        codex_running: dict[str, bool] = {}
+        if _requires_codex_agent_host(candidate):
+            for service in (_CODEX_EGRESS_POLICY, _CODEX_AGENT_HOST):
+                container_id = (
+                    self._compose(
+                        bundle=bundle,
+                        candidate=candidate,
+                        config_path=config.path,
+                        arguments=("ps", "--all", "--quiet", service),
+                    )
+                    .stdout.decode()
+                    .strip()
+                )
+                if not container_id:
+                    continue
+                _require_match(f"{service} container id", container_id, _CONTAINER_ID)
+                inspected = _inspect_one(container_id, f"{service} convergence identity")
+                service_config = _mapping(inspected.get("Config"), f"{service} config")
+                labels = _mapping(service_config.get("Labels"), f"{service} Compose labels")
+                image_id = _require_match(f"{service} image id", inspected.get("Image"), _IMAGE_ID)
+                if (
+                    labels.get("com.docker.compose.project") != "nexus"
+                    or labels.get("com.docker.compose.service") != service
+                    or labels.get("com.docker.compose.oneoff") != "False"
+                    or (forward_fix_sha is None and image_id != current_record.worker_image_id)
+                ):
+                    raise PermanentReleaseFailure(f"live {service} predecessor identity differs")
+                state = _mapping(inspected.get("State"), f"{service} convergence state")
+                running = state.get("Running")
+                if type(running) is not bool:
+                    raise ReleaseDefect(f"{service} convergence running state is malformed")
+                codex_running[service] = running
+                containers[service] = ContainerEvidence(
+                    container_id=container_id,
+                    image=image_id,
+                    config_sha256=hashlib.sha256(_canonical_json(service_config)).hexdigest(),
+                )
         self._preflight_host_capacity(
             containers,
             writers_running=forward_fix_sha is None,
         )
 
         drifted: list[tuple[str, str]] = []
-        for service in _SERVICES:
-            container_id = containers[service].container_id
+        for service, evidence in containers.items():
+            container_id = evidence.container_id
             inspected = _inspect_one(container_id, f"{service} resource convergence inspect")
             host_config = _mapping(inspected.get("HostConfig"), f"{service} host config")
             state = _mapping(inspected.get("State"), f"{service} convergence state")
@@ -3430,7 +3469,9 @@ class HostRelease:
                 kernel_limits is None or kernel_limits == expected_kernel_limits
             ):
                 continue
-            expected_running = service not in _WRITERS or forward_fix_sha is None
+            expected_running = codex_running.get(
+                service, service not in _WRITERS or forward_fix_sha is None
+            )
             if running is not expected_running:
                 state_name = "running" if expected_running else "stopped"
                 raise ReleaseBlocked(
@@ -3496,6 +3537,15 @@ class HostRelease:
             running = state.get("Running")
             if type(running) is not bool:
                 raise ReleaseDefect(f"{service} settled running state is malformed")
+            service_config = _mapping(inspected.get("Config"), f"{service} settled config")
+            if (
+                inspected.get("Image") != evidence.image
+                or hashlib.sha256(_canonical_json(service_config)).hexdigest()
+                != evidence.config_sha256
+            ):
+                raise PermanentReleaseFailure(f"{service} identity changed during convergence")
+            if service in codex_running and running is not codex_running[service]:
+                raise ReleaseBlocked(f"{service} running state changed during convergence")
             if running:
                 swap_current = self._validate_running_resource_limits(
                     service,
