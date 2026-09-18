@@ -6839,7 +6839,6 @@ export default function MediaPaneBody() {
       <div
         className={styles.mobileDocumentState}
         data-mobile-reader-interaction-root={isPaneActive ? "true" : undefined}
-        data-testid="mobile-reader-interaction-root"
       >
         <PaneLoadingState label="Loading item…" announcement="Polite" />
       </div>
@@ -6851,7 +6850,6 @@ export default function MediaPaneBody() {
       <div
         className={`${styles.errorContainer} ${styles.mobileDocumentState}`}
         data-mobile-reader-interaction-root={isPaneActive ? "true" : undefined}
-        data-testid="mobile-reader-interaction-root"
       >
         <FeedbackNotice
           content={error ?? { tone: "Danger", title: "Media not found" }}
@@ -6872,7 +6870,6 @@ export default function MediaPaneBody() {
       <div
         className={`${styles.content} ${styles.mobileDocumentState}`}
         data-mobile-reader-interaction-root={isPaneActive ? "true" : undefined}
-        data-testid="mobile-reader-interaction-root"
       >
         <div className={styles.notReady}>
           <p>This EPUB is still being processed.</p>
@@ -6915,7 +6912,7 @@ export default function MediaPaneBody() {
         </div>
       ) : null}
       {sourceError && canRead ? (
-        <div className={styles.retrievalBanner} data-testid="source-readiness">
+        <div className={styles.retrievalBanner}>
           <Pill tone={sourceError.severity === "error" ? "danger" : "warning"}>
             {sourceError.title}
           </Pill>
@@ -6923,10 +6920,7 @@ export default function MediaPaneBody() {
         </div>
       ) : null}
       {retrievalError && canRead ? (
-        <div
-          className={styles.retrievalBanner}
-          data-testid="retrieval-readiness"
-        >
+        <div className={styles.retrievalBanner}>
           <Pill
             tone={retrievalError.severity === "error" ? "danger" : "warning"}
           >
@@ -6941,10 +6935,7 @@ export default function MediaPaneBody() {
   const readerProgressLoadFailed = (
     <div className={styles.mobileDocumentState}>
       {readerBanners}
-      <div
-        className={styles.notReady}
-        data-testid="reader-progress-load-failed"
-      >
+      <div className={styles.notReady}>
         <p>Couldn&apos;t load your reading position.</p>
         <Button variant="primary" size="md" onClick={readerProgress.retryLoad}>
           Retry
@@ -7064,7 +7055,6 @@ export default function MediaPaneBody() {
         data-chrome-revealed={chromeRevealed ? "true" : undefined}
         data-view-transition-part="reader"
         data-mobile-reader-interaction-root={isPaneActive ? "true" : undefined}
-        data-testid="mobile-reader-interaction-root"
       >
         {mediaReaderViewTransition ? (
           <div className={styles.readerTransitionHeader} aria-hidden="true">

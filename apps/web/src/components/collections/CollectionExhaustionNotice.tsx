@@ -5,8 +5,32 @@ import Button from "@/components/ui/Button";
 import type { ExhaustionState } from "@/lib/api/useExhaustivePagination";
 import styles from "./CollectionExhaustionNotice.module.css";
 
-function completionAnnouncement(itemCount: number): string {
-  return `Finished loading ${itemCount} ${itemCount === 1 ? "item" : "items"}.`;
+interface Notice {
+  readonly text: string;
+  readonly action: { readonly label: string; readonly run: () => void } | null;
+}
+
+function noticeFor(state: ExhaustionState): Notice | null {
+  switch (state.kind) {
+    case "Idle":
+    case "Complete":
+      return null;
+    case "Draining":
+      return { text: "Loading remaining items…", action: null };
+    case "ResumeFailed":
+      return {
+        text: "Could not finish loading",
+        action: { label: "Retry", run: state.retry },
+      };
+    case "RefreshRequired":
+      return {
+        text:
+          state.reason === "CollectionChanged"
+            ? "List changed while loading"
+            : "This list can no longer continue",
+        action: { label: "Refresh list", run: state.refresh },
+      };
+  }
 }
 
 export default function CollectionExhaustionNotice({
@@ -22,72 +46,47 @@ export default function CollectionExhaustionNotice({
     previousKindRef.current = state.kind;
     if (state.kind === previousKind) return;
 
-    switch (state.kind) {
-      case "Idle":
-        setAnnouncement("");
-        return;
-      case "Draining":
-        setAnnouncement("Loading remaining items…");
-        return;
-      case "Complete":
-        setAnnouncement(
-          previousKind === "Draining"
-            ? completionAnnouncement(state.itemCount)
-            : "",
-        );
-        return;
-      case "ResumeFailed":
-        setAnnouncement("Could not finish loading — Retry");
-        return;
-      case "RefreshRequired":
-        setAnnouncement(
-          state.reason === "CollectionChanged"
-            ? "List changed while loading — Refresh list"
-            : "This list can no longer continue — Refresh list",
-        );
-        return;
+    // Completion is the one announcement with no visible counterpart, and only
+    // after a drain the reader was told about.
+    if (state.kind === "Complete") {
+      setAnnouncement(
+        previousKind === "Draining"
+          ? `Finished loading ${state.itemCount} ${state.itemCount === 1 ? "item" : "items"}.`
+          : "",
+      );
+      return;
     }
+    const notice = noticeFor(state);
+    setAnnouncement(
+      notice === null
+        ? ""
+        : notice.action === null
+          ? notice.text
+          : `${notice.text} — ${notice.action.label}`,
+    );
   }, [state]);
 
-  const notice = (() => {
-    switch (state.kind) {
-      case "Idle":
-      case "Complete":
-        return null;
-      case "Draining":
-        return <p className={styles.notice}>Loading remaining items…</p>;
-      case "ResumeFailed":
-        return (
-          <p className={styles.notice}>
-            <span>Could not finish loading —</span>
-            <Button variant="ghost" size="sm" onClick={state.retry}>
-              Retry
-            </Button>
-          </p>
-        );
-      case "RefreshRequired":
-        return (
-          <p className={styles.notice}>
-            <span>
-              {state.reason === "CollectionChanged"
-                ? "List changed while loading —"
-                : "This list can no longer continue —"}
-            </span>
-            <Button variant="ghost" size="sm" onClick={state.refresh}>
-              Refresh list
-            </Button>
-          </p>
-        );
-    }
-  })();
-
+  const notice = noticeFor(state);
   if (notice === null && announcement.length === 0) {
     return null;
   }
 
   return (
     <>
-      {notice}
+      {notice ? (
+        <p className={styles.notice}>
+          {notice.action ? (
+            <>
+              <span>{notice.text} —</span>
+              <Button variant="ghost" size="sm" onClick={notice.action.run}>
+                {notice.action.label}
+              </Button>
+            </>
+          ) : (
+            notice.text
+          )}
+        </p>
+      ) : null}
       <span
         className="sr-only"
         role="status"

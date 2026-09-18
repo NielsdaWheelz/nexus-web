@@ -57,7 +57,6 @@ export default function ReaderProgressHandoff({
           role="group"
           aria-label="More recent reading position available"
           className={styles.readerProgressHandoff}
-          data-testid="reader-progress-handoff"
         >
           <span className={styles.readerProgressHandoffTitle}>
             More recent reading position available
@@ -99,7 +98,7 @@ export default function ReaderProgressHandoff({
         </div>
       )}
       {saveFailed && (
-        <div className={styles.readerProgressSyncError} data-testid="reader-progress-sync-error">
+        <div className={styles.readerProgressSyncError}>
           <span>Progress not synced</span>
           <span aria-hidden="true" className={styles.readerProgressHandoffDivider}>
             ·

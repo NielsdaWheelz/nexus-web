@@ -6,11 +6,10 @@ import { useReaderContext } from "./ReaderContext";
 import { toReaderProfileSaveErrorMessage } from "./readerProfileSync";
 
 /**
- * The keyed dedupe identity of the one reader-profile save-failure
- * presentation. An active Settings pane suppresses it and presents inline;
- * everywhere else it is a persistent global notice.
+ * The keyed dedupe identity of the one persistent reader-profile save-failure
+ * notice.
  */
-export const READER_PROFILE_SAVE_FEEDBACK_KEY = "reader-profile-save";
+const READER_PROFILE_SAVE_FEEDBACK_KEY = "reader-profile-save";
 
 /**
  * The global presentation owner for reader-profile persistence: SaveFailed

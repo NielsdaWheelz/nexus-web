@@ -28,8 +28,6 @@ export interface LibraryChooserSurfaceProps {
   title: string;
   /** Forwarded to MobileSheet (re-focus on session change). */
   focusKey?: unknown;
-  /** Stable test id for the mobile sheet panel. */
-  panelTestId?: string;
   panelId?: string;
   /** The LibraryChooser. */
   children: ReactNode;
@@ -52,7 +50,6 @@ export default function LibraryChooserSurface({
   returnFocusFallback,
   title,
   focusKey,
-  panelTestId,
   panelId,
   children,
 }: LibraryChooserSurfaceProps) {
@@ -139,7 +136,6 @@ export default function LibraryChooserSurface({
         layer={layer}
         ariaLabel={title}
         focusKey={focusKey}
-        panelTestId={panelTestId}
         panelId={panelId}
         initialFocus={(container) => container}
         returnFocusTo={anchor}

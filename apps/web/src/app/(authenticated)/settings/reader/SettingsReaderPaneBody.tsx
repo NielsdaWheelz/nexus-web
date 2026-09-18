@@ -1,25 +1,18 @@
 "use client";
 
-import { useEffect } from "react";
 import { useReaderContext } from "@/lib/reader/ReaderContext";
-import { toReaderProfileSaveErrorMessage } from "@/lib/reader/readerProfileSync";
-import { READER_PROFILE_SAVE_FEEDBACK_KEY } from "@/lib/reader/ReaderProfileSaveFeedback";
 import {
   isReaderFocusMode,
   isReaderFontFamily,
   isReaderTheme,
   type ReaderFocusMode,
 } from "@/lib/reader/types";
-import { FeedbackNotice, useFeedback } from "@/components/feedback/Feedback";
 import PaneSection from "@/components/ui/PaneSection";
 import PaneSurface from "@/components/ui/PaneSurface";
 import Select from "@/components/ui/Select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import Toggle from "@/components/ui/Toggle";
-import {
-  usePaneIsActive,
-  usePaneReturnReady,
-} from "@/lib/panes/paneRuntime";
+import { usePaneReturnReady } from "@/lib/panes/paneRuntime";
 import styles from "./page.module.css";
 
 const FOCUS_MODE_OPTIONS: ReadonlyArray<{ value: ReaderFocusMode; label: string }> = [
@@ -40,40 +33,12 @@ export default function SettingsReaderPaneBody() {
     setFontSize,
     setLineHeight,
     setColumnWidth,
-    retrySave,
   } = useReaderContext();
-  const { suppress } = useFeedback();
-  const isActive = usePaneIsActive();
   usePaneReturnReady(true);
-
-  // While this pane is active it owns the reader-profile-save presentation:
-  // the retained global toast is suppressed and failures render inline below.
-  // Releasing the lease (deactivation/unmount) restores the global notice if
-  // failure remains, so there is exactly one visible live presentation.
-  useEffect(() => {
-    if (!isActive) {
-      return;
-    }
-    return suppress(READER_PROFILE_SAVE_FEEDBACK_KEY);
-  }, [isActive, suppress]);
-
-  const failure =
-    persistence.state === "SaveFailed" ? persistence.failure : null;
 
   return (
     <PaneSurface>
       <PaneSection title="Appearance">
-        {isActive && failure && (
-          <FeedbackNotice
-            content={{
-              tone: "Danger",
-              ...toReaderProfileSaveErrorMessage(failure),
-            }}
-            announcement="Assertive"
-            actions={[{ label: "Retry", onClick: retrySave }]}
-          />
-        )}
-
         <div className={styles.form}>
         <div className={styles.formRow}>
           <div className={styles.formField}>

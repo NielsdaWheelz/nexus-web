@@ -22,12 +22,8 @@ export default function DocentOverlay({
   if (!step) return null;
 
   return (
-    <div
-      className={styles.overlay}
-      role="status"
-      data-testid="docent-overlay"
-    >
-      <div className={styles.header} aria-live="polite" data-testid="docent-header">
+    <div className={styles.overlay} role="status">
+      <div className={styles.header} aria-live="polite">
         <span className={styles.counter}>
           {walk.index + 1} / {walk.steps.length}
         </span>

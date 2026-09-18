@@ -1,15 +1,14 @@
 "use client";
 
 import type { ContributorCredit } from "@/lib/contributors/types";
-import { formatContributorRole } from "@/lib/contributors/formatting";
 import { contributorAuthorHref } from "@/lib/contributors/routes";
 import { cx } from "@/lib/ui/cx";
 import styles from "./ContributorChip.module.css";
 
 // A single credited name: a name with a handle is an
 // inline link to author detail; a handle-less text fact (podcast preview) is plain
-// inline text. Names are `dir="auto"` so RTL names read correctly; the role, when
-// shown, is app chrome (not `dir="auto"`). No border, no radius, no fill.
+// inline text. Names are `dir="auto"` so RTL names read correctly. No border, no
+// radius, no fill.
 
 // `ContributorSummary` is a minimal shape kept only for the few call sites that pass
 // a resolved contributor rather than a credit.
@@ -24,14 +23,12 @@ interface ContributorChipProps {
   credit?: ContributorCredit;
   contributor?: ContributorSummary;
   className?: string;
-  showRole?: boolean;
 }
 
 export default function ContributorChip({
   credit,
   contributor,
   className,
-  showRole = false,
 }: ContributorChipProps) {
   const handle =
     credit?.contributor_handle?.trim() ||
@@ -47,7 +44,6 @@ export default function ContributorChip({
     return null;
   }
 
-  const roleLabel = showRole ? formatContributorRole(credit?.role) : null;
   const title =
     creditedName && displayName && creditedName !== displayName
       ? `${creditedName} (${displayName})`
@@ -58,13 +54,10 @@ export default function ContributorChip({
       {label}
     </span>
   );
-  const roleNode = roleLabel ? <span className={styles.role}>{roleLabel}</span> : null;
-
   if (!handle) {
     return (
       <span className={cx(styles.name, className)} title={title}>
         {nameNode}
-        {roleNode}
       </span>
     );
   }
@@ -78,7 +71,6 @@ export default function ContributorChip({
       data-pane-label-hint={label}
     >
       {nameNode}
-      {roleNode}
     </a>
   );
 }

@@ -24,13 +24,11 @@ export default function ResourceThumb({
   spec,
   alt,
   size = "md",
-  className,
   viewTransitionName,
 }: {
   spec: ResourceThumbSpec;
   alt: string;
   size?: ResourceThumbSize;
-  className?: string;
   viewTransitionName?: string;
 }) {
   const fill = size === "fill";
@@ -48,7 +46,7 @@ export default function ResourceThumb({
         alt={alt}
         width={px}
         height={px}
-        className={cx(styles.cover, sizingClass, className)}
+        className={cx(styles.cover, sizingClass)}
         data-view-transition-part="thumb"
         style={viewTransitionName ? transitionStyle : undefined}
       />
@@ -58,7 +56,7 @@ export default function ResourceThumb({
   const Icon = spec.icon;
   return (
     <span
-      className={cx(styles.iconTile, sizingClass, className)}
+      className={cx(styles.iconTile, sizingClass)}
       style={viewTransitionName ? transitionStyle : undefined}
       data-view-transition-part="thumb"
       role={alt ? "img" : undefined}

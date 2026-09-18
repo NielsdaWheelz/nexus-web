@@ -6,10 +6,6 @@
   word-break: break-word;
 }
 
-.compact {
-  color: var(--ink);
-}
-
 .empty {
   color: var(--ink-faint);
   font-style: italic;
@@ -23,28 +19,5 @@
 .exact {
   border-radius: var(--radius-xs);
   padding: 1px 2px;
-}
-
-.color-yellow {
-  background: var(--highlight-yellow);
-}
-
-.color-green {
-  background: var(--highlight-green);
-}
-
-.color-blue {
-  background: var(--highlight-blue);
-}
-
-.color-pink {
-  background: var(--highlight-pink);
-}
-
-.color-purple {
-  background: var(--highlight-purple);
-}
-
-.color-neutral {
   background: var(--accent-muted);
 }

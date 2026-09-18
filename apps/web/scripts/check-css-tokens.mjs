@@ -377,8 +377,8 @@ for (const { path, source } of cssSources) {
 
 // The Tengwar absence lint runs over the modules too, not only the stylesheets:
 // the sealed dossier document's stylesheets are hand-written strings inside
-// `MachineText.tsx`, and a face bound there would be as real as one in a `.css`
-// file and invisible to every other pass here.
+// `DossierDocumentFrame.tsx`, and a face bound there would be as real as one in
+// a `.css` file and invisible to every other pass here.
 const tengwarViolations = [];
 for (const file of collectFiles(srcDir, [".ts", ".tsx"]).sort()) {
   const path = toPosix(relative(webDir, file));

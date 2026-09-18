@@ -1,8 +1,6 @@
 "use client";
 
 import {
-  Component,
-  createRef,
   useCallback,
   useEffect,
   useId,
@@ -10,7 +8,6 @@ import {
   useState,
   useSyncExternalStore,
   type FormEvent,
-  type ReactNode,
   type KeyboardEvent,
 } from "react";
 import { Link, Paperclip, Sparkles } from "lucide-react";
@@ -47,7 +44,8 @@ import {
 import {
   createLink,
   deleteLink,
-  type LinkTarget,
+  targetLabel,
+  toLinkTarget,
 } from "@/lib/resourceGraph/links";
 import { deleteStance, putStance } from "@/lib/resourceGraph/stances";
 import {
@@ -73,6 +71,7 @@ import {
   dismissSynapseEdge,
   fetchSynapseScanStatus,
   requestSynapseScan,
+  type SynapseScanStatus,
 } from "@/lib/synapse";
 import { useIntervalPoll } from "@/lib/useIntervalPoll";
 import styles from "./ConnectionsSurface.module.css";
@@ -156,7 +155,7 @@ function connectionOperationTitle(operation: ConnectionOperation): string {
 }
 
 /** Finite Connections-domain copy adapter; unknown codes remain defects. */
-export function connectionErrorMessage(
+function connectionErrorMessage(
   error: unknown,
   operation: ConnectionOperation,
 ): FeedbackContent {
@@ -617,16 +616,6 @@ function ConnectionRow({
   );
 }
 
-function toLinkTarget(target: ResourceTarget): LinkTarget {
-  return target.kind === "resource"
-    ? { kind: "resource", ref: target.item.ref }
-    : { kind: "passage", candidate_ref: target.candidateRef };
-}
-
-function targetLabel(target: ResourceTarget): string {
-  return target.kind === "resource" ? target.item.label : target.label;
-}
-
 function targetRefOf(target: ResourceTarget): string {
   return target.kind === "resource" ? target.item.ref : target.candidateRef;
 }
@@ -933,237 +922,154 @@ function ConnectionComposer({
     }
   }
 
+  if (defect) throw defect.error;
+
   return (
-    <ConnectionComposerDefectBoundary
-      active={active}
-      activeDefect={defect !== null}
-      onContinue={() => setDefect(null)}
+    <form
+      id={id}
+      hidden={!active}
+      className={styles.composer}
+      onSubmit={(event) => void submitConnection(event)}
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes("Files"))
+          event.preventDefault();
+      }}
+      onDrop={(event) => {
+        const files = Array.from(event.dataTransfer.files);
+        if (files.length === 0) return;
+        event.preventDefault();
+        void attachFiles(files);
+      }}
     >
-      <ConnectionComposerProjection defect={defect}>
-        <form
-          id={id}
-          hidden={!active}
-          className={styles.composer}
-          onSubmit={(event) => void submitConnection(event)}
-          onDragOver={(event) => {
-            if (event.dataTransfer.types.includes("Files"))
-              event.preventDefault();
-          }}
-          onDrop={(event) => {
-            const files = Array.from(event.dataTransfer.files);
-            if (files.length === 0) return;
-            event.preventDefault();
-            void attachFiles(files);
+      <div className={styles.composerControls}>
+        <div className={styles.searchWrap}>
+          <Input
+            ref={searchInputRef}
+            size="sm"
+            value={query}
+            role="combobox"
+            aria-expanded={!selected && targets.length > 0}
+            aria-controls={listboxId}
+            aria-autocomplete="list"
+            aria-activedescendant={
+              !selected && effectiveActiveKey
+                ? resourceTargetOptionId(
+                    listboxId,
+                    targets.find(
+                      (target) =>
+                        resourceTargetKey(target) === effectiveActiveKey,
+                    )!,
+                  )
+                : undefined
+            }
+            placeholder="Search to link…"
+            aria-label="Connection target"
+            onChange={(event) => {
+              controller.update({
+                selected: null,
+                query: event.currentTarget.value,
+              });
+              controller.update({ feedback: null });
+            }}
+            onKeyDown={onSearchKeyDown}
+          />
+          {!selected && query.trim().length > 0 ? (
+            <div className={styles.autocomplete}>
+              <ResourceTargetListbox
+                id={listboxId}
+                ariaLabel="Link targets"
+                targets={targets}
+                activeKey={effectiveActiveKey}
+                loading={loading}
+                error={searchError}
+                onHover={(target) =>
+                  controller.update({
+                    activeKey: resourceTargetKey(target),
+                  })
+                }
+                onPick={pickTarget}
+              />
+            </div>
+          ) : null}
+        </div>
+        <Select
+          size="sm"
+          value={kind}
+          aria-label="Connection kind"
+          onChange={(event) => {
+            const nextKind = event.currentTarget.value as EdgeKind;
+            controller.update({ kind: nextKind });
+            // Passage anchors are Links; Stances require a resource.
+            if (nextKind !== "context" && selected?.kind === "passage") {
+              controller.update({ selected: null });
+              controller.update({ feedback: null });
+            }
           }}
         >
-          <div className={styles.composerControls}>
-            <div className={styles.searchWrap}>
-              <Input
-                ref={searchInputRef}
-                size="sm"
-                value={query}
-                role="combobox"
-                aria-expanded={!selected && targets.length > 0}
-                aria-controls={listboxId}
-                aria-autocomplete="list"
-                aria-activedescendant={
-                  !selected && effectiveActiveKey
-                    ? resourceTargetOptionId(
-                        listboxId,
-                        targets.find(
-                          (target) =>
-                            resourceTargetKey(target) === effectiveActiveKey,
-                        )!,
-                      )
-                    : undefined
-                }
-                placeholder="Search to link…"
-                aria-label="Connection target"
-                onChange={(event) => {
-                  controller.update({
-                    selected: null,
-                    query: event.currentTarget.value,
-                  });
-                  controller.update({ feedback: null });
-                }}
-                onKeyDown={onSearchKeyDown}
-              />
-              {!selected && query.trim().length > 0 ? (
-                <div className={styles.autocomplete}>
-                  <ResourceTargetListbox
-                    id={listboxId}
-                    ariaLabel="Link targets"
-                    targets={targets}
-                    activeKey={effectiveActiveKey}
-                    loading={loading}
-                    error={searchError}
-                    onHover={(target) =>
-                      controller.update({
-                        activeKey: resourceTargetKey(target),
-                      })
-                    }
-                    onPick={pickTarget}
-                  />
-                </div>
-              ) : null}
-            </div>
-            <Select
-              size="sm"
-              value={kind}
-              aria-label="Connection kind"
-              onChange={(event) => {
-                const nextKind = event.currentTarget.value as EdgeKind;
-                controller.update({ kind: nextKind });
-                // Passage anchors are Links; Stances require a resource.
-                if (nextKind !== "context" && selected?.kind === "passage") {
-                  controller.update({ selected: null });
-                  controller.update({ feedback: null });
-                }
-              }}
-            >
-              <option value="context">context</option>
-              <option value="supports">supports</option>
-              <option value="contradicts">contradicts</option>
-            </Select>
-            <Button
-              type="submit"
-              size="sm"
-              variant="secondary"
-              loading={submitting}
-              leadingIcon={<Link size={14} />}
-            >
-              {kind === "context" ? "Link" : "Record stance"}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              leadingIcon={<Paperclip size={14} />}
-              loading={attaching}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              Attach
-            </Button>
-            <input
-              ref={fileInputRef}
-              className={styles.fileInput}
-              type="file"
-              multiple
-              accept="application/pdf,application/epub+zip,.pdf,.epub"
-              aria-label="Attach files"
-              tabIndex={-1}
-              onChange={(event) =>
-                void attachFiles(Array.from(event.currentTarget.files ?? []))
-              }
-            />
-          </div>
-          {pendingAttachments.length > 0 ? (
-            <ul
-              className={styles.pendingAttachments}
-              aria-label="Pending attachments"
-            >
-              {pendingAttachments.map((pending) => (
-                <li key={pending.mediaId} className={styles.pendingAttachment}>
-                  <span>
-                    {pending.label} was saved and still needs its connection.
-                  </span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    disabled={attaching}
-                    onClick={() => void retryAttachment(pending)}
-                  >
-                    Retry attachment
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {feedback ? (
-            <FeedbackNotice content={feedback} announcement="Assertive" />
-          ) : null}
-        </form>
-      </ConnectionComposerProjection>
-    </ConnectionComposerDefectBoundary>
-  );
-}
-
-function ConnectionComposerProjection({
-  defect,
-  children,
-}: {
-  defect: { error: unknown } | null;
-  children: ReactNode;
-}) {
-  if (defect) throw defect.error;
-  return children;
-}
-
-interface ConnectionComposerDefectBoundaryProps {
-  active: boolean;
-  activeDefect: boolean;
-  onContinue(): void;
-  children: ReactNode;
-}
-
-class ConnectionComposerDefectBoundary extends Component<
-  ConnectionComposerDefectBoundaryProps,
-  { hasError: boolean }
-> {
-  state = { hasError: false };
-  private readonly actionRef = createRef<HTMLButtonElement>();
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: unknown) {
-    console.error("Connection composer contract defect:", error);
-    if (this.props.active) this.actionRef.current?.focus();
-  }
-
-  componentDidUpdate(
-    previous: Readonly<ConnectionComposerDefectBoundaryProps>,
-  ) {
-    if (
-      this.state.hasError &&
-      previous.activeDefect &&
-      !this.props.activeDefect
-    ) {
-      this.setState({ hasError: false });
-      return;
-    }
-    if (this.state.hasError && !previous.active && this.props.active) {
-      this.actionRef.current?.focus();
-    }
-  }
-
-  render() {
-    if (!this.state.hasError) return this.props.children;
-    return (
-      <div hidden={!this.props.active} className={styles.composer}>
-        <FeedbackNotice
-          content={{
-            tone: "Danger",
-            title: "Connections need attention",
-            message:
-              "Nexus preserved any accepted file identity. Continue to review its connection.",
-          }}
-          announcement="Assertive"
-        />
+          <option value="context">context</option>
+          <option value="supports">supports</option>
+          <option value="contradicts">contradicts</option>
+        </Select>
         <Button
-          ref={this.actionRef}
-          type="button"
+          type="submit"
           size="sm"
           variant="secondary"
-          onClick={this.props.onContinue}
+          loading={submitting}
+          leadingIcon={<Link size={14} />}
         >
-          Continue connections
+          {kind === "context" ? "Link" : "Record stance"}
         </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          leadingIcon={<Paperclip size={14} />}
+          loading={attaching}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          Attach
+        </Button>
+        <input
+          ref={fileInputRef}
+          className={styles.fileInput}
+          type="file"
+          multiple
+          accept="application/pdf,application/epub+zip,.pdf,.epub"
+          aria-label="Attach files"
+          tabIndex={-1}
+          onChange={(event) =>
+            void attachFiles(Array.from(event.currentTarget.files ?? []))
+          }
+        />
       </div>
-    );
-  }
+      {pendingAttachments.length > 0 ? (
+        <ul
+          className={styles.pendingAttachments}
+          aria-label="Pending attachments"
+        >
+          {pendingAttachments.map((pending) => (
+            <li key={pending.mediaId} className={styles.pendingAttachment}>
+              <span>
+                {pending.label} was saved and still needs its connection.
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={attaching}
+                onClick={() => void retryAttachment(pending)}
+              >
+                Retry attachment
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {feedback ? (
+        <FeedbackNotice content={feedback} announcement="Assertive" />
+      ) : null}
+    </form>
+  );
 }
 
 type AttachmentEdgeOutcome =
@@ -1271,56 +1177,49 @@ function useSynapseScan({
     },
   });
 
-  const start = useCallback(async () => {
-    setFeedback(null);
-    setFailureOperation(null);
-    setPhase("requesting");
-    try {
-      const scan = await requestSynapseScan(selfRef);
-      if (scan.status === "idle") {
-        // Engine disabled or the scan already finished: nothing to poll.
-        setPhase("idle");
-        onSettled();
-        return;
-      }
-      deadlineRef.current = Date.now() + SYNAPSE_SCAN_TIMEOUT_MS;
-      setPhase("polling");
-    } catch (err) {
-      setPhase("idle");
-      if (handleUnauthenticatedApiError(err)) return;
+  // One begin: read the scan status (by starting a scan, or by reading the
+  // status of one already running) and either settle or poll to the deadline.
+  const begin = useCallback(
+    async (
+      read: () => Promise<SynapseScanStatus>,
+      operation: "StartScan" | "ScanStatus",
+    ) => {
+      setFeedback(null);
+      setFailureOperation(null);
+      setPhase("requesting");
       try {
-        setFeedback(connectionErrorMessage(err, "StartScan"));
-        setFailureOperation("StartScan");
-      } catch (caughtDefect) {
-        setDefectState({ error: caughtDefect });
+        const status = await read();
+        if (status === "idle") {
+          // Engine disabled or the scan already finished: nothing to poll.
+          setPhase("idle");
+          onSettled();
+          return;
+        }
+        deadlineRef.current = Date.now() + SYNAPSE_SCAN_TIMEOUT_MS;
+        setPhase("polling");
+      } catch (err) {
+        setPhase("idle");
+        if (handleUnauthenticatedApiError(err)) return;
+        try {
+          setFeedback(connectionErrorMessage(err, operation));
+          setFailureOperation(operation);
+        } catch (caughtDefect) {
+          setDefectState({ error: caughtDefect });
+        }
       }
-    }
-  }, [onSettled, selfRef]);
+    },
+    [onSettled],
+  );
 
-  const retryStatus = useCallback(async () => {
-    setFeedback(null);
-    setFailureOperation(null);
-    setPhase("requesting");
-    try {
-      const status = await fetchSynapseScanStatus(selfRef);
-      if (status === "idle") {
-        setPhase("idle");
-        onSettled();
-        return;
-      }
-      deadlineRef.current = Date.now() + SYNAPSE_SCAN_TIMEOUT_MS;
-      setPhase("polling");
-    } catch (err) {
-      setPhase("idle");
-      if (handleUnauthenticatedApiError(err)) return;
-      try {
-        setFeedback(connectionErrorMessage(err, "ScanStatus"));
-        setFailureOperation("ScanStatus");
-      } catch (caughtDefect) {
-        setDefectState({ error: caughtDefect });
-      }
-    }
-  }, [onSettled, selfRef]);
+  const start = useCallback(
+    () => begin(async () => (await requestSynapseScan(selfRef)).status, "StartScan"),
+    [begin, selfRef],
+  );
+
+  const retryStatus = useCallback(
+    () => begin(() => fetchSynapseScanStatus(selfRef), "ScanStatus"),
+    [begin, selfRef],
+  );
 
   return {
     phase,

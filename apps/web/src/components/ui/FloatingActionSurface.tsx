@@ -36,6 +36,8 @@ interface FloatingActionPosition {
 
 const CARET_SIZE_PX = 6;
 const CARET_EDGE_INSET_PX = CARET_SIZE_PX * 2;
+const GAP_PX = 8;
+const VIEWPORT_PADDING_PX = 8;
 
 export default function FloatingActionSurface({
   open,
@@ -46,8 +48,6 @@ export default function FloatingActionSurface({
   placement = "below",
   align = "center",
   flip = false,
-  gap = 8,
-  viewportPadding = 8,
   scrollBehavior = "reposition",
   preservePointerSelection = false,
   dismissIgnore = false,
@@ -66,8 +66,6 @@ export default function FloatingActionSurface({
   placement?: "below" | "above" | "left" | "right";
   align?: "start" | "center" | "end";
   flip?: boolean;
-  gap?: number;
-  viewportPadding?: number;
   scrollBehavior?: "reposition" | "dismiss";
   preservePointerSelection?: boolean;
   dismissIgnore?: boolean;
@@ -91,7 +89,7 @@ export default function FloatingActionSurface({
     const anchorRect = resolveRect(anchor);
     if (!open || !surface || !anchorRect) return;
 
-    const bounds = viewportBounds(isMobileViewport, viewportPadding);
+    const bounds = viewportBounds(isMobileViewport, VIEWPORT_PADDING_PX);
     const maxWidth = Math.max(0, bounds.maxLeft - bounds.minLeft);
     const maxHeight = Math.max(0, bounds.maxTop - bounds.minTop);
     surface.style.maxWidth = `${maxWidth}px`;
@@ -161,7 +159,7 @@ export default function FloatingActionSurface({
             bounds,
             clampLeft,
             clampTop,
-            gap,
+            gap: GAP_PX,
             isMobileViewport,
           }),
         ),
@@ -180,7 +178,7 @@ export default function FloatingActionSurface({
           placement,
           align,
           flip,
-          gap,
+          gap: GAP_PX,
         }),
       ),
     );
@@ -189,13 +187,11 @@ export default function FloatingActionSurface({
     anchor,
     boundary,
     flip,
-    gap,
     isMobileViewport,
     lineRects,
     open,
     placement,
     strategy,
-    viewportPadding,
   ]);
 
   useLayoutEffect(() => {

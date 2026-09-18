@@ -60,7 +60,6 @@ export function presentContributorWork(work: ContributorWorkItem): CollectionRow
     activity: absent(),
     exceptionalStatus: absent(),
     localAvailability: absent(),
-    connections: absent(),
     relatedMediaId: absent(),
     // External works are a plain link with no resource menu; resource works get
     // the canonical dropdown resolved from their server snapshot.

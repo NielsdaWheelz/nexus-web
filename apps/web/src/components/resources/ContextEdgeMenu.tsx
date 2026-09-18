@@ -32,9 +32,6 @@ export default function ContextEdgeMenu({
   presentFailure,
   label,
   retryable = false,
-  align,
-  placement,
-  renderTrigger,
 }: {
   readonly action: ContextEdgeActionKind;
   /**
@@ -52,9 +49,6 @@ export default function ContextEdgeMenu({
   readonly label?: string;
   /** Offer a Retry affordance on the failure notice. */
   readonly retryable?: boolean;
-  readonly align?: ActionMenuProps["align"];
-  readonly placement?: ActionMenuProps["placement"];
-  readonly renderTrigger?: ActionMenuProps["renderTrigger"];
 }) {
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -107,9 +101,7 @@ export default function ContextEdgeMenu({
       <ActionMenu
         options={[descriptor]}
         label={label ?? entry.triggerLabel}
-        align={align}
-        placement={placement}
-        renderTrigger={renderTrigger ?? iconTrigger}
+        renderTrigger={iconTrigger}
       />
       {feedback ? (
         <FeedbackNotice
