@@ -292,7 +292,7 @@ def _require_fragment_highlight_or_404(highlight: Highlight) -> HighlightFragmen
     return highlight.fragment_anchor
 
 
-def _require_pdf_highlight_or_404(highlight: Highlight):
+def require_pdf_highlight_or_404(highlight: Highlight) -> HighlightPdfAnchor:
     """Require a highlight to be a canonical PDF highlight."""
 
     require_typed_highlight_or_404(highlight)
@@ -357,7 +357,7 @@ def project_highlight(highlight: Highlight, viewer_id: UUID) -> TypedHighlightOu
     require_typed_highlight_or_404(highlight)
 
     if highlight.anchor_kind == "pdf_page_geometry":
-        pdf_anchor = _require_pdf_highlight_or_404(highlight)
+        pdf_anchor = require_pdf_highlight_or_404(highlight)
         quads_out = []
         if highlight.pdf_quads:
             sorted_quads = sorted(highlight.pdf_quads, key=lambda q: q.quad_idx)

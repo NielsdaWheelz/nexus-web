@@ -9,6 +9,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_serializable
@@ -133,7 +134,7 @@ def _lock_subscription_epoch(
     db: Session,
     *,
     payload: PodcastSyncPayload,
-) -> Mapping[str, Any] | None:
+) -> RowMapping | None:
     return (
         db.execute(
             text(
@@ -164,7 +165,7 @@ def _lock_subscription_epoch(
     )
 
 
-def _checkpoint_from_row(row: Mapping[str, Any]) -> _SyncCheckpoint | None:
+def _checkpoint_from_row(row: RowMapping) -> _SyncCheckpoint | None:
     values = (
         row["sync_checkpoint_status"],
         row["sync_checkpoint_cutoff_at"],
