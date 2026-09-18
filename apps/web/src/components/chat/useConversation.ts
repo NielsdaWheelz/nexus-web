@@ -166,6 +166,13 @@ function conversationOperationErrorMessage(
         requestId: error.requestId,
         title: "That model selection is invalid.",
       };
+    case "E_GENERATION_CONTEXT_TOO_LARGE":
+      return {
+        tone: "Warning",
+        requestId: error.requestId,
+        title: "This conversation no longer fits the model’s context window.",
+        message: "Start a new chat or choose a larger model.",
+      };
     default:
       throw error;
   }

@@ -1072,7 +1072,6 @@ def _finish_oracle_terminal_without_dispatch(
     *,
     reading_id: UUID,
     context: JobExecutionContext,
-    reason: str,
     error_code: OracleReadingFailureCode | None = None,
     error_detail: str | None = None,
 ) -> dict[str, Any]:
@@ -1125,7 +1124,6 @@ def _finish_oracle_terminal_without_dispatch(
             owner=owner,
             state=state,
             terminal_result=_COMPLETED_ORACLE_ADAPTER.dump_json(completed).decode("utf-8"),
-            reason=reason,
         )
         if not step_journal.checkpoint_step_state(
             db,
@@ -1194,7 +1192,6 @@ async def execute_reading(
             db,
             reading_id=reading_id,
             context=context,
-            reason="oracle reading became terminal before dispatch",
         )
 
     question = reading.question_text
@@ -1213,7 +1210,6 @@ async def execute_reading(
             db,
             reading_id=reading_id,
             context=context,
-            reason="oracle corpus was not ready before dispatch",
             error_code=oracle_reading_failure_code(E_ORACLE_CORPUS_NOT_READY),
             error_detail=detail,
         )
@@ -1258,7 +1254,6 @@ async def execute_reading(
             db,
             reading_id=reading_id,
             context=context,
-            reason="oracle retrieval failed before dispatch",
             error_code=oracle_reading_failure_code(exc.code.value),
             error_detail=exc.message,
         )
@@ -1276,7 +1271,6 @@ async def execute_reading(
             db,
             reading_id=reading_id,
             context=context,
-            reason="oracle user content was unavailable before dispatch",
             error_code=oracle_reading_failure_code(ApiErrorCode.E_APP_SEARCH_FAILED.value),
             error_detail=detail,
         )
@@ -1342,7 +1336,6 @@ async def execute_reading(
             db,
             reading_id=reading_id,
             context=context,
-            reason="oracle input changed before dispatch",
             error_code=oracle_reading_failure_code(ApiErrorCode.E_GENERATION_SOURCE_CHANGED.value),
             error_detail="Oracle input changed after the generation was prepared",
         )
@@ -1351,7 +1344,6 @@ async def execute_reading(
             db,
             reading_id=reading_id,
             context=context,
-            reason="oracle dispatch invalidated before acceptance",
         )
     if isinstance(execution_result, RescheduleRequested):
         return execution_result

@@ -2201,7 +2201,6 @@ def _terminal_failure(
             owner=owner,
             build_id=build_id,
             ctx=ctx,
-            reason="dossier build terminalized before host acceptance",
         ):
             db.rollback()
             return
@@ -2248,7 +2247,6 @@ def _cancel_prepared_build_generation_in_current_transaction(
     owner: LlmCallOwner,
     build_id: UUID,
     ctx: JobExecutionContext | None,
-    reason: str,
 ) -> bool:
     """Close the one prepared Dossier generation before its owner becomes terminal.
 
@@ -2295,7 +2293,6 @@ def _cancel_prepared_build_generation_in_current_transaction(
         owner=owner,
         state=state,
         terminal_result=ArtifactGenerationCancelled().model_dump_json(),
-        reason=reason,
     )
     db.execute(
         text("UPDATE background_jobs SET payload = CAST(:payload AS jsonb) WHERE id = :job_id"),
@@ -2526,7 +2523,6 @@ def cancel_build(db: Session, *, build_id: UUID, actor_user_id: UUID) -> None:
             owner=owner,
             build_id=build_id,
             ctx=None,
-            reason="dossier build was cancelled before host acceptance",
         ):
             raise AssertionError("unfenced dossier cancellation lost queue ownership")
         existing = _existing_terminal_child(db, build_id)
@@ -3045,8 +3041,6 @@ def _lock_cleanup_head_ids_in_order(
 def _cancel_prepared_learn_requests_before_purge(
     db: Session,
     request_ids: Sequence[UUID],
-    *,
-    reason: str,
 ) -> None:
     if not request_ids:
         return
@@ -3091,7 +3085,6 @@ def _cancel_prepared_learn_requests_before_purge(
             owner=owner,
             state=state,
             terminal_result=_unresolved_idea_envelope().model_dump_json(),
-            reason=reason,
         )
         payload = step_journal.payload_with_step_state(
             {"coordination": coordination},
@@ -3278,7 +3271,6 @@ def _delete_heads(db: Session, head_ids: list[UUID]) -> None:
     _cancel_prepared_learn_requests_before_purge(
         db,
         learn_request_ids,
-        reason="Dossier Idea resolution was purged before host acceptance",
     )
     for build_id in build_ids:
         if not _cancel_prepared_build_generation_in_current_transaction(
@@ -3286,7 +3278,6 @@ def _delete_heads(db: Session, head_ids: list[UUID]) -> None:
             owner=LlmCallOwner(kind="artifact_build", id=build_id),
             build_id=build_id,
             ctx=None,
-            reason="dossier build was purged before host acceptance",
         ):
             raise AssertionError("Dossier purge lost queue ownership")
 

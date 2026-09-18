@@ -309,7 +309,6 @@ def _apply_completed_synapse(
                 owner=owner,
                 state=current,
                 terminal_result=terminal_result,
-                reason=preaccept_reason,
             )
             if not step_journal.checkpoint_step_state(
                 db,

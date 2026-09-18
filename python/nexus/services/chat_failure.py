@@ -140,9 +140,7 @@ def _project_failure(
         return AssistantUnavailableChatFailure(can_rerun=can_rerun)
     if code == "operator_defect":
         return OperatorDefectChatFailure()
-
-    # Unreachable given the up-front guard; kept as a total-match backstop.
-    raise _UnrepresentableTerminal(f"unrecognized ChatRun.error_code {code!r}")
+    return None
 
 
 def rerun_eligibility(

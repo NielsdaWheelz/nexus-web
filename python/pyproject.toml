@@ -155,7 +155,6 @@ include = [
     "nexus/services/playback_source.py",
     "nexus/services/reader.py",
     "nexus/services/reader_navigation.py",
-    "nexus/services/redact.py",
     "nexus/services/resonance",
     "nexus/services/resource_graph",
     "nexus/services/resource_mutation_replay.py",

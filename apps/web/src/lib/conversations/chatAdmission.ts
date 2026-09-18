@@ -33,6 +33,7 @@ const REJECTION_CODES = [
   "E_READER_SELECTION_TOO_LARGE",
   "E_CONVERSATION_NO_LONGER_EMPTY",
   "E_BILLING_REQUIRED",
+  "E_GENERATION_CONTEXT_TOO_LARGE",
 ] as const;
 export type ChatAdmissionRejection = { code: (typeof REJECTION_CODES)[number] };
 export type AcceptedChatAdmission = Readonly<{
@@ -158,6 +159,8 @@ export function chatAdmissionErrorMessage(
       return "This chat already has messages. Review the conversation and send again.";
     case "E_BILLING_REQUIRED":
       return "Billing must be enabled before sending this message.";
+    case "E_GENERATION_CONTEXT_TOO_LARGE":
+      return "This conversation no longer fits the model’s context window. Start a new chat or choose a larger model.";
     default:
       return assertNever(reason.code);
   }

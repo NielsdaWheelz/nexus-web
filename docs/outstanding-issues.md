@@ -265,3 +265,4 @@ unexpected timeouts. See
 - [open] oi-163 · note anchors · 2026-09-17 cleanup audit · p2 · normalized quote offsets can address the wrong stored text: [ticket](tickets/note-quote-offsets-assume-normalized-source.md).
 - [open] oi-164 · note citations · 2026-09-17 cleanup audit · p2 · citation ranges count trimmed text against untrimmed editor positions: [ticket](tickets/note-citation-pulse-counts-untrimmed-text.md).
 - [open] oi-165 · note navigation · 2026-09-17 cleanup audit · p2 · emitted passage links have no navigation consumer: [ticket](tickets/note-passage-links-have-no-navigation-consumer.md).
+- [open] oi-167 · chat tool runtime · 2026-09-17 slop sweep · p3 · `rejected_provider_call` has no producer, so an unknown provider tool name has no recorded outcome: [ticket](tickets/unknown-provider-tool-name-has-no-recorded-outcome.md).

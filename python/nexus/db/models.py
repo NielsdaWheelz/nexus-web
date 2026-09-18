@@ -2488,7 +2488,6 @@ class ChatRun(Base):
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     support_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     publication_warning_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

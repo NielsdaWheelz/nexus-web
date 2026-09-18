@@ -516,7 +516,6 @@ def complete_prepared_dawn_write_without_dispatch(
         owner=owner,
         state=state,
         terminal_result=_COMPLETED_DAWN_WRITE_ADAPTER.dump_json(completed).decode("utf-8"),
-        reason=f"dawn write {reason.replace('_', ' ')} before dispatch",
     )
     if not step_journal.checkpoint_step_state(
         db,
