@@ -29,6 +29,12 @@ from nexus.db.models import Conversation, ResourceEdge
 from nexus.errors import ApiErrorCode, ForbiddenError, InvalidRequestError, NotFoundError
 from nexus.schemas.conversation import ConversationOut, PageInfo
 from nexus.schemas.resource_items import ResourceActivationOut
+from nexus.services.keyset_cursor import (
+    KeysetValue,
+    KeysetValueKind,
+    decode_keyset_cursor,
+    encode_keyset_cursor,
+)
 from nexus.services.resource_graph.edges import create_edge
 from nexus.services.resource_graph.refs import (
     ResourceRef,
@@ -41,12 +47,6 @@ from nexus.services.resource_items.capabilities import (
     resource_can_attach,
 )
 from nexus.services.resource_items.routing import resource_activation_for_ref
-from nexus.services.signed_keyset_cursor import (
-    KeysetValue,
-    KeysetValueKind,
-    decode_signed_keyset_cursor,
-    encode_signed_keyset_cursor,
-)
 
 _DEFAULT_LIMIT = 50
 _MIN_LIMIT = 1
@@ -402,7 +402,7 @@ def _decode_cursor_clause(
     """Decode a conversation cursor into a SQL fragment + bound params."""
     if not cursor:
         return "", {}
-    updated_at, conversation_id = decode_signed_keyset_cursor(
+    updated_at, conversation_id = decode_keyset_cursor(
         cursor,
         family="ConversationContext",
         query=query,
@@ -423,7 +423,7 @@ def _encode_cursor(
     *,
     query: Mapping[str, object],
 ) -> str:
-    return encode_signed_keyset_cursor(
+    return encode_keyset_cursor(
         family="ConversationContext",
         query=query,
         after=(

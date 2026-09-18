@@ -28,7 +28,6 @@ from nexus.schemas.consumption import (
     LecternSnapshot,
     ListeningStateOut,
     OpenPaneActivation,
-    PauseShorteningMode,
     PlaybackRateResolution,
     PlayerDescriptor,
     PodcastPlaybackPreference,
@@ -47,8 +46,8 @@ from nexus.services.consumption._listening_store import ListeningRow
 from nexus.services.consumption._reader_engagement_store import ReaderEngagementRow
 from nexus.services.playback_source import derive_playback_source
 from nexus.services.podcasts.playback_preferences import (
-    load_subscription_pause_shortening_modes,
-    load_subscription_playback_preferences,
+    SubscriptionPlaybackSettings,
+    load_subscription_playback_settings,
 )
 
 _MAX_CHAPTERS = 100
@@ -137,12 +136,7 @@ def _project(db: Session, *, viewer_id: UUID, rows: list[LecternRow]) -> list[Le
     )
     listening = _listening_store.load_states(db, viewer_id=viewer_id, media_ids=media_ids)
     podcast_ids = [row.podcast_id for row in rows if row.podcast_id is not None]
-    subscription_preferences = load_subscription_playback_preferences(
-        db,
-        viewer_id=viewer_id,
-        podcast_ids=podcast_ids,
-    )
-    pause_shortening_modes = load_subscription_pause_shortening_modes(
+    subscription_settings = load_subscription_playback_settings(
         db,
         viewer_id=viewer_id,
         podcast_ids=podcast_ids,
@@ -153,8 +147,7 @@ def _project(db: Session, *, viewer_id: UUID, rows: list[LecternRow]) -> list[Le
             db,
             row,
             listening.get(row.media_id),
-            subscription_preferences.get(row.podcast_id) if row.podcast_id is not None else None,
-            pause_shortening_modes.get(row.podcast_id) if row.podcast_id is not None else None,
+            subscription_settings.get(row.podcast_id) if row.podcast_id is not None else None,
             override_rows.get(row.media_id),
         )
         for row in rows
@@ -218,8 +211,7 @@ def _derive_activation(
     db: Session,
     row: LecternRow,
     listening: ListeningRow | None,
-    subscription_preference: Absent | Present[float] | None,
-    pause_shortening_mode: Absent | Present[PauseShorteningMode] | None,
+    subscription: SubscriptionPlaybackSettings | None,
     override: _state_store.OverrideRow | None,
 ) -> LecternActivation:
     if row.kind == MediaKind.video.value:
@@ -250,10 +242,12 @@ def _derive_activation(
             playback_rate=resolve_playback_rate(
                 episode_rate=listening.playback_speed if listening is not None else None,
                 podcast_id=row.podcast_id,
-                subscription_preference=subscription_preference,
+                subscription_preference=(
+                    subscription.playback_rate if subscription is not None else None
+                ),
             ),
             pause_shortening_mode=(
-                pause_shortening_mode if pause_shortening_mode is not None else absent()
+                subscription.pause_shortening_mode if subscription is not None else absent()
             ),
             consumption_override_revision=(
                 present(override.revision) if override is not None else absent()
@@ -634,12 +628,7 @@ def player_descriptors(
         return {}
     row_media_ids = [row.media_id for row in rows]
     listening = _listening_store.load_states(db, viewer_id=viewer_id, media_ids=row_media_ids)
-    subscription_preferences = load_subscription_playback_preferences(
-        db,
-        viewer_id=viewer_id,
-        podcast_ids=[row.podcast_id for row in rows],
-    )
-    pause_shortening_modes = load_subscription_pause_shortening_modes(
+    subscription_settings = load_subscription_playback_settings(
         db,
         viewer_id=viewer_id,
         podcast_ids=[row.podcast_id for row in rows],
@@ -663,7 +652,7 @@ def player_descriptors(
         if playback is None or not playback.stream_url:
             continue
         listening_row = listening.get(row.media_id)
-        pause_shortening_mode = pause_shortening_modes.get(row.podcast_id)
+        subscription = subscription_settings.get(row.podcast_id)
         result[row.media_id] = PlayerDescriptor(
             media_id=row.media_id,
             title=row.title[:_MAX_TITLE_CHARS],
@@ -679,10 +668,12 @@ def player_descriptors(
                         listening_row.playback_speed if listening_row is not None else None
                     ),
                     podcast_id=row.podcast_id,
-                    subscription_preference=subscription_preferences.get(row.podcast_id),
+                    subscription_preference=(
+                        subscription.playback_rate if subscription is not None else None
+                    ),
                 ),
                 pause_shortening_mode=(
-                    pause_shortening_mode if pause_shortening_mode is not None else absent()
+                    subscription.pause_shortening_mode if subscription is not None else absent()
                 ),
                 consumption_override_revision=(
                     present(override_rows[row.media_id].revision)

@@ -26,7 +26,7 @@ from nexus.schemas.presence import absent, present
 from nexus.services.browse.cursor import decode_search_cursor, encode_search_cursor
 from nexus.services.browse.models import BrowseKind, BrowseQuery
 from nexus.services.contributor_credits import load_contributor_credits_for_media
-from nexus.services.signed_keyset_cursor import KeysetValueKind
+from nexus.services.keyset_cursor import KeysetValueKind
 
 _PROVIDER_CONTRACT = "NexusVisibleMediaWebsearch"
 _MEDIA_KIND = {

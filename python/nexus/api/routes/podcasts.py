@@ -25,7 +25,7 @@ from nexus.services.podcasts import episodes as podcast_episodes_service
 from nexus.services.podcasts import refresh as podcast_refresh_service
 from nexus.services.podcasts import subscriptions as podcast_subscription_service
 from nexus.services.podcasts import subscriptions_query as podcast_subscriptions_query_service
-from nexus.services.podcasts.handles import PodcastRefreshRunHandle, unseal_podcast_refresh_run
+from nexus.services.sealed_handles import PodcastRefreshRunHandle, unseal_podcast_refresh_run
 
 router = APIRouter(tags=["podcasts"])
 

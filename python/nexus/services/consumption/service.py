@@ -55,7 +55,6 @@ from nexus.schemas.consumption import (
     OrderedOutcome,
     PlacedOutcome,
     PlaceItemsCommand,
-    PlayerDescriptor,
     PreviewPositionIn,
     RemovedOutcome,
     RemoveItemCommand,
@@ -120,7 +119,6 @@ from nexus.services.consumption import (
 from nexus.services.consumption._lectern_store import (
     SUPPORTED_MEDIA_KINDS,
     LecternRow,
-    LecternSource,
     _dedupe,
 )
 from nexus.services.consumption._projection import _media_kinds
@@ -537,38 +535,11 @@ def get_activity_stats(
     )
 
 
-def engagement_fact_rows_sql() -> str:
-    """Canonical consumption-fact relation; binds ``:viewer_id``.
-
-    Columns: ``media_id``, ``read_state``, ``progress_fraction``, and
-    ``last_engaged_at``.
-    """
-    return _projection.engagement_fact_rows_sql()
-
-
-def lectern_membership_rows_sql() -> str:
-    """Complete Lectern membership relation; binds ``:viewer_id``.
-
-    Columns: ``media_id``. Hidden rows are intentionally included.
-    """
-    return _projection.lectern_membership_rows_sql()
-
-
-def lectern_item_count(db: Session, *, viewer_id: UUID) -> int:
-    """Count every Lectern row, including hidden rows."""
-    return _projection.lectern_item_count(db, viewer_id=viewer_id)
-
-
 def lectern_has_capacity(db: Session, *, viewer_id: UUID) -> bool:
     """Whether the complete Lectern membership is below its owned row cap."""
-    return lectern_item_count(db, viewer_id=viewer_id) < _lectern_store.LECTERN_MAX_ITEMS
-
-
-def recent_engagement_anchor_facts(
-    db: Session, *, viewer_id: UUID, limit: int
-) -> tuple[_projection.RecentEngagementAnchorFact, ...]:
-    """Newest distinct visible media engagement facts, capped by ``limit``."""
-    return _projection.recent_engagement_anchor_facts(db, viewer_id=viewer_id, limit=limit)
+    return (
+        _projection.lectern_item_count(db, viewer_id=viewer_id) < _lectern_store.LECTERN_MAX_ITEMS
+    )
 
 
 def get_listening_state(db: Session, viewer_id: UUID, media_id: UUID) -> ListeningStateOut:
@@ -669,85 +640,6 @@ def put_reader_cursor_in_txn(
         families=families,
     )
     return snapshot
-
-
-def media_read_states(
-    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
-) -> dict[UUID, _projection.MediaReadStateOut]:
-    """Batch collection read-state for arbitrary media (MediaOut/episode surfaces).
-
-    The one read boundary adopters use for read-state; the projection owns the
-    explicit-override + listening-threshold + reader-engagement derivation."""
-    return _projection.media_read_states(db, viewer_id=viewer_id, media_ids=media_ids)
-
-
-def listening_recency(
-    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
-) -> dict[UUID, datetime]:
-    """Per-media listening-engagement recency (owner-scoped read for MediaOut)."""
-    return _projection.listening_recency(db, viewer_id=viewer_id, media_ids=media_ids)
-
-
-def reader_engagement_recency(
-    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
-) -> dict[UUID, datetime]:
-    """Per-media reader-engagement recency (owner-scoped read for MediaOut)."""
-    return _projection.reader_engagement_recency(db, viewer_id=viewer_id, media_ids=media_ids)
-
-
-def player_descriptors(
-    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
-) -> dict[UUID, PlayerDescriptor]:
-    """Batch ``PlayerDescriptor`` for podcast-episode media (MediaOut/episode-list
-    adopters, spec §6). The one boundary adopters use; ``_projection`` owns the
-    Lectern-identical derivation."""
-    return _projection.player_descriptors(db, viewer_id=viewer_id, media_ids=media_ids)
-
-
-def get_lectern_item_for_media(
-    db: Session, *, viewer_id: UUID, media_id: UUID
-) -> tuple[UUID, str] | None:
-    """The viewer's Lectern ``(item_id, title)`` for a media, or ``None`` (assistant
-    add echoes the resulting row whether it was newly ensured or already present)."""
-    return _lectern_store.find_item_for_media(db, viewer_id=viewer_id, media_id=media_id)
-
-
-def lectern_item_ids_for_media(
-    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
-) -> dict[UUID, UUID]:
-    """Batch (``media_id`` -> Lectern ``item_id``) for the viewer, set-based.
-
-    The one boundary the action-snapshot aggregator uses for ``LecternMembership``
-    presence + item id across a batch of media; media absent from the Lectern are
-    omitted. Never loop :func:`get_lectern_item_for_media` for this."""
-    return _lectern_store.item_ids_for_media(db, viewer_id=viewer_id, media_ids=media_ids)
-
-
-# ---------------------------------------------------------------------------
-# Episode-state SQL fragments (podcast list/detail/library adopters compose these
-# through the service boundary; the raw table reads stay inside _projection).
-# ---------------------------------------------------------------------------
-
-
-def episode_state_case_sql(*, listening_alias: str, override_alias: str, episode_alias: str) -> str:
-    """CASE expr deriving ``played``|``in_progress``|``unplayed`` (see _projection)."""
-    return _projection.episode_state_case_sql(
-        listening_alias=listening_alias,
-        override_alias=override_alias,
-        episode_alias=episode_alias,
-    )
-
-
-def episode_state_joins_sql(
-    *, user_param: str, media_expr: str, listening_alias: str, override_alias: str
-) -> str:
-    """LEFT JOINs binding the viewer's listening + override rows for ``media_expr``."""
-    return _projection.episode_state_joins_sql(
-        user_param=user_param,
-        media_expr=media_expr,
-        listening_alias=listening_alias,
-        override_alias=override_alias,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1103,7 +995,7 @@ def set_podcast_episode_states_in_txn(
     normalized_ids = _dedupe(media_ids)
     if not normalized_ids:
         return 0
-    before = media_read_states(db, viewer_id=viewer_id, media_ids=normalized_ids)
+    before = _projection.media_read_states(db, viewer_id=viewer_id, media_ids=normalized_ids)
     _write_podcast_episode_states(db, viewer_id, normalized_ids, state)
     target = "finished" if state == "Finished" else "unread"
     changed_count = sum(1 for media_id in normalized_ids if before[media_id].state != target)
@@ -1687,16 +1579,6 @@ def _install_preview_position_op(
 # ---------------------------------------------------------------------------
 # Trusted ensure + media-lifecycle composition helpers
 # ---------------------------------------------------------------------------
-
-
-def ensure_missing_items_in_txn(
-    db: Session, *, viewer_id: UUID, media_ids: list[UUID], source: LecternSource
-) -> list[tuple[UUID, UUID]]:
-    """Compose the trusted ensure inside a caller-owned, viewer-locked txn
-    (the auto-subscription watermark commit; spec §5.3)."""
-    return _lectern_store.ensure_missing_in_txn(
-        db, viewer_id=viewer_id, media_ids=media_ids, source=source
-    )
 
 
 def ensure_missing_items_for_assistant_in_current_transaction(

@@ -36,7 +36,7 @@ several of its tracks).
 ## Proposed fix
 
 Load the player descriptors before the DTOs are built (the projection owner
-`consumption_service.player_descriptors` is already a batch read), pass the
+`consumption._projection.player_descriptors` is already a batch read), pass the
 `Presence[PlayerDescriptor]` into `_media_out_from_row` the way
 `source_progress` is now passed, and delete the `model_validate` rebuild and
 its comment. `_apply_consumption_state` keeps only the per-viewer read-state

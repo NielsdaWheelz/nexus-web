@@ -30,9 +30,9 @@ from nexus.schemas.podcast import (
 from nexus.schemas.presence import presence_from_nullable
 from nexus.services import library_governance
 from nexus.services.collection_revisions import CollectionFamily, bump_collection_families
+from nexus.services.sealed_handles import seal_podcast_refresh_run
 
 from .control_replay import podcast_control_request_bytes
-from .handles import seal_podcast_refresh_run
 from .types import (
     PODCAST_HEALTHY_SYNC_BASE_SECONDS,
     PODCAST_HEALTHY_SYNC_JITTER_MAX_SECONDS,

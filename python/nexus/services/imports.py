@@ -79,6 +79,12 @@ from nexus.services.import_history import (
     history_entry,
     read_history_page,
 )
+from nexus.services.keyset_cursor import (
+    KeysetValue,
+    KeysetValueKind,
+    decode_keyset_cursor,
+    encode_keyset_cursor,
+)
 from nexus.services.media import list_media_for_viewer_by_ids
 from nexus.services.media_source_ingest import (
     SourceRecoveryFacts,
@@ -90,12 +96,6 @@ from nexus.services.media_upload_sessions import (
     UPLOAD_SESSION_DERIVED_STATE_SQL,
 )
 from nexus.services.sealed_handles import seal_upload_session, unseal_upload_session
-from nexus.services.signed_keyset_cursor import (
-    KeysetValue,
-    KeysetValueKind,
-    decode_signed_keyset_cursor,
-    encode_signed_keyset_cursor,
-)
 from nexus.services.source_history import COUNTED_PROGRESS_SOURCE_TYPES
 
 _HISTORY_CURSOR_FAMILY = "imports:history"
@@ -571,7 +571,7 @@ def read_import_page(
         params.update(
             keyset_params(
                 plan,
-                decode_signed_keyset_cursor(
+                decode_keyset_cursor(
                     query.cursor,
                     family=family,
                     query=cursor_query,
@@ -601,7 +601,7 @@ def read_import_page(
     next_cursor: Absent | Present[str] = absent()
     if len(rows) > query.limit and page:
         next_cursor = present(
-            encode_signed_keyset_cursor(
+            encode_keyset_cursor(
                 family=family, query=cursor_query, after=after_values(plan, page[-1])
             )
         )
@@ -705,7 +705,7 @@ def read_import_history(
     }
     before: Absent | Present[tuple[datetime, UUID]] = absent()
     if cursor is not None:
-        occurred_at, event_id = decode_signed_keyset_cursor(
+        occurred_at, event_id = decode_keyset_cursor(
             cursor,
             family=_HISTORY_CURSOR_FAMILY,
             query=cursor_query,
@@ -718,7 +718,7 @@ def read_import_history(
     if len(entries) > limit and page:
         last = page[-1]
         next_cursor = present(
-            encode_signed_keyset_cursor(
+            encode_keyset_cursor(
                 family=_HISTORY_CURSOR_FAMILY,
                 query=cursor_query,
                 after=(

@@ -42,11 +42,12 @@ from nexus.services.collection_revisions import (
     read_collection_revision,
     require_collection_revision,
 )
+from nexus.services.consumption import _projection
 from nexus.services.consumption import service as consumption_service
-from nexus.services.signed_keyset_cursor import (
+from nexus.services.keyset_cursor import (
     KeysetValueKind,
-    decode_signed_keyset_cursor,
-    encode_signed_keyset_cursor,
+    decode_keyset_cursor,
+    encode_keyset_cursor,
 )
 
 PodcastEpisodeState = Literal["all", "unplayed", "in_progress", "played"]
@@ -143,7 +144,7 @@ def resolve_episode_selection_ids(
                 SELECT
                     pe.media_id,
                     {
-                consumption_service.episode_state_case_sql(
+                _projection.episode_state_case_sql(
                     listening_alias="pls",
                     override_alias="co",
                     episode_alias="pe",
@@ -152,7 +153,7 @@ def resolve_episode_selection_ids(
                 FROM podcast_episodes pe
                 JOIN visible_media vm ON vm.media_id = pe.media_id
                 {
-                consumption_service.episode_state_joins_sql(
+                _projection.episode_state_joins_sql(
                     user_param=":viewer_id",
                     media_expr="pe.media_id",
                     listening_alias="pls",
@@ -311,7 +312,7 @@ def list_podcast_episodes_for_viewer(
         params.update(
             keyset_params(
                 plan,
-                decode_signed_keyset_cursor(
+                decode_keyset_cursor(
                     cursor,
                     family=CollectionFamily.PodcastEpisodes.value,
                     query=query_identity,
@@ -340,7 +341,7 @@ def list_podcast_episodes_for_viewer(
                     (NULLIF(BTRIM(pe.description_text), '') IS NOT NULL)
                         AS has_show_notes,
                     {
-                    consumption_service.episode_state_case_sql(
+                    _projection.episode_state_case_sql(
                         listening_alias="pls", override_alias="co", episode_alias="pe"
                     )
                 } AS episode_state
@@ -348,7 +349,7 @@ def list_podcast_episodes_for_viewer(
                 JOIN visible_media vm
                   ON vm.media_id = pe.media_id
                 {
-                    consumption_service.episode_state_joins_sql(
+                    _projection.episode_state_joins_sql(
                         user_param=":viewer_id",
                         media_expr="pe.media_id",
                         listening_alias="pls",
@@ -454,7 +455,7 @@ def list_podcast_episodes_for_viewer(
         )
     next_cursor = (
         present(
-            encode_signed_keyset_cursor(
+            encode_keyset_cursor(
                 family=CollectionFamily.PodcastEpisodes.value,
                 query=query_identity,
                 after=after_values(plan, page_rows[-1]),

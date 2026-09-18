@@ -1448,7 +1448,7 @@ the hide-finished completion filter for reads — no DML on
   while the domain object, storage row, and API fields keep their internal
   Default identity; `All` is a reserved library name (`400 E_NAME_INVALID` on
   any non-default create/rename). Pagination over any library — default or
-  not — is stateless keyset pagination with the unversioned authenticated
+  not — is stateless keyset pagination with the unversioned
   `LibraryEntries` cursor family. Its query digest binds viewer, Library, view,
   order, completion, and a named keyset plan; any wrong family, digest, plan,
   or scalar kind is a clean
@@ -1909,7 +1909,7 @@ arrives, and disables continuation while requested and committed disagree.
 `python/nexus/services/collection_keyset.py` is the single owner of the
 plan → `ORDER BY` → keyset predicate → cursor-value mechanics, so those four can
 never disagree; each collection owner keeps its own plan construction because
-the sort vocabulary is domain language. Signed cursors bind viewer,
+the sort vocabulary is domain language. Cursors bind viewer,
 scope/resource identity, cursor-family version, the exact order plan, and the
 collection revision, so a cursor is undecodable outside the binding that minted
 it. The Author works, Conversation index, and Libraries index families are at

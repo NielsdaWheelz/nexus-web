@@ -25,7 +25,7 @@ from nexus.services.browse.models import (
     gutenberg_target,
     seal_target,
 )
-from nexus.services.signed_keyset_cursor import KeysetValueKind
+from nexus.services.keyset_cursor import KeysetValueKind
 
 _PROVIDER_CONTRACT = "ProjectGutenbergCatalogSearch"
 _LANDING = "https://www.gutenberg.org/ebooks/{ebook_ref}"

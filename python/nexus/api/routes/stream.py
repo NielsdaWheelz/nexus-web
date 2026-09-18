@@ -47,7 +47,7 @@ from nexus.services.chat_run_execution import chat_run_execution_phase
 from nexus.services.durable_step_journal import DurableExecutionPhase
 from nexus.services.podcasts import refresh as podcast_refresh_service
 from nexus.services.podcasts import subscriptions as podcast_subscription_service
-from nexus.services.podcasts.handles import (
+from nexus.services.sealed_handles import (
     PodcastRefreshRunHandle,
     unseal_podcast_refresh_run,
 )
