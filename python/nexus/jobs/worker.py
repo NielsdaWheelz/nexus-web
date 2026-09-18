@@ -16,7 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_serializable
-from nexus.errors import ResourceFailureDimension
+from nexus.errors import ApiError, ApiErrorCode, ResourceFailureDimension
 from nexus.jobs.dead_letter_projections import apply_dead_letter_projection
 from nexus.jobs.history_projections import (
     Dead,
@@ -1212,6 +1212,8 @@ def _clear_resource_failure_capacity(
 
 
 def _derive_error_code(exc: Exception) -> str:
+    if isinstance(exc, ApiError) and isinstance(exc.code, ApiErrorCode):
+        return exc.code.value
     candidate = getattr(exc, "error_code", None)
     if candidate is None:
         return "E_WORKER_HANDLER_FAILED"
