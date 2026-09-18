@@ -435,6 +435,11 @@ row). None of the highlight-family FKs cascade; ordinary deletion is explicit
 child-first cleanup, and reindex/refresh never delete Highlights or passage
 anchors — unresolved locators stay visible rather than disappearing.
 
+note quotes match in normalized text, then project unique hits into raw stored
+codepoint offsets. projection preserves the matched unicode component
+occurrences; a hit that cannot form one exact raw interval remains unresolved.
+resolution never rewrites the note body or chooses among ambiguous matches.
+
 **Libraries / sharing** — `libraries`, `memberships`, `library_entries`, and
 `library_invitations`. There is no separate provenance, closure, or backfill-job
 table: the default library's read surface is a live query over

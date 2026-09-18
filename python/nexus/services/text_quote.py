@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import unicodedata
 from array import array
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, replace
 from enum import Enum
 from uuid import UUID
 
@@ -229,6 +230,41 @@ def match_quote_in_sources(
     )
 
 
+def _project_note_match(text: str, match: OwnerQuoteMatch, *, exact: str) -> OwnerQuoteMatch:
+    """Map a normalized note hit to the same contiguous stored-text occurrence."""
+    if match.raw_start is None or match.raw_end is None:
+        return match
+    nfc = unicodedata.normalize("NFC", text)
+    if nfc == text:
+        return match
+
+    # Equal NFD components retain occurrence order through NFC. Count only the
+    # selected interval's components and their preceding occurrences, rather
+    # than building per-character source maps for the entire note.
+    remaining = Counter(unicodedata.normalize("NFD", nfc[match.raw_start : match.raw_end]))
+    preceding = Counter(
+        component
+        for component in unicodedata.normalize("NFD", nfc[: match.raw_start])
+        if component in remaining
+    )
+    start, end = len(text), 0
+    for index, char in enumerate(text):
+        for component in unicodedata.normalize("NFD", char):
+            if preceding[component]:
+                preceding[component] -= 1
+            elif remaining[component]:
+                remaining[component] -= 1
+                start = min(start, index)
+                end = index + 1
+
+    # Reordering or expansion can make a partial hit impossible to represent
+    # as one raw interval. Do not include unrelated text or substitute another
+    # occurrence of an indistinguishable component to manufacture a match.
+    if normalize_for_match(text[start:end]).text.strip() != exact:
+        return _NO_OWNER_MATCH
+    return replace(match, raw_start=start, raw_end=end)
+
+
 def resolve_owner_quote(
     db: Session,
     *,
@@ -257,7 +293,8 @@ def resolve_owner_quote(
         if body_text is None:
             return _NO_OWNER_MATCH
         sources = [NormalizedOwnerSource(None, None, None, normalize_for_match(body_text))]
-    else:
-        sources = load_normalized_media_sources(db, media_id=owner_id, cache=sources_cache)
+        match = match_quote_in_sources(sources, exact=exact, prefix=prefix, suffix=suffix)
+        return _project_note_match(body_text, match, exact=exact)
 
+    sources = load_normalized_media_sources(db, media_id=owner_id, cache=sources_cache)
     return match_quote_in_sources(sources, exact=exact, prefix=prefix, suffix=suffix)
