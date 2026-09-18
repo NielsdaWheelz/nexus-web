@@ -1106,8 +1106,10 @@ class GenerationToolExecutor:
             )
 
     def refuse_unknown_call(self, *, transport_call_id: str) -> ModelToolExecutionResult:
+        """Answer an unpublished provider tool name as an error result so the model
+        self-corrects; an unresolvable name has no canonical position to record."""
         _validate_transport_call_id(transport_call_id)
-        result: ToolResult = {"type": "Failure", "error": {"type": "InvalidInput"}}
+        result: ToolResult = {"type": "Failure", "error": {"type": "ToolUnavailable"}}
         return ModelToolExecutionResult(
             model_output=ToolModelOutput(
                 call_id=transport_call_id,

@@ -1,8 +1,7 @@
 // One exhaustive error-copy boundary (A14) for every expected Dossier error,
 // mapped near the screen. Two closed maps:
-//   - `dossierBuildFailureMessage`: the current async failure vocabulary plus
-//     read-only historical spellings surfaced from the head's
-//     `latest_unsuccessful_build` or a replayed `Failed` stream event.
+//   - `dossierBuildFailureMessage`: the async failure vocabulary surfaced from
+//     the head's `latest_unsuccessful_build` or a replayed `Failed` stream event.
 //   - `dossierApiErrorMessage`: the synchronous A9 API error union returned by
 //     Generate/Cancel/Make-current/read (invalid subject, masked not-found,
 //     generation-in-progress, invalid instruction, revision-not-found /
@@ -12,12 +11,12 @@
 // aliases are accepted at this hard-cut boundary.
 import { isApiError } from "@/lib/api/client";
 import type {
+  DossierBuildFailureCode,
   DossierErrorInfo,
-  ReadDossierBuildFailureCode,
 } from "@/lib/dossiers/dossierControllerTypes";
 
 export function dossierBuildFailureMessage(
-  code: ReadDossierBuildFailureCode,
+  code: DossierBuildFailureCode,
 ): string {
   switch (code) {
     case "NoSourceMaterial":
@@ -48,14 +47,6 @@ export function dossierBuildFailureMessage(
       return "The generated dossier couldn't be validated. Try again.";
     case "CitationValidationFailed":
       return "The generated citations couldn't be verified. Try again.";
-    case "EntitlementDenied":
-      return "You don't have access to generate this dossier.";
-    case "BudgetExceeded":
-      return "This generation exceeded its budget. Try a narrower instruction.";
-    case "ProviderRefused":
-      return "The model declined to generate this dossier.";
-    case "ProviderIncomplete":
-      return "The model returned an incomplete dossier. Try again.";
     default: {
       const exhaustive: never = code;
       throw new Error(`Unhandled dossier failure code: ${String(exhaustive)}`);

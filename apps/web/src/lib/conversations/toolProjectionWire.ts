@@ -100,12 +100,9 @@ export function decodeToolProjectionFields(
   }
   if (
     (recordKind === "attached_context" && resultKind !== "attached_context") ||
-    (recordKind === "rejected_provider_call" &&
-      resultKind !== "rejected_provider_call") ||
     ((recordKind === "current_execution" ||
       recordKind === "historical_execution") &&
-      (resultKind === "attached_context" ||
-        resultKind === "rejected_provider_call"))
+      resultKind === "attached_context")
   ) {
     throw new Error(
       "Invalid tool projection: result kind disagrees with record kind",

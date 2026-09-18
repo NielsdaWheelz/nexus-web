@@ -119,18 +119,6 @@ class DossierBuildFailureCode(StrEnum):
     CitationValidationFailed = "CitationValidationFailed"
 
 
-class HistoricalDossierBuildFailureCode(StrEnum):
-    """Read-only legacy spellings; new terminal producers cannot accept these."""
-
-    EntitlementDenied = "EntitlementDenied"
-    BudgetExceeded = "BudgetExceeded"
-    ProviderRefused = "ProviderRefused"
-    ProviderIncomplete = "ProviderIncomplete"
-
-
-type ReadDossierBuildFailureCode = DossierBuildFailureCode | HistoricalDossierBuildFailureCode
-
-
 class ArtifactBuildEventType(StrEnum):
     """The persisted, sequenced build-event log types (A5). Stored in
     ``artifact_build_events.event_type`` (append-only, storage-enum CHECK)."""
@@ -139,17 +127,7 @@ class ArtifactBuildEventType(StrEnum):
     Progress = "Progress"
     Succeeded = "Succeeded"
     Failed = "Failed"
-    HistoricalFailed = "HistoricalFailed"
     Cancelled = "Cancelled"
-
-
-type WritableArtifactBuildEventType = Literal[
-    ArtifactBuildEventType.Started,
-    ArtifactBuildEventType.Progress,
-    ArtifactBuildEventType.Succeeded,
-    ArtifactBuildEventType.Failed,
-    ArtifactBuildEventType.Cancelled,
-]
 
 
 # ---------------------------------------------------------------------------
@@ -192,20 +170,6 @@ class FailedEventPayload(_StrictModel):
 
     failure_code: DossierBuildFailureCode
     detail: Presence[str]
-
-
-class HistoricalFailedEventPayload(_StrictModel):
-    """Migration-tagged replay of a terminal written before the hard cut.
-
-    The distinct event type is the provenance proof: current producers cannot
-    emit or accidentally accept retired provider/billing vocabulary.
-    """
-
-    failure_code: HistoricalDossierBuildFailureCode
-    detail: Presence[str]
-
-
-type ReadFailedEventPayload = FailedEventPayload | HistoricalFailedEventPayload
 
 
 class CancelledEventPayload(_StrictModel):

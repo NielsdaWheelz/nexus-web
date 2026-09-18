@@ -21,7 +21,6 @@ import type {
 export interface ConversationSummary {
   id: string;
   title: string;
-  sharing: string;
   message_count: number;
   created_at: string;
   updated_at: string;
@@ -292,7 +291,7 @@ export function createRunningAssistantTrustTrail({
 export interface ConversationMessage {
   id: string;
   seq: number;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant";
   message_document?: MessageDocument;
   parent_message_id?: string | null;
   branch_root_message_id?: string | null;

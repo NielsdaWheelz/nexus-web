@@ -251,7 +251,7 @@ def list_conversations_with_any_edge_to_ref(
 
     rows = db.execute(
         text(f"""
-            SELECT c.id, c.owner_user_id, c.title, c.sharing, c.created_at, c.updated_at,
+            SELECT c.id, c.owner_user_id, c.title, c.created_at, c.updated_at,
                    (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id)
                        AS message_count
             FROM conversations c
@@ -282,10 +282,9 @@ def list_conversations_with_any_edge_to_ref(
             owner_user_id=row[1],
             title=row[2],
             is_owner=True,
-            sharing=row[3],
-            message_count=row[6],
-            created_at=row[4],
-            updated_at=row[5],
+            message_count=row[5],
+            created_at=row[3],
+            updated_at=row[4],
         )
         for row in rows
     ]

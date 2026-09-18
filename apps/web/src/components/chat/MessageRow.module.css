@@ -89,14 +89,6 @@
   margin-top: var(--space-5);
 }
 
-.systemBody {
-  display: block;
-  text-align: center;
-  font-size: var(--text-xs);
-  font-style: italic;
-  color: var(--ink-faint);
-}
-
 .messageActions {
   display: flex;
   justify-content: flex-end;

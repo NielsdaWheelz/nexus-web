@@ -43,24 +43,6 @@ export const ORACLE_READING_FAILURE_CODES = [
 
 export type OracleReadingFailureCode =
   (typeof ORACLE_READING_FAILURE_CODES)[number];
-export const HISTORICAL_ORACLE_READING_FAILURE_CODES = [
-  "defect",
-  "E_INTERNAL",
-  "E_BILLING_REQUIRED",
-  "E_TOKEN_BUDGET_EXCEEDED",
-  "budget_exceeded",
-  "invalid_structured_output",
-  "refused",
-  "incomplete",
-  "rate_limited",
-  "provider_unavailable",
-  "stream_interrupted",
-] as const;
-export type HistoricalOracleReadingFailureCode =
-  (typeof HISTORICAL_ORACLE_READING_FAILURE_CODES)[number];
-export type ReadOracleReadingFailureCode =
-  | OracleReadingFailureCode
-  | HistoricalOracleReadingFailureCode;
 export type OracleReadingStatus =
   | "pending"
   | "streaming"
@@ -79,7 +61,6 @@ const ORACLE_EVENT_TYPES = [
   "delta",
   "omens",
   "done",
-  "historical_done",
 ] as const;
 
 const ORACLE_FOLIO_THEMES = [
@@ -186,15 +167,6 @@ interface OracleDoneEvent {
     | { status: "failed"; error_code: OracleReadingFailureCode };
 }
 
-interface HistoricalOracleDoneEvent {
-  seq: number;
-  event_type: "historical_done";
-  payload: {
-    status: "failed";
-    error_code: HistoricalOracleReadingFailureCode;
-  };
-}
-
 export type OracleReadingEvent =
   | OracleMetaEvent
   | OracleBindEvent
@@ -203,8 +175,7 @@ export type OracleReadingEvent =
   | OraclePassageEvent
   | OracleDeltaEvent
   | OracleOmensEvent
-  | OracleDoneEvent
-  | HistoricalOracleDoneEvent;
+  | OracleDoneEvent;
 
 export interface OracleReadingDetail {
   id: string;
@@ -222,7 +193,7 @@ export interface OracleReadingDetail {
   started_at: string | null;
   completed_at: string | null;
   failed_at: string | null;
-  error_code: ReadOracleReadingFailureCode | null;
+  error_code: OracleReadingFailureCode | null;
 }
 
 export interface OracleCreateResponse {
@@ -278,26 +249,6 @@ export function decodeOracleReadingFailureCode(
     ORACLE_READING_FAILURE_CODES,
     "Oracle failure code",
   );
-}
-
-export function decodeHistoricalOracleReadingFailureCode(
-  value: unknown,
-): HistoricalOracleReadingFailureCode {
-  return expectOneOf(
-    value,
-    HISTORICAL_ORACLE_READING_FAILURE_CODES,
-    "historical Oracle failure code",
-  );
-}
-
-function decodeReadOracleReadingFailureCode(
-  value: unknown,
-): ReadOracleReadingFailureCode {
-  try {
-    return decodeOracleReadingFailureCode(value);
-  } catch {
-    return decodeHistoricalOracleReadingFailureCode(value);
-  }
 }
 
 function decodeImage(value: unknown, name: string): OracleImagePayload {
@@ -493,26 +444,6 @@ function decodeEventPayload(
         },
       };
     }
-    case "historical_done": {
-      const payload = expectExactRecord(
-        raw,
-        ["status", "error_code"],
-        "historical Oracle done event",
-      );
-      if (payload.status !== "failed") {
-        fail("historical Oracle done status must be failed");
-      }
-      return {
-        seq,
-        event_type: eventType,
-        payload: {
-          status: "failed",
-          error_code: decodeHistoricalOracleReadingFailureCode(
-            payload.error_code,
-          ),
-        },
-      };
-    }
   }
 }
 
@@ -588,7 +519,7 @@ export function decodeOracleReadingDetail(value: unknown): OracleReadingDetail {
   const errorCode =
     detail.error_code === null
       ? null
-      : decodeReadOracleReadingFailureCode(detail.error_code);
+      : decodeOracleReadingFailureCode(detail.error_code);
   const completedAt = nullableInstant(
     detail.completed_at,
     "Oracle reading completed_at",

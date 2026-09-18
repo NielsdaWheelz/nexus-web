@@ -40,7 +40,6 @@ from nexus.services import library_governance as governance
 from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_collection_families,
-    bump_collection_revision,
 )
 from nexus.services.sealed_handles import (
     InvalidSealedHandle,
@@ -481,11 +480,6 @@ def accept_library_invite(
                     CollectionFamily.PodcastEpisodes,
                     CollectionFamily.PodcastSubscriptions,
                 ),
-            )
-            bump_collection_revision(
-                db,
-                viewer_id=viewer_id,
-                family=CollectionFamily.ConversationIndex,
             )
             updated = _load_invitation_projection(db, invite_id)
 

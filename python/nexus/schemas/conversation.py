@@ -39,13 +39,11 @@ TOOL_RECORD_KINDS = Literal[
     "attached_context",
     "current_execution",
     "historical_execution",
-    "rejected_provider_call",
 ]
 TOOL_RESULT_KINDS = Literal[
     "attached_context",
     "mutation",
     "navigation",
-    "rejected_provider_call",
     "retrieval",
 ]
 CHAT_RUN_STATUSES = Literal["queued", "running", "complete", "error", "cancelled"]
@@ -98,7 +96,6 @@ class ConversationOut(BaseModel):
     title: str
     owner_user_id: UUID
     is_owner: bool
-    sharing: str  # "private" | "library" | "public"
     message_count: int
     created_at: datetime
     updated_at: datetime
@@ -141,10 +138,10 @@ class MessageOut(BaseModel):
 
     id: UUID
     seq: int
-    role: str  # "user" | "assistant" | "system"
+    role: str  # "user" | "assistant"
     message_document: MessageDocument = Field(default_factory=MessageDocument)
     # Citations rehydrated from the assistant message's citation edges (AC23/§5.2);
-    # empty for user/system messages and assistants with no cited evidence.
+    # empty for user messages and assistants with no cited evidence.
     citations: list[CitationOut] = Field(default_factory=list)
     trust_trail: AssistantTrustTrailOut | None = None
     parent_message_id: UUID | None = None
@@ -344,12 +341,6 @@ class ToolProjectionOut(BaseModel):
             )
             if (self.effect, self.result_kind, self.activity_label) != expected:
                 raise ValueError("canonical tool projection presentation drift")
-        elif self.record_kind == "rejected_provider_call":
-            if (
-                self.result_kind != "rejected_provider_call"
-                or self.activity_label != "Skipped an unavailable tool"
-            ):
-                raise ValueError("rejected provider projection presentation drift")
         elif (
             self.result_kind != "attached_context"
             or self.activity_label != "Attached conversation context"
@@ -385,16 +376,6 @@ def tool_projection_from_persisted_record(record: Any) -> ToolProjectionOut:
             result_kind=declaration.result_kind,
             activity_label=declaration.activity_label,
             error_type=error_type,
-        )
-    if record_kind == "rejected_provider_call":
-        return ToolProjectionOut(
-            record_kind=record_kind,
-            canonical_tool_id=None,
-            provider_wire_name=record.provider_wire_name,
-            effect=None,
-            result_kind="rejected_provider_call",
-            activity_label="Skipped an unavailable tool",
-            error_type=None,
         )
     if record_kind == "attached_context":
         return ToolProjectionOut(
@@ -483,9 +464,7 @@ class ChatRunToolResultEventPayload(StoredToolProjection):
             self.tool_contract_revision is None or self.binding_policy_revision is None
         ):
             raise ValueError("historical tool result is missing reviewed revisions")
-        if self.record_kind in {"rejected_provider_call", "attached_context"} and any(
-            value is not None for value in audit
-        ):
+        if self.record_kind == "attached_context" and any(value is not None for value in audit):
             raise ValueError("non-executable tool result carries replay identity")
         return self
 
@@ -1111,33 +1090,3 @@ class ChatRunEventOut(BaseModel):
     def validate_payload(self) -> ChatRunEventOut:
         self.payload = chat_run_public_event_payload_json(self.event_type, self.payload)
         return self
-
-
-# =============================================================================
-# Conversation Share Schemas
-# =============================================================================
-
-
-class SetConversationSharesRequest(BaseModel):
-    """Request schema for PUT /conversations/{id}/shares.
-
-    Replaces all share targets atomically. Duplicate library_ids are deduped.
-    """
-
-    sharing: Literal["library"]
-    library_ids: list[UUID]
-
-
-class ConversationShareTargetOut(BaseModel):
-    """A single share target in a conversation share list."""
-
-    library_id: UUID
-    created_at: datetime
-
-
-class ConversationSharesOut(BaseModel):
-    """Response schema for GET/PUT /conversations/{id}/shares."""
-
-    conversation_id: UUID
-    sharing: str
-    shares: list[ConversationShareTargetOut]

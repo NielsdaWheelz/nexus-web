@@ -310,10 +310,6 @@ def observe_web_page(
             status="Omitted",
             omission_reason=present(reason),
         )
-    if attempt.status == MediaSourceAttemptStatus.superseded.value:
-        # justify-defect: canonical URL dedupe rehomes the accepted attempt onto
-        # the winner before the common terminal publication.
-        raise WebPageReadDefect("Web Article attempt stopped at superseded")
     if observed_at < accepted.ready_deadline.value:
         return PageReadyResult(
             result_id=accepted.result_id,

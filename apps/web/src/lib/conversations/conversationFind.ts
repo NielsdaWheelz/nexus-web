@@ -153,8 +153,6 @@ function roleLabel(role: ConversationMessage["role"]): string {
       return "You";
     case "assistant":
       return "Assistant";
-    case "system":
-      return "System";
   }
 }
 
