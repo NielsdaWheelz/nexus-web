@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db, get_repeatable_read_db
-from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.responses import ok, success_response
 from nexus.schemas.epub_find import EpubFindRequest
 from nexus.schemas.media import MediaEvidenceResponse
@@ -48,6 +48,8 @@ def resolve_media_evidence(
         viewer_id=viewer.user_id,
         evidence_span_id=evidence_span_id,
     )
+    if result["media_id"] != str(media_id) or result["resolver"]["kind"] == "note":
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
     del result["citation_label"]
     del result["resolver"]["selector"]
     return success_response(result)
