@@ -19,17 +19,20 @@ from uuid import UUID, uuid5
 
 from llm_tools import WEB_SEARCH_SPEC, canonical_json_bytes
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.db.models import MediaSourceAttempt, MediaSourceAttemptStatus
+from nexus.db.models import Media, MediaSourceAttempt, MediaSourceAttemptStatus, ProcessingStatus
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.jobs.queue import JobRow, current_dead_job_for_payload, get_job
+from nexus.jobs.queue import JobRow, current_dead_job_for_payload
 from nexus.schemas.presence import Presence, Present, absent, present
+from nexus.services.capabilities import is_document_status_ready
 from nexus.services.durable_step_journal import (
     Completed,
     read_step_states,
 )
-from nexus.services.media_read_map import DocumentRead, load_media_document
+from nexus.services.import_history import source_supersession_media_id
+from nexus.services.media_read_map import load_media_document
 from nexus.services.media_source_ingest import accept_url_source
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
@@ -284,26 +287,41 @@ def observe_web_page(
         accepted.ready_deadline, Present
     ):
         raise AssertionError("accepted Web search result is incomplete")
-    attempt = db.get(MediaSourceAttempt, accepted.source_attempt_id.value)
-    if attempt is None:
-        # justify-defect: the completed acceptance receipt owns this durable row.
-        raise WebPageReadDefect("accepted Web Article source attempt disappeared")
-    if attempt.status == MediaSourceAttemptStatus.succeeded.value:
+    # Hold the accepted attempt against supersession until its history is read;
+    # if teardown already removed it, supersession history is already committed.
+    attempt = db.scalar(
+        select(MediaSourceAttempt)
+        .where(MediaSourceAttempt.id == accepted.source_attempt_id.value)
+        .with_for_update(read=True)
+    )
+    winner = source_supersession_media_id(db, source_attempt_id=accepted.source_attempt_id.value)
+    if isinstance(winner, Present):
+        media = db.get(Media, winner.value)
+        if media is None:
+            raise WebPageReadDefect("canonical Web Article winner disappeared")
+        ready = is_document_status_ready(media.processing_status)
+        failed = media.processing_status == ProcessingStatus.failed
+        error_code, error_message = media.last_error_code, media.last_error_message
+    else:
+        if attempt is None:
+            # justify-defect: acceptance retains its attempt or supersession history.
+            raise WebPageReadDefect("accepted Web Article source attempt disappeared")
+        ready = attempt.status == MediaSourceAttemptStatus.succeeded.value
+        failed = attempt.status == MediaSourceAttemptStatus.failed.value
+        error_code, error_message = attempt.error_code, attempt.error_message
+    if ready:
         return PageReadyResult(
             result_id=accepted.result_id,
             status="Ready",
             omission_reason=absent(),
         )
-    if attempt.status == MediaSourceAttemptStatus.failed.value:
-        reason = _terminal_omission_reason(
-            attempt.error_code,
-            attempt.error_message,
-        )
+    if failed:
+        reason = _terminal_omission_reason(error_code, error_message)
         if reason is None:
             # justify-defect: a persistent source/provider dependency failure is
             # not a soft content omission.
             raise WebPageReadDefect(
-                f"Web Article source failed outside the omission contract: {attempt.error_code}"
+                f"Web Article source failed outside the omission contract: {error_code}"
             )
         return PageReadyResult(
             result_id=accepted.result_id,
@@ -316,10 +334,14 @@ def observe_web_page(
             status="Pending",
             omission_reason=absent(),
         )
-    dead_job = current_dead_job_for_payload(
-        db,
-        kind="ingest_media_source",
-        expected_payload_match={"attempt_id": str(attempt.id)},
+    dead_job = (
+        current_dead_job_for_payload(
+            db,
+            kind="ingest_media_source",
+            expected_payload_match={"attempt_id": str(attempt.id)},
+        )
+        if attempt is not None and not isinstance(winner, Present)
+        else None
     )
     if dead_job is not None:
         # justify-defect: the required source dependency exhausted the queue's
@@ -342,18 +364,21 @@ def read_web_page(
 
     if accepted.status != "Accepted" or not isinstance(accepted.source_attempt_id, Present):
         raise AssertionError("cannot read an unaccepted Web search result")
-    attempt = db.get(MediaSourceAttempt, accepted.source_attempt_id.value)
-    if attempt is None:
-        raise WebPageReadDefect("accepted Web Article source attempt disappeared")
-    if attempt.status != MediaSourceAttemptStatus.succeeded.value:
-        raise WebPageReadDefect("Web Article read ran before source readiness")
-    document = load_media_document(db, viewer_id, attempt.media_id)
-    if document is None:
-        document = _load_canonical_dedupe_winner(
-            db,
-            viewer_id=viewer_id,
-            attempt=attempt,
-        )
+    attempt = db.scalar(
+        select(MediaSourceAttempt)
+        .where(MediaSourceAttempt.id == accepted.source_attempt_id.value)
+        .with_for_update(read=True)
+    )
+    winner = source_supersession_media_id(db, source_attempt_id=accepted.source_attempt_id.value)
+    if isinstance(winner, Present):
+        media_id = winner.value
+    else:
+        if attempt is None:
+            raise WebPageReadDefect("accepted Web Article source attempt disappeared")
+        if attempt.status != MediaSourceAttemptStatus.succeeded.value:
+            raise WebPageReadDefect("Web Article read ran before source readiness")
+        media_id = attempt.media_id
+    document = load_media_document(db, viewer_id, media_id)
     if document is None:
         raise WebPageReadDefect("succeeded Web Article has no readable document")
     if not document.body.strip():
@@ -368,38 +393,6 @@ def read_web_page(
         ),
         body=body,
     )
-
-
-def _load_canonical_dedupe_winner(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    attempt: MediaSourceAttempt,
-) -> DocumentRead | None:
-    """Follow the source job's exact canonical-dedupe result when present."""
-
-    if attempt.job_id is None:
-        raise WebPageReadDefect("succeeded Web Article attempt has no source job")
-    job = get_job(db, attempt.job_id)
-    if job is None:
-        raise WebPageReadDefect("succeeded Web Article source job disappeared")
-    if job.status != "succeeded":
-        if job.status in {"pending", "running", "failed"}:
-            return None
-        raise WebPageReadDefect(
-            f"succeeded Web Article source job has terminal status {job.status}"
-        )
-    raw_winner = (job.result or {}).get("superseded_by_media_id")
-    if raw_winner is None:
-        raise WebPageReadDefect("succeeded Web Article did not publish its accepted media")
-    try:
-        winner_id = UUID(str(raw_winner))
-    except ValueError as exc:
-        raise WebPageReadDefect("Web Article dedupe winner is malformed") from exc
-    document = load_media_document(db, viewer_id, winner_id)
-    if document is None:
-        raise WebPageReadDefect("canonical Web Article winner is not readable")
-    return document
 
 
 def _terminal_omission_reason(

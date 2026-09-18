@@ -110,14 +110,6 @@ in rem, so a large document root font size grows the chip past the rail's left
 edge, which clips it; the proof measures the default root only. See
 [docs/tickets/collapsed-count-chip-scales-out-of-its-fixed-width-rail.md](tickets/collapsed-count-chip-scales-out-of-its-fixed-width-rail.md).
 
-### [OPEN] OI-044 — The new `failed` content-index defect has no preflight over extant rows
-backend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain P review) · P2
-`_item` now raises for any media whose content index reports `failed`, including
-the shape the previous classifier rendered as a repairable `NeedsAttention` row;
-0227's preflight surveys attempt codes only, so no evidence says such rows are
-absent from production. See
-[docs/tickets/imports-ingress-defect-has-no-preflight-over-extant-index-rows.md](tickets/imports-ingress-defect-has-no-preflight-over-extant-index-rows.md).
-
 ### [OPEN] OI-045 — The collapsed rail's count capture has no reviewer verdict
 frontend · opened 2026-09-09 by Claude (imports cutover, Phase 6 chain W2 re-review) · P3
 Successor to OI-032. The D15 journey run records the post-fix capture
@@ -199,7 +191,6 @@ unexpected timeouts. See
 - [open] metadata verification · 2026-09-14 implementation · live research judgments and external query contents still need smoke inspection: [ticket](tickets/metadata-live-research-smoke-unverified.md).
 - [open] resource actions · 2026-09-14 highlight popup verification · manual follow-up must distinguish a mobile navigation defect from the removed journey's readiness race: [ticket](tickets/resource-action-parity-mobile-pane-readiness.md).
 - [open] agent tools · 2026-09-14 pr #246 memory review · resource reads load full bodies before enforcing their output limit: [ticket](tickets/resource-reader-loads-full-body-before-limit.md).
-- [open] oi-107 · release operator inputs · 2026-09-14 pr #255 qualification · p1 · reconcile the preserved local auth input with the verified two-origin production contract before future sync: [ticket](tickets/local-production-auth-input-retains-obsolete-preview-origin.md).
 - [open] oi-109 · local s3 development · 2026-09-15 pr #255 qualification · p2 · the pinned minio image pull failed on the devbox; establish supported access and prove a fresh pull: [ticket](tickets/local-minio-image-pull-fails-on-devbox.md).
 - [open] oi-111 · reader publication · 2026-09-15 restoration rehearsal · p2 · web replacement can retain a cursor for a deleted fragment: [ticket](tickets/web-publication-invalidates-saved-reader-cursors.md).
 - [open] oi-113 · interactive worker · 2026-09-15 pr #255 qualification · p2 · exact-image startup is oom-killed at 256 mib; isolate provider imports and qualify real execution demand: [ticket](tickets/interactive-worker-startup-reaches-memory-cap.md).
@@ -234,4 +225,5 @@ unexpected timeouts. See
 - [open] oi-170 · consumption activity · 2026-09-17 slop sweep · p3 · `clientMutationId` on activity uploads is a wire no-op held by the shipped android client: [ticket](tickets/activity-upload-client-mutation-id-is-a-wire-no-op.md).
 - [open] oi-171 · appearance · 2026-09-18 owner decisions · p3 · Press and Study declare no color-scheme, so native controls and UA scrollbars follow the browser default: [ticket](tickets/press-and-study-leave-native-controls-on-the-ua-scheme.md).
 - [open] oi-172 · contributors · 2026-09-18 owner decisions · p3 · author rename is dead end to end now that no viewer can hold the admin role; delete the feature or grant it to a real principal: [ticket](tickets/author-rename-has-no-principal-who-may-perform-it.md).
-- [open] oi-173 · agent tools · 2026-09-18 owner decisions · p3 · web page read follows a dedupe rehome through a succeeded job row that hourly pruning now deletes after seven days: [ticket](tickets/web-page-read-replay-reads-a-prunable-job-row.md).
+
+- [open] release backup capacity · 2026-09-18 deployment · required backup reservation exceeds available vps disk: [ticket](tickets/release-backup-exceeds-vps-disk.md).
