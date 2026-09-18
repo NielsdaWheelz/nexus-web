@@ -48,8 +48,7 @@ fix: for 1, if both counts are zero delete `HistoricalDossierBuildFailureCode`,
 cases, plus the `models.py:2505` CHECK string; if non-zero, rewrite or delete
 the rows first. for 2, delete `SystemMessage.tsx`, its `MessageRow` arm, the
 `roleLabel` `case "system"` at `conversationFind.ts:150-158`, `.systemBody`
-(`MessageRow.module.css:92`), the dead `MESSAGE_ROLES`
-(`schemas/conversation.py:40`), and narrow `ConversationMessage.role`
+(`MessageRow.module.css:92`), and narrow `ConversationMessage.role`
 (`types.ts:300`). for 3, follow the existing ticket's first arm and also drop
 the `web_page_read.py` branch. for 4, delete `_fetch_mean_embeddings_python`
 (103-147), the try/except/rollback wrapper (94-101), the `ProgrammingError`

@@ -89,27 +89,12 @@ def calendar_local_date(db: Session, user_id: UUID) -> date:
 
 
 def search_users(db: Session, query: str, viewer_id: UUID, limit: int = 10) -> list[UserSearchOut]:
-    """Search users by email prefix or display_name substring.
-
-    Args:
-        db: Database session.
-        query: Search query (minimum 3 characters).
-        viewer_id: Current user's ID (excluded from results).
-        limit: Maximum results (capped at 20).
-
-    Returns:
-        List of matching users.
-
-    Raises:
-        InvalidRequestError: If query is too short.
-    """
+    """Search users by email prefix or display_name substring, excluding the viewer."""
     if len(query) < 3:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             "Search query must be at least 3 characters",
         )
-
-    limit = min(limit, 20)
 
     # Escape LIKE special characters
     escaped = re.sub(r"([%_\\])", r"\\\1", query)

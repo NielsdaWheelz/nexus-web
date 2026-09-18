@@ -19,7 +19,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_valid
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import Presence
 from nexus.schemas.publication_dates import PublicationDate
-from nexus.schemas.retrieval import RetrievalLocator, validate_locator_for_result_type
+from nexus.schemas.retrieval import (
+    LocatorBackedResultType,
+    RetrievalLocator,
+    validate_locator_for_result_type,
+)
 from nexus.schemas.search_types import SEARCH_RESULT_TYPES
 
 # =============================================================================
@@ -98,6 +102,18 @@ class SearchResultBaseOut(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
+class SearchResultLocatorBackedOut[ResultTypeT: LocatorBackedResultType](SearchResultBaseOut):
+    """Envelope for the variants that carry a locator bound to their result type."""
+
+    type: ResultTypeT
+    locator: RetrievalLocator
+
+    @model_validator(mode="after")
+    def validate_locator_contract(self) -> "SearchResultLocatorBackedOut[ResultTypeT]":
+        validate_locator_for_result_type(self.type, self.locator)
+        return self
+
+
 class SearchResultMediaOut(SearchResultBaseOut):
     """Typed search result for media title hits."""
 
@@ -130,36 +146,22 @@ class SearchResultPodcastOut(SearchResultBaseOut):
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
 
 
-class SearchResultContentChunkOut(SearchResultBaseOut):
+class SearchResultContentChunkOut(SearchResultLocatorBackedOut[Literal["content_chunk"]]):
     """Typed search result for indexed document evidence."""
 
-    type: Literal["content_chunk"]
     id: UUID
     source_kind: str
     evidence_span_ids: list[UUID] = Field(default_factory=list)
     source: SearchResultSourceOut
     citation_label: str
-    locator: RetrievalLocator
-
-    @model_validator(mode="after")
-    def validate_locator_contract(self) -> "SearchResultContentChunkOut":
-        validate_locator_for_result_type(self.type, self.locator)
-        return self
 
 
-class SearchResultFragmentOut(SearchResultBaseOut):
+class SearchResultFragmentOut(SearchResultLocatorBackedOut[Literal["fragment"]]):
     """Typed search result for a readable source fragment."""
 
-    type: Literal["fragment"]
     id: UUID
     source: SearchResultSourceOut
     citation_label: str | None = None
-    locator: RetrievalLocator
-
-    @model_validator(mode="after")
-    def validate_locator_contract(self) -> "SearchResultFragmentOut":
-        validate_locator_for_result_type(self.type, self.locator)
-        return self
 
 
 class SearchResultContributorIdentityOut(BaseModel):
@@ -186,37 +188,23 @@ class SearchResultContributorOut(SearchResultBaseOut):
     contributor: SearchResultContributorIdentityOut
 
 
-class SearchResultNoteBlockOut(SearchResultBaseOut):
+class SearchResultNoteBlockOut(SearchResultLocatorBackedOut[Literal["note_block"]]):
     """Typed search result for note-block body hits."""
 
-    type: Literal["note_block"]
     id: UUID
     body_text: str
     highlight_excerpt: str | None = None
     note_origin: Literal["note", "highlight_note"]
-    locator: RetrievalLocator
-
-    @model_validator(mode="after")
-    def validate_locator_contract(self) -> "SearchResultNoteBlockOut":
-        validate_locator_for_result_type(self.type, self.locator)
-        return self
 
 
-class SearchResultHighlightOut(SearchResultBaseOut):
+class SearchResultHighlightOut(SearchResultLocatorBackedOut[Literal["highlight"]]):
     """Typed search result for a saved source highlight."""
 
-    type: Literal["highlight"]
     id: UUID
     color: str
     exact: str
     source: SearchResultSourceOut
     citation_label: str | None = None
-    locator: RetrievalLocator
-
-    @model_validator(mode="after")
-    def validate_locator_contract(self) -> "SearchResultHighlightOut":
-        validate_locator_for_result_type(self.type, self.locator)
-        return self
 
 
 class SearchResultPageOut(SearchResultBaseOut):
@@ -226,50 +214,31 @@ class SearchResultPageOut(SearchResultBaseOut):
     id: UUID
 
 
-class SearchResultMessageOut(SearchResultBaseOut):
+class SearchResultMessageOut(SearchResultLocatorBackedOut[Literal["message"]]):
     """Typed search result for conversation message hits."""
 
-    type: Literal["message"]
     id: UUID
     conversation_id: UUID
     seq: int
-    locator: RetrievalLocator
-
-    @model_validator(mode="after")
-    def validate_locator_contract(self) -> "SearchResultMessageOut":
-        validate_locator_for_result_type(self.type, self.locator)
-        return self
 
 
-class SearchResultEvidenceSpanOut(SearchResultBaseOut):
+class SearchResultEvidenceSpanOut(SearchResultLocatorBackedOut[Literal["evidence_span"]]):
     """Typed search result for one durable evidence span."""
 
-    type: Literal["evidence_span"]
     id: UUID
     source: SearchResultSourceOut
     evidence_span_id: UUID
     citation_label: str
-    locator: RetrievalLocator
-
-    @model_validator(mode="after")
-    def validate_locator_contract(self) -> "SearchResultEvidenceSpanOut":
-        validate_locator_for_result_type(self.type, self.locator)
-        return self
 
 
-class SearchResultReaderApparatusItemOut(SearchResultBaseOut):
+class SearchResultReaderApparatusItemOut(
+    SearchResultLocatorBackedOut[Literal["reader_apparatus_item"]]
+):
     """Typed search result for source-authored reader apparatus rows."""
 
-    type: Literal["reader_apparatus_item"]
     id: UUID
     source: SearchResultSourceOut
     apparatus_kind: str
-    locator: RetrievalLocator
-
-    @model_validator(mode="after")
-    def validate_locator_contract(self) -> "SearchResultReaderApparatusItemOut":
-        validate_locator_for_result_type(self.type, self.locator)
-        return self
 
 
 class SearchResultConversationOut(SearchResultBaseOut):
@@ -292,10 +261,9 @@ class ConversationArtifactSearchOut(SearchResultBaseOut):
     subject_ref: str
 
 
-class SearchResultWebOut(SearchResultBaseOut):
+class SearchResultWebOut(SearchResultLocatorBackedOut[Literal["web_result"]]):
     """Typed public-web result shape shared with chat web search."""
 
-    type: Literal["web_result"]
     id: str
     result_type: Literal["web_result"]
     source_id: str
@@ -308,7 +276,6 @@ class SearchResultWebOut(SearchResultBaseOut):
     rank: int | None = None
     provider: str | None = None
     provider_request_id: str | None = None
-    locator: RetrievalLocator
     selected: bool
 
     @model_validator(mode="after")
@@ -317,7 +284,6 @@ class SearchResultWebOut(SearchResultBaseOut):
             raise ValueError("context_ref.type must be web_result")
         if str(self.context_ref.id) != self.source_id:
             raise ValueError("web_result context_ref.id must match source_id")
-        validate_locator_for_result_type(self.type, self.locator)
         return self
 
 

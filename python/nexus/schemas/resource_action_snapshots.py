@@ -237,19 +237,6 @@ class LecternMembershipResourceActionCapabilityOut(BaseModel):
 
     model_config = _OUT_CONFIG
 
-    @model_validator(mode="before")
-    @classmethod
-    def _validate_wire_shape(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-        state = value.get("state")
-        has_item_id = "lecternItemId" in value or "lectern_item_id" in value
-        if state == "Present" and not has_item_id:
-            raise ValueError("Present LecternMembership requires lecternItemId")
-        if state == "Absent" and has_item_id:
-            raise ValueError("Absent LecternMembership forbids lecternItemId")
-        return value
-
     @model_serializer(mode="wrap")
     def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         value = handler(self)
@@ -266,19 +253,6 @@ class HighlightNoteResourceActionCapabilityOut(BaseModel):
     note_block_id: UUID | None = None
 
     model_config = _OUT_CONFIG
-
-    @model_validator(mode="before")
-    @classmethod
-    def _validate_wire_shape(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-        state = value.get("state")
-        has_note_id = "noteBlockId" in value or "note_block_id" in value
-        if state == "Present" and not has_note_id:
-            raise ValueError("Present HighlightNote requires noteBlockId")
-        if state == "Absent" and has_note_id:
-            raise ValueError("Absent HighlightNote forbids noteBlockId")
-        return value
 
     @model_serializer(mode="wrap")
     def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:

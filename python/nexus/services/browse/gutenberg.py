@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from nexus.auth.permissions import visible_content_credit_rows_sql
 from nexus.schemas.browse import (
     BrowseCandidate,
     BrowseSource,
@@ -24,7 +25,6 @@ from nexus.services.browse.models import (
     gutenberg_target,
     seal_target,
 )
-from nexus.services.contributor_credits import visible_credit_rows_sql
 from nexus.services.signed_keyset_cursor import KeysetValueKind
 
 _PROVIDER_CONTRACT = "ProjectGutenbergCatalogSearch"
@@ -79,7 +79,7 @@ def search(
                             ORDER BY vcc.ordinal
                         ) AS contributors,
                         string_agg(vcc.credited_name || ' ' || c.display_name, ' ') AS names
-                    FROM ({visible_credit_rows_sql()}) vcc
+                    FROM ({visible_content_credit_rows_sql()}) vcc
                     JOIN contributors c ON c.id = vcc.contributor_id
                     WHERE vcc.project_gutenberg_catalog_ebook_id IS NOT NULL
                     GROUP BY vcc.project_gutenberg_catalog_ebook_id
@@ -173,7 +173,7 @@ def preview(
                             )
                             ORDER BY vcc.ordinal
                         ) AS contributors
-                    FROM ({visible_credit_rows_sql()}) vcc
+                    FROM ({visible_content_credit_rows_sql()}) vcc
                     JOIN contributors c ON c.id = vcc.contributor_id
                     WHERE vcc.project_gutenberg_catalog_ebook_id = :ebook_id
                 )

@@ -32,9 +32,9 @@ from nexus.services.contributor_taxonomy import (
     RawCreditEntry,
     RawIdentityClaim,
     build_observation,
-    display_contributor_name,
+    clean_contributor_display,
 )
-from nexus.services.contributors import MediaTarget, replace_observed_role_slices
+from nexus.services.contributors import MediaTarget, replace_observed_role_slices_batch
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.storage.paths import build_source_artifact_storage_path
 from nexus.tasks.storage_object_cleanup import (
@@ -180,7 +180,7 @@ def _parse_from_header(msg: email.message.Message) -> tuple[str, str] | None:
     candidate = (display_name_raw or "").strip()
     if not candidate or "@" in candidate:
         candidate = local_part
-    name = display_contributor_name(candidate) or local_part
+    name = clean_contributor_display(candidate) or local_part
     return name, addr
 
 
@@ -211,11 +211,7 @@ def _apply_email_sender_credit(media_id: UUID, observation: ContributorObservati
     ``NOT_OBSERVED`` is a no-op. Safe to re-run on the duplicate path: the resolver
     performs no DML when the persisted author facts already match (D-27).
     """
-    replace_observed_role_slices(
-        target=MediaTarget(media_id),
-        observation=observation,
-        source="email",
-    )
+    replace_observed_role_slices_batch(((MediaTarget(media_id), observation, "email"),))
 
 
 class EmailAcceptance:

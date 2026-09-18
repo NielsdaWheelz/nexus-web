@@ -655,9 +655,8 @@ def _extend_library(
     library = facts.library.get(ref.id)
     if library is None:
         return
-    if library.settings_applicable:
+    if library.mutable:
         capabilities.append(_simple("LibrarySettings", _authorized(library.can_manage_settings)))
-    if library.delete_applicable:
         capabilities.append(_simple("DeleteLibrary", _authorized(library.can_delete)))
 
 

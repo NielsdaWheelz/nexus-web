@@ -33,15 +33,6 @@ from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, Retri
 from nexus.schemas.search_types import SEARCH_RESULT_TYPES
 from nexus.services.generation_selection import GenerationSelectionSpec
 
-# Valid sharing modes - must match DB constraint
-SHARING_MODES = Literal["private", "library", "public"]
-
-# Valid message roles - must match DB constraint
-MESSAGE_ROLES = Literal["user", "assistant", "system"]
-
-# Valid message statuses - must match DB constraint
-MESSAGE_STATUSES = Literal["pending", "complete", "error", "cancelled"]
-
 # Valid assistant tool-call statuses - must match message_tool_calls.status
 MESSAGE_TOOL_STATUSES = Literal["pending", "running", "complete", "error", "cancelled"]
 TOOL_RECORD_KINDS = Literal[
@@ -57,7 +48,6 @@ TOOL_RESULT_KINDS = Literal[
     "rejected_provider_call",
     "retrieval",
 ]
-WEB_SEARCH_RESULT_TYPES = Literal["web", "news", "mixed"]
 CHAT_RUN_STATUSES = Literal["queued", "running", "complete", "error", "cancelled"]
 # Filter vocabulary for GET /chat-runs: the run statuses plus the synthetic
 # "active" (non-terminal) filter. Owned once at the boundary; the service maps it.
@@ -319,7 +309,7 @@ class ToolProjectionOut(BaseModel):
         # cycle while retaining one semantic contract owner.
         from nexus.services.tool_runtime.declarations import (
             BROWSER_TOOL_PROJECTION_CONTRACT,
-            CHAT_TOOL_DECLARATIONS,
+            CHAT_TOOL_DECLARATIONS_BY_ID,
         )
 
         contract = BROWSER_TOOL_PROJECTION_CONTRACT
@@ -337,9 +327,8 @@ class ToolProjectionOut(BaseModel):
         if any(projection[field] is not None for field in shape["null_fields"]):
             raise ValueError("tool projection populated a forbidden tagged field")
 
-        declarations = {str(item.spec.id): item for item in CHAT_TOOL_DECLARATIONS}
         if self.record_kind in {"current_execution", "historical_execution"}:
-            declaration = declarations.get(self.canonical_tool_id or "")
+            declaration = CHAT_TOOL_DECLARATIONS_BY_ID.get(self.canonical_tool_id or "")
             if declaration is None:
                 raise ValueError("unknown canonical tool projection identity")
             if (
@@ -380,18 +369,11 @@ class StoredToolProjection(ToolProjectionOut):
 def tool_projection_from_persisted_record(record: Any) -> ToolProjectionOut:
     """Derive public presentation only after the storage owner decoded a row."""
 
-    from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
+    from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS_BY_ID
 
     record_kind: TOOL_RECORD_KINDS = record.record_kind
     if record_kind in {"current_execution", "historical_execution"}:
-        declaration = next(
-            (
-                item
-                for item in CHAT_TOOL_DECLARATIONS
-                if str(item.spec.id) == record.canonical_tool_id
-            ),
-            None,
-        )
+        declaration = CHAT_TOOL_DECLARATIONS_BY_ID.get(record.canonical_tool_id)
         if declaration is None:
             raise AssertionError("decoded tool row has no presentation declaration")
         error_type = record.error_code if record_kind == "current_execution" else None
@@ -626,9 +608,6 @@ TRUST_TRAIL_VERSION = "assistant_trust_trail.v1"
 
 
 class TrustPromptAssemblyOut(BaseModel):
-    id: UUID
-    prompt_block_manifest: dict[str, Any]
-    max_context_tokens: int
     reserved_output_tokens: int
     input_budget_tokens: int
     estimated_input_tokens: int
@@ -636,8 +615,6 @@ class TrustPromptAssemblyOut(BaseModel):
     included_retrieval_ids: list[str]
     included_context_refs: list[dict[str, Any]]
     dropped_items: list[dict[str, Any]]
-    budget_breakdown: dict[str, Any]
-    created_at: datetime
 
     model_config = ConfigDict(extra="forbid")
 

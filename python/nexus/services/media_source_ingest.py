@@ -82,16 +82,16 @@ from nexus.services.capabilities import (
     ViewerRecovery,
     is_same_source_terminal_error,
 )
-from nexus.services.contributor_observation_seam import (
-    ContributorObservation,
-    MediaTarget,
-    observe_contributors_under_source_fence,
-)
 from nexus.services.contributor_taxonomy import (
     NOT_OBSERVED,
     ContributorObservationBatch,
+    NotObserved,
     RawCreditEntry,
     build_observation,
+)
+from nexus.services.contributors import (
+    MediaTarget,
+    apply_observed_role_slices_in_current_transaction,
 )
 from nexus.services.document_embeds import (
     delete_document_embed_artifacts,
@@ -1552,16 +1552,36 @@ class _SourceAuthorshipPhase:
             return
 
         for observed_media_id, observation, source in self.observations:
-            observe_contributors_under_source_fence(
-                session_factory=self.session_factory,
-                item=ContributorObservation(
-                    target=MediaTarget(observed_media_id or self.terminal_media_id),
-                    observation=observation,
-                    source=source,
-                ),
-                fence=self.fence,
-                publication_media_ids=self.publication_media_ids,
+            if isinstance(observation, NotObserved):
+                continue
+            self._apply_observation(
+                target=MediaTarget(observed_media_id or self.terminal_media_id),
+                observation=observation,
+                source=source,
             )
+
+    def _apply_observation(
+        self,
+        *,
+        target: MediaTarget,
+        observation: ContributorObservationBatch,
+        source: str,
+    ) -> None:
+        def apply(db: Session, _attempt: MediaSourceAttempt) -> None:
+            apply_observed_role_slices_in_current_transaction(
+                db,
+                target=target,
+                observation=observation,
+                source=source,
+            )
+
+        run_source_publication_phase(
+            session_factory=self.session_factory,
+            label="apply_contributor_observation",
+            fence=self.fence,
+            media_ids=self.publication_media_ids,
+            mutate=apply,
+        )
 
 
 def _run_claimed_source_attempt(

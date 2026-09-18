@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ApiError, apiFetch, isApiError, type ApiPath } from "@/lib/api/client";
+import { isApiError, isSameSystemApiDefect, type ApiError } from "@/lib/api/client";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import type { AsyncResource } from "@/lib/api/useResource";
 import { isAbortError } from "@/lib/errors";
@@ -32,8 +32,7 @@ interface CursorContinuation<T> {
 export function useCursorPagination<T>(args: {
   firstPage: AsyncResource<CursorPage<T>>;
   initialMoreError: ApiError | null;
-  buildMoreHref: (cursor: string) => string;
-  loadMorePage?: (href: string, signal: AbortSignal) => Promise<CursorPage<T>>;
+  loadMorePage: (cursor: string, signal: AbortSignal) => Promise<CursorPage<T>>;
 }): {
   items: T[];
   status: "loading" | "error" | "ready";
@@ -44,7 +43,7 @@ export function useCursorPagination<T>(args: {
   loadMore: () => void;
   retry: () => void;
 } {
-  const { firstPage, initialMoreError, buildMoreHref, loadMorePage } = args;
+  const { firstPage, initialMoreError, loadMorePage } = args;
   const firstData = firstPage.status === "ready" ? firstPage.data : null;
 
   const [continuation, setContinuation] = useState<CursorContinuation<T>>({
@@ -98,8 +97,6 @@ export function useCursorPagination<T>(args: {
   const firstDataRef = useRef(firstData);
   firstDataRef.current = firstData;
   const loadingRef = useRef(false);
-  const buildRef = useRef(buildMoreHref);
-  buildRef.current = buildMoreHref;
   const loadRef = useRef(loadMorePage);
   loadRef.current = loadMorePage;
 
@@ -129,12 +126,7 @@ export function useCursorPagination<T>(args: {
     abortRef.current = controller;
     void (async () => {
       try {
-        const href = buildRef.current(next);
-        const page = loadRef.current
-          ? await loadRef.current(href, controller.signal)
-          : await apiFetch<CursorPage<T>>(href as ApiPath, {
-              signal: controller.signal,
-            });
+        const page = await loadRef.current(next, controller.signal);
         if (controller.signal.aborted || generation !== generationRef.current)
           return;
         setContinuation((current) => ({
@@ -151,7 +143,7 @@ export function useCursorPagination<T>(args: {
           return;
         }
         if (handleUnauthenticatedApiError(err)) return;
-        if (!isApiError(err)) {
+        if (!isApiError(err) || isSameSystemApiDefect(err)) {
           const owner = firstDataRef.current;
           if (owner !== null) setDefect({ owner, error: err });
           return;

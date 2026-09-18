@@ -114,7 +114,7 @@ def _start_agent_tools_listener(
 
     from nexus.services.agent_tools_mcp import (
         ActiveAgentToolRegistry,
-        create_active_agent_tools_mcp_app,
+        create_agent_tools_mcp_app,
     )
     from nexus.services.codex_generation_client import CodexGenerationClient
 
@@ -125,7 +125,7 @@ def _start_agent_tools_listener(
     async def policy_violation(generation_id: UUID) -> None:
         await control.policy_violation(generation_id)
 
-    app = create_active_agent_tools_mcp_app(
+    app = create_agent_tools_mcp_app(
         registry=registry,
         signing_key=settings.effective_agent_tool_grant_signing_key,
         on_policy_violation=policy_violation,

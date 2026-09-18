@@ -25,8 +25,6 @@ from sqlalchemy.orm import Session
 from nexus.db.models import ContributorCredit, Media
 from nexus.services.contributor_taxonomy import (
     CONTRIBUTOR_ROLES_ORDERED,
-    MAX_CONTRIBUTOR_NAME_CODE_POINTS,
-    MAX_RAW_ROLE_LENGTH,
     ContributorObservation,
     contributor_match_key,
 )
@@ -36,8 +34,6 @@ if TYPE_CHECKING:
     # observation. Only ``.contributor_id`` is read at runtime (duck-typed), so
     # this introduces no runtime coupling to the identity module.
     from nexus.services._contributor_identity import ResolvedCredit
-
-_ROLE_SET = frozenset(CONTRIBUTOR_ROLES_ORDERED)
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +142,6 @@ def replace_role_slices(
         current_by_role=current_by_role,
         prior_role_order=prior_role_order,
     )
-    _validate_planned(planned)
 
     changed = _apply_diff(db, target=target, current=current, planned=planned)
 
@@ -249,27 +244,6 @@ def _build_planned(
     return planned
 
 
-def _validate_planned(planned: Sequence[_PlannedRow]) -> None:
-    # justify-service-invariant-check: the dropped credit CHECK constraints (role
-    # vocabulary, nonnegative dense ordinal, one target) and (contributor, role)
-    # uniqueness now live in application code (D-19). These catch a construction
-    # bug before it reaches the partial unique indexes.
-    seen_pairs: set[tuple[UUID, str]] = set()
-    for index, row in enumerate(planned):
-        if row.role not in _ROLE_SET:
-            raise AssertionError(f"planned credit has unknown role {row.role!r}")
-        if row.ordinal != index:
-            raise AssertionError(f"planned credit ordinals are not dense: {row.ordinal} != {index}")
-        if not (0 < len(row.credited_name) <= MAX_CONTRIBUTOR_NAME_CODE_POINTS):
-            raise AssertionError("planned credit credited_name is out of bounds")
-        if row.raw_role is not None and not (0 < len(row.raw_role) <= MAX_RAW_ROLE_LENGTH):
-            raise AssertionError("planned credit raw_role is out of bounds")
-        pair = (row.contributor_id, row.role)
-        if pair in seen_pairs:
-            raise AssertionError(f"planned credits duplicate (contributor, role) {pair!r}")
-        seen_pairs.add(pair)
-
-
 def _apply_diff(
     db: Session,
     *,
@@ -290,7 +264,7 @@ def _apply_diff(
     to_delete: list[ContributorCredit] = []
     for row in current:
         candidate = planned_by_ordinal.get(row.ordinal)
-        if candidate is not None and _current_facts(row) == _planned_facts(candidate):
+        if candidate is not None and _facts(row) == _facts(candidate):
             kept_ordinals.add(row.ordinal)
         else:
             to_delete.append(row)
@@ -321,21 +295,9 @@ def _apply_diff(
     return True
 
 
-def _current_facts(
-    row: ContributorCredit,
+def _facts(
+    row: ContributorCredit | _PlannedRow,
 ) -> tuple[UUID, str, str, str, str | None, str, int]:
-    return (
-        row.contributor_id,
-        row.role,
-        row.credited_name,
-        row.normalized_credited_name,
-        row.raw_role,
-        row.source,
-        row.ordinal,
-    )
-
-
-def _planned_facts(row: _PlannedRow) -> tuple[UUID, str, str, str, str | None, str, int]:
     return (
         row.contributor_id,
         row.role,

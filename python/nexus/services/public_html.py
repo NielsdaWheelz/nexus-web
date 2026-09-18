@@ -128,7 +128,7 @@ def _sanitize(
     *,
     asset_handle_for_key: Callable[[str], str | None] | None,
 ) -> str:
-    root = fragment_fromstring(raw_html, create_parent="div")
+    root = fragment_fromstring(raw_html, create_parent=True)
     for element in list(root.iterdescendants()):
         if not isinstance(element.tag, str):
             element.drop_tree()
