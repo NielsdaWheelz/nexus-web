@@ -47,6 +47,7 @@
 
 .actionField {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-1);
@@ -55,12 +56,6 @@
 .iconButton {
   min-width: var(--size-xl);
   min-height: var(--size-xl);
-}
-
-.menuSettings {
-  display: grid;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
 }
 
 @container (max-width: 68rem) {

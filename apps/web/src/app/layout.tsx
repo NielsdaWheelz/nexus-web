@@ -33,8 +33,7 @@ export const metadata: Metadata = {
 // in the brand module because that module is generated from the asterism SVG.
 const SOLAR_BG = "#15201b";
 
-// An explicit theme choice must reach the browser chrome; only "system" (no
-// cookie) can defer to the media query, which knows nothing of the Solar.
+// The chosen room must reach the browser chrome.
 export async function generateViewport(): Promise<Viewport> {
   const theme = await readThemeCookie();
   return {
@@ -42,13 +41,9 @@ export async function generateViewport(): Promise<Viewport> {
     initialScale: 1,
     viewportFit: "cover",
     interactiveWidget: "resizes-content",
-    themeColor:
-      theme === null
-        ? [
-            { media: "(prefers-color-scheme: light)", color: BRAND_BG_LIGHT },
-            { media: "(prefers-color-scheme: dark)", color: BRAND_BG_DARK },
-          ]
-        : { light: BRAND_BG_LIGHT, dark: BRAND_BG_DARK, elvish: SOLAR_BG }[theme],
+    themeColor: { light: BRAND_BG_LIGHT, dark: BRAND_BG_DARK, elvish: SOLAR_BG }[
+      theme
+    ],
   };
 }
 
@@ -150,7 +145,7 @@ export default async function RootLayout({
   return (
     <html
       lang="en"
-      data-theme={theme ?? undefined}
+      data-theme={theme}
       className={`${inter.variable} ${jetbrainsMono.variable} ${ebGaramond.variable} ${cormorant.variable} ${imFellEnglish.variable} ${unifrakturMaguntia.variable}`}
     >
       <body>

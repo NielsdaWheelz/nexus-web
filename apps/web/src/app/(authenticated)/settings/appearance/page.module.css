@@ -101,20 +101,6 @@
   background-color: var(--accent);
 }
 
-/* The night half of the System plate: the same geometry as the day half it
-   covers, cut on one diagonal, so the four lines run across the seam and only
-   the room they are drawn in changes. Absolute, so it costs no flow. */
-.nightHalf {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: var(--space-3);
-  background-color: var(--surface-canvas);
-  clip-path: polygon(62% 0, 100% 0, 100% 100%, 38% 100%);
-}
-
 /* Gold that reads as metal is never a flat fill (§6): the transparent border
    takes a conic gradient in border-box while the plate's own ground holds the
    padding box. Conic, because real metal shows a light source sweeping around
