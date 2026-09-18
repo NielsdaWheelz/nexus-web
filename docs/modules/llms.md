@@ -139,11 +139,11 @@ prompts, and decrypted continuation bytes never enter catalog, history,
 evidence, or logs.
 
 Completed children and tool positions replay without redispatch. A provider
-loop may resume only from its sealed next-child continuation. Accepted or
-uncertain dispatch never becomes automatic retry authority. Only externally
-established `ProveNotDispatched` may reset an exact non-dispatched child;
-otherwise reconciliation attaches independently recovered terminal evidence or
-the operation remains suspended/terminal according to its owner contract.
+loop may resume from its sealed next-child continuation; `ReDispatchable` tools
+may retry after lease recovery. An unresolved external dispatch grants no retry
+authority and remains suspended/terminal according to its owner contract.
+There is no application entry point for resetting an uncertain generation or
+attaching an out-of-band terminal result.
 
 Subscription quota observed before Codex acceptance is capacity, not ordinary
 failure. Background work enters durable `CapacityPaused`, waits for the known
