@@ -61,9 +61,7 @@ from nexus.services.html5_shape import normalize_html5_shape
 from nexus.services.html_tree import (
     inner_html,
     parse_html_document,
-    remove_element,
     serialize_html,
-    unwrap_element,
 )
 from nexus.services.parser_temp import (
     StorageObjectIntegrityError,
@@ -2108,7 +2106,7 @@ def _sanitize_epub_element(element: HtmlElement) -> None:
         "feimage",
     }
     if tag in blocked_tags:
-        remove_element(element)
+        element.drop_tree()
         return
 
     if tag not in _EPUB_ALLOWED_HTML_TAGS and tag not in _EPUB_ALLOWED_SVG_TAGS:
@@ -2116,7 +2114,8 @@ def _sanitize_epub_element(element: HtmlElement) -> None:
             element.tag = "span"
             _sanitize_epub_attributes(element, "span")
             return
-        unwrap_element(element)
+        if element.getparent() is not None:
+            element.drop_tag()
         return
 
     _sanitize_epub_attributes(element, tag)

@@ -23,8 +23,6 @@ from nexus.services.html5_shape import normalize_html5_shape
 from nexus.services.html_tree import (
     inner_html,
     parse_html_document,
-    remove_element,
-    unwrap_element,
 )
 
 ALLOWED_TAGS = frozenset(
@@ -211,13 +209,13 @@ def _sanitize_element(
         "link",
         "base",
     ):
-        # Remove these elements entirely (including content)
-        remove_element(element)
+        # Remove the subtree while preserving the following text.
+        element.drop_tree()
         return
 
     if tag not in ALLOWED_TAGS:
         # Unwrap element (keep children, remove tag)
-        unwrap_element(element)
+        element.drop_tag()
         return
 
     # Sanitize attributes
