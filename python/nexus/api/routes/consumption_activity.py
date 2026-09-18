@@ -40,8 +40,6 @@ def post_activity(
     """Persist one BFF-injected device-scoped activity batch."""
     consumption_service.record_activity_batch(
         viewer.user_id,
-        client_mutation_id=body.client_mutation_id,
-        media_ref=body.media_ref,
         media_id=_media_id(body.media_ref),
         device_id=body.device_id,
         device_class=body.device_class,

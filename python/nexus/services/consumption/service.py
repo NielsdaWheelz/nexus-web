@@ -14,7 +14,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import partial
-from time import perf_counter
 from typing import Any, Literal, cast
 from uuid import UUID
 
@@ -34,7 +33,6 @@ from nexus.errors import (
     InvalidRequestError,
     NotFoundError,
 )
-from nexus.logging import get_logger
 from nexus.schemas.consumption import (
     CompletedOutcome,
     CompletedWithoutAdvanceOutcome,
@@ -123,7 +121,9 @@ from nexus.services.consumption._lectern_store import (
     SUPPORTED_MEDIA_KINDS,
     LecternRow,
     LecternSource,
+    _dedupe,
 )
+from nexus.services.consumption._projection import _media_kinds
 from nexus.services.consumption.handles import (
     CompletionHandle,
     seal_activity_exclusion,
@@ -140,10 +140,7 @@ from nexus.services.resource_mutation_replay import (
 
 LECTERN_SCOPE = "Lectern.Commands"
 CONSUMPTION_SCOPE = "Consumption.Commands"
-CONSUMPTION_ACTIVITY_SCOPE = "Consumption.Activity"
 CONSUMPTION_ACTIVITY_EXCLUSION_SCOPE = "Consumption.ActivityExclusions"
-PREVIEW_POSITION_SCOPE = "Consumption.PreviewPosition"
-CONSUMPTION_STATS_LATENCY_BUDGET_MS = 500
 _ACTIVITY_MAX_AGE = timedelta(days=30)
 _ACTIVITY_MAX_FUTURE_SKEW = timedelta(minutes=5)
 _ACTIVITY_BATCH_MAX_BYTES = 48_000
@@ -158,7 +155,6 @@ WHERE media.id = :media_id
 """)
 
 _LECTERN_OUTCOME_ADAPTER: TypeAdapter[LecternOutcome] = TypeAdapter(LecternOutcome)
-logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -182,20 +178,13 @@ def get_activity_sessions(
     current_device_id: str,
 ) -> ActivitySessionPageOut:
     """One repeatable-read page of derived Consumption sessions."""
-    started = perf_counter()
     as_of, after = (
         (_activity_stats.as_of_created_at(db), None)
         if cursor is None
         else _activity_stats.decode_session_cursor(cursor, query=query, db=db, viewer_id=viewer_id)
     )
-    rows = _activity_stats.session_rows(
+    page, next_cursor = _session_page(
         db, viewer_id=viewer_id, query=query, as_of=as_of, limit=limit, after=after
-    )
-    page = rows[:limit]
-    next_cursor = (
-        _activity_stats.encode_session_cursor(as_of=as_of, query=query, row=page[-1])
-        if len(rows) > limit and page
-        else None
     )
     device_rows = _activity_stats.device_breakdown_rows(
         db, viewer_id=viewer_id, query=query, as_of=as_of
@@ -205,18 +194,32 @@ def get_activity_sessions(
         current_device_id=current_device_id,
         time_zone=query.time_zone,
     )
-    response = ActivitySessionPageOut(
+    return ActivitySessionPageOut(
         sessions=[_session_out(row, devices=device_summaries) for row in page],
         next_cursor=present(next_cursor) if next_cursor else absent(),
     )
-    logger.info(
-        "activity_projection_read",
-        surface="Sessions",
-        latency_ms=max(0, int((perf_counter() - started) * 1000)),
-        row_count=len(response.sessions),
-        reason="ok",
+
+
+def _session_page(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    query: _activity_stats.ActivityQuery,
+    as_of: datetime,
+    limit: int,
+    after: tuple[datetime, UUID, str, str] | None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """One session page plus the cursor that continues it past ``limit`` rows."""
+    rows = _activity_stats.session_rows(
+        db, viewer_id=viewer_id, query=query, as_of=as_of, limit=limit, after=after
     )
-    return response
+    page = rows[:limit]
+    next_cursor = (
+        _activity_stats.encode_session_cursor(as_of=as_of, query=query, row=page[-1])
+        if len(rows) > limit and page
+        else None
+    )
+    return page, next_cursor
 
 
 def _active_filter_names(query: _activity_stats.ActivityQuery) -> list[str]:
@@ -349,7 +352,6 @@ def get_activity_stats(
     from nexus.services.notes import count_retained_note_blocks
     from nexus.services.resource_graph.user_relations import count_retained_neutral_links
 
-    started = perf_counter()
     as_of = _activity_stats.as_of_created_at(db)
     totals_rows = _activity_stats.activity_totals_rows(
         db, viewer_id=viewer_id, query=query, as_of=as_of
@@ -362,14 +364,8 @@ def get_activity_stats(
     local_days = _activity_stats.local_day_rows(db, viewer_id=viewer_id, query=query, as_of=as_of)
     streak = _activity_stats.streak_row(db, viewer_id=viewer_id, query=query, as_of=as_of)
     session_total = _activity_stats.session_count(db, viewer_id=viewer_id, query=query, as_of=as_of)
-    session_rows = _activity_stats.session_rows(
-        db, viewer_id=viewer_id, query=query, as_of=as_of, limit=50
-    )
-    session_page = session_rows[:50]
-    next_cursor = (
-        _activity_stats.encode_session_cursor(as_of=as_of, query=query, row=session_page[-1])
-        if len(session_rows) > 50 and session_page
-        else None
+    session_page, next_cursor = _session_page(
+        db, viewer_id=viewer_id, query=query, as_of=as_of, limit=50, after=None
     )
     device_rows = _activity_stats.device_breakdown_rows(
         db, viewer_id=viewer_id, query=query, as_of=as_of
@@ -425,7 +421,7 @@ def get_activity_stats(
     )
     active_filters = _active_filter_names(query)
     completion_filters = [name for name in active_filters if name != "device"]
-    response = ConsumptionStatsOut(
+    return ConsumptionStatsOut(
         activity=ActivityStatsSectionOut(
             applied_filters=["time", *active_filters],
             inapplicable_filters=[],
@@ -539,18 +535,6 @@ def get_activity_stats(
             ),
         ),
     )
-    duration_ms = max(0, int((perf_counter() - started) * 1000))
-    logger.info(
-        "activity_projection_read",
-        surface="Stats",
-        latency_ms=duration_ms,
-        latency_budget_ms=CONSUMPTION_STATS_LATENCY_BUDGET_MS,
-        over_budget=duration_ms > CONSUMPTION_STATS_LATENCY_BUDGET_MS,
-        bucket_count=len(response.activity.timeline),
-        session_count=response.activity.totals.session_count,
-        reason="ok",
-    )
-    return response
 
 
 def engagement_fact_rows_sql() -> str:
@@ -764,23 +748,6 @@ def episode_state_joins_sql(
         listening_alias=listening_alias,
         override_alias=override_alias,
     )
-
-
-def listening_recency_subquery_sql(*, user_param: str, media_expr: str) -> str:
-    """Scalar subquery -> the viewer's listening-row recency for one media."""
-    return _projection.listening_recency_subquery_sql(user_param=user_param, media_expr=media_expr)
-
-
-def reader_engagement_recency_subquery_sql(*, user_param: str, media_expr: str) -> str:
-    """Scalar subquery -> the viewer's reader-engagement recency for one media."""
-    return _projection.reader_engagement_recency_subquery_sql(
-        user_param=user_param, media_expr=media_expr
-    )
-
-
-def listening_recency_max_subquery_sql(*, podcast_expr: str) -> str:
-    """Scalar subquery -> MAX listening recency across visible podcast episodes."""
-    return _projection.listening_recency_max_subquery_sql(podcast_expr=podcast_expr)
 
 
 # ---------------------------------------------------------------------------
@@ -1097,10 +1064,13 @@ def _apply_finish_lectern_item(
     )
 
 
-def _apply_set_batch_state(
-    db: Session, viewer_id: UUID, command: SetBatchStateCommand
-) -> _ConsumptionEffect:
-    media_ids = _dedupe(command.media_ids)
+def _write_podcast_episode_states(
+    db: Session,
+    viewer_id: UUID,
+    media_ids: list[UUID],
+    state: Literal["Finished", "Unread"],
+) -> None:
+    """Authorize every deduped media, reject non-episodes, then write the batch."""
     for media_id in media_ids:
         _require_readable(db, viewer_id, media_id)
     kinds = _media_kinds(db, media_ids)
@@ -1109,10 +1079,16 @@ def _apply_set_batch_state(
             ApiErrorCode.E_INVALID_KIND, "Batch state changes are podcast-episode only"
         )
     for media_id in media_ids:
-        if command.state == "Finished":
-            _write_finished_state(db, viewer_id, media_id, kind=kinds.get(media_id))
+        if state == "Finished":
+            _write_finished_state(db, viewer_id, media_id, kind=MediaKind.podcast_episode.value)
         else:
             _write_unread_state(db, viewer_id, media_id)
+
+
+def _apply_set_batch_state(
+    db: Session, viewer_id: UUID, command: SetBatchStateCommand
+) -> _ConsumptionEffect:
+    _write_podcast_episode_states(db, viewer_id, _dedupe(command.media_ids), command.state)
     return _ConsumptionEffect(kind="StateOnly")
 
 
@@ -1128,26 +1104,9 @@ def set_podcast_episode_states_in_txn(
     if not normalized_ids:
         return 0
     before = media_read_states(db, viewer_id=viewer_id, media_ids=normalized_ids)
-    for media_id in normalized_ids:
-        _require_readable(db, viewer_id, media_id)
-    kinds = _media_kinds(db, normalized_ids)
-    if any(kinds.get(media_id) != MediaKind.podcast_episode.value for media_id in normalized_ids):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_KIND,
-            "Batch state changes are podcast-episode only",
-        )
+    _write_podcast_episode_states(db, viewer_id, normalized_ids, state)
     target = "finished" if state == "Finished" else "unread"
     changed_count = sum(1 for media_id in normalized_ids if before[media_id].state != target)
-    for media_id in normalized_ids:
-        if state == "Finished":
-            _write_finished_state(
-                db,
-                viewer_id,
-                media_id,
-                kind=MediaKind.podcast_episode.value,
-            )
-        else:
-            _write_unread_state(db, viewer_id, media_id)
     if changed_count:
         bump_collection_families(
             db,
@@ -1262,8 +1221,6 @@ def _write_finished_state(
         _listening_store.mark_completed_in_txn(db, viewer_id=viewer_id, media_id=media_id)
     if prior_finished:
         return None
-    if not _effective_state_is_finished(db, viewer_id=viewer_id, media_id=media_id):
-        raise AssertionError("Finished write did not establish canonical Finished state")
     return _activity_store.insert_completion_fact_in_txn(
         db,
         viewer_id=viewer_id,
@@ -1297,8 +1254,8 @@ def _build_consumption_result(
         (FinishLecternItemCommand, SettleNaturalEndCommand),
     ):
         candidate = next((row for row in rows if row.visible and row.item_id == next_item_id), None)
-        if candidate is not None and _capability_matches(
-            _projection.activation_kind(candidate), command.next_capability
+        if candidate is not None and _projection.activation_kind(candidate) == (
+            command.next_capability
         ):
             resolved_next_id = next_item_id
             next_item = present(_projection.build_item(db, viewer_id=viewer_id, row=candidate))
@@ -1378,13 +1335,9 @@ def _select_next(
     for row in sorted(rows, key=lambda candidate: candidate.position):
         if not row.visible or row.position <= removed_position:
             continue
-        if _capability_matches(_projection.activation_kind(row), capability):
+        if _projection.activation_kind(row) == capability:
             return row.item_id
     return None
-
-
-def _capability_matches(activation_kind: str, capability: NextCapability) -> bool:
-    return activation_kind == capability
 
 
 # ---------------------------------------------------------------------------
@@ -1395,8 +1348,6 @@ def _capability_matches(activation_kind: str, capability: NextCapability) -> boo
 def record_activity_batch(
     viewer_id: UUID,
     *,
-    client_mutation_id: UUID,
-    media_ref: str,
     media_id: UUID,
     device_id: str,
     device_class: ActivityDeviceClass,
@@ -1412,8 +1363,6 @@ def record_activity_batch(
                 _record_activity_batch_op,
                 fresh,
                 viewer_id,
-                client_mutation_id,
-                media_ref,
                 media_id,
                 device_id,
                 device_class,
@@ -1427,96 +1376,23 @@ def record_activity_batch(
 def _record_activity_batch_op(
     db: Session,
     viewer_id: UUID,
-    client_mutation_id: UUID,
-    media_ref: str,
     media_id: UUID,
     device_id: str,
     device_class: ActivityDeviceClass,
     batch: ActivityBatchIn,
 ) -> None:
     _lock_viewer(db, viewer_id)
-    request = {
-        "clientMutationId": str(client_mutation_id),
-        "mediaRef": media_ref,
-        "deviceId": device_id,
-        "deviceClass": device_class,
-        "batch": batch.model_dump(mode="json", by_alias=True),
-    }
-    request_bytes = canonical_json_bytes(request)
-    try:
-        stored = lookup_replay(
-            db,
-            viewer_id=viewer_id,
-            scope=CONSUMPTION_ACTIVITY_SCOPE,
-            client_mutation_id=str(client_mutation_id),
-            request_bytes=request_bytes,
-        )
-    except ConflictError:
-        logger.info(
-            "consumption_activity_write",
-            outcome="conflict",
-            span_count=len(batch.spans),
-        )
-        raise
-    if stored is not None:
-        accepted_count = stored["acceptedCount"]
-        deduplicated_count = stored["deduplicatedCount"]
-        if not isinstance(accepted_count, int) or not isinstance(deduplicated_count, int):
-            raise AssertionError(
-                "activity replay memo has invalid capture counts"
-            )  # justify-service-invariant-check: this scope writes integer count fields.
-        logger.info(
-            "consumption_activity_write",
-            outcome="replay",
-            span_count=len(batch.spans),
-            accepted_count=accepted_count,
-            deduplicated_count=deduplicated_count,
-            conflict_count=0,
-        )
-        db.rollback()
-        return
     _validate_activity_batch(batch)
     _require_activity_media_readable(db, viewer_id, media_id)
-    try:
-        inserted = _activity_store.insert_activity_batch_in_txn(
-            db,
-            viewer_id=viewer_id,
-            media_id=media_id,
-            device_id=device_id,
-            device_class=device_class,
-            batch=batch,
-        )
-    except ConflictError:
-        logger.info(
-            "consumption_activity_write",
-            outcome="capture_key_conflict",
-            span_count=len(batch.spans),
-            accepted_count=0,
-            deduplicated_count=0,
-            conflict_count=1,
-        )
-        raise
-    record_replay(
+    _activity_store.insert_activity_batch_in_txn(
         db,
         viewer_id=viewer_id,
-        scope=CONSUMPTION_ACTIVITY_SCOPE,
-        client_mutation_id=str(client_mutation_id),
-        request_bytes=request_bytes,
-        response_json={
-            "acceptedCount": inserted.accepted_count,
-            "deduplicatedCount": inserted.deduplicated_count,
-        },
-        changed_lanes={},
+        media_id=media_id,
+        device_id=device_id,
+        device_class=device_class,
+        batch=batch,
     )
     db.commit()
-    logger.info(
-        "consumption_activity_write",
-        outcome="accepted",
-        span_count=len(batch.spans),
-        accepted_count=inserted.accepted_count,
-        deduplicated_count=inserted.deduplicated_count,
-        conflict_count=0,
-    )
 
 
 def _validate_activity_batch(batch: ActivityBatchIn) -> None:
@@ -1743,7 +1619,6 @@ def install_preview_position(
     viewer_id: UUID,
     media_id: UUID,
     *,
-    client_mutation_id: UUID,
     position: PreviewPositionIn,
 ) -> None:
     """Transfer Preview progress once after acquisition without overwriting progress."""
@@ -1757,7 +1632,6 @@ def install_preview_position(
                 fresh,
                 viewer_id,
                 media_id,
-                client_mutation_id,
                 position,
             ),
         )
@@ -1769,26 +1643,9 @@ def _install_preview_position_op(
     db: Session,
     viewer_id: UUID,
     media_id: UUID,
-    client_mutation_id: UUID,
     position: PreviewPositionIn,
 ) -> None:
     _lock_viewer(db, viewer_id)
-    request_bytes = canonical_json_bytes(
-        {
-            "mediaId": str(media_id),
-            "position": position.model_dump(mode="json", by_alias=True),
-        }
-    )
-    stored = lookup_replay(
-        db,
-        viewer_id=viewer_id,
-        scope=PREVIEW_POSITION_SCOPE,
-        client_mutation_id=str(client_mutation_id),
-        request_bytes=request_bytes,
-    )
-    if stored is not None:
-        db.rollback()
-        return
     if not can_read_media(db, viewer_id, media_id):
         db.rollback()
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
@@ -1824,47 +1681,12 @@ def _install_preview_position_op(
                 CollectionFamily.PodcastSubscriptions,
             ),
         )
-    record_replay(
-        db,
-        viewer_id=viewer_id,
-        scope=PREVIEW_POSITION_SCOPE,
-        client_mutation_id=str(client_mutation_id),
-        request_bytes=request_bytes,
-        response_json={},
-        changed_lanes={},
-    )
     db.commit()
 
 
 # ---------------------------------------------------------------------------
 # Trusted ensure + media-lifecycle composition helpers
 # ---------------------------------------------------------------------------
-
-
-def ensure_missing_items(
-    viewer_id: UUID, media_ids: list[UUID], *, source: LecternSource
-) -> list[tuple[UUID, UUID]]:
-    """Append absent Lectern rows for a trusted source (no replay memo)."""
-    fresh = fresh_session()
-    try:
-        return retry_serializable(
-            fresh,
-            "ensure_missing_items",
-            partial(_ensure_missing_items_op, fresh, viewer_id, media_ids, source),
-        )
-    finally:
-        fresh.close()
-
-
-def _ensure_missing_items_op(
-    db: Session, viewer_id: UUID, media_ids: list[UUID], source: LecternSource
-) -> list[tuple[UUID, UUID]]:
-    _lock_viewer(db, viewer_id)
-    pairs = _lectern_store.ensure_missing_in_txn(
-        db, viewer_id=viewer_id, media_ids=media_ids, source=source
-    )
-    db.commit()
-    return pairs
 
 
 def ensure_missing_items_in_txn(
@@ -1933,11 +1755,7 @@ def fresh_session() -> Session:
     Every consumption command that opens its own transaction — here and in the
     sibling modules of this package — must arrive through this owner.
     """
-    fresh = get_session_factory()()
-    # An open transaction would make use_serializable retain weaker
-    # isolation; factory sessions must arrive clean (contributors precedent).
-    assert not fresh.in_transaction(), "consumption commands require a fresh session"
-    return fresh
+    return get_session_factory()()
 
 
 # ---------------------------------------------------------------------------
@@ -2020,27 +1838,6 @@ def _validate_add_targets(db: Session, viewer_id: UUID, media_ids: list[UUID]) -
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_KIND, "Media cannot be added to the Lectern"
             )
-
-
-def _media_kinds(db: Session, media_ids: list[UUID]) -> dict[UUID, str]:
-    if not media_ids:
-        return {}
-    rows = db.execute(
-        text("SELECT id, kind FROM media WHERE id = ANY(:ids)"),
-        {"ids": media_ids},
-    ).fetchall()
-    return {UUID(str(row[0])): str(row[1]) for row in rows}
-
-
-def _dedupe(media_ids: list[UUID]) -> list[UUID]:
-    seen: set[UUID] = set()
-    result: list[UUID] = []
-    for media_id in media_ids:
-        if media_id in seen:
-            continue
-        seen.add(media_id)
-        result.append(media_id)
-    return result
 
 
 def _uuid_or_none(value: object) -> UUID | None:

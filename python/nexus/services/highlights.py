@@ -216,7 +216,7 @@ def get_fragment_for_viewer_or_404(db: Session, viewer_id: UUID, fragment_id: UU
     return fragment  # fragment.media available via relationship
 
 
-def _lock_fragment_row_for_highlight_write_or_404(db: Session, fragment_id: UUID) -> None:
+def lock_fragment_row_for_highlight_write_or_404(db: Session, fragment_id: UUID) -> None:
     """Serialize fragment highlight mutations on the target fragment row."""
 
     locked_fragment_id = db.execute(
@@ -426,7 +426,7 @@ def project_highlights_with_links(
     ]
 
 
-def _fragment_highlight_span_conflict_exists(
+def fragment_highlight_span_conflict_exists(
     db: Session,
     *,
     viewer_id: UUID,
@@ -559,9 +559,9 @@ def _build_fragment_highlight(
     fragment = get_fragment_for_viewer_or_404(db, viewer_id, fragment_id)
     _require_media_readable_for_highlight(db, fragment.media_id)
     # Serialize duplicate-span checks on the fragment row before anchor writes.
-    _lock_fragment_row_for_highlight_write_or_404(db, fragment_id)
+    lock_fragment_row_for_highlight_write_or_404(db, fragment_id)
     validate_offsets_or_400(fragment.canonical_text, start_offset, end_offset)
-    if _fragment_highlight_span_conflict_exists(
+    if fragment_highlight_span_conflict_exists(
         db,
         viewer_id=viewer_id,
         fragment_id=fragment_id,
@@ -948,7 +948,7 @@ def update_highlight(
         fragment = db.get(Fragment, fragment_anchor.fragment_id)
         if fragment is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Not found")
-        _lock_fragment_row_for_highlight_write_or_404(db, fragment.id)
+        lock_fragment_row_for_highlight_write_or_404(db, fragment.id)
         validate_offsets_or_400(fragment.canonical_text, final_start, final_end)
         exact, prefix, suffix = derive_exact_prefix_suffix(
             fragment.canonical_text, final_start, final_end
@@ -964,7 +964,7 @@ def update_highlight(
     if color_changed:
         update_values["color"] = final_color
 
-    if offsets_changed and _fragment_highlight_span_conflict_exists(
+    if offsets_changed and fragment_highlight_span_conflict_exists(
         db,
         viewer_id=viewer_id,
         fragment_id=fragment_anchor.fragment_id,

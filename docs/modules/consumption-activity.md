@@ -60,9 +60,10 @@ All breakdowns, sessions, streaks, and Year presentation derive from effective
 
 ## Boundaries
 
-`POST /consumption/activity` is the unchanged replayable observation endpoint.
-The browser BFF alone injects the private `nx_device`; each span's `captureKey`
-provides fact identity.
+`POST /consumption/activity` is the observation endpoint. The browser BFF
+alone injects the private `nx_device`; each span's `captureKey` provides fact
+identity, so a retried batch inserts nothing and a reused key with different
+facts conflicts.
 
 `POST /consumption/activity-exclusions` is a strict replayable `Exclude |
 Restore` lifecycle union. Exclude names one exact, un-clipped session by media,
@@ -99,9 +100,8 @@ families through Consumption before deleting the parent media row.
 
 ## Operations
 
-Stats and session reads emit privacy-safe `activity_projection_read` latency
-and row-count fields. Real-PostgreSQL proof owns replay, exclusions, filtering,
-teardown, and deterministic projection. There is no rollup or cache.
+Real-PostgreSQL proof owns replay, exclusions, filtering, teardown, and
+deterministic projection. There is no rollup or cache.
 
 ## Non-goals
 

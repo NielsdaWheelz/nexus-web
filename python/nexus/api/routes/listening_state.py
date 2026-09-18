@@ -9,7 +9,7 @@ viewer lock, and the revision CAS. This router owns the static
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Response
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
 from nexus.auth.middleware import Viewer, get_viewer
@@ -48,13 +48,11 @@ def install_preview_position(
     media_id: UUID,
     body: PreviewPositionIn,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    client_mutation_id: Annotated[UUID, Header(alias="Idempotency-Key")],
 ) -> Response:
     """Transfer one ephemeral Preview position after Media acquisition."""
     consumption_service.install_preview_position(
         viewer.user_id,
         media_id,
-        client_mutation_id=client_mutation_id,
         position=body,
     )
     return Response(status_code=204)

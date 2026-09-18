@@ -690,7 +690,6 @@ Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `podcast_sync_subscription_job`,
 `podcast_backfill_subscription`,
 `podcast_reindex_semantic_job`, `podcast_refresh_due_job` (periodic),
-`podcast_refresh_run_prune_job` (periodic),
 `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
 (periodic), `purge_expired_auth_handoff_codes` (periodic), `synapse_scan`,
@@ -1612,22 +1611,20 @@ transcript origin is exactly `Publisher | Imported | Generated`.
 authorization, one typed media snapshot, and strict media-kind dispatch only.
 `_request_podcast_episode_transcript` owns the Episode precedence machine:
 publisher sidecar, readable transcript, inflight work, quota rejection, then
-fresh generated admission. A dry-run may append its explicit immutable
-`podcast_transcript_request_audits` forecast fact, but it does not create
-`media_transcript_states`, create/reset a transcription job, reserve usage, or
-bump collection revisions. Transcript work state is materialized only after the
+fresh generated admission. A dry-run does not create `media_transcript_states`,
+create/reset a transcription job, reserve usage, or bump collection revisions. Transcript work state is materialized only after the
 dry-run return boundary. Explicit admission and durable source requeue both use
 the same transcript-job reset owner; no caller carries a second job upsert.
 Forecast, explicit admission, and durable source requeue derive and reserve
-quota through one typed transcript-budget owner. A quota rejection writes only
-its immutable audit fact for a single request; it does not materialize
-transcript work state or bump collection revisions. A fingerprinted episode
+quota through one typed transcript-budget owner. A quota rejection writes
+nothing: it does not materialize transcript work state or bump collection
+revisions. A fingerprinted episode
 query is one atomic admission transaction: Media rows lock in deterministic
 selection order, and any stale selection, quota rejection, or enqueue defect
-rolls back every episode's state, reservation, audit, source attempt, queue job,
-and collection revision. Repeated inflight admission is likewise an audit-only
-idempotent fact; Podcast collection revisions advance only when the request
-changes viewer-visible transcript work state.
+rolls back every episode's state, reservation, source attempt, queue job, and
+collection revision. Repeated inflight admission likewise writes nothing;
+Podcast collection revisions advance only when the request changes
+viewer-visible transcript work state.
 The request path locks and reads its media/job/transcript inputs once through
 the typed `_TranscriptRequestMedia` snapshot. Publisher-sidecar forecast and
 admission then live in `_request_rss_podcast_transcript`: they reserve zero
@@ -1640,11 +1637,10 @@ exactly once; the outer transcript controller does not publish a second
 revision for the same accepted attempt.
 Publisher-sidecar fallback admission returns the discriminated domain result
 `Admitted | RejectedQuota` from its fenced publication phase. A quota rejection
-therefore commits its immutable audit before the worker raises the typed error
-and publishes terminal source/transcript failure in the next fenced phase; the
-error is never used as callback control flow that would roll the audit back.
+returns rather than raising inside the phase, so the worker raises the typed
+error and publishes terminal source/transcript failure in the next fenced phase.
 Generated-fallback and operator-requeue admission mutate only the generated
-budget reservation, transcription job, and immutable audit. Existing current
+budget reservation and transcription job. Existing current
 segments, fragments, and readable transcript state remain authoritative until
 `transcripts/current.py` atomically installs their replacement; admission never
 deletes or downgrades the current projection and publishes no duplicate

@@ -1344,42 +1344,6 @@ def revoke_jobs_by_dedupe_keys(
     )
 
 
-def revoke_jobs_for_payload(
-    db: Session,
-    *,
-    kind: str,
-    expected_payload_match: Mapping[str, Any],
-) -> None:
-    """Delete queue rows selected by an owned exact JSON payload subset."""
-    target_payload = json.dumps(dict(expected_payload_match))
-    targets = (
-        db.execute(
-            text(
-                """
-            SELECT id
-            FROM background_jobs
-            WHERE kind = :kind
-              AND payload @> CAST(:expected_payload_match AS jsonb)
-            ORDER BY id ASC
-            FOR UPDATE
-            """
-            ),
-            {"kind": kind, "expected_payload_match": target_payload},
-        )
-        .scalars()
-        .all()
-    )
-    if not targets:
-        return
-    capacity = _lock_heavy_capacity_for_jobs(db, targets)
-    if capacity is not None:
-        _clear_heavy_capacity(db, capacity)
-    db.execute(
-        text("DELETE FROM background_jobs WHERE id = ANY(:job_ids)"),
-        {"job_ids": list(targets)},
-    )
-
-
 def reschedule_running_job(
     db: Session,
     *,

@@ -31,8 +31,7 @@ columns to drop, with the slice that removes their code side:
 - `resource_external_snapshots.source_snapshot` +
   `ck_resource_external_snapshots_source_object` (M-01)
 
-tables to drop: `podcast_transcript_request_audits` (POD-01; write-only audit
-ledger), `billing_entitlement_override_events` (SAM-02; write-only audit
+tables to drop: `billing_entitlement_override_events` (SAM-02; write-only audit
 table), plus the dead tables the py-db verifier confirms.
 
 not in scope: the trust prompt-assembly fields stay in `chat_prompt_assemblies`;
@@ -48,3 +47,7 @@ with the doc corrections in the same commit.
 acceptance: `pg_dump --schema-only` shows none of the listed columns, tables,
 constraints or indexes; the migration is at the new head; `./scripts/test`
 passes and an import, a reader open and a dossier build still work.
+
+data cleanup in the same revision: `DELETE FROM resource_mutations WHERE scope
+IN ('Consumption.Activity', 'Consumption.PreviewPosition')` (svc-consumption
+CONS-3; those replay memos have no writer and no reader now).

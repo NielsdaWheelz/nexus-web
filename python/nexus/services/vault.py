@@ -14,6 +14,7 @@ import re
 import time
 import zipfile
 from collections.abc import Mapping, Sequence
+from functools import partial
 from pathlib import Path
 from typing import Any, TypedDict, cast
 from uuid import UUID, uuid4
@@ -37,6 +38,8 @@ from nexus.services import notes as notes_service
 from nexus.services.highlights import (
     delete_highlight_rows,
     derive_exact_prefix_suffix,
+    fragment_highlight_span_conflict_exists,
+    lock_fragment_row_for_highlight_write_or_404,
     map_integrity_error,
     validate_offsets_or_400,
 )
@@ -58,8 +61,6 @@ from nexus.services.vault_contracts import (
     parse_editable_vault_path,
     parse_vault_markdown_file,
 )
-from nexus.storage.client import StorageClient, get_storage_client
-from nexus.storage.paths import get_file_extension
 
 
 class ProjectedVaultFile(TypedDict):
@@ -97,8 +98,6 @@ def export_vault(
     db: Session,
     viewer_id: UUID,
     vault_dir: Path,
-    *,
-    storage_client: StorageClient | None = None,
 ) -> None:
     vault_dir.mkdir(parents=True, exist_ok=True)
     (vault_dir / "Media").mkdir(exist_ok=True)
@@ -114,16 +113,11 @@ def export_vault(
                 _remove_old_handle_files(target.parent, target.name, match.group(1))
         _write_text(target, file["content"])
 
-    if storage_client is not None:
-        _write_source_files(db, viewer_id, vault_dir, storage_client)
-
 
 def sync_vault(
     db: Session,
     viewer_id: UUID,
     vault_dir: Path,
-    *,
-    storage_client: StorageClient | None = None,
 ) -> None:
     (vault_dir / "Highlights").mkdir(parents=True, exist_ok=True)
     (vault_dir / "Pages").mkdir(parents=True, exist_ok=True)
@@ -155,9 +149,6 @@ def sync_vault(
 
     for conflict in result["conflicts"]:
         _write_text(vault_dir / conflict["path"], conflict["content"])
-
-    if storage_client is not None:
-        _write_source_files(db, viewer_id, vault_dir, storage_client)
 
 
 def export_vault_files(db: Session, viewer_id: UUID) -> list[ProjectedVaultFile]:
@@ -198,9 +189,17 @@ def sync_vault_files(
         path = parsed.path
         content = parsed.content
         if isinstance(parsed, (NewHighlightFile, ExistingHighlightFile)):
-            changed, conflict_reason = _sync_highlight_content(db, viewer_id, parsed)
+            changed, conflict_reason = retry_read_committed(
+                db,
+                "sync_vault_highlight",
+                partial(_sync_highlight_content_attempt, db, viewer_id, parsed),
+            )
         else:
-            changed, conflict_reason = _sync_page_content(db, viewer_id, parsed)
+            changed, conflict_reason = retry_read_committed(
+                db,
+                "sync_vault_page",
+                partial(_sync_page_content_attempt, db, viewer_id, parsed),
+            )
 
         if conflict_reason is not None:
             conflicts.append(
@@ -226,10 +225,9 @@ def watch_vault(
     vault_dir: Path,
     *,
     interval_seconds: float,
-    storage_client: StorageClient | None = None,
 ) -> None:
     while True:
-        sync_vault(db, viewer_id, vault_dir, storage_client=storage_client)
+        sync_vault(db, viewer_id, vault_dir)
         time.sleep(interval_seconds)
 
 
@@ -260,13 +258,13 @@ def _vault_file_map(db: Session, viewer_id: UUID) -> dict[str, str]:
     highlight_rows = _load_vault_highlights(db, viewer_id)
     highlights_by_media: dict[UUID, list[Highlight]] = {}
     for highlight in highlight_rows:
-        media_id = _highlight_media_id(highlight)
+        media_id = highlight.anchor_media_id
         if media_id is not None:
             highlights_by_media.setdefault(media_id, []).append(highlight)
 
     for row in media_rows:
         media_id = UUID(str(row["id"]))
-        media_handle = _media_handle(media_id)
+        media_handle = format_vault_handle("med", media_id)
         media_title = str(row["title"])
         media_slug = _slug(media_title)
         media_path = f"Media/{media_slug}--{media_handle}.md"
@@ -277,8 +275,12 @@ def _vault_file_map(db: Session, viewer_id: UUID) -> dict[str, str]:
             files[f"Sources/{media_handle}/article.md"] = _web_article_markdown(
                 media_title, content_blocks
             )
-            files[f"Sources/{media_handle}/article.html"] = _joined_fragment_html(fragments)
-            files[f"Sources/{media_handle}/canonical.txt"] = _joined_block_text(content_blocks)
+            files[f"Sources/{media_handle}/article.html"] = "\n".join(
+                fragment.html_sanitized for fragment in fragments
+            )
+            files[f"Sources/{media_handle}/canonical.txt"] = "\n\n".join(
+                str(block["canonical_text"]) for block in content_blocks
+            )
             source_link = f"../Sources/{media_handle}/article.md"
         elif row["kind"] == "epub":
             files[f"Sources/{media_handle}/text.md"] = _fragment_text_markdown(
@@ -301,7 +303,7 @@ def _vault_file_map(db: Session, viewer_id: UUID) -> dict[str, str]:
     files["Library.md"] = "\n".join(library_lines).rstrip() + "\n"
 
     for highlight in highlight_rows:
-        media_id = _highlight_media_id(highlight)
+        media_id = highlight.anchor_media_id
         if media_id is not None and can_read_media(db, viewer_id, media_id):
             path, content = _highlight_file(db, highlight)
             files[path] = content
@@ -313,17 +315,6 @@ def _vault_file_map(db: Session, viewer_id: UUID) -> dict[str, str]:
         files[path] = content
 
     return files
-
-
-def _sync_highlight_content(
-    db: Session,
-    viewer_id: UUID,
-    file: NewHighlightFile | ExistingHighlightFile,
-) -> tuple[bool, str | None]:
-    def attempt() -> tuple[bool, str | None]:
-        return _sync_highlight_content_attempt(db, viewer_id, file)
-
-    return retry_read_committed(db, "sync_vault_highlight", attempt)
 
 
 def _sync_highlight_content_attempt(
@@ -345,13 +336,13 @@ def _sync_highlight_content_attempt(
     if highlight.anchor_kind not in {"fragment_offsets", "pdf_page_geometry"}:
         return False, "Unsupported highlight anchor kind"
 
-    server_updated_at = _highlight_server_updated_at(highlight)
+    server_updated_at = highlight.updated_at.isoformat()
     if file.server_updated_at != server_updated_at:
         return False, "Server highlight changed since this file was exported"
 
     if file.deleted:
         try:
-            _delete_highlight(db, highlight)
+            delete_highlight_rows(db, highlight)
             db.commit()
             return True, None
         except ApiError as exc:
@@ -365,40 +356,6 @@ def _sync_highlight_content_attempt(
     except ApiError as exc:
         db.rollback()
         return False, exc.message
-
-
-def _lock_fragment_row_for_highlight_write(db: Session, fragment_id: UUID) -> None:
-    locked = db.execute(
-        text("SELECT 1 FROM fragments WHERE id = :fragment_id FOR UPDATE"),
-        {"fragment_id": fragment_id},
-    ).scalar_one_or_none()
-    if locked is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Fragment not found")
-
-
-def _fragment_highlight_span_conflict_exists(
-    db: Session,
-    *,
-    user_id: UUID,
-    fragment_id: UUID,
-    start_offset: int,
-    end_offset: int,
-    exclude_highlight_id: UUID | None = None,
-) -> bool:
-    query = (
-        db.query(Highlight.id)
-        .join(HighlightFragmentAnchor, Highlight.id == HighlightFragmentAnchor.highlight_id)
-        .filter(
-            Highlight.user_id == user_id,
-            Highlight.anchor_kind == "fragment_offsets",
-            HighlightFragmentAnchor.fragment_id == fragment_id,
-            HighlightFragmentAnchor.start_offset == start_offset,
-            HighlightFragmentAnchor.end_offset == end_offset,
-        )
-    )
-    if exclude_highlight_id is not None:
-        query = query.filter(Highlight.id != exclude_highlight_id)
-    return query.first() is not None
 
 
 def _create_highlight_from_file(db: Session, viewer_id: UUID, file: NewHighlightFile) -> None:
@@ -464,29 +421,25 @@ def _apply_highlight_changes(
                 ApiErrorCode.E_INVALID_REQUEST,
                 "Fragment highlights require fragment_offsets selectors",
             )
-        fragment_id, start_offset, end_offset = _resolve_fragment_selector(
-            db,
-            _highlight_media_id_required(highlight),
-            file.fragment_id,
-            file.start_offset,
-            file.end_offset,
-        )
+        fragment_id = file.fragment_id
+        start_offset = file.start_offset
+        end_offset = file.end_offset
+        fragment = db.get(Fragment, fragment_id)
+        if fragment is None or fragment.media_id != _highlight_media_id_required(highlight):
+            raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Fragment not found")
         if (
             anchor.fragment_id != fragment_id
             or anchor.start_offset != start_offset
             or anchor.end_offset != end_offset
         ):
-            fragment = db.get(Fragment, fragment_id)
-            if fragment is None:
-                raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Fragment not found")
-            _lock_fragment_row_for_highlight_write(db, fragment_id)
-            if _fragment_highlight_span_conflict_exists(
+            lock_fragment_row_for_highlight_write_or_404(db, fragment_id)
+            if fragment_highlight_span_conflict_exists(
                 db,
-                user_id=viewer_id,
+                viewer_id=viewer_id,
                 fragment_id=fragment_id,
                 start_offset=start_offset,
                 end_offset=end_offset,
-                exclude_highlight_id=highlight.id,
+                highlight_id=highlight.id,
             ):
                 raise ApiError(
                     ApiErrorCode.E_HIGHLIGHT_CONFLICT,
@@ -536,11 +489,11 @@ def _create_fragment_highlight(
     fragment = db.get(Fragment, fragment_id)
     if fragment is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Fragment not found")
-    _lock_fragment_row_for_highlight_write(db, fragment_id)
+    lock_fragment_row_for_highlight_write_or_404(db, fragment_id)
     validate_offsets_or_400(fragment.canonical_text, start_offset, end_offset)
-    if _fragment_highlight_span_conflict_exists(
+    if fragment_highlight_span_conflict_exists(
         db,
-        user_id=viewer_id,
+        viewer_id=viewer_id,
         fragment_id=fragment_id,
         start_offset=start_offset,
         end_offset=end_offset,
@@ -573,17 +526,6 @@ def _create_fragment_highlight(
     except IntegrityError as exc:
         raise map_integrity_error(exc) from exc
     return highlight
-
-
-def _sync_page_content(
-    db: Session,
-    viewer_id: UUID,
-    file: NewPageFile | ExistingPageFile,
-) -> tuple[bool, str | None]:
-    def attempt() -> tuple[bool, str | None]:
-        return _sync_page_content_attempt(db, viewer_id, file)
-
-    return retry_read_committed(db, "sync_vault_page", attempt)
 
 
 def _sync_page_content_attempt(
@@ -628,7 +570,9 @@ def _sync_page_content_attempt(
     if title_changed:
         page.title = next_title
         page.updated_at = func.now()
-        _bump_resource_lane(db, viewer_id, ResourceRef(scheme="page", id=page.id), "title")
+        versions.bump_version(
+            db, viewer_id=viewer_id, ref=ResourceRef(scheme="page", id=page.id), lane="title"
+        )
     if body_changed or title_changed:
         page.updated_at = func.now()
     for block_id in sorted(changed_block_ids, key=str):
@@ -641,10 +585,6 @@ def _ensure_page_versions(db: Session, viewer_id: UUID, page_id: UUID) -> None:
     ref = ResourceRef(scheme="page", id=page_id)
     versions.ensure_version(db, viewer_id=viewer_id, ref=ref, lane="title")
     versions.ensure_version(db, viewer_id=viewer_id, ref=ref, lane="outgoing_edges")
-
-
-def _bump_resource_lane(db: Session, viewer_id: UUID, ref: ResourceRef, lane: str) -> None:
-    versions.bump_version(db, viewer_id=viewer_id, ref=ref, lane=lane)
 
 
 def _load_vault_highlights(db: Session, viewer_id: UUID) -> list[Highlight]:
@@ -690,11 +630,12 @@ def _load_content_blocks(db: Session, media_id: UUID) -> list[dict[str, object]]
 def _highlight_file(db: Session, highlight: Highlight) -> tuple[str, str]:
     metadata = _metadata_for_highlight(highlight)
     body = _highlight_note_body(db, highlight)
-    return f"Highlights/{_highlight_handle(highlight.id)}.md", _write_frontmatter(metadata, body)
+    path = f"Highlights/{format_vault_handle('hl', highlight.id)}.md"
+    return path, _write_frontmatter(metadata, body)
 
 
 def _page_file(db: Session, page: Page) -> tuple[str, str]:
-    page_handle = _page_handle(page.id)
+    page_handle = format_vault_handle("page", page.id)
     slug = _slug(page.title)
     metadata: dict[str, object] = {
         "nexus_type": "page",
@@ -703,7 +644,7 @@ def _page_file(db: Session, page: Page) -> tuple[str, str]:
         "server_updated_at": page.updated_at.isoformat(),
         "deleted": False,
     }
-    body = _page_body(db, page)
+    body = _page_blocks_markdown(_editable_page_nodes(db, page.user_id, page.id))
     return f"Pages/{slug}--{page_handle}.md", _write_frontmatter(metadata, body)
 
 
@@ -739,7 +680,12 @@ def _apply_page_body_from_vault(
                 )
             ],
         )
-        _bump_resource_lane(db, viewer_id, ResourceRef(scheme="page", id=page.id), "outgoing_edges")
+        versions.bump_version(
+            db,
+            viewer_id=viewer_id,
+            ref=ResourceRef(scheme="page", id=page.id),
+            lane="outgoing_edges",
+        )
         return True, None, {block.id}
 
     flat_nodes = _flatten_page_nodes(nodes)
@@ -863,7 +809,7 @@ def _apply_marked_page_blocks(
                 block_id=cast(UUID, child["block_id"]),
                 collapsed=cast(bool, child["collapsed"]),
             )
-        _bump_resource_lane(db, viewer_id, parent, "outgoing_edges")
+        versions.bump_version(db, viewer_id=viewer_id, ref=parent, lane="outgoing_edges")
         changed = True
     return changed, None, changed_block_ids
 
@@ -1022,57 +968,61 @@ def _flatten_page_nodes(
     return out
 
 
-def _parse_marked_page_blocks(body: str) -> list[_ParsedPageBlock]:
-    lines = body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    parsed_blocks: list[_ParsedPageBlock] = []
-    current_id: UUID | None = None
-    current_parent_id: UUID | None = None
+def _parse_marked_sections(
+    body: str, marker: re.Pattern[str], message: str
+) -> list[tuple[tuple[str, ...], str]]:
+    """Split a vault body into (marker groups, body) sections, in file order.
+
+    Text before the first marker is a client error; a body with no marker at all
+    is an unmarked rewrite the caller rejects on its own terms.
+    """
+    parsed: list[tuple[tuple[str, ...], str]] = []
+    current_groups: tuple[str, ...] | None = None
     current_body_lines: list[str] = []
-    saw_marker = False
     prefix_lines: list[str] = []
 
     def flush_current() -> None:
-        if current_id is None:
+        if current_groups is None:
             return
-        parsed_blocks.append(
-            {
-                "id": current_id,
-                "parent_id": current_parent_id,
-                "body": "\n".join(current_body_lines).strip(),
-            }
-        )
+        parsed.append((current_groups, "\n".join(current_body_lines).strip()))
         current_body_lines.clear()
 
-    for line in lines:
-        match = _BLOCK_MARKER_RE.match(line.strip())
+    for line in body.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        match = marker.match(line.strip())
         if match is None:
-            if current_id is None:
+            if current_groups is None:
                 prefix_lines.append(line)
             else:
                 current_body_lines.append(line)
             continue
-
-        saw_marker = True
-        if current_id is None and "\n".join(prefix_lines).strip():
-            raise ApiError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Vault page block text must appear after a block marker",
-            )
+        if current_groups is None and "\n".join(prefix_lines).strip():
+            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, message)
         flush_current()
-        parent_raw = match.group(2)
-        current_id = UUID(match.group(1))
-        current_parent_id = UUID(parent_raw) if parent_raw else None
+        current_groups = match.groups()
 
     flush_current()
-    return parsed_blocks if saw_marker else []
+    return parsed
 
 
-def _page_body(db: Session, page: Page) -> str:
-    return _page_blocks_markdown(_editable_page_nodes(db, page.user_id, page.id))
+def _parse_marked_page_blocks(body: str) -> list[_ParsedPageBlock]:
+    return [
+        {
+            "id": UUID(groups[0]),
+            "parent_id": UUID(groups[1]) if groups[1] else None,
+            "body": block_body,
+        }
+        for groups, block_body in _parse_marked_sections(
+            body,
+            _BLOCK_MARKER_RE,
+            "Vault page block text must appear after a block marker",
+        )
+    ]
 
 
 def _highlight_note_body(db: Session, highlight: Highlight) -> str:
-    blocks = _highlight_note_blocks(db, highlight.user_id, highlight.id)
+    blocks = graph_highlight_notes.note_blocks_for_highlight(
+        db, viewer_id=highlight.user_id, highlight_id=highlight.id
+    )
     if not blocks:
         return ""
     if len(blocks) == 1:
@@ -1092,7 +1042,9 @@ def _sync_highlight_note_body_from_vault(
     highlight_id: UUID,
     body: str,
 ) -> None:
-    blocks = _highlight_note_blocks(db, viewer_id, highlight_id)
+    blocks = graph_highlight_notes.note_blocks_for_highlight(
+        db, viewer_id=viewer_id, highlight_id=highlight_id
+    )
     parsed_notes = _parse_marked_highlight_notes(body)
     if parsed_notes:
         blocks_by_id = {block.id: block for block in blocks}
@@ -1174,59 +1126,24 @@ def _patch_existing_note_block_bodies_from_vault(
 
 
 def _parse_marked_highlight_notes(body: str) -> list[tuple[UUID, str]]:
-    lines = body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    parsed_notes: list[tuple[UUID, str]] = []
-    current_id: UUID | None = None
-    current_body_lines: list[str] = []
-    saw_marker = False
-    prefix_lines: list[str] = []
-
-    def flush_current() -> None:
-        if current_id is None:
-            return
-        parsed_notes.append((current_id, "\n".join(current_body_lines).strip()))
-        current_body_lines.clear()
-
-    for line in lines:
-        match = _HIGHLIGHT_NOTE_MARKER_RE.match(line.strip())
-        if match is None:
-            if current_id is None:
-                prefix_lines.append(line)
-            else:
-                current_body_lines.append(line)
-            continue
-
-        saw_marker = True
-        if current_id is None and "\n".join(prefix_lines).strip():
-            raise ApiError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Vault highlight note text must appear after a note marker",
-            )
-        flush_current()
-        current_id = UUID(match.group(1))
-
-    flush_current()
-    return parsed_notes if saw_marker else []
-
-
-def _highlight_note_blocks(
-    db: Session,
-    viewer_id: UUID,
-    highlight_id: UUID,
-) -> list[NoteBlock]:
-    return graph_highlight_notes.note_blocks_for_highlight(
-        db, viewer_id=viewer_id, highlight_id=highlight_id
-    )
+    return [
+        (UUID(groups[0]), note_body)
+        for groups, note_body in _parse_marked_sections(
+            body,
+            _HIGHLIGHT_NOTE_MARKER_RE,
+            "Vault highlight note text must appear after a note marker",
+        )
+    ]
 
 
 def _metadata_for_highlight(highlight: Highlight) -> dict[str, object]:
     media_id = _highlight_media_id_required(highlight)
     metadata: dict[str, object] = {
         "nexus_type": "highlight",
-        "highlight_handle": _highlight_handle(highlight.id),
-        "media_handle": _media_handle(media_id),
+        "highlight_handle": format_vault_handle("hl", highlight.id),
+        "media_handle": format_vault_handle("med", media_id),
         "color": highlight.color,
-        "server_updated_at": _highlight_server_updated_at(highlight),
+        "server_updated_at": highlight.updated_at.isoformat(),
         "deleted": False,
         "exact": highlight.exact,
         "prefix": highlight.prefix,
@@ -1240,43 +1157,17 @@ def _metadata_for_highlight(highlight: Highlight) -> dict[str, object]:
         if anchor is None:
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Fragment anchor is missing")
         metadata["selector_kind"] = "fragment_offsets"
-        metadata["fragment_handle"] = _fragment_handle(anchor.fragment_id)
+        metadata["fragment_handle"] = format_vault_handle("frag", anchor.fragment_id)
         metadata["start_offset"] = anchor.start_offset
         metadata["end_offset"] = anchor.end_offset
     return metadata
 
 
-def _resolve_fragment_selector(
-    db: Session,
-    media_id: UUID,
-    fragment_id: UUID,
-    start_offset: int,
-    end_offset: int,
-) -> tuple[UUID, int, int]:
-    fragment = db.get(Fragment, fragment_id)
-    if fragment is None or fragment.media_id != media_id:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Fragment not found")
-    return fragment_id, start_offset, end_offset
-
-
-def _delete_highlight(db: Session, highlight: Highlight) -> None:
-    # Explicit child-first cleanup: no Highlight-family DB cascades remain.
-    delete_highlight_rows(db, highlight)
-
-
-def _highlight_media_id(highlight: Highlight) -> UUID | None:
-    return highlight.anchor_media_id
-
-
 def _highlight_media_id_required(highlight: Highlight) -> UUID:
-    media_id = _highlight_media_id(highlight)
+    media_id = highlight.anchor_media_id
     if media_id is None:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Highlight is missing media anchor")
     return media_id
-
-
-def _highlight_server_updated_at(highlight: Highlight) -> str:
-    return highlight.updated_at.isoformat()
 
 
 def _highlight_sort_key(highlight: Highlight) -> tuple[int, int, int]:
@@ -1289,21 +1180,6 @@ def _highlight_sort_key(highlight: Highlight) -> tuple[int, int, int]:
         highlight.fragment_anchor.start_offset,
         highlight.fragment_anchor.end_offset,
     )
-
-
-def _write_source_file(
-    row: Mapping[Any, Any],
-    source_dir: Path,
-    storage_client: StorageClient | None,
-) -> None:
-    storage_path = row.get("storage_path")
-    if not storage_path:
-        return
-    client = storage_client or get_storage_client()
-    ext = get_file_extension(str(row["kind"]))
-    path = source_dir / f"source.{ext}"
-    chunks = list(client.stream_object(str(storage_path)))
-    _write_bytes(path, b"".join(chunks), read_only=True)
 
 
 def _media_markdown(
@@ -1327,12 +1203,13 @@ def _media_markdown(
         "",
     ]
     for highlight in highlights:
-        lines.append(f"![[../Highlights/{_highlight_handle(highlight.id)}]]")
+        lines.append(f"![[../Highlights/{format_vault_handle('hl', highlight.id)}]]")
     return "\n".join(lines).rstrip() + "\n"
 
 
 def _web_article_markdown(title: str, content_blocks: list[dict[str, object]]) -> str:
-    return f"# {title}\n\n{_joined_block_text(content_blocks).strip()}\n"
+    body = "\n\n".join(str(block["canonical_text"]) for block in content_blocks)
+    return f"# {title}\n\n{body.strip()}\n"
 
 
 def _fragment_text_markdown(title: str, content_blocks: list[dict[str, object]]) -> str:
@@ -1357,14 +1234,6 @@ def _pdf_markdown(title: str, content_blocks: list[dict[str, object]]) -> str:
             lines.extend([f"## Page {page_label}", ""])
         lines.extend([str(block["canonical_text"]).strip(), ""])
     return "\n".join(lines).rstrip() + "\n"
-
-
-def _joined_block_text(content_blocks: list[dict[str, object]]) -> str:
-    return "\n\n".join(str(block["canonical_text"]) for block in content_blocks)
-
-
-def _joined_fragment_html(fragments: list[Fragment]) -> str:
-    return "\n".join(fragment.html_sanitized for fragment in fragments)
 
 
 def _write_frontmatter(metadata: dict[str, object], body: str) -> str:
@@ -1398,35 +1267,6 @@ def _conflict_markdown(text_content: str, reason: str) -> str:
     )
 
 
-def _write_source_files(
-    db: Session,
-    viewer_id: UUID,
-    vault_dir: Path,
-    storage_client: StorageClient,
-) -> None:
-    rows = (
-        db.execute(
-            text(f"""
-            WITH visible_media AS (
-                {visible_media_ids_cte_sql()}
-            )
-            SELECT m.id, m.kind, mf.storage_path, mf.content_type
-            FROM media m
-            JOIN visible_media vm ON vm.media_id = m.id
-            JOIN media_file mf ON mf.media_id = m.id
-            WHERE m.kind IN ('epub', 'pdf')
-            ORDER BY lower(m.title), m.id
-        """),
-            {"viewer_id": viewer_id},
-        )
-        .mappings()
-        .all()
-    )
-    for row in rows:
-        media_handle = _media_handle(UUID(str(row["id"])))
-        _write_source_file(row, vault_dir / "Sources" / media_handle, storage_client)
-
-
 def _write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and path.read_text(encoding="utf-8") == content:
@@ -1434,19 +1274,6 @@ def _write_text(path: Path, content: str) -> None:
     if path.exists():
         os.chmod(path, 0o644)
     path.write_text(content, encoding="utf-8")
-
-
-def _write_bytes(path: Path, content: bytes, *, read_only: bool) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        os.chmod(path, 0o644)
-        if path.read_bytes() == content:
-            if read_only:
-                os.chmod(path, 0o444)
-            return
-    path.write_bytes(content)
-    if read_only:
-        os.chmod(path, 0o444)
 
 
 def _remove_old_handle_files(directory: Path, target_name: str, handle: str) -> None:
@@ -1458,22 +1285,6 @@ def _remove_old_handle_files(directory: Path, target_name: str, handle: str) -> 
 def _slug(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return slug[:80].strip("-") or "untitled"
-
-
-def _media_handle(media_id: UUID) -> str:
-    return format_vault_handle("med", media_id)
-
-
-def _highlight_handle(highlight_id: UUID) -> str:
-    return format_vault_handle("hl", highlight_id)
-
-
-def _fragment_handle(fragment_id: UUID) -> str:
-    return format_vault_handle("frag", fragment_id)
-
-
-def _page_handle(page_id: UUID) -> str:
-    return format_vault_handle("page", page_id)
 
 
 def _processing_status_value(value: object) -> str:
