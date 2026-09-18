@@ -73,7 +73,7 @@
 
 .option {
   display: grid;
-  grid-template-columns: var(--space-4) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-2);
   min-height: var(--size-lg);
@@ -99,12 +99,6 @@
 
 .option[aria-disabled="true"] .optionName {
   color: var(--ink-muted);
-}
-
-.dotSlot {
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .optionName {

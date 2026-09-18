@@ -22,7 +22,6 @@ from nexus.services.resource_items.capabilities import resource_inspect_policy
 class InspectResourceResult:
     uri: str
     status: Literal["complete", "error"]
-    body: str  # error description on failure; unused on success (the map renders)
     document_map: MediaReadMap | None = None
     error_code: str | None = None
 
@@ -43,37 +42,21 @@ def execute_inspect_resource(
     parsed = parse_resource_ref(uri)
     if isinstance(parsed, ResourceRefParseFailure):
         if parsed.reason == "unsupported_scheme":
-            scheme = uri.partition(":")[0]
-            return _error(
-                uri, f"Resource URI scheme '{scheme}' is not supported.", "unknown_scheme"
-            )
-        return _error(uri, f"Resource URI {uri} is malformed.", "invalid_uri")
+            return _error(uri, "unknown_scheme")
+        return _error(uri, "invalid_uri")
 
     inspect_policy = resource_inspect_policy(parsed)
     if inspect_policy != "media_document_map":
-        return _error(
-            uri,
-            f"Resource {uri} has inspect policy '{inspect_policy}', so nexus__resource__inspect "
-            "cannot map it. Pass a media document URI; use nexus__resource__read to read other "
-            "resources.",
-            "not_inspectable",
-        )
+        return _error(uri, "not_inspectable")
 
     if uri not in admitted_resource_uris:
-        return _error(
-            uri,
-            f"Resource {uri} is not in this operation's admitted scope. "
-            "Use nexus__search to find new sources first.",
-            "not_in_context_refs",
-        )
+        return _error(uri, "not_in_context_refs")
 
     document_map = get_media_read_map_for_viewer(db, viewer_id, parsed.id)
     if document_map is None:
-        return _error(
-            uri, f"Resource {uri} is unavailable or you do not have access to it.", "missing"
-        )
-    return InspectResourceResult(uri=uri, status="complete", body="", document_map=document_map)
+        return _error(uri, "missing")
+    return InspectResourceResult(uri=uri, status="complete", document_map=document_map)
 
 
-def _error(uri: str, body: str, error_code: str) -> InspectResourceResult:
-    return InspectResourceResult(uri=uri, status="error", body=body, error_code=error_code)
+def _error(uri: str, error_code: str) -> InspectResourceResult:
+    return InspectResourceResult(uri=uri, status="error", error_code=error_code)

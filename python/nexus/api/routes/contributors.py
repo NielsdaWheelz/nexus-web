@@ -84,14 +84,14 @@ def list_contributor_works(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
-    view, query = contributors_service.parse_contributor_works_query(
+    plan, query = contributors_service.parse_contributor_works_query(
         request.query_params.multi_items()
     )
     page = contributors_service.list_contributor_works(
         db,
         viewer_id=viewer.user_id,
         contributor_handle=_parse_handle(contributor_handle),
-        view=view,
+        plan=plan,
         cursor=query.cursor,
         collection_revision=query.collection_revision,
         limit=query.limit,

@@ -8,11 +8,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from nexus.config import get_settings
-from nexus.db.models import (
-    BillingAccount,
-    BillingEntitlementOverride,
-    BillingEntitlementOverrideEvent,
-)
+from nexus.db.models import BillingAccount, BillingEntitlementOverride
 from nexus.schemas.billing import (
     BillingEntitlementsOut,
     BillingPlanTier,
@@ -113,7 +109,6 @@ def grant_entitlement_override(
     grant = db.scalar(
         select(BillingEntitlementOverride).where(BillingEntitlementOverride.user_id == user_id)
     )
-    before = _grant_snapshot(grant)
     if grant is None:
         grant = BillingEntitlementOverride(
             user_id=user_id,
@@ -124,9 +119,6 @@ def grant_entitlement_override(
             updated_at=now,
         )
         db.add(grant)
-        event_type = "created"
-    else:
-        event_type = "updated"
 
     grant.plan_tier = plan_tier
     grant.transcription_quota_mode = transcription_quota_mode
@@ -137,19 +129,6 @@ def grant_entitlement_override(
     grant.updated_by_user_id = actor_user_id
     grant.updated_by_label = actor_label
     grant.updated_at = now
-    db.flush()
-    db.add(
-        BillingEntitlementOverrideEvent(
-            override_id=grant.id,
-            user_id=user_id,
-            event_type=event_type,
-            actor_user_id=actor_user_id,
-            actor_label=actor_label,
-            reason=reason,
-            before_state=before,
-            after_state=_grant_snapshot(grant),
-        )
-    )
     db.commit()
     return grant
 
@@ -169,25 +148,11 @@ def revoke_entitlement_override(
         raise ValueError("No billing entitlement override exists for user")
 
     now = _db_now(db)
-    before = _grant_snapshot(grant)
     grant.revoked_at = now
     grant.reason = reason
     grant.updated_by_user_id = actor_user_id
     grant.updated_by_label = actor_label
     grant.updated_at = now
-    db.flush()
-    db.add(
-        BillingEntitlementOverrideEvent(
-            override_id=grant.id,
-            user_id=user_id,
-            event_type="revoked",
-            actor_user_id=actor_user_id,
-            actor_label=actor_label,
-            reason=reason,
-            before_state=before,
-            after_state=_grant_snapshot(grant),
-        )
-    )
     db.commit()
     return grant
 
@@ -222,19 +187,6 @@ def _usage_period(now: datetime, account: BillingAccount | None) -> tuple[dateti
     if now.month == 12:
         return start, datetime(now.year + 1, 1, 1, tzinfo=UTC)
     return start, datetime(now.year, now.month + 1, 1, tzinfo=UTC)
-
-
-def _grant_snapshot(grant: BillingEntitlementOverride | None) -> dict | None:
-    if grant is None:
-        return None
-    return {
-        "plan_tier": grant.plan_tier,
-        "transcription_quota_mode": grant.transcription_quota_mode,
-        "transcription_minutes_limit_monthly": grant.transcription_minutes_limit_monthly,
-        "expires_at": grant.expires_at.isoformat() if grant.expires_at else None,
-        "revoked_at": grant.revoked_at.isoformat() if grant.revoked_at else None,
-        "reason": grant.reason,
-    }
 
 
 def _db_now(db: Session) -> datetime:

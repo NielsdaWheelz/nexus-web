@@ -25,14 +25,11 @@ from nexus.services.collection_revisions import (
     CollectionFamily,
     bump_all_collection_families,
 )
-from nexus.services.contributor_observation_seam import (
-    ContributorObservation,
-    apply_contributor_observation_in_current_transaction,
-)
-from nexus.services.contributor_observation_seam import (
-    PodcastTarget as ObservationPodcastTarget,
-)
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
+from nexus.services.contributors import (
+    PodcastTarget,
+    apply_observed_role_slices_in_current_transaction,
+)
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
 from .provider import PODCAST_PROVIDER
@@ -214,13 +211,11 @@ def apply_podcast_contributor_credits_in_current_transaction(
             podcast_id=str(podcast_id),
             truncated=truncated,
         )
-    apply_contributor_observation_in_current_transaction(
+    apply_observed_role_slices_in_current_transaction(
         db,
-        ContributorObservation(
-            target=ObservationPodcastTarget(podcast_id),
-            observation=observation,
-            source=PODCAST_PROVIDER,
-        ),
+        target=PodcastTarget(podcast_id),
+        observation=observation,
+        source=PODCAST_PROVIDER,
     )
 
 

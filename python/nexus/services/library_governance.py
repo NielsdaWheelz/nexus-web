@@ -58,6 +58,7 @@ from nexus.services.collection_keyset import (
     plan_json,
 )
 from nexus.services.collection_revisions import (
+    ENTRY_VISIBILITY_FAMILIES,
     CollectionFamily,
     bump_collection_families,
     bump_collection_revisions,
@@ -71,6 +72,7 @@ from nexus.services.signed_keyset_cursor import (
     encode_signed_keyset_cursor,
 )
 from nexus.storage.client import StorageError, get_storage_client
+from nexus.text import escape_like
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +87,6 @@ class LibraryMembershipContext:
     is_default: bool
     owner_user_id: UUID
     name: str
-    color: str | None
     role: LibraryRole
     system_key: str | None
     created_at: datetime
@@ -118,7 +119,6 @@ def _library_out_from_row(row, *, viewer_user_id: UUID) -> LibraryOut:
     return LibraryOut(
         id=row["id"],
         name=row["name"],
-        color=row["color"],
         owner_user_handle=seal_user(row["owner_user_id"]),
         is_default=row["is_default"],
         role=row["role"],
@@ -139,7 +139,6 @@ def _library_destination_out_from_row(row) -> LibraryDestinationOut:
     return LibraryDestinationOut(
         id=row["id"],
         name=row["name"],
-        color=row["color"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -175,13 +174,7 @@ def _bump_library_index(
     bump_collection_families(
         db,
         viewer_ids=viewer_ids,
-        families=(
-            CollectionFamily.AuthorWorks,
-            CollectionFamily.LibrariesIndex,
-            CollectionFamily.LibraryEntries,
-            CollectionFamily.PodcastEpisodes,
-            CollectionFamily.PodcastSubscriptions,
-        ),
+        families=(*ENTRY_VISIBILITY_FAMILIES, CollectionFamily.LibrariesIndex),
     )
     if conversations:
         bump_collection_revisions(
@@ -203,7 +196,7 @@ def lock_library_for_member(
     row = (
         db.execute(
             text(f"""
-            SELECT l.id, l.is_default, l.owner_user_id, l.name, l.color,
+            SELECT l.id, l.is_default, l.owner_user_id, l.name,
                    m.role, l.system_key, l.created_at, l.updated_at
             FROM libraries l
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
@@ -222,7 +215,6 @@ def lock_library_for_member(
         is_default=row["is_default"],
         owner_user_id=row["owner_user_id"],
         name=row["name"],
-        color=row["color"],
         role=row["role"],
         system_key=row["system_key"],
         created_at=row["created_at"],
@@ -263,53 +255,6 @@ def require_not_system(system_key: str | None) -> None:
         raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "System library cannot be modified")
 
 
-def _repair_owner_admin_invariant(db: Session, library_id: UUID, owner_user_id: UUID) -> bool:
-    """Ensure the owner has an admin membership row.
-
-    Return whether the repair changed the owner-visible library projection.
-    """
-    row = db.execute(
-        text("""
-            SELECT role
-            FROM memberships
-            WHERE library_id = :library_id
-              AND user_id = :owner_user_id
-        """),
-        {"library_id": library_id, "owner_user_id": owner_user_id},
-    ).fetchone()
-    if row is None:
-        db.execute(
-            text("""
-                INSERT INTO memberships (library_id, user_id, role)
-                VALUES (:library_id, :owner_user_id, 'admin')
-            """),
-            {"library_id": library_id, "owner_user_id": owner_user_id},
-        )
-        return True
-    if row[0] != "admin":
-        db.execute(
-            text("""
-                UPDATE memberships
-                SET role = 'admin'
-                WHERE library_id = :library_id
-                  AND user_id = :owner_user_id
-            """),
-            {"library_id": library_id, "owner_user_id": owner_user_id},
-        )
-        return True
-    return False
-
-
-def _lock_memberships_and_repair_owner(db: Session, library_id: UUID, owner_user_id: UUID) -> bool:
-    """Gap-lock the library's membership rows, then repair the owner-admin invariant — the
-    shared preamble for every membership mutation (role change, removal, transfer)."""
-    db.execute(
-        text("SELECT 1 FROM memberships WHERE library_id = :lid FOR UPDATE"),
-        {"lid": library_id},
-    )
-    return _repair_owner_admin_invariant(db, library_id, owner_user_id)
-
-
 def _validate_library_name(name: str) -> str:
     """Normalize and validate a non-default library name. ``All`` (any trimmed,
     Unicode-casefolded spelling) is reserved for the All view alias, so it is
@@ -337,7 +282,7 @@ def create_library(
                     text(
                         """
                         SELECT
-                            l.id, l.name, l.color, l.owner_user_id, l.is_default,
+                            l.id, l.name, l.owner_user_id, l.is_default,
                             l.system_key, l.created_at, l.updated_at, m.role
                         FROM libraries l
                         LEFT JOIN memberships m
@@ -372,11 +317,11 @@ def create_library(
                     text(
                         """
                         INSERT INTO libraries (
-                            id, name, color, owner_user_id, is_default
+                            id, name, owner_user_id, is_default
                         )
-                        VALUES (:library_id, :name, NULL, :viewer_id, false)
+                        VALUES (:library_id, :name, :viewer_id, false)
                         RETURNING
-                            id, name, color, owner_user_id, is_default,
+                            id, name, owner_user_id, is_default,
                             system_key, created_at, updated_at
                         """
                     ),
@@ -484,7 +429,6 @@ def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) ->
         library=LibraryOut(
             id=ctx.library_id,
             name=name,
-            color=ctx.color,
             owner_user_handle=seal_user(ctx.owner_user_id),
             is_default=ctx.is_default,
             role=ctx.role,
@@ -749,7 +693,7 @@ def list_libraries(
         db.execute(
             text(f"""
             WITH memberships_held AS (
-                SELECT l.id, l.name, l.color, l.owner_user_id, l.is_default,
+                SELECT l.id, l.name, l.owner_user_id, l.is_default,
                        l.system_key, l.created_at, l.updated_at, m.role,
                        {_PRESENTED_NAME_SQL} AS presented_name
                 FROM libraries l
@@ -760,7 +704,7 @@ def list_libraries(
                        lower(btrim(memberships_held.presented_name)) AS name_key
                 FROM memberships_held
             )
-            SELECT facts.id, facts.name, facts.color, facts.owner_user_id, facts.is_default,
+            SELECT facts.id, facts.name, facts.owner_user_id, facts.is_default,
                    facts.system_key, facts.created_at, facts.updated_at, facts.role,
                    facts.presented_name, facts.name_key
             FROM facts
@@ -791,54 +735,13 @@ def list_libraries(
     )
 
 
-def _escape_like(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
-def _encode_destination_cursor(row, *, viewer_id: UUID) -> str:
-    payload = {
-        "k": "library_destinations:v2",
-        "viewer_id": str(viewer_id),
-        "q": str(row["cursor_q"]),
-        "rank": int(row["match_rank"]),
-        "normalized_name": str(row["normalized_name"]),
-        "name": str(row["name"]),
-        "id": str(row["id"]),
-    }
-    # justify-base64url-over-base64: cursor rides in a URL query parameter.
-    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
-    return encoded.rstrip("=")
-
-
-def _decode_destination_cursor(
-    cursor: str, q: str, *, viewer_id: UUID
-) -> tuple[int, str, str, UUID]:
-    try:
-        padded = cursor + "=" * (-len(cursor) % 4)
-        payload: dict[str, Any] = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
-        if (
-            set(payload) != {"k", "viewer_id", "q", "rank", "normalized_name", "name", "id"}
-            or payload["k"] != "library_destinations:v2"
-            or UUID(str(payload["viewer_id"])) != viewer_id
-            or payload["q"] != q
-        ):
-            raise ValueError
-        return (
-            int(payload["rank"]),
-            str(payload["normalized_name"]),
-            str(payload["name"]),
-            UUID(str(payload["id"])),
-        )
-    except (
-        ValueError,
-        TypeError,
-        KeyError,
-        UnicodeDecodeError,
-        binascii.Error,
-        json.JSONDecodeError,
-    ):
-        # justify-ignore-error: malformed cursor input is an expected API error path.
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
+_DESTINATIONS_CURSOR_FAMILY = "LibraryDestinations:v3"
+_DESTINATIONS_PLAN = (
+    SortKey("match_rank", "asc", KeysetValueKind.Int),
+    SortKey("normalized_name", "asc", KeysetValueKind.Text),
+    SortKey("name", "asc", KeysetValueKind.Text),
+    SortKey("id", "asc", KeysetValueKind.Uuid),
+)
 
 
 def list_writable_library_destinations(
@@ -853,42 +756,32 @@ def list_writable_library_destinations(
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
     limit = min(limit, 50)
     query = q or ""
-    cursor_clause = ""
+    cursor_query = {
+        "family": _DESTINATIONS_CURSOR_FAMILY,
+        "plan": plan_json(_DESTINATIONS_PLAN),
+        "q": query,
+        "viewerId": str(viewer_id),
+    }
+    keyset_sql = ""
     params: dict[str, object] = {
         "viewer_id": viewer_id,
         "q": query,
-        "prefix_q": f"{_escape_like(query)}%",
-        "contains_q": f"%{_escape_like(query)}%",
+        "prefix_q": f"{escape_like(query)}%",
+        "contains_q": f"%{escape_like(query)}%",
         "limit": limit + 1,
     }
     if cursor is not None:
-        rank, normalized_name, name, library_id = _decode_destination_cursor(
-            cursor, query, viewer_id=viewer_id
-        )
-        cursor_clause = """
-          AND (
-            ranked.match_rank > :cursor_rank
-            OR (ranked.match_rank = :cursor_rank AND ranked.normalized_name > :cursor_normalized_name)
-            OR (
-              ranked.match_rank = :cursor_rank
-              AND ranked.normalized_name = :cursor_normalized_name
-              AND ranked.name > :cursor_name
-            )
-            OR (
-              ranked.match_rank = :cursor_rank
-              AND ranked.normalized_name = :cursor_normalized_name
-              AND ranked.name = :cursor_name
-              AND ranked.id > :cursor_id
-            )
-          )
-        """
+        keyset_sql = keyset_clause(_DESTINATIONS_PLAN, alias="ranked")
         params.update(
-            {
-                "cursor_rank": rank,
-                "cursor_normalized_name": normalized_name,
-                "cursor_name": name,
-                "cursor_id": library_id,
-            }
+            keyset_params(
+                _DESTINATIONS_PLAN,
+                decode_signed_keyset_cursor(
+                    cursor,
+                    family=_DESTINATIONS_CURSOR_FAMILY,
+                    query=cursor_query,
+                    expected_kinds=expected_kinds(_DESTINATIONS_PLAN),
+                ),
+            )
         )
 
     rows = (
@@ -898,11 +791,9 @@ def list_writable_library_destinations(
                 SELECT
                     l.id,
                     l.name,
-                    l.color,
                     l.created_at,
                     l.updated_at,
                     lower(l.name) AS normalized_name,
-                    :q AS cursor_q,
                     CASE
                         WHEN :q = '' THEN 3
                         WHEN lower(l.name) = :q THEN 0
@@ -920,8 +811,8 @@ def list_writable_library_destinations(
             SELECT *
             FROM ranked
             WHERE 1 = 1
-              {cursor_clause}
-            ORDER BY match_rank ASC, ranked.normalized_name ASC, ranked.name ASC, ranked.id ASC
+              {keyset_sql}
+            ORDER BY {order_by_sql(_DESTINATIONS_PLAN, alias="ranked")}
             LIMIT :limit
         """),
             params,
@@ -931,7 +822,11 @@ def list_writable_library_destinations(
     )
     page_rows = rows[:limit]
     next_cursor = (
-        _encode_destination_cursor(page_rows[-1], viewer_id=viewer_id)
+        encode_signed_keyset_cursor(
+            family=_DESTINATIONS_CURSOR_FAMILY,
+            query=cursor_query,
+            after=after_values(_DESTINATIONS_PLAN, page_rows[-1]),
+        )
         if len(rows) > limit
         else None
     )
@@ -942,8 +837,7 @@ def list_writable_library_destinations(
 class LibraryManagementFacts:
     """The viewer's manage/delete authority over one library."""
 
-    settings_applicable: bool
-    delete_applicable: bool
+    mutable: bool
     can_manage_settings: bool
     can_delete: bool
 
@@ -990,8 +884,7 @@ def library_management_facts(
         )
         mutable = not bool(row["is_default"]) and row["system_key"] is None
         facts[UUID(str(row["id"]))] = LibraryManagementFacts(
-            settings_applicable=mutable,
-            delete_applicable=mutable,
+            mutable=mutable,
             can_manage_settings=capabilities["can_rename"],
             can_delete=capabilities["can_delete"],
         )
@@ -1003,7 +896,7 @@ def get_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryOut:
     row = (
         db.execute(
             text("""
-            SELECT l.id, l.name, l.color, l.owner_user_id, l.is_default,
+            SELECT l.id, l.name, l.owner_user_id, l.is_default,
                    l.system_key, l.created_at, l.updated_at, m.role
             FROM libraries l
             JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
@@ -1153,7 +1046,10 @@ def update_library_member_role(
             require_non_default(ctx.is_default)
             require_not_system(ctx.system_key)
 
-            owner_repaired = _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
+            db.execute(
+                text("SELECT 1 FROM memberships WHERE library_id = :lid FOR UPDATE"),
+                {"lid": library_id},
+            )
 
             if target_user_id == ctx.owner_user_id:
                 raise ForbiddenError(
@@ -1200,7 +1096,7 @@ def update_library_member_role(
                     .mappings()
                     .one()
                 )
-            if role_changed or owner_repaired:
+            if role_changed:
                 _bump_library_index(db, _library_member_ids(db, library_id))
 
             return _library_member_out_from_row(target, owner_user_id=ctx.owner_user_id)
@@ -1220,7 +1116,10 @@ def remove_library_member(
             require_non_default(ctx.is_default)
             require_not_system(ctx.system_key)
 
-            owner_repaired = _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
+            db.execute(
+                text("SELECT 1 FROM memberships WHERE library_id = :lid FOR UPDATE"),
+                {"lid": library_id},
+            )
 
             if target_user_id == ctx.owner_user_id:
                 raise ForbiddenError(
@@ -1233,8 +1132,6 @@ def remove_library_member(
                 {"lid": library_id, "uid": target_user_id},
             ).fetchone()
             if target is None:
-                if owner_repaired:
-                    _bump_library_index(db, _library_member_ids(db, library_id))
                 return
 
             result = db.execute(
@@ -1274,15 +1171,15 @@ def transfer_library_ownership(
                     "Only the library owner can transfer ownership",
                 )
 
-            owner_repaired = _lock_memberships_and_repair_owner(db, library_id, ctx.owner_user_id)
+            db.execute(
+                text("SELECT 1 FROM memberships WHERE library_id = :lid FOR UPDATE"),
+                {"lid": library_id},
+            )
 
             if new_owner_user_id == ctx.owner_user_id:
-                if owner_repaired:
-                    _bump_library_index(db, _library_member_ids(db, library_id))
                 return LibraryOut(
                     id=ctx.library_id,
                     name=ctx.name,
-                    color=ctx.color,
                     owner_user_handle=seal_user(ctx.owner_user_id),
                     is_default=ctx.is_default,
                     role=ctx.role,
@@ -1332,7 +1229,6 @@ def transfer_library_ownership(
             return LibraryOut(
                 id=ctx.library_id,
                 name=ctx.name,
-                color=ctx.color,
                 owner_user_handle=seal_user(new_owner_user_id),
                 is_default=ctx.is_default,
                 created_at=ctx.created_at,

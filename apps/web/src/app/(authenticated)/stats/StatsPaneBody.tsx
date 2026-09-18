@@ -1216,15 +1216,15 @@ export default function StatsPaneBody() {
   const sessionPagination = useCursorPagination({
     firstPage: sessionFirstPage,
     initialMoreError: null,
-    buildMoreHref: (cursor) => {
+    loadMorePage: async (cursor, signal) => {
       if (committed === null || hydratedTimeZone === null) {
         throw new Error("Stats session pagination requires a committed view");
       }
-      return statsSessionsPath(committed.state, hydratedTimeZone, cursor);
-    },
-    loadMorePage: async (href, signal) => {
       const page = decodeActivitySessionPage(
-        await apiFetch<unknown>(href as ApiPath, { signal }),
+        await apiFetch<unknown>(
+          statsSessionsPath(committed.state, hydratedTimeZone, cursor),
+          { signal },
+        ),
       );
       return statsSessionCursorPage({
         rows: page.sessions,
@@ -1315,13 +1315,6 @@ export default function StatsPaneBody() {
   };
 
   if (correctionDefect !== null) throw correctionDefect;
-  if (
-    sessionPagination.error !== null &&
-    isSameSystemApiDefect(sessionPagination.error)
-  ) {
-    throw sessionPagination.error;
-  }
-
   return (
     <main className={styles.pane} aria-busy={updating || initialLoading}>
       <header className={styles.header}>

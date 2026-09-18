@@ -31,7 +31,7 @@ from nexus.auth.permissions import (
 )
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.retrieval import retrieval_locator_json
-from nexus.services import library_entries
+from nexus.services import library_entries, library_entry_listing
 from nexus.services.artifacts.registry import visible_persisted_subject
 from nexus.services.artifacts.subject_policy import DossierSubjectScheme
 from nexus.services.contributor_credits import (
@@ -49,7 +49,7 @@ INLINE_THRESHOLD_CHARS = 1500
 # Byline label for resolved media/quote rows: composed from the canonical credit
 # read owner so the sole raw ``contributor_credits`` read lives there (spec §3).
 _AUTHORS_SQL = media_author_names_agg_sql()
-_AUTHORS_JOIN_SQL = media_author_credits_join_sql("m.id")
+_AUTHORS_JOIN_SQL = media_author_credits_join_sql()
 
 
 @dataclass(frozen=True)
@@ -796,7 +796,9 @@ def _load_library(
         db, [lid for lid in ids if lid not in own_default_ids]
     )
     virtual_counts = {
-        lid: library_entries.count_default_root_inventory(db, viewer_id=viewer_id, library_id=lid)
+        lid: library_entry_listing.count_default_root_inventory(
+            db, viewer_id=viewer_id, library_id=lid
+        )
         for lid in own_default_ids
     }
     out: list[LoadedResource] = []

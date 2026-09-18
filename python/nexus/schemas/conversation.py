@@ -309,7 +309,7 @@ class ToolProjectionOut(BaseModel):
         # cycle while retaining one semantic contract owner.
         from nexus.services.tool_runtime.declarations import (
             BROWSER_TOOL_PROJECTION_CONTRACT,
-            CHAT_TOOL_DECLARATIONS,
+            CHAT_TOOL_DECLARATIONS_BY_ID,
         )
 
         contract = BROWSER_TOOL_PROJECTION_CONTRACT
@@ -327,9 +327,8 @@ class ToolProjectionOut(BaseModel):
         if any(projection[field] is not None for field in shape["null_fields"]):
             raise ValueError("tool projection populated a forbidden tagged field")
 
-        declarations = {str(item.spec.id): item for item in CHAT_TOOL_DECLARATIONS}
         if self.record_kind in {"current_execution", "historical_execution"}:
-            declaration = declarations.get(self.canonical_tool_id or "")
+            declaration = CHAT_TOOL_DECLARATIONS_BY_ID.get(self.canonical_tool_id or "")
             if declaration is None:
                 raise ValueError("unknown canonical tool projection identity")
             if (
@@ -370,18 +369,11 @@ class StoredToolProjection(ToolProjectionOut):
 def tool_projection_from_persisted_record(record: Any) -> ToolProjectionOut:
     """Derive public presentation only after the storage owner decoded a row."""
 
-    from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS
+    from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS_BY_ID
 
     record_kind: TOOL_RECORD_KINDS = record.record_kind
     if record_kind in {"current_execution", "historical_execution"}:
-        declaration = next(
-            (
-                item
-                for item in CHAT_TOOL_DECLARATIONS
-                if str(item.spec.id) == record.canonical_tool_id
-            ),
-            None,
-        )
+        declaration = CHAT_TOOL_DECLARATIONS_BY_ID.get(record.canonical_tool_id)
         if declaration is None:
             raise AssertionError("decoded tool row has no presentation declaration")
         error_type = record.error_code if record_kind == "current_execution" else None

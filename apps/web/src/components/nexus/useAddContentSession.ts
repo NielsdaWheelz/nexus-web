@@ -847,14 +847,12 @@ export function useAddContentSession(): AddContentSessionController {
             await addLibraryPlacement({
               target: { kind: "Media", id: mediaId },
               destination: command.destination,
-              clientMutationId: crypto.randomUUID(),
               signal,
             });
           } else {
             await removeLibraryPlacement({
               target: { kind: "Media", id: mediaId },
               destination: command.destination,
-              clientMutationId: crypto.randomUUID(),
               signal,
             });
           }
@@ -1134,7 +1132,6 @@ export function useAddContentSession(): AddContentSessionController {
         return {
           id: destination.id,
           name: destination.name,
-          color: destination.color,
         };
       } finally {
         if (generation === generationRef.current)

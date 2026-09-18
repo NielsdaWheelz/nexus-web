@@ -583,12 +583,8 @@ separate from source-authored apparatus.
 - controls stay interactive in `Pending` and `SaveFailed`.
 - one keyed Feedback presentation (`reader-profile-save`, owned by
   `ReaderProfileSaveFeedback.tsx`) is the save-failure UX: a persistent global
-  toast with Retry for `SaveFailed`. While the
-  Settings reader pane is active it holds a `suppressDedupeKey` lease on that
-  key — the global toast is hidden and `SettingsReaderPaneBody` renders the
-  same failure inline — and releases the lease on deactivation/unmount,
-  restoring the global notice if the failure remains. There is exactly one
-  visible live presentation at a time.
+  toast with Retry for `SaveFailed`. It is the only presentation — the Settings
+  reader pane renders no inline copy of it.
 
 ### reader profile backend contract
 

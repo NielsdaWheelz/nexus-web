@@ -23,6 +23,15 @@ class CollectionFamily(str, Enum):
     PodcastEpisodes = "PodcastEpisodes"
 
 
+# Every finite collection whose membership changes when an entry's visibility does.
+ENTRY_VISIBILITY_FAMILIES = (
+    CollectionFamily.AuthorWorks,
+    CollectionFamily.LibraryEntries,
+    CollectionFamily.PodcastEpisodes,
+    CollectionFamily.PodcastSubscriptions,
+)
+
+
 def read_collection_revision(
     db: Session,
     *,

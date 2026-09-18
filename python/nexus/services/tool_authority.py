@@ -57,6 +57,7 @@ from nexus.services.llm_ledger import (
     LlmCallOwner,
     lock_active_generation_for_authority_in_current_transaction,
 )
+from nexus.services.retrieval_citation import RetrievalCitation
 from nexus.services.tool_runtime.composition import (
     FrozenToolOperation,
     freeze_tool_plan_snapshot,
@@ -126,6 +127,21 @@ class ModelToolExecutionResult:
     position: ToolPositionRecord | None
 
 
+@dataclass(slots=True)
+class ToolAuditProjection:
+    """In-process audit view a handler stages for the terminal domain projection."""
+
+    scope: str
+    requested_types: list[str] = field(default_factory=list)
+    filters: dict[str, Any] = field(default_factory=dict)
+    citations: list[RetrievalCitation] = field(default_factory=list)
+    selected_citations: list[RetrievalCitation] = field(default_factory=list)
+    created_refs: list[dict[str, Any]] = field(default_factory=list)
+    provider_request_ids: list[str] = field(default_factory=list)
+    search_query_fingerprint: str | None = None
+    latency_ms: int | None = None
+
+
 class ToolExecutionProjection(Protocol):
     """Optional domain view below the canonical authority and position ledger."""
 
@@ -157,7 +173,7 @@ class ToolExecutionProjection(Protocol):
         authority: ToolAuthority,
         position: ToolPositionRecord,
         result: ToolResult,
-        audit: Mapping[str, object],
+        audit: ToolAuditProjection,
     ) -> None: ...
 
     def render_output(
@@ -210,7 +226,7 @@ class _NoToolExecutionProjection:
         authority: ToolAuthority,
         position: ToolPositionRecord,
         result: ToolResult,
-        audit: Mapping[str, object],
+        audit: ToolAuditProjection,
     ) -> None:
         del db, authority, position, result, audit
 
@@ -475,14 +491,6 @@ class ToolAuthority:
         async with open_async_session(self.session_factory) as database:
             return await database.run_sync(prepare)
 
-    def read_positions(self, db: Session) -> tuple[ToolPositionRecord, ...]:
-        rows = db.scalars(
-            select(LLMToolPosition)
-            .where(LLMToolPosition.generation_id == self.generation_id)
-            .order_by(LLMToolPosition.position)
-        ).all()
-        return tuple(_position_record(row, generation_seq=self.generation_seq) for row in rows)
-
     def _lock(self, db: Session) -> tuple[GenerationRecord, GenerationSpec, JobRow]:
         generation, spec, job = _lock_authority(
             db,
@@ -557,7 +565,7 @@ class ToolPositionRecorder:
         self.position = InvocationPosition(position.path)
         self.catalog_view: PlanCatalogView = authority.operation.plan.catalog_view
         self.max_live_writes = authority.operation.definition.max_live_writes
-        self.audit: dict[str, object] = {}
+        self.audit = ToolAuditProjection(scope="conversation_context")
         self.budgets = _PositionBudgetState(
             self,
             authority.operation.profile.run_limits,
@@ -575,11 +583,8 @@ class ToolPositionRecorder:
     def admitted_resource_uris(self) -> frozenset[str]:
         return self.authority.admitted_resource_uris
 
-    def stage_audit(self, **values: object) -> None:
-        # The audit projection is an in-process downstream view.  Its values may
-        # include typed citation records; only the canonical tool result and
-        # position evidence cross the durable JSON boundary below.
-        self.audit = dict(values)
+    def stage_audit(self, audit: ToolAuditProjection) -> None:
+        self.audit = audit
 
     def live_write_count(self, db: Session) -> int:
         projected = self.authority.projection.live_write_count(db, authority=self.authority)
@@ -1113,9 +1118,9 @@ class GenerationToolExecutor:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class GenerationToolAuthorityComposition:
-    """Inputs that become executable only after the parent is durably active."""
+@dataclass(slots=True)
+class DeferredGenerationToolExecutor:
+    """Provider-facing handle that opens authority after parent dispatch is armed."""
 
     session_factory: sessionmaker[Session] = field(repr=False, compare=False)
     user_id: UUID
@@ -1124,33 +1129,21 @@ class GenerationToolAuthorityComposition:
     job_context: JobExecutionContext
     operation: FrozenToolOperation = field(repr=False, compare=False)
     projection: ToolExecutionProjection | None = field(default=None, repr=False, compare=False)
-
-    async def open(self) -> GenerationToolExecutor:
-        return GenerationToolExecutor(
-            authority=await ToolAuthority.from_claimed_generation_attempt(
-                session_factory=self.session_factory,
-                user_id=self.user_id,
-                owner=self.owner,
-                generation_id=self.generation_id,
-                job_context=self.job_context,
-                operation=self.operation,
-                projection=self.projection,
-            )
-        )
-
-
-@dataclass(slots=True)
-class DeferredGenerationToolExecutor:
-    """Provider-facing handle that opens authority after parent dispatch is armed."""
-
-    composition: GenerationToolAuthorityComposition
     _executor: GenerationToolExecutor | None = field(default=None, init=False, repr=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     async def open(self) -> GenerationToolExecutor:
         async with self._lock:
             if self._executor is None:
-                self._executor = await self.composition.open()
+                self._executor = await compose_generation_tool_executor(
+                    session_factory=self.session_factory,
+                    user_id=self.user_id,
+                    owner=self.owner,
+                    generation_id=self.generation_id,
+                    job_context=self.job_context,
+                    operation=self.operation,
+                    projection=self.projection,
+                )
             return self._executor
 
     async def execute(
@@ -1173,15 +1166,17 @@ async def compose_generation_tool_executor(
 ) -> GenerationToolExecutor:
     """Compose the one executable model-tool boundary for either transport."""
 
-    return await GenerationToolAuthorityComposition(
-        session_factory=session_factory,
-        user_id=user_id,
-        owner=owner,
-        generation_id=generation_id,
-        job_context=job_context,
-        operation=operation,
-        projection=projection,
-    ).open()
+    return GenerationToolExecutor(
+        authority=await ToolAuthority.from_claimed_generation_attempt(
+            session_factory=session_factory,
+            user_id=user_id,
+            owner=owner,
+            generation_id=generation_id,
+            job_context=job_context,
+            operation=operation,
+            projection=projection,
+        )
+    )
 
 
 def compose_deferred_generation_tool_executor(
@@ -1197,15 +1192,13 @@ def compose_deferred_generation_tool_executor(
     """Compose before arm; open the same authority on the first provider proposal."""
 
     return DeferredGenerationToolExecutor(
-        composition=GenerationToolAuthorityComposition(
-            session_factory=session_factory,
-            user_id=user_id,
-            owner=owner,
-            generation_id=generation_id,
-            job_context=job_context,
-            operation=operation,
-            projection=projection,
-        )
+        session_factory=session_factory,
+        user_id=user_id,
+        owner=owner,
+        generation_id=generation_id,
+        job_context=job_context,
+        operation=operation,
+        projection=projection,
     )
 
 
@@ -1502,9 +1495,9 @@ def _json_object(value: Mapping[str, object], label: str) -> dict[str, object]:
 
 __all__ = [
     "DeferredGenerationToolExecutor",
-    "GenerationToolAuthorityComposition",
     "GenerationToolExecutor",
     "ModelToolExecutionResult",
+    "ToolAuditProjection",
     "ToolAuthority",
     "ToolAuthorityRefused",
     "ToolEffectMode",

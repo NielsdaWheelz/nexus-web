@@ -8,10 +8,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.services.contributor_credits import (
-    contributor_fts_text_sql,
-    visible_credit_rows_sql,
-)
+from nexus.auth.permissions import visible_content_credit_rows_sql
+from nexus.services.contributor_credits import contributor_fts_text_sql
 from nexus.services.search.projection import _truncate_snippet
 from nexus.services.search.results import _build_search_score, _RankedContributorResult
 from nexus.services.search.scope import ScopeUnsupported, scope_filter_sql
@@ -31,7 +29,7 @@ def _search_contributors(
 ) -> list[_RankedContributorResult]:
     """Search contributor identities by display name, aliases, and visible credited names.
 
-    Composes the canonical read relation (``contributor_credits.visible_credit_rows_sql``
+    Composes the canonical read relation (``permissions.visible_content_credit_rows_sql``
     for the credited-visible predicate, ``contributor_fts_text_sql`` for the blob) rather
     than reading raw credit SQL. A contributor surfaces only with at least one visible
     credited target (spec §2.8 / D-8): retained key owners and graph-referenced identities
@@ -92,7 +90,7 @@ def _search_contributors(
         WITH
             scoped_credits AS (
                 SELECT cc.*
-                FROM ({visible_credit_rows_sql()}) cc
+                FROM ({visible_content_credit_rows_sql()}) cc
                 WHERE TRUE
                 {scope_credit_filter}
             ),

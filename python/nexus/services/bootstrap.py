@@ -125,7 +125,7 @@ def _ensure_default_library_membership(
 ) -> bool:
     row = db.execute(
         text("""
-            SELECT role FROM memberships
+            SELECT 1 FROM memberships
             WHERE library_id = :library_id AND user_id = :user_id
         """),
         {"library_id": default_library_id, "user_id": user_id},
@@ -135,16 +135,6 @@ def _ensure_default_library_membership(
             text("""
                 INSERT INTO memberships (library_id, user_id, role)
                 VALUES (:library_id, :user_id, 'admin')
-            """),
-            {"library_id": default_library_id, "user_id": user_id},
-        )
-        return True
-    elif row[0] != "admin":
-        db.execute(
-            text("""
-                UPDATE memberships
-                SET role = 'admin'
-                WHERE library_id = :library_id AND user_id = :user_id
             """),
             {"library_id": default_library_id, "user_id": user_id},
         )
