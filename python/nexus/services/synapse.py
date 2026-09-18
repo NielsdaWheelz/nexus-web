@@ -83,7 +83,7 @@ from nexus.services.llm_execution import (
     prove_uncertain_generation_not_dispatched_in_current_transaction,
 )
 from nexus.services.llm_ledger import LlmCallOwner, lock_generation_owner_in_current_transaction
-from nexus.services.media_intelligence import NotReady, get_current
+from nexus.services.media_intelligence import NotReady, get_media_unit
 from nexus.services.resource_graph.connections import query_connections
 from nexus.services.resource_graph.edges import (
     delete_edge,
@@ -821,7 +821,7 @@ def _build_dossier(db: Session, *, user_id: UUID, ref: ResourceRef) -> _Dossier 
 
 
 def _media_dossier(db: Session, *, media_id: UUID) -> _Dossier | None:
-    unit = get_current(db, media_id=media_id)
+    unit = get_media_unit(db, media_id=media_id)
     if isinstance(unit, NotReady):
         return None
     title = db.execute(select(Media.title).where(Media.id == media_id)).scalar_one_or_none()

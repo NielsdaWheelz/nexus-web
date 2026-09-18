@@ -38,13 +38,10 @@ def build_note_indexable_blocks(block: NoteBlock) -> list[IndexableBlock]:
             block_idx=0,
             block_kind="note",
             canonical_text=body,
-            extraction_confidence=None,
             source_start_offset=0,
             source_end_offset=len(body),
             locator=locator,
-            selector=locator,
             heading_path=(),
-            metadata={},
         )
     ]
 

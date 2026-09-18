@@ -70,7 +70,7 @@ from nexus.services.artifacts.subject_policy import (
 from nexus.services.media_intelligence import (
     MediaUnit,
     current_content_fingerprint,
-    get_current,
+    get_media_unit,
     read_single,
 )
 from nexus.services.resource_graph.refs import ResourceRef
@@ -224,7 +224,7 @@ class MediaBinding(DossierBindingBase):
                 summary_md="",
                 candidates=[],
             )
-        unit = get_current(db, media_id=media_id)
+        unit = get_media_unit(db, media_id=media_id)
         if not isinstance(unit, MediaUnit) or not unit.claims:
             return _MediaCollected(
                 media_id=media_id,
@@ -365,7 +365,7 @@ class MediaBinding(DossierBindingBase):
         fingerprint = current_content_fingerprint(db, media_id=media_id)
         offered = 0
         if can_read_media(db, viewer, media_id):
-            unit = get_current(db, media_id=media_id)
+            unit = get_media_unit(db, media_id=media_id)
             if isinstance(unit, MediaUnit):
                 offered = len(unit.claims)
         return MediaInputManifestV1(

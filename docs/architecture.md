@@ -408,7 +408,7 @@ APK ([`deployment.md`](../deployment.md)). Offline packages and device
 availability are not server rows.
 
 **Retrieval index** — `content_blocks`, `evidence_spans`, `content_chunks`,
-`content_chunk_parts`, `content_embeddings` (pgvector, 256 dims),
+`content_embeddings` (pgvector, 256 dims),
 `content_index_states(owner_kind, owner_id)`, `media_transcript_states`.
 The index is owner-polymorphic: media-owned content and note-owned bodies share
 the same chunk/span/embedding pipeline; notes no longer have a parallel
@@ -1113,7 +1113,8 @@ capability-owned:
   `media_source_ingest.py`.
 - `source_attempt_failures.py`: the terminal source-attempt transaction across
   attempt, Media, transcript, Podcast job, reservation, and revisions;
-  `media_failure_projection.py` is its lightweight Media failure-field writer.
+  `media_processing_state.mark_media_failed_by_id` is its Media failure-field
+  writer.
 
 **Entity & state machine:** `media.processing_status` runs
 `pending → extracting → ready_for_reading` or `failed`. Search/embedding
@@ -2284,7 +2285,7 @@ The things most likely to bite you, distilled:
 | The schema                                                        | `migrations/alembic/versions/` + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
 | Generation backends                                               | `python/nexus/services/{generation_catalog,generation_policy,generation_service,generation_spec,generation_backend,provider_generation_backend,codex_generation_client,llm_execution,llm_ledger,tool_authority}.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md) |
-| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_failure_projection.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
+| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
 | Imports workspace (query owner, history, pane)                    | `python/nexus/services/{imports,import_history}.py`, `python/nexus/api/routes/imports.py`, `apps/web/src/lib/imports/`, `apps/web/src/components/imports/`, `apps/web/src/app/(authenticated)/imports/`                                              |
 | Reader/highlights backend                                         | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote,pdf_quote_match}.py`                                                                |
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |

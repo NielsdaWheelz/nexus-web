@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import base64
-import binascii
-import hashlib
 import json
 import math
 import re
@@ -70,7 +68,6 @@ CONTENT_INDEX_EMBEDDING_BATCH_SIZE = 64
 CONTENT_INDEX_CHUNK_MAX_BYTES = 256 * 1024
 CONTENT_INDEX_SPOOL_MAX_BYTES = 384 * 1024 * 1024
 _CONTENT_INDEX_SPOOL_RECORD_MAX_BYTES = CONTENT_INDEX_CHUNK_MAX_BYTES * 16 + 1024 * 1024
-_CONTENT_INDEX_SPOOL_VERSION = 1
 MEDIA_CONTENT_REINDEX_JOB_KIND = "media_content_reindex_job"
 MEDIA_CONTENT_REINDEX_REASONS = frozenset(
     {
@@ -98,13 +95,10 @@ class IndexableBlock:
     block_idx: int
     block_kind: str
     canonical_text: str
-    extraction_confidence: float | None
     source_start_offset: int
     source_end_offset: int
     locator: dict[str, object]
-    selector: dict[str, object]
     heading_path: tuple[str, ...]
-    metadata: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -146,12 +140,6 @@ class ContentIndexResourceLimitExceeded(Exception):
 
     def __init__(self) -> None:
         super().__init__("Document content exceeds the bounded indexing envelope.")
-
-
-# justify-defect: the spool is private same-system scratch written and read by
-# one worker attempt; any shape, identity, or digest drift is internal corruption.
-class ContentIndexSpoolCorruption(AssertionError):
-    """A same-system document plan did not match its closed spool contract."""
 
 
 @dataclass(frozen=True)
@@ -196,39 +184,22 @@ def plan_content_index(
     embedding_dimensions = transcript_embedding_dimensions()
     embedding_provider = current_transcript_embedding_provider()
 
-    planned_chunks: list[PlannedContentChunk] = []
-    chunk_batch: list[list[tuple[IndexableBlock, int, int, int]]] = []
-    for chunk_parts in _iter_content_chunk_parts(blocks):
-        chunk_batch.append(chunk_parts)
-        if len(chunk_batch) == CONTENT_INDEX_EMBEDDING_BATCH_SIZE:
-            planned_chunks.extend(
-                _plan_content_chunk_batch(
-                    source_kind=source_kind,
-                    chunk_parts_batch=chunk_batch,
-                    embedding_model=embedding_model,
-                    embedding_dimensions=embedding_dimensions,
-                    maximum_chunk_bytes=None,
-                    embed_texts=build_text_embeddings,
-                )
-            )
-            chunk_batch = []
-    if chunk_batch:
-        planned_chunks.extend(
-            _plan_content_chunk_batch(
-                source_kind=source_kind,
-                chunk_parts_batch=chunk_batch,
-                embedding_model=embedding_model,
-                embedding_dimensions=embedding_dimensions,
-                maximum_chunk_bytes=None,
-                embed_texts=build_text_embeddings,
-            )
+    planned_chunks = tuple(
+        _iter_planned_chunks(
+            source_kind=source_kind,
+            blocks=blocks,
+            embedding_model=embedding_model,
+            embedding_dimensions=embedding_dimensions,
+            maximum_chunk_bytes=None,
+            embed_texts=build_text_embeddings,
         )
+    )
 
     return ContentIndexPlan(
         owner=owner,
         source_kind=source_kind,
         blocks=tuple(blocks),
-        chunks=tuple(planned_chunks),
+        chunks=planned_chunks,
         embedding_provider=embedding_provider,
         embedding_model=embedding_model,
         embedding_dimensions=embedding_dimensions,
@@ -251,76 +222,22 @@ def build_spooled_content_index_plan(
     embedding_model = current_transcript_embedding_model()
     embedding_dimensions = transcript_embedding_dimensions()
     embedding_provider = current_transcript_embedding_provider()
-    header = {
-        "block_count": len(block_list),
-        "embedding_dimensions": embedding_dimensions,
-        "embedding_model": embedding_model,
-        "embedding_provider": embedding_provider,
-        "kind": "Header",
-        "owner_id": str(owner.id),
-        "owner_kind": owner.kind,
-        "source_kind": source_kind,
-        "version": _CONTENT_INDEX_SPOOL_VERSION,
-    }
-    digest = hashlib.sha256()
     written_bytes = 0
     chunk_count = 0
     try:
         with spool_path.open("xb") as spool:
-            written_bytes = _write_spool_record(
-                spool,
-                header,
-                written_bytes=written_bytes,
-                digest=digest,
-            )
-            chunk_batch: list[list[tuple[IndexableBlock, int, int, int]]] = []
-            for chunk_parts in _iter_content_chunk_parts(block_list):
-                chunk_batch.append(chunk_parts)
-                if len(chunk_batch) == CONTENT_INDEX_EMBEDDING_BATCH_SIZE:
-                    planned = _plan_content_chunk_batch(
-                        source_kind=source_kind,
-                        chunk_parts_batch=chunk_batch,
-                        embedding_model=embedding_model,
-                        embedding_dimensions=embedding_dimensions,
-                        maximum_chunk_bytes=CONTENT_INDEX_CHUNK_MAX_BYTES,
-                        embed_texts=embed_texts,
-                    )
-                    for chunk in planned:
-                        written_bytes = _write_spool_record(
-                            spool,
-                            _spool_chunk_record(chunk_count, chunk),
-                            written_bytes=written_bytes,
-                            digest=digest,
-                        )
-                        chunk_count += 1
-                    del planned
-                    chunk_batch = []
-            if chunk_batch:
-                for chunk in _plan_content_chunk_batch(
-                    source_kind=source_kind,
-                    chunk_parts_batch=chunk_batch,
-                    embedding_model=embedding_model,
-                    embedding_dimensions=embedding_dimensions,
-                    maximum_chunk_bytes=CONTENT_INDEX_CHUNK_MAX_BYTES,
-                    embed_texts=embed_texts,
-                ):
-                    written_bytes = _write_spool_record(
-                        spool,
-                        _spool_chunk_record(chunk_count, chunk),
-                        written_bytes=written_bytes,
-                        digest=digest,
-                    )
-                    chunk_count += 1
-            _write_spool_record(
-                spool,
-                {
-                    "chunk_count": chunk_count,
-                    "kind": "Complete",
-                    "sha256": digest.hexdigest(),
-                },
-                written_bytes=written_bytes,
-                digest=None,
-            )
+            for chunk in _iter_planned_chunks(
+                source_kind=source_kind,
+                blocks=block_list,
+                embedding_model=embedding_model,
+                embedding_dimensions=embedding_dimensions,
+                maximum_chunk_bytes=CONTENT_INDEX_CHUNK_MAX_BYTES,
+                embed_texts=embed_texts,
+            ):
+                written_bytes = _write_spool_record(
+                    spool, _spool_chunk_record(chunk), written_bytes=written_bytes
+                )
+                chunk_count += 1
     except Exception:
         spool_path.unlink(missing_ok=True)
         raise
@@ -345,15 +262,6 @@ def publish_content_index(
     """Replace one complete materialization inside the caller's transaction."""
     now = datetime.now(UTC)
     replace_content_index_materialization(db, owner=plan.owner)
-    _set_index_state(
-        db,
-        owner=plan.owner,
-        status="indexing",
-        status_reason=reason,
-        embedding_provider=None,
-        embedding_model=None,
-        now=now,
-    )
 
     block_ids_by_idx: dict[int, UUID] = {}
     for expected_idx, block in enumerate(plan.blocks):
@@ -366,14 +274,8 @@ def publish_content_index(
                     block_idx,
                     block_kind,
                     canonical_text,
-                    extraction_confidence,
-                    source_start_offset,
-                    source_end_offset,
-                    parent_block_id,
                     heading_path,
                     locator,
-                    selector,
-                    metadata,
                     created_at
                 )
                 VALUES (
@@ -382,14 +284,8 @@ def publish_content_index(
                     :block_idx,
                     :block_kind,
                     :canonical_text,
-                    :extraction_confidence,
-                    :source_start_offset,
-                    :source_end_offset,
-                    NULL,
                     CAST(:heading_path AS jsonb),
                     CAST(:locator AS jsonb),
-                    CAST(:selector AS jsonb),
-                    CAST(:metadata AS jsonb),
                     :now
                 )
                 RETURNING id
@@ -401,13 +297,8 @@ def publish_content_index(
                 "block_idx": block.block_idx,
                 "block_kind": block.block_kind,
                 "canonical_text": block.canonical_text,
-                "extraction_confidence": block.extraction_confidence,
-                "source_start_offset": block.source_start_offset,
-                "source_end_offset": block.source_end_offset,
                 "heading_path": json.dumps(list(block.heading_path)),
                 "locator": json.dumps(block.locator),
-                "selector": json.dumps(block.selector),
-                "metadata": json.dumps(block.metadata),
                 "now": now,
             },
         ).scalar_one()
@@ -502,7 +393,6 @@ def publish_content_index(
                     chunk_idx,
                     source_kind,
                     chunk_text,
-                    token_count,
                     heading_path,
                     summary_locator,
                     created_at
@@ -514,7 +404,6 @@ def publish_content_index(
                     :chunk_idx,
                     :source_kind,
                     :chunk_text,
-                    :token_count,
                     CAST(:heading_path AS jsonb),
                     CAST(:summary_locator AS jsonb),
                     :now
@@ -529,63 +418,11 @@ def publish_content_index(
                 "chunk_idx": chunk_idx,
                 "source_kind": plan.source_kind,
                 "chunk_text": chunk_text,
-                "token_count": sum(int(part[3]) for part in chunk_parts),
                 "heading_path": json.dumps(list(first_block.heading_path)),
                 "summary_locator": json.dumps(summary_locator),
                 "now": now,
             },
         ).scalar_one()
-
-        chunk_offset = 0
-        previous_block: IndexableBlock | None = None
-        for part_idx, (block, start_offset, end_offset, _) in enumerate(chunk_parts):
-            block_id = block_ids_by_idx[block.block_idx]
-            separator_before = _separator_before(previous_block, block)
-            chunk_start_offset = chunk_offset + len(separator_before)
-            chunk_end_offset = chunk_start_offset + end_offset - start_offset
-            db.execute(
-                text(
-                    """
-                    INSERT INTO content_chunk_parts (
-                        chunk_id,
-                        part_idx,
-                        block_id,
-                        block_start_offset,
-                        block_end_offset,
-                        chunk_start_offset,
-                        chunk_end_offset,
-                        separator_before,
-                        created_at
-                    )
-                    VALUES (
-                        :chunk_id,
-                        :part_idx,
-                        :block_id,
-                        :block_start_offset,
-                        :block_end_offset,
-                        :chunk_start_offset,
-                        :chunk_end_offset,
-                        :separator_before,
-                        :now
-                    )
-                    """
-                ),
-                {
-                    "chunk_id": chunk_id,
-                    "part_idx": part_idx,
-                    "block_id": block_id,
-                    "block_start_offset": start_offset,
-                    "block_end_offset": end_offset,
-                    "chunk_start_offset": chunk_start_offset,
-                    "chunk_end_offset": chunk_end_offset,
-                    "separator_before": separator_before,
-                    "now": now,
-                },
-            )
-            chunk_offset = chunk_end_offset
-            previous_block = block
-        if chunk_offset != len(chunk_text):
-            raise ValueError("Chunk part offsets do not reconstruct chunk text")
 
         db.execute(
             text(
@@ -724,24 +561,16 @@ def build_fragment_indexable_blocks(
                         spec.end_offset,
                     ),
                 }
-                metadata: dict[str, object] = {}
                 if spec.section_id is not None:
                     locator["section_id"] = spec.section_id
-                    metadata["section_id"] = spec.section_id
                     locator["parent_section_id"] = spec.parent_section_id.model_dump(mode="json")
                     locator["owns_container"] = spec.owns_container
                 if spec.anchor_id is not None:
                     locator["anchor_id"] = spec.anchor_id
-                    metadata["anchor_id"] = spec.anchor_id
                 if spec.heading_level is not None:
                     locator["heading_level"] = spec.heading_level
-                    metadata["heading_level"] = spec.heading_level
                 if spec.container_end_offset.kind == "Present":
                     locator["container_end_offset"] = spec.container_end_offset.value
-                if spec.depth is not None:
-                    metadata["depth"] = spec.depth
-                if spec.ordinal is not None:
-                    metadata["ordinal"] = spec.ordinal
                 blocks.append(
                     IndexableBlock(
                         owner=IndexOwner("media", media_id),
@@ -749,13 +578,10 @@ def build_fragment_indexable_blocks(
                         block_idx=len(blocks),
                         block_kind=spec.block_kind,
                         canonical_text=block_text,
-                        extraction_confidence=None,
                         source_start_offset=source_base + spec.start_offset,
                         source_end_offset=source_base + spec.end_offset,
                         locator=locator,
-                        selector=locator,
                         heading_path=spec.heading_path,
-                        metadata=metadata,
                     )
                 )
             source_offset += len(fragment_text) + 2
@@ -784,13 +610,10 @@ def build_fragment_indexable_blocks(
                     block_idx=len(blocks),
                     block_kind="paragraph",
                     canonical_text=block_text,
-                    extraction_confidence=None,
                     source_start_offset=source_base + start_offset,
                     source_end_offset=source_base + end_offset,
                     locator=locator,
-                    selector=locator,
                     heading_path=(),
-                    metadata={},
                 )
             )
         source_offset += len(fragment_text) + 2
@@ -833,13 +656,10 @@ def build_transcript_indexable_blocks(
                 block_idx=len(blocks),
                 block_kind="transcript_segment",
                 canonical_text=text_value,
-                extraction_confidence=None,
                 source_start_offset=source_offset,
                 source_end_offset=source_offset + len(text_value),
                 locator=locator,
-                selector=locator,
                 heading_path=(),
-                metadata={"speaker_label": segment.speaker_label},
             )
         )
         source_offset += len(text_value)
@@ -893,17 +713,6 @@ def build_pdf_indexable_blocks(
                 "page_box": "crop",
                 "quads": [],
             }
-        selector = {
-            "kind": "pdf_text_quote",
-            "page_number": page_number,
-            "physical_page_number": page_number,
-            "page_label": page_label,
-            "plain_text_start_offset": start,
-            "plain_text_end_offset": end,
-            "page_text_start_offset": 0,
-            "page_text_end_offset": len(page_text),
-            "text_quote": _text_quote(plain_text, start, end),
-        }
         blocks.append(
             IndexableBlock(
                 owner=IndexOwner("media", media_id),
@@ -911,13 +720,10 @@ def build_pdf_indexable_blocks(
                 block_idx=len(blocks),
                 block_kind="pdf_text_block",
                 canonical_text=page_text,
-                extraction_confidence=None,
                 source_start_offset=start,
                 source_end_offset=end,
                 locator=locator,
-                selector=selector,
                 heading_path=(f"p. {page_label or page_number}",),
-                metadata={"page_number": page_number, "page_label": page_label},
             )
         )
     return blocks
@@ -1296,11 +1102,6 @@ def request_media_content_reindex(
             max_attempts=definition.max_attempts,
         )
 
-    _assert_media_reindex_waiting_postcondition(
-        db,
-        media_id=media_id,
-        revision=revision,
-    )
     _record_index_event(
         db, media_id=media_id, facts=IndexAccepted(revision=revision, job_id=selected.id)
     )
@@ -1366,11 +1167,6 @@ def ensure_media_content_reindex_job(
             request_id=request_id,
         ),
         max_attempts=definition.max_attempts,
-    )
-    _assert_media_reindex_waiting_postcondition(
-        db,
-        media_id=media_id,
-        revision=revision,
     )
     _record_index_event(
         db, media_id=media_id, facts=IndexAccepted(revision=revision, job_id=inserted.id)
@@ -1633,29 +1429,6 @@ def _job_revision(payload: Mapping[str, object]) -> int:
     return _validated_media_revision(payload.get("revision"))
 
 
-def _assert_media_reindex_waiting_postcondition(
-    db: Session,
-    *,
-    media_id: UUID,
-    revision: int,
-) -> None:
-    from nexus.jobs.queue import lock_jobs_for_payload
-
-    jobs = lock_jobs_for_payload(
-        db,
-        kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
-        expected_payload_match={"media_id": str(media_id)},
-    )
-    waiting = [
-        job for job in jobs if job.status in {"pending", "failed"} and job.claimed_by is None
-    ]
-    current = [job for job in waiting if _job_revision(job.payload) == revision]
-    obsolete = [job for job in waiting if _job_revision(job.payload) < revision]
-    if len(current) != 1 or obsolete:
-        # justify-defect: the locked owner row and queue rows define coalescing.
-        raise AssertionError("media content-reindex waiting-job postcondition failed")
-
-
 def mark_content_index_pending(db: Session, *, owner: IndexOwner, reason: str) -> None:
     """Flag an owner's index stale (gated out of search) without deleting its rows;
     the reindex job rebuilds and flips it back to ready."""
@@ -1767,17 +1540,6 @@ def replace_content_index_materialization(db: Session, *, owner: IndexOwner) -> 
         params,
     )
     db.execute(
-        text(
-            """
-            DELETE FROM content_chunk_parts ccp
-            USING content_chunks cc
-            WHERE ccp.chunk_id = cc.id
-              AND cc.owner_kind = :owner_kind AND cc.owner_id = :owner_id
-            """
-        ),
-        params,
-    )
-    db.execute(
         text("DELETE FROM content_chunks WHERE owner_kind = :owner_kind AND owner_id = :owner_id"),
         params,
     )
@@ -1804,38 +1566,6 @@ def _set_index_state(
     if status != "ready":
         embedding_provider = None
         embedding_model = None
-    exists = db.execute(
-        text(
-            "SELECT 1 FROM content_index_states "
-            "WHERE owner_kind = :owner_kind AND owner_id = :owner_id"
-        ),
-        {"owner_kind": owner.kind, "owner_id": owner.id},
-    ).scalar()
-    if exists:
-        db.execute(
-            text(
-                """
-                UPDATE content_index_states
-                SET status = :status,
-                    status_reason = :status_reason,
-                    active_embedding_provider = :embedding_provider,
-                    active_embedding_model = :embedding_model,
-                    updated_at = :now
-                WHERE owner_kind = :owner_kind AND owner_id = :owner_id
-                """
-            ),
-            {
-                "owner_kind": owner.kind,
-                "owner_id": owner.id,
-                "status": status,
-                "status_reason": status_reason,
-                "embedding_provider": embedding_provider,
-                "embedding_model": embedding_model,
-                "now": now,
-            },
-        )
-        return
-
     db.execute(
         text(
             """
@@ -1859,6 +1589,12 @@ def _set_index_state(
                 :now,
                 :now
             )
+            ON CONFLICT ON CONSTRAINT uq_content_index_states_owner DO UPDATE
+            SET status = EXCLUDED.status,
+                status_reason = EXCLUDED.status_reason,
+                active_embedding_provider = EXCLUDED.active_embedding_provider,
+                active_embedding_model = EXCLUDED.active_embedding_model,
+                updated_at = EXCLUDED.updated_at
             """
         ),
         {
@@ -1901,17 +1637,10 @@ def _validate_blocks(
         if previous_source_end is not None and block.source_start_offset < previous_source_end:
             raise ValueError("IndexableBlock source offsets must be sorted and non-overlapping")
         previous_source_end = block.source_end_offset
-        if block.extraction_confidence is not None and not 0 <= block.extraction_confidence <= 1:
-            raise ValueError("IndexableBlock extraction_confidence is invalid")
         if any(not isinstance(heading, str) for heading in block.heading_path):
             raise ValueError("IndexableBlock heading_path must contain strings")
-        if not isinstance(block.metadata, dict):
-            raise ValueError("IndexableBlock metadata must be an object")
         _validate_selector(
             source_kind, block.locator, block.canonical_text, context="block locator"
-        )
-        _validate_selector(
-            source_kind, block.selector, block.canonical_text, context="block selector"
         )
 
 
@@ -1963,50 +1692,25 @@ def _validate_selector(
     if source_kind == "note":
         if kind != "note_text":
             raise ValueError(f"{context} kind is invalid for note")
-        _validate_note_selector(selector, text_value, context=context)
+        _validate_fragment_selector(selector, text_value, id_key="note_block_id", context=context)
         return
     raise ValueError(f"Unsupported source_kind: {source_kind}")
-
-
-def _validate_note_selector(
-    selector: dict[str, object],
-    text_value: str,
-    *,
-    context: str,
-) -> None:
-    note_block_id = selector.get("note_block_id")
-    if not isinstance(note_block_id, str):
-        raise ValueError(f"{context} note_block_id is required")
-    try:
-        UUID(note_block_id)
-    except ValueError:
-        raise ValueError(f"{context} note_block_id is invalid") from None
-    start_offset = selector.get("start_offset")
-    end_offset = selector.get("end_offset")
-    if not _is_int(start_offset) or not _is_int(end_offset):
-        raise ValueError(f"{context} offsets must be integers")
-    if start_offset < 0 or end_offset < start_offset:
-        raise ValueError(f"{context} offsets are invalid")
-    if end_offset - start_offset != len(text_value):
-        raise ValueError(
-            f"{context} offsets do not match text length "
-            f"(start={start_offset}, end={end_offset}, text_length={len(text_value)})"
-        )
 
 
 def _validate_fragment_selector(
     selector: dict[str, object],
     text_value: str,
     *,
+    id_key: str = "fragment_id",
     context: str,
 ) -> None:
-    fragment_id = selector.get("fragment_id")
-    if not isinstance(fragment_id, str):
-        raise ValueError(f"{context} fragment_id is required")
+    owner_id = selector.get(id_key)
+    if not isinstance(owner_id, str):
+        raise ValueError(f"{context} {id_key} is required")
     try:
-        UUID(fragment_id)
+        UUID(owner_id)
     except ValueError:
-        raise ValueError(f"{context} fragment_id is invalid") from None
+        raise ValueError(f"{context} {id_key} is invalid") from None
     start_offset = selector.get("start_offset")
     end_offset = selector.get("end_offset")
     if not _is_int(start_offset) or not _is_int(end_offset):
@@ -2134,6 +1838,40 @@ def _iter_content_chunk_parts(
         yield current_parts
 
 
+def _iter_planned_chunks(
+    *,
+    source_kind: str,
+    blocks: Sequence[IndexableBlock],
+    embedding_model: str,
+    embedding_dimensions: int,
+    maximum_chunk_bytes: int | None,
+    embed_texts: TextEmbeddingBatch,
+) -> Iterator[PlannedContentChunk]:
+    """Yield every planned chunk, embedding them in bounded batches."""
+    chunk_batch: list[list[tuple[IndexableBlock, int, int, int]]] = []
+    for chunk_parts in _iter_content_chunk_parts(blocks):
+        chunk_batch.append(chunk_parts)
+        if len(chunk_batch) == CONTENT_INDEX_EMBEDDING_BATCH_SIZE:
+            yield from _plan_content_chunk_batch(
+                source_kind=source_kind,
+                chunk_parts_batch=chunk_batch,
+                embedding_model=embedding_model,
+                embedding_dimensions=embedding_dimensions,
+                maximum_chunk_bytes=maximum_chunk_bytes,
+                embed_texts=embed_texts,
+            )
+            chunk_batch = []
+    if chunk_batch:
+        yield from _plan_content_chunk_batch(
+            source_kind=source_kind,
+            chunk_parts_batch=chunk_batch,
+            embedding_model=embedding_model,
+            embedding_dimensions=embedding_dimensions,
+            maximum_chunk_bytes=maximum_chunk_bytes,
+            embed_texts=embed_texts,
+        )
+
+
 def _plan_content_chunk_batch(
     *,
     source_kind: str,
@@ -2203,11 +1941,9 @@ def _packed_embedding_literal(value: bytes, *, dimensions: int) -> str:
     return to_pgvector_literal(list(vector))
 
 
-def _spool_chunk_record(chunk_idx: int, chunk: PlannedContentChunk) -> dict[str, object]:
+def _spool_chunk_record(chunk: PlannedContentChunk) -> dict[str, object]:
     return {
-        "chunk_idx": chunk_idx,
         "embedding_f32": base64.b64encode(chunk.embedding_f32).decode("ascii"),
-        "kind": "Chunk",
         "locator": chunk.locator,
         "parts": [
             {
@@ -2222,230 +1958,44 @@ def _spool_chunk_record(chunk_idx: int, chunk: PlannedContentChunk) -> dict[str,
     }
 
 
-def _canonical_spool_record(record: Mapping[str, object]) -> bytes:
-    return (
-        json.dumps(record, ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n"
-    ).encode("utf-8")
-
-
 def _write_spool_record(
     spool: BinaryIO,
     record: Mapping[str, object],
     *,
     written_bytes: int,
-    digest: Any,
 ) -> int:
-    encoded = _canonical_spool_record(record)
+    """Append one JSONL record, holding the document to its size envelope."""
+    encoded = (json.dumps(record, separators=(",", ":")) + "\n").encode("utf-8")
     if (
         len(encoded) > _CONTENT_INDEX_SPOOL_RECORD_MAX_BYTES
         or written_bytes + len(encoded) > CONTENT_INDEX_SPOOL_MAX_BYTES
     ):
         raise ContentIndexResourceLimitExceeded()
     spool.write(encoded)
-    if digest is not None:
-        digest.update(encoded)
     return written_bytes + len(encoded)
-
-
-def _spool_record_mapping(raw: bytes, *, context: str) -> dict[str, object]:
-    try:
-        decoded = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ContentIndexSpoolCorruption(f"{context} is not canonical JSON") from exc
-    if not isinstance(decoded, dict):
-        raise ContentIndexSpoolCorruption(f"{context} has an invalid shape")
-    if _canonical_spool_record(decoded) != raw:
-        raise ContentIndexSpoolCorruption(f"{context} is not canonically encoded")
-    return decoded
-
-
-def _exact_spool_record(
-    raw: bytes,
-    *,
-    expected_keys: frozenset[str],
-    context: str,
-) -> dict[str, object]:
-    decoded = _spool_record_mapping(raw, context=context)
-    if set(decoded) != expected_keys:
-        raise ContentIndexSpoolCorruption(f"{context} has an invalid shape")
-    return decoded
-
-
-def _read_spool_line(spool: BinaryIO, *, context: str) -> bytes:
-    raw = spool.readline(_CONTENT_INDEX_SPOOL_RECORD_MAX_BYTES + 1)
-    if not raw or len(raw) > _CONTENT_INDEX_SPOOL_RECORD_MAX_BYTES or not raw.endswith(b"\n"):
-        raise ContentIndexSpoolCorruption(f"{context} is absent, truncated, or oversized")
-    return raw
-
-
-def _require_spool_int(value: object, *, context: str) -> int:
-    if not _is_int(value):
-        raise ContentIndexSpoolCorruption(f"{context} must be an integer")
-    return value
-
-
-def _decode_spooled_chunk(
-    record: Mapping[str, object],
-    *,
-    plan: SpooledContentIndexPlan,
-    expected_chunk_idx: int,
-) -> PlannedContentChunk:
-    chunk_idx = _require_spool_int(record["chunk_idx"], context="spool chunk index")
-    if chunk_idx != expected_chunk_idx:
-        raise ContentIndexSpoolCorruption("spool chunk order is not contiguous")
-    chunk_text = record["text"]
-    locator = record["locator"]
-    raw_parts = record["parts"]
-    raw_embedding = record["embedding_f32"]
-    if (
-        not isinstance(chunk_text, str)
-        or utf8_byte_length(chunk_text) > CONTENT_INDEX_CHUNK_MAX_BYTES
-    ):
-        raise ContentIndexSpoolCorruption("spool chunk text is invalid")
-    if not isinstance(locator, dict):
-        raise ContentIndexSpoolCorruption("spool chunk locator is invalid")
-    if not isinstance(raw_parts, list) or not raw_parts:
-        raise ContentIndexSpoolCorruption("spool chunk parts are invalid")
-    if not isinstance(raw_embedding, str):
-        raise ContentIndexSpoolCorruption("spool chunk embedding is invalid")
-
-    parts: list[tuple[IndexableBlock, int, int, int]] = []
-    total_tokens = 0
-    for part_idx, raw_part in enumerate(raw_parts):
-        if not isinstance(raw_part, dict) or set(raw_part) != {
-            "block_idx",
-            "end_offset",
-            "start_offset",
-            "token_count",
-        }:
-            raise ContentIndexSpoolCorruption(f"spool chunk part {part_idx} has an invalid shape")
-        block_idx = _require_spool_int(
-            raw_part["block_idx"], context=f"spool chunk part {part_idx} block index"
-        )
-        start_offset = _require_spool_int(
-            raw_part["start_offset"], context=f"spool chunk part {part_idx} start offset"
-        )
-        end_offset = _require_spool_int(
-            raw_part["end_offset"], context=f"spool chunk part {part_idx} end offset"
-        )
-        token_count = _require_spool_int(
-            raw_part["token_count"], context=f"spool chunk part {part_idx} token count"
-        )
-        if not 0 <= block_idx < len(plan.blocks):
-            raise ContentIndexSpoolCorruption("spool chunk part names an absent block")
-        block = plan.blocks[block_idx]
-        if not 0 <= start_offset <= end_offset <= len(block.canonical_text) or token_count <= 0:
-            raise ContentIndexSpoolCorruption("spool chunk part offsets or token count are invalid")
-        total_tokens += token_count
-        parts.append((block, start_offset, end_offset, token_count))
-    if total_tokens > CHUNK_MAX_TOKENS or _chunk_text(parts) != chunk_text:
-        raise ContentIndexSpoolCorruption("spool chunk parts do not reconstruct its text")
-    expected_locator = _chunk_locator(parts, chunk_text)
-    if _canonical_spool_record(expected_locator) != _canonical_spool_record(locator):
-        raise ContentIndexSpoolCorruption("spool chunk locator does not match its parts")
-    try:
-        embedding_f32 = base64.b64decode(raw_embedding, validate=True)
-    except (ValueError, binascii.Error) as exc:
-        raise ContentIndexSpoolCorruption("spool chunk embedding is not canonical base64") from exc
-    if len(embedding_f32) != plan.embedding_dimensions * array("f").itemsize:
-        raise ContentIndexSpoolCorruption("spool chunk embedding dimensions do not match its plan")
-    try:
-        _validate_selector(plan.source_kind, locator, chunk_text, context="spool chunk locator")
-    except ValueError as exc:
-        raise ContentIndexSpoolCorruption(
-            "spool chunk locator violates its source contract"
-        ) from exc
-    return PlannedContentChunk(
-        parts=tuple(parts),
-        text=chunk_text,
-        locator=locator,
-        embedding_f32=embedding_f32,
-    )
 
 
 def read_spooled_content_index_chunks(
     plan: SpooledContentIndexPlan,
 ) -> Iterator[PlannedContentChunk]:
-    """Validate and stream one exact complete document plan from local scratch."""
-    try:
-        size_bytes = plan.spool_path.stat().st_size
-    except OSError as exc:
-        raise ContentIndexSpoolCorruption("content-index spool is absent") from exc
-    if size_bytes > CONTENT_INDEX_SPOOL_MAX_BYTES:
-        raise ContentIndexSpoolCorruption("content-index spool exceeds its committed envelope")
-    digest = hashlib.sha256()
-    expected_header = {
-        "block_count": len(plan.blocks),
-        "embedding_dimensions": plan.embedding_dimensions,
-        "embedding_model": plan.embedding_model,
-        "embedding_provider": plan.embedding_provider,
-        "kind": "Header",
-        "owner_id": str(plan.owner.id),
-        "owner_kind": plan.owner.kind,
-        "source_kind": plan.source_kind,
-        "version": _CONTENT_INDEX_SPOOL_VERSION,
-    }
-    try:
-        with plan.spool_path.open("rb") as spool:
-            header_raw = _read_spool_line(spool, context="content-index spool header")
-            header = _exact_spool_record(
-                header_raw,
-                expected_keys=frozenset(expected_header),
-                context="content-index spool header",
+    """Stream one complete document plan back from its private local scratch."""
+    with plan.spool_path.open("rb") as spool:
+        for line in spool:
+            record: dict[str, Any] = json.loads(line)
+            yield PlannedContentChunk(
+                parts=tuple(
+                    (
+                        plan.blocks[part["block_idx"]],
+                        part["start_offset"],
+                        part["end_offset"],
+                        part["token_count"],
+                    )
+                    for part in record["parts"]
+                ),
+                text=record["text"],
+                locator=record["locator"],
+                embedding_f32=base64.b64decode(record["embedding_f32"]),
             )
-            if header != expected_header:
-                raise ContentIndexSpoolCorruption(
-                    "content-index spool header does not match its plan"
-                )
-            digest.update(header_raw)
-            chunk_count = 0
-            while True:
-                raw = _read_spool_line(spool, context="content-index spool record")
-                record = _spool_record_mapping(raw, context="content-index spool record")
-                record_kind = record.get("kind")
-                if record_kind == "Complete":
-                    if set(record) != {"chunk_count", "kind", "sha256"}:
-                        raise ContentIndexSpoolCorruption(
-                            "content-index spool completion has an invalid shape"
-                        )
-                    complete_count = _require_spool_int(
-                        record["chunk_count"], context="content-index spool complete count"
-                    )
-                    if (
-                        complete_count != chunk_count
-                        or complete_count != plan.chunk_count
-                        or record["sha256"] != digest.hexdigest()
-                        or spool.read(1) != b""
-                    ):
-                        raise ContentIndexSpoolCorruption(
-                            "content-index spool completion does not match its records"
-                        )
-                    return
-                if record_kind != "Chunk":
-                    raise ContentIndexSpoolCorruption("content-index spool record kind is invalid")
-                if set(record) != {
-                    "chunk_idx",
-                    "embedding_f32",
-                    "kind",
-                    "locator",
-                    "parts",
-                    "text",
-                }:
-                    raise ContentIndexSpoolCorruption(
-                        "content-index spool chunk has an invalid shape"
-                    )
-                chunk = _decode_spooled_chunk(
-                    record,
-                    plan=plan,
-                    expected_chunk_idx=chunk_count,
-                )
-                digest.update(raw)
-                chunk_count += 1
-                yield chunk
-    except ContentIndexSpoolCorruption:
-        raise
-    except OSError as exc:
-        raise ContentIndexSpoolCorruption("content-index spool could not be read") from exc
 
 
 def _content_index_plan_chunks(

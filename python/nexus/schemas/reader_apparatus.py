@@ -52,7 +52,6 @@ class ReaderApparatusItemOut(BaseModel):
     kind: ReaderApparatusItemKind
     label: str | None
     body_text: str | None
-    body_html_sanitized: str | None
     locator: RetrievalLocator | None
     locator_status: ReaderApparatusLocatorStatus
     confidence: ReaderApparatusConfidence
@@ -88,7 +87,6 @@ class ReaderApparatusResponse(BaseModel):
     media_id: UUID
     media_kind: str
     status: ReaderApparatusStatus
-    extractor_version: str
     source_fingerprint: str
     capabilities: ReaderApparatusCapabilities
     items: list[ReaderApparatusItemOut] = Field(default_factory=list)

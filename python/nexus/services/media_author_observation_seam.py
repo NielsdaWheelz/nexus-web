@@ -17,13 +17,10 @@ returning.
 
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID
 
-from nexus.services.contributor_taxonomy import (
-    ContributorObservationBatch,
-    NotObserved,
-    ObservedRoleSlices,
-)
+from nexus.services.contributor_taxonomy import ContributorObservationBatch, NotObserved
 
 _AUTHOR_OBSERVATIONS_KEY = "author_observations"
 
@@ -45,10 +42,10 @@ def attach_author_observation(
     """
     if isinstance(observation, NotObserved):
         return
-    bucket = result.setdefault(_AUTHOR_OBSERVATIONS_KEY, [])
-    if not isinstance(bucket, list):
-        # justify-defect: source adapters share one closed in-memory result carrier.
-        raise AssertionError("author observations must be a list")
+    bucket = cast(
+        list[SourceAuthorObservation],
+        result.setdefault(_AUTHOR_OBSERVATIONS_KEY, []),
+    )
     bucket.append((media_id, observation, source))
 
 
@@ -60,24 +57,4 @@ def take_author_observations(result: dict[str, object]) -> list[SourceAuthorObse
     """
     if _AUTHOR_OBSERVATIONS_KEY not in result:
         return []
-    raw = result.pop(_AUTHOR_OBSERVATIONS_KEY)
-    if not isinstance(raw, list):
-        # justify-defect: source adapters share one closed in-memory result carrier.
-        raise AssertionError("author observations must be a list")
-
-    observations: list[SourceAuthorObservation] = []
-    for item in raw:
-        if not isinstance(item, tuple) or len(item) != 3:
-            # justify-defect: only attach_author_observation writes this carrier.
-            raise AssertionError("author observation entry is malformed")
-        media_id, observation, source = item
-        if (
-            (media_id is not None and not isinstance(media_id, UUID))
-            or not isinstance(observation, (ObservedRoleSlices, NotObserved))
-            or not isinstance(source, str)
-            or not source
-        ):
-            # justify-defect: only attach_author_observation writes this carrier.
-            raise AssertionError("author observation entry is malformed")
-        observations.append((media_id, observation, source))
-    return observations
+    return cast(list[SourceAuthorObservation], result.pop(_AUTHOR_OBSERVATIONS_KEY))
