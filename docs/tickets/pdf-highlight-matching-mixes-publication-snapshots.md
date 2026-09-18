@@ -7,6 +7,10 @@ but `is_pdf_quote_text_ready` and `_get_page_span` query current database rows.
 nonempty cached text can therefore be matched with a replacement publication's
 page offsets. the resulting prefix/suffix and stored match offsets can be wrong.
 
+the same snapshot gap affects `media_read_map.py:247-280`: `read_page_range`
+loads text, then checks readiness and fetches page bounds in separate statements.
+replacement text/spans published between those reads can select the wrong text.
+
 `media_source_ingest.py:2060` permits source refresh from `ready_for_reading`;
 `pdf_lifecycle.py:96` and `pdf_ingest.py:1844` replace text and spans under the
 reader publication owner's media-row lock. highlight matching takes no matching
@@ -19,3 +23,4 @@ highlight write owner. preserve ordinary create/update/no-op/conflict behavior.
 
 acceptance: that reproduction stores quote context and offsets from one complete
 publication; no mixed old-text/new-span match is possible.
+the public page-range reader must also select text and bounds from one publication.
