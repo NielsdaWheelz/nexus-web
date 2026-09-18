@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
 
@@ -94,7 +93,7 @@ class RateLimiter:
             ) from exc
 
         if count > self._rpm_limit:
-            logger.warning("rate_limit.blocked", **safe_kv(limit_type="rpm"))
+            logger.warning("rate_limit.blocked", limit_type="rpm")
             raise ApiError(
                 ApiErrorCode.E_RATE_LIMITED,
                 f"Rate limit exceeded: {self._rpm_limit} requests per minute",

@@ -7,13 +7,12 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import ChatRun, MessageToolCall
+from nexus.db.models import ChatRun
 from nexus.services.chat_run_event_store import ChatRunEventEmitter
 from nexus.services.chat_run_tools import (
-    decode_persisted_tool_record,
     upsert_attached_context_tool_call,
 )
 from nexus.services.resource_graph import cleanup as graph_cleanup
@@ -266,26 +265,10 @@ def persist_attached_citations(
     citations: tuple[RetrievalCitation, ...],
 ) -> CitationCandidateNumbering:
     """Persist attached evidence candidates and return the next turn ordinal."""
-    existing = db.scalar(
-        select(MessageToolCall)
-        .where(
-            MessageToolCall.assistant_message_id == run.assistant_message_id,
-            MessageToolCall.tool_call_index == 0,
-        )
-        .with_for_update()
-    )
-    if existing is not None:
-        decode_persisted_tool_record(existing)
     if not citations:
-        if existing is not None:
-            tool_call_id = existing.id
-            prune_tool_call_retrievals(db, tool_call_id=tool_call_id)
-            db.delete(existing)
         return CitationCandidateNumbering(rows=(), next_ordinal=1)
 
-    tool_call_id = (
-        existing.id if existing is not None else upsert_attached_context_tool_call(db, run=run)
-    )
+    tool_call_id = upsert_attached_context_tool_call(db, run=run)
     for ordinal, citation in enumerate(citations):
         insert_retrieval_row(
             db,

@@ -330,9 +330,7 @@ class JobGenerationJournal:
             )
         observed = self.read_admission(db)
         if observed is not None:
-            _assert_frozen_admission(
-                observed, generation_id=generation_id, spec=spec, intent=intent
-            )
+            _assert_frozen_admission(observed, spec=spec, intent=intent)
             self.clear_capacity_pause(db)
             return observed
         if read_step_states(job).get(self.step_path) is not None:
@@ -602,12 +600,10 @@ async def admit_job_generation(
             db.commit()
     else:
         spec, frozen_intent = observed
-    _assert_frozen_admission(
-        (spec, frozen_intent),
-        generation_id=generation_id,
-        spec=spec,
-        intent=intent,
-    )
+    if frozen_intent != intent:
+        raise GenerationAdmissionInputsChanged(
+            "domain prompt changed after the generation was Prepared"
+        )
     if spec.operation != operation or spec.selection_source != "BackgroundPolicy":
         raise AssertionError("frozen job admission has the wrong operation identity")
     has_tools = isinstance(spec.model_tool_plan_snapshot, Present)
@@ -834,8 +830,6 @@ class _LedgerChildLifecycle:
                     db,
                     source_model_turn_id=pending.source_turn.id,
                     successor=start,
-                    expected_context=pending.context,
-                    cipher=self._cipher,
                 )
             db.commit()
 
@@ -1111,11 +1105,9 @@ def _assert_identity(
 def _assert_frozen_admission(
     observed: tuple[GenerationSpec, GenerationIntent],
     *,
-    generation_id: UUID,
     spec: GenerationSpec,
     intent: GenerationIntent,
 ) -> None:
-    del generation_id
     observed_spec, observed_intent = observed
     if observed_spec != spec:
         raise AssertionError("frozen generation admission changed concurrently")
@@ -1396,11 +1388,9 @@ def cancel_prepared_generation_without_dispatch_in_current_transaction(
     owner: LlmCallOwner,
     state: StepReplayState,
     terminal_result: str,
-    reason: str,
 ) -> StepReplayState:
     """Close a Prepared owner only when no model child was armed."""
 
-    del reason
     lock_generation_owner_in_current_transaction(db, owner)
     if state.dispatch_phase is not Prepared:
         raise AssertionError("pre-admission cancellation requires Prepared")

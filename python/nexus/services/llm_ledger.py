@@ -249,26 +249,6 @@ class ModelTurnCompletion:
 
 
 @dataclass(frozen=True, slots=True)
-class DispatchableModelTurn:
-    """A prepared child whose provider continuation may be dispatched once."""
-
-    kind: Literal["Dispatchable"] = "Dispatchable"
-    turn: ModelTurnRecord = field(kw_only=True)
-    canonical_continuation: bytes = field(kw_only=True, repr=False)
-
-
-@dataclass(frozen=True, slots=True)
-class RedispatchForbiddenModelTurn:
-    """An uncertain/terminal child for which automatic redispatch is forbidden."""
-
-    kind: Literal["RedispatchForbidden"] = "RedispatchForbidden"
-    turn: ModelTurnRecord = field(kw_only=True)
-
-
-type ContinuationResume = DispatchableModelTurn | RedispatchForbiddenModelTurn
-
-
-@dataclass(frozen=True, slots=True)
 class PendingGenerationContinuation:
     """One terminal child whose sealed successor is safe to resume."""
 
@@ -569,72 +549,6 @@ def complete_model_turn_in_current_transaction(
     _validate_turn(turn)
 
 
-def resume_generation_continuation_in_current_transaction(
-    db: Session,
-    *,
-    source_model_turn_id: UUID,
-    successor: ModelTurnStart,
-    expected_context: GenerationContinuationContext,
-    cipher: GenerationContinuationCipher,
-) -> ContinuationResume:
-    """Idempotently materialize one successor child from sealed state."""
-
-    call = _lock_generation_by_id(db, successor.generation_id)
-    _assert_parent_open(call)
-    source = _lock_model_turn(
-        db,
-        generation_id=successor.generation_id,
-        model_turn_id=source_model_turn_id,
-    )
-    if source.terminal is None:
-        _turn_defect(source, "cannot resume from a nonterminal source child")
-    continuation = db.scalar(
-        select(LLMModelTurnContinuation)
-        .where(
-            LLMModelTurnContinuation.generation_id == successor.generation_id,
-            LLMModelTurnContinuation.source_model_turn_id == source_model_turn_id,
-        )
-        .with_for_update()
-    )
-    if continuation is None:
-        consumed_turn = db.scalar(
-            select(LLMModelTurn).where(
-                LLMModelTurn.generation_id == successor.generation_id,
-                LLMModelTurn.turn_seq == successor.turn_seq,
-            )
-        )
-        if consumed_turn is None:
-            _turn_defect(source, "terminal source child has no successor continuation")
-        _assert_model_turn_start_identity(consumed_turn, successor)
-        if consumed_turn.dispatch_started_at is None and consumed_turn.terminal is None:
-            _turn_defect(
-                consumed_turn,
-                "prepared successor lost its continuation before dispatch",
-            )
-        return RedispatchForbiddenModelTurn(turn=_turn_record(consumed_turn))
-    if successor.turn_seq != continuation.successor_turn_seq:
-        _turn_defect(source, "successor child sequence differs from sealed continuation")
-
-    sealed = _sealed_from_row(continuation, source_turn_seq=source.turn_seq)
-    existing = db.scalar(
-        select(LLMModelTurn).where(
-            LLMModelTurn.generation_id == successor.generation_id,
-            LLMModelTurn.turn_seq == successor.turn_seq,
-        )
-    )
-    plaintext = cipher.open(sealed=sealed, expected_context=expected_context)
-    turn = (
-        _start_model_turn_under_parent_lock(db, call=call, start=successor)
-        if existing is None
-        else existing
-    )
-    _assert_model_turn_start_identity(turn, successor)
-    record = _turn_record(turn)
-    if turn.dispatch_started_at is not None or turn.terminal is not None:
-        return RedispatchForbiddenModelTurn(turn=record)
-    return DispatchableModelTurn(turn=record, canonical_continuation=plaintext)
-
-
 def open_generation_continuation_in_current_transaction(
     db: Session,
     *,
@@ -714,8 +628,6 @@ def arm_resumed_model_turn_dispatch_in_current_transaction(
     *,
     source_model_turn_id: UUID,
     successor: ModelTurnStart,
-    expected_context: GenerationContinuationContext,
-    cipher: GenerationContinuationCipher,
 ) -> ModelTurnRecord:
     """Prepare, arm, and consume one successor under the parent fence.
 
@@ -726,17 +638,60 @@ def arm_resumed_model_turn_dispatch_in_current_transaction(
     armed; it can never authorize an automatic duplicate provider call.
     """
 
-    resumed = resume_generation_continuation_in_current_transaction(
+    call = _lock_generation_by_id(db, successor.generation_id)
+    _assert_parent_open(call)
+    source = _lock_model_turn(
         db,
-        source_model_turn_id=source_model_turn_id,
-        successor=successor,
-        expected_context=expected_context,
-        cipher=cipher,
+        generation_id=successor.generation_id,
+        model_turn_id=source_model_turn_id,
     )
-    if isinstance(resumed, RedispatchForbiddenModelTurn):
+    if source.terminal is None:
+        _turn_defect(source, "cannot resume from a nonterminal source child")
+    continuation = db.scalar(
+        select(LLMModelTurnContinuation)
+        .where(
+            LLMModelTurnContinuation.generation_id == successor.generation_id,
+            LLMModelTurnContinuation.source_model_turn_id == source_model_turn_id,
+        )
+        .with_for_update()
+    )
+    if continuation is None:
+        consumed_turn = db.scalar(
+            select(LLMModelTurn).where(
+                LLMModelTurn.generation_id == successor.generation_id,
+                LLMModelTurn.turn_seq == successor.turn_seq,
+            )
+        )
+        if consumed_turn is None:
+            _turn_defect(source, "terminal source child has no successor continuation")
+        _assert_model_turn_start_identity(consumed_turn, successor)
+        if consumed_turn.dispatch_started_at is None and consumed_turn.terminal is None:
+            _turn_defect(
+                consumed_turn,
+                "prepared successor lost its continuation before dispatch",
+            )
         raise AssertionError(
-            f"llm_model_turns row id={resumed.turn.id} is corrupt: "
+            f"llm_model_turns row id={consumed_turn.id} is corrupt: "
             "successor model turn was already armed"
+        )
+    if successor.turn_seq != continuation.successor_turn_seq:
+        _turn_defect(source, "successor child sequence differs from sealed continuation")
+
+    existing = db.scalar(
+        select(LLMModelTurn).where(
+            LLMModelTurn.generation_id == successor.generation_id,
+            LLMModelTurn.turn_seq == successor.turn_seq,
+        )
+    )
+    turn = (
+        _start_model_turn_under_parent_lock(db, call=call, start=successor)
+        if existing is None
+        else existing
+    )
+    _assert_model_turn_start_identity(turn, successor)
+    if turn.dispatch_started_at is not None or turn.terminal is not None:
+        raise AssertionError(
+            f"llm_model_turns row id={turn.id} is corrupt: successor model turn was already armed"
         )
     arm_model_turn_dispatch_in_current_transaction(
         db,
@@ -752,16 +707,11 @@ def arm_resumed_model_turn_dispatch_in_current_transaction(
     )
     if not isinstance(deleted, CursorResult) or deleted.rowcount != 1:
         raise AssertionError(
-            f"llm_model_turns row id={resumed.turn.id} is corrupt: "
+            f"llm_model_turns row id={turn.id} is corrupt: "
             "successor continuation was not consumed exactly once"
         )
     db.flush()
-    return resumed.turn
-
-
-def read_generation(db: Session, *, generation_id: UUID) -> GenerationRecord | None:
-    call = db.get(LLMCall, generation_id)
-    return None if call is None else _generation_record(call)
+    return _turn_record(turn)
 
 
 def read_model_turns(
@@ -838,24 +788,6 @@ def read_latest_generation_for_owner(
         .where(LLMCall.owner_kind == owner.kind, LLMCall.owner_id == owner.id)
         .order_by(LLMCall.generation_seq.desc())
         .limit(1)
-    )
-    return None if call is None else _generation_record(call)
-
-
-def read_generation_for_owner_sequence(
-    db: Session,
-    *,
-    owner: LlmCallOwner,
-    generation_seq: int,
-) -> GenerationRecord | None:
-    if generation_seq < 1:
-        raise ValueError("generation_seq must be positive")
-    call = db.scalar(
-        select(LLMCall).where(
-            LLMCall.owner_kind == owner.kind,
-            LLMCall.owner_id == owner.id,
-            LLMCall.generation_seq == generation_seq,
-        )
     )
     return None if call is None else _generation_record(call)
 
@@ -1385,20 +1317,12 @@ def _turn_defect(turn: LLMModelTurn, detail: str) -> Never:
 
 
 __all__ = [
-    "ContinuationResume",
-    "DispatchableModelTurn",
-    "GenerationOutcome",
     "GenerationRecord",
-    "GenerationSpecDocument",
-    "GenerationSpecLike",
     "GenerationStart",
     "LlmCallOwner",
-    "LlmCallOwnerKind",
     "ModelTurnCompletion",
     "ModelTurnRecord",
     "ModelTurnStart",
-    "PendingGenerationContinuation",
-    "RedispatchForbiddenModelTurn",
     "arm_model_turn_dispatch_in_current_transaction",
     "complete_generation_in_current_transaction",
     "complete_model_turn_in_current_transaction",
@@ -1407,15 +1331,12 @@ __all__ = [
     "lock_generation_for_authority_in_current_transaction",
     "lock_generation_owner_in_current_transaction",
     "open_generation_continuation_in_current_transaction",
-    "read_generation",
-    "read_generation_for_owner_sequence",
     "read_latest_generation_for_owner",
     "read_latest_generations_for_owners",
     "read_model_turns",
     "read_model_turns_for_generations",
     "read_pending_generation_continuation_in_current_transaction",
     "arm_resumed_model_turn_dispatch_in_current_transaction",
-    "resume_generation_continuation_in_current_transaction",
     "stop_generation_in_current_transaction",
     "start_generation_in_current_transaction",
     "start_model_turn_in_current_transaction",

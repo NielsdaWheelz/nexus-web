@@ -140,7 +140,6 @@ from nexus.services.chat_run_steps import (
     ExpectedFailure,
     GenerationStepResultEnvelope,
     PublicationRequest,
-    PublicationStepResult,
     assistant_turn_result,
     step_fingerprint,
 )
@@ -163,7 +162,6 @@ from nexus.services.conversations import DEFAULT_CONVERSATION_TITLE
 from nexus.services.durable_step_journal import (
     Completed,
     Prepared,
-    ReplayPolicy,
     StepReplayState,
     Uncertain,
     decode_step_result,
@@ -211,7 +209,7 @@ from nexus.services.llm_execution import (
     execute_generation,
 )
 from nexus.services.llm_ledger import LlmCallOwner, read_model_turns
-from nexus.services.redact import safe_kv
+from nexus.services.prompt_budget import ContextBudgetError
 from nexus.services.resource_graph.context import (
     add_context_ref_without_commit,
     list_context_refs,
@@ -301,11 +299,6 @@ class _ChatTextCoalescer:
             return
         if self._sequence_start is None or self._sequence_end is None:
             raise AssertionError("buffered Chat text has no provider sequence")
-        if (
-            len(self._text) > CHAT_TEXT_FLUSH_MAX_CHARS
-            or len(self._text.encode("utf-8")) > CHAT_TEXT_FLUSH_MAX_BYTES
-        ):
-            raise AssertionError("buffered Chat text exceeds its durable SSE bound")
         self._emitter.assistant_text_delta(
             text=self._text,
             provider_event_seq_start=self._sequence_start,
@@ -384,10 +377,10 @@ type ChatExecutionOutcome = (
 type ChatExecutionResult = ChatExecutionOutcome | RescheduleRequested
 
 
-def _presence(value: str | None) -> owned_presence.Presence[str]:
-    return (
-        owned_presence.Present[str](value=value) if value is not None else owned_presence.Absent()
-    )
+def _present[T](value: T | None) -> owned_presence.Presence[T]:
+    if value is None:
+        return owned_presence.absent()
+    return owned_presence.Present[T](value=value)
 
 
 def _failed_chat_execution(
@@ -401,8 +394,8 @@ def _failed_chat_execution(
     ).scalar_one_or_none()
     return FailedChatExecution(
         run_id=run_id,
-        error_code=_presence(error_code),
-        support_id=_presence(support_id),
+        error_code=_present(error_code),
+        support_id=_present(support_id),
     )
 
 
@@ -539,14 +532,20 @@ def persist_frozen_chat_admission_in_current_transaction(
 ) -> tuple[GenerationSpec, RunSelectionOut]:
     """Persist one complete Chat prompt/spec before its queue row can exist."""
 
-    assembly = assemble_chat_context(
-        db,
-        run=run,
-        max_context_tokens=pair.effective_context_budget_tokens,
-        max_output_tokens=pair.effective_output_budget_tokens,
-        turn_context=turn_context,
-        tool_authority=tool_authority,
-    )
+    try:
+        assembly = assemble_chat_context(
+            db,
+            run=run,
+            max_context_tokens=pair.effective_context_budget_tokens,
+            max_output_tokens=pair.effective_output_budget_tokens,
+            turn_context=turn_context,
+            tool_authority=tool_authority,
+        )
+    except ContextBudgetError as error:
+        raise ApiError(
+            ApiErrorCode.E_GENERATION_CONTEXT_TOO_LARGE,
+            "This conversation no longer fits the model context window",
+        ) from error
     try:
         spec = generation_service.freeze_chat_from_pair(
             catalog_definition_revision=catalog_definition_revision,
@@ -607,19 +606,6 @@ async def create_chat_run(
         tool_authority=tool_authority,
         reader_selection_key=reader_selection.key if reader_selection is not None else None,
     )
-    # Existing immutable decisions require no current catalog/provider access.
-    # Release this read lock before external catalog I/O; settlement rechecks it.
-    try:
-        lock_idempotency_key(db, viewer_id, normalized_key)
-        receipt = lookup_chat_admission(
-            db, viewer_id=viewer_id, idempotency_key=normalized_key, request_bytes=request_bytes
-        )
-    finally:
-        db.rollback()
-    if receipt is not None:
-        log_chat_admission(receipt, viewer_id=viewer_id, replayed=True)
-        return receipt
-
     pair: ResolvedCatalogPair | None = None
     catalog_error: ApiError | None = None
     try:
@@ -983,7 +969,8 @@ def cancel_chat_run(
     db.commit()
     logger.info(
         "chat_run.cancel_requested",
-        **safe_kv(chat_run_id=str(run_id), status=status),
+        chat_run_id=str(run_id),
+        status=status,
     )
     return read_chat_run_response(db, viewer_id, run_id, catalog_snapshot=catalog_snapshot)
 
@@ -1072,7 +1059,7 @@ async def _execute_chat_run(
         steps.clear()
         return SkippedChatExecution(reason="Terminal")
     generation_path = "generation/1"
-    generation_state = steps.read(generation_path, ReplayPolicy.BilledOnce)
+    generation_state = steps.read(generation_path)
     cancellation_requested = is_cancel_requested(db, run.id)
     if cancellation_requested and generation_state is None:
         return _finalize_cancelled_execution(db, run=run, steps=steps)
@@ -1346,9 +1333,8 @@ async def _dispatch_generation_step(
             before_terminal=before_terminal,
             resolve_terminal=resolve_terminal,
             encode_terminal=encode_native_terminal,
-            encode_failure=lambda code, detail: _encode_chat_failure(
+            encode_failure=lambda code, _detail: _encode_chat_failure(
                 code,
-                detail=detail,
                 generation_id=generation_id,
                 observed_text="".join(observed_text_parts),
                 usage=_aggregate_usage(observed_usage_by_child),
@@ -1433,8 +1419,8 @@ def _chat_generation_terminal_result(
     if host_cancelled or status == "cancelled":
         return CancelledGeneration(
             assistant_content=observed_text,
-            usage=_owned_usage(usage),
-            last_provider_event_seq=_owned_sequence(last_sequence),
+            usage=_present(usage),
+            last_provider_event_seq=_present(last_sequence),
         )
     if status == "failed":
         if error_code is None:
@@ -1442,13 +1428,12 @@ def _chat_generation_terminal_result(
         return ExpectedFailure(
             assistant_content=observed_text,
             error_code=error_code,
-            usage=_owned_usage(usage),
-            support_id=_owned_text(generation_id.hex[:12]),
-            last_provider_event_seq=_owned_sequence(last_sequence),
+            usage=_present(usage),
+            support_id=_present(generation_id.hex[:12]),
+            last_provider_event_seq=_present(last_sequence),
         )
     return assistant_turn_result(
         text=observed_text,
-        tool_calls=(),
         usage=usage,
         support_id=generation_id.hex[:12],
         last_provider_event_seq=last_sequence,
@@ -1571,27 +1556,25 @@ def _backend_terminal_is_cancelled(terminal: BackendTerminal) -> bool:
 def _encode_chat_failure(
     code: str,
     *,
-    detail: str,
     generation_id: UUID,
     observed_text: str,
     usage: dict[str, JsonValue] | None,
     last_sequence: int,
 ) -> str:
-    del detail
     last_event = owned_presence.present(last_sequence) if last_sequence else owned_presence.absent()
     result: ExpectedFailure | CancelledGeneration
     if code == "cancelled":
         result = CancelledGeneration(
             assistant_content=observed_text,
-            usage=_owned_usage(usage),
+            usage=_present(usage),
             last_provider_event_seq=last_event,
         )
     else:
         result = ExpectedFailure(
             assistant_content=observed_text,
             error_code=code,
-            usage=_owned_usage(usage),
-            support_id=_owned_text(generation_id.hex[:12]),
+            usage=_present(usage),
+            support_id=_present(generation_id.hex[:12]),
             last_provider_event_seq=last_event,
         )
     return encode_step_result(GenerationStepResultEnvelope(root=result))
@@ -1659,11 +1642,11 @@ def _publish_chat_run(
 ) -> ChatExecutionOutcome:
     request = PublicationRequest(
         generated_markdown=full_content,
-        usage=_owned_usage(usage),
-        last_provider_event_seq=_owned_sequence(last_provider_event_seq),
+        usage=_present(usage),
+        last_provider_event_seq=_present(last_provider_event_seq),
     )
     fingerprint = step_fingerprint(request)
-    state = steps.read("publication", ReplayPolicy.ReDispatchable)
+    state = steps.read("publication")
     if state is None:
         state = steps.prepare("publication", fingerprint)
     else:
@@ -1701,6 +1684,12 @@ def _publish_chat_run(
     degraded_support_id: str | None = None
     if isinstance(citation_result, DegradedCitations):
         degraded_support_id = uuid4().hex[:12]
+        logger.warning(
+            "chat_citations_degraded",
+            chat_run_id=str(locked_run.id),
+            support_id=degraded_support_id,
+            detail=citation_result.detail,
+        )
         finalize_run(
             db,
             run_id=locked_run.id,
@@ -1711,7 +1700,6 @@ def _publish_chat_run(
             error_code=None,
             support_id=degraded_support_id,
             publication_warning_code=citation_result.warning_code,
-            error_detail=citation_result.detail,
             usage=usage,
             last_provider_event_seq=last_provider_event_seq,
             commit=False,
@@ -1734,20 +1722,7 @@ def _publish_chat_run(
         )
         outcome_kind = "Published"
 
-    terminal_event_seq = db.execute(
-        text(
-            "SELECT seq FROM chat_run_events "
-            "WHERE run_id = :run_id AND event_type = 'done' ORDER BY seq DESC LIMIT 1"
-        ),
-        {"run_id": locked_run.id},
-    ).scalar_one()
-    steps.complete_publication(
-        PublicationStepResult(
-            outcome=outcome_kind,
-            message_id=locked_run.assistant_message_id,
-            terminal_event_seq=terminal_event_seq,
-        )
-    )
+    steps.clear()
     _log_chat_run_finished(
         db,
         run_id=locked_run.id,
@@ -1798,26 +1773,6 @@ def _assert_step_fingerprint(state: StepReplayState, expected: str) -> None:
         raise AssertionError("durable chat step has no request fingerprint")
     if fingerprint.value != expected:
         raise AssertionError("durable chat step request fingerprint changed")
-
-
-def _owned_usage(
-    value: dict[str, JsonValue] | None,
-) -> owned_presence.Presence[dict[str, JsonValue]]:
-    if value is None:
-        return owned_presence.absent()
-    return owned_presence.Present[dict[str, JsonValue]](value=value)
-
-
-def _owned_sequence(value: int | None) -> owned_presence.Presence[int]:
-    if value is None:
-        return owned_presence.absent()
-    return owned_presence.Present[int](value=value)
-
-
-def _owned_text(value: str | None) -> owned_presence.Presence[str]:
-    if value is None:
-        return owned_presence.absent()
-    return owned_presence.Present[str](value=value)
 
 
 def _owned_value[T](value: owned_presence.Presence[T]) -> T | None:

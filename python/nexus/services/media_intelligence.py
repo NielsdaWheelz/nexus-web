@@ -554,7 +554,6 @@ def _complete_prepared_media_unit_without_dispatch(
     ctx: JobExecutionContext,
     state: step_journal.StepReplayState,
     result: _CompletedResult,
-    reason: str,
 ) -> bool:
     """Atomically cancel a preaccept start and complete the owner journal."""
 
@@ -567,7 +566,6 @@ def _complete_prepared_media_unit_without_dispatch(
         owner=owner,
         state=state,
         terminal_result=terminal_result,
-        reason=reason,
     )
     job = get_job(db, ctx.job_id)
     if job is None or step_journal.read_step_states(job).get(_MEDIA_UNIT_STEP_PATH) != state:
@@ -711,7 +709,7 @@ async def run_media_unit_build(
             f"media {media_id} fingerprint {content_fingerprint} synthesis is uncertain"
         )
 
-    def skip(reason: str, message: str) -> Literal["ok"]:
+    def skip(reason: str) -> Literal["ok"]:
         if state is not None and state.dispatch_phase is step_journal.Prepared:
             _complete_prepared_media_unit_without_dispatch(
                 db,
@@ -719,13 +717,12 @@ async def run_media_unit_build(
                 ctx=ctx,
                 state=state,
                 result=_CompletedSkip(reason=reason),
-                reason=message,
             )
         else:
             db.commit()
         return "ok"
 
-    def fail(completed: _CompletedFailure, message: str) -> Literal["ok", "failed"]:
+    def fail(completed: _CompletedFailure) -> Literal["ok", "failed"]:
         if state is not None and state.dispatch_phase is step_journal.Prepared:
             if not _complete_prepared_media_unit_without_dispatch(
                 db,
@@ -733,7 +730,6 @@ async def run_media_unit_build(
                 ctx=ctx,
                 state=state,
                 result=completed,
-                reason=message,
             ):
                 return "ok"
         else:
@@ -750,25 +746,16 @@ async def run_media_unit_build(
 
     summary = media_summary_orm_or_none(db, media_id=media_id)
     if summary is None:
-        return skip("summary_missing", "media summary was removed before redispatch")
+        return skip("summary_missing")
     if summary.id != summary_id:
         raise AssertionError("media unit job summary owner changed")
     if summary.content_fingerprint != content_fingerprint:
-        return skip(
-            "summary_superseded",
-            "media summary fingerprint was superseded before redispatch",
-        )
+        return skip("summary_superseded")
     if current_content_fingerprint(db, media_id=media_id) != content_fingerprint:
-        return skip(
-            "content_fingerprint_changed",
-            "media content fingerprint changed before redispatch",
-        )
+        return skip("content_fingerprint_changed")
     if summary.status != "building":
         # A prior attempt already applied the Completed result.
-        return skip(
-            "summary_not_building",
-            "media summary was no longer building before redispatch",
-        )
+        return skip("summary_not_building")
 
     owner_row = db.execute(
         text("SELECT created_by_user_id FROM media WHERE id = :media_id"),
@@ -780,7 +767,6 @@ async def run_media_unit_build(
                 error_code="no_owner",
                 error_detail=present("media has no owning user to attribute the generation to"),
             ),
-            "media owner was absent before redispatch",
         )
     owner_user_id = UUID(str(owner_row))
 
@@ -791,7 +777,6 @@ async def run_media_unit_build(
                 error_code="no_candidates",
                 error_detail=present("media has no indexed content chunks with evidence spans"),
             ),
-            "media candidates were absent before redispatch",
         )
 
     user_content = _build_media_unit_user_content(candidates)
@@ -893,7 +878,6 @@ async def run_media_unit_build(
                 ctx=ctx,
                 state=current_state,
                 result=_CompletedSkip(reason="request_fingerprint_changed"),
-                reason="media synthesis inputs changed before redispatch",
             )
         return "ok"
     except GenerationDispatchAborted:
@@ -904,7 +888,6 @@ async def run_media_unit_build(
                 ctx=ctx,
                 state=state,
                 result=_CompletedSkip(reason="dispatch_aborted"),
-                reason="media owner fence aborted generation before redispatch",
             )
         return "ok"
     except GenerationUncertain as exc:

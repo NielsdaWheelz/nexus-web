@@ -263,3 +263,5 @@ unexpected timeouts. See
 - [open] oi-166 · reader evidence · 2026-09-17 slop sweep · p3 · media evidence wire keeps dead `route`/`selector` fields coupled by an exact-key web decoder: [ticket](tickets/media-evidence-wire-keeps-dead-route-and-selector.md).
 - [open] oi-167 · pdf highlights · 2026-09-17 typecheck cleanup · p2 · write-time matching combines cached text with current publication spans: [ticket](tickets/pdf-highlight-matching-mixes-publication-snapshots.md).
 - [open] oi-168 · pdf highlights · 2026-09-17 typecheck cleanup · p3 · three persisted quote-match columns have no current runtime readers: [ticket](tickets/pdf-highlight-match-columns-have-no-readers.md).
+- [open] oi-167 · chat tool runtime · 2026-09-17 slop sweep · p3 · `rejected_provider_call` has no producer, so an unknown provider tool name has no recorded outcome: [ticket](tickets/unknown-provider-tool-name-has-no-recorded-outcome.md).
+||||||| 72af03076e
