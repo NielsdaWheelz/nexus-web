@@ -264,7 +264,6 @@ def refresh_media_source(
         viewer_id=viewer.user_id,
         media_id=media_id,
         request_id=getattr(request.state, "request_id", None),
-        idempotency_key=request.headers.get("Idempotency-Key"),
     )
     return success_response(result)
 

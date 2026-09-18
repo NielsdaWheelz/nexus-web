@@ -5,7 +5,7 @@ import socket
 import warnings
 from contextlib import closing
 from dataclasses import dataclass
-from ipaddress import IPv4Address, IPv6Address, ip_address
+from ipaddress import ip_address
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
@@ -13,6 +13,11 @@ from PIL import Image
 
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
+from nexus.services.net.egress_policy import (
+    HOSTNAME_DENYLIST_EXACT,
+    HOSTNAME_DENYLIST_SUFFIXES,
+    is_private_ip,
+)
 
 logger = get_logger(__name__)
 
@@ -34,10 +39,6 @@ ALLOWED_SCHEMES = frozenset({"http", "https"})
 
 # Allowed ports
 ALLOWED_PORTS = frozenset({80, 443, None})  # None = default port for scheme
-
-# Hostname denylist (pre-DNS)
-HOSTNAME_DENYLIST_EXACT = frozenset({"localhost"})
-HOSTNAME_DENYLIST_SUFFIXES = (".local", ".internal", ".lan", ".home")
 
 # Content-Type immediate rejection list (clearly non-image)
 REJECTED_CONTENT_TYPES = frozenset(
@@ -178,32 +179,6 @@ def check_hostname_denylist(hostname: str) -> None:
 # =============================================================================
 # DNS Resolution and IP Validation
 # =============================================================================
-
-
-def is_private_ip(ip: IPv4Address | IPv6Address) -> bool:
-    """Check if IP address is private/reserved.
-
-    Blocks:
-    - Loopback (127.0.0.0/8, ::1)
-    - Private (10/8, 172.16/12, 192.168/16)
-    - Link-local (169.254/16, fe80::/10)
-    - Metadata endpoint (169.254.169.254)
-    """
-    # Use stdlib methods where available
-    if ip.is_loopback:
-        return True
-    if ip.is_private:
-        return True
-    if ip.is_link_local:
-        return True
-    if ip.is_reserved:
-        return True
-
-    # Explicit check for metadata endpoint
-    if isinstance(ip, IPv4Address) and str(ip) == "169.254.169.254":
-        return True
-
-    return False
 
 
 def validate_dns_resolution(hostname: str) -> None:

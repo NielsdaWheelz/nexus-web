@@ -2,7 +2,6 @@
 
 Video ingest is source-owned.
 
-`media_ingest.py` forwards URL requests to `media_source_ingest.py`.
 `media_source_ingest.py` classifies supported YouTube URLs, creates or reuses
 canonical video media, records the source attempt, and enqueues
 `ingest_media_source`. `youtube_video_ingest.py` owns YouTube materialization

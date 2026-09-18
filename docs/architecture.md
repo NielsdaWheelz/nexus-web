@@ -1077,7 +1077,6 @@ it creates `media_source_attempts`, persists durable source artifacts where
 needed, and enqueues `ingest_media_source`. Source creation and asset reads are
 capability-owned:
 
-- `media_ingest.py`: URL transport adapter into `media_source_ingest.py`.
 - `media_source_ingest.py`: accepted source-attempt state machine for generic
   web URLs, X/Twitter URLs, YouTube URLs, remote PDF/EPUB URLs, uploaded
   PDF/EPUB files, and browser article/file captures. Its detached acquisition
@@ -1091,9 +1090,9 @@ capability-owned:
 - `x_identity.py`, `x_client.py`, `x_rendering.py`, `x_ingest.py`: official-API
   X/Twitter same-author thread capture. Identity comes from provider author ID
   plus conversation ID; quote posts are separate `post:<post_id>` media; provider
-  billing/auth/rate-limit/timeout failures are typed and recorded in
-  `external_provider_events`. There is no scraping, oEmbed, or generic article
-  fallback for X URLs.
+  billing/auth/rate-limit/timeout failures are typed and surface as their mapped
+  API error plus an `x_provider_failure` warning log. There is no scraping,
+  oEmbed, or generic article fallback for X URLs.
 - `youtube_video_ingest.py`: playable YouTube metadata materialization for
   queued source attempts using the YouTube Data API. Add never initializes or
   fetches a transcript. The explicit canonical Transcribe command separately
@@ -2286,7 +2285,7 @@ The things most likely to bite you, distilled:
 | The schema                                                        | `migrations/alembic/versions/` + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
 | Generation backends                                               | `python/nexus/services/{generation_catalog,generation_policy,generation_service,generation_spec,generation_backend,provider_generation_backend,codex_generation_client,llm_execution,llm_ledger,tool_authority}.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md) |
-| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_ingest.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
+| Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |
 | Imports workspace (query owner, history, pane)                    | `python/nexus/services/{imports,import_history}.py`, `python/nexus/api/routes/imports.py`, `apps/web/src/lib/imports/`, `apps/web/src/components/imports/`, `apps/web/src/app/(authenticated)/imports/`                                              |
 | Reader/highlights backend                                         | `python/nexus/services/{reader,epub_*,pdf_*,fragment_blocks,highlights,passage_anchors,locator_resolver,text_quote,pdf_quote_match}.py`                                                                |
 | Chat / conversations                                              | `python/nexus/services/chat_runs.py` + `chat_run_*`, `context_assembler.py`, `conversations.py`                                                                                                        |

@@ -1068,24 +1068,6 @@ def _apply_consumption_state(
                 media_outs[index] = MediaOut.model_validate(values)
 
 
-def refresh_source_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-    *,
-    request_id: str | None = None,
-) -> dict[str, object]:
-    """Refresh source content through the durable source lifecycle."""
-    from nexus.services.media_source_ingest import refresh_source_for_viewer as refresh_source
-
-    return refresh_source(
-        db=db,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        request_id=request_id,
-    )
-
-
 def _encode_media_cursor(updated_at: datetime, media_id: UUID) -> str:
     """Encode a keyset cursor for media listing pagination."""
     payload = {

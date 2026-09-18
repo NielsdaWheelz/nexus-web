@@ -9,90 +9,38 @@ Key behaviors:
 - Length must be ≤ 2048 characters
 - Host must be present and non-empty
 - Userinfo (user:pass@host) is forbidden
-- Localhost/private addresses are rejected (127.0.0.1, ::1, localhost, *.local)
+- Localhost, internal-network suffixes, and private/reserved IPs are rejected
 - Fragment (#...) is stripped during normalization
 - Scheme and host are lowercased during normalization
 """
 
 import ipaddress
-import re
 from urllib.parse import urlparse, urlunparse
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
+from nexus.services.net.egress_policy import (
+    HOSTNAME_DENYLIST_EXACT,
+    HOSTNAME_DENYLIST_SUFFIXES,
+    is_private_ip,
+)
 
 MAX_URL_LENGTH = 2048
 
 # Allowed schemes
 ALLOWED_SCHEMES = {"http", "https"}
 
-# Hostnames to block (case-insensitive)
-BLOCKED_HOSTNAMES = {
-    "localhost",
-}
-
-# Hostname patterns to block
-BLOCKED_HOSTNAME_PATTERNS = [
-    re.compile(r".*\.local$", re.IGNORECASE),  # *.local
-]
-
-# Private IP ranges to block
-PRIVATE_IP_RANGES = [
-    ipaddress.ip_network("127.0.0.0/8"),  # Loopback
-    ipaddress.ip_network("10.0.0.0/8"),  # Private class A
-    ipaddress.ip_network("172.16.0.0/12"),  # Private class B
-    ipaddress.ip_network("192.168.0.0/16"),  # Private class C
-    ipaddress.ip_network("169.254.0.0/16"),  # Link-local
-    ipaddress.ip_network("::1/128"),  # IPv6 loopback
-    ipaddress.ip_network("fe80::/10"),  # IPv6 link-local
-    ipaddress.ip_network("fc00::/7"),  # IPv6 unique local
-]
-
-
-def _is_private_ip(hostname: str) -> bool:
-    """Check if hostname is a private/local IP address.
-
-    Args:
-        hostname: The hostname to check.
-
-    Returns:
-        True if the hostname is a private/local IP, False otherwise.
-    """
-    try:
-        ip = ipaddress.ip_address(hostname)
-        for network in PRIVATE_IP_RANGES:
-            if ip in network:
-                return True
-        return False
-    except ValueError:
-        # Not an IP address
-        return False
-
 
 def _is_blocked_hostname(hostname: str) -> bool:
-    """Check if hostname is blocked.
-
-    Args:
-        hostname: The hostname to check (will be lowercased).
-
-    Returns:
-        True if the hostname is blocked, False otherwise.
-    """
+    """Reject localhost, internal-network suffixes, and private/reserved IP literals."""
     hostname_lower = hostname.lower()
-
-    # Check exact matches
-    if hostname_lower in BLOCKED_HOSTNAMES:
+    if hostname_lower in HOSTNAME_DENYLIST_EXACT:
         return True
-
-    # Check patterns
-    for pattern in BLOCKED_HOSTNAME_PATTERNS:
-        if pattern.match(hostname_lower):
-            return True
-
-    # Check if it's a private IP
-    if _is_private_ip(hostname):
+    if hostname_lower.endswith(HOSTNAME_DENYLIST_SUFFIXES):
         return True
-
-    return False
+    try:
+        return is_private_ip(ipaddress.ip_address(hostname))
+    except ValueError:
+        return False
 
 
 def normalize_host(hostname: str | None) -> str:

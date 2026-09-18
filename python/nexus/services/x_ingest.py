@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from time import perf_counter
 from uuid import UUID
 
 from sqlalchemy import text
@@ -37,7 +36,6 @@ from nexus.services.document_embeds import (
 from nexus.services.fragment_blocks import FragmentBlockSpec, insert_fragment_blocks
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.media_processing_state import mark_ready_for_reading
-from nexus.services.provider_events import record_external_provider_event
 from nexus.services.reader_apparatus import (
     attach_fragment_locators,
     replace_media_apparatus,
@@ -151,7 +149,6 @@ def materialize_x_post_media(
     viewer_id: UUID,
     media_id: UUID,
     post_id: str,
-    source_attempt_id: UUID,
     request_id: str | None,
     publication_fence: SourcePublicationFence,
 ) -> dict[str, object]:
@@ -161,7 +158,6 @@ def materialize_x_post_media(
         viewer_id,
         media_id=media_id,
         post_id=post_id,
-        source_attempt_id=source_attempt_id,
         request_id=request_id,
         publication_fence=publication_fence,
     )
@@ -177,31 +173,20 @@ def _refresh_x_author_thread_media_for_viewer(
     request_id: str | None,
     publication_fence: SourcePublicationFence,
 ) -> dict[str, object]:
-    started_at = perf_counter()
     try:
         snapshot = fetch_author_thread_snapshot(post_id)
     except XProviderError as exc:
-        provider_failure = exc
-
-        def publish_provider_failure(db: Session, _attempt: object) -> None:
-            _record_x_provider_failure(
-                db,
-                error=provider_failure,
-                request_id=request_id,
-                source_attempt_id=source_attempt_id,
-                viewer_id=viewer_id,
-                target_ref=post_id,
-                duration_ms=_duration_ms(started_at),
-            )
-
-        run_source_publication_phase(
-            session_factory=session_factory,
-            label="publish_x_thread_provider_failure",
-            fence=publication_fence,
-            media_ids=(media_id,),
-            mutate=publish_provider_failure,
+        api_error = _api_error_from_x_provider_error(exc)
+        logger.warning(
+            "x_provider_failure",
+            request_id=request_id,
+            user_id=str(viewer_id),
+            operation=exc.operation,
+            provider_status_code=exc.provider_status_code,
+            provider_error_title=exc.provider_error_title,
+            api_error_code=api_error.code.value,
         )
-        raise _api_error_from_x_provider_error(exc) from exc
+        raise api_error from exc
     if not snapshot.posts:
         raise ApiError(ApiErrorCode.E_INGEST_FAILED, "X API returned no thread posts.")
 
@@ -311,16 +296,6 @@ def _refresh_x_author_thread_media_for_viewer(
                 winner = db.get(Media, winner_id)
                 if winner is None:
                     raise AssertionError("planned X thread media disappeared while locked")
-                _record_x_provider_success(
-                    db,
-                    request_id=request_id,
-                    source_attempt_id=source_attempt_id,
-                    viewer_id=viewer_id,
-                    media_id=winner_id,
-                    target_ref=provider_id,
-                    duration_ms=_duration_ms(started_at),
-                    snapshot=snapshot,
-                )
                 return (
                     winner_id,
                     _status_to_str(winner.processing_status),
@@ -418,16 +393,6 @@ def _refresh_x_author_thread_media_for_viewer(
                 expected_kind="web_article",
                 replace_projection=replace_thread_projection,
             )
-            _record_x_provider_success(
-                db,
-                request_id=request_id,
-                source_attempt_id=source_attempt_id,
-                viewer_id=viewer_id,
-                media_id=media.id,
-                target_ref=provider_id,
-                duration_ms=_duration_ms(started_at),
-                snapshot=snapshot,
-            )
             bump_all_collection_families(
                 db,
                 families=(
@@ -510,36 +475,23 @@ def _refresh_x_post_media_for_viewer(
     *,
     media_id: UUID,
     post_id: str,
-    source_attempt_id: UUID,
     request_id: str | None,
     publication_fence: SourcePublicationFence,
 ) -> dict[str, object]:
-    started_at = perf_counter()
     try:
         snapshot = fetch_single_post_snapshot(post_id)
     except XProviderError as exc:
-        provider_failure = exc
-
-        def publish_provider_failure(db: Session, _attempt: object) -> None:
-            _record_x_provider_failure(
-                db,
-                error=provider_failure,
-                request_id=request_id,
-                source_attempt_id=source_attempt_id,
-                viewer_id=viewer_id,
-                target_ref=post_id,
-                duration_ms=_duration_ms(started_at),
-                capability="post",
-            )
-
-        run_source_publication_phase(
-            session_factory=session_factory,
-            label="publish_x_post_provider_failure",
-            fence=publication_fence,
-            media_ids=(media_id,),
-            mutate=publish_provider_failure,
+        api_error = _api_error_from_x_provider_error(exc)
+        logger.warning(
+            "x_provider_failure",
+            request_id=request_id,
+            user_id=str(viewer_id),
+            operation=exc.operation,
+            provider_status_code=exc.provider_status_code,
+            provider_error_title=exc.provider_error_title,
+            api_error_code=api_error.code.value,
         )
-        raise _api_error_from_x_provider_error(exc) from exc
+        raise api_error from exc
 
     provider_id = x_post_provider_id(snapshot.post.id)
     author = snapshot.users.get(snapshot.post.author_id)
@@ -605,16 +557,6 @@ def _refresh_x_post_media_for_viewer(
                 existing_media = db.get(Media, durable_existing_uuid)
                 if existing_media is None:
                     raise AssertionError("planned X post media disappeared while locked")
-                _record_x_post_provider_success(
-                    db,
-                    request_id=request_id,
-                    source_attempt_id=source_attempt_id,
-                    viewer_id=viewer_id,
-                    media_id=durable_existing_uuid,
-                    target_ref=provider_id,
-                    duration_ms=_duration_ms(started_at),
-                    snapshot=snapshot,
-                )
                 return durable_existing_uuid, _status_to_str(existing_media.processing_status)
 
             media = db.get(Media, media_id)
@@ -626,16 +568,6 @@ def _refresh_x_post_media_for_viewer(
                 media=media,
                 snapshot=snapshot,
                 now=datetime.now(UTC),
-            )
-            _record_x_post_provider_success(
-                db,
-                request_id=request_id,
-                source_attempt_id=source_attempt_id,
-                viewer_id=viewer_id,
-                media_id=media.id,
-                target_ref=provider_id,
-                duration_ms=_duration_ms(started_at),
-                snapshot=snapshot,
             )
             return None, ProcessingStatus.ready_for_reading.value
 
@@ -1008,110 +940,3 @@ def _api_error_from_x_provider_error(error: XProviderError) -> ApiError:
         )
     api_error.retry_after_seconds = error.retry_after_seconds
     return api_error
-
-
-def _record_x_provider_failure(
-    db: Session,
-    *,
-    error: XProviderError,
-    request_id: str | None,
-    source_attempt_id: UUID | None = None,
-    viewer_id: UUID,
-    target_ref: str,
-    duration_ms: int,
-    capability: str = "author-thread",
-) -> None:
-    api_error = _api_error_from_x_provider_error(error)
-    record_external_provider_event(
-        db,
-        request_id=request_id,
-        source_attempt_id=source_attempt_id,
-        viewer_id=viewer_id,
-        provider="x",
-        capability=capability,
-        operation=error.operation,
-        target_ref=target_ref,
-        status="failure",
-        api_error_code=api_error.code.value,
-        provider_status_code=error.provider_status_code,
-        provider_error_type=error.provider_error_type,
-        provider_error_title=error.provider_error_title,
-        duration_ms=duration_ms,
-        retry_after_seconds=error.retry_after_seconds,
-    )
-    logger.warning(
-        "x_provider_failure",
-        request_id=request_id,
-        user_id=str(viewer_id),
-        operation=error.operation,
-        provider_status_code=error.provider_status_code,
-        provider_error_title=error.provider_error_title,
-        api_error_code=api_error.code.value,
-    )
-
-
-def _record_x_provider_success(
-    db: Session,
-    *,
-    request_id: str | None,
-    source_attempt_id: UUID | None = None,
-    viewer_id: UUID,
-    media_id: UUID,
-    target_ref: str,
-    duration_ms: int,
-    snapshot: XAuthorThreadSnapshot,
-) -> None:
-    record_external_provider_event(
-        db,
-        request_id=request_id,
-        source_attempt_id=source_attempt_id,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        provider="x",
-        capability="author-thread",
-        operation="ingest_author_thread",
-        target_ref=target_ref,
-        status="success",
-        duration_ms=duration_ms,
-        metadata={
-            "requested_post_id": snapshot.requested_post_id,
-            "conversation_id": snapshot.conversation_id,
-            "canonical_anchor_post_id": snapshot.canonical_anchor_post_id,
-            "post_count": len(snapshot.posts),
-            "quote_post_count": len(snapshot.quote_references),
-        },
-    )
-
-
-def _record_x_post_provider_success(
-    db: Session,
-    *,
-    request_id: str | None,
-    source_attempt_id: UUID | None = None,
-    viewer_id: UUID,
-    media_id: UUID,
-    target_ref: str,
-    duration_ms: int,
-    snapshot: XSinglePostSnapshot,
-) -> None:
-    record_external_provider_event(
-        db,
-        request_id=request_id,
-        source_attempt_id=source_attempt_id,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        provider="x",
-        capability="post",
-        operation="ingest_x_post",
-        target_ref=target_ref,
-        status="success",
-        duration_ms=duration_ms,
-        metadata={
-            "requested_post_id": snapshot.requested_post_id,
-            "canonical_post_id": snapshot.post.id,
-        },
-    )
-
-
-def _duration_ms(started_at: float) -> int:
-    return max(0, int((perf_counter() - started_at) * 1000))

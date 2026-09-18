@@ -2,7 +2,7 @@
 
 Owns only the proxy-specific concerns:
 - In-memory LRU cache with byte budget, keyed by normalized URL
-- Opaque ETag generation and conditional-GET (If-None-Match) handling
+- Opaque ETag generation and conditional-GET (If-None-Match) handling on cache hits
 
 SSRF/redirect/decode validation lives in nexus.services.image_validation.
 
@@ -121,32 +121,9 @@ class ImageCache:
             self._cache[key] = entry
             self._total_bytes += entry_size
 
-    def clear(self) -> None:
-        """Clear all cache entries."""
-        with self._lock:
-            self._cache.clear()
-            self._total_bytes = 0
-
-    @property
-    def size(self) -> int:
-        """Current number of entries."""
-        with self._lock:
-            return len(self._cache)
-
-    @property
-    def total_bytes(self) -> int:
-        """Current total bytes used."""
-        with self._lock:
-            return self._total_bytes
-
 
 # Global cache instance
 _cache = ImageCache()
-
-
-def get_cache() -> ImageCache:
-    """Get the global image cache instance."""
-    return _cache
 
 
 # =============================================================================
@@ -209,8 +186,7 @@ def fetch_image(url: str, if_none_match: str | None = None) -> ImageResponse:
     """
     normalized_url, hostname, _ = validate_url(url)
     check_hostname_denylist(hostname)
-    cache = get_cache()
-    cached = cache.get(normalized_url)
+    cached = _cache.get(normalized_url)
     if cached:
         if if_none_match and etags_match(if_none_match, cached.etag):
             return ImageResponse(
@@ -227,17 +203,10 @@ def fetch_image(url: str, if_none_match: str | None = None) -> ImageResponse:
     with create_http_client() as client:
         validated = fetch_validated_image(url, client)
     etag = compute_etag(validated.data)
-    cache.put(
+    _cache.put(
         normalized_url,
         CacheEntry(data=validated.data, content_type=validated.content_type, etag=etag),
     )
-    if if_none_match and etags_match(if_none_match, etag):
-        return ImageResponse(
-            data=b"",
-            content_type=validated.content_type,
-            etag=etag,
-            not_modified=True,
-        )
     return ImageResponse(
         data=validated.data,
         content_type=validated.content_type,
