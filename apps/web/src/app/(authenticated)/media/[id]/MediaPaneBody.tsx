@@ -4890,7 +4890,7 @@ export default function MediaPaneBody() {
   );
 
   const { noteGenuineInput: noteGenuineReaderActivityInput } = readerActivity;
-  const runPdfControlFromGenuineInput = useCallback(
+  const runPdfPageTurnFromGenuineInput = useCallback(
     (action: (controls: PdfReaderControlActions) => void) => {
       handleGenuineReaderInput();
       noteGenuineReaderActivityInput();
@@ -5661,7 +5661,7 @@ export default function MediaPaneBody() {
                   size="sm"
                   iconOnly
                   onClick={() =>
-                    runPdfControlFromGenuineInput((controls) =>
+                    runPdfPageTurnFromGenuineInput((controls) =>
                       controls.goToPreviousPage(),
                     )
                   }
@@ -5682,7 +5682,7 @@ export default function MediaPaneBody() {
                   size="sm"
                   iconOnly
                   onClick={() =>
-                    runPdfControlFromGenuineInput((controls) =>
+                    runPdfPageTurnFromGenuineInput((controls) =>
                       controls.goToNextPage(),
                     )
                   }
@@ -5700,20 +5700,14 @@ export default function MediaPaneBody() {
                       id: "zoom-out",
                       label: "Zoom out",
                       disabled: !pdfControlsState.canZoomOut,
-                      onSelect: () =>
-                        runPdfControlFromGenuineInput((controls) =>
-                          controls.zoomOut(),
-                        ),
+                      onSelect: () => pdfControlsRef.current?.zoomOut(),
                     },
                     {
                       kind: "command",
                       id: "zoom-in",
                       label: "Zoom in",
                       disabled: !pdfControlsState.canZoomIn,
-                      onSelect: () =>
-                        runPdfControlFromGenuineInput((controls) =>
-                          controls.zoomIn(),
-                        ),
+                      onSelect: () => pdfControlsRef.current?.zoomIn(),
                     },
                   ]}
                 />
@@ -5827,7 +5821,7 @@ export default function MediaPaneBody() {
     pdfControlsState,
     prevSection,
     currentSectionId,
-    runPdfControlFromGenuineInput,
+    runPdfPageTurnFromGenuineInput,
   ]);
   useEffect(() => {
     setVideoSeekTargetMs(null);
