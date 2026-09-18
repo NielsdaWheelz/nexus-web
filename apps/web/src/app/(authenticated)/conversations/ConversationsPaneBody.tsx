@@ -60,6 +60,7 @@ import type { PaneHeaderAction } from "@/lib/ui/actionDescriptor";
 import { useRenderEnvironment } from "@/lib/renderEnvironment/provider";
 import usePaneFilterRows from "@/lib/panes/usePaneFilterRows";
 import { isAbortError } from "@/lib/errors";
+import { useRevalidationSettlement } from "@/lib/panes/useRevalidationSettlement";
 
 /** The chats index committed as one exact view: rows, revision, and cursor. */
 interface CommittedChatsView extends ConversationsPaneSeed {
@@ -92,13 +93,6 @@ function conversationsErrorMessage(error: ApiError): FeedbackContent {
     default:
       throw error;
   }
-}
-
-interface PendingConversationsRevalidation {
-  readonly version: number;
-  readonly resolve: () => void;
-  readonly reject: (error: unknown) => void;
-  readonly removeAbortListener: () => void;
 }
 
 function seedFromPage(
@@ -154,8 +148,7 @@ export default function ConversationsPaneBody() {
   const initialRestored = useRef(restored).current;
   const [firstPageVersion, setFirstPageVersion] = useState(0);
   const firstPageVersionRef = useRef(0);
-  const pendingConversationsRevalidationRef =
-    useRef<PendingConversationsRevalidation | null>(null);
+  const revalidation = useRevalidationSettlement();
   const completedConversationsRevalidationVersionRef = useRef<number | null>(
     null,
   );
@@ -242,9 +235,9 @@ export default function ConversationsPaneBody() {
       setChainEpoch((epoch) => epoch + 1);
       setFeedback(null);
       focusPendingSortControl();
-      const pending = pendingConversationsRevalidationRef.current;
-      if (pending?.version === firstPageVersion) {
-        completedConversationsRevalidationVersionRef.current = pending.version;
+
+      if (revalidation.isPending(firstPageVersion)) {
+        completedConversationsRevalidationVersionRef.current = firstPageVersion;
       }
       return;
     }
@@ -258,50 +251,39 @@ export default function ConversationsPaneBody() {
           setAsyncDefect({ error: defect });
         }
       }
-      const pending = pendingConversationsRevalidationRef.current;
-      if (pending?.version === firstPageVersion) {
-        pendingConversationsRevalidationRef.current = null;
+
+      if (revalidation.isPending(firstPageVersion)) {
         completedConversationsRevalidationVersionRef.current = null;
-        pending.removeAbortListener();
-        pending.reject(firstPage.error);
+        revalidation.reject(firstPage.error);
       }
     }
-  }, [firstPage, firstPageVersion, focusPendingSortControl, view]);
+  }, [revalidation, firstPage, firstPageVersion, focusPendingSortControl, view]);
 
   // A newly requested view retires the previous view's rejection.
   useEffect(() => setViewInvalid(false), [requestedViewKey]);
 
   useLayoutEffect(() => {
     committedSnapshotRef.current = requestsFirstPage ? null : controller;
-    const pending = pendingConversationsRevalidationRef.current;
+    const completedVersion = completedConversationsRevalidationVersionRef.current;
     if (
       controller === null ||
-      pending === null ||
-      completedConversationsRevalidationVersionRef.current !== pending.version
+      completedVersion === null ||
+      !revalidation.isPending(completedVersion)
     ) {
       return;
     }
     completedConversationsRevalidationVersionRef.current = null;
-    pendingConversationsRevalidationRef.current = null;
-    pending.removeAbortListener();
-    pending.resolve();
-  }, [controller, requestsFirstPage]);
+    revalidation.resolve(completedVersion);
+  }, [revalidation, controller, requestsFirstPage]);
 
   usePaneReturnReady(
     controller !== null || firstPage.status === "error" || invalidView,
   );
 
-  const rejectPendingConversationsRevalidation = useCallback(
-    (error: unknown) => {
-      const pending = pendingConversationsRevalidationRef.current;
-      pendingConversationsRevalidationRef.current = null;
-      completedConversationsRevalidationVersionRef.current = null;
-      if (!pending) return;
-      pending.removeAbortListener();
-      pending.reject(error);
-    },
-    [],
-  );
+  const rejectPendingConversationsRevalidation = useCallback((error: unknown) => {
+    completedConversationsRevalidationVersionRef.current = null;
+    revalidation.reject(error);
+  }, [revalidation]);
   const refreshIndex = useCallback(() => {
     rejectPendingConversationsRevalidation(
       new DOMException("Conversations refresh was superseded.", "AbortError"),
@@ -337,44 +319,15 @@ export default function ConversationsPaneBody() {
       }
       refreshIndex();
       const version = firstPageVersionRef.current;
-      return new Promise<void>((resolve, reject) => {
-        const onAbort = () => {
-          const pending = pendingConversationsRevalidationRef.current;
-          if (pending?.version !== version) return;
-          pendingConversationsRevalidationRef.current = null;
+      return revalidation.wait({
+        requestId: version,
+        signal,
+        onAbort: () => {
           completedConversationsRevalidationVersionRef.current = null;
-          pending.removeAbortListener();
-          reject(
-            signal.reason ??
-              new DOMException(
-                "Conversations refresh was aborted.",
-                "AbortError",
-              ),
-          );
-        };
-        signal.addEventListener("abort", onAbort, { once: true });
-        pendingConversationsRevalidationRef.current = {
-          version,
-          resolve,
-          reject,
-          removeAbortListener: () =>
-            signal.removeEventListener("abort", onAbort),
-        };
-        if (signal.aborted) onAbort();
+        },
       });
     },
-    [refreshIndex],
-  );
-  useEffect(
-    () => () => {
-      rejectPendingConversationsRevalidation(
-        new DOMException(
-          "Conversations refresh source was replaced.",
-          "AbortError",
-        ),
-      );
-    },
-    [rejectPendingConversationsRevalidation],
+    [refreshIndex, revalidation],
   );
 
   const commitPage = useCallback(
