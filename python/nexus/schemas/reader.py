@@ -1,10 +1,9 @@
 """Reader profile and per-media reader state schemas."""
 
-import math
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 
 from nexus.schemas.presence import Presence
 
@@ -32,32 +31,14 @@ class HighlightTargetTimeRangeOut(ResolvedHighlightTargetModel):
 
 
 class HighlightTargetPdfQuadOut(ResolvedHighlightTargetModel):
-    x1: float
-    y1: float
-    x2: float
-    y2: float
-    x3: float
-    y3: float
-    x4: float
-    y4: float
-
-    @model_validator(mode="after")
-    def validate_finite(self) -> "HighlightTargetPdfQuadOut":
-        if not all(
-            math.isfinite(value)
-            for value in (
-                self.x1,
-                self.y1,
-                self.x2,
-                self.y2,
-                self.x3,
-                self.y3,
-                self.x4,
-                self.y4,
-            )
-        ):
-            raise ValueError("PDF quad coordinates must be finite")
-        return self
+    x1: FiniteFloat
+    y1: FiniteFloat
+    x2: FiniteFloat
+    y2: FiniteFloat
+    x3: FiniteFloat
+    y3: FiniteFloat
+    x4: FiniteFloat
+    y4: FiniteFloat
 
 
 class WebTextOffsetsTargetOut(ResolvedHighlightTargetModel):
@@ -189,41 +170,6 @@ class ReaderStateModel(BaseModel):
     """Base model for persisted reader resume state payloads."""
 
     model_config = ConfigDict(extra="forbid")
-
-    def model_dump(
-        self,
-        *,
-        mode: Literal["json", "python"] | str = "python",
-        include: Any = None,
-        exclude: Any = None,
-        context: Any | None = None,
-        by_alias: bool | None = None,
-        exclude_unset: bool = False,
-        exclude_defaults: bool = False,
-        exclude_none: bool = False,
-        exclude_computed_fields: bool = False,
-        round_trip: bool = False,
-        warnings: bool | Literal["none", "warn", "error"] = True,
-        fallback: Any = None,
-        serialize_as_any: bool = False,
-    ) -> dict[str, Any]:
-        """Keep explicit nulls in persisted reader-state payloads."""
-
-        return super().model_dump(
-            mode=mode,
-            include=include,
-            exclude=exclude,
-            context=context,
-            by_alias=by_alias,
-            exclude_unset=exclude_unset,
-            exclude_defaults=exclude_defaults,
-            exclude_none=False,
-            exclude_computed_fields=exclude_computed_fields,
-            round_trip=round_trip,
-            warnings=warnings,
-            fallback=fallback,
-            serialize_as_any=serialize_as_any,
-        )
 
 
 class ReaderTextLocations(ReaderStateModel):
