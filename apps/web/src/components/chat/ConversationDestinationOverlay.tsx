@@ -5,7 +5,7 @@ import Dialog from "@/components/ui/Dialog";
 import Input from "@/components/ui/Input";
 import LoadMoreFooter from "@/components/ui/LoadMoreFooter";
 import MobileSheet from "@/components/ui/MobileSheet";
-import type { ApiPath } from "@/lib/api/client";
+import { apiFetch, type ApiPath } from "@/lib/api/client";
 import { useResource } from "@/lib/api/useResource";
 import { useCursorPagination, type CursorPage } from "@/lib/api/useCursorPagination";
 import { formatDisplayNumber } from "@/lib/display/format";
@@ -146,7 +146,11 @@ function DestinationPicker({ onSelect }: { onSelect: (conversationId: string) =>
     useCursorPagination<ConversationListItem>({
       firstPage,
       initialMoreError: null,
-      buildMoreHref: (cursor) => buildListHref(debouncedQuery, cursor),
+      loadMorePage: (cursor, signal) =>
+        apiFetch<CursorPage<ConversationListItem>>(
+          buildListHref(debouncedQuery, cursor),
+          { signal },
+        ),
     });
 
   // Effective active row derived during render (never via an effect) so an in-flight

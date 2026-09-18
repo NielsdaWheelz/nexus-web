@@ -68,7 +68,6 @@ export function useImportHistory(ref: ImportRef | null): ImportHistoryResult {
   const pagination = useCursorPagination<HistoryEntry>({
     firstPage,
     initialMoreError: null,
-    buildMoreHref: (cursor) => cursor,
     loadMorePage: async (cursor, signal) => {
       if (ref === null) throw new Error("Cannot page a history with no ref");
       return cursorPage(
