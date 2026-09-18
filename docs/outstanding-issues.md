@@ -225,5 +225,4 @@ unexpected timeouts. See
 - [open] oi-170 · consumption activity · 2026-09-17 slop sweep · p3 · `clientMutationId` on activity uploads is a wire no-op held by the shipped android client: [ticket](tickets/activity-upload-client-mutation-id-is-a-wire-no-op.md).
 - [open] oi-171 · appearance · 2026-09-18 owner decisions · p3 · Press and Study declare no color-scheme, so native controls and UA scrollbars follow the browser default: [ticket](tickets/press-and-study-leave-native-controls-on-the-ua-scheme.md).
 - [open] oi-172 · contributors · 2026-09-18 owner decisions · p3 · author rename is dead end to end now that no viewer can hold the admin role; delete the feature or grant it to a real principal: [ticket](tickets/author-rename-has-no-principal-who-may-perform-it.md).
-
-- [open] release backup capacity · 2026-09-18 deployment · required backup reservation exceeds available vps disk: [ticket](tickets/release-backup-exceeds-vps-disk.md).
+- [open] secret scanning · 2026-09-18 pr #334 · gitguardian repeats an operator-classified false positive on a compose variable reference: [ticket](tickets/gitguardian-repeats-classified-variable-reference.md).

@@ -222,6 +222,31 @@ one canonical `/etc/nexus/config/<sha256>.env`, then atomically moves
 The config snapshot is root:root `0440`, the live Caddyfile is root:root
 `0444`, and release-state directories are root:root `0750`.
 
+required migration backups use a separate private cloudflare r2 bucket. keep
+both `r2.dev` access and public custom domains disabled. create credentials
+scoped to object read/write access in this bucket, place them in the ignored
+`deploy/env/env-prod-backup` input, then publish them before the new sha's
+application release:
+
+```bash
+NEXUS_BACKUP_ENV=/absolute/path/to/env-prod-backup \
+  ./deploy/hetzner/sync-backup-env.sh "$SOURCE_SHA"
+```
+
+this publisher writes one root-owned `/etc/nexus/backup-config/<sha256>.env`
+and atomically moves `/etc/nexus/backup.env` under the shared release lock. it
+does not restart services or expose backup credentials to application containers.
+the release captures the exact backup config path and digest before stopping
+writers. a missing or invalid backup config blocks a new required-backup release.
+historical local backups and their attempts remain readable.
+
+retain r2's default cleanup of incomplete multipart uploads after seven days.
+do not expire completed backups automatically: retain them until an
+explicit retention review permits removing individual recovery points. r2
+storage and request usage can incur charges beyond the account's free allowance.
+see [r2 lifecycle behavior](https://developers.cloudflare.com/r2/buckets/object-lifecycles/)
+and [r2 pricing](https://developers.cloudflare.com/r2/pricing/).
+
 The Vercel deployment ID is its durable build-config snapshot. Keep this sequence
 serialized so no other production build captures the prepared values. A
 code-only release may reuse the current Vercel snapshot and current
@@ -257,8 +282,25 @@ replay restores and verifies an existing `FrontendPromoted` candidate's bound
 backend without regressing its phase, including after `current` publication
 but before `Succeeded`. finalization checks the bound public release identity.
 
-Database backups are required by default. An operator who accepts losing the
-fresh stopped-writer recovery point can explicitly waive it:
+database backups are required by default. the controller streams a compressed
+custom-format postgres dump directly to the captured private r2 bucket at
+`releases/<source-sha>/database.dump`. it keeps only a small durable upload
+receipt on the vps, completes the object only after `pg_dump` succeeds, then
+reads the entire object back and checks its byte count, sha256, and complete
+`pg_restore` traversal before admitting migration. interrupted upload completion
+uses that receipt; a completed object without its receipt is never adopted.
+after full verification it publishes `releases/<source-sha>/database.json`, a
+recovery manifest containing the archive identity, starting revision, byte
+count, and sha256. this keeps the recovery point usable if the vps is lost.
+replay re-verifies the bound object before database mutation.
+
+this avoids reserving a second database-sized local file. the tradeoffs are r2
+storage/request charges, network dependence, and upload plus full readback time
+inside the no-use window. the api artifact includes the postgres client for the
+bounded backup container; the running api does not receive backup credentials.
+
+an operator who accepts losing the fresh stopped-writer recovery point can
+explicitly waive it:
 
 ```bash
 ./deploy/hetzner/deploy.sh "$SOURCE_SHA" --no-database-backup
@@ -266,7 +308,7 @@ fresh stopped-writer recovery point can explicitly waive it:
 
 The attempt records this choice before stopping writers. Every replay must use
 the same choice; adding or omitting the flag later is refused. A waiver skips
-database backup creation and its disk reservation. It preserves migration
+database backup creation and its storage preflight. It preserves migration
 preflights, stopped-writer proof, the durable mutation boundary, and release
 health checks. Existing archives remain untouched and are not represented as a
 fresh release backup. Database mutation still requires forward recovery;
@@ -319,7 +361,7 @@ The command performs the complete protocol:
    result; unsafe current use blocks before any update;
 4. preflights the exact content-addressed config path and digest, Compose, Caddy
    equality, image identity, applied memory/PID limits, cgroup, memory, swap,
-   PSI, parser disk and required-backup disk, running-container ownership,
+   PSI, parser disk and the required-backup destination, running-container ownership,
    live infra, database ancestry, and predecessor evidence without mutation;
 5. stops and proves stopped the background worker first, then the interactive
    worker and API;
@@ -356,15 +398,23 @@ current
 forward-fix
 ```
 
-Bundles live at `/opt/nexus/releases/<source-sha>`, configs at
-`/etc/nexus/config/<sha256>.env`, and migration backups at
-`/var/backups/nexus`. Durable JSON and pointers are canonical, fsynced, and
-atomically published. Records and bundles are immutable.
+bundles live at `/opt/nexus/releases/<source-sha>` and application configs at
+`/etc/nexus/config/<sha256>.env`. backup configs live separately at
+`/etc/nexus/backup-config/<sha256>.env`. r2 backups use
+`releases/<source-sha>/database.dump` and its `database.json` recovery manifest
+in the captured private bucket; their small upload receipts live at
+`/var/backups/nexus/r2/<source-sha>/receipt.json`.
+historical local archives remain at `/var/backups/nexus/<source-sha>.dump`.
+durable json and pointers are canonical, fsynced, and atomically published.
+records and bundles are immutable.
 
-New application attempts use schema `2` and record immutable `backup_policy`
-(`required` or `waived`). Existing schema `1` attempts require backups and retain
-their original JSON representation. A waived attempt records `backup: null`;
-it never claims `BackupVerified`.
+new application attempts use schema `3` and record immutable `backup_policy`
+(`required` or `waived`), `backup_config_path`, and `backup_config_sha256`.
+required attempts bind backup config even when no migration is pending; waived
+attempts bind neither. existing schema `1` and `2` attempts retain their original
+json and local-backup semantics. schema `1` requires backups; schema `2` retains
+its recorded policy. a waived attempt records `backup: null`; it never claims
+`BackupVerified`.
 
 Application phases are:
 
@@ -451,6 +501,64 @@ defective while its attempt is active, stop and preserve all state for reviewed
 manual disaster recovery. There is no generic controller swap, override, or
 fallback. The narrow two-SHA repair authority below exists only for Oracle
 reconciliation and cannot activate application code or configuration.
+
+### database backup recovery
+
+a verified archive is a recovery point, not an automatic rollback. restoring it
+discards writes made after that point. keep the no-use window closed and review
+the database, application sha, and schema together before any production restore.
+the release controller never restores or downgrades a database.
+
+first restore into an isolated disposable postgres instance on a machine with
+space for both the archive and expanded database. use the captured postgres
+image, including pgvector, and create the original database owner role. the
+remote `database.json` recovery manifest binds the r2 endpoint, bucket, key,
+expected sha256, byte count, database identity, and starting revision. the vps's
+release attempt is additional evidence when available; losing it does not make
+the remote recovery point unusable. r2's multipart etag is not the archive's
+sha256.
+
+configure an s3 client profile named `nexus-backups` with region `auto` and the
+operator-only credentials, without putting secrets in command arguments. set
+`BACKUP_ENDPOINT` and `BACKUP_BUCKET` from the retained operator config, then
+download the desired release's recovery manifest with the aws cli:
+
+```bash
+umask 077
+aws --profile nexus-backups --endpoint-url "$BACKUP_ENDPOINT" \
+  s3api get-object --bucket "$BACKUP_BUCKET" \
+  --key "releases/$SOURCE_SHA/database.json" recovery.json
+jq . recovery.json
+```
+
+require manifest schema `1` and its source sha, endpoint, bucket, and archive
+key to match the selected release and destination. set `BACKUP_KEY`, `BACKUP_SHA256`, and
+`BACKUP_BYTE_COUNT` from its evidence, then download and check the archive:
+
+```bash
+umask 077
+aws --profile nexus-backups --endpoint-url "$BACKUP_ENDPOINT" \
+  s3api get-object --bucket "$BACKUP_BUCKET" --key "$BACKUP_KEY" recovery.dump
+test "$(wc -c < recovery.dump | tr -d ' ')" = "$BACKUP_BYTE_COUNT"
+printf '%s  %s\n' "$BACKUP_SHA256" recovery.dump | sha256sum --check
+pg_restore --file=/dev/null recovery.dump
+```
+
+proceed only after all three checks succeed. in a shell configured to connect
+only to the isolated recovery instance, create a new database and restore it:
+
+```bash
+createdb nexus_backup_rehearsal
+pg_restore --exit-on-error --dbname=nexus_backup_rehearsal recovery.dump
+psql --dbname=nexus_backup_rehearsal --no-psqlrc --tuples-only \
+  --command='SELECT version_num FROM alembic_version'
+```
+
+require the recorded starting revision and inspect representative product rows
+before treating the rehearsal as complete. retain its outcome with the recovery
+point. a live production restore remains a separately reviewed disaster recovery
+operation; do not substitute this disposable database for production or start
+predecessor code against a migrated database.
 
 ## Oracle publication
 
@@ -555,6 +663,8 @@ release controller.
 | Durable host protocol | `deploy/hetzner/release.py` |
 | Production topology | `deploy/hetzner/docker-compose.yml` |
 | VPS config publication | `deploy/hetzner/sync-env.sh` |
+| backup config publication | `deploy/hetzner/sync-backup-env.sh` |
+| streamed database backup | `python/nexus/release_backup.py` |
 | Vercel config publication | `deploy/vercel/sync-env.sh` |
 | Oracle operation | `deploy/hetzner/reconcile-oracle.sh` |
 | Environment contract | `deploy/env/README.md` and `deploy/env/*.example` |
