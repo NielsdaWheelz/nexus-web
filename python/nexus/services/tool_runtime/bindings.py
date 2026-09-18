@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any
 
 from llm_tools import (
     Available,
     ExecutionContext,
     HandlerSuccess,
-    ToolBinding,
     ToolId,
 )
 
@@ -19,45 +18,21 @@ from nexus.services.tool_runtime.binding_contract import (
 from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
 from nexus.services.tool_runtime.execution import NexusToolExecution
 
+_EXECUTION = NexusToolExecution()
+_AVAILABILITY_BY_ID: dict[ToolId, NexusToolAvailability] = {}
+for _entry in NEXUS_TOOL_DECLARATIONS:
 
-class NexusToolExecutionService(Protocol):
-    """Explicit execution owner supplied when the application binds dispatch."""
-
-    async def execute(
-        self,
-        *,
-        tool_id: ToolId,
+    async def _handler(
         value: object,
         context: ExecutionContext,
-    ) -> HandlerSuccess[Any]: ...
+        *,
+        _tool_id: ToolId = _entry.spec.id,
+    ) -> HandlerSuccess[Any]:
+        return await _EXECUTION.execute(tool_id=_tool_id, value=value, context=context)
+
+    _AVAILABILITY_BY_ID[_entry.spec.id] = Available(_handler)
+
+NEXUS_TOOL_BINDINGS = compose_nexus_bindings(_AVAILABILITY_BY_ID)
 
 
-def bind_nexus_tools(
-    execution: NexusToolExecutionService,
-) -> tuple[ToolBinding[Any, Any, Any], ...]:
-    """Bind every declaration to one explicit application execution owner."""
-
-    availability_by_id: dict[ToolId, NexusToolAvailability] = {}
-    for entry in NEXUS_TOOL_DECLARATIONS:
-        tool_id = entry.spec.id
-
-        async def handler(
-            value: object,
-            context: ExecutionContext,
-            *,
-            _tool_id: ToolId = tool_id,
-        ) -> HandlerSuccess[Any]:
-            return await execution.execute(tool_id=_tool_id, value=value, context=context)
-
-        availability_by_id[tool_id] = Available(handler)
-    return compose_nexus_bindings(availability_by_id)
-
-
-NEXUS_TOOL_BINDINGS = bind_nexus_tools(NexusToolExecution())
-
-
-__all__ = [
-    "NEXUS_TOOL_BINDINGS",
-    "NexusToolExecutionService",
-    "bind_nexus_tools",
-]
+__all__ = ["NEXUS_TOOL_BINDINGS"]

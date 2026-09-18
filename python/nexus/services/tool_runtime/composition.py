@@ -23,7 +23,6 @@ from llm_tools import (
     ToolCatalog,
     ToolEffect,
     ToolFamily,
-    ToolId,
     ToolSpec,
     Unavailable,
     WebSearchProvider,
@@ -44,7 +43,7 @@ from pydantic import ValidationError
 
 from nexus.config import Settings
 from nexus.services.tool_runtime.declarations import (
-    CHAT_TOOL_DECLARATIONS,
+    CHAT_TOOL_DECLARATIONS_BY_ID,
     NEXUS_TOOL_DECLARATIONS,
     PresentedToolDeclaration,
 )
@@ -85,9 +84,6 @@ _WEB_SEARCH_POLICY_INPUTS: Final[Mapping[str, object]] = MappingProxyType(
         "safe_search": "moderate",
         "selected_results": 5,
     }
-)
-_PRESENTED_DECLARATIONS_BY_ID: Final[Mapping[ToolId, PresentedToolDeclaration]] = MappingProxyType(
-    {entry.spec.id: entry for entry in CHAT_TOOL_DECLARATIONS}
 )
 
 
@@ -161,26 +157,6 @@ def _compose_tool_runtime(
     return ComposedToolRuntime(catalog=catalog, operations=operations)
 
 
-def compose_tool_runtime(
-    web_search_binding: ToolBinding[Any, Any, Any],
-    *,
-    web_read_binding: ToolBinding[Any, Any, Any] | None = None,
-    nexus_bindings: tuple[ToolBinding[Any, Any, Any], ...] | None = None,
-) -> ComposedToolRuntime:
-    """Freeze every reviewed operation plan against one exact tool catalogue."""
-
-    if nexus_bindings is None:
-        from nexus.services.tool_runtime.bindings import NEXUS_TOOL_BINDINGS
-
-        nexus_bindings = NEXUS_TOOL_BINDINGS
-    _require_nexus_execution(nexus_bindings, available=True)
-    return _compose_tool_runtime(
-        web_search_binding,
-        web_read_binding=web_read_binding or bind_web_read(SafeWebReader()),
-        nexus_bindings=nexus_bindings,
-    )
-
-
 def _validate_frozen_operation(operation: FrozenToolOperation) -> None:
     definition = operation.definition
     profile = operation.profile
@@ -219,7 +195,7 @@ def operation_presented_declarations(
     declarations: list[PresentedToolDeclaration] = []
     for spec in operation_tool_specs(operation):
         try:
-            entry = _PRESENTED_DECLARATIONS_BY_ID[spec.id]
+            entry = CHAT_TOOL_DECLARATIONS_BY_ID[spec.id]
         except KeyError as exc:
             raise ValueError(f"frozen tool lacks presentation metadata: {spec.id!s}") from exc
         if entry.spec is not spec:
@@ -287,6 +263,8 @@ def compose_product_tool_runtime(
 ) -> ComposedToolRuntime:
     """Compose one process-owned runtime with stable configured/keyless authority."""
 
+    from nexus.services.tool_runtime.bindings import NEXUS_TOOL_BINDINGS
+
     if web_search_provider is None:
         portable = ToolCatalog.compose((web_family(),)).binding(WEB_SEARCH_SPEC.id)
         web_search_binding: ToolBinding[Any, Any, Any] = ToolBinding(
@@ -307,7 +285,12 @@ def compose_product_tool_runtime(
             policy_epoch=portable.policy_epoch,
             policy_inputs={**portable.policy_inputs, **_WEB_SEARCH_POLICY_INPUTS},
         )
-    return compose_tool_runtime(web_search_binding)
+    _require_nexus_execution(NEXUS_TOOL_BINDINGS, available=True)
+    return _compose_tool_runtime(
+        web_search_binding,
+        web_read_binding=bind_web_read(SafeWebReader()),
+        nexus_bindings=NEXUS_TOOL_BINDINGS,
+    )
 
 
 def compose_projection_tool_runtime() -> ComposedToolRuntime:
@@ -422,7 +405,6 @@ __all__ = [
     "compose_provider_model_tools",
     "compose_product_tool_runtime",
     "compose_projection_tool_runtime",
-    "compose_tool_runtime",
     "encode_tool_plan_snapshot",
     "freeze_tool_plan_snapshot",
     "operation_presented_declarations",

@@ -75,7 +75,6 @@ _MCP_STREAMABLE_HTTP_ACCEPT: Final[bytes] = b"application/json, text/event-strea
 MAX_MCP_REQUEST_BODY_BYTES: Final[int] = 512 * 1024
 MCP_RATE_WINDOW_SECONDS: Final[float] = 60.0
 MCP_SOURCE_RATE_BURST: Final[int] = 120
-MCP_GRANT_RATE_BURST: Final[int] = 120
 _MAX_MCP_SOURCE_WINDOWS: Final[int] = 4_096
 MCP_TOOL_DRAIN_TIMEOUT_SECONDS: Final[float] = 35.0
 _MAX_JSON_RPC_INTEGER: Final[int] = 2**63 - 1
@@ -521,7 +520,6 @@ class CodexGenerationToolBinding:
     intent: GenerationIntent = field(repr=False)
     signing_key: SecretStr = field(repr=False)
     projection: ToolExecutionProjection | None = field(default=None, repr=False)
-    registry: ActiveAgentToolRegistry | None = field(default=None, repr=False)
     _bind_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _admission: GenerationAdmission | None = field(default=None, init=False, repr=False)
     _command: GenerationCommand | None = field(default=None, init=False, repr=False)
@@ -594,7 +592,7 @@ class CodexGenerationToolBinding:
                 transport_deadline_at=admitted_at
                 + timedelta(seconds=admission.runtime_deadline_seconds),
             )
-            registry = self.registry or active_agent_tool_registry()
+            registry = active_agent_tool_registry()
             if registry is None:
                 raise RuntimeError("active agent-tool registry is not installed")
             authority = AgentToolAuthority.from_generation_tool_executor(
@@ -655,7 +653,6 @@ def compose_codex_generation_tool_binding(
     intent: GenerationIntent,
     settings: Settings,
     projection: ToolExecutionProjection | None = None,
-    registry: ActiveAgentToolRegistry | None = None,
 ) -> CodexGenerationToolBinding:
     """Compose the one grant lifecycle shared by Chat and background Codex."""
 
@@ -670,7 +667,6 @@ def compose_codex_generation_tool_binding(
         intent=intent,
         signing_key=settings.effective_agent_tool_grant_signing_key,
         projection=projection,
-        registry=registry,
     )
 
 
@@ -678,7 +674,7 @@ def _aware_utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
-def create_active_agent_tools_mcp_app(
+def create_agent_tools_mcp_app(
     *,
     registry: ActiveAgentToolRegistry,
     signing_key: SecretStr,
@@ -686,33 +682,40 @@ def create_active_agent_tools_mcp_app(
     settings: Settings,
 ) -> Any:
     """Build the worker listener whose authority is selected per grant."""
-    return create_routed_agent_tools_mcp_app(
-        registry=registry,
-        signing_key=signing_key,
+
+    authority = _AuthorityRouter(registry)
+    tools = [
+        _sdk_tool(authority, wire_name, entry, on_policy_violation)
+        for wire_name, entry in _model_tool_wire_declarations()
+    ]
+    server = _AgentToolsMCPServer(
+        authority=authority,
         on_policy_violation=on_policy_violation,
+        tools=tools,
         lifespan=_active_listener_lifespan(registry, settings),
-        mcp_origin=settings.agent_tools_mcp_origin,
+    )
+    app = server.streamable_http_app(
+        streamable_http_path=MCP_PATH,
+        stateless_http=True,
+        json_response=True,
+        max_request_body_size=MAX_MCP_REQUEST_BODY_BYTES,
+        transport_security=_transport_security(settings.agent_tools_mcp_origin),
     )
 
+    async def authorize_request(claims: AgentToolGrantClaims) -> bool:
+        return await authority.authorize_request(
+            claims=claims,
+            on_policy_violation=on_policy_violation,
+        )
 
-def create_routed_agent_tools_mcp_app(
-    *,
-    registry: ActiveAgentToolRegistry,
-    signing_key: SecretStr,
-    on_policy_violation: Callable[[UUID], Awaitable[None]],
-    mcp_origin: str,
-    lifespan: Callable[[Any], AbstractAsyncContextManager[Any]] | None = None,
-) -> Any:
-    """Build the sole grant-routed stateless Streamable HTTP application."""
-    router = _AuthorityRouter(registry)
-    app = _create_mcp_app_for_authority(
-        authority=router,
+    app.add_middleware(
+        _GrantGate,
         signing_key=signing_key,
-        on_policy_violation=on_policy_violation,
         clock=registry.database_now,
-        lifespan=lifespan,
-        mcp_origin=mcp_origin,
+        authorize_request=authorize_request,
+        max_body_bytes=MAX_MCP_REQUEST_BODY_BYTES,
     )
+    app.add_middleware(_McpSourceRateGate)
     return app
 
 
@@ -750,51 +753,6 @@ def _active_listener_lifespan(
                 registry.unbind_operations(operations)
 
     return lifespan
-
-
-def _create_mcp_app_for_authority(
-    *,
-    authority: Any,
-    signing_key: SecretStr,
-    on_policy_violation: Callable[[UUID], Awaitable[None]],
-    clock: Callable[[], Awaitable[datetime]],
-    lifespan: Callable[[Any], AbstractAsyncContextManager[Any]] | None = None,
-    mcp_origin: str,
-) -> Any:
-    tools = [
-        _sdk_tool(authority, wire_name, entry, on_policy_violation)
-        for wire_name, entry in _model_tool_wire_declarations()
-    ]
-    server = _AgentToolsMCPServer(
-        authority=authority,
-        on_policy_violation=on_policy_violation,
-        tools=tools,
-        lifespan=lifespan,
-    )
-    app = server.streamable_http_app(
-        streamable_http_path=MCP_PATH,
-        stateless_http=True,
-        json_response=True,
-        max_request_body_size=MAX_MCP_REQUEST_BODY_BYTES,
-        transport_security=_transport_security(mcp_origin),
-    )
-
-    async def authorize_request(claims: AgentToolGrantClaims) -> bool:
-        return await authority.authorize_request(
-            claims=claims,
-            on_policy_violation=on_policy_violation,
-        )
-
-    app.add_middleware(_AuthenticatedGrantRateGate)
-    app.add_middleware(
-        _GrantGate,
-        signing_key=signing_key,
-        clock=clock,
-        authorize_request=authorize_request,
-        max_body_bytes=MAX_MCP_REQUEST_BODY_BYTES,
-    )
-    app.add_middleware(_McpSourceRateGate)
-    return app
 
 
 def _transport_security(mcp_origin: str) -> TransportSecuritySettings:
@@ -846,37 +804,6 @@ class _McpSourceRateGate(BaseHTTPMiddleware):
             self._windows.popitem(last=False)
 
 
-class _AuthenticatedGrantRateGate(BaseHTTPMiddleware):
-    """Reserve a distinct fixed window for each already-authorized active grant."""
-
-    def __init__(self, app: Any) -> None:
-        super().__init__(app)
-        self._windows: dict[str, _RateWindow] = {}
-        self._lock = asyncio.Lock()
-
-    async def dispatch(self, request: Request, call_next: Callable[[Request], Any]) -> Response:
-        if request.url.path != MCP_PATH:
-            return await call_next(request)
-        claims = getattr(request.state, "agent_tool_grant", None)
-        if not isinstance(claims, AgentToolGrantClaims):
-            raise RuntimeError("authenticated MCP rate gate received no verified grant")
-        now = time.monotonic()
-        async with self._lock:
-            window = self._windows.get(claims.jti)
-            if window is None or now - window.started >= MCP_RATE_WINDOW_SECONDS:
-                window = _RateWindow(started=now)
-                self._windows[claims.jti] = window
-            if window.requests >= MCP_GRANT_RATE_BURST:
-                return Response(status_code=429)
-            window.requests += 1
-            self._windows = {
-                jti: candidate
-                for jti, candidate in self._windows.items()
-                if now - candidate.started < MCP_RATE_WINDOW_SECONDS
-            }
-        return await call_next(request)
-
-
 def _trusted_mcp_source(request: Request) -> str | None:
     """Resolve Caddy's single-hop source without trusting a public-supplied chain."""
 
@@ -886,9 +813,7 @@ def _trusted_mcp_source(request: Request) -> str | None:
     try:
         peer = ipaddress.ip_address(client.host)
     except ValueError:
-        # Starlette's in-process test transport uses a non-address sentinel and
-        # cannot supply a spoofable network header.
-        return f"local:{client.host}"
+        return None
     forwarded_values = request.headers.getlist("x-forwarded-for")
     if peer.is_private and not peer.is_loopback:
         if len(forwarded_values) != 1 or "," in forwarded_values[0]:
