@@ -140,16 +140,10 @@ export function anchoredRowForEvidenceItem(
     };
   }
   if (locator.type === "pdf_page_geometry") {
-    if (typeof locator.page_number !== "number") return null;
-    // A fact resolved through a passage_anchor is legitimately page-only: the
-    // passage-anchor resolver recomputes quote identity, never geometry, so its
-    // locator carries no quads until a fresh selection supplies them. Page-only
-    // projection beats dropping the row from the margin/Evidence entirely.
-    const quads = parseRawPdfQuads(locator.quads);
     return {
       ...base,
       page_number: locator.page_number,
-      quads,
+      quads: parseRawPdfQuads(locator.quads),
     };
   }
   return null;

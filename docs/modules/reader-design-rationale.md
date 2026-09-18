@@ -343,11 +343,13 @@ The format reader publishes both visible endpoints with a source/layout fence;
 `readerDocumentPosition.ts` only projects them. A missing exact endpoint stays
 absent rather than becoming a zero or a scrollbar estimate.
 
-Document Map markers use exact owner start locators. EPUB Contents targets are
-exact element starts; missing named anchors reject navigation. Dense rail
-targets retain exact ticks while bounded hit groups expose every destination.
-structure and evidence use separate lanes; aliases do not duplicate content. Preview, Return, and restore can paint the rail but
-cannot write progress or activity.
+Document Map markers use the most precise current owner locator. EPUB Contents
+targets are exact element starts; missing named anchors reject navigation. A
+PDF passage whose quote resolves without current geometry gets a page-start
+point and no fabricated extent. Dense rail targets retain exact ticks while
+bounded hit groups expose every destination. Structure and evidence use
+separate lanes; aliases do not duplicate content. Preview, Return, and restore
+can paint the rail but cannot write progress or activity.
 
 ### addressability versus history
 

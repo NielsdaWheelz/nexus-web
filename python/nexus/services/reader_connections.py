@@ -350,10 +350,9 @@ def _reader_locator_from_passage(media_id: UUID, locator: dict[str, Any]) -> dic
         if page_number is None:
             return None
         return {
-            "type": "pdf_page_geometry",
+            "type": "pdf_page",
             "media_id": str(media_id),
             "page_number": int(page_number),
-            "quads": locator.get("quads", []),
         }
     if kind == "time":
         return {

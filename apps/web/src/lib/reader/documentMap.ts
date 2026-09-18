@@ -31,8 +31,18 @@ export type ReaderEvidenceSourceKind =
 
 export type ReaderEvidenceConfidence = "exact" | "strong" | "probable";
 
+export interface ReaderPdfPageLocator {
+  type: "pdf_page";
+  media_id: string;
+  page_number: number;
+}
+
+export type ReaderEvidenceLocator =
+  | MediaRetrievalLocator
+  | ReaderPdfPageLocator;
+
 export interface ReaderEvidenceAnchor {
-  locator: MediaRetrievalLocator;
+  locator: ReaderEvidenceLocator;
   // Present when the resolved locus is a durable passage anchor, so a mutation
   // can key off the anchor rather than the edge. Null for every other locus.
   passage_anchor_id: string | null;

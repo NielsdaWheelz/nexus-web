@@ -230,7 +230,6 @@ unexpected timeouts. See
 
 - [open] oi-153 · web bff · 2026-09-17 slop sweep · p3 · 153 of 175 route files are the same proxy handler; one catch-all plus an explicit denylist replaces them: [ticket](tickets/bff-proxy-routes-are-153-identical-files.md).
 - [open] oi-161 · web panes · 2026-09-17 slop sweep · p3 · four pane bodies are oversized with no split that does not invent abstractions; re-measure after the dedupes land: [ticket](tickets/oversized-pane-bodies-have-no-obvious-split.md).
-- [open] pdf passage connections · 2026-09-17 passage cleanup · p2 · valid page locations are rejected by the geometry-only connection projection: [ticket](tickets/pdf-passage-connections-lose-current-locations.md).
 - [open] pdf passage positioning · 2026-09-17 passage cleanup · p2 · actual viewport verification is blocked by standalone renderer bootstrap: [ticket](tickets/pdf-passage-positioning-needs-browser-verification.md).
 - [open] oi-167 · pdf highlights · 2026-09-17 typecheck cleanup · p2 · write-time matching combines cached text with current publication spans: [ticket](tickets/pdf-highlight-matching-mixes-publication-snapshots.md).
 - [open] oi-168 · pdf highlights · 2026-09-17 typecheck cleanup · p3 · three persisted quote-match columns have no current runtime readers: [ticket](tickets/pdf-highlight-match-columns-have-no-readers.md).

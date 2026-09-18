@@ -39,12 +39,14 @@ def locator_fraction(
     page_count: int | None,
     pdf_page_heights: dict[int, float],
 ) -> float | None:
-    """Map an exact locator to a normalized document-overview position."""
+    """Map a current locator to a normalized document-overview position."""
 
     if not locator:
         return None
     page = locator_page(locator)
     if page is not None and page_count and page_count > 0:
+        if locator.get("type") == "pdf_page":
+            return (page - 1) / page_count if page <= page_count else None
         origin = _pdf_quad_origin(locator)
         page_height = pdf_page_heights.get(page)
         if (
@@ -156,7 +158,7 @@ def locator_is_current_for_media(
         case "web_text_offsets" | "epub_fragment_offsets":
             fragment_id = locator_fragment(locator)
             return fragment_id is not None and str(fragment_id) in fragment_indexes
-        case "pdf_page_geometry":
+        case "pdf_page" | "pdf_page_geometry":
             page_number = locator_page(locator)
             return page_count is not None and page_number is not None and page_number <= page_count
         case "transcript_time_range" | "audio_time_range" | "video_time_range":

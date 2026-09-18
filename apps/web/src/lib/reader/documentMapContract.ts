@@ -24,6 +24,7 @@ import {
   expectNonnegativeInteger,
   expectNullableString,
   expectOneOf,
+  expectPositiveInteger,
   expectRecord,
   expectString,
 } from "@/lib/validation";
@@ -35,6 +36,7 @@ import type {
   ReaderEvidenceAnchor,
   ReaderEvidenceAssociation,
   ReaderEvidenceItem,
+  ReaderEvidenceLocator,
   ReaderEvidenceObject,
   ReaderEvidencePassageGroup,
   ReaderEvidenceResolution,
@@ -212,17 +214,34 @@ function decodeResolution(
 
 function decodeAnchor(raw: unknown, name: string): ReaderEvidenceAnchor {
   const value = expectExactRecord(raw, ["locator", "passage_anchor_id"], name);
-  if (
-    !isRetrievalLocator(value.locator) ||
-    !isMediaRetrievalLocator(value.locator)
-  ) {
-    defect(`${name}.locator is not a supported media reader locator`);
-  }
   return {
-    locator: value.locator,
+    locator: decodeEvidenceLocator(value.locator, `${name}.locator`),
     passage_anchor_id: expectNullableString(
       value.passage_anchor_id,
       `${name}.passage_anchor_id`,
+    ),
+  };
+}
+
+function decodeEvidenceLocator(
+  raw: unknown,
+  name: string,
+): ReaderEvidenceLocator {
+  if (isRetrievalLocator(raw) && isMediaRetrievalLocator(raw)) return raw;
+  const value = expectExactRecord(
+    raw,
+    ["type", "media_id", "page_number"],
+    name,
+  );
+  if (value.type !== "pdf_page") {
+    defect(`${name} is not a supported media reader locator`);
+  }
+  return {
+    type: "pdf_page",
+    media_id: expectString(value.media_id, `${name}.media_id`),
+    page_number: expectPositiveInteger(
+      value.page_number,
+      `${name}.page_number`,
     ),
   };
 }
