@@ -30,9 +30,8 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
 from functools import partial
-from typing import Literal, assert_never, cast
+from typing import Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
@@ -128,7 +127,6 @@ from nexus.services._contributor_identity import (
 from nexus.services.capabilities import can_edit_media_authors, can_rename_contributor
 from nexus.services.chat_context_refs import contributor_is_referenced_in_persisted_context
 from nexus.services.collection_keyset import (
-    Direction,
     SortKey,
     after_values,
     expected_kinds,
@@ -292,79 +290,61 @@ def get_contributor_detail(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class WorksPublishedNewest:
-    """Canonical: newest publication first, undated works last."""
-
-
-@dataclass(frozen=True, slots=True)
-class WorksPublishedOldest:
-    """Oldest publication first; undated works stay last."""
-
-
-@dataclass(frozen=True, slots=True)
-class WorksTitle:
-    direction: Direction
-
-
-type ContributorWorksView = WorksPublishedNewest | WorksPublishedOldest | WorksTitle
-
 _WORKS_VIEW_KEYS = frozenset({"sort", "direction"})
 # Versioned family: a cursor minted under the single unordered works view
 # carries no plan and can address no chosen order, so none is decodable here.
 _WORKS_CURSOR_FAMILY = f"{CollectionFamily.AuthorWorks.value}:v2"
 
+# The four advertised works views and their total, stable sort-key plans, which
+# drive ORDER BY, the keyset, and the cursor `after`. Keyed by the raw
+# ``(sort, direction)`` query parameters; both absent is the canonical
+# newest-first view and ``published+desc`` is rejected rather than normalized so
+# that view keeps exactly one URL. ``date_missing`` is ALWAYS ASC so undated
+# works sort last in both publication directions (0=dated, 1=undated); ``href``
+# is the distinct relation's unique target key, which makes every plan total.
+# Each list is hashed into the signed works cursor: reordering one invalidates
+# every outstanding cursor for that view.
+_WORKS_PLANS: dict[tuple[str | None, str | None], list[SortKey]] = {
+    (None, None): [
+        SortKey("date_missing", "asc", KeysetValueKind.Int),
+        SortKey("date_key", "desc", KeysetValueKind.TextOrNull),
+        SortKey("title", "asc", KeysetValueKind.Text),
+        SortKey("href", "asc", KeysetValueKind.Text),
+    ],
+    ("published", "asc"): [
+        SortKey("date_missing", "asc", KeysetValueKind.Int),
+        SortKey("date_key", "asc", KeysetValueKind.TextOrNull),
+        SortKey("title", "asc", KeysetValueKind.Text),
+        SortKey("href", "asc", KeysetValueKind.Text),
+    ],
+    ("title", "asc"): [
+        SortKey("title_key", "asc", KeysetValueKind.Text),
+        SortKey("title", "asc", KeysetValueKind.Text),
+        SortKey("date_missing", "asc", KeysetValueKind.Int),
+        SortKey("date_key", "desc", KeysetValueKind.TextOrNull),
+        SortKey("href", "asc", KeysetValueKind.Text),
+    ],
+    ("title", "desc"): [
+        SortKey("title_key", "desc", KeysetValueKind.Text),
+        SortKey("title", "desc", KeysetValueKind.Text),
+        SortKey("date_missing", "asc", KeysetValueKind.Int),
+        SortKey("date_key", "desc", KeysetValueKind.TextOrNull),
+        SortKey("href", "asc", KeysetValueKind.Text),
+    ],
+}
+
 
 def parse_contributor_works_query(
     items: Sequence[tuple[str, str]],
-) -> tuple[ContributorWorksView, ParsedCollectionQuery]:
+) -> tuple[list[SortKey], ParsedCollectionQuery]:
     """Strict works-view query parse. ``items`` is the request's ``multi_items()``
-    so duplicate keys are visible. Both keys absent is the canonical
-    newest-first view; anything else must name one advertised non-default view
-    exactly. ``published+desc`` is rejected rather than normalized so the
-    canonical view keeps exactly one URL."""
+    so duplicate keys are visible. Anything that is not one advertised view
+    exactly is rejected."""
     query = parse_collection_query(items, domain_keys=_WORKS_VIEW_KEYS)
-    sort = query.parameters.get("sort")
-    direction = query.parameters.get("direction")
-    if sort is None and direction is None:
-        return WorksPublishedNewest(), query
-    if sort == "published" and direction == "asc":
-        return WorksPublishedOldest(), query
-    if sort == "title" and (direction == "asc" or direction == "desc"):
-        return WorksTitle(direction), query
-    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported author works view")
-
-
-def _works_plan(view: ContributorWorksView) -> list[SortKey]:
-    """The total, stable sort-key plan that drives ORDER BY, the keyset, and the
-    cursor `after`. ``date_missing`` is ALWAYS ASC so undated works sort last in
-    both publication directions (0=dated, 1=undated); ``href`` is the distinct
-    relation's unique target key, which makes every plan total."""
-    match view:
-        case WorksPublishedNewest():
-            return [
-                SortKey("date_missing", "asc", KeysetValueKind.Int),
-                SortKey("date_key", "desc", KeysetValueKind.TextOrNull),
-                SortKey("title", "asc", KeysetValueKind.Text),
-                SortKey("href", "asc", KeysetValueKind.Text),
-            ]
-        case WorksPublishedOldest():
-            return [
-                SortKey("date_missing", "asc", KeysetValueKind.Int),
-                SortKey("date_key", "asc", KeysetValueKind.TextOrNull),
-                SortKey("title", "asc", KeysetValueKind.Text),
-                SortKey("href", "asc", KeysetValueKind.Text),
-            ]
-        case WorksTitle(direction):
-            return [
-                SortKey("title_key", direction, KeysetValueKind.Text),
-                SortKey("title", direction, KeysetValueKind.Text),
-                SortKey("date_missing", "asc", KeysetValueKind.Int),
-                SortKey("date_key", "desc", KeysetValueKind.TextOrNull),
-                SortKey("href", "asc", KeysetValueKind.Text),
-            ]
-        case _:
-            assert_never(view)
+    plan = _WORKS_PLANS.get((query.parameters.get("sort"), query.parameters.get("direction")))
+    if plan is None:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported author works view")
+    return plan, query
 
 
 def list_contributor_works(
@@ -372,7 +352,7 @@ def list_contributor_works(
     *,
     viewer_id: UUID,
     contributor_handle: ContributorHandle,
-    view: ContributorWorksView,
+    plan: list[SortKey],
     cursor: CollectionCursor | None = None,
     collection_revision: CollectionRevision | None = None,
     limit: int = 100,
@@ -393,7 +373,6 @@ def list_contributor_works(
             expected=collection_revision,
         )
     )
-    plan = _works_plan(view)
     cursor_query = {
         "contributorHandle": str(contributor_handle),
         "family": _WORKS_CURSOR_FAMILY,
@@ -567,41 +546,18 @@ def resolve_contributor_ids_by_handles(db: Session, handles: Sequence[str]) -> d
 # ---------------------------------------------------------------------------
 
 
-def replace_observed_role_slices(
-    *,
-    target: CreditTarget,
-    observation: ContributorObservationBatch,
-    source: str,
-) -> None:
-    """One unreplayable automatic author mutation (spec 2.4).
-
-    ``NOT_OBSERVED`` returns before any session is opened and never erases prior
-    credits. Never touches ``resource_mutations`` (D-43): a stable job key may
-    legitimately observe different authors later, and background lanes have no
-    user.
-    """
-    if isinstance(observation, NotObserved):
-        return
-    fresh = _fresh_author_session()
-    try:
-        retry_serializable(
-            fresh,
-            "replace_observed_role_slices",
-            partial(_run_observations_op, fresh, ((target, observation, source),)),
-        )
-    finally:
-        fresh.close()
-
-
 def replace_observed_role_slices_batch(
     items: Sequence[tuple[CreditTarget, ContributorObservationBatch, str]],
 ) -> None:
-    """Chunked variant of :func:`replace_observed_role_slices` (D-15).
+    """Unreplayable automatic author mutations, in chunks (spec 2.4, D-15).
 
-    Used only by the gutenberg catalog sync: one fresh session and one
-    serializable operation per chunk of ``_BATCH_CHUNK_SIZE`` targets, applying
-    the same per-target semantics sequentially. A chunk retry recomputes from
-    current rows; unchanged targets perform no DML, so retries converge.
+    ``NOT_OBSERVED`` targets are dropped before any session is opened and never
+    erase prior credits. One fresh session and one serializable operation per
+    chunk of ``_BATCH_CHUNK_SIZE`` targets, applied sequentially. A chunk retry
+    recomputes from current rows; unchanged targets perform no DML, so retries
+    converge. Never touches ``resource_mutations`` (D-43): a stable job key may
+    legitimately observe different authors later, and background lanes have no
+    user.
     """
     observed = [
         (target, observation, source)
@@ -1326,53 +1282,27 @@ def _contributor_is_orphaned(db: Session, contributor: Contributor) -> bool:
 
 
 def _foreign_author_memo_exists(db: Session, *, contributor: Contributor) -> bool:
-    """D-41 foreign replay probe: typed object, URI string, or foreign scope.
+    """D-41 foreign replay probe: any memo whose response names this handle.
 
-    ``jsonb_path_exists`` (not text LIKE) over ``response_json`` for the known
-    ref forms — any ``contributorHandle`` field (author-edit memos are recorded
-    ``by_alias=True``, so they carry the camel spelling), plus the typed
-    contributor object, the snake ``contributor_handle`` field, and the
-    ``contributor:<uuid>`` URI (D-41's future-proof forms; no current memo shape
-    produces them) — plus a scope-prefix check that excludes the contributor's
-    own display-name scope, which the prune deletes itself. A media-author memo
-    naming this contributor therefore keeps a replay-protected identity alive
-    until that memo is removed (spec 2.8).
+    ``jsonb_path_exists`` (not text LIKE) over ``response_json``: author-edit memos
+    are recorded ``by_alias=True``, so a media-author memo naming this contributor
+    carries the camel ``contributorHandle`` and keeps a replay-protected identity
+    alive until that memo is removed (spec 2.8).
     """
-    handle_path = (
-        '$.** ? ((@.type == "contributor" && @.id == $h)'
-        " || @.contributorHandle == $h || @.contributor_handle == $h)"
-    )
     row = db.execute(
         text(
             """
             SELECT 1
             FROM resource_mutations rm
-            WHERE (
-                jsonb_path_exists(
-                    rm.response_json,
-                    CAST(:handle_path AS jsonpath),
-                    jsonb_build_object('h', CAST(:contributor_handle AS text))
-                )
-                OR jsonb_path_exists(
-                    rm.response_json,
-                    '$.** ? (@ == $uri)',
-                    jsonb_build_object('uri', CAST(:contributor_uri AS text))
-                )
-                OR (
-                    rm.mutation_scope LIKE :scope_prefix
-                    AND rm.mutation_scope != :own_scope
-                )
+            WHERE jsonb_path_exists(
+                rm.response_json,
+                '$.** ? (@.contributorHandle == $h)',
+                jsonb_build_object('h', CAST(:contributor_handle AS text))
             )
             LIMIT 1
             """
         ),
-        {
-            "handle_path": handle_path,
-            "contributor_handle": contributor.handle,
-            "contributor_uri": f"contributor:{contributor.id}",
-            "scope_prefix": f"contributor:{contributor.id}:%",
-            "own_scope": f"contributor:{contributor.id}:display-name",
-        },
+        {"contributor_handle": contributor.handle},
     ).first()
     return row is not None
 

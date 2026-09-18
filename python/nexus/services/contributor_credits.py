@@ -23,32 +23,6 @@ from nexus.auth.permissions import visible_content_credit_rows_sql, visible_medi
 from nexus.schemas.contributors import ContributorCreditOut, ContributorRole
 
 
-def visible_credit_rows_sql() -> str:
-    """All credit rows on targets visible to the viewer. Binds ``:viewer_id``.
-
-    Thin composable wrapper over the permissions predicate so read consumers
-    compose the canonical relation without importing visibility SQL themselves.
-    Columns: every ``contributor_credits`` column (``cc.*``).
-    """
-    return visible_content_credit_rows_sql()
-
-
-def current_contributor_rows_for_media_sql() -> str:
-    """Current direct-plus-parent-podcast credits for supplied media ids.
-
-    Binds ``:media_ids`` and returns one role fact per contributor/media; the
-    Consumption stats owner aggregates roles and fully co-credits activity.
-    """
-    return """
-        SELECT DISTINCT media_ids.media_id, c.handle, c.display_name, cc.role
-        FROM unnest(CAST(:media_ids AS uuid[])) AS media_ids(media_id)
-        LEFT JOIN podcast_episodes pe ON pe.media_id = media_ids.media_id
-        JOIN contributor_credits cc
-          ON cc.media_id = media_ids.media_id OR cc.podcast_id = pe.podcast_id
-        JOIN contributors c ON c.id = cc.contributor_id
-    """
-
-
 def current_media_contributor_rows_sql() -> str:
     """All direct-plus-parent-podcast media credit facts.
 
@@ -57,7 +31,7 @@ def current_media_contributor_rows_sql() -> str:
     intentionally supplies attribution rather than a second visibility rule.
     """
     return """
-        SELECT DISTINCT targets.media_id, c.handle, c.display_name, cc.role
+        SELECT DISTINCT targets.media_id, c.handle, c.display_name, targets.role
         FROM (
             SELECT cc.media_id, cc.contributor_id, cc.role
             FROM contributor_credits cc
@@ -411,14 +385,12 @@ def media_author_names_agg_sql() -> str:
     )
 
 
-def media_author_credits_join_sql(media_id_expr: str = "m.id") -> str:
+def media_author_credits_join_sql() -> str:
     """``LEFT JOIN`` onto author-role credits for :func:`media_author_names_agg_sql`.
 
-    ``media_id_expr`` is the outer query's media-id SQL expression.
+    The outer query must alias its media row ``m``.
     """
-    return (
-        f"LEFT JOIN contributor_credits cc ON cc.media_id = {media_id_expr} AND cc.role = 'author'"
-    )
+    return "LEFT JOIN contributor_credits cc ON cc.media_id = m.id AND cc.role = 'author'"
 
 
 def load_contributor_credits_for_media(
@@ -426,34 +398,7 @@ def load_contributor_credits_for_media(
     media_ids: list[UUID],
 ) -> dict[UUID, list[ContributorCreditOut]]:
     """Batch-load ordered credits per media id, as narrowed embedded DTOs (D-33)."""
-    credits_by_media: dict[UUID, list[ContributorCreditOut]] = {
-        media_id: [] for media_id in media_ids
-    }
-    if not media_ids:
-        return credits_by_media
-
-    rows = db.execute(
-        text(
-            """
-            SELECT
-                cc.media_id,
-                c.handle,
-                c.display_name,
-                cc.credited_name,
-                cc.role,
-                cc.raw_role,
-                cc.ordinal
-            FROM contributor_credits cc
-            JOIN contributors c ON c.id = cc.contributor_id
-            WHERE cc.media_id = ANY(:media_ids)
-            ORDER BY cc.media_id ASC, cc.ordinal ASC
-            """
-        ),
-        {"media_ids": media_ids},
-    ).fetchall()
-    for row in rows:
-        credits_by_media.setdefault(UUID(str(row[0])), []).append(_credit_out(row))
-    return credits_by_media
+    return _load_credits(db, "media_id", media_ids)
 
 
 def load_contributor_credits_for_podcasts(
@@ -461,17 +406,26 @@ def load_contributor_credits_for_podcasts(
     podcast_ids: list[UUID],
 ) -> dict[UUID, list[ContributorCreditOut]]:
     """Batch-load ordered credits per podcast id, as narrowed embedded DTOs (D-33)."""
-    credits_by_podcast: dict[UUID, list[ContributorCreditOut]] = {
-        podcast_id: [] for podcast_id in podcast_ids
+    return _load_credits(db, "podcast_id", podcast_ids)
+
+
+def _load_credits(
+    db: Session,
+    owner_column: Literal["media_id", "podcast_id"],
+    owner_ids: list[UUID],
+) -> dict[UUID, list[ContributorCreditOut]]:
+    """``owner_column`` is a fixed internal literal, never user input."""
+    credits_by_owner: dict[UUID, list[ContributorCreditOut]] = {
+        owner_id: [] for owner_id in owner_ids
     }
-    if not podcast_ids:
-        return credits_by_podcast
+    if not owner_ids:
+        return credits_by_owner
 
     rows = db.execute(
         text(
-            """
+            f"""
             SELECT
-                cc.podcast_id,
+                cc.{owner_column},
                 c.handle,
                 c.display_name,
                 cc.credited_name,
@@ -480,15 +434,15 @@ def load_contributor_credits_for_podcasts(
                 cc.ordinal
             FROM contributor_credits cc
             JOIN contributors c ON c.id = cc.contributor_id
-            WHERE cc.podcast_id = ANY(:podcast_ids)
-            ORDER BY cc.podcast_id ASC, cc.ordinal ASC
+            WHERE cc.{owner_column} = ANY(:owner_ids)
+            ORDER BY cc.{owner_column} ASC, cc.ordinal ASC
             """
         ),
-        {"podcast_ids": podcast_ids},
+        {"owner_ids": owner_ids},
     ).fetchall()
     for row in rows:
-        credits_by_podcast.setdefault(UUID(str(row[0])), []).append(_credit_out(row))
-    return credits_by_podcast
+        credits_by_owner.setdefault(UUID(str(row[0])), []).append(_credit_out(row))
+    return credits_by_owner
 
 
 def current_gutenberg_author_names(
