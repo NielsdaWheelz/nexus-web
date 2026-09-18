@@ -21,13 +21,13 @@ from nexus.errors import (
     NotFoundError,
 )
 from nexus.ids import new_uuid7
-from nexus.jobs.queue import revoke_jobs_for_payload
 from nexus.logging import get_logger
 from nexus.schemas.contributors import ContributorCreditIn
 from nexus.schemas.podcast import (
     PodcastAlreadyUnsubscribedOut,
     PodcastBackfillOut,
     PodcastBackfillRetryOut,
+    PodcastBackfillState,
     PodcastCanonicalCommitTarget,
     PodcastDiscoveryCommitTarget,
     PodcastOpmlImportErrorOut,
@@ -743,7 +743,7 @@ def _backfill_state(
     completed_at: datetime | None,
     source_limited_at: datetime | None,
     failed_at: datetime | None,
-) -> str:
+) -> PodcastBackfillState:
     if failed_at is not None:
         return "Failed"
     if source_limited_at is not None:
@@ -1108,30 +1108,6 @@ def update_subscription_settings_for_viewer(
     )
 
 
-def _decode_queue_revocation(revocation: object) -> UUID | None:
-    """Decode the persisted backfill-only queue-revocation marker."""
-    if not isinstance(revocation, dict):
-        return None
-    raw_backfill_id = revocation.get("backfillId")
-    return UUID(str(raw_backfill_id)) if raw_backfill_id is not None else None
-
-
-def _revoke_subscription_jobs(
-    db: Session,
-    *,
-    backfill_id: UUID | None,
-) -> None:
-    """Revoke only the backfill job a completed Unsubscribe orphaned."""
-    if backfill_id is None:
-        return
-    with transaction(db):
-        revoke_jobs_for_payload(
-            db,
-            kind="podcast_backfill_subscription",
-            expected_payload_match={"backfillId": str(backfill_id)},
-        )
-
-
 def unsubscribe_from_podcast(
     db: Session,
     viewer_id: UUID,
@@ -1157,16 +1133,9 @@ def unsubscribe_from_podcast(
         request_bytes=request_bytes,
     )
     if replay is not None:
-        replay_payload = dict(replay)
-        replay_backfill_id = _decode_queue_revocation(replay_payload.pop("_queueRevocation", None))
-        _revoke_subscription_jobs(
-            db,
-            backfill_id=replay_backfill_id,
-        )
-        if replay_payload.get("outcome") == "Unsubscribed":
-            return PodcastUnsubscribedOut.model_validate(replay_payload)
-        return PodcastAlreadyUnsubscribedOut.model_validate(replay_payload)
-    removed_backfill_id: UUID | None = None
+        if replay.get("outcome") == "Unsubscribed":
+            return PodcastUnsubscribedOut.model_validate(replay)
+        return PodcastAlreadyUnsubscribedOut.model_validate(replay)
     command_identity = _subscription_command_identity(
         db,
         podcast_id=podcast_id,
@@ -1174,7 +1143,6 @@ def unsubscribe_from_podcast(
     )
 
     def attempt() -> PodcastUnsubscribeOut:
-        nonlocal removed_backfill_id
         with transaction(db):
             _lock_subscription_command(
                 db,
@@ -1189,13 +1157,9 @@ def unsubscribe_from_podcast(
                 request_bytes=request_bytes,
             )
             if replay is not None:
-                replay_payload = dict(replay)
-                removed_backfill_id = _decode_queue_revocation(
-                    replay_payload.pop("_queueRevocation", None)
-                )
-                if replay_payload.get("outcome") == "Unsubscribed":
-                    return PodcastUnsubscribedOut.model_validate(replay_payload)
-                return PodcastAlreadyUnsubscribedOut.model_validate(replay_payload)
+                if replay.get("outcome") == "Unsubscribed":
+                    return PodcastUnsubscribedOut.model_validate(replay)
+                return PodcastAlreadyUnsubscribedOut.model_validate(replay)
 
             subscription_id = db.scalar(
                 text(
@@ -1262,7 +1226,6 @@ def unsubscribe_from_podcast(
                         podcast_id=podcast_id,
                     )
                     if backfill is not None:
-                        removed_backfill_id = UUID(str(backfill[0]))
                         db.execute(
                             text(
                                 """
@@ -1309,32 +1272,12 @@ def unsubscribe_from_podcast(
                 scope=PODCAST_CONTROL_REPLAY_SCOPE,
                 client_mutation_id=idempotency_key,
                 request_bytes=request_bytes,
-                response_json={
-                    **response.model_dump(mode="json", by_alias=True),
-                    **(
-                        {
-                            "_queueRevocation": {
-                                "backfillId": (
-                                    str(removed_backfill_id)
-                                    if removed_backfill_id is not None
-                                    else None
-                                )
-                            }
-                        }
-                        if response.outcome == "Unsubscribed"
-                        else {}
-                    ),
-                },
+                response_json=response.model_dump(mode="json", by_alias=True),
                 changed_lanes={},
             )
             return response
 
-    response = retry_read_committed(db, "unsubscribe_from_podcast", attempt)
-    _revoke_subscription_jobs(
-        db,
-        backfill_id=removed_backfill_id,
-    )
-    return response
+    return retry_read_committed(db, "unsubscribe_from_podcast", attempt)
 
 
 def _parse_opml_rss_outlines(payload: bytes) -> list[dict[str, str]]:

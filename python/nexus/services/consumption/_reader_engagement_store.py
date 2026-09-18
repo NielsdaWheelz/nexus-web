@@ -73,18 +73,6 @@ def load_recency(db: Session, *, viewer_id: UUID, media_ids: list[UUID]) -> dict
     return {UUID(str(row[0])): row[1] for row in rows}
 
 
-def recency_subquery_sql(*, user_param: str, media_expr: str) -> str:
-    """Scalar subquery -> the viewer's ``last_engaged_at`` for one media. Composed
-    by adopters (e.g. library recency) so ``reader_engagement_states`` reads stay
-    inside this owner."""
-    return f"""(
-        SELECT re_recency.last_engaged_at
-        FROM reader_engagement_states re_recency
-        WHERE re_recency.user_id = {user_param}
-          AND re_recency.media_id = {media_expr}
-    )"""
-
-
 def record_engagement_in_txn(
     db: Session,
     *,

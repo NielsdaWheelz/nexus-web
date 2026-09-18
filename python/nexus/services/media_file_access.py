@@ -67,7 +67,7 @@ def get_media_file_source(db: Session, *, media_id: UUID) -> MediaFileSource | N
 def parse_single_byte_range(raw: str, *, size_bytes: int) -> InclusiveByteRange:
     """Parse one canonical HTTP byte range against an authorized object size."""
     match = _SINGLE_RANGE_RE.fullmatch(raw)
-    if match is None or "," in raw or size_bytes <= 0:
+    if match is None or size_bytes <= 0:
         raise ValueError("invalid byte range")
     start_raw, end_raw = match.groups()
     if not start_raw and not end_raw:

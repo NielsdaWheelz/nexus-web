@@ -135,9 +135,9 @@ def mark_terminal(
     """Idempotently transition the run to a terminal status and emit ``done``.
 
     No-op when the parent is already terminal. Otherwise sets the parent's
-    ``status`` and ``completed_at``, stamps ``error_code``/``error_detail`` on
-    the parent when given (this is the one writer of the run-parent error pair;
-    ``error_detail`` is operator-facing, never rendered), sets ``failed_at`` on
+    ``status`` and ``completed_at``, stamps ``error_code`` on the parent when
+    given and ``error_detail`` on an oracle reading (operator-facing, never
+    rendered), sets ``failed_at`` on
     a failed oracle reading (its failed-has-error CHECK), then appends the
     ``done`` event. Does not commit — the caller owns the transaction boundary.
     """
@@ -159,6 +159,8 @@ def mark_terminal(
     if error_code is not None:
         parent.error_code = error_code
     if error_detail is not None:
+        if not isinstance(parent, OracleReading):
+            raise AssertionError("error_detail is an oracle reading column")
         parent.error_detail = error_detail
     if isinstance(parent, OracleReading) and status == "failed":
         parent.failed_at = func.now()

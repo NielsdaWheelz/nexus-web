@@ -263,15 +263,6 @@ class ReaderDocumentMapMarkerOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ReaderDocumentMapSourceVersionOut(BaseModel):
-    media_updated_at: Presence[datetime]
-    apparatus_source_fingerprint: Presence[str]
-    graph_max_updated_at: Presence[datetime]
-    highlights_max_updated_at: Presence[datetime]
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class ReaderDocumentMapDiagnosticsOut(BaseModel):
     omitted_item_counts: dict[str, int] = Field(default_factory=dict)
 
@@ -284,7 +275,6 @@ class ReaderDocumentMapOut(BaseModel):
     media_kind: str
     title: str
     status: ReaderDocumentMapStatus
-    source_version: ReaderDocumentMapSourceVersionOut
     navigation: Presence[MediaNavigationOut]
     embeds: list[DocumentEmbedOut] = Field(default_factory=list)
     evidence: ReaderEvidenceOut

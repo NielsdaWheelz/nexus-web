@@ -38,14 +38,11 @@ from .types import (
     PODCAST_HEALTHY_SYNC_JITTER_MAX_SECONDS,
     PODCAST_REFRESH_DUE_MAX_LIMIT,
     PODCAST_REFRESH_ERROR_MESSAGE_MAX_LENGTH,
-    PODCAST_REFRESH_RUN_PRUNE_LIMIT,
-    PODCAST_REFRESH_RUN_RETENTION_DAYS,
     PODCAST_SYNC_BULK_PRIORITY,
     PODCAST_SYNC_FAILURE_BACKOFF_SECONDS,
     PODCAST_SYNC_INTERACTIVE_PRIORITY,
     PodcastRefreshRunItemStatus,
     PodcastRefreshRunStatus,
-    PodcastSyncStatus,
 )
 
 PODCAST_SYNC_JOB_KIND = "podcast_sync_subscription_job"
@@ -56,18 +53,6 @@ _ACTIVE_SYNC_STATUSES = frozenset({"Pending", "Running"})
 _TERMINAL_SYNC_STATUSES = frozenset({"Complete", "SourceLimited", "Failed"})
 _ACTIVE_ITEM_STATUSES = frozenset({"Pending", "Running"})
 _TERMINAL_ITEM_STATUSES = frozenset({"Complete", "SourceLimited", "Failed", "Skipped"})
-
-
-@dataclass(frozen=True)
-class GenerationAdmission:
-    subscription_id: UUID
-    user_id: UUID
-    podcast_id: UUID
-    sync_generation: int
-    status: PodcastSyncStatus
-    job_id: UUID
-    inserted_job: bool
-    promoted_job: bool
 
 
 @dataclass(frozen=True)
@@ -275,7 +260,7 @@ def admit_subscription_generation_in_txn(
     podcast_id: UUID,
     priority: int,
     run_id: UUID | None = None,
-) -> GenerationAdmission:
+) -> None:
     """Join the active generation or start one terminal subscription generation.
 
     The caller owns the surrounding retryable transaction. An interactive join
@@ -305,7 +290,6 @@ def admit_subscription_generation_in_txn(
         podcast_id=podcast_id,
     )
 
-    promoted = False
     preflight_status = str(preflight["sync_status"])
     preflight_job_id = preflight["sync_job_id"]
     if (
@@ -320,7 +304,7 @@ def admit_subscription_generation_in_txn(
             podcast_id=podcast_id,
             sync_generation=generation,
         )
-        promoted = promote_unclaimed_job(
+        promote_unclaimed_job(
             db,
             job_id=UUID(str(preflight_job_id)),
             kind=PODCAST_SYNC_JOB_KIND,
@@ -391,9 +375,8 @@ def admit_subscription_generation_in_txn(
         podcast_id=podcast_id,
         sync_generation=generation,
     )
-    inserted_job = False
     if current_job_id is None:
-        job, inserted_job = enqueue_unique_job(
+        job, _inserted = enqueue_unique_job(
             db,
             kind=PODCAST_SYNC_JOB_KIND,
             payload=payload,
@@ -442,17 +425,6 @@ def admit_subscription_generation_in_txn(
                 "status": status,
             },
         )
-
-    return GenerationAdmission(
-        subscription_id=subscription_id,
-        user_id=user_id,
-        podcast_id=podcast_id,
-        sync_generation=generation,
-        status=cast(PodcastSyncStatus, status),
-        job_id=current_job_id,
-        inserted_job=inserted_job,
-        promoted_job=promoted,
-    )
 
 
 def bump_refresh_collections_in_txn(db: Session, viewer_ids: Sequence[UUID]) -> None:
@@ -871,38 +843,3 @@ def get_refresh_run_snapshot(
 ) -> PodcastRefreshRunSnapshotOut:
     assert_refresh_run_owner(db, viewer_id=viewer_id, run_id=run_id)
     return _read_refresh_run_snapshot(db, run_id=run_id)
-
-
-def prune_terminal_refresh_runs(db: Session) -> int:
-    with transaction(db):
-        run_ids = [
-            UUID(str(row[0]))
-            for row in db.execute(
-                text(
-                    """
-                    SELECT id
-                    FROM podcast_refresh_runs
-                    WHERE status IN ('Complete', 'Partial', 'Failed')
-                      AND completed_at < now() - (:retention_days * interval '1 day')
-                    ORDER BY completed_at, id
-                    LIMIT :limit
-                    FOR UPDATE SKIP LOCKED
-                    """
-                ),
-                {
-                    "retention_days": PODCAST_REFRESH_RUN_RETENTION_DAYS,
-                    "limit": PODCAST_REFRESH_RUN_PRUNE_LIMIT,
-                },
-            ).fetchall()
-        ]
-        if not run_ids:
-            return 0
-        db.execute(
-            text("DELETE FROM podcast_refresh_run_items WHERE run_id = ANY(:run_ids)"),
-            {"run_ids": run_ids},
-        )
-        db.execute(
-            text("DELETE FROM podcast_refresh_runs WHERE id = ANY(:run_ids)"),
-            {"run_ids": run_ids},
-        )
-        return len(run_ids)

@@ -14,7 +14,6 @@ BACKGROUND_WORKER_JOB_KINDS: tuple[str, ...] = (
     "note_reindex_job",
     "podcast_backfill_subscription",
     "podcast_refresh_due_job",
-    "podcast_refresh_run_prune_job",
     "podcast_reindex_semantic_job",
     "synapse_scan",
     "dawn_write_job",

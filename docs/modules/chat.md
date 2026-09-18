@@ -334,13 +334,14 @@ variants, their valid origins, and the `chat_failure_projection`/
 cancelled turn; `POST /messages/{assistant_message_id}/regenerate` produces a
 fresh alternative for an eligible completed answer. Each has its sole BFF route
 (`app/api/messages/[messageId]/{rerun,regenerate}/route.ts`) and both are
-consolidated into one private sibling-candidate constructor
-(`services/chat_run_candidates.py`) with two explicit commands and separate
-eligibility guards. Each request carries an exact selection, the current
-catalog-definition revision, and `tool_authority: ReadOnly`. The primary action
-reuses the source run's selection only while the current catalog still marks it
-rerun-eligible; otherwise `CandidateGenerationPicker` requires an explicit
-replacement. Nothing silently substitutes a model, and write authority never
+consolidated into one sibling-candidate constructor
+(`services/chat_run_candidates.py`) that each route calls with an explicit
+`rerun`/`regenerate` operation and separate eligibility guards. Each request
+carries an exact selection, the current catalog-definition revision, and
+`tool_authority: ReadOnly`. The primary action reuses the source run's
+selection only while the current catalog still marks it rerun-eligible;
+otherwise `CandidateGenerationPicker` requires an explicit replacement. Nothing
+silently substitutes a model, and write authority never
 inherits. Both commands clone the source user turn (content, parent, branch
 lineage, reader-selection snapshot, turn context) into a new user sibling with a
 pending assistant child and one queued durable run, then select the new

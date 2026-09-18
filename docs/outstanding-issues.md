@@ -256,9 +256,14 @@ unexpected timeouts. See
 - [open] oi-153 · web bff · 2026-09-17 slop sweep · p3 · 153 of 175 route files are the same proxy handler; one catch-all plus an explicit denylist replaces them: [ticket](tickets/bff-proxy-routes-are-153-identical-files.md).
 - [open] oi-156 · web resource actions · 2026-09-17 slop sweep · p3 · owner-approved cutover deleting the lost-response delete witness; a lost response then leaves the row until refresh: [ticket](tickets/destructive-action-settlement-cutover.md).
 - [open] oi-157 · dossiers · 2026-09-17 slop sweep · p3 · drop the support and error_code projections and the idea manifest redaction, adding idea_subject_id to the exact-record key list: [ticket](tickets/dossier-wire-carries-redundant-projections.md).
-- [open] oi-159 · python static gates · 2026-09-17 slop sweep · p3 · pyright's include list omits seven service packages; checking all of nexus yields 17 errors: [ticket](tickets/pyright-checks-a-hand-maintained-file-list.md).
 - [open] oi-160 · runtime health · 2026-09-17 slop sweep · p3 · readyz runs an ingest-reconciler integrity audit that gates public ingress and the interactive worker: [ticket](tickets/readyz-gates-deploys-on-an-ingest-reconciler-audit.md).
 - [open] oi-161 · web panes · 2026-09-17 slop sweep · p3 · four pane bodies are oversized with no split that does not invent abstractions; re-measure after the dedupes land: [ticket](tickets/oversized-pane-bodies-have-no-obvious-split.md).
 - [open] oi-163 · note anchors · 2026-09-17 cleanup audit · p2 · normalized quote offsets can address the wrong stored text: [ticket](tickets/note-quote-offsets-assume-normalized-source.md).
 - [open] oi-165 · note navigation · 2026-09-17 cleanup audit · p2 · emitted passage links have no navigation consumer: [ticket](tickets/note-passage-links-have-no-navigation-consumer.md).
 - [open] oi-166 · reader evidence · 2026-09-17 slop sweep · p3 · media evidence wire keeps dead `route`/`selector` fields coupled by an exact-key web decoder: [ticket](tickets/media-evidence-wire-keeps-dead-route-and-selector.md).
+- [open] oi-167 · pdf highlights · 2026-09-17 typecheck cleanup · p2 · write-time matching combines cached text with current publication spans: [ticket](tickets/pdf-highlight-matching-mixes-publication-snapshots.md).
+- [open] oi-168 · pdf highlights · 2026-09-17 typecheck cleanup · p3 · three persisted quote-match columns have no current runtime readers: [ticket](tickets/pdf-highlight-match-columns-have-no-readers.md).
+- [open] oi-167 · chat tool runtime · 2026-09-17 slop sweep · p3 · `rejected_provider_call` has no producer, so an unknown provider tool name has no recorded outcome: [ticket](tickets/unknown-provider-tool-name-has-no-recorded-outcome.md).
+||||||| 72af03076e
+- [open] oi-168 · consumption activity · 2026-09-17 slop sweep · p3 · `clientMutationId` on activity uploads is a wire no-op held by the shipped android client: [ticket](tickets/activity-upload-client-mutation-id-is-a-wire-no-op.md).
+||||||| 433ab7b522

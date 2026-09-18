@@ -19,10 +19,8 @@ Every projection runs inside the caller's open transaction and never commits.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -179,8 +177,7 @@ def _project_podcast_backfill(db: Session, job: JobRow) -> None:
     try:
         backfill_id = UUID(str(job.payload["backfillId"]))
         expected_step_no = int(job.payload["expectedStepNo"])
-        expected_digest = str(job.payload["expectedCursorDigest"])
-        if expected_step_no < 0 or len(expected_digest) != 64:
+        if expected_step_no < 0:
             raise ValueError("Invalid Podcast backfill fence")
     except (KeyError, TypeError, ValueError):
         return
@@ -188,7 +185,7 @@ def _project_podcast_backfill(db: Session, job: JobRow) -> None:
         db.execute(
             text(
                 """
-                SELECT step_no, cursor, completed_at, source_limited_at, failed_at
+                SELECT step_no, completed_at, source_limited_at, failed_at
                 FROM podcast_subscription_backfills
                 WHERE id = :backfill_id
                 FOR UPDATE
@@ -200,8 +197,6 @@ def _project_podcast_backfill(db: Session, job: JobRow) -> None:
         .first()
     )
     if row is None or int(row["step_no"]) != expected_step_no:
-        return
-    if _cursor_digest(row["cursor"]) != expected_digest:
         return
     if any(row[field] is not None for field in ("completed_at", "source_limited_at", "failed_at")):
         return
@@ -228,21 +223,3 @@ def _project_podcast_backfill(db: Session, job: JobRow) -> None:
             )[:_BACKFILL_ERROR_DETAIL_MAX_LENGTH],
         },
     )
-
-
-def _cursor_digest(value: object) -> str:
-    """Canonical replay-fence digest for a stored provider continuation."""
-    if value is not None and not isinstance(value, dict):
-        # justify-defect: the cursor column is a jsonb object or NULL.
-        raise AssertionError("Podcast backfill cursor is not an object")
-    cursor: dict[str, Any] | None = (
-        None if value is None else {str(key): item for key, item in value.items()}
-    )
-    payload = json.dumps(
-        cursor,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()

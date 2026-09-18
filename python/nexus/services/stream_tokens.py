@@ -21,7 +21,6 @@ from nexus.config import get_settings
 from nexus.db.session import get_session_factory, transaction
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.redact import safe_kv
 
 logger = get_logger(__name__)
 
@@ -261,7 +260,7 @@ def _claim_jti_once(*, jti: str, user_id: UUID, exp_epoch: int) -> None:
                 },
             )
             if result.first() is None:
-                logger.warning("stream.jti_replay_blocked", **safe_kv(jti=jti))
+                logger.warning("stream.jti_replay_blocked", jti=jti)
                 raise ApiError(
                     ApiErrorCode.E_STREAM_TOKEN_REPLAYED,
                     "Stream token has already been used",

@@ -246,20 +246,17 @@ use ordinary queue retries, and exhausted retries invoke the exact dead-letter
 finalizer.
 
 `podcast_refresh_due_job` is a 15-minute background schedule that admits a
-bounded oldest-due set and creates one refresh run per affected viewer.
-`podcast_refresh_run_prune_job` runs daily and deletes at most 1,000 terminal
-runs older than 30 days, child items first. Neither is a maintenance-only
-operation.
+bounded oldest-due set and creates one refresh run per affected viewer. It is
+not a maintenance-only operation.
 
 `podcast_backfill_subscription` is a separate durable history traversal seeded
-once by Subscribe. Each payload carries `backfillId`, `expectedStepNo`, and
-`expectedCursorDigest`. The handler fetches outside the DB transaction, renews
-the exact queue claim, locks and revalidates the backfill/subscription fence,
-commits one bounded metadata batch, advances counters/cursor, and enqueues at
-most one successor in that transaction. Stale claims, removed subscriptions,
-and already-applied steps terminate without writes. Future steps and same-step
-cursor mismatches fail closed. Exhausted retries use the dead-letter finalizer
-above; the explicit idempotent Retry command replaces only a current Failed
+once by Subscribe. Each payload carries `backfillId` and `expectedStepNo`. The
+handler fetches outside the DB transaction, renews the exact queue claim, locks
+and revalidates the backfill/subscription fence, commits one bounded metadata
+batch, advances counters/cursor, and enqueues at most one successor in that
+transaction. Stale claims, removed subscriptions, and already-applied steps
+terminate without writes. Future steps fail closed. Exhausted retries use the
+dead-letter finalizer above; the explicit idempotent Retry command replaces only a current Failed
 backfill and starts one new step-zero chain.
 
 Live and backlog failure are independent. Both persist episode identities,

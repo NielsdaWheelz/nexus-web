@@ -57,7 +57,6 @@ def finalize_run(
     error_code: str | None,
     support_id: str | None = None,
     publication_warning_code: Literal["CitationsUnavailable"] | None = None,
-    error_detail: str | None = None,
     usage: dict[str, Any] | None = None,
     last_provider_event_seq: int | None = None,
     cancelled: bool = False,
@@ -124,7 +123,6 @@ def finalize_run(
         status=run_status,
         done_payload=chat_run_event_payload_json("done", done_payload),
         error_code=error_code,
-        error_detail=error_detail,
     )
     if commit:
         db.commit()

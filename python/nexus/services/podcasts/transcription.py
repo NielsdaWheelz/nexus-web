@@ -72,7 +72,6 @@ from .transcription_reservation_settlement import (
     release_transcription_reservation,
 )
 from .transcription_usage import (
-    TranscriptionBudget,
     read_transcription_budget,
     reserve_transcription_usage,
 )
@@ -306,18 +305,6 @@ def _request_podcast_episode_transcript(
     effective_status = "extracting" if already_inflight else media.processing_status
 
     if dry_run:
-        _record_podcast_transcript_request_audit(
-            db,
-            media_id=media_id,
-            requested_by_user_id=viewer_id,
-            request_reason=request_reason,
-            dry_run=True,
-            outcome="forecast",
-            required_minutes=budget.required_minutes,
-            remaining_minutes=budget.remaining_minutes,
-            fits_budget=budget.fits,
-            now=now,
-        )
         return TranscriptRequestResponse(
             media_id=str(media_id),
             processing_status=cast(MediaProcessingStatus, effective_status),
@@ -332,29 +319,13 @@ def _request_podcast_episode_transcript(
 
     if not budget.fits and not already_inflight:
         return PodcastTranscriptionRejectedQuota(
-            error=_transcript_quota_rejection(
-                db,
-                media_id=media_id,
-                requested_by_user_id=viewer_id,
-                request_reason=request_reason,
-                budget=budget,
-                now=now,
+            error=ApiError(
+                ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
+                "Monthly transcription quota exceeded",
             )
         )
 
     if already_inflight:
-        _record_podcast_transcript_request_audit(
-            db,
-            media_id=media_id,
-            requested_by_user_id=viewer_id,
-            request_reason=request_reason,
-            dry_run=False,
-            outcome="idempotent",
-            required_minutes=budget.required_minutes,
-            remaining_minutes=budget.remaining_minutes,
-            fits_budget=True,
-            now=now,
-        )
         return TranscriptRequestResponse(
             media_id=str(media_id),
             processing_status=cast(MediaProcessingStatus, effective_status),
@@ -419,18 +390,6 @@ def _request_podcast_episode_transcript(
         # pre-existing in-flight source attempt unreachable on this branch.
         raise AssertionError("podcast transcript source admission lost its state invariant")
 
-    _record_podcast_transcript_request_audit(
-        db,
-        media_id=media_id,
-        requested_by_user_id=viewer_id,
-        request_reason=request_reason,
-        dry_run=False,
-        outcome="queued",
-        required_minutes=budget.required_minutes,
-        remaining_minutes=remaining_minutes_after,
-        fits_budget=True,
-        now=now,
-    )
     return TranscriptRequestResponse(
         media_id=str(media_id),
         processing_status="extracting",
@@ -469,18 +428,6 @@ def _request_ready_podcast_transcript(
         transcript_state = admission.transcript_state
         transcript_coverage = admission.transcript_coverage
 
-    _record_podcast_transcript_request_audit(
-        db,
-        media_id=media_id,
-        requested_by_user_id=viewer_id,
-        request_reason=request_reason,
-        dry_run=dry_run,
-        outcome=outcome,
-        required_minutes=0,
-        remaining_minutes=None,
-        fits_budget=True,
-        now=now,
-    )
     return TranscriptRequestResponse(
         media_id=str(media_id),
         processing_status="ready_for_reading",
@@ -624,18 +571,6 @@ def _request_rss_podcast_transcript(
         # justify-defect: the Media lock and transcript state gate make a
         # pre-existing in-flight source attempt unreachable on this branch.
         raise AssertionError("podcast transcript source admission lost its state invariant")
-    _record_podcast_transcript_request_audit(
-        db,
-        media_id=media_id,
-        requested_by_user_id=viewer_id,
-        request_reason=request_reason,
-        dry_run=False,
-        outcome="queued",
-        required_minutes=0,
-        remaining_minutes=None,
-        fits_budget=True,
-        now=now,
-    )
     return TranscriptRequestResponse(
         media_id=str(media_id),
         processing_status="extracting",
@@ -816,17 +751,13 @@ def admit_generated_podcast_transcription_for_source_attempt(
     )
     if not budget.fits:
         return PodcastTranscriptionRejectedQuota(
-            error=_transcript_quota_rejection(
-                db,
-                media_id=media_id,
-                requested_by_user_id=requested_by_user_id,
-                request_reason=request_reason,
-                budget=budget,
-                now=now,
+            error=ApiError(
+                ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
+                "Monthly transcription quota exceeded",
             )
         )
 
-    remaining_minutes_after = reserve_transcription_usage(
+    reserve_transcription_usage(
         db,
         user_id=requested_by_user_id,
         budget=budget,
@@ -839,18 +770,6 @@ def admit_generated_podcast_transcription_for_source_attempt(
         request_reason=request_reason,
         reserved_minutes=budget.required_minutes,
         reservation_usage_date=budget.usage_date,
-        now=now,
-    )
-    _record_podcast_transcript_request_audit(
-        db,
-        media_id=media_id,
-        requested_by_user_id=requested_by_user_id,
-        request_reason=request_reason,
-        dry_run=False,
-        outcome="queued",
-        required_minutes=budget.required_minutes,
-        remaining_minutes=remaining_minutes_after,
-        fits_budget=True,
         now=now,
     )
     return PodcastTranscriptionAdmitted()
@@ -872,12 +791,10 @@ def run_podcast_transcription_now(
                 SELECT
                     episode.rss_transcript_url,
                     episode.duration_seconds,
-                    media.language,
                     job.reserved_minutes,
                     job.requested_by_user_id,
                     job.request_reason
                 FROM podcast_episodes episode
-                JOIN media ON media.id = episode.media_id
                 JOIN podcast_transcription_jobs job ON job.media_id = episode.media_id
                 WHERE episode.media_id = :media_id
                 """
@@ -891,17 +808,17 @@ def run_podcast_transcription_now(
         raise AssertionError("podcast source attempt is missing its domain job")
 
     rss_transcript_url = str(sidecar[0] or "").strip() or None
-    reserved_minutes = int(sidecar[3] or 0)
-    effective_requester = UUID(str(sidecar[4])) if sidecar[4] is not None else requested_by_user_id
-    admitted_request_reason = require_transcript_request_reason(sidecar[5])
+    reserved_minutes = int(sidecar[2] or 0)
+    effective_requester = UUID(str(sidecar[3])) if sidecar[3] is not None else requested_by_user_id
+    admitted_request_reason = require_transcript_request_reason(sidecar[4])
     if rss_transcript_url is not None and reserved_minutes == 0:
-        rss_result = fetch_rss_transcript(
-            [{"url": rss_transcript_url, "type": None, "language": sidecar[2]}],
-            episode_duration_ms=(int(sidecar[1]) * 1000 if sidecar[1] is not None else None),
-            episode_language=str(sidecar[2] or "").strip() or None,
+        rss_segments = normalize_transcript_segments(
+            fetch_rss_transcript(
+                rss_transcript_url,
+                episode_duration_ms=(int(sidecar[1]) * 1000 if sidecar[1] is not None else None),
+            )
         )
-        rss_segments = normalize_transcript_segments(rss_result.get("segments"))
-        if rss_result.get("status") == "completed" and rss_segments:
+        if rss_segments:
             now = datetime.now(UTC)
 
             def publish_publisher_transcript(db: Session, _attempt: object) -> None:
@@ -1025,7 +942,6 @@ def run_podcast_transcription_now(
     transcription_result = get_deepgram_client().transcribe(audio_url)
     transcription_status = transcription_result.status
     transcript_segments = normalize_transcript_segments(transcription_result.segments)
-    transcription_error_code = transcription_result.error_code
     transcription_error_message = str(transcription_result.error_message or "").strip()
     diagnostic_error_code = transcription_result.diagnostic_error_code
     now = datetime.now(UTC)
@@ -1072,19 +988,6 @@ def run_podcast_transcription_now(
 
     if transcription_status == "completed":
         raise RuntimeError("podcast transcription completed without valid segments")
-    if transcription_error_code in {
-        ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
-        ApiErrorCode.E_TRANSCRIPTION_TIMEOUT.value,
-    }:
-        raise ApiError(
-            ApiErrorCode(transcription_error_code),
-            transcription_error_message or "Transcription provider failed",
-        )
-    if transcription_error_code != ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value:
-        raise RuntimeError(
-            "podcast transcription provider returned unexpected failure "
-            f"code: {transcription_error_code!r}"
-        )
     raise ApiError(
         ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE,
         transcription_error_message or "Transcript unavailable",
@@ -1175,85 +1078,3 @@ def _reset_podcast_transcription_job_for_source_attempt(
 def _assert_one_mutated_row(result: Any, table_name: str) -> None:
     if getattr(result, "rowcount", None) != 1:
         raise RuntimeError(f"{table_name} mutation affected an unexpected row count")
-
-
-def _record_podcast_transcript_request_audit(
-    db: Session,
-    *,
-    media_id: UUID,
-    requested_by_user_id: UUID,
-    request_reason: TranscriptRequestReason,
-    dry_run: bool,
-    outcome: str,
-    required_minutes: int | None,
-    remaining_minutes: int | None,
-    fits_budget: bool | None,
-    now: datetime,
-) -> None:
-    db.execute(
-        text(
-            """
-            INSERT INTO podcast_transcript_request_audits (
-                media_id,
-                requested_by_user_id,
-                request_reason,
-                dry_run,
-                outcome,
-                required_minutes,
-                remaining_minutes,
-                fits_budget,
-                created_at
-            )
-            VALUES (
-                :media_id,
-                :requested_by_user_id,
-                :request_reason,
-                :dry_run,
-                :outcome,
-                :required_minutes,
-                :remaining_minutes,
-                :fits_budget,
-                :created_at
-            )
-            """
-        ),
-        {
-            "media_id": media_id,
-            "requested_by_user_id": requested_by_user_id,
-            "request_reason": request_reason,
-            "dry_run": dry_run,
-            "outcome": outcome,
-            "required_minutes": required_minutes,
-            "remaining_minutes": remaining_minutes,
-            "fits_budget": fits_budget,
-            "created_at": now,
-        },
-    )
-
-
-def _transcript_quota_rejection(
-    db: Session,
-    *,
-    media_id: UUID,
-    requested_by_user_id: UUID,
-    request_reason: TranscriptRequestReason,
-    budget: TranscriptionBudget,
-    now: datetime,
-) -> ApiError:
-    assert not budget.fits  # justify-service-invariant-check: caller gates on budget.fits.
-    _record_podcast_transcript_request_audit(
-        db,
-        media_id=media_id,
-        requested_by_user_id=requested_by_user_id,
-        request_reason=request_reason,
-        dry_run=False,
-        outcome="rejected_quota",
-        required_minutes=budget.required_minutes,
-        remaining_minutes=budget.remaining_minutes,
-        fits_budget=False,
-        now=now,
-    )
-    return ApiError(
-        ApiErrorCode.E_PODCAST_QUOTA_EXCEEDED,
-        "Monthly transcription quota exceeded",
-    )

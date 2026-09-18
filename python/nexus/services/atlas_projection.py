@@ -37,18 +37,6 @@ _MIN_PCA_VECTORS = 3
 # ---------- mean embeddings -------------------------------------------------
 
 
-def _visible_media_sql() -> str:
-    """SQL predicate subquery listing the user's personal Default virtual
-    media set (spec S4.1): every media id reachable through any of the
-    user's CURRENT non-system memberships. Oracle system-only works never
-    appear here even when the user holds a system-library membership (AC2).
-    Binds :viewer_id and :library_id (the user's own Default library id) —
-    callers must resolve that id first via
-    ``library_governance.find_default_library_id``.
-    """
-    return library_media_ids_cte_sql()
-
-
 def _parse_pgvector_literal(raw: object) -> list[float]:
     """Parse a pgvector text literal ``[a,b,...]`` into a list of floats.
 
@@ -83,7 +71,7 @@ def fetch_mean_embeddings(db: Session, user_id: UUID) -> list[tuple[UUID, list[f
                 FROM content_chunks c
                 JOIN content_embeddings e ON e.chunk_id = c.id
                 WHERE c.owner_kind = 'media'
-                  AND c.owner_id IN ({_visible_media_sql()})
+                  AND c.owner_id IN ({library_media_ids_cte_sql()})
                   AND e.embedding_vector IS NOT NULL
                 GROUP BY c.owner_id
                 HAVING count(e.id) > 0
@@ -110,7 +98,7 @@ def _fetch_mean_embeddings_python(
             FROM content_chunks c
             JOIN content_embeddings e ON e.chunk_id = c.id
             WHERE c.owner_kind = 'media'
-              AND c.owner_id IN ({_visible_media_sql()})
+              AND c.owner_id IN ({library_media_ids_cte_sql()})
               AND e.embedding_vector IS NOT NULL
             """
         ),
@@ -311,7 +299,7 @@ def count_unpositioned(db: Session, user_id: UUID) -> int:
             text(
                 f"""
                 SELECT count(DISTINCT v.media_id)
-                FROM ({_visible_media_sql()}) v(media_id)
+                FROM ({library_media_ids_cte_sql()}) v(media_id)
                 LEFT JOIN media_atlas_positions p ON p.media_id = v.media_id
                 WHERE p.media_id IS NULL
                 """

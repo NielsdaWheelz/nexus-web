@@ -42,7 +42,7 @@ from nexus.services.consumption import (
     _reader_engagement_store,
     _state_store,
 )
-from nexus.services.consumption._lectern_store import LecternRow
+from nexus.services.consumption._lectern_store import LecternRow, _opt_str
 from nexus.services.consumption._listening_store import ListeningRow
 from nexus.services.consumption._reader_engagement_store import ReaderEngagementRow
 from nexus.services.playback_source import derive_playback_source
@@ -307,20 +307,22 @@ def _derive_consumption(
 def _audio_state(
     listening: ListeningRow | None, duration_seconds: int | None
 ) -> tuple[ConsumptionStateValue, Absent | Present[float]]:
-    position = listening.position_ms if listening is not None else 0
-    duration_ms = listening.duration_ms if listening is not None else None
+    if listening is None:
+        return "Unread", absent()
+    duration_ms = listening.duration_ms
     if duration_ms is None and duration_seconds is not None:
         duration_ms = duration_seconds * 1000
-    is_completed = listening.is_completed if listening is not None else False
 
     fraction = None
     if duration_ms is not None and duration_ms > 0:
-        fraction = min(1.0, position / duration_ms)
+        fraction = min(1.0, listening.position_ms / duration_ms)
     progress: Absent | Present[float] = present(fraction) if fraction is not None else absent()
 
-    if is_completed or (fraction is not None and fraction >= _policy.FINISHED_PROGRESSION):
+    if listening.is_completed or (
+        fraction is not None and fraction >= _policy.FINISHED_PROGRESSION
+    ):
         return "Finished", progress
-    if position > 0:
+    if listening.position_ms > 0:
         return "InProgress", progress
     return "Unread", progress
 
@@ -363,18 +365,10 @@ def _progress_resettable(
 # Collection read-state projection (adopters read through the service boundary)
 # ---------------------------------------------------------------------------
 
-# The kinds whose read-state derives from the listening threshold rather than
-# reader engagement. AUDIO_KINDS died with consumption_queue.py; the
-# projection owns this derivation now (spec §7 delete map).
-_AUDIO_READ_STATE_KINDS = frozenset({MediaKind.podcast_episode.value})
-
 _STATE_TO_READ_STATE: dict[ConsumptionStateValue, MediaReadState] = {
     "Unread": "unread",
     "InProgress": "in_progress",
     "Finished": "finished",
-}
-_READ_STATE_TO_STATE: dict[MediaReadState, ConsumptionStateValue] = {
-    value: key for key, value in _STATE_TO_READ_STATE.items()
 }
 
 
@@ -388,33 +382,41 @@ class MediaReadStateOut:
     progress_resettable: bool
 
 
-def engagement_fact_rows_sql() -> str:
+def engagement_fact_rows_sql(*, media_ids_param: str | None = None) -> str:
     """Composable canonical consumption facts for one viewer.
 
     Binds ``:viewer_id`` and returns one row per media carrying an explicit
     override, reader engagement, or listening state. Columns are
     ``media_id``, ``read_state`` (``Unread``/``InProgress``/``Finished``),
     ``progress_fraction``, ``progress_resettable``, and ``last_engaged_at``.
-    The derivation is identical to :func:`media_read_states`; visibility and
-    destination policy belong to the composing caller. The candidate-id union
-    is materialized once because this relation is commonly composed as a joined
-    subquery; allowing PostgreSQL to inline it can re-run the union once per
-    outer Media candidate.
+    This is the sole read-state derivation; visibility and destination policy
+    belong to the composing caller. The candidate-id union is materialized once
+    because this relation is commonly composed as a joined subquery; allowing
+    PostgreSQL to inline it can re-run the union once per outer Media candidate.
+
+    ``media_ids_param`` names a bound UUID-array parameter restricting the
+    relation to those media. The restriction is applied inside every candidate
+    arm, so a caller asking about a handful of media never folds the viewer's
+    whole engagement history past the materialization boundary.
     """
     duration_ms = "COALESCE(pls.duration_ms, pe.duration_seconds * 1000)"
+    candidate_filter = f"AND media_id = ANY(:{media_ids_param})" if media_ids_param else ""
     return f"""
         WITH consumption_media_ids AS MATERIALIZED (
             SELECT media_id
             FROM consumption_overrides
             WHERE user_id = :viewer_id
+            {candidate_filter}
             UNION
             SELECT media_id
             FROM reader_engagement_states
             WHERE user_id = :viewer_id
+            {candidate_filter}
             UNION
             SELECT media_id
             FROM podcast_listening_states
             WHERE user_id = :viewer_id
+            {candidate_filter}
         )
         SELECT
             ids.media_id,
@@ -445,12 +447,14 @@ def engagement_fact_rows_sql() -> str:
                 WHEN m.kind <> 'podcast_episode' THEN res.max_total_progression
                 ELSE NULL
             END AS progress_fraction,
-            (
-                co.media_id IS NOT NULL
-                OR res.media_id IS NOT NULL
-                OR COALESCE(pls.position_ms, 0) > 0
-                OR pls.is_completed IS TRUE
-            ) AS progress_resettable,
+            CASE
+                WHEN m.kind = 'podcast_episode' THEN (
+                    co.media_id IS NOT NULL
+                    OR COALESCE(pls.position_ms, 0) > 0
+                    OR pls.is_completed IS TRUE
+                )
+                ELSE (co.media_id IS NOT NULL OR res.media_id IS NOT NULL)
+            END AS progress_resettable,
             CASE
                 WHEN m.kind = 'podcast_episode' THEN pls.last_engaged_at
                 ELSE res.last_engaged_at
@@ -497,38 +501,26 @@ def media_read_states(
 ) -> dict[UUID, MediaReadStateOut]:
     """Batch read-state for arbitrary media (MediaOut listings, episode surfaces).
 
-    Explicit override is the highest-priority input; otherwise podcast episodes
-    derive from the listening threshold (position/duration with the projection-only
-    95% signal, no ``is_completed`` side effect) and everything else from reader
-    engagement (any row -> in progress; ``max_total_progression >= 0.95`` ->
-    finished). Override changes state only; progress stays derived (spec §5.2)."""
+    One read of :func:`engagement_fact_rows_sql`, the sole derivation. Media with
+    no override, engagement, or listening row are Unread with no progress."""
     if not media_ids:
         return {}
-    kinds = _media_kinds(db, media_ids)
-    overrides = _state_store.load_overrides(db, viewer_id=viewer_id, media_ids=media_ids)
-    audio_ids = [mid for mid in media_ids if kinds.get(mid) in _AUDIO_READ_STATE_KINDS]
-    doc_ids = [mid for mid in media_ids if kinds.get(mid) not in _AUDIO_READ_STATE_KINDS]
-    listening = _listening_store.load_states(db, viewer_id=viewer_id, media_ids=audio_ids)
-    durations = _episode_durations(db, audio_ids)
-    engagement = _reader_engagement_store.load_states(db, viewer_id=viewer_id, media_ids=doc_ids)
-
-    result: dict[UUID, MediaReadStateOut] = {}
-    for media_id in media_ids:
-        if kinds.get(media_id) in _AUDIO_READ_STATE_KINDS:
-            state, progress = _audio_state(listening.get(media_id), durations.get(media_id))
-        else:
-            state, progress = _doc_state(engagement.get(media_id))
-        override = overrides.get(media_id)
-        if override is not None:
-            state = override
-        result[media_id] = MediaReadStateOut(
-            state=_STATE_TO_READ_STATE[state],
-            progress_fraction=progress.value if isinstance(progress, Present) else None,
-            progress_resettable=_progress_resettable(
-                override=override,
-                engagement=engagement.get(media_id),
-                listening=listening.get(media_id),
-            ),
+    result = {
+        media_id: MediaReadStateOut(
+            state="unread", progress_fraction=None, progress_resettable=False
+        )
+        for media_id in media_ids
+    }
+    rows = db.execute(
+        text(engagement_fact_rows_sql(media_ids_param="media_ids")),
+        {"viewer_id": viewer_id, "media_ids": media_ids},
+    ).mappings()
+    for row in rows:
+        fraction = row["progress_fraction"]
+        result[UUID(str(row["media_id"]))] = MediaReadStateOut(
+            state=_STATE_TO_READ_STATE[cast(ConsumptionStateValue, row["read_state"])],
+            progress_fraction=float(fraction) if fraction is not None else None,
+            progress_resettable=bool(row["progress_resettable"]),
         )
     return result
 
@@ -751,10 +743,6 @@ def _load_player_descriptor_rows(db: Session, media_ids: list[UUID]) -> list[_Pl
     ]
 
 
-def _opt_str(value: object) -> str | None:
-    return str(value) if value is not None else None
-
-
 def _media_kinds(db: Session, media_ids: list[UUID]) -> dict[UUID, str]:
     if not media_ids:
         return {}
@@ -763,22 +751,6 @@ def _media_kinds(db: Session, media_ids: list[UUID]) -> dict[UUID, str]:
         {"ids": media_ids},
     ).fetchall()
     return {UUID(str(row[0])): str(row[1]) for row in rows}
-
-
-def _episode_durations(db: Session, media_ids: list[UUID]) -> dict[UUID, int]:
-    if not media_ids:
-        return {}
-    rows = db.execute(
-        text(
-            """
-            SELECT media_id, duration_seconds
-            FROM podcast_episodes
-            WHERE media_id = ANY(:ids) AND duration_seconds IS NOT NULL
-            """
-        ),
-        {"ids": media_ids},
-    ).fetchall()
-    return {UUID(str(row[0])): int(row[1]) for row in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -826,39 +798,6 @@ def episode_state_joins_sql(
           ON {override_alias}.user_id = {user_param}
          AND {override_alias}.media_id = {media_expr}
     """
-
-
-def listening_recency_subquery_sql(*, user_param: str, media_expr: str) -> str:
-    """Scalar subquery -> truthful listening engagement recency for one media."""
-    return f"""(
-        SELECT ls_recency.last_engaged_at
-        FROM podcast_listening_states ls_recency
-        WHERE ls_recency.user_id = {user_param}
-          AND ls_recency.media_id = {media_expr}
-    )"""
-
-
-def reader_engagement_recency_subquery_sql(*, user_param: str, media_expr: str) -> str:
-    """Scalar subquery -> the viewer's reader-engagement ``last_engaged_at`` for
-    one media."""
-    return _reader_engagement_store.recency_subquery_sql(
-        user_param=user_param, media_expr=media_expr
-    )
-
-
-def listening_recency_max_subquery_sql(*, podcast_expr: str) -> str:
-    """Scalar subquery -> MAX listening engagement across the viewer's visible
-    episodes of one podcast. Binds the canonical ``:viewer_id`` visibility
-    parameter; hidden/tombstoned/tearing-down episodes cannot surface a podcast."""
-    return f"""(
-        SELECT MAX(ls_pod.last_engaged_at)
-        FROM podcast_episodes pe_ls
-        JOIN podcast_listening_states ls_pod
-          ON ls_pod.user_id = :viewer_id
-         AND ls_pod.media_id = pe_ls.media_id
-        WHERE pe_ls.podcast_id = {podcast_expr}
-          AND pe_ls.media_id IN ({visible_media_ids_cte_sql()})
-    )"""
 
 
 def _chapter_out_or_none(*, title_raw: Any, start_ms: Any, end_ms: Any) -> ChapterOut | None:
