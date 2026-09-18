@@ -108,7 +108,6 @@ def sanitize_html(
     html: str,
     base_url: str,
     *,
-    preserve_anchor_targets: bool = False,
     allow_reader_apparatus_attrs: bool = False,
     allow_document_embed_attrs: bool = False,
 ) -> str:
@@ -121,13 +120,10 @@ def sanitize_html(
     4. Strips all event handlers and styles
     5. Rewrites images to proxy endpoint
     6. Adds security attributes to links
-    7. Optionally preserves in-document anchor targets (`id` / `a[name]`)
 
     Args:
         html: The HTML content to sanitize (from Readability).
         base_url: The base URL for resolving relative URLs.
-        preserve_anchor_targets: Keep anchor target attributes for
-            in-document navigation (`id` and `a[name]`).
         allow_reader_apparatus_attrs: Keep server-authored reader apparatus
             attributes after the reader apparatus extractor has stripped
             untrusted source attributes and re-applied trusted annotations.
@@ -158,7 +154,6 @@ def sanitize_html(
             _sanitize_element(
                 child,
                 base_url,
-                preserve_anchor_targets=preserve_anchor_targets,
                 allow_reader_apparatus_attrs=allow_reader_apparatus_attrs,
                 allow_document_embed_attrs=allow_document_embed_attrs,
             )
@@ -176,7 +171,6 @@ def _sanitize_element(
     element: HtmlElement,
     base_url: str,
     *,
-    preserve_anchor_targets: bool,
     allow_reader_apparatus_attrs: bool,
     allow_document_embed_attrs: bool,
 ) -> None:
@@ -190,7 +184,6 @@ def _sanitize_element(
             _sanitize_element(
                 child,
                 base_url,
-                preserve_anchor_targets=preserve_anchor_targets,
                 allow_reader_apparatus_attrs=allow_reader_apparatus_attrs,
                 allow_document_embed_attrs=allow_document_embed_attrs,
             )
@@ -225,7 +218,6 @@ def _sanitize_element(
         element,
         tag,
         base_url,
-        preserve_anchor_targets=preserve_anchor_targets,
         allow_reader_apparatus_attrs=allow_reader_apparatus_attrs,
         allow_document_embed_attrs=allow_document_embed_attrs,
     )
@@ -236,7 +228,6 @@ def _sanitize_attributes(
     tag: str,
     base_url: str,
     *,
-    preserve_anchor_targets: bool,
     allow_reader_apparatus_attrs: bool,
     allow_document_embed_attrs: bool,
 ) -> None:
@@ -258,16 +249,7 @@ def _sanitize_attributes(
             attrs_to_remove.append(attr)
             continue
 
-        # Keep anchor targets only when explicitly requested.
-        if attr_lower == "id":
-            if preserve_anchor_targets and element.attrib.get(attr, "").strip():
-                continue
-            attrs_to_remove.append(attr)
-            continue
-
-        if attr_lower == "name" and tag == "a":
-            if preserve_anchor_targets and element.attrib.get(attr, "").strip():
-                continue
+        if attr_lower == "id" or (attr_lower == "name" and tag == "a"):
             attrs_to_remove.append(attr)
             continue
 

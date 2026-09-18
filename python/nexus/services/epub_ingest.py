@@ -134,7 +134,6 @@ _HTML_VOID_TAGS = frozenset(
 
 @dataclass(frozen=True)
 class EpubExtractionResult:
-    status: str = "success"
     fragment_count: int = 0
     toc_node_count: int = 0
     asset_count: int = 0
@@ -149,7 +148,6 @@ class EpubExtractionResult:
 
 @dataclass(frozen=True)
 class EpubExtractionError:
-    status: str = "failed"
     error_code: str = ""
     error_message: str = ""
     terminal: bool = False
@@ -423,8 +421,6 @@ class _ManifestItem:
     manifest_id: str
     href: str
     media_type: str
-    properties: str | None
-    fallback_id: str | None
 
 
 @dataclass
@@ -454,12 +450,9 @@ class _StagedChapter:
 @dataclass
 class _AssetEntry:
     epub_path: str
-    manifest_id: str | None
     asset_key: str
     content_type: str
     size_bytes: int
-    fallback_id: str | None
-    properties: str | None
 
 
 @dataclass
@@ -1058,14 +1051,11 @@ def publish_epub_extraction_plan(
         db.add(
             EpubResource(
                 media_id=media_id,
-                manifest_item_id=asset.manifest_id,
                 package_href=asset.epub_path,
                 asset_key=asset.asset_key,
                 storage_path=plan.asset_storage_paths[asset.asset_key],
                 content_type=asset.content_type,
                 size_bytes=asset.size_bytes,
-                fallback_item_id=asset.fallback_id,
-                properties=asset.properties,
                 created_at=plan.now,
             )
         )
@@ -1461,8 +1451,6 @@ def _parse_manifest(
                     manifest_id=item_id,
                     href=resolved,
                     media_type=mtype,
-                    properties=item.get("properties") or None,
-                    fallback_id=item.get("fallback") or None,
                 )
     return result
 
@@ -1952,12 +1940,9 @@ def _ensure_asset_entry(
     asset_entries.append(
         _AssetEntry(
             epub_path=epub_path,
-            manifest_id=manifest_item.manifest_id,
             asset_key=key,
             content_type=content_type,
             size_bytes=info.file_size,
-            fallback_id=manifest_item.fallback_id,
-            properties=manifest_item.properties,
         )
     )
     return key

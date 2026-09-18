@@ -3449,8 +3449,7 @@ def _replace_stored_html_projection(
                 fragment_id=fragment.id,
                 document_embeds=prepared.document_embeds,
             ),
-            extraction_error_code=prepared.document_embed_extraction_error_code,
-            extraction_error_message=prepared.document_embed_extraction_error_message,
+            extraction_failed=prepared.document_embed_extraction_failed,
             request_id=request_id,
             locked_existing_target_media_ids=frozenset(planned_existing_media_ids),
         )

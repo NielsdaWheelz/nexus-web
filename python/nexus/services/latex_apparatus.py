@@ -59,14 +59,6 @@ class LatexBiblatexApparatus:
 
 
 @dataclass(frozen=True)
-class LatexSourceArchiveSafetyConfig:
-    max_entries: int
-    max_total_uncompressed_bytes: int
-    max_single_entry_uncompressed_bytes: int
-    max_compression_ratio: int
-
-
-@dataclass(frozen=True)
 class LatexCitationMarker:
     ordinal: int
     command: str
@@ -103,9 +95,8 @@ def extract_latex_biblatex_apparatus_from_archive(
     *,
     source_kind: str,
     source_ref: dict[str, object],
-    safety_cfg: LatexSourceArchiveSafetyConfig | None = None,
 ) -> LatexBiblatexApparatus:
-    files = _source_archive_text_files(source_path, safety_cfg=safety_cfg)
+    files = _source_archive_text_files(source_path)
     tex_name, tex = _primary_tex_file(files)
     bib_resource_names = _bib_resource_names(tex)
     bib_names = bib_resource_names or tuple(name for name in files if name.lower().endswith(".bib"))
@@ -333,12 +324,8 @@ def _latex_resource_limit(reason: str, message: str) -> LatexSourceArchiveUnsafe
     return LatexSourceArchiveUnsafe(reason, message, resource_limit_dimension="Output")
 
 
-def _source_archive_text_files(
-    source_path: Path,
-    *,
-    safety_cfg: LatexSourceArchiveSafetyConfig | None = None,
-) -> dict[str, str]:
-    cfg = safety_cfg or _default_source_archive_safety_config()
+def _source_archive_text_files(source_path: Path) -> dict[str, str]:
+    settings = get_settings()
     files: dict[str, str] = {}
     selected_source_bytes = 0
     with tarfile.open(name=source_path, mode="r:*") as archive:
@@ -347,10 +334,13 @@ def _source_archive_text_files(
         entry_count = 0
         for member in archive:
             entry_count += 1
-            if entry_count > cfg.max_entries:
+            if entry_count > settings.max_latex_source_archive_entries:
                 raise LatexSourceArchiveUnsafe(
                     "too_many_entries",
-                    f"Source archive has more than {cfg.max_entries} entries",
+                    (
+                        "Source archive has more than "
+                        f"{settings.max_latex_source_archive_entries} entries"
+                    ),
                     resource_limit_dimension="Structure",
                 )
             name = _safe_source_archive_name(member.name)
@@ -368,22 +358,22 @@ def _source_archive_text_files(
                     "unsupported_member_type",
                     f"Unsupported member type in source archive: {name}",
                 )
-            if member.size > cfg.max_single_entry_uncompressed_bytes:
+            if member.size > settings.max_latex_source_archive_single_entry_uncompressed_bytes:
                 raise LatexSourceArchiveUnsafe(
                     "single_entry_too_large",
                     (
                         f"Entry '{name}' uncompressed size {member.size} exceeds limit "
-                        f"{cfg.max_single_entry_uncompressed_bytes}"
+                        f"{settings.max_latex_source_archive_single_entry_uncompressed_bytes}"
                     ),
                     resource_limit_dimension="Output",
                 )
             total_uncompressed += int(member.size)
-            if total_uncompressed > cfg.max_total_uncompressed_bytes:
+            if total_uncompressed > settings.max_latex_source_archive_total_uncompressed_bytes:
                 raise LatexSourceArchiveUnsafe(
                     "total_uncompressed_too_large",
                     (
                         f"Total uncompressed source archive size {total_uncompressed} "
-                        f"exceeds limit {cfg.max_total_uncompressed_bytes}"
+                        f"exceeds limit {settings.max_latex_source_archive_total_uncompressed_bytes}"
                     ),
                     resource_limit_dimension="Output",
                 )
@@ -405,21 +395,9 @@ def _source_archive_text_files(
         _check_source_archive_compression_ratio(
             source_path.stat().st_size,
             total_uncompressed,
-            cfg.max_compression_ratio,
+            settings.max_latex_source_archive_compression_ratio,
         )
     return files
-
-
-def _default_source_archive_safety_config() -> LatexSourceArchiveSafetyConfig:
-    settings = get_settings()
-    return LatexSourceArchiveSafetyConfig(
-        max_entries=settings.max_latex_source_archive_entries,
-        max_total_uncompressed_bytes=settings.max_latex_source_archive_total_uncompressed_bytes,
-        max_single_entry_uncompressed_bytes=(
-            settings.max_latex_source_archive_single_entry_uncompressed_bytes
-        ),
-        max_compression_ratio=settings.max_latex_source_archive_compression_ratio,
-    )
 
 
 def _safe_source_archive_name(raw_name: str) -> str:
