@@ -327,7 +327,7 @@ def _result_model_fields(
 ) -> dict[str, Any]:
     context_ref = _result_context_ref(result)
     ref = _result_resource_ref(result)
-    activation = resource_activation_for_ref(db, viewer_id=viewer_id, ref=ref)
+    activation = resource_activation_for_ref(db, viewer_id=viewer_id, ref=ref, missing=False)
     if activation.href is None:
         raise AssertionError(f"{result.result_type} search result is not activatable")
     fields = {

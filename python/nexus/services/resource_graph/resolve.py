@@ -30,15 +30,13 @@ from nexus.auth.permissions import (
     visible_podcast_ids_cte_sql,
 )
 from nexus.errors import ApiErrorCode, NotFoundError
-from nexus.schemas.retrieval import retrieval_locator_json
 from nexus.services import library_entries, library_entry_listing
-from nexus.services.artifacts.registry import visible_persisted_subject
+from nexus.services.artifacts.registry import visible_persisted_subject_sql
 from nexus.services.artifacts.subject_policy import DossierSubjectScheme
 from nexus.services.contributor_credits import (
     media_author_credits_join_sql,
     media_author_names_agg_sql,
 )
-from nexus.services.locator_resolver import locator_from_resolution, resolve_evidence_span
 from nexus.services.media_read_map import load_media_document_summary
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
@@ -86,12 +84,9 @@ class LoadedResource:
     message_role: str | None = None  # message "{role}: …"
     message_count: int | None = None  # conversation summary
     item_count: int | None = None  # library summary
-    related_subject_scheme: DossierSubjectScheme | None = None
-    related_subject_id: UUID | None = None
     related_library_id: UUID | None = None  # Library Dossier -> app-search scope
     related_artifact_id: UUID | None = None  # Dossier revision -> artifact head
     related_revision_id: UUID | None = None  # Dossier head -> current revision
-    related_revision_is_current: bool | None = None
     locator_label: str | None = None  # oracle corpus passage locator
     apparatus_kind: str | None = None
 
@@ -106,140 +101,6 @@ class ResolvedResource:
     quote: LoadedQuote | None = None  # set for highlights → <quote> instead of <body>
     missing: bool = False
     resolved_revision_ref: str | None = None
-
-
-def resource_owner_rows_sql(endpoint_relation: str) -> str:
-    """Normalize one checked-in, bounded resource-endpoint relation one hop.
-
-    ``endpoint_relation`` must expose ``resource_scheme`` and ``resource_id``;
-    it is checked-in SQL assembled by a service, never request text. Returned
-    columns are ``resource_scheme``, ``resource_id``, ``owner_scheme``, and
-    ``owner_id``. Direct media, podcast, Page, and NoteBlock identities are
-    preserved. Media-owned fragments, highlights, evidence spans, content
-    chunks, and reader-apparatus items map to their canonical media; note-owned
-    spans/chunks map to their exact NoteBlock.
-
-    Requiring the endpoint relation makes the bounded-work contract structural:
-    every storage branch starts from the distinct supplied endpoints, so a
-    multiply referenced owner CTE cannot materialize the complete resource
-    corpus before filtering.
-    """
-    return f"""
-        WITH owner_endpoints AS (
-            SELECT DISTINCT resource_scheme, resource_id
-            FROM ({endpoint_relation}) supplied_endpoints
-            WHERE resource_scheme IS NOT NULL
-              AND resource_id IS NOT NULL
-        )
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            'media'::text AS owner_scheme,
-            m.id AS owner_id
-        FROM owner_endpoints endpoint
-        JOIN media m
-          ON endpoint.resource_scheme = 'media'
-         AND m.id = endpoint.resource_id
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            'podcast'::text AS owner_scheme,
-            p.id AS owner_id
-        FROM owner_endpoints endpoint
-        JOIN podcasts p
-          ON endpoint.resource_scheme = 'podcast'
-         AND p.id = endpoint.resource_id
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            'page'::text AS owner_scheme,
-            p.id AS owner_id
-        FROM owner_endpoints endpoint
-        JOIN pages p
-          ON endpoint.resource_scheme = 'page'
-         AND p.id = endpoint.resource_id
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            'note_block'::text AS owner_scheme,
-            nb.id AS owner_id
-        FROM owner_endpoints endpoint
-        JOIN note_blocks nb
-          ON endpoint.resource_scheme = 'note_block'
-         AND nb.id = endpoint.resource_id
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            'media'::text AS owner_scheme,
-            f.media_id AS owner_id
-        FROM owner_endpoints endpoint
-        JOIN fragments f
-          ON endpoint.resource_scheme = 'fragment'
-         AND f.id = endpoint.resource_id
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            'media'::text AS owner_scheme,
-            h.anchor_media_id AS owner_id
-        FROM owner_endpoints endpoint
-        JOIN highlights h
-          ON endpoint.resource_scheme = 'highlight'
-         AND h.id = endpoint.resource_id
-        WHERE h.anchor_media_id IS NOT NULL
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            es.owner_kind AS owner_scheme,
-            es.owner_id
-        FROM owner_endpoints endpoint
-        JOIN evidence_spans es
-          ON endpoint.resource_scheme = 'evidence_span'
-         AND es.id = endpoint.resource_id
-        WHERE es.owner_kind IN ('media', 'note_block')
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            cc.owner_kind AS owner_scheme,
-            cc.owner_id
-        FROM owner_endpoints endpoint
-        JOIN content_chunks cc
-          ON endpoint.resource_scheme = 'content_chunk'
-         AND cc.id = endpoint.resource_id
-        WHERE cc.owner_kind IN ('media', 'note_block')
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            'media'::text AS owner_scheme,
-            rai.media_id AS owner_id
-        FROM owner_endpoints endpoint
-        JOIN reader_apparatus_items rai
-          ON endpoint.resource_scheme = 'reader_apparatus_item'
-         AND rai.id = endpoint.resource_id
-    """
 
 
 def resolve_ref(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> ResolvedResource:
@@ -282,82 +143,6 @@ def missing_resolved_resource(uri: str) -> ResolvedResource:
         fetch_hint="",
         missing=True,
     )
-
-
-def covering_evidence_span_for_highlight(
-    db: Session, *, viewer_id: UUID, highlight_id: UUID
-) -> ResourceRef | None:
-    """Best-effort resolve a highlight to the evidence_span covering its anchor.
-
-    Bridges the two coordinate systems — highlights anchor in fragment-offset /
-    PDF-page-geometry space; evidence_spans anchor in content-block space —
-    through the content-chunk ``summary_locator`` layer that already reconciles
-    them (§4.7). Returns ``None`` when no chunk covers the anchor, so the caller
-    falls back to ``media`` grain (D8). Bounded to the highlight's own anchor
-    media; the highlight's own visibility is the caller's (P-6).
-    """
-    row = (
-        db.execute(
-            text(
-                """
-                SELECT h.anchor_media_id, h.anchor_kind,
-                       hfa.fragment_id, hfa.start_offset,
-                       hpa.page_number
-                FROM highlights h
-                LEFT JOIN highlight_fragment_anchors hfa ON hfa.highlight_id = h.id
-                LEFT JOIN highlight_pdf_anchors hpa ON hpa.highlight_id = h.id
-                WHERE h.id = :highlight_id AND h.user_id = :viewer_id
-                """
-            ),
-            {"highlight_id": highlight_id, "viewer_id": viewer_id},
-        )
-        .mappings()
-        .first()
-    )
-    if row is None or row["anchor_media_id"] is None:
-        return None
-    media_id = row["anchor_media_id"]
-    if row["anchor_kind"] == "fragment_offsets" and row["fragment_id"] is not None:
-        span_id = db.scalar(
-            text(
-                """
-                SELECT cc.primary_evidence_span_id
-                FROM content_chunks cc
-                WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
-                  AND cc.summary_locator->>'fragment_id' = :fragment_id
-                  AND (cc.summary_locator->>'start_offset')::int <= :offset
-                  AND (cc.summary_locator->>'end_offset')::int >= :offset
-                  AND cc.primary_evidence_span_id IS NOT NULL
-                ORDER BY cc.chunk_idx
-                LIMIT 1
-                """
-            ),
-            {
-                "media_id": media_id,
-                "fragment_id": str(row["fragment_id"]),
-                "offset": int(row["start_offset"]),
-            },
-        )
-    elif row["anchor_kind"] == "pdf_page_geometry" and row["page_number"] is not None:
-        span_id = db.scalar(
-            text(
-                """
-                SELECT cc.primary_evidence_span_id
-                FROM content_chunks cc
-                WHERE cc.owner_kind = 'media' AND cc.owner_id = :media_id
-                  AND (cc.summary_locator->>'page_number')::int = :page_number
-                  AND cc.primary_evidence_span_id IS NOT NULL
-                ORDER BY cc.chunk_idx
-                LIMIT 1
-                """
-            ),
-            {"media_id": media_id, "page_number": int(row["page_number"])},
-        )
-    else:
-        return None
-    if span_id is None:
-        return None
-    return ResourceRef(scheme="evidence_span", id=span_id)
 
 
 # ---------- batched visibility reads (action-snapshot aggregator) -------------
@@ -539,192 +324,6 @@ def parent_media_id_for_read_pointer(
     )
 
 
-def reader_target_for_citation_target(
-    db: Session, *, viewer_id: UUID, target: ResourceRef
-) -> tuple[UUID | None, dict[str, object] | None]:
-    """Reconstruct the in-reader jump ``(media_id, locator)`` for a citation target.
-
-    The render contract (G6): the same single ``ReaderCitationData`` jump path lights
-    up for chat, Oracle, and the library dossier, all of which cite the finest-grained
-    object (``evidence_span``/``content_chunk``/``media``). Position lives in the target,
-    not the edge (D11), so it is recomputed here from the target's own anchoring using
-    the single locator owner (``locator_resolver``), exactly as search and Dossier synthesis do.
-
-    Note-owned evidence returns ``(None, note_block_offsets)``. The frontend citation
-    adapter treats that locator as a note activation target, not a media jump.
-    """
-    if target.scheme == "media":
-        return target.id, None
-    if target.scheme == "highlight":
-        media_id = db.scalar(
-            text("SELECT anchor_media_id FROM highlights WHERE id = :id"),
-            {"id": target.id},
-        )
-        if media_id is None or not can_read_media(db, viewer_id, media_id):
-            return None, None
-        return media_id, None
-    if target.scheme == "fragment":
-        row = db.execute(
-            text(
-                """
-                SELECT media_id
-                FROM fragments
-                WHERE id = :id
-                """
-            ),
-            {"id": target.id},
-        ).first()
-        if row is None or not can_read_media(db, viewer_id, row[0]):
-            return None, None
-        return row[0], None
-    if target.scheme == "reader_apparatus_item":
-        return _reader_target_for_reader_apparatus_item(
-            db, viewer_id=viewer_id, apparatus_item_id=target.id
-        )
-    if target.scheme == "note_block":
-        return None, _note_block_locator_for_block(db, viewer_id=viewer_id, block_id=target.id)
-    if target.scheme == "content_chunk":
-        return _reader_target_for_content_chunk(db, viewer_id=viewer_id, chunk_id=target.id)
-    if target.scheme == "oracle_passage_anchor":
-        current = oracle_anchor_current_target(db, target.id)
-        if current is None:
-            return None, None
-        return reader_target_for_citation_target(db, viewer_id=viewer_id, target=current)
-    if target.scheme != "evidence_span":
-        return None, None
-    try:
-        resolution = resolve_evidence_span(db, viewer_id=viewer_id, evidence_span_id=target.id)
-    except NotFoundError:
-        # justify-ignore-error: the cited span was deleted or is no longer visible; the
-        # cited edge outlives it (N4), so the chip renders from its stored snapshot.
-        return None, None
-    resolver = resolution.get("resolver")
-    if isinstance(resolver, dict) and resolver.get("kind") == "note":
-        return None, locator_from_resolution(
-            resolution,
-            media_id=UUID(str(resolution["media_id"])),
-            media_kind="note",
-        )
-    media_id = parent_media_id_for_read_pointer(db, scheme="evidence_span", resource_id=target.id)
-    if media_id is None:
-        return None, None
-    media_kind = db.scalar(text("SELECT kind FROM media WHERE id = :id"), {"id": media_id})
-    locator = locator_from_resolution(
-        resolution, media_id=media_id, media_kind=str(media_kind or "")
-    )
-    return media_id, locator
-
-
-def _reader_target_for_content_chunk(
-    db: Session, *, viewer_id: UUID, chunk_id: UUID
-) -> tuple[UUID | None, dict[str, object] | None]:
-    row = (
-        db.execute(
-            text(
-                """
-                SELECT owner_kind, owner_id, primary_evidence_span_id, summary_locator
-                FROM content_chunks
-                WHERE id = :chunk_id
-                """
-            ),
-            {"chunk_id": chunk_id},
-        )
-        .mappings()
-        .first()
-    )
-    if row is None:
-        return None, None
-    owner_kind = str(row["owner_kind"])
-    if owner_kind == "media":
-        return row["owner_id"], None
-    if owner_kind != "note_block":
-        return None, None
-    span_id = row["primary_evidence_span_id"]
-    if span_id is not None:
-        try:
-            resolution = resolve_evidence_span(db, viewer_id=viewer_id, evidence_span_id=span_id)
-        except NotFoundError:
-            return None, None
-        return None, locator_from_resolution(
-            resolution,
-            media_id=UUID(str(row["owner_id"])),
-            media_kind="note",
-        )
-    return None, _note_locator_from_summary_locator(row["summary_locator"])
-
-
-def _note_block_locator_for_block(
-    db: Session, *, viewer_id: UUID, block_id: UUID
-) -> dict[str, object] | None:
-    row = db.execute(
-        text(
-            """
-            SELECT body_text
-            FROM note_blocks
-            WHERE id = :block_id
-              AND user_id = :viewer_id
-            """
-        ),
-        {"viewer_id": viewer_id, "block_id": block_id},
-    ).first()
-    if row is None:
-        return None
-    body = str(row[0] or "")
-    if not body:
-        return None
-    return retrieval_locator_json(
-        {
-            "type": "note_block_offsets",
-            "block_id": str(block_id),
-            "start_offset": 0,
-            "end_offset": len(body),
-        }
-    )
-
-
-def _note_locator_from_summary_locator(raw: object) -> dict[str, object] | None:
-    locator = raw if isinstance(raw, dict) else {}
-    note_block_id = locator.get("note_block_id")
-    start_offset = locator.get("start_offset")
-    end_offset = locator.get("end_offset")
-    if (
-        not isinstance(note_block_id, str)
-        or not isinstance(start_offset, int)
-        or not isinstance(end_offset, int)
-    ):
-        return None
-    return retrieval_locator_json(
-        {
-            "type": "note_block_offsets",
-            "block_id": note_block_id,
-            "start_offset": start_offset,
-            "end_offset": end_offset,
-        }
-    )
-
-
-def _reader_target_for_reader_apparatus_item(
-    db: Session, *, viewer_id: UUID, apparatus_item_id: UUID
-) -> tuple[UUID | None, dict[str, object] | None]:
-    row = db.execute(
-        text(
-            """
-            SELECT rai.media_id, rai.locator
-            FROM reader_apparatus_items rai
-            JOIN reader_apparatus_states ras ON ras.id = rai.state_id
-            WHERE rai.id = :id
-              AND ras.status IN ('ready', 'partial')
-              AND rai.locator IS NOT NULL
-              AND rai.locator_status != 'missing'
-            """
-        ),
-        {"id": apparatus_item_id},
-    ).first()
-    if row is None or not can_read_media(db, viewer_id, row[0]):
-        return None, None
-    return row[0], retrieval_locator_json(row[1])
-
-
 def _load_media(
     db: Session,
     items: list[ResourceRef],
@@ -828,7 +427,7 @@ def _load_artifact(
     ids = [ref.id for ref in items]
     rows = db.execute(
         text(
-            """
+            f"""
             SELECT a.id, a.subject_scheme, a.subject_id,
                    COALESCE(
                        m.title, c.title,
@@ -837,9 +436,7 @@ def _load_artifact(
                        pg.title, CASE WHEN nb.id IS NOT NULL THEN 'Note' END,
                        idea.display_title
                    ) AS subject_title,
-                   r.id AS revision_id, r.content_text,
-                   a.current_revision_id = r.id AS revision_is_current,
-                   a.audience_scheme, a.audience_id
+                   r.id AS revision_id, r.content_text
             FROM artifacts a
             LEFT JOIN artifact_revisions r ON r.id = a.current_revision_id
             LEFT JOIN media m ON a.subject_scheme = 'media' AND m.id = a.subject_id
@@ -855,9 +452,10 @@ def _load_artifact(
             LEFT JOIN artifact_idea_subjects idea
               ON a.subject_scheme = 'idea' AND idea.id = a.subject_id
             WHERE a.id = ANY(:ids)
+              AND {visible_persisted_subject_sql("a")}
             """
         ),
-        {"ids": ids},
+        {"ids": ids, "viewer_id": viewer_id, "viewer_id_text": str(viewer_id)},
     ).fetchall()
     by_id = {row[0]: row for row in rows}
     out: list[LoadedResource] = []
@@ -868,19 +466,6 @@ def _load_artifact(
             continue
         subject_scheme = cast(DossierSubjectScheme, str(row[1]))
         subject_id = UUID(str(row[2]))
-        if (
-            visible_persisted_subject(
-                db,
-                subject_scheme=subject_scheme,
-                subject_id=subject_id,
-                audience_scheme=str(row[7]),
-                audience_id=str(row[8]),
-                viewer_id=viewer_id,
-            )
-            is None
-        ):
-            out.append(_missing(ref.uri, "artifact"))
-            continue
         out.append(
             LoadedResource(
                 uri=ref.uri,
@@ -888,11 +473,8 @@ def _load_artifact(
                 title=str(row[3] or "Dossier"),
                 body=str(row[5]) if row[5] is not None else None,
                 related_artifact_id=UUID(str(row[0])),
-                related_subject_scheme=subject_scheme,
-                related_subject_id=subject_id,
                 related_library_id=subject_id if subject_scheme == "library" else None,
                 related_revision_id=UUID(str(row[4])) if row[4] is not None else None,
-                related_revision_is_current=bool(row[6]) if row[6] is not None else None,
             )
         )
     return out
@@ -904,7 +486,7 @@ def _load_artifact_revision(
     ids = [ref.id for ref in items]
     rows = db.execute(
         text(
-            """
+            f"""
             SELECT r.id, a.id AS artifact_id, a.subject_scheme, a.subject_id,
                    COALESCE(
                        m.title, c.title,
@@ -913,8 +495,7 @@ def _load_artifact_revision(
                        pg.title, CASE WHEN nb.id IS NOT NULL THEN 'Note' END,
                        idea.display_title
                    ) AS subject_title,
-                   r.content_text, a.current_revision_id = r.id AS is_current,
-                   a.audience_scheme, a.audience_id
+                   r.content_text, a.current_revision_id = r.id AS is_current
             FROM artifact_revisions r
             JOIN artifact_builds b ON b.id = r.build_id
             JOIN artifacts a ON a.id = b.artifact_id
@@ -931,9 +512,10 @@ def _load_artifact_revision(
             LEFT JOIN artifact_idea_subjects idea
               ON a.subject_scheme = 'idea' AND idea.id = a.subject_id
             WHERE r.id = ANY(:ids)
+              AND {visible_persisted_subject_sql("a")}
             """
         ),
-        {"ids": ids},
+        {"ids": ids, "viewer_id": viewer_id, "viewer_id_text": str(viewer_id)},
     ).fetchall()
     by_id = {row[0]: row for row in rows}
     out: list[LoadedResource] = []
@@ -944,19 +526,6 @@ def _load_artifact_revision(
             continue
         subject_scheme = cast(DossierSubjectScheme, str(row[2]))
         subject_id = UUID(str(row[3]))
-        if (
-            visible_persisted_subject(
-                db,
-                subject_scheme=subject_scheme,
-                subject_id=subject_id,
-                audience_scheme=str(row[7]),
-                audience_id=str(row[8]),
-                viewer_id=viewer_id,
-            )
-            is None
-        ):
-            out.append(_missing(ref.uri, "artifact_revision"))
-            continue
         suffix = "current" if row[6] else "historical"
         out.append(
             LoadedResource(
@@ -965,11 +534,8 @@ def _load_artifact_revision(
                 title=f"{row[4] or 'Dossier'} ({suffix})",
                 body=str(row[5] or ""),
                 related_artifact_id=UUID(str(row[1])),
-                related_subject_scheme=subject_scheme,
-                related_subject_id=subject_id,
                 related_library_id=subject_id if subject_scheme == "library" else None,
                 related_revision_id=UUID(str(row[0])),
-                related_revision_is_current=bool(row[6]),
             )
         )
     return out

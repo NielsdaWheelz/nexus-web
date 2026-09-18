@@ -64,10 +64,6 @@ def load_page_surface(db: Session, *, user_id: UUID, page_id: UUID) -> PageSurfa
     )
 
 
-def list_page_note_block_ids(db: Session, *, user_id: UUID, page_id: UUID) -> list[UUID]:
-    return load_page_surface(db, user_id=user_id, page_id=page_id).block_ids
-
-
 def replace_ordered_targets(
     db: Session,
     *,

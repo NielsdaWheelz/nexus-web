@@ -3,8 +3,7 @@
 Refs travel as ``<scheme>:<uuid>`` URI strings on the wire; routes parse them
 into typed ``ResourceRef`` values at the boundary. ``ConnectionOut`` carries live
 endpoint display (label + missing) so connections lists render without a
-second round trip; ``POST /resource-graph/resolve`` covers every other UI
-hydration need.
+second round trip.
 """
 
 from datetime import datetime
@@ -27,12 +26,6 @@ from nexus.services.resource_graph.schemas import snapshot_to_jsonb
 
 class ResourceGraphModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-
-class ResolveRefsRequest(ResourceGraphModel):
-    """Body for POST /resource-graph/resolve."""
-
-    refs: list[str] = Field(min_length=1, max_length=100)
 
 
 class ConnectionFiltersRequest(ResourceGraphModel):
@@ -137,15 +130,6 @@ class ContextRefOut(ResourceGraphModel):
     summary: str
     missing: bool
     created_at: datetime
-
-
-class ResolvedResourceOut(ResourceGraphModel):
-    """Batch-resolve item for UI hydration."""
-
-    ref: str
-    label: str
-    summary: str
-    missing: bool
 
 
 # =============================================================================

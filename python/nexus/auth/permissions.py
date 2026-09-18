@@ -23,7 +23,6 @@ Media Readability Rule (can_read_media / visible_media_ids_cte_sql):
 
 Conversation Visibility (can_read_conversation):
 - Viewer is owner, OR
-- Conversation is public, OR
 - Conversation is library-shared and both viewer+owner are members of a share-target library
 
 Highlight Visibility (can_read_highlight):
@@ -292,7 +291,6 @@ def visible_conversation_ids_cte_sql() -> str:
     The SQL set-membership twin of :func:`can_read_conversation`; co-located here so the
     two forms of the same rule cannot drift. A conversation is visible iff:
     - owner_user_id = viewer_id, OR
-    - sharing = 'public', OR
     - sharing = 'library' AND a conversation_share targets a library where both viewer
       AND owner are current members (dual-membership check).
     """
@@ -300,12 +298,6 @@ def visible_conversation_ids_cte_sql() -> str:
         SELECT c.id AS conversation_id
         FROM conversations c
         WHERE c.owner_user_id = :viewer_id
-
-        UNION
-
-        SELECT c.id AS conversation_id
-        FROM conversations c
-        WHERE c.sharing = 'public'
 
         UNION
 
@@ -325,7 +317,6 @@ def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_i
 
     True iff:
     - Viewer is the conversation owner, OR
-    - Conversation sharing is 'public', OR
     - Conversation sharing is 'library' and exists a share-target library
       where both viewer and owner are current members.
 
@@ -337,13 +328,7 @@ def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_i
         Conversation.owner_user_id == viewer_user_id,
     )
 
-    # Path 2: public
-    public_path = exists().where(
-        Conversation.id == conversation_id,
-        Conversation.sharing == "public",
-    )
-
-    # Path 3: library-shared with active dual membership
+    # Path 2: library-shared with active dual membership
     # Use aliased approach to check both viewer and owner membership in the same library
     viewer_membership = Membership.__table__.alias("viewer_m")
     owner_membership = Membership.__table__.alias("owner_m")
@@ -372,7 +357,7 @@ def can_read_conversation(session: Session, viewer_user_id: UUID, conversation_i
         .exists()
     )
 
-    query = select(owner_path | public_path | library_path)
+    query = select(owner_path | library_path)
     result = session.execute(query)
     return bool(result.scalar())
 

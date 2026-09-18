@@ -27,11 +27,13 @@ from nexus.schemas.citation import (
     CitationTargetType,
 )
 from nexus.schemas.citation import CitationSnapshot as CitationSnapshotOut
+from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.schemas.retrieval import RetrievalLocator
 from nexus.services.media_intelligence import MediaProjection, read_batch
 from nexus.services.resource_graph.edges import create_edge, replace_edges_for_origin
+from nexus.services.resource_graph.reader_targets import reader_target_for_citation_target
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
-from nexus.services.resource_graph.resolve import reader_target_for_citation_target, resolve_ref
+from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_graph.schemas import (
     CitationInput,
     CitationSnapshot,
@@ -42,7 +44,7 @@ from nexus.services.resource_graph.schemas import (
     EdgeOut,
     snapshot_from_jsonb,
 )
-from nexus.services.resource_items.routing import resource_activation_for_ref
+from nexus.services.resource_items.routing import resource_activations_for_refs
 
 _MARKDOWN_CITATION_MARKER_RE = re.compile(r"\[(\d+)\](?:\(([^)\n]*)\))?")
 
@@ -110,34 +112,6 @@ def replace_citations_for_output(
             for citation in citations
         ],
     )
-
-
-def validate_generated_markdown_citations(
-    content_md: str,
-    citations: Sequence[CitationInput],
-) -> None:
-    """Validate generated prose markers against the citation-edge input set."""
-    citation_ordinals = _dense_citation_ordinals(citations)
-    marker_ordinals = generated_markdown_citation_ordinals(content_md)
-    if marker_ordinals != citation_ordinals:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Generated markdown citation markers must match citation ordinals exactly; "
-            f"markers={marker_ordinals}, citations={citation_ordinals}",
-        )
-
-
-def generated_markdown_citation_ordinals(content_md: str) -> list[int]:
-    """Return plain generated citation markers; reject linked marker syntax."""
-    markers = parse_generated_markdown_citation_markers(content_md)
-    linked_marker_ordinals = sorted({marker.ordinal for marker in markers if marker.linked})
-    if linked_marker_ordinals:
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Generated markdown citation markers must be plain [N] markers, not links; "
-            f"linked_markers={linked_marker_ordinals}",
-        )
-    return sorted({marker.ordinal for marker in markers})
 
 
 def parse_generated_markdown_citation_markers(
@@ -222,10 +196,42 @@ def build_citation_outs_for_sources(
     )
     media_ids = sorted({row.target_id for row in rows if row.target_scheme == "media"})
     summaries = read_batch(db, media_ids=media_ids) if media_ids else {}
+    target_refs = list(
+        {
+            f"{row.target_scheme}:{row.target_id}": ResourceRef(
+                scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id
+            )
+            for row in rows
+        }.values()
+    )
+    resolved = resolve_refs(db, viewer_id=viewer_id, refs=target_refs)
+    missing_uris = {
+        ref.uri for ref, item in zip(target_refs, resolved, strict=True) if item.missing
+    }
+    activations = resource_activations_for_refs(
+        db,
+        viewer_id=viewer_id,
+        refs=target_refs,
+        missing_ref_uris=missing_uris,
+    )
+    projections = citation_reader_targets_for_edges(
+        db,
+        viewer_id=viewer_id,
+        edges=rows,
+        target_missing_ref_uris=missing_uris,
+        target_routeable_ref_uris={
+            uri for uri, activation in activations.items() if activation.href is not None
+        },
+    )
     for row in rows:
         source_uri = f"{row.source_scheme}:{row.source_id}"
         out.setdefault(source_uri, []).append(
-            _citation_out(db, viewer_id=viewer_id, row=row, summaries=summaries)
+            _citation_out(
+                row=row,
+                projection=projections[row.id],
+                activation=activations[f"{row.target_scheme}:{row.target_id}"],
+                summaries=summaries,
+            )
         )
     return out
 
@@ -256,37 +262,6 @@ def citation_counts_for_sources(
         .all()
     )
     return {UUID(str(row["source_id"])): int(row["citation_count"]) for row in rows}
-
-
-def citation_reader_target_for_edge(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    edge: ResourceEdge,
-) -> CitationTargetProjection:
-    """Project one citation edge through the same target-owned reader jump logic."""
-    assert edge.ordinal is not None and edge.snapshot is not None, (
-        f"citation edge {edge.id} lost its ordinal/snapshot pair"
-    )
-    target = ResourceRef(scheme=cast("ResourceScheme", edge.target_scheme), id=edge.target_id)
-    media_id, locator = reader_target_for_citation_target(db, viewer_id=viewer_id, target=target)
-    resolved = resolve_ref(db, viewer_id=viewer_id, ref=target)
-    if resolved.missing:
-        target_status = "missing"
-    elif media_id is not None or locator is not None:
-        target_status = "current"
-    elif resource_activation_for_ref(db, viewer_id=viewer_id, ref=target).href is not None:
-        target_status = "current"
-    else:
-        target_status = "unanchorable"
-    return CitationTargetProjection(
-        ordinal=edge.ordinal,
-        role=cast("EdgeKind", edge.kind),
-        snapshot=snapshot_from_jsonb(edge.snapshot),
-        media_id=media_id,
-        locator=locator,
-        target_status=target_status,
-    )
 
 
 def citation_reader_targets_for_edges(
@@ -414,14 +389,12 @@ def _dense_citation_ordinals(citations: Sequence[CitationInput]) -> list[int]:
 
 
 def _citation_out(
-    db: Session,
     *,
-    viewer_id: UUID,
     row: ResourceEdge,
+    projection: CitationTargetProjection,
+    activation: ResourceActivationOut,
     summaries: Mapping[UUID, MediaProjection],
 ) -> CitationOut:
-    projection = citation_reader_target_for_edge(db, viewer_id=viewer_id, edge=row)
-    target_ref = ResourceRef(scheme=cast("ResourceScheme", row.target_scheme), id=row.target_id)
     # Only media-scheme targets carry the summary abstract; a content_chunk/span
     # whose parent happens to be media is a finer grain and does not (mirrors the
     # harness's "media targets only" rule, keyed by the media target id).
@@ -434,12 +407,7 @@ def _citation_out(
             type=cast("CitationTargetType", row.target_scheme),
             id=row.target_id,
         ),
-        activation=resource_activation_for_ref(
-            db,
-            viewer_id=viewer_id,
-            ref=target_ref,
-            missing=projection.target_status == "missing",
-        ),
+        activation=activation,
         media_id=projection.media_id,
         # Pydantic coerces the validated locator JSON into the RetrievalLocator union.
         locator=cast("RetrievalLocator | None", projection.locator),

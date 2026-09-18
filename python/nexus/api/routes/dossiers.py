@@ -294,6 +294,7 @@ def _head_out(
                 db,
                 viewer_id=viewer_id,
                 ref=resolved.ref,
+                missing=subject.missing,
             ),
         )
     return DossierHeadOut(

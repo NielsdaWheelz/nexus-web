@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
-from nexus.responses import ok, success_response
+from nexus.responses import ok
 from nexus.schemas.resource_action_snapshots import ResourceActionSnapshotResolveRequest
 from nexus.schemas.resource_items import (
     ResourceBodyMutationRequest,
@@ -36,24 +36,6 @@ def _parse_ref(raw: str) -> ResourceRef:
             f"Invalid resource ref: {raw!r}. Expected '<scheme>:<uuid>'.",
         )
     return parsed
-
-
-@router.post("/resolve")
-def resolve_resource_items(
-    refs: list[str],
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    return success_response(
-        {
-            "items": [
-                surfaces.resource_item_out(
-                    db, viewer_id=viewer.user_id, ref=_parse_ref(ref)
-                ).model_dump(mode="json", by_alias=True)
-                for ref in refs
-            ]
-        }
-    )
 
 
 @router.post("/action-snapshots/resolve")
@@ -124,18 +106,6 @@ def search_openable_resources(
     duration_ms = (time.monotonic() - started_at) * 1000
     response.headers.append("Server-Timing", f"nexus_openables;dur={duration_ms:.2f}")
     return ok(result, by_alias=True)
-
-
-@router.get("/{resource_ref}")
-def get_resource_item(
-    resource_ref: str,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    return ok(
-        surfaces.resource_item_out(db, viewer_id=viewer.user_id, ref=_parse_ref(resource_ref)),
-        by_alias=True,
-    )
 
 
 @router.get("/{resource_ref}/surface")

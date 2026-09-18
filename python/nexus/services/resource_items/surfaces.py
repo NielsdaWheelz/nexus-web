@@ -47,7 +47,6 @@ from nexus.services.resource_items.capabilities import (
     resource_can_own_ordered_adjacency,
 )
 from nexus.services.resource_items.routing import (
-    resource_activation_for_ref,
     resource_activations_for_refs,
 )
 from nexus.services.resource_mutation_replay import (
@@ -161,19 +160,7 @@ def execute_surface_command(
 
 
 def resource_item_out(db: Session, *, viewer_id: UUID, ref: ResourceRef) -> ResourceItemOut:
-    resolved = resolve_refs(db, viewer_id=viewer_id, refs=[ref])[0]
-    activation = resource_activation_for_ref(
-        db,
-        viewer_id=viewer_id,
-        ref=ref,
-        missing=resolved.missing,
-    )
-    return _resource_item_out(
-        ref=ref,
-        resolved=resolved,
-        activation=activation,
-        version_by_lane=versions.versions_for_ref(db, viewer_id=viewer_id, ref=ref),
-    )
+    return resource_items_out(db, viewer_id=viewer_id, refs=[ref])[0]
 
 
 def _apply_command(

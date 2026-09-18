@@ -613,10 +613,6 @@ def resource_can_be_app_search_scope(ref: ResourceRef) -> bool:
     return capability_for_ref(ref).app_search_scope
 
 
-def resource_can_activate_conversation_search_scope(ref: ResourceRef) -> bool:
-    return capability_for_ref(ref).conversation_search_scope
-
-
 def resource_can_own_ordered_adjacency(ref: ResourceRef) -> bool:
     return capability_for_ref(ref).adjacency_source
 
@@ -633,14 +629,6 @@ def app_search_scope_schemes() -> tuple[ResourceScheme, ...]:
     )
 
 
-def conversation_search_scope_schemes() -> tuple[ResourceScheme, ...]:
-    return tuple(
-        scheme
-        for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items()
-        if capability.conversation_search_scope
-    )
-
-
 def citation_output_source_schemes() -> tuple[ResourceScheme, ...]:
     return tuple(
         scheme
@@ -653,20 +641,10 @@ def app_search_scope_hint() -> str:
     return ", ".join(f"{scheme}:UUID" for scheme in app_search_scope_schemes())
 
 
-def expandable_resource_schemes() -> tuple[ResourceScheme, ...]:
-    return tuple(
-        scheme for scheme, capability in RESOURCE_ITEM_CAPABILITIES.items() if capability.expandable
-    )
-
-
-def resource_expansion_policy(ref: ResourceRef) -> ResourceExpansionPolicy:
-    return capability_for_ref(ref).expansion_policy
-
-
 def expand_owned_child_refs(
     db: Session, *, viewer_id: UUID, ref: ResourceRef
 ) -> tuple[ResourceRef, ...]:
-    policy = resource_expansion_policy(ref)
+    policy = capability_for_ref(ref).expansion_policy
     if policy == "none":
         return ()
     if policy == "media_owned_reader_children":

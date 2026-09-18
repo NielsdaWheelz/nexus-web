@@ -1,7 +1,7 @@
 """Conversation and Message service layer.
 
 Read visibility: shared read allowed via canonical visibility predicate
-(owner, public, or library-shared with active dual membership).
+(owner, or library-shared with active dual membership).
 Write boundary: owner-only for all mutation operations.
 
 Error masking: E_CONVERSATION_NOT_FOUND / E_MESSAGE_NOT_FOUND consistently (prevent probing).
@@ -149,8 +149,8 @@ def get_conversation_for_visible_read_or_404(
 ) -> Conversation:
     """Load conversation and verify canonical read visibility.
 
-    Visible iff viewer is owner, or conversation is public, or conversation is
-    library-shared with both viewer and owner as members of a share-target library.
+    Visible iff viewer is owner, or conversation is library-shared with both
+    viewer and owner as members of a share-target library.
 
     Raises:
         NotFoundError(E_CONVERSATION_NOT_FOUND): If conversation doesn't exist
@@ -454,7 +454,6 @@ def _build_visibility_cte(viewer_id: UUID) -> str:
 
     Visible means:
     - Owner, OR
-    - Public, OR
     - Library-shared with active dual membership (viewer + owner in share-target library)
     """
     return """
@@ -462,10 +461,6 @@ def _build_visibility_cte(viewer_id: UUID) -> str:
             SELECT c.id
             FROM conversations c
             WHERE c.owner_user_id = :viewer_id
-            UNION
-            SELECT c.id
-            FROM conversations c
-            WHERE c.sharing = 'public'
             UNION
             SELECT c.id
             FROM conversations c
@@ -837,7 +832,7 @@ def visible_conversation_ids(
 
     The set-based twin of :func:`nexus.auth.permissions.can_read_conversation`: it
     reuses the shared :func:`visible_conversation_ids_cte_sql` visibility rule
-    (owner OR public OR library-shared with dual membership), so the batched read
+    (owner OR library-shared with dual membership), so the batched read
     and the per-ref predicate cannot drift. The action-snapshot aggregator uses this
     instead of looping ``can_read_conversation`` per ref (AC9)."""
     ordered = list(dict.fromkeys(conversation_ids))

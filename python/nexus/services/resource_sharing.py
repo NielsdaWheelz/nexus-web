@@ -38,6 +38,7 @@ from nexus.services.public_resource_sharing import (
     link_projection_availability,
 )
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_items.capabilities import capability_for_ref
 from nexus.services.resource_items.routing import route_for_ref
 from nexus.services.sealed_handles import InvalidSealedHandle, seal_user, unseal_user
@@ -134,7 +135,10 @@ def get_share_snapshot(
     subject: ResourceRef,
 ) -> ResourceShareSnapshotOut:
     mode = capability_for_ref(subject).sharing
-    route = route_for_ref(db, viewer_id=viewer_user_id, ref=subject)
+    resolved = resolve_refs(db, viewer_id=viewer_user_id, refs=[subject])[0]
+    if resolved.missing:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
+    route = route_for_ref(db, viewer_id=viewer_user_id, ref=subject, missing=False)
     if route is None:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Resource not found")
 
@@ -202,8 +206,6 @@ def create_share(
         check_link_projection=False,
     )
     if isinstance(selected, AudienceUnavailableOut):
-        if selected.reason == "EntitlementRequired":
-            raise ApiError(ApiErrorCode.E_BILLING_REQUIRED, "Sharing requires an eligible plan")
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, f"Share unavailable: {selected.reason}")
 
     if isinstance(audience, UserAudienceIn):

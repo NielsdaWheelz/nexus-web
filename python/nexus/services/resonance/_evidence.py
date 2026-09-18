@@ -29,13 +29,169 @@ from nexus.services.resonance._ranking import (
     semantic_chunk_candidate_limit,
     slate_semantic_qualifies,
 )
-from nexus.services.resource_graph.connection_summaries import edge_fact_rows_sql
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.resolve import resolve_refs, resource_owner_rows_sql
+from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.resource_graph.schemas import EdgeKind
 from nexus.services.semantic_chunks import media_neighbor_rows_sql
 
 _DAY_PRECISION_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _edge_fact_rows_sql() -> str:
+    """Viewer-owned edge facts for a caller-supplied origin allowlist.
+
+    Binds ``:viewer_id`` and ``:edge_origins``. Columns are ``edge_id``,
+    ``edge_kind``, ``edge_origin``, ``source_scheme``, ``source_id``,
+    ``target_scheme``, ``target_id``, and ``created_at``.
+    """
+    return """
+        SELECT
+            e.id AS edge_id,
+            e.kind AS edge_kind,
+            e.origin AS edge_origin,
+            e.source_scheme,
+            e.source_id,
+            e.target_scheme,
+            e.target_id,
+            e.created_at
+        FROM resource_edges e
+        WHERE e.user_id = :viewer_id
+          AND e.origin = ANY(:edge_origins)
+    """
+
+
+def _resource_owner_rows_sql(endpoint_relation: str) -> str:
+    """Normalize one checked-in, bounded resource-endpoint relation one hop.
+
+    ``endpoint_relation`` must expose ``resource_scheme`` and ``resource_id``;
+    it is checked-in SQL assembled by a service, never request text. Returned
+    columns are ``resource_scheme``, ``resource_id``, ``owner_scheme``, and
+    ``owner_id``. Direct media, podcast, Page, and NoteBlock identities are
+    preserved. Media-owned fragments, highlights, evidence spans, content
+    chunks, and reader-apparatus items map to their canonical media; note-owned
+    spans/chunks map to their exact NoteBlock.
+
+    Requiring the endpoint relation makes the bounded-work contract structural:
+    every storage branch starts from the distinct supplied endpoints, so a
+    multiply referenced owner CTE cannot materialize the complete resource
+    corpus before filtering.
+    """
+    return f"""
+        WITH owner_endpoints AS (
+            SELECT DISTINCT resource_scheme, resource_id
+            FROM ({endpoint_relation}) supplied_endpoints
+            WHERE resource_scheme IS NOT NULL
+              AND resource_id IS NOT NULL
+        )
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            'media'::text AS owner_scheme,
+            m.id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN media m
+          ON endpoint.resource_scheme = 'media'
+         AND m.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            'podcast'::text AS owner_scheme,
+            p.id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN podcasts p
+          ON endpoint.resource_scheme = 'podcast'
+         AND p.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            'page'::text AS owner_scheme,
+            p.id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN pages p
+          ON endpoint.resource_scheme = 'page'
+         AND p.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            'note_block'::text AS owner_scheme,
+            nb.id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN note_blocks nb
+          ON endpoint.resource_scheme = 'note_block'
+         AND nb.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            'media'::text AS owner_scheme,
+            f.media_id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN fragments f
+          ON endpoint.resource_scheme = 'fragment'
+         AND f.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            'media'::text AS owner_scheme,
+            h.anchor_media_id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN highlights h
+          ON endpoint.resource_scheme = 'highlight'
+         AND h.id = endpoint.resource_id
+        WHERE h.anchor_media_id IS NOT NULL
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            es.owner_kind AS owner_scheme,
+            es.owner_id
+        FROM owner_endpoints endpoint
+        JOIN evidence_spans es
+          ON endpoint.resource_scheme = 'evidence_span'
+         AND es.id = endpoint.resource_id
+        WHERE es.owner_kind IN ('media', 'note_block')
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            cc.owner_kind AS owner_scheme,
+            cc.owner_id
+        FROM owner_endpoints endpoint
+        JOIN content_chunks cc
+          ON endpoint.resource_scheme = 'content_chunk'
+         AND cc.id = endpoint.resource_id
+        WHERE cc.owner_kind IN ('media', 'note_block')
+
+        UNION ALL
+
+        SELECT
+            endpoint.resource_scheme,
+            endpoint.resource_id,
+            'media'::text AS owner_scheme,
+            rai.media_id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN reader_apparatus_items rai
+          ON endpoint.resource_scheme = 'reader_apparatus_item'
+         AND rai.id = endpoint.resource_id
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -616,7 +772,7 @@ def _edge_rows(
                 FROM jsonb_to_recordset(CAST(:anchors AS jsonb))
                     AS x(scheme text, id uuid, rank integer)
             ),
-            edges AS ({edge_fact_rows_sql()}),
+            edges AS ({_edge_fact_rows_sql()}),
             edge_endpoints AS (
                 SELECT source_scheme AS scheme, source_id AS id FROM edges
                 UNION
@@ -624,7 +780,7 @@ def _edge_rows(
             ),
             owners AS (
                 {
-            resource_owner_rows_sql('''
+            _resource_owner_rows_sql('''
                     SELECT scheme AS resource_scheme, id AS resource_id
                     FROM edge_endpoints
                 ''')

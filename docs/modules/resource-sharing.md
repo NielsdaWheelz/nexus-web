@@ -11,7 +11,7 @@ separate from inbound Android/web capture, which remains owned by
 `resource_grants` is the sole persisted access-grant table. A row grants one
 canonical `ResourceRef` to either one sealed user identity or one random link
 bearer. `services/resource_grants.py` owns creation, resolution, listing,
-revocation/decline, token hashing, lock order, and subject cleanup.
+revocation/decline, lock order, and subject cleanup.
 `services/resource_sharing.py` owns the authenticated snapshot, availability,
 and create projection. Permissions consume the grants; search, readers, and
 highlight access do not reimplement them.
