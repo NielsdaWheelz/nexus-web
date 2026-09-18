@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useRef, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, Ellipsis, X } from "lucide-react";
-import ActionMenu from "@/components/ui/ActionMenu";
 import Button from "@/components/ui/Button";
-import type { ActionDescriptor } from "@/lib/ui/actionDescriptor";
 import { useDialogOverlay } from "@/lib/ui/useDialogOverlay";
 import { useHistoryDismiss } from "@/lib/ui/useHistoryDismiss";
 import {
@@ -23,11 +21,7 @@ import {
   PlayerStatus,
   PlayerTransport,
   playerChapters,
-  playerContentsAction,
   playerNextProvenance,
-  playerOpenLecternAction,
-  playerPreviewActions,
-  playerReviewCapturesAction,
   playerSourceHref,
   playerTitle,
   type PresentPlayerChrome,
@@ -66,7 +60,6 @@ export default function MobileNowPlaying({
 }) {
   const panelRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const [shortViewport, setShortViewport] = useState(false);
   const title = playerTitle(model);
   const chapters = playerChapters(model);
   const provenance = playerNextProvenance(model);
@@ -82,20 +75,6 @@ export default function MobileNowPlaying({
     layerScope: "Player.NowPlaying",
   });
   useHistoryDismiss(active, onCollapse, { isTopmost: overlay.isTopmost });
-
-  useEffect(() => {
-    const update = () => setShortViewport(window.innerHeight < 680);
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
-
-  const secondaryOptions: ActionDescriptor[] = [
-    ...playerContentsAction(model, onOpenContents),
-    ...playerPreviewActions(model, onOpenTarget),
-    ...playerReviewCapturesAction(model, capture),
-    ...playerOpenLecternAction(model, onOpenLectern),
-  ];
 
   if (!active) return null;
   return createPortal(
@@ -174,8 +153,13 @@ export default function MobileNowPlaying({
                 <PlayerCaptureButton model={model} capture={capture} />
               ) : null}
 
-              {shortViewport ? (
-                <>
+              <div className={styles.secondaryActions}>
+                {model.kind === "Canonical" && chapters.length > 0 ? (
+                  <span data-player-contents>
+                    <PlayerContentsButton onClick={onOpenContents} />
+                  </span>
+                ) : null}
+                {model.kind === "Canonical" ? (
                   <PlayerRecordingActionsMenu
                     model={model}
                     align="center"
@@ -190,77 +174,37 @@ export default function MobileNowPlaying({
                       </Button>
                     )}
                   />
-                  <ActionMenu
-                    options={secondaryOptions}
-                    label="More Now Playing controls"
-                    placement="above"
-                    align="center"
-                    renderTrigger={(props) => (
-                      <Button
-                        {...props}
-                        variant="ghost"
-                        size="lg"
-                        leadingIcon={<Ellipsis aria-hidden="true" />}
+                ) : (
+                  <>
+                    <Button variant="ghost" size="lg" onClick={onOpenTarget}>
+                      Open preview
+                    </Button>
+                    <Button variant="ghost" size="lg" asChild>
+                      <a
+                        href={playerSourceHref(model)}
+                        target="_blank"
+                        rel="noopener noreferrer"
                       >
-                        More
-                      </Button>
-                    )}
-                  />
-                </>
-              ) : (
-                <div className={styles.secondaryActions}>
-                  {model.kind === "Canonical" && chapters.length > 0 ? (
-                    <span data-player-contents>
-                      <PlayerContentsButton onClick={onOpenContents} />
-                    </span>
-                  ) : null}
-                  {model.kind === "Canonical" ? (
-                    <PlayerRecordingActionsMenu
-                      model={model}
-                      align="center"
-                      renderTrigger={(props) => (
-                        <Button
-                          {...props}
-                          variant="ghost"
-                          size="lg"
-                          leadingIcon={<Ellipsis aria-hidden="true" />}
-                        >
-                          Recording actions
-                        </Button>
-                      )}
-                    />
-                  ) : (
-                    <>
-                      <Button variant="ghost" size="lg" onClick={onOpenTarget}>
-                        Open preview
-                      </Button>
-                      <Button variant="ghost" size="lg" asChild>
-                        <a
-                          href={playerSourceHref(model)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          Open source
-                        </a>
-                      </Button>
-                    </>
-                  )}
-                  {model.kind === "Canonical" ? (
-                    <>
-                      <Button
-                        variant="ghost"
-                        size="lg"
-                        onClick={capture.openReview}
-                      >
-                        Review captures ({capture.waypointCount})
-                      </Button>
-                      <Button variant="ghost" size="lg" onClick={onOpenLectern}>
-                        Open Lectern
-                      </Button>
-                    </>
-                  ) : null}
-                </div>
-              )}
+                        Open source
+                      </a>
+                    </Button>
+                  </>
+                )}
+                {model.kind === "Canonical" ? (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="lg"
+                      onClick={capture.openReview}
+                    >
+                      Review captures ({capture.waypointCount})
+                    </Button>
+                    <Button variant="ghost" size="lg" onClick={onOpenLectern}>
+                      Open Lectern
+                    </Button>
+                  </>
+                ) : null}
+              </div>
 
               {provenance ? (
                 <p className={styles.provenance}>{provenance}</p>

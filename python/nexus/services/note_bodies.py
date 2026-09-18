@@ -10,7 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from nexus.db.models import NoteBlock
-from nexus.errors import ApiError, ApiErrorCode, ConflictError
+from nexus.errors import ApiError, ApiErrorCode, ConflictError, NotFoundError
 from nexus.schemas.resource_items import is_object_type
 from nexus.services.resource_graph.edges import replace_edges_for_origin
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
@@ -79,6 +79,13 @@ def text_from_pm_json(value: object) -> str:
 
     visit(value)
     return "\n".join(line.rstrip() for line in "".join(parts).splitlines()).strip()
+
+
+def get_note_block_for_owner_or_404(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlock:
+    block = db.get(NoteBlock, block_id)
+    if block is None or block.user_id != viewer_id:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
+    return block
 
 
 def upsert_note_body(

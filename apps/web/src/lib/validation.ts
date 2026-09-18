@@ -183,6 +183,19 @@ export function expectInteger(raw: unknown, name: string): number {
   return raw;
 }
 
+export function expectBoundedInteger(
+  raw: unknown,
+  name: string,
+  minimum: number,
+  maximum: number,
+): number {
+  const value = expectInteger(raw, name);
+  if (value < minimum || value > maximum) {
+    throw new TypeError(`${name} is outside its supported range`);
+  }
+  return value;
+}
+
 export function expectNonnegativeInteger(raw: unknown, name: string): number {
   if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
     throw new TypeError(`${name} must be a nonnegative integer`);

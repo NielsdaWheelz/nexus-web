@@ -116,28 +116,6 @@ export function playerChapters(
     : [];
 }
 
-export function playerCaptureAction(
-  model: PresentPlayerChrome,
-  capture: PlayerCaptureController,
-): ActionDescriptor[] {
-  if (model.kind !== "Canonical") return [];
-  return [
-    {
-      id: "Player.Capture",
-      kind: "custom",
-      label: "Capture this moment",
-      icon: <Mic aria-hidden="true" />,
-      render: ({ closeMenu }) => (
-        <PlayerCaptureButton
-          model={model}
-          capture={capture}
-          afterCapture={closeMenu}
-        />
-      ),
-    },
-  ];
-}
-
 export function playerReviewCapturesAction(
   model: PresentPlayerChrome,
   capture: PlayerCaptureController,
@@ -663,20 +641,16 @@ export function PlayerVolumeControl() {
 export function PlayerCaptureButton({
   model,
   capture,
-  className,
-  afterCapture,
 }: {
   readonly model: Extract<PresentPlayerChrome, { readonly kind: "Canonical" }>;
   readonly capture: PlayerCaptureController;
-  readonly className?: string;
-  readonly afterCapture?: () => void;
 }) {
   const timeline = usePlayerTimeline();
   return (
     <Button
       variant="ghost"
       size="lg"
-      className={[styles.capture, className].filter(Boolean).join(" ")}
+      className={styles.capture}
       data-player-capture
       data-recording={capture.isRecording ? "true" : "false"}
       aria-label="Capture this moment"
@@ -686,10 +660,7 @@ export function PlayerCaptureButton({
           positionMs: timeline.positionMs,
         })
       }
-      onPointerUp={() => {
-        capture.handlePointerUp();
-        afterCapture?.();
-      }}
+      onPointerUp={capture.handlePointerUp}
       onPointerCancel={capture.handlePointerCancel}
       onClick={(event) => {
         if (event.detail !== 0) return;
@@ -697,7 +668,6 @@ export function PlayerCaptureButton({
           mediaId: model.state.session.descriptor.mediaId,
           positionMs: timeline.positionMs,
         });
-        afterCapture?.();
       }}
       leadingIcon={<Mic aria-hidden="true" />}
     >
