@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { FeedbackContent } from "@/components/feedback/Feedback";
 import { isApiError, isSameSystemApiDefect } from "@/lib/api/client";
 import { runBoundedTasks } from "@/lib/async/runBoundedTasks";
@@ -31,12 +31,6 @@ import {
   type LibraryPlacementOption,
 } from "@/lib/libraries/libraryPlacement";
 import { publishLibraryPlacementChange } from "@/lib/libraries/placementRevision";
-import {
-  getPodcastOpmlFileError,
-  importPodcastOpml,
-  podcastOpmlReplayIdentity,
-  PodcastOpmlEncodingError,
-} from "@/lib/podcasts/opmlImport";
 import {
   ADD_SESSION_MAX_ITEMS,
   acceptanceErrorMessage,
@@ -70,7 +64,6 @@ type SubmissionItem = Extract<AddItem, { kind: "Draft" }>;
 export interface AddContentSessionController {
   readonly state: AddSessionState;
   readonly dirty: boolean;
-  readonly opmlReplayIdentity: string | null;
   start(seed: AddSeed): string;
   setUrlText(text: string): void;
   reviewUrls(): boolean;
@@ -84,15 +77,8 @@ export interface AddContentSessionController {
     itemId: string,
     destinations: readonly LibraryDestinationSelection[],
   ): void;
-  openOpml(): void;
-  backToContent(): void;
-  setOpmlFile(file: File | null): void;
-  setOpmlDestinations(
-    destinations: readonly LibraryDestinationSelection[],
-  ): void;
   submit(): Promise<void>;
   reconcileAcceptance(itemId: string): Promise<void>;
-  importOpml(): Promise<void>;
   refreshPlacements(mediaIds: readonly string[]): Promise<void>;
   runPlacement(input: {
     mediaIds: readonly string[];
@@ -145,51 +131,6 @@ function isPlacementSettlementUnknown(error: unknown): boolean {
   );
 }
 
-/** Finite OPML-import copy adapter; contract and unknown failures defect. */
-function opmlImportErrorMessage(error: unknown): FeedbackContent {
-  if (error instanceof PodcastOpmlEncodingError) {
-    return { tone: "Danger", title: error.message };
-  }
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-
-  const title = "OPML couldn’t be imported";
-  const requestId = error.requestId;
-  switch (error.code) {
-    case "E_NETWORK":
-      return {
-        tone: "Danger",
-        title,
-        message: "Check your connection and retry.",
-        requestId,
-      };
-    case "E_UPSTREAM":
-    case "E_UPSTREAM_TIMEOUT":
-    case "E_RATE_LIMITED":
-      return {
-        tone: "Danger",
-        title,
-        message: "Wait a moment, then retry.",
-        requestId,
-      };
-    case "E_INVALID_REQUEST":
-      return {
-        tone: "Danger",
-        title,
-        message: "Review the OPML file and selected libraries, then retry.",
-        requestId,
-      };
-    case "E_FORBIDDEN":
-    case "E_LIBRARY_FORBIDDEN":
-    case "E_LIBRARY_NOT_FOUND":
-      return libraryRequestErrorMessage(error, {
-        title,
-        request: "PlacementMutation",
-      });
-    default:
-      throw error;
-  }
-}
-
 function requireIndexedItem<T>(items: readonly T[], index: number): T {
   const item = items[index];
   if (item === undefined) {
@@ -224,8 +165,6 @@ export function useAddContentSession(): AddContentSessionController {
     }),
   );
   const stateRef = useRef(state);
-  const [opmlReplayIdentity, setOpmlReplayIdentity] =
-    useState<string | null>(null);
   const generationRef = useRef(0);
   const sessionAbortRef = useRef(new AbortController());
   const startedSubmissionItemIdsRef = useRef(new Set<string>());
@@ -259,7 +198,6 @@ export function useAddContentSession(): AddContentSessionController {
       startedSubmissionItemIdsRef.current.clear();
       placementProgressByMediaIdRef.current.clear();
       destinationCreateIdByNameRef.current.clear();
-      setOpmlReplayIdentity(null);
       const next = createAddSessionState({
         seed,
         sessionId: createRandomId("add-session"),
@@ -412,46 +350,6 @@ export function useAddContentSession(): AddContentSessionController {
     (itemId: string, destinations: readonly LibraryDestinationSelection[]) => {
       if (stateRef.current.mutation.kind === "Idle") {
         apply({ kind: "SetItemDestinations", itemId, destinations });
-      }
-    },
-    [apply],
-  );
-
-  const openOpml = useCallback(() => {
-    if (stateRef.current.mutation.kind === "Idle") apply({ kind: "OpenOpml" });
-  }, [apply]);
-
-  const backToContent = useCallback(() => {
-    if (stateRef.current.mutation.kind === "Idle")
-      apply({ kind: "BackToContent" });
-  }, [apply]);
-
-  const setOpmlFile = useCallback(
-    (file: File | null) => {
-      if (stateRef.current.mutation.kind !== "Idle") return;
-      if (file === null) {
-        apply({ kind: "SetOpml", opml: { kind: "Empty" } });
-        return;
-      }
-      const error = getPodcastOpmlFileError(file);
-      apply({
-        kind: "SetOpml",
-        opml: error
-          ? {
-              kind: "Invalid",
-              input: { kind: "File", file },
-              feedback: { tone: "Danger", title: error },
-            }
-          : { kind: "Ready", file },
-      });
-    },
-    [apply],
-  );
-
-  const setOpmlDestinations = useCallback(
-    (destinations: readonly LibraryDestinationSelection[]) => {
-      if (stateRef.current.mutation.kind === "Idle") {
-        apply({ kind: "SetOpmlDestinations", destinations });
       }
     },
     [apply],
@@ -654,89 +552,6 @@ export function useAddContentSession(): AddContentSessionController {
     },
     [apply],
   );
-
-  const importOpml = useCallback(async () => {
-    const current = stateRef.current;
-    if (current.mutation.kind !== "Idle") return;
-    if (current.opml.kind !== "Ready" && current.opml.kind !== "Failed") {
-      apply({
-        kind: "SetOpml",
-        opml: {
-          kind: "Invalid",
-          input: { kind: "NoFile" },
-          feedback: { tone: "Danger", title: "Choose an OPML or XML file." },
-        },
-      });
-      return;
-    }
-    const file = current.opml.file;
-    const libraryIds = current.opmlDestinations.map(
-      (destination) => destination.id,
-    );
-    const generation = generationRef.current;
-    const signal = sessionAbortRef.current.signal;
-    apply({ kind: "StartMutation", operation: { kind: "ImportOpml" } });
-    apply({ kind: "SetOpml", opml: { kind: "Importing", file } });
-    let defectState: { error: unknown } | null = null;
-    try {
-      const replayIdentity = await podcastOpmlReplayIdentity({
-        file,
-        libraryIds,
-        signal,
-      });
-      if (generation !== generationRef.current || signal.aborted) return;
-      setOpmlReplayIdentity(replayIdentity);
-      const result = await importPodcastOpml({
-        file,
-        libraryIds,
-        signal,
-      });
-      if (generation === generationRef.current) {
-        apply({
-          kind: "SetOpml",
-          opml: {
-            kind: "Complete",
-            file: {
-              kind: "File",
-              name: file.name,
-              sizeBytes: file.size,
-              fileKind: "Opml",
-            },
-            result,
-          },
-        });
-      }
-    } catch (error) {
-      if (
-        generation !== generationRef.current ||
-        signal.aborted ||
-        isAbortError(error)
-      )
-        return;
-      if (handleUnauthenticatedApiError(error)) {
-        apply({ kind: "SetOpml", opml: current.opml });
-        return;
-      } else {
-        try {
-          apply({
-            kind: "SetOpml",
-            opml: {
-              kind: "Failed",
-              file,
-              feedback: opmlImportErrorMessage(error),
-            },
-          });
-        } catch (caughtDefect: unknown) {
-          apply({ kind: "SetOpml", opml: current.opml });
-          defectState = { error: caughtDefect };
-        }
-      }
-    } finally {
-      if (generation === generationRef.current)
-        apply({ kind: "FinishMutation" });
-    }
-    if (defectState !== null) throw defectState.error;
-  }, [apply]);
 
   const runPlacement = useCallback(
     async ({
@@ -1144,7 +959,6 @@ export function useAddContentSession(): AddContentSessionController {
   return {
     state,
     dirty: isAddSessionDirty(state),
-    opmlReplayIdentity,
     start,
     setUrlText,
     reviewUrls,
@@ -1153,13 +967,8 @@ export function useAddContentSession(): AddContentSessionController {
     restageItem,
     setDefaultDestinations,
     setItemDestinations,
-    openOpml,
-    backToContent,
-    setOpmlFile,
-    setOpmlDestinations,
     submit,
     reconcileAcceptance,
-    importOpml,
     refreshPlacements,
     runPlacement,
     createDestination,

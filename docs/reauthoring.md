@@ -14,6 +14,8 @@ three phases, in this order, because each makes the next cheaper:
 2. **non-product chunks**: untrack the generated android offline bundle (build it in gradle), squash 235 migrations to one baseline once production is at the current head, replace the 8k-line release controller with a linear deploy script that keeps backup-before-migrate and first-attempt CI provenance.
 3. **reauthor every survivor to its target**, largest first. the current module is the specification: its wire shapes, its schema, and its user-visible behaviour. for each module: write a one-page behaviour spec from the code (invariants, contracts, what the user sees), rewrite the module to the target size in one linear style with no compatibility layer, pass the static gate, and run the one manual check the spec names. multi-user capabilities (billing, quota, entitlements, sharing, invitations, memberships, grants, per-user filtering, tool authority) are kept and rewritten, never dropped. fine-grained findings from the second sweep (session scratchpad `plan2/`) are inputs to the rewrite, not separate PRs.
 
+calibration (chat tools, 2026-09-21): a spec that describes the current structure and a rewriter that edits in place yield about a third off, not two thirds. so the spec's file layout must sum to the target, the rewriter writes each file fresh from the spec and deletes the old ones, and the reviewer rejects a trimmed-in-place diff regardless of the gate.
+
 verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, one alembic head) plus one named manual check per module. there are no automated tests; that is a known, accepted trade.
 
 ## inventory and targets
@@ -31,13 +33,13 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | ingest-imports (url/file/youtube/x/email/arxiv/remote, upload sessions, imports workspace, metadata intelligence) | 31.0k | 8k | reauthor; decide x, email, arxiv | open |
 | media-core | 5.7k | 3k | reauthor | open |
 | chat (runs, conversations, forks, composer, tails) | 29.6k | 10k | reauthor; 17 chat_run_* files → 3 | open |
-| chat-tools (runtime, authority, MCP, six tools) | 8.9k | 2.5k | reauthor: six tools + one dispatcher | open |
+| chat-tools (runtime, authority, MCP, six tools) | 5.8k | 2.5k | reauthor: six tools + one dispatcher | first pass landed (size/chat-tools) at 5.8k, −32%; remaining levers: MCP transport 0.9k, HostTable research plan 0.5k, ledger density |
 | generation (catalog, ledger, codex + 7 provider APIs, picker) | 13.5k | 3k | codex + 1–2 providers; drop model lifecycle | open |
 | dossiers (engine 3.4k, ten subject bindings, web document runtime) | 18.7k | 5k | reauthor: one engine, one binding table | open |
 | oracle-atlas (oracle, plates, concordance, corpus ops, atlas, manifests, deploy plate train) | 12.6k | 0–4k | deferred by owner 2026-09-21; keep and reauthor: delete, or keep at 4k | open |
 | synapse-connections (resonance, synapse, dawn write, connections surface, reading slate) | 7.8k | 2k | keep synapse + connections; DELETE dawn write (decided 2026-09-21); reading slate deferred | dawn write deleted (size/dawn); rest open |
-| search-browse-nexus (index, 11 retrievers, browse adapters, nexus launcher, switchboard, /search) | 26.4k | 8k | reauthor: one search UI, one retriever | open |
-| podcasts (subscriptions, sync, refresh runs, backfill, transcription, OPML, detail panes) | 17.9k | 6k | reauthor; drop refresh-run ledger, OPML | open |
+| search-browse-nexus (index, 11 retrievers, browse adapters, nexus launcher, switchboard, /search) | 26.4k | 8k | reauthor: one search UI, one retriever | python search/index/retrieval first pass landed (size/search-py) at 6.0k of 9.0k, −33%; browse and the three web search UIs open |
+| podcasts (subscriptions, sync, refresh runs, backfill, transcription, OPML, detail panes) | 14.1k | 6k | reauthor; drop refresh-run ledger, OPML | python first pass landed (size/podcasts-py): 10.9k→7.1k, −35%; OPML and the refresh-run ledger deleted (0239); web 7.0k open |
 | player (browser + android runtimes, protocol, lectern, walknotes, native player) | 21.3k | 6k | one runtime behind one transport; deferred by owner 2026-09-21; keep and reauthor walknotes | open |
 | consumption-stats (spans, projection, stats pane, outbox, exclusions) | 13.5k | 3k | reauthor; keep stats + exclusions | open |
 | library (libraries, entries, listing, placement 3.2k) | 15.5k | 5k | reauthor | open |

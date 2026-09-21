@@ -1,16 +1,4 @@
-"""Search routes.
-
-Routes are transport-only:
-- Extract viewer_user_id from request.state
-- Parse query params → SearchQuery at the boundary
-- Call exactly one service function
-- Return success(...) or raise ApiError
-
-No domain logic or raw DB access in routes.
-
-This endpoint implements hybrid search across all user-visible content using
-PostgreSQL full-text search plus vector ANN. Visibility follows canonical predicates.
-"""
+"""The search route: parse query params, call one service function, dump."""
 
 from typing import Annotated
 
@@ -21,8 +9,7 @@ from nexus.api.query_params import parse_comma_list
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.schemas.search import SearchResponse
-from nexus.services.search.constants import DEFAULT_LIMIT, MAX_LIMIT
-from nexus.services.search.query import build_search_query
+from nexus.services.search.query import DEFAULT_LIMIT, MAX_LIMIT, build_search_query
 from nexus.services.search.scope import scope_from_uri
 from nexus.services.search.service import search as search_service
 
@@ -49,12 +36,10 @@ def search(
         description="Comma-separated document formats (article, pdf, epub, video, episode, podcast).",
     ),
     authors: str | None = Query(
-        default=None,
-        description="Comma-separated contributor handles to filter credited content.",
+        default=None, description="Comma-separated contributor handles to filter credited content."
     ),
     roles: str | None = Query(
-        default=None,
-        description="Comma-separated contributor credit roles to filter credited content.",
+        default=None, description="Comma-separated contributor credit roles to filter content."
     ),
     cursor: str | None = Query(default=None, description="Pagination cursor"),
     limit: int = Query(
@@ -64,21 +49,11 @@ def search(
         description=f"Maximum results per page (default {DEFAULT_LIMIT}, max {MAX_LIMIT})",
     ),
 ) -> dict:
-    """Search across all visible content.
+    """Hybrid search (full text ∪ vector ANN) across everything the viewer may see.
 
-    Hybrid retrieval (full-text ∪ vector ANN) across documents, notes, highlights,
-    conversations, people, and web results. Refinement is by kind, format, author,
-    and role filters; retrieval mode is never user-controlled.
-
-    **Scopes:**
-    - `all` - All visible content
-    - `media:<id>` - Content anchored to specific media
-    - `library:<id>` - Content anchored to media in that library
-    - `conversation:<id>` - Messages within that conversation
-
-    Returns 404 for unauthorized scope (prevents existence leakage), and 200 with
-    empty results when there is neither a usable full-text query nor a structured
-    filter.
+    Returns 404 for a scope the viewer cannot read — never 403, so existence
+    does not leak — and 200 with no results when there is neither a usable
+    full-text query nor a structured filter.
     """
     query = build_search_query(
         text=q,
@@ -90,5 +65,6 @@ def search(
         cursor=cursor,
         limit=limit,
     )
-    result = search_service(db=db, viewer_id=viewer.user_id, query=query)
-    return result.model_dump(mode="json", by_alias=True)
+    return search_service(db=db, viewer_id=viewer.user_id, query=query).model_dump(
+        mode="json", by_alias=True
+    )

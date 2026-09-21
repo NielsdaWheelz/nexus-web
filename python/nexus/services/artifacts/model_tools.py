@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from llm_tools import ToolResult
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -28,7 +29,6 @@ from nexus.services.tool_authority import (
     ToolPositionRecord,
     read_tool_positions,
 )
-from nexus.services.tool_runtime.execution import ToolResult
 
 
 @dataclass(frozen=True, slots=True)

@@ -5,7 +5,6 @@ import { ArrowLeft, FileText, Link, Plus, Upload, X } from "lucide-react";
 import LibraryChooserSurface from "@/components/libraries/LibraryChooserSurface";
 import LibraryDestinationField from "@/components/libraries/LibraryDestinationField";
 import LibraryEntryEditor from "@/components/libraries/LibraryEntryEditor";
-import OpmlImportPanel from "@/components/OpmlImportPanel";
 import Button from "@/components/ui/Button";
 import Dialog from "@/components/ui/Dialog";
 import Textarea from "@/components/ui/Textarea";
@@ -21,7 +20,6 @@ import {
 } from "@/lib/libraries/libraryPlacement";
 import {
   acceptedMediaIds,
-  couldNotSubscribeCount,
   draftItems,
   settledAcceptedItems,
   type AddItem,
@@ -53,17 +51,12 @@ interface AddPanelProps {
 export function resolveAddPanelInitialFocus(
   container: HTMLElement,
   isMobile: boolean,
-  state: Pick<AddSessionState, "branch" | "initialFocus">,
+  state: Pick<AddSessionState, "initialFocus">,
 ): HTMLElement | null {
   const heading = container.querySelector<HTMLElement>(
     '[data-add-heading="true"]',
   );
   if (isMobile) return heading;
-  if (state.branch === "Opml") {
-    return (
-      container.querySelector<HTMLElement>('[data-add-focus="opml"]') ?? heading
-    );
-  }
   const requested = state.initialFocus === "File" ? "file" : "url";
   return (
     container.querySelector<HTMLElement>(`[data-add-focus="${requested}"]`) ??
@@ -301,8 +294,6 @@ function mutationLabel(session: AddContentSessionController): string {
       return "Checking…";
     case "CreateDestination":
       return "Creating library…";
-    case "ImportOpml":
-      return "Importing…";
     case "Placement":
       return "Updating libraries…";
   }
@@ -325,23 +316,6 @@ function feedbackStatus(feedback: {
 function liveStatus(session: AddContentSessionController): string {
   const { state } = session;
   if (state.mutation.kind === "Running") return mutationLabel(session);
-  if (state.branch === "Opml") {
-    switch (state.opml.kind) {
-      case "Empty":
-        return "Choose an OPML file to import.";
-      case "Ready":
-        return `${state.opml.file.name} is ready to import.`;
-      case "Importing":
-        return "Importing OPML…";
-      case "Invalid":
-      case "Failed":
-        return feedbackStatus(state.opml.feedback);
-      case "Complete": {
-        const { result } = state.opml;
-        return `Import complete: ${result.total} total, ${result.imported} imported, ${result.skipped_already_subscribed} already subscribed, ${result.skipped_invalid} invalid, ${couldNotSubscribeCount(result)} could not subscribe.`;
-      }
-    }
-  }
   if (state.intakeFeedback) return feedbackStatus(state.intakeFeedback);
   if (state.urlInput.feedback) return feedbackStatus(state.urlInput.feedback);
   const ready = draftItems(state).length;
@@ -626,15 +600,6 @@ export default function AddPanel({
           layer="palette"
         />
       ) : null}
-
-      <button
-        type="button"
-        className={styles.opmlLink}
-        disabled={busy}
-        onClick={session.openOpml}
-      >
-        Import podcast subscriptions from OPML
-      </button>
     </section>
   );
 
@@ -661,319 +626,297 @@ export default function AddPanel({
             ref={headingRef}
             tabIndex={-1}
             data-add-heading="true"
-            data-add-focus={state.branch === "Opml" ? "opml" : undefined}
           >
-            {state.branch === "Opml" ? "Import OPML" : "Add content"}
+            Add content
           </h2>
-          <p>
-            {state.branch === "Opml"
-              ? "Import podcast subscriptions from another app."
-              : "Review sources, then add them when you are ready."}
-          </p>
+          <p>Review sources, then add them when you are ready.</p>
         </div>
         <Button
           variant="ghost"
           size="sm"
           iconOnly
           onClick={onClose}
-          aria-label={`Close ${state.branch === "Opml" ? "Import OPML" : "Add content"}`}
+          aria-label="Close Add content"
         >
           <X size={16} aria-hidden="true" />
         </Button>
       </header>
 
       <div className={styles.body}>
-        {state.branch === "Opml" ? (
-          <OpmlImportPanel
-            state={state.opml}
-            destinations={state.opmlDestinations}
-            disabled={busy}
-            creatingDestination={creatingDestination}
-            onFileChange={session.setOpmlFile}
-            onDestinationsChange={session.setOpmlDestinations}
-            onCreateDestination={createDestination}
-            onManagePodcasts={() =>
-              onOpen({ kind: "InternalHref", href: "/podcasts" })
-            }
-          />
+        {state.items.length === 0 || sourceExpanded ? (
+          sourceEntry
         ) : (
-          <>
-            {state.items.length === 0 || sourceExpanded ? (
-              sourceEntry
-            ) : (
-              <Button
-                ref={addMoreRef}
-                data-add-focus="add-more"
-                variant="ghost"
-                size="sm"
-                className={styles.addMore}
-                disabled={busy}
-                leadingIcon={<Plus size={15} aria-hidden="true" />}
-                onClick={() => {
-                  setSourceExpanded(true);
-                  requestAnimationFrame(() => sourceFocusRef.current?.focus());
-                }}
-              >
-                Add more
-              </Button>
-            )}
-
-            {drafts.length > 0 ? (
-              <section
-                className={styles.draftToolbar}
-                aria-label="Draft filing"
-              >
-                <LibraryDestinationField
-                  label={`Libraries for all ${drafts.length} ${drafts.length === 1 ? "draft" : "drafts"}`}
-                  emptyLabel="No additional libraries"
-                  selected={state.defaultDestinations}
-                  onChange={session.setDefaultDestinations}
-                  interaction={
-                    creatingDestination
-                      ? { kind: "Creating" }
-                      : busy
-                        ? { kind: "Disabled" }
-                        : { kind: "Enabled" }
-                  }
-                  onCreateDestination={createDestination}
-                  layer="palette"
-                />
-              </section>
-            ) : null}
-
-            {state.intakeFeedback ? (
-              <p className={styles.intakeFeedback}>
-                {state.intakeFeedback.title}
-              </p>
-            ) : null}
-
-            {state.items.length > 0 ? (
-              <div
-                ref={queueRef}
-                className={styles.queue}
-                tabIndex={-1}
-                data-add-focus="queue"
-                aria-label="Items to add"
-              >
-                {state.items.map((item) => {
-                  const feedback = feedbackForItem(item);
-                  const feedbackId = feedback
-                    ? `${id}-${item.id}-feedback`
-                    : undefined;
-                  const mediaId =
-                    item.kind === "Accepted" ? item.result.mediaId : null;
-                  return (
-                    <article
-                      key={item.id}
-                      className={styles.queueItem}
-                      data-add-item-id={item.id}
-                      aria-describedby={feedbackId}
-                    >
-                      <div className={styles.itemIcon} aria-hidden="true">
-                        {isFileItem(item) ? (
-                          <FileText size={16} />
-                        ) : (
-                          <Link size={16} />
-                        )}
-                      </div>
-                      <div className={styles.itemMain}>
-                        <span
-                          className={styles.itemLabel}
-                          title={itemLabel(item)}
-                        >
-                          {itemLabel(item)}
-                        </span>
-                        <span className={styles.itemStatus}>
-                          {state.mutation.kind === "Running" &&
-                          state.mutation.operation.kind ===
-                            "ReconcileAcceptance" &&
-                          item.kind === "AcceptanceUnresolved" &&
-                          state.mutation.operation.itemId === item.id
-                            ? "Checking…"
-                            : itemStatus(item)}
-                        </span>
-                        {activePlacementMediaIds.has(mediaId ?? "") ? (
-                          <span className={styles.placementStatus}>
-                            Updating libraries…
-                          </span>
-                        ) : null}
-                        {feedback ? (
-                          <span
-                            id={feedbackId}
-                            className={styles.itemFeedback}
-                            data-tone={feedback.tone}
-                          >
-                            {feedback.title}
-                            {feedback.message ? ` ${feedback.message}` : ""}
-                            {feedback.requestId
-                              ? ` Request ID: ${feedback.requestId}`
-                              : ""}
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className={styles.itemActions}>
-                        {item.kind === "Draft" ? (
-                          <LibraryDestinationField
-                            label="Libraries"
-                            emptyLabel="No additional libraries"
-                            selected={item.destinations}
-                            onChange={(next) =>
-                              session.setItemDestinations(item.id, next)
-                            }
-                            interaction={
-                              creatingDestination
-                                ? { kind: "Creating" }
-                                : busy
-                                  ? { kind: "Disabled" }
-                                  : { kind: "Enabled" }
-                            }
-                            onCreateDestination={createDestination}
-                            layer="palette"
-                          />
-                        ) : null}
-                        {item.kind === "Rejected" ? (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            disabled={busy}
-                            onClick={() => session.restageItem(item.id)}
-                          >
-                            Restage
-                          </Button>
-                        ) : null}
-                        {item.kind === "AcceptanceUnresolved" ? (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            disabled={busy}
-                            onClick={() =>
-                              runSessionCommand(() =>
-                                session.reconcileAcceptance(item.id),
-                              )
-                            }
-                          >
-                            {unresolvedActionLabel(item.reason)}
-                          </Button>
-                        ) : null}
-                        {item.kind === "AcceptanceUnresolved" ? (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            disabled={busy}
-                            onClick={() => session.restageItem(item.id)}
-                          >
-                            Restage as new
-                          </Button>
-                        ) : null}
-                        {mediaId ? (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            disabled={busy}
-                            onClick={() =>
-                              onOpen({
-                                kind: "InternalHref",
-                                href:
-                                  item.kind === "Accepted" &&
-                                  item.result.duplicate
-                                    ? `/media/${mediaId}?duplicate=true`
-                                    : `/media/${mediaId}`,
-                              })
-                            }
-                          >
-                            Open
-                          </Button>
-                        ) : null}
-                        {item.kind === "Accepted" ? (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            disabled={busy}
-                            onClick={(event) =>
-                              openPlacementEditor(
-                                {
-                                  kind: "Row",
-                                  mediaIds: [item.result.mediaId],
-                                  title: `Libraries for ${itemLabel(item)}`,
-                                },
-                                event.currentTarget,
-                              )
-                            }
-                          >
-                            Libraries
-                          </Button>
-                        ) : null}
-                        {item.kind === "Invalid" ||
-                        item.kind === "Draft" ||
-                        item.kind === "Rejected" ||
-                        item.kind === "AcceptanceUnresolved" ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            iconOnly
-                            disabled={busy}
-                            onClick={() => removeItem(item.id)}
-                            aria-label={`Remove ${itemLabel(item)}`}
-                          >
-                            <X size={14} aria-hidden="true" />
-                          </Button>
-                        ) : null}
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            ) : null}
-
-            {accepted.length > 0 ? (
-              <section
-                className={styles.acceptedSummary}
-                aria-label="Added items"
-              >
-                <p>
-                  {accepted.length} {accepted.length === 1 ? "item" : "items"}{" "}
-                  added
-                </p>
-                <div>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={busy}
-                    onClick={(event) =>
-                      openPlacementEditor(
-                        {
-                          kind: "BulkAdd",
-                          mediaIds: uniqueAcceptedMediaIds,
-                          title: "Add all to libraries",
-                        },
-                        event.currentTarget,
-                      )
-                    }
-                  >
-                    Add all to…
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={busy}
-                    onClick={(event) =>
-                      openPlacementEditor(
-                        {
-                          kind: "BulkRemove",
-                          mediaIds: uniqueAcceptedMediaIds,
-                          title: "Remove all from libraries",
-                        },
-                        event.currentTarget,
-                      )
-                    }
-                  >
-                    Remove all from…
-                  </Button>
-                </div>
-              </section>
-            ) : null}
-          </>
+          <Button
+            ref={addMoreRef}
+            data-add-focus="add-more"
+            variant="ghost"
+            size="sm"
+            className={styles.addMore}
+            disabled={busy}
+            leadingIcon={<Plus size={15} aria-hidden="true" />}
+            onClick={() => {
+              setSourceExpanded(true);
+              requestAnimationFrame(() => sourceFocusRef.current?.focus());
+            }}
+          >
+            Add more
+          </Button>
         )}
+
+        {drafts.length > 0 ? (
+          <section
+            className={styles.draftToolbar}
+            aria-label="Draft filing"
+          >
+            <LibraryDestinationField
+              label={`Libraries for all ${drafts.length} ${drafts.length === 1 ? "draft" : "drafts"}`}
+              emptyLabel="No additional libraries"
+              selected={state.defaultDestinations}
+              onChange={session.setDefaultDestinations}
+              interaction={
+                creatingDestination
+                  ? { kind: "Creating" }
+                  : busy
+                    ? { kind: "Disabled" }
+                    : { kind: "Enabled" }
+              }
+              onCreateDestination={createDestination}
+              layer="palette"
+            />
+          </section>
+        ) : null}
+
+        {state.intakeFeedback ? (
+          <p className={styles.intakeFeedback}>
+            {state.intakeFeedback.title}
+          </p>
+        ) : null}
+
+        {state.items.length > 0 ? (
+          <div
+            ref={queueRef}
+            className={styles.queue}
+            tabIndex={-1}
+            data-add-focus="queue"
+            aria-label="Items to add"
+          >
+            {state.items.map((item) => {
+              const feedback = feedbackForItem(item);
+              const feedbackId = feedback
+                ? `${id}-${item.id}-feedback`
+                : undefined;
+              const mediaId =
+                item.kind === "Accepted" ? item.result.mediaId : null;
+              return (
+                <article
+                  key={item.id}
+                  className={styles.queueItem}
+                  data-add-item-id={item.id}
+                  aria-describedby={feedbackId}
+                >
+                  <div className={styles.itemIcon} aria-hidden="true">
+                    {isFileItem(item) ? (
+                      <FileText size={16} />
+                    ) : (
+                      <Link size={16} />
+                    )}
+                  </div>
+                  <div className={styles.itemMain}>
+                    <span
+                      className={styles.itemLabel}
+                      title={itemLabel(item)}
+                    >
+                      {itemLabel(item)}
+                    </span>
+                    <span className={styles.itemStatus}>
+                      {state.mutation.kind === "Running" &&
+                      state.mutation.operation.kind ===
+                        "ReconcileAcceptance" &&
+                      item.kind === "AcceptanceUnresolved" &&
+                      state.mutation.operation.itemId === item.id
+                        ? "Checking…"
+                        : itemStatus(item)}
+                    </span>
+                    {activePlacementMediaIds.has(mediaId ?? "") ? (
+                      <span className={styles.placementStatus}>
+                        Updating libraries…
+                      </span>
+                    ) : null}
+                    {feedback ? (
+                      <span
+                        id={feedbackId}
+                        className={styles.itemFeedback}
+                        data-tone={feedback.tone}
+                      >
+                        {feedback.title}
+                        {feedback.message ? ` ${feedback.message}` : ""}
+                        {feedback.requestId
+                          ? ` Request ID: ${feedback.requestId}`
+                          : ""}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className={styles.itemActions}>
+                    {item.kind === "Draft" ? (
+                      <LibraryDestinationField
+                        label="Libraries"
+                        emptyLabel="No additional libraries"
+                        selected={item.destinations}
+                        onChange={(next) =>
+                          session.setItemDestinations(item.id, next)
+                        }
+                        interaction={
+                          creatingDestination
+                            ? { kind: "Creating" }
+                            : busy
+                              ? { kind: "Disabled" }
+                              : { kind: "Enabled" }
+                        }
+                        onCreateDestination={createDestination}
+                        layer="palette"
+                      />
+                    ) : null}
+                    {item.kind === "Rejected" ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => session.restageItem(item.id)}
+                      >
+                        Restage
+                      </Button>
+                    ) : null}
+                    {item.kind === "AcceptanceUnresolved" ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() =>
+                          runSessionCommand(() =>
+                            session.reconcileAcceptance(item.id),
+                          )
+                        }
+                      >
+                        {unresolvedActionLabel(item.reason)}
+                      </Button>
+                    ) : null}
+                    {item.kind === "AcceptanceUnresolved" ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => session.restageItem(item.id)}
+                      >
+                        Restage as new
+                      </Button>
+                    ) : null}
+                    {mediaId ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() =>
+                          onOpen({
+                            kind: "InternalHref",
+                            href:
+                              item.kind === "Accepted" &&
+                              item.result.duplicate
+                                ? `/media/${mediaId}?duplicate=true`
+                                : `/media/${mediaId}`,
+                          })
+                        }
+                      >
+                        Open
+                      </Button>
+                    ) : null}
+                    {item.kind === "Accepted" ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={busy}
+                        onClick={(event) =>
+                          openPlacementEditor(
+                            {
+                              kind: "Row",
+                              mediaIds: [item.result.mediaId],
+                              title: `Libraries for ${itemLabel(item)}`,
+                            },
+                            event.currentTarget,
+                          )
+                        }
+                      >
+                        Libraries
+                      </Button>
+                    ) : null}
+                    {item.kind === "Invalid" ||
+                    item.kind === "Draft" ||
+                    item.kind === "Rejected" ||
+                    item.kind === "AcceptanceUnresolved" ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        disabled={busy}
+                        onClick={() => removeItem(item.id)}
+                        aria-label={`Remove ${itemLabel(item)}`}
+                      >
+                        <X size={14} aria-hidden="true" />
+                      </Button>
+                    ) : null}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : null}
+
+        {accepted.length > 0 ? (
+          <section
+            className={styles.acceptedSummary}
+            aria-label="Added items"
+          >
+            <p>
+              {accepted.length} {accepted.length === 1 ? "item" : "items"}{" "}
+              added
+            </p>
+            <div>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={busy}
+                onClick={(event) =>
+                  openPlacementEditor(
+                    {
+                      kind: "BulkAdd",
+                      mediaIds: uniqueAcceptedMediaIds,
+                      title: "Add all to libraries",
+                    },
+                    event.currentTarget,
+                  )
+                }
+              >
+                Add all to…
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={busy}
+                onClick={(event) =>
+                  openPlacementEditor(
+                    {
+                      kind: "BulkRemove",
+                      mediaIds: uniqueAcceptedMediaIds,
+                      title: "Remove all from libraries",
+                    },
+                    event.currentTarget,
+                  )
+                }
+              >
+                Remove all from…
+              </Button>
+            </div>
+          </section>
+        ) : null}
       </div>
 
       <div className={styles.liveStatus} role="status" aria-live="polite">
@@ -985,34 +928,17 @@ export default function AddPanel({
           variant="primary"
           size="md"
           loading={busy}
-          disabled={
-            state.branch === "Opml"
-              ? !busy &&
-                state.opml.kind !== "Ready" &&
-                state.opml.kind !== "Failed" &&
-                state.opml.kind !== "Complete"
-              : false
-          }
           onClick={() => {
             if (busy) return;
-            if (state.branch === "Opml") {
-              if (state.opml.kind === "Complete") onClose();
-              else runSessionCommand(session.importOpml);
-              return;
-            }
             if (drafts.length > 0) runSessionCommand(session.submit);
             else onClose();
           }}
         >
           {busy
             ? mutationLabel(session)
-            : state.branch === "Opml"
-              ? state.opml.kind === "Complete"
-                ? "Done"
-                : "Import OPML"
-              : drafts.length > 0
-                ? `Add ${drafts.length} ${drafts.length === 1 ? "item" : "items"}`
-                : "Done"}
+            : drafts.length > 0
+              ? `Add ${drafts.length} ${drafts.length === 1 ? "item" : "items"}`
+              : "Done"}
         </Button>
       </footer>
 

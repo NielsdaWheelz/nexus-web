@@ -1,4 +1,4 @@
-"""Cycle-free active-subscription playback-settings query."""
+"""Per-subscription playback settings the Android player reads."""
 
 from __future__ import annotations
 
@@ -19,18 +19,11 @@ class SubscriptionPlaybackSettings:
     pause_shortening_mode: Absent | Present[PauseShorteningMode]
 
 
-def pause_shortening_mode_from_nullable(
-    value: object,
-) -> Absent | Present[PauseShorteningMode]:
-    """Decode the nullable subscription value; unknown storage is corruption."""
+def pause_shortening_mode_from_nullable(value: object) -> Absent | Present[PauseShorteningMode]:
+    """Decode the nullable subscription override; NULL means the device default."""
     if value is None:
         return absent()
-    stored = str(value)
-    if stored not in ("Off", "Natural"):
-        # justify-defect: Podcast settings is the sole writer and only accepts
-        # the closed PauseShorteningMode vocabulary.
-        raise AssertionError(f"unknown podcast pause_shortening_mode: {stored!r}")
-    return present(cast(PauseShorteningMode, stored))
+    return present(cast(PauseShorteningMode, str(value)))
 
 
 def load_subscription_playback_settings(
@@ -40,26 +33,25 @@ def load_subscription_playback_settings(
     podcast_ids: list[UUID],
 ) -> dict[UUID, SubscriptionPlaybackSettings]:
     """Return the owned nullable playback settings for each active subscription."""
-    podcast_ids = list(dict.fromkeys(podcast_ids))
-    if not podcast_ids:
+    ordered = list(dict.fromkeys(podcast_ids))
+    if not ordered:
         return {}
     rows = db.execute(
         text(
             """
             SELECT podcast_id, default_playback_speed, pause_shortening_mode
             FROM podcast_subscriptions
-            WHERE user_id = :viewer_id
-              AND podcast_id = ANY(:podcast_ids)
+            WHERE user_id = :viewer_id AND podcast_id = ANY(:podcast_ids)
             """
         ),
-        {"viewer_id": viewer_id, "podcast_ids": podcast_ids},
+        {"viewer_id": viewer_id, "podcast_ids": ordered},
     ).mappings()
     return {
         UUID(str(row["podcast_id"])): SubscriptionPlaybackSettings(
             playback_rate=presence_from_nullable(
-                float(row["default_playback_speed"])
-                if row["default_playback_speed"] is not None
-                else None
+                None
+                if row["default_playback_speed"] is None
+                else float(row["default_playback_speed"])
             ),
             pause_shortening_mode=pause_shortening_mode_from_nullable(row["pause_shortening_mode"]),
         )

@@ -215,10 +215,8 @@ from nexus.services.resource_graph.context import (
     list_context_refs,
 )
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.tool_authority import (
-    compose_deferred_generation_tool_executor,
-)
-from nexus.services.tool_runtime.composition import (
+from nexus.services.tool_authority import DeferredGenerationToolExecutor
+from nexus.services.tool_runtime.catalog import (
     ComposedToolRuntime,
     FrozenToolOperation,
 )
@@ -1186,7 +1184,7 @@ async def _dispatch_generation_step(
     emitter: ChatRunEventEmitter,
 ) -> AssistantTurn | ExpectedFailure | CancelledGeneration | RescheduleRequested:
     """Execute one exact frozen generation through either supported route."""
-    from nexus.services.tool_runtime.execution import ChatToolExecutionProjection
+    from nexus.services.tool_runtime.chat_projection import ChatToolExecutionProjection
 
     observed_text_parts: list[str] = []
     observed_text_by_child: dict[int, list[str]] = {}
@@ -1275,9 +1273,9 @@ async def _dispatch_generation_step(
     admission_binder = None
     before_terminal = None
     if isinstance(spec.selection, CodexPersonalSelection):
-        from nexus.services.agent_tools_mcp import compose_codex_generation_tool_binding
+        from nexus.services.agent_tools_mcp import CodexGenerationToolBinding
 
-        codex_binding = compose_codex_generation_tool_binding(
+        codex_binding = CodexGenerationToolBinding(
             session_factory=session_factory,
             user_id=run.owner_user_id,
             owner=LlmCallOwner(kind="chat_run", id=run.id),
@@ -1286,13 +1284,12 @@ async def _dispatch_generation_step(
             operation=operation,
             spec=spec,
             intent=intent,
-            settings=settings,
             projection=projection,
         )
         admission_binder = codex_binding.bind_admission
         before_terminal = codex_binding.wait_until_idle
     elif isinstance(spec.selection, ProviderApiSelection):
-        tool_executor = compose_deferred_generation_tool_executor(
+        tool_executor = DeferredGenerationToolExecutor(
             session_factory=session_factory,
             user_id=run.owner_user_id,
             owner=LlmCallOwner(kind="chat_run", id=run.id),

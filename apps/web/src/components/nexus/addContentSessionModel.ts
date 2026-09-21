@@ -21,7 +21,6 @@ import {
   type LibraryPlacementDestination,
   type LibraryPlacementOption,
 } from "@/lib/libraries/libraryPlacement";
-import type { PodcastOpmlImportResult } from "@/lib/podcasts/opmlImport";
 
 export const ADD_SESSION_MAX_ITEMS = 20;
 
@@ -29,7 +28,7 @@ type AddSource =
   | { kind: "Url"; url: string }
   | { kind: "File"; file: File; fileKind: UploadFileKind };
 
-type FileSummary<K extends UploadFileKind | "Opml" | "Unsupported"> = {
+type FileSummary<K extends UploadFileKind | "Unsupported"> = {
   kind: "File";
   name: string;
   sizeBytes: number;
@@ -126,7 +125,6 @@ export type SessionMutationOperation =
   | { kind: "Submit"; itemIds: readonly string[] }
   | { kind: "ReconcileAcceptance"; itemId: string }
   | { kind: "CreateDestination" }
-  | { kind: "ImportOpml" }
   | {
       kind: "Placement";
       command: PlacementCommand;
@@ -137,32 +135,13 @@ type SessionMutationState =
   | { kind: "Idle" }
   | { kind: "Running"; operation: SessionMutationOperation };
 
-export type OpmlImportState =
-  | { kind: "Empty" }
-  | {
-      kind: "Invalid";
-      input: { kind: "NoFile" } | { kind: "File"; file: File };
-      feedback: FeedbackContent;
-    }
-  | { kind: "Ready"; file: File }
-  | { kind: "Importing"; file: File }
-  | { kind: "Failed"; file: File; feedback: FeedbackContent }
-  | {
-      kind: "Complete";
-      file: FileSummary<"Opml">;
-      result: PodcastOpmlImportResult;
-    };
-
 export type AddSessionState = Readonly<{
   sessionId: string;
-  branch: "Content" | "Opml";
-  initialFocus: "Url" | "File" | "Opml";
+  initialFocus: "Url" | "File";
   urlInput: { text: string; feedback?: FeedbackContent };
   intakeFeedback?: FeedbackContent;
   items: readonly AddItem[];
   defaultDestinations: readonly LibraryDestinationSelection[];
-  opmlDestinations: readonly LibraryDestinationSelection[];
-  opml: OpmlImportState;
   placementByMediaId: ReadonlyMap<string, PlacementState>;
   mutation: SessionMutationState;
 }>;
@@ -340,13 +319,6 @@ export type AddSessionAction =
       itemId: string;
       destinations: readonly LibraryDestinationSelection[];
     }
-  | { kind: "OpenOpml" }
-  | { kind: "BackToContent" }
-  | { kind: "SetOpml"; opml: OpmlImportState }
-  | {
-      kind: "SetOpmlDestinations";
-      destinations: readonly LibraryDestinationSelection[];
-    }
   | { kind: "StartMutation"; operation: SessionMutationOperation }
   | { kind: "StartSubmission"; itemIds: readonly string[] }
   | { kind: "StartFileReconciliation"; itemId: string }
@@ -379,15 +351,10 @@ export function createAddSessionState({
 }): AddSessionState {
   return {
     sessionId,
-    branch: seed.kind === "Opml" ? "Opml" : "Content",
-    initialFocus: seed.kind === "Opml" ? "Opml" : seed.initialFocus,
-    urlInput: {
-      text: seed.kind === "Content" ? (seed.initialUrlDraft ?? "") : "",
-    },
+    initialFocus: seed.initialFocus,
+    urlInput: { text: seed.initialUrlDraft ?? "" },
     items: [],
     defaultDestinations: [...seed.initialDestinations],
-    opmlDestinations: [...seed.initialDestinations],
-    opml: { kind: "Empty" },
     placementByMediaId: new Map(),
     mutation: { kind: "Idle" },
   };
@@ -478,24 +445,6 @@ export function reduceAddSession(
               : item,
         ),
       };
-    case "OpenOpml":
-      return {
-        ...state,
-        branch: "Opml",
-        opmlDestinations: [...state.defaultDestinations],
-        opml: { kind: "Empty" },
-      };
-    case "BackToContent":
-      return {
-        ...state,
-        branch: "Content",
-        opmlDestinations: [...state.defaultDestinations],
-        opml: { kind: "Empty" },
-      };
-    case "SetOpml":
-      return { ...state, opml: action.opml };
-    case "SetOpmlDestinations":
-      return { ...state, opmlDestinations: [...action.destinations] };
     case "StartMutation":
       return {
         ...state,
@@ -634,14 +583,6 @@ export function reduceAddSession(
                 feedback: action.acceptanceFeedback,
               };
         }),
-        opml:
-          state.opml.kind === "Importing"
-            ? {
-                kind: "Failed",
-                file: state.opml.file,
-                feedback: action.operationFeedback,
-              }
-            : state.opml,
         placementByMediaId: new Map(
           [...state.placementByMediaId].map(([mediaId, placement]) => {
             if (placement.kind === "Loading") {
@@ -728,24 +669,5 @@ export function acceptedMediaIds(state: AddSessionState): readonly string[] {
 
 export function isAddSessionDirty(state: AddSessionState): boolean {
   if (state.urlInput.text.trim() !== "") return true;
-  if (
-    state.opml.kind === "Ready" ||
-    state.opml.kind === "Importing" ||
-    state.opml.kind === "Failed" ||
-    (state.opml.kind === "Invalid" && state.opml.input.kind === "File")
-  ) {
-    return true;
-  }
   return state.items.some((item) => item.kind !== "Accepted");
-}
-
-export function couldNotSubscribeCount(
-  result: PodcastOpmlImportResult,
-): number {
-  return (
-    result.total -
-    result.imported -
-    result.skipped_already_subscribed -
-    result.skipped_invalid
-  );
 }
