@@ -213,10 +213,6 @@ class Settings(BaseSettings):
     # Storage limits
     max_pdf_bytes: int = Field(default=100 * 1024 * 1024, alias="MAX_PDF_BYTES")  # 100 MB
     max_epub_bytes: int = Field(default=50 * 1024 * 1024, alias="MAX_EPUB_BYTES")  # 50 MB
-    max_arxiv_source_bytes: int = Field(
-        default=50 * 1024 * 1024,
-        alias="MAX_ARXIV_SOURCE_BYTES",
-    )
     signed_url_expiry_s: int = Field(default=300, alias="SIGNED_URL_EXPIRY_S")  # 5 minutes
 
     # Podcast discovery and subscription ingestion policy.

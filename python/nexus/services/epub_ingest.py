@@ -10,7 +10,6 @@ Reuses existing sanitization/canonicalization/fragment-block primitives.
 from __future__ import annotations
 
 import codecs
-import hashlib
 import logging
 import posixpath
 import re
@@ -58,6 +57,12 @@ from nexus.services.epub_structure import (
 )
 from nexus.services.fragment_blocks import insert_fragment_blocks, parse_fragment_blocks
 from nexus.services.html5_shape import normalize_html5_shape
+from nexus.services.html_apparatus import (
+    HtmlApparatusTargetLimitExceeded,
+    attach_fragment_locators,
+    collect_html_apparatus_targets,
+    extract_html_apparatus,
+)
 from nexus.services.html_tree import (
     inner_html,
     parse_html_document,
@@ -69,14 +74,7 @@ from nexus.services.parser_temp import (
     stream_storage_object_to_file,
     utf8_byte_length,
 )
-from nexus.services.reader_apparatus import (
-    HtmlApparatusTargetLimitExceeded,
-    attach_fragment_locators,
-    collect_html_apparatus_targets,
-    extract_html_apparatus,
-    replace_media_apparatus,
-    source_fingerprint,
-)
+from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.storage.client import StorageError
 from nexus.storage.paths import build_epub_attempt_asset_storage_path
 from nexus.tasks.storage_object_cleanup import reserve_storage_object_write
@@ -442,7 +440,6 @@ class _ChapterSpec:
 class _StagedChapter:
     chapter: _ChapterSpec
     html_path: Path
-    source_sha256: str
 
 
 @dataclass
@@ -482,7 +479,6 @@ class EpubExtractionPlan:
     nav_locations: tuple[EpubStructureSection, ...]
     asset_entries: tuple[_AssetEntry, ...]
     asset_storage_paths: dict[str, str]
-    apparatus_source_fingerprint: str
 
 
 class _EpubExtractionFailure(Exception):
@@ -712,7 +708,6 @@ def _build_epub_extraction_plan_from_file(
         ] = []
         all_block_specs: list[list] = []
         retained_hrefs: list[str] = []
-        chapter_source_fingerprints: list[dict[str, object]] = []
         rendered_text_bytes = 0
 
         for chapter_index, staged in enumerate(staged_chapters, start=1):
@@ -750,15 +745,6 @@ def _build_epub_extraction_plan_from_file(
                 )
             sanitized_chapters.append((ch, html_sanitized, apparatus_items, apparatus_edges))
             retained_hrefs.append(ch.href)
-            chapter_source_fingerprints.append(
-                {
-                    "package_href": ch.href,
-                    "manifest_id": ch.manifest_id,
-                    "spine_index": ch.spine_idx,
-                    "spine_itemref_id": ch.itemref_id,
-                    "xhtml_sha256": staged.source_sha256,
-                }
-            )
             record_progress(chapter_index, chapter_total, "Chapter")
 
         if not sanitized_chapters:
@@ -790,7 +776,6 @@ def _build_epub_extraction_plan_from_file(
             ]
         ] = []
         structure_fragments: list[EpubStructureFragment] = []
-        canonical_text_digest = hashlib.sha256()
         for fragment_idx, (ch, html_sanitized, apparatus_items, apparatus_edges) in enumerate(
             sanitized_chapters
         ):
@@ -808,9 +793,6 @@ def _build_epub_extraction_plan_from_file(
                     "EPUB rendered text exceeds the 64 MiB limit",
                     dimension="Output",
                 )
-            if fragment_idx:
-                canonical_text_digest.update(b"\n")
-            canonical_text_digest.update(canonical_text.encode("utf-8"))
             fragment = Fragment(
                 id=new_uuid7(),
                 media_id=media_id,
@@ -914,15 +896,6 @@ def _build_epub_extraction_plan_from_file(
             nav_locations=tuple(nav_locations),
             asset_entries=tuple(asset_entries),
             asset_storage_paths=asset_storage_paths,
-            apparatus_source_fingerprint=source_fingerprint(
-                "epub",
-                storage_path,
-                source_size_bytes,
-                chapter_source_fingerprints,
-                len(fragments),
-                len(toc_nodes),
-                f"sha256:{canonical_text_digest.hexdigest()}",
-            ),
         )
 
     except _EpubResourceLimitExceeded as exc:
@@ -1102,8 +1075,6 @@ def publish_epub_extraction_plan(
     replace_media_apparatus(
         db,
         media_id=media_id,
-        media_kind="epub",
-        source_fingerprint_value=plan.apparatus_source_fingerprint,
         items=apparatus_items,
         edges=apparatus_edges,
         status="ready" if apparatus_items else "empty",
@@ -1668,7 +1639,6 @@ def _stage_epub_chapters(
         # justify-ignore-error: an unreadable spine entry is not a renderable chapter.
         except _ZIP_ENTRY_READ_ERRORS:
             continue
-        source_sha256 = hashlib.sha256(raw).hexdigest()
         rewritten_html = _rewrite_chapter_resources(
             _decode_epub_text(raw),
             ch.href,
@@ -1682,9 +1652,7 @@ def _stage_epub_chapters(
         del raw
         html_path = staging_directory / f"chapter-{ch.spine_idx}.html"
         html_path.write_text(rewritten_html, encoding="utf-8")
-        staged_chapters.append(
-            _StagedChapter(chapter=ch, html_path=html_path, source_sha256=source_sha256)
-        )
+        staged_chapters.append(_StagedChapter(chapter=ch, html_path=html_path))
         (
             chapter_targets,
             chapter_target_count,

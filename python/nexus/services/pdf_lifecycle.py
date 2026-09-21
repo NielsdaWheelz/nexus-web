@@ -29,7 +29,6 @@ from nexus.services.pdf_ingest import (
     PdfExtractionError,
     PdfExtractionPlan,
     PdfExtractionResult,
-    PdfSourcePackageArtifact,
     build_pdf_extraction_plan,
     publish_pdf_extraction_plan,
 )
@@ -71,8 +70,6 @@ def prepare_pdf_source(
     source_size_bytes: int,
     expected_source_sha256: str,
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
-    source_package: PdfSourcePackageArtifact | None = None,
-    source_package_diagnostics: dict[str, object] | None = None,
 ) -> PdfExtractionPlan:
     """Acquire and parse one immutable PDF source outside a DB transaction."""
     plan = build_pdf_extraction_plan(
@@ -83,8 +80,6 @@ def prepare_pdf_source(
         expected_source_sha256=expected_source_sha256,
         storage_client=get_storage_client(),
         record_progress=record_progress,
-        source_package=source_package,
-        source_package_diagnostics=source_package_diagnostics,
     )
     if isinstance(plan, PdfExtractionError):
         raise _extraction_api_error(plan)

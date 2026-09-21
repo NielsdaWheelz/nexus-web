@@ -38,17 +38,6 @@ PDF reader apparatus is intentionally conservative.
   reference blocks, the same adapter may emit exact `bibliography_entry` targets
   and `cites_bibliography_entry` edges. This is scoped native-link graph
   support, not generic PDF citation parsing.
-- For arXiv PDFs with a committed source package, source-first TeX/BibTeX
-  apparatus may emit `bibliography_ref`, `bibliography_entry`, and source
-  footnote rows from structured LaTeX/BibTeX files. This verifies the source
-  package citation graph; it does not imply PDF page-geometry alignment unless
-  geometry locators are explicitly present.
-- For law-review-style born-digital PDFs, the `pdf_legal_footnotes_v1` adapter
-  may emit `footnote_ref`, `footnote`, and `points_to_note` rows only when
-  raised body markers pair one-to-one with same-page lower-band note labels via
-  exact page geometry, footnote-sized target text, and adjacent body-text marker
-  context. These rows are `strong` confidence because the PDF does not encode
-  semantic note links.
 - Marker-only PDF apparatus remains `partial` when native citation links exist
   but target materialization cannot be resolved without ambiguity.
 - Plain extracted text, superscript-like glyphs, line numbers, and reference

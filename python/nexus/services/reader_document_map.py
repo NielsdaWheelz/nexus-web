@@ -28,23 +28,17 @@ from nexus.services.reader_publication import read_publication_generation
 
 
 def get_reader_document_map(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    media_id: UUID,
+    db: Session, *, viewer_id: UUID, media_id: UUID
 ) -> ReaderDocumentMapOut:
-    """Read domain owners once and assemble the canonical Document Map."""
-
+    """Read each domain owner once and assemble the canonical Document Map."""
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
     media = (
         db.execute(
             text(
                 """
-                SELECT id, kind, title, page_count, processing_status
-                FROM media
-                WHERE id = :media_id
+                SELECT kind, title, page_count, processing_status
+                FROM media WHERE id = :media_id
                 """
             ),
             {"media_id": media_id},
@@ -54,6 +48,8 @@ def get_reader_document_map(
     )
     if media is None:
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    media_kind = str(media["kind"])
+    page_count = int(media["page_count"]) if media["page_count"] is not None else None
 
     fragments = (
         db.execute(
@@ -72,15 +68,14 @@ def get_reader_document_map(
     )
     fragment_indexes = {str(row["id"]): int(row["idx"]) for row in fragments}
     fragment_ranges: dict[str, tuple[int, int]] = {}
-    fragment_cursor = 0
+    total_fragment_chars = 0
     for row in fragments:
         char_count = int(row["char_count"] or 0)
-        fragment_ranges[str(row["id"])] = (fragment_cursor, char_count)
-        fragment_cursor += char_count
+        fragment_ranges[str(row["id"])] = (total_fragment_chars, char_count)
+        total_fragment_chars += char_count
 
-    media_kind = str(media["kind"])
     generation = absent()
-    if media_kind in {"epub", "web_article", "pdf"}:
+    if media_kind in ("epub", "web_article", "pdf"):
         publication_generation = read_publication_generation(db, media_id=media_id)
         if publication_generation is None:
             if is_document_status_ready(str(media["processing_status"])):
@@ -88,8 +83,10 @@ def get_reader_document_map(
                 raise AssertionError("Readable document has no reader publication")
             raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media has no reader publication")
         generation = present(publication_generation)
-    pdf_page_heights = (
-        {
+
+    pdf_page_heights: dict[int, float] = {}
+    if media_kind == "pdf":
+        pdf_page_heights = {
             int(row["page_number"]): float(row["page_height"])
             for row in db.execute(
                 text(
@@ -105,9 +102,7 @@ def get_reader_document_map(
             .mappings()
             .all()
         }
-        if media_kind == "pdf"
-        else {}
-    )
+
     navigation = None
     navigation_partial = False
     if media_kind in ("web_article", "epub"):
@@ -118,16 +113,7 @@ def get_reader_document_map(
                 raise
             navigation_partial = True
 
-    media_highlights = highlights.list_highlights_for_media(
-        db=db,
-        viewer_id=viewer_id,
-        media_id=media_id,
-        mine_only=False,
-    )
     apparatus = reader_apparatus.get_media_apparatus(db, viewer_id, media_id)
-    connection_rows = reader_connections.list_reader_connections(
-        db, viewer_id=viewer_id, media_id=media_id
-    )
     embed_rows = (
         document_embeds.list_document_embeds_for_media(db, viewer_id=viewer_id, media_id=media_id)
         if media_kind == "web_article"
@@ -140,13 +126,17 @@ def get_reader_document_map(
         media_kind=media_kind,
         navigation=navigation,
         embeds=embed_rows,
-        highlights=media_highlights,
+        highlights=highlights.list_highlights_for_media(
+            db=db, viewer_id=viewer_id, media_id=media_id, mine_only=False
+        ),
         apparatus=apparatus,
-        connections=connection_rows,
+        connections=reader_connections.list_reader_connections(
+            db, viewer_id=viewer_id, media_id=media_id
+        ),
         fragment_indexes=fragment_indexes,
         fragment_ranges=fragment_ranges,
-        total_fragment_chars=fragment_cursor,
-        page_count=int(media["page_count"]) if media["page_count"] is not None else None,
+        total_fragment_chars=total_fragment_chars,
+        page_count=page_count,
         pdf_page_heights=pdf_page_heights,
     )
 
@@ -158,19 +148,24 @@ def get_reader_document_map(
             navigation_partial = True
     if media_kind == "epub":
         unresolved_targets = db.execute(
-            text("""
+            text(
+                """
                 SELECT count(*) FROM epub_toc_nodes
                 WHERE media_id = :media_id AND href IS NOT NULL AND target_offset IS NULL
-            """),
+                """
+            ),
             {"media_id": media_id},
         ).scalar_one()
         if unresolved_targets:
             omitted_item_counts["unresolved_navigation_target"] = unresolved_targets
             navigation_partial = True
 
-    all_item_count = projection.evidence.counts.passages + projection.evidence.counts.document
+    counts = projection.evidence.counts
     has_content = bool(
-        all_item_count or embed_rows or (navigation is not None and navigation.sections)
+        counts.passages
+        or counts.document
+        or embed_rows
+        or (navigation is not None and navigation.sections)
     )
     partial = navigation_partial or apparatus.status in ("partial", "failed")
     status: ReaderDocumentMapStatus = (
@@ -186,7 +181,5 @@ def get_reader_document_map(
         embeds=embed_rows,
         evidence=projection.evidence,
         markers=projection.markers,
-        diagnostics=ReaderDocumentMapDiagnosticsOut(
-            omitted_item_counts=omitted_item_counts,
-        ),
+        diagnostics=ReaderDocumentMapDiagnosticsOut(omitted_item_counts=omitted_item_counts),
     )
