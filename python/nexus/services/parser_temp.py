@@ -1,4 +1,4 @@
-"""Attempt-scoped filesystem materialization and output sizing for bounded media parsers."""
+"""Attempt-scoped filesystem materialization and output sizing for media parsers."""
 
 from __future__ import annotations
 
@@ -15,20 +15,19 @@ from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.storage.client import StorageClient, StorageError
 
+_SHA256_HEX_RE = re.compile(r"[0-9a-f]{64}\Z")
+
 
 class StorageObjectIntegrityError(ApiError):
-    """The stored object bytes are not the bytes the media source published.
+    """The stored bytes are not the bytes the media source published.
 
-    A parser observes this before it opens the document, so the owning source
-    attempt settles on the same terminal ``E_SOURCE_INTEGRITY`` outcome as the
-    upload boundary instead of retrying an object that cannot change.
+    Raised before a parser opens the document so the owning attempt settles on
+    the same terminal ``E_SOURCE_INTEGRITY`` outcome as the upload boundary,
+    instead of retrying an object that cannot change.
     """
 
     def __init__(self, message: str) -> None:
         super().__init__(ApiErrorCode.E_SOURCE_INTEGRITY, message)
-
-
-_SHA256_HEX_RE = re.compile(r"[0-9a-f]{64}\Z")
 
 
 def require_source_sha256(value: str) -> str:
@@ -92,26 +91,21 @@ def stream_storage_object_to_file(
             raise StorageObjectIntegrityError(
                 f"Storage object '{storage_path}' is shorter than persisted byte length"
             )
+        actual_source_sha256 = digest.hexdigest()
+        if actual_source_sha256 != expected_source_sha256:
+            raise StorageObjectIntegrityError(
+                "storage object SHA-256 differs from persisted source identity"
+            )
     except StorageError as exc:
         destination.unlink(missing_ok=True)
         raise StorageError(exc.message, exc.code) from exc
     except Exception:
         destination.unlink(missing_ok=True)
         raise
-    actual_source_sha256 = digest.hexdigest()
-    if actual_source_sha256 != expected_source_sha256:
-        destination.unlink(missing_ok=True)
-        raise StorageObjectIntegrityError(
-            "storage object SHA-256 differs from persisted source identity"
-        )
     return actual_source_sha256
 
 
-def prune_stale_parser_temp(
-    root: Path,
-    *,
-    operation_is_live: Callable[[UUID], bool],
-) -> int:
+def prune_stale_parser_temp(root: Path, *, operation_is_live: Callable[[UUID], bool]) -> int:
     """Delete only UUID operation roots proven not to have live queue work."""
     if not root.exists():
         return 0
@@ -131,12 +125,11 @@ def prune_stale_parser_temp(
 
 
 def utf8_byte_length(value: str) -> int:
-    """Count the encoded UTF-8 bytes of one already bounded text value."""
     return len(value.encode())
 
 
 def nested_utf8_byte_length(value: object) -> int:
-    """Count the UTF-8 bytes of every string reachable inside one parser output value."""
+    """Count the UTF-8 bytes of every string reachable inside one parser output."""
     if isinstance(value, str):
         return utf8_byte_length(value)
     if isinstance(value, Mapping):

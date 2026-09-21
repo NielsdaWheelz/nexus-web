@@ -1,12 +1,8 @@
-"""Capabilities derivation for media items.
+"""Media capability derivation, plus the readiness and author-edit predicates.
 
-Also the single owner of the two author-editing permission predicates (spec 6)
-and of the identity a recovery command is admitted for. The same functions shape
-the returned capabilities on the media DTO and re-authorize each author mutation
-inside its transaction — the facade calls them directly so the wire capability
-and the enforced rule can never diverge. Recovery capabilities are not derived
-here: the source and search owners decide the offer, and this module only reads
-which offer they made.
+The same predicates shape the wire capabilities and re-authorize each author
+mutation, so the advertised action and the enforced rule cannot diverge. Recovery
+capabilities are read, not decided: the source and search owners make the offer.
 """
 
 from dataclasses import dataclass
@@ -25,8 +21,7 @@ type SearchRecoveryAnswer = RepairSearchOffer | Literal["NotOwner"] | None
 
 @dataclass(frozen=True, slots=True)
 class ViewerRecovery:
-    """A viewer's recovery command: authorized as that viewer and replayed by
-    their ``client_mutation_id``."""
+    """A viewer's recovery command, replayed by their ``client_mutation_id``."""
 
     viewer_id: UUID
     client_mutation_id: str
@@ -39,27 +34,12 @@ class OperatorRecovery:
 
 type RecoveryActor = ViewerRecovery | OperatorRecovery
 
-
-def can_edit_media_authors(*, can_read: bool, is_creator: bool) -> bool:
-    """Spec 6: canEditAuthors = canReadMedia AND isMediaCreator.
-
-    Null/system-creator media therefore has no author editor.
-    """
-    return can_read and is_creator
-
-
 _REFRESHABLE_PROCESSING_STATUSES = {
     ProcessingStatus.ready_for_reading.value,
     ProcessingStatus.failed.value,
 }
-_DOCUMENT_MEDIA_KINDS = {
-    MediaKind.epub.value,
-    MediaKind.web_article.value,
-}
-_TRANSCRIPT_MEDIA_KINDS = {
-    MediaKind.video.value,
-    MediaKind.podcast_episode.value,
-}
+_DOCUMENT_MEDIA_KINDS = {MediaKind.epub.value, MediaKind.web_article.value}
+_TRANSCRIPT_MEDIA_KINDS = {MediaKind.video.value, MediaKind.podcast_episode.value}
 _SOURCE_REFRESH_MEDIA_KINDS = {
     MediaKind.web_article.value,
     MediaKind.video.value,
@@ -67,14 +47,8 @@ _SOURCE_REFRESH_MEDIA_KINDS = {
     MediaKind.pdf.value,
     MediaKind.epub.value,
 }
-_READABLE_TRANSCRIPT_STATES = {
-    TranscriptState.ready.value,
-    TranscriptState.partial.value,
-}
-_READABLE_TRANSCRIPT_COVERAGES = {
-    TranscriptCoverage.partial.value,
-    TranscriptCoverage.full.value,
-}
+_READABLE_TRANSCRIPT_STATES = {TranscriptState.ready.value, TranscriptState.partial.value}
+_READABLE_TRANSCRIPT_COVERAGES = {TranscriptCoverage.partial.value, TranscriptCoverage.full.value}
 _SAME_SOURCE_TERMINAL_ERROR_CODES = frozenset(
     {
         "E_ARCHIVE_UNSAFE",
@@ -89,12 +63,17 @@ _SAME_SOURCE_TERMINAL_ERROR_CODES = frozenset(
 )
 
 
+def can_edit_media_authors(*, can_read: bool, is_creator: bool) -> bool:
+    """canEditAuthors = canReadMedia AND isMediaCreator; system media has no editor."""
+    return can_read and is_creator
+
+
 def is_document_status_ready(processing_status: str | ProcessingStatus) -> bool:
     return processing_status == ProcessingStatus.ready_for_reading.value
 
 
 def is_same_source_terminal_error(error_code: str | None) -> bool:
-    """Return whether retrying or refreshing the exact source cannot change the result."""
+    """Whether retrying or refreshing the exact source cannot change the result."""
     return error_code in _SAME_SOURCE_TERMINAL_ERROR_CODES
 
 
@@ -110,7 +89,7 @@ def is_text_document_ready(
     transcript_state: str | None = None,
     transcript_coverage: str | None = None,
 ) -> bool:
-    """Return whether text/document read APIs may expose current artifacts."""
+    """Whether text/document read APIs may expose current artifacts."""
     if kind in _DOCUMENT_MEDIA_KINDS or kind == MediaKind.pdf.value:
         return is_document_status_ready(processing_status)
     if kind in _TRANSCRIPT_MEDIA_KINDS:
@@ -140,86 +119,60 @@ def derive_capabilities(
     is_pdf = kind == MediaKind.pdf.value
     is_document = kind in _DOCUMENT_MEDIA_KINDS
     is_transcript_media = kind in _TRANSCRIPT_MEDIA_KINDS
+    if not (is_pdf or is_document or is_transcript_media):
+        raise ValueError(f"Unsupported media kind: {kind}")
 
-    status_ready_for_reading = is_document_status_ready(processing_status)
-    is_transcript_unavailable = False
-    transcript_ready = False
-
-    if is_transcript_media and transcript_state is not None:
-        is_transcript_unavailable = transcript_state == TranscriptState.unavailable.value
-        transcript_ready = is_transcript_readable(transcript_state, transcript_coverage)
-
-    can_download_file = media_file_exists
-
-    if external_playback_url_exists:
-        can_play = is_transcript_media or status_ready_for_reading or is_transcript_unavailable
-    else:
-        can_play = False
+    status_ready = is_document_status_ready(processing_status)
+    transcript_unavailable = (
+        is_transcript_media and transcript_state == TranscriptState.unavailable.value
+    )
+    transcript_ready = (
+        is_transcript_media
+        and transcript_state is not None
+        and is_transcript_readable(transcript_state, transcript_coverage)
+    )
 
     if is_pdf:
         can_read = media_file_exists and processing_status != ProcessingStatus.failed.value
-    elif is_document:
-        can_read = status_ready_for_reading
-    elif is_transcript_media:
-        if is_transcript_unavailable:
-            can_read = False
-        else:
-            can_read = transcript_ready
-    else:
-        raise ValueError(f"Unsupported media kind: {kind}")
-
-    if is_pdf:
-        can_highlight = media_file_exists and status_ready_for_reading
-    elif is_transcript_unavailable:
-        can_highlight = False
-    else:
-        can_highlight = can_read
-
-    if is_pdf:
+        can_highlight = media_file_exists and status_ready
         can_quote = can_highlight and pdf_quote_text_ready
-    elif is_transcript_unavailable:
-        can_quote = False
+    elif is_document:
+        can_read = can_highlight = can_quote = status_ready
+    elif transcript_unavailable:
+        can_read = can_highlight = can_quote = False
     else:
-        can_quote = can_read
+        can_read = can_highlight = can_quote = transcript_ready
 
     retrieval_ready = (
         retrieval_status == "ready" if retrieval_active_ready is None else retrieval_active_ready
     )
-    can_search = can_quote and retrieval_ready
-
     source_suspended = isinstance(source_recovery, RepairSourceOffer)
-    can_refresh_source = (
-        is_creator
-        and kind in _SOURCE_REFRESH_MEDIA_KINDS
-        and source_refresh_available
-        and processing_status in _REFRESHABLE_PROCESSING_STATUSES
-        and not is_same_source_terminal_error(last_error_code)
-        and not source_suspended
-    )
-    can_retry_metadata = is_creator and is_metadata_enrichment_eligible(
-        kind=kind, processing_status=processing_status
-    )
-    # Spec §6 canReadMedia is the ACCESS predicate (auth/permissions.can_read_media
-    # — library/provenance membership), not this file's content-readability
-    # can_read. Media DTOs are assembled only for media the viewer can access, so
-    # the access term is true by construction here — the same value the PUT
-    # enforcement passes after re-checking can_read_media. Author editing must
-    # not depend on processing state (a failed ingest still has editable authors).
-    can_edit_authors = can_edit_media_authors(can_read=True, is_creator=is_creator)
 
     return CapabilitiesOut(
         can_read=can_read,
         can_highlight=can_highlight,
         can_quote=can_quote,
-        can_search=can_search,
-        can_play=can_play,
-        can_download_file=can_download_file,
+        can_search=can_quote and retrieval_ready,
+        can_play=external_playback_url_exists
+        and (is_transcript_media or status_ready or transcript_unavailable),
+        can_download_file=media_file_exists,
         can_delete=can_delete,
         can_retry=isinstance(source_recovery, RetrySourceOffer),
-        can_refresh_source=can_refresh_source,
-        can_retry_metadata=can_retry_metadata,
+        can_refresh_source=(
+            is_creator
+            and kind in _SOURCE_REFRESH_MEDIA_KINDS
+            and source_refresh_available
+            and processing_status in _REFRESHABLE_PROCESSING_STATUSES
+            and not is_same_source_terminal_error(last_error_code)
+            and not source_suspended
+        ),
+        # Author editing must not depend on processing state: a failed ingest
+        # still has editable authors. The access half is true by construction —
+        # a media DTO is only assembled for media the viewer can already read.
+        can_retry_metadata=is_creator
+        and is_metadata_enrichment_eligible(kind=kind, processing_status=processing_status),
         can_repair_source=source_suspended,
         can_repair_search=isinstance(search_recovery, RepairSearchOffer),
-        can_edit_authors=can_edit_authors,
-        can_read_embeds=is_document and kind == MediaKind.web_article.value,
+        can_edit_authors=can_edit_media_authors(can_read=True, is_creator=is_creator),
+        can_read_embeds=kind == MediaKind.web_article.value,
     )
