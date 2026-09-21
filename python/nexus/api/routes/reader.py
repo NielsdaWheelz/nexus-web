@@ -1,8 +1,4 @@
-"""Reader routes: evidence resolution, EPUB fragments/navigation, reader state, file.
-
-Transport-only: validate input, call one reader-family service, return the
-envelope. All paths are `/media/{media_id}/...`.
-"""
+"""Reader routes: evidence, EPUB fragments and find, navigation, map, state, file."""
 
 from typing import Annotated
 from uuid import UUID
@@ -33,10 +29,7 @@ from nexus.services.consumption import service as consumption_service
 router = APIRouter(tags=["media"])
 
 
-@router.get(
-    "/media/{media_id}/evidence/{evidence_span_id}",
-    response_model=MediaEvidenceResponse,
-)
+@router.get("/media/{media_id}/evidence/{evidence_span_id}", response_model=MediaEvidenceResponse)
 def resolve_media_evidence(
     media_id: UUID,
     evidence_span_id: UUID,
@@ -44,9 +37,7 @@ def resolve_media_evidence(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     result = locator_resolver.resolve_evidence_span(
-        db,
-        viewer_id=viewer.user_id,
-        evidence_span_id=evidence_span_id,
+        db, viewer_id=viewer.user_id, evidence_span_id=evidence_span_id
     )
     if result["media_id"] != str(media_id) or result["resolver"]["kind"] == "note":
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Evidence not found")
@@ -62,9 +53,7 @@ def get_epub_fragment(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
-    """Get one canonical EPUB render unit in a coherent publication snapshot."""
-    result = epub_read.get_epub_fragment_for_viewer(db, viewer.user_id, media_id, fragment_id)
-    return ok(result)
+    return ok(epub_read.get_epub_fragment_for_viewer(db, viewer.user_id, media_id, fragment_id))
 
 
 @router.post("/media/{media_id}/epub-find")
@@ -74,7 +63,6 @@ def find_in_epub(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
-    """Find literal occurrences in one current EPUB snapshot."""
     return ok(epub_find.find_epub_for_viewer(db, viewer.user_id, media_id, payload))
 
 
@@ -84,9 +72,7 @@ def get_media_navigation(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
-    """Get canonical reader navigation payload."""
-    result = reader_navigation.get_media_navigation_for_viewer(db, viewer.user_id, media_id)
-    return ok(result)
+    return ok(reader_navigation.get_media_navigation_for_viewer(db, viewer.user_id, media_id))
 
 
 @router.get("/media/{media_id}/document-map")
@@ -96,19 +82,15 @@ def get_reader_document_map(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
-    """Get the reader Document Map aggregate."""
     unsupported_params = sorted(request.query_params)
     if unsupported_params:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             f"Unsupported Document Map params: {', '.join(unsupported_params)}",
         )
-    result = reader_document_map.get_reader_document_map(
-        db,
-        viewer_id=viewer.user_id,
-        media_id=media_id,
+    return ok(
+        reader_document_map.get_reader_document_map(db, viewer_id=viewer.user_id, media_id=media_id)
     )
-    return ok(result)
 
 
 @router.get("/media/{media_id}/reader-state")
@@ -117,17 +99,13 @@ def get_reader_state(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Get the canonical cursor snapshot (Empty or Positioned, never raw null)."""
     return ok(consumption_service.get_reader_cursor(db, viewer.user_id, media_id))
 
 
 @router.put("/media/{media_id}/reader-state")
 def put_reader_state(
-    media_id: UUID,
-    payload: CursorWrite,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
+    media_id: UUID, payload: CursorWrite, viewer: Annotated[Viewer, Depends(get_viewer)]
 ) -> JSONResponse:
-    """Atomically replace the cursor and current engagement."""
     snapshot = consumption_service.put_reader_cursor(viewer.user_id, media_id, payload)
     return JSONResponse(content=ok(snapshot))
 
@@ -140,11 +118,7 @@ def get_offline_reader_state(
     db: Annotated[Session, Depends(get_repeatable_read_db)],
     expected_account_id: Annotated[UUID, Header(alias="X-Nexus-Expected-Account-Id")],
 ) -> dict:
-    """Attest one snapshot: the cursor and the generation it belongs to.
-
-    The offline client persists this pair as its durable baseline, so both reads
-    must come from one snapshot rather than two READ COMMITTED instants.
-    """
+    """The cursor and the publication generation it belongs to, from one snapshot."""
     state = offline_reader_progress.get(
         db,
         viewer_id=viewer.user_id,
@@ -184,13 +158,9 @@ def get_media_file(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Get a short-lived signed download URL for a media file (PDF/EPUB only).
-
-    Returns url and expires_at.
-    """
-    result = media_file_access.get_signed_download_url(
-        db=db,
-        viewer_id=viewer.user_id,
-        media_id=media_id,
+    """A short-lived signed download URL: url and expires_at."""
+    return success_response(
+        media_file_access.get_signed_download_url(
+            db=db, viewer_id=viewer.user_id, media_id=media_id
+        )
     )
-    return success_response(result)
