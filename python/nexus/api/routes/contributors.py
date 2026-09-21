@@ -1,15 +1,4 @@
-"""Contributor routes.
-
-Transport-only: parse/validate input, invoke exactly one facade function, return
-the envelope. These four endpoints plus ``PUT /media/{id}/authors`` are the whole
-contributor HTTP surface — there is no directory, reconciliation, merge, split,
-tombstone, alias or external-id route. All four speak strict camelCase: responses
-envelope via ``ok(model, by_alias=True)``.
-
-Handles are parsed once at ingress by ``parse_contributor_handle``; reserved
-collection segments (``directory``/``reconciliation-candidates``) and grammar
-violations 404 without revealing whether an internal record exists (spec 6).
-"""
+"""Contributor routes: parse the handle at ingress, call one facade function, envelope."""
 
 from typing import Annotated
 
@@ -23,10 +12,7 @@ from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.responses import ok
 from nexus.schemas.contributors import ContributorRenameRequest
 from nexus.services import contributors as contributors_service
-from nexus.services.contributor_taxonomy import (
-    ContributorHandle,
-    parse_contributor_handle,
-)
+from nexus.services.contributor_taxonomy import ContributorHandle, parse_contributor_handle
 
 router = APIRouter(prefix="/contributors", tags=["contributors"])
 
@@ -38,6 +24,7 @@ def _require_nonblank(value: str) -> str:
 
 
 def _parse_handle(contributor_handle: str) -> ContributorHandle:
+    """A grammar violation or a reserved segment 404s without revealing anything."""
     try:
         return parse_contributor_handle(contributor_handle)
     except ValueError:
@@ -53,11 +40,7 @@ def search_contributors(
     limit: int = Query(default=20, ge=1, le=50),
 ) -> dict:
     page = contributors_service.search_contributors(
-        db,
-        viewer_id=viewer.user_id,
-        q=q,
-        cursor=cursor,
-        limit=limit,
+        db, viewer_id=viewer.user_id, q=q, cursor=cursor, limit=limit
     )
     return ok(page, by_alias=True)
 
@@ -69,9 +52,7 @@ def get_contributor(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     detail = contributors_service.get_contributor_detail(
-        db,
-        viewer_id=viewer.user_id,
-        contributor_handle=_parse_handle(contributor_handle),
+        db, viewer_id=viewer.user_id, contributor_handle=_parse_handle(contributor_handle)
     )
     return ok(detail, by_alias=True)
 
@@ -105,7 +86,6 @@ def rename_contributor(
     viewer: Annotated[Viewer, Depends(get_viewer)],
 ) -> dict:
     detail = contributors_service.ensure_contributor_display_name(
-        viewer=viewer,
-        contributor_handle=_parse_handle(contributor_handle),
+        viewer=viewer, contributor_handle=_parse_handle(contributor_handle)
     )
     return ok(detail, by_alias=True)
