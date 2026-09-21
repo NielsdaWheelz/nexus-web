@@ -22,7 +22,7 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 
 | feature | now | target | call | status |
 |---|---:|---:|---|---|
-| GENERATED android bundle | 41.7k | 0 | untrack, build in gradle (step already exists) | in progress (size/bundle) |
+| GENERATED android bundle | 0 | 0 | untrack, build in gradle (step already exists) | done (size/bundle): untracked, built by gradle |
 | substrate: db schema (models 4.3k + 235 migrations 41.7k) | 46.0k | 5k | squash migrations to one baseline after 0231–0236 deploy | open |
 | deploy/release (release.py 8.1k + scripts) | 10.2k | 1k | linear deploy script keeping backup-before-migrate + first-attempt provenance | in progress (size/deploy) |
 | docs (rules subtree 3.9k, modules 5.8k, architecture 2.3k, chapbook 1.4k, tickets 2k) | 17.9k | 9k | keep rules/local-rules/runbook/tickets; demote uncited module docs | open |
