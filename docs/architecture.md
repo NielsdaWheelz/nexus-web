@@ -2135,7 +2135,7 @@ the hosted renderer the exact media ID, canonical document kind, and bounded
 `requestedTitle` for enqueue. That title is presentation metadata only; it
 does not authorize work or select package identity.
 
-When validated connectivity is absent, `MainActivity` can load the committed
+When validated connectivity is absent, `MainActivity` can load the packaged
 APK shelf at `appassets.androidplatform.net` without hosted bootstrap. The
 request router serves only packaged static assets and in-memory lease paths;
 PDF byte ranges are handled natively, and every other reserved-host request is

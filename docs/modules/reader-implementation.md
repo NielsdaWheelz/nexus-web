@@ -929,8 +929,10 @@ members retain the 512-MiB ceiling. Production objects are staged and hashed in
 chunks, then ZIP-streamed with cooperative deadline checks per chunk rather
 than accumulated as one in-memory package.
 
-The Android shelf serves the committed Vite bundle and package entries only on
-the reserved appassets host. Lease capabilities are memory-only. Remote
+The Android shelf serves the packaged Vite bundle and package entries only on
+the reserved appassets host. That bundle is a build output, not a committed
+tree: gradle runs `bun run build:offline-reading` in `apps/web` before merging
+assets, and `./scripts/test` runs the same build. Lease capabilities are memory-only. Remote
 article subresources, arbitrary native fetch, WebView `file:`/`content:` access,
 and reserved-host network fallback are absent by contract. Audio remains owned
 by `OfflineMediaStore`; reading remains owned by `OfflineReadingStore`.

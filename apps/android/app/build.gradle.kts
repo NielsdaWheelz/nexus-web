@@ -1,7 +1,5 @@
 import groovy.json.JsonSlurper
-import java.io.File
 import java.net.URI
-import java.security.MessageDigest
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -226,61 +224,26 @@ android {
 
 }
 
-val verifyOfflineReadingAssets = tasks.register("verifyOfflineReadingAssets") {
-    group = "verification"
-    description = "Verifies the committed zero-network offline reader asset closure."
-    val assetRoot = layout.projectDirectory.dir("src/main/assets/nexus-offline")
-    inputs.dir(assetRoot)
-    doLast {
-        val root = assetRoot.asFile
-        val manifestFile = root.resolve("asset-manifest.sha256")
-        check(manifestFile.isFile) { "Generate offline reader assets with bun run build:offline-reading." }
-        val declared = manifestFile.readLines()
-            .filter(String::isNotBlank)
-            .associate { line ->
-                val parts = line.split("  ", limit = 2)
-                check(parts.size == 2 && parts[0].matches(Regex("[0-9a-f]{64}"))) {
-                    "Malformed offline reader asset manifest entry."
-                }
-                parts[1] to parts[0]
-            }
-        val actual = root.walkTopDown()
-            .filter(File::isFile)
-            .map { it.relativeTo(root).invariantSeparatorsPath }
-            .filter { it != "asset-manifest.sha256" }
-            .toSet()
-        check(declared.keys == actual) { "Offline reader asset closure is stale." }
-        for ((relative, expected) in declared) {
-            val digest = MessageDigest.getInstance("SHA-256")
-                .digest(root.resolve(relative).readBytes())
-                .joinToString("") { "%02x".format(it) }
-            check(digest == expected) { "Offline reader asset digest is stale: $relative" }
-        }
-        val repositoryRoot = rootProject.projectDir.resolve("../..").canonicalFile
-        val sourceManifest = root.resolve("source-manifest.sha256")
-        for (line in sourceManifest.readLines().filter(String::isNotBlank)) {
-            val parts = line.split("  ", limit = 2)
-            check(parts.size == 2 && parts[0].matches(Regex("[0-9a-f]{64}"))) {
-                "Malformed offline reader source manifest entry."
-            }
-            val source = repositoryRoot.resolve(parts[1]).canonicalFile
-            check(source.isFile && source.path.startsWith(repositoryRoot.path + File.separator)) {
-                "Offline reader source manifest escapes or names a missing input: ${parts[1]}"
-            }
-            val digest = MessageDigest.getInstance("SHA-256")
-                .digest(source.readBytes())
-                .joinToString("") { "%02x".format(it) }
-            check(digest == parts[0]) { "Offline reader assets are stale for source: ${parts[1]}" }
-        }
-    }
+// The offline reader shelf is a build output, not source: gradle regenerates it
+// from apps/web before the assets are merged, so a clean checkout builds. The
+// pdf.js copy is pinned by `apps/web/package.json` + `bun.lock` (asserted at run
+// time by copy-pdfjs.mjs), so node_modules is not declared as an input.
+val webDir = rootProject.projectDir.resolve("../web")
+val buildOfflineReadingAssets = tasks.register<Exec>("buildOfflineReadingAssets") {
+    group = "build"
+    description = "Builds the zero-network offline reader shelf from apps/web."
+    workingDir = webDir
+    commandLine("bun", "run", "build:offline-reading")
+    inputs.dir(webDir.resolve("src"))
+    inputs.dir(webDir.resolve("scripts"))
+    inputs.file(webDir.resolve("vite.offline-reading.config.ts"))
+    inputs.file(webDir.resolve("package.json"))
+    inputs.file(webDir.resolve("bun.lock"))
+    outputs.dir(layout.projectDirectory.dir("src/main/assets/nexus-offline"))
 }
 
-tasks.named("preBuild") {
-    dependsOn(verifyOfflineReadingAssets)
-}
-
-tasks.named("check") {
-    dependsOn(verifyOfflineReadingAssets)
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+    dependsOn(buildOfflineReadingAssets)
 }
 
 kotlin {
