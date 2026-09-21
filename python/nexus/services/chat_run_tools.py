@@ -11,16 +11,14 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun, MessageToolCall
-from nexus.schemas.conversation import ChatRunToolResultEventPayload
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -207,29 +205,6 @@ def decode_persisted_tool_record(row: MessageToolCall) -> PersistedToolRecord:
         status=row.status,
         error_code=row.error_code,
     )
-
-
-class _ToolStepModel(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-class ToolModelOutput(_ToolStepModel):
-    call_id: str = Field(min_length=1)
-    output: str
-    is_error: bool
-
-
-class ToolStepResult(_ToolStepModel):
-    tool_call_id: UUID
-    canonical_tool_id: str = Field(min_length=1, max_length=128)
-    record_kind: Literal[RecordKind.current_execution]
-    canonical_input_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    tool_contract_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
-    binding_policy_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
-    tool_call_index: int = Field(ge=1)
-    model_output: ToolModelOutput
-    next_citation_ordinal: int = Field(ge=1)
-    result_event: ChatRunToolResultEventPayload
 
 
 def _assert_current_position(

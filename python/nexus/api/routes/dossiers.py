@@ -63,7 +63,7 @@ from nexus.services.resource_graph.refs import (
 )
 from nexus.services.resource_graph.resolve import resolve_ref
 from nexus.services.resource_items.routing import resource_activation_for_ref
-from nexus.services.tool_runtime.composition import ComposedToolRuntime
+from nexus.services.tool_runtime.catalog import ComposedToolRuntime
 
 router = APIRouter(tags=["dossiers"])
 

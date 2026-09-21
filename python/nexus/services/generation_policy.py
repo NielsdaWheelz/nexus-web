@@ -22,7 +22,7 @@ from nexus.services.generation_selection import (
     ProviderApiSelection,
 )
 from nexus.services.generation_spec import BackgroundOperationKey
-from nexus.services.tool_runtime.authority import tool_plan_authority_revision
+from nexus.services.tool_runtime.plan_revisions import tool_plan_authority_revision
 
 type GenerationSelection = CodexPersonalSelection | ProviderApiSelection
 type EffectMode = Literal["ReadOnly", "AdditiveWrites"]
@@ -529,7 +529,7 @@ def operation_revision(operation: str) -> str:
 def validate_policy() -> None:
     # Load executable tool definitions only while validating complete process
     # composition. Domain workers may import policy facts without loading tools.
-    from nexus.services.tool_runtime.profiles import tool_plan_policy_facts
+    from nexus.services.tool_runtime.plans import TOOL_PLAN_DEFINITIONS_BY_ID
 
     expected_operations = (
         "metadata_enrichment",
@@ -564,7 +564,14 @@ def validate_policy() -> None:
         },
     }
     current_model_plans = {
-        facts.plan_id: facts.authority_revision for facts in tool_plan_policy_facts()
+        plan_id: TOOL_PLAN_DEFINITIONS_BY_ID[plan_id].authority_revision
+        for plan_id in (
+            "ChatRead",
+            "ChatReadAdditiveWrite",
+            "LibraryDossierRead",
+            "IdeaDossierRead",
+            "MetadataRead",
+        )
     }
     if referenced_model_plans != current_model_plans:
         raise AssertionError("generation policy model-tool authority drifted")

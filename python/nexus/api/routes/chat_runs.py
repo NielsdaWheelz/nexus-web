@@ -19,7 +19,7 @@ from nexus.schemas.presence import Present
 from nexus.services import chat_run_candidates
 from nexus.services import chat_runs as chat_runs_service
 from nexus.services.generation_catalog import GenerationCatalogService
-from nexus.services.tool_runtime.composition import ComposedToolRuntime
+from nexus.services.tool_runtime.catalog import ComposedToolRuntime
 
 router = APIRouter(
     tags=["chat-runs"],

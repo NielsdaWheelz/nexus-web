@@ -42,7 +42,6 @@ PODCASTS_ENABLED
 YOUTUBE_DATA_API_KEY
 X_API_BEARER_TOKEN
 OPENAI_API_KEY
-AGENT_TOOL_GRANT_SIGNING_KEY
 GENERATION_API_PROVIDERS
 GENERATION_CONTINUATION_ENCRYPTION_KEY
 POSTGRES_IMAGE
@@ -246,18 +245,6 @@ if (
 ):
     sys.exit(1)
 PY
-}
-
-require_agent_tool_grant_signing_key() {
-  local file="$1"
-  local grant_key stream_key
-
-  grant_key="$(normalize_env_value "$(env_value "AGENT_TOOL_GRANT_SIGNING_KEY" "$file" || true)")"
-  stream_key="$(normalize_env_value "$(env_value "STREAM_TOKEN_SIGNING_KEY" "$file" || true)")"
-  [ "${#grant_key}" -ge 32 ] || \
-    die "AGENT_TOOL_GRANT_SIGNING_KEY must contain at least 32 characters"
-  [ "$grant_key" != "$stream_key" ] || \
-    die "AGENT_TOOL_GRANT_SIGNING_KEY must be distinct from STREAM_TOKEN_SIGNING_KEY"
 }
 
 reject_legacy_runtime_keys() {
@@ -483,7 +470,6 @@ require_non_empty_keys "$tmp_file"
 require_prod_env "$tmp_file"
 require_local_database_url "$tmp_file"
 require_cloudflare_r2_s3_api_origin "$tmp_file"
-require_agent_tool_grant_signing_key "$tmp_file"
 require_digest_image POSTGRES_IMAGE "$tmp_file"
 require_digest_image CADDY_IMAGE "$tmp_file"
 reject_legacy_runtime_keys "$tmp_file"

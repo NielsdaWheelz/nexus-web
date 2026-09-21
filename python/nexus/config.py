@@ -460,12 +460,6 @@ class Settings(BaseSettings):
         default=None,
         alias="NEXUS_FABLE_RETENTION_ACCEPTED_AT",
     )
-    agent_tool_grant_signing_key: SecretStr | None = Field(
-        default=None,
-        alias="AGENT_TOOL_GRANT_SIGNING_KEY",
-        repr=False,
-    )
-
     # Public web search provider settings.
     # Brave is the first production web-search provider. If no API key is
     # configured, required web-search turns fail closed with a typed tool error.
@@ -810,14 +804,6 @@ class Settings(BaseSettings):
             raise ValueError("GENERATION_API_PROVIDERS must be nonempty in staging/prod")
         if not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required for transcript embeddings")
-        if not self.agent_tool_grant_signing_key:
-            raise ValueError("AGENT_TOOL_GRANT_SIGNING_KEY is required in staging/prod")
-        from nexus.services.agent_tool_grants import validate_agent_tool_grant_signing_key
-
-        try:
-            validate_agent_tool_grant_signing_key(self.agent_tool_grant_signing_key)
-        except ValueError as exc:
-            raise ValueError("AGENT_TOOL_GRANT_SIGNING_KEY is invalid") from exc
 
     def _validate_ingest_runtime_and_paths(self) -> None:
         if (
@@ -919,15 +905,6 @@ class Settings(BaseSettings):
         if self.nexus_env in (Environment.LOCAL, Environment.TEST):
             return "dGVzdC1zdHJlYW0tdG9rZW4tc2lnbmluZy1rZXktMzJieXRlcw=="  # test key
         raise ValueError("STREAM_TOKEN_SIGNING_KEY is required in staging/prod")
-
-    @property
-    def effective_agent_tool_grant_signing_key(self) -> SecretStr:
-        """Return the dedicated grant key, with a non-production test key only."""
-        if self.agent_tool_grant_signing_key is not None:
-            return self.agent_tool_grant_signing_key
-        if self.nexus_env in (Environment.LOCAL, Environment.TEST):
-            return SecretStr("test-agent-tools-grant-signing-key-32-bytes!")
-        raise ValueError("AGENT_TOOL_GRANT_SIGNING_KEY is required in staging/prod")
 
     @property
     def effective_generation_continuation_encryption_key(self) -> SecretStr:
