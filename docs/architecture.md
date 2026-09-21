@@ -661,8 +661,8 @@ same entrypoint with fixed `interactive` and `background` lanes:
   active aligned slots in that kind's global dedupe namespace, then reconciles
   only priority, so deployment and expired-lease replay cannot retain stale
   ordering policy. Immutable scheduler identity stays exact while the registry
-  declares the optional checkpoint keys that Dawn and the storage orphan sweep
-  may persist; their owning codecs remain responsible for checkpoint values.
+  declares the optional checkpoint keys that the storage orphan sweep may
+  persist; its owning codec remains responsible for checkpoint values.
   The namespace lookup is cross-kind and locks at most 257 rows: more than 256
   active claimants defects the whole transaction before reconciliation.
   Propagated `request_id` values are correlation, not namespace ownership.
@@ -709,7 +709,7 @@ Task catalog (each is a thin handler in `tasks/` that wraps a service):
 `reconcile_stale_ingest_media_job` (periodic),
 `sync_gutenberg_catalog_job` (periodic), `prune_background_jobs_job`
 (periodic), `purge_expired_auth_handoff_codes` (periodic), `synapse_scan`,
-`dawn_write_job` (periodic), `atlas_project_job` (periodic), `media_teardown`,
+`atlas_project_job` (periodic), `media_teardown`,
 `storage_object_cleanup`, and `storage_orphan_sweep` (periodic).
 
 Author identity is resolved inline, synchronously, inside each ingest/enrichment
@@ -727,7 +727,7 @@ rather than proposed and reconciled after the fact.
 > queue-level retries.
 
 **Generation boundary.** Every durable generative job — chat, Oracle,
-synapse, Dawn, dossiers, media summaries, and metadata enrichment — runs through
+synapse, dossiers, media summaries, and metadata enrichment — runs through
 `GenerationService` and `services/llm_execution.py`. Admission freezes the
 exact selection, budgets, output contract, prompt reference, and operation-owned
 tool plan in one `GenerationSpec`; workers never reread mutable policy. All
@@ -1570,7 +1570,7 @@ commands. Commands use resource versions, durable mutation replay, and one
 SERIALIZABLE transaction. Surface activation uses the bounded batch router, so
 heterogeneous rows add no per-occurrence query loop. Intrinsic page-title and
 note-body edits use the resource-item mutation owner. `services/notes.py`
-remains the notes collection, daily-page, dated-capture, and Dawn Write facade.
+remains the notes collection, daily-page, and dated-capture facade.
 A Page list row is exactly `{id,title,updatedAt}`; Page detail adds required
 `dailyPage: Presence<{localDate}>`. `schemas/notes.py` and
 `services/notes.py` own those typed backend shapes and convert nullable daily

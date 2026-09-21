@@ -40,7 +40,6 @@ type LlmCallOwnerKind = Literal[
     "artifact_learn_request",
     "media_summary",
     "synapse_scan",
-    "dawn_write",
     "media_enrichment",
 ]
 type GenerationOutcome = Literal["Succeeded", "Failed", "Cancelled"]
@@ -49,7 +48,6 @@ _OPERATION_OWNER_KINDS: dict[str, LlmCallOwnerKind] = {
     "metadata_enrichment": "media_enrichment",
     "media_summary": "media_summary",
     "synapse": "synapse_scan",
-    "dawn_write": "dawn_write",
     "oracle": "oracle_reading",
     "dossier_page": "artifact_build",
     "dossier_note": "artifact_build",

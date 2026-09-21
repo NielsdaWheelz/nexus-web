@@ -89,8 +89,8 @@ kind is a frozen `JobDefinition`:
   and do not claim that namespace.
 - `periodic_checkpoint_keys` — the closed set of optional top-level checkpoint
   keys a periodic handler may persist alongside immutable scheduler identity.
-  Dawn declares its frozen-worklist/generation keys and the storage orphan
-  sweep declares its continuation token; all other periodic jobs declare none.
+  The storage orphan sweep declares its continuation token; all other
+  periodic jobs declare none.
   The scheduler rejects undeclared keys while each handler-owned strict codec
   validates checkpoint values. Namespace selection is global across kinds and
   bounded to 256 active rows; a foreign-kind claimant, noncanonical identity,
@@ -125,7 +125,7 @@ missing, additional, coerced, padded, or noncanonical values and passes a typed
 The generation kinds use these exact renewable registry leases:
 `enrich_metadata` and `synapse_scan`,
 300s; `oracle_reading_generate` and `media_unit_build`, 450s;
-`dawn_write_job` and `dossier_build`, 900s; and `chat_run`, 1,200s. The worker
+`dossier_build`, 900s; and `chat_run`, 1,200s. The worker
 renews its exact running claim before dispatch and throughout execution;
 publication requires a live claim. These leases are not attempt deadlines.
 A Codex MCP bearer expires at the earliest of the lease expiry observed when
