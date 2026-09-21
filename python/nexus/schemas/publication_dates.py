@@ -1,7 +1,5 @@
 """Calendar-precision bibliography dates and external source normalization."""
 
-from __future__ import annotations
-
 import re
 from datetime import UTC, date, datetime
 from typing import Annotated
@@ -32,16 +30,12 @@ PublicationDate = Annotated[
 
 def normalize_source_publication_date(value: str | None) -> Presence[PublicationDate]:
     """Ignore unusable source dates; reduce qualified instants to their UTC day."""
-    if value is None:
-        return absent()
-    value = value.strip()
+    candidate = (value or "").strip()
     try:
-        if re.fullmatch(_DATE_PATTERN, value):
-            return present(_validate_calendar_date(value))
-        if _SOURCE_INSTANT.fullmatch(value):
-            return present(datetime.fromisoformat(value).astimezone(UTC).date().isoformat())
-    # justify-ignore-error: invalid external calendar values and UTC overflow
-    # are absent publication observations, not failed document ingestion.
+        if re.fullmatch(_DATE_PATTERN, candidate):
+            return present(_validate_calendar_date(candidate))
+        if _SOURCE_INSTANT.fullmatch(candidate):
+            return present(datetime.fromisoformat(candidate).astimezone(UTC).date().isoformat())
     except (ValueError, OverflowError):
         return absent()
     return absent()

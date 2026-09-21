@@ -1,23 +1,17 @@
 # Nexus Worker
 
-Postgres-backed workers for Nexus.
+One process per lane, each running two loops against `background_jobs`:
 
-## Scope
+- Job loop: claim one due row, execute its handler, settle the row.
+- Scheduler loop: enqueue each due periodic slot once, cluster-wide.
 
-Each single-process lane runs two loops:
-
-- Job loop: claim one due row from `background_jobs`, execute handler, persist state.
-- Scheduler loop: enqueue explicitly enabled periodic jobs with deterministic dedupe keys.
-
-`WORKER_LANE=interactive|background` selects one fixed allowlist declared in
-`nexus.config`. The five-kind interactive lane owns user-waiting work. The
-fifteen-kind background lane owns retrieval, repair, teardown, and production
-periodic schedules. The lanes are disjoint and together cover the complete
-production-enabled job set.
+`WORKER_LANE=interactive` owns the five user-waiting kinds and keeps handlers
+in-process alongside the agent-tools MCP listener. `WORKER_LANE=background`
+owns the fifteen retrieval, repair, teardown and periodic kinds and runs every
+handler in a fresh cgroup-limited child. The lanes are disjoint and together
+cover the production-enabled job set (`python/nexus/job_topology.py`).
 
 ## Run
-
-From repo root:
 
 ```bash
 make worker-interactive
@@ -37,8 +31,6 @@ PYTHONPATH=$PWD:$PWD/.. \
   uv run python -m apps.worker.main
 ```
 
-Run the same command with `WORKER_LANE=background` for the background lane.
-
 ## Docker
 
 ```bash
@@ -49,27 +41,28 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.worker.yml 
   up -d worker-interactive worker-background
 ```
 
+Each container's healthcheck runs `python -S -m apps.worker.health --lane <lane>`,
+which fails unless the process published a database-backed cycle in the last 20
+seconds under the running image's identity.
+
 ## Environment
 
-- `DATABASE_URL` (required)
-- `NEXUS_RUNTIME_IDENTITY_FILE` (explicit checkout identity in local/test only;
-  production uses the baked `/app/runtime-identity.json`)
-- `WORKER_LANE` (required by the worker entrypoint)
-- `WORKER_POLL_INTERVAL_SECONDS`
-- `WORKER_IDLE_BACKOFF_MAX_SECONDS`
-- `WORKER_SCHEDULER_INTERVAL_SECONDS`
-- `WORKER_HEARTBEAT_INTERVAL_SECONDS`
-- `WORKER_LEASE_SECONDS`
-- `WORKER_DB_FAILURE_BACKOFF_SECONDS`
-- `WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS`
-- `PODCAST_REFRESH_DUE_SCHEDULE_SECONDS`
-- `PODCAST_REFRESH_DUE_LIMIT`
-- `INGEST_RECONCILE_SCHEDULE_SECONDS`
-- `SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS`
+`DATABASE_URL`, `NEXUS_RUNTIME_IDENTITY_FILE` (local only; production uses the
+baked `/app/runtime-identity.json`), `WORKER_LANE`, `WORKER_POLL_INTERVAL_SECONDS`,
+`WORKER_IDLE_BACKOFF_MAX_SECONDS`, `WORKER_SCHEDULER_INTERVAL_SECONDS`,
+`WORKER_HEARTBEAT_INTERVAL_SECONDS`, `WORKER_LEASE_SECONDS`,
+`WORKER_DB_FAILURE_BACKOFF_SECONDS`, `WORKER_DB_FAILURE_BACKOFF_MAX_SECONDS`,
+`PARSER_TEMP_ROOT`, `BACKGROUND_PROCESS_*`, `BACKGROUND_JOB_PRUNE_*`, and the
+schedule knobs `PODCAST_REFRESH_DUE_SCHEDULE_SECONDS`,
+`INGEST_RECONCILE_SCHEDULE_SECONDS`, `ATLAS_PROJECT_SCHEDULE_SECONDS`,
+`STORAGE_ORPHAN_SWEEP_INTERVAL_SECONDS`, `SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS`.
+See root `.env.example` for values.
 
-See root `.env.example` for example values and related ingest controls.
+## Maintenance
 
-Maintenance is a one-off process, never a deployed service:
+A one-off process, never a deployed service. The raw allowlist must be a
+non-empty subset of `MAINTENANCE_JOB_KINDS`; the normal lanes reject it. Stop
+the process when the bounded operation is complete.
 
 ```bash
 WORKER_LANE=maintenance \
@@ -79,17 +72,7 @@ SYNC_GUTENBERG_CATALOG_SCHEDULE_SECONDS=86400 \
 uv run python -m apps.worker.main
 ```
 
-The raw allowlist must be a non-empty subset of `MAINTENANCE_JOB_KINDS`.
-Normal lanes reject it. Stop the process when the bounded maintenance
-operation is complete.
-
 ## Contract
 
-`python/nexus/jobs/registry.py` owns job policy.
-`python/nexus/job_topology.py` owns the production and maintenance topology
-without importing the application runtime graph. Only the background lane
-schedules production periodic jobs. After a successful database-backed cycle,
-the worker process proves the exact database revision and atomically publishes
-progress. The cgroup-local `python -S -m apps.worker.health --lane <lane>`
-probe rejects stale/dead progress and lane/kind drift without importing the
-database, ORM, provider, or task-registry graph.
+`python/nexus/jobs/registry.py` owns per-kind policy; `docs/modules/jobs.md`
+states the queue's invariants.

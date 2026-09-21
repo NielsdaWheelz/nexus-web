@@ -29,9 +29,9 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | deploy/release (release.py 8.1k + scripts) | 2.7k | 1k | linear deploy script keeping backup-before-migrate + first-attempt provenance | done (size/deploy): release.py 8,071→620, driven over ssh; compose/Caddyfile/cloud-init/env are the fixed remainder |
 | docs (rules subtree 3.9k, modules 5.8k, architecture 2.3k, chapbook 1.4k, tickets 2k) | 17.9k | 9k | keep rules/local-rules/runbook/tickets; demote uncited module docs | open |
 | reader (epub, pdf, web article, selection/highlights; MediaPaneBody 7.6k, PdfReader 3.6k) | 46.3k | 15k | reauthor: one reader shell, one find | initial-content ownership unified; unicode selection, painting, find, and margin mapping share provenance; full reauthoring open |
-| reader-apparatus (footnotes, bibliography, latex, publisher extractors, doc map, margin rail) | 13.3k | 3k | keep footnotes/endnotes; delete latex, pdf legal-footnote, 6 publisher extractors, doc-map presenters | open |
-| ingest-imports (url/file/youtube/x/email/arxiv/remote, upload sessions, imports workspace, metadata intelligence) | 27.8k | 8k | reauthor; decide x, email, arxiv | python source-ingest first pass landed (size/ingest-py): 12.5k→9.2k, −26%; node acquisition/extraction reauthored (cleanup/node-ingest): 1,011→502 lines, −50%; imports history, metadata intelligence and the web Add/imports flow open |
-| media-core | 5.7k | 3k | reauthor | open |
+| reader-apparatus (footnotes, bibliography, latex, publisher extractors, doc map, margin rail) | 13.3k | 3k | keep footnotes/endnotes; delete latex, pdf legal-footnote, 6 publisher extractors, doc-map presenters | python landed (size/reader-apparatus-py, mig 0240): 7.2k→3.8k, −47%, latex + legal footnotes + six extractors deleted; web document map / margin rail ~6k open |
+| ingest-imports (url/file/youtube/x/email/arxiv/remote, upload sessions, imports workspace, metadata intelligence) | 27.8k | 8k | reauthor; decide x, email, arxiv | python source-ingest first pass landed (size/ingest-py): 12.5k→9.2k, −26%; node acquisition/extraction reauthored (cleanup/node-ingest): 1,011→502 lines, −50%; media intelligence + metadata enrichment landed (size/media-intelligence-py): 3.5k→2.3k, −33%; imports history and the web Add/imports flow open |
+| media-core | 5.7k | 3k | reauthor | first pass landed (size/media-core-py): 5.7k→4.2k, −26%; 70 pydantic models (340 lines owned by five other modules) and the 36-key MediaOut wire are the remaining mass |
 | chat (runs, conversations, forks, composer, tails) | 29.6k | 10k | reauthor; 17 chat_run_* files → 3 | api admission/read/cancel database phases own their sessions on worker threads (cleanup/chat-database); reauthoring open |
 | chat-tools (runtime, authority, MCP, six tools) | 5.8k | 2.5k | reauthor: six tools + one dispatcher | first pass landed (size/chat-tools) at 5.8k, −32%; remaining levers: MCP transport 0.9k, HostTable research plan 0.5k, ledger density |
 | generation (catalog, ledger, codex + 7 provider APIs, picker) | 10.2k | 3k | codex + 1–2 providers; drop model lifecycle | python first pass landed (size/generation-py): 10.9k→7.6k, −30%; model lifecycle deleted; picker web 2.6k open |
@@ -56,7 +56,7 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | substrate: workspace/panes (store, host, memento, mobile chrome, pane find, route model) | 20.7k | 6k | reauthor | open |
 | substrate: api/auth/bff (proxy, sse, session; BFF routes already collapsed) | 13.9k | 4k | reauthor | bff transport 940→328 lines: one forwarding owner with explicit session/public/share/extension lanes; server JSON fetch now owns its deadline through body consumption; auth, client consolidation and sse remain open |
 | substrate: ui primitives (+3.5k css, fonts/legal) | 14.3k | 6k | reauthor css | open |
-| substrate: jobs/worker | 6.6k | 2k | reauthor | open |
+| substrate: jobs/worker | 6.6k | 2k | reauthor | first pass landed (size/jobs-py): 6.4k→4.0k, −38%; queue.py 1,027 (310 SQL lines) and worker.py 707 are the remaining mass |
 | codex agent host (+ deploy isolation) | 4.4k | 2k | keep; declare isolation in compose, not python | open |
 | telemetry | 1.5k | 0.5k | delete rum; keep client-defects + release backup tooling | open |
 | android shell/build, scripts/config | 5.0k | 4k | keep | open |

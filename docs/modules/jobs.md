@@ -81,22 +81,8 @@ kind is a frozen `JobDefinition`:
 - `periodic_priority` — routine scheduler rows use priority 200 so newly
   accepted ordinary work at priority 100 wins before the older periodic slot
   timestamp can break a tie. The stale-ingest reconciler is the sole urgent
-  periodic exception at priority -1000. On every schedule pass, the scheduler
-  locks every active row that claims the kind's global periodic dedupe
-  namespace, validates its exact aligned slot identity, and applies the current
-  priority without changing payload, availability, attempts, lease, claimant,
-  lifecycle, or timestamps. Propagated `request_id` values remain correlation
-  and do not claim that namespace.
-- `periodic_checkpoint_keys` — the closed set of optional top-level checkpoint
-  keys a periodic handler may persist alongside immutable scheduler identity.
-  The storage orphan sweep declares its continuation token; all other
-  periodic jobs declare none.
-  The scheduler rejects undeclared keys while each handler-owned strict codec
-  validates checkpoint values. Namespace selection is global across kinds and
-  bounded to 256 active rows; a foreign-kind claimant, noncanonical identity,
-  undeclared checkpoint, or overflow defects the whole transaction before any
-  durable mutation. On-demand rows sharing a kind are untouched, and terminal
-  rows remain immutable history.
+  periodic exception at priority -1000. The priority is stamped when a slot is
+  enqueued, so a change applies to newly scheduled slots only.
 - `failed_result_statuses` — see the gotcha below.
 - `dead_letter_projection` — a member of the closed `DeadLetterProjection` union
   applied once retries are exhausted; a projection may finalize domain state,
@@ -116,9 +102,8 @@ kind/attempts/delays/lease policy. API `/version` and each worker heartbeat expo
 it for exact release proof. It changes only when that contract changes.
 
 `oracle_reading_generate` has one canonical producer and one exact payload:
-`{"reading_id": "<canonical-lowercase-uuid>"}`. Its registry adapter rejects
-missing, additional, coerced, padded, or noncanonical values and passes a typed
-`UUID` to the Oracle task. The task does not decode the durable carrier again.
+`{"reading_id": "<canonical-lowercase-uuid>"}`. Its registry adapter passes a
+typed `UUID` to the Oracle task, which does not decode the durable carrier again.
 
 ### Lease policy by kind
 

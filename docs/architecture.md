@@ -419,8 +419,10 @@ the same chunk/span/embedding pipeline; notes no longer have a parallel
 
 **Media Intelligence** — `media_summaries` is one current summary head per
 Media content fingerprint; `media_claims` holds ordered grounded claims whose
-targets are exact `evidence_span` rows. `services/media_intelligence.py` is the
-sole storage owner and publishes audience-gated single/batch projections.
+targets are exact `evidence_span` rows. `services/media_intelligence_lifecycle.py`
+owns the head lifecycle, `tasks/media_unit_build.py` publishes or fails a unit,
+and `services/media_intelligence.py` publishes audience-gated single/batch
+projections.
 Media Intelligence is current-only reusable interpretation, not Dossier
 revision history.
 

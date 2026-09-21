@@ -1,45 +1,32 @@
-"""Lane-owned worker progress heartbeat and strict health command."""
+"""Lane-owned worker progress heartbeat and its strict health command.
+
+Run as ``python -S -m apps.worker.health --lane <lane>`` by the container
+healthcheck, so this module imports stdlib and the static lane topology only --
+never the database, ORM, registry or task graph.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import sys
 import tempfile
 import threading
 import time
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from nexus.job_topology import (
-    BACKGROUND_WORKER_JOB_KINDS,
-    INTERACTIVE_WORKER_JOB_KINDS,
-)
+from nexus.job_topology import BACKGROUND_WORKER_JOB_KINDS, INTERACTIVE_WORKER_JOB_KINDS
 
 WorkerLane = Literal["interactive", "background"]
-ReadinessCheck = Callable[[], bool]
 WORKER_HEALTH_PROGRESS_INTERVAL_SECONDS = 5.0
 WORKER_HEARTBEAT_MAX_AGE_SECONDS = 20.0
-WORKER_HEARTBEAT_PATHS: Mapping[WorkerLane, Path] = {
+WORKER_HEARTBEAT_PATHS: dict[WorkerLane, Path] = {
     "interactive": Path("/tmp/nexus-worker-interactive.json"),
     "background": Path("/tmp/nexus-worker-background.json"),
 }
-_HEARTBEAT_KEYS = frozenset(
-    {
-        "pid",
-        "lane",
-        "allowed_job_kinds",
-        "source_sha",
-        "expected_database_revision",
-        "expected_oracle_manifest_digest",
-        "task_contract_digest",
-        "successful_cycle_monotonic_seconds",
-    }
-)
 
 
 class WorkerHeartbeatError(RuntimeError):
@@ -50,289 +37,97 @@ class WorkerHeartbeatError(RuntimeError):
         self.code = code
 
 
-@dataclass(frozen=True, slots=True)
-class WorkerHeartbeat:
-    pid: int
-    lane: WorkerLane
-    allowed_job_kinds: tuple[str, ...]
-    source_sha: str
-    expected_database_revision: str
-    expected_oracle_manifest_digest: str
-    task_contract_digest: str
-    successful_cycle_monotonic_seconds: float
-
-    def as_json(self) -> dict[str, object]:
-        return {
-            "pid": self.pid,
-            "lane": self.lane,
-            "allowed_job_kinds": list(self.allowed_job_kinds),
-            "source_sha": self.source_sha,
-            "expected_database_revision": self.expected_database_revision,
-            "expected_oracle_manifest_digest": self.expected_oracle_manifest_digest,
-            "task_contract_digest": self.task_contract_digest,
-            "successful_cycle_monotonic_seconds": self.successful_cycle_monotonic_seconds,
-        }
+def lane_job_kinds(lane: WorkerLane) -> list[str]:
+    """The sorted kinds this lane must be running, as published and checked."""
+    kinds = INTERACTIVE_WORKER_JOB_KINDS if lane == "interactive" else BACKGROUND_WORKER_JOB_KINDS
+    return sorted(kinds)
 
 
 class WorkerHeartbeatPublisher:
-    """Atomically publish successful database-backed progress for one lane."""
+    """Atomically publish one lane's successful database-backed progress."""
 
     def __init__(
         self,
         *,
         lane: WorkerLane,
-        allowed_job_kinds: Sequence[str],
         source_sha: str,
         expected_database_revision: str,
         expected_oracle_manifest_digest: str,
         task_contract_digest: str,
-        readiness_check: ReadinessCheck,
-        heartbeat_path: Path | None = None,
-        pid: int | None = None,
-        monotonic: Callable[[], float] = time.monotonic,
+        readiness_check: Callable[[], bool],
     ) -> None:
-        self._lane: WorkerLane = lane
-        self._allowed_job_kinds = _closed_job_kinds(allowed_job_kinds)
-        self._source_sha = _require_source_sha(source_sha)
-        self._expected_database_revision = _require_database_revision(expected_database_revision)
-        self._expected_oracle_manifest_digest = _require_oracle_digest(
-            expected_oracle_manifest_digest
-        )
-        self._task_contract_digest = _require_digest(task_contract_digest)
+        self._path = WORKER_HEARTBEAT_PATHS[lane]
         self._readiness_check = readiness_check
-        self._heartbeat_path = heartbeat_path or WORKER_HEARTBEAT_PATHS[lane]
-        self._pid = os.getpid() if pid is None else _require_pid(pid)
-        self._monotonic = monotonic
         self._write_lock = threading.Lock()
-
-    @property
-    def path(self) -> Path:
-        return self._heartbeat_path
+        self._record: dict[str, Any] = {
+            "pid": os.getpid(),
+            "lane": lane,
+            "allowed_job_kinds": lane_job_kinds(lane),
+            "source_sha": source_sha,
+            "expected_database_revision": expected_database_revision,
+            "expected_oracle_manifest_digest": expected_oracle_manifest_digest,
+            "task_contract_digest": task_contract_digest,
+        }
 
     def clear(self) -> None:
         """Make this lane immediately unhealthy at startup or shutdown."""
         with self._write_lock:
-            self._heartbeat_path.unlink(missing_ok=True)
+            self._path.unlink(missing_ok=True)
 
     def publish(self) -> None:
         """Publish one complete successful-cycle record via atomic rename."""
         if not self._readiness_check():
             self.clear()
             return
-        heartbeat = WorkerHeartbeat(
-            pid=self._pid,
-            lane=self._lane,
-            allowed_job_kinds=self._allowed_job_kinds,
-            source_sha=self._source_sha,
-            expected_database_revision=self._expected_database_revision,
-            expected_oracle_manifest_digest=self._expected_oracle_manifest_digest,
-            task_contract_digest=self._task_contract_digest,
-            successful_cycle_monotonic_seconds=float(self._monotonic()),
-        )
-        payload = _canonical_json_bytes(heartbeat.as_json())
+        payload = json.dumps(
+            self._record | {"successful_cycle_monotonic_seconds": time.monotonic()},
+            sort_keys=True,
+        ).encode("utf-8")
         with self._write_lock:
-            _atomic_write(self._heartbeat_path, payload)
+            # Ephemeral by design: close + rename gives readers atomic bytes,
+            # and the freshness and PID checks invalidate it after a crash.
+            descriptor, temp_name = tempfile.mkstemp(
+                dir=self._path.parent, prefix=f".{self._path.name}.", suffix=".tmp"
+            )
+            with os.fdopen(descriptor, "wb") as stream:
+                os.fchmod(stream.fileno(), 0o600)
+                stream.write(payload)
+            os.replace(temp_name, self._path)
 
 
-def expected_job_kinds(lane: WorkerLane) -> tuple[str, ...]:
-    if lane == "interactive":
-        return tuple(sorted(INTERACTIVE_WORKER_JOB_KINDS))
-    return tuple(sorted(BACKGROUND_WORKER_JOB_KINDS))
+def check_worker_health(lane: WorkerLane) -> dict[str, Any]:
+    """Read this lane's record and prove it is fresh, this lane's, and alive.
 
-
-def check_worker_health(*, lane: WorkerLane, heartbeat_path: Path | None = None) -> WorkerHeartbeat:
-    """Validate the recent self-published worker health record."""
-    path = heartbeat_path or WORKER_HEARTBEAT_PATHS[lane]
+    Freshness is measured with CLOCK_MONOTONIC, which is system-wide on Linux
+    and therefore comparable across the publishing and reading processes.
+    """
     try:
-        payload = json.loads(path.read_bytes())
+        record = json.loads(WORKER_HEARTBEAT_PATHS[lane].read_bytes())
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise WorkerHeartbeatError("heartbeat_invalid") from exc
-
-    return validate_worker_heartbeat_record(
-        payload,
-        expected_lane=lane,
-        expected_allowed_job_kinds=expected_job_kinds(lane),
-        now_monotonic=time.monotonic(),
-        process_is_alive=_process_is_alive,
-    )
-
-
-def validate_worker_heartbeat_record(
-    payload: object,
-    *,
-    expected_lane: WorkerLane,
-    expected_allowed_job_kinds: Sequence[str],
-    now_monotonic: float,
-    process_is_alive: Callable[[int], bool],
-) -> WorkerHeartbeat:
-    """Validate a self-authored record without importing the worker runtime graph."""
-    heartbeat = _parse_worker_heartbeat(payload)
-    if heartbeat.lane != expected_lane or heartbeat.allowed_job_kinds != _closed_job_kinds(
-        expected_allowed_job_kinds
-    ):
+    if not isinstance(record, dict):
+        raise WorkerHeartbeatError("heartbeat_invalid")
+    published = record.get("successful_cycle_monotonic_seconds")
+    pid = record.get("pid")
+    if not isinstance(published, (int, float)) or not isinstance(pid, int):
+        raise WorkerHeartbeatError("heartbeat_invalid")
+    if record.get("lane") != lane or record.get("allowed_job_kinds") != lane_job_kinds(lane):
         raise WorkerHeartbeatError("identity_mismatch")
-    now = float(now_monotonic)
-    if not math.isfinite(now) or now < 0:
-        raise WorkerHeartbeatError("heartbeat_invalid")
-    age = now - heartbeat.successful_cycle_monotonic_seconds
-    if age < 0 or age > WORKER_HEARTBEAT_MAX_AGE_SECONDS:
+    if not 0 <= time.monotonic() - published <= WORKER_HEARTBEAT_MAX_AGE_SECONDS:
         raise WorkerHeartbeatError("heartbeat_stale")
-    if not process_is_alive(heartbeat.pid):
-        raise WorkerHeartbeatError("process_dead")
-    return heartbeat
-
-
-def _parse_worker_heartbeat(payload: object) -> WorkerHeartbeat:
-    if not isinstance(payload, dict) or payload.keys() != _HEARTBEAT_KEYS:
-        raise WorkerHeartbeatError("heartbeat_invalid")
-    value = cast(dict[str, Any], payload)
-    try:
-        pid = _require_pid(value["pid"])
-        lane = _require_lane(value["lane"])
-        allowed_job_kinds = _closed_job_kinds(value["allowed_job_kinds"])
-        source_sha = _require_source_sha(value["source_sha"])
-        expected_database_revision = _require_database_revision(value["expected_database_revision"])
-        expected_oracle_manifest_digest = _require_oracle_digest(
-            value["expected_oracle_manifest_digest"]
-        )
-        task_contract_digest = _require_digest(value["task_contract_digest"])
-        successful_cycle = value["successful_cycle_monotonic_seconds"]
-        if (
-            type(successful_cycle) not in (int, float)
-            or not math.isfinite(successful_cycle)
-            or successful_cycle < 0
-        ):
-            raise ValueError("invalid successful cycle timestamp")
-    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
-        raise WorkerHeartbeatError("heartbeat_invalid") from exc
-    return WorkerHeartbeat(
-        pid=pid,
-        lane=lane,
-        allowed_job_kinds=allowed_job_kinds,
-        source_sha=source_sha,
-        expected_database_revision=expected_database_revision,
-        expected_oracle_manifest_digest=expected_oracle_manifest_digest,
-        task_contract_digest=task_contract_digest,
-        successful_cycle_monotonic_seconds=float(successful_cycle),
-    )
-
-
-def _closed_job_kinds(value: object) -> tuple[str, ...]:
-    if not isinstance(value, (list, tuple)):
-        raise ValueError("allowed job kinds must be a sequence")
-    kinds = tuple(value)
-    if any(not isinstance(kind, str) or not kind for kind in kinds) or kinds != tuple(
-        sorted(set(kinds))
-    ):
-        raise ValueError("allowed job kinds must be sorted unique names")
-    return kinds
-
-
-def _require_lane(value: object) -> WorkerLane:
-    if value not in ("interactive", "background"):
-        raise ValueError("unsupported worker lane")
-    return cast(WorkerLane, value)
-
-
-def _require_pid(value: object) -> int:
-    if type(value) is not int or value < 1:
-        raise ValueError("pid must be a positive integer")
-    return value
-
-
-def _require_digest(value: object) -> str:
-    if (
-        not isinstance(value, str)
-        or len(value) != 64
-        or any(character not in "0123456789abcdef" for character in value)
-    ):
-        raise ValueError("task contract digest is malformed")
-    return value
-
-
-def _require_source_sha(value: object) -> str:
-    if (
-        not isinstance(value, str)
-        or len(value) != 40
-        or any(character not in "0123456789abcdef" for character in value)
-    ):
-        raise ValueError("source SHA is malformed")
-    return value
-
-
-def _require_database_revision(value: object) -> str:
-    if (
-        not isinstance(value, str)
-        or not 1 <= len(value) <= 64
-        or not value[0].isalnum()
-        or not all(
-            character.isdigit() or "a" <= character <= "z" or character == "_"
-            for character in value
-        )
-    ):
-        raise ValueError("database revision is malformed")
-    return value
-
-
-def _require_oracle_digest(value: object) -> str:
-    if not isinstance(value, str) or not value.startswith("sha256:"):
-        raise ValueError("Oracle digest is malformed")
-    _require_digest(value.removeprefix("sha256:"))
-    return value
-
-
-def _process_is_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
-
-
-def _canonical_json_bytes(value: object) -> bytes:
-    return (
-        json.dumps(
-            value,
-            allow_nan=False,
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        + "\n"
-    ).encode("utf-8")
-
-
-def _atomic_write(path: Path, payload: bytes) -> None:
-    # This /tmp signal is intentionally ephemeral: close + rename gives readers
-    # atomic bytes, while freshness/PID checks invalidate it after a crash.
-    descriptor, temp_name = tempfile.mkstemp(
-        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
-    )
-    temp_path = Path(temp_name)
-    try:
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "wb") as stream:
-            descriptor = -1
-            stream.write(payload)
-        os.replace(temp_path, path)
-    except BaseException:
-        if descriptor >= 0:
-            os.close(descriptor)
-        temp_path.unlink(missing_ok=True)
-        raise
-
-
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--lane", choices=("interactive", "background"), required=True)
-    return parser
+    except OSError as exc:
+        raise WorkerHeartbeatError("process_dead") from exc
+    return cast(dict[str, Any], record)
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    lane = cast(WorkerLane, args.lane)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--lane", choices=("interactive", "background"), required=True)
+    lane = cast(WorkerLane, parser.parse_args(argv).lane)
     try:
-        heartbeat = check_worker_health(lane=lane)
+        record = check_worker_health(lane)
     except WorkerHeartbeatError as exc:
         print(
             json.dumps({"status": "unavailable", "reason": exc.code}, sort_keys=True),
@@ -343,11 +138,11 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(
             {
                 "status": "ready",
-                "lane": heartbeat.lane,
-                "source_sha": heartbeat.source_sha,
-                "expected_database_revision": heartbeat.expected_database_revision,
-                "expected_oracle_manifest_digest": heartbeat.expected_oracle_manifest_digest,
-                "task_contract_digest": heartbeat.task_contract_digest,
+                "lane": record["lane"],
+                "source_sha": record["source_sha"],
+                "expected_database_revision": record["expected_database_revision"],
+                "expected_oracle_manifest_digest": record["expected_oracle_manifest_digest"],
+                "task_contract_digest": record["task_contract_digest"],
             },
             sort_keys=True,
         )
