@@ -1404,8 +1404,8 @@ roles, ownership transfer, membership guards, ingest access checks),
 ordering, and all item-in-library commands; it also composes the URL-only
 factual view lenses, the fixed `Unfiled`/`In Progress` entry projections, and
 the hide-finished completion filter for reads — no DML on
-  alternate views, positions unchanged), and `services/library_invitations.py` (the
-  `library_invitations` table). Visibility itself is enforced by the boolean
+  alternate views, positions unchanged), and `services/library_sharing.py` (the
+  `memberships` and `library_invitations` tables). Visibility itself is enforced by the boolean
   predicates in `auth/permissions.py`; the search/object readers read
   `library_entries` under an explicit Tier-R allowlist. Library list hydration is
   private and total: the repeatable-read membership query filters visibility,
@@ -1456,7 +1456,8 @@ the hide-finished completion filter for reads — no DML on
   deleting a subscription removes its virtual Podcast row.
   Default Podcast rows expose absent placement rather than a fabricated entry
   ID or position. Filing media into the default library directly — the one
-  actor-authorized filing command in `library_entries.ensure_media_in_library`
+  actor-authorized filing command in
+  `library_entries.ensure_media_in_library_in_current_transaction`
   — always inserts (or idempotently keeps) a physical `library_entries` row
   there; a work already visible virtually through another membership can
   still be explicitly filed, and that direct entry is what a later
