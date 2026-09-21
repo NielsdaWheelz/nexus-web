@@ -50,11 +50,12 @@ from nexus.services.durable_step_journal import (
     stable_generation_id,
 )
 from nexus.services.generation_backend import BackendToolExecutor, CodexAdmissionBinder
-from nexus.services.generation_intent import GenerationIntent, JsonSchemaOutput
 from nexus.services.generation_spec import (
     FrozenToolScope,
+    GenerationIntent,
     GenerationSpec,
     ImmutablePromptPayloadRef,
+    JsonSchemaOutput,
     decode_generation_spec_document,
     generation_fact_digest,
 )

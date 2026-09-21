@@ -19,23 +19,10 @@ from sqlalchemy.orm import Session
 from nexus.auth.middleware import Viewer, get_viewer
 from nexus.db.session import get_db
 from nexus.responses import ok
-from nexus.schemas.resource_graph import ContextRefOut
+from nexus.schemas.resource_graph import context_ref_out
 from nexus.services.resource_graph import context as context_service
 
 router = APIRouter(tags=["conversation-context"])
-
-
-def _context_ref_out(row: context_service.ContextRefOut) -> ContextRefOut:
-    return ContextRefOut(
-        id=row.edge_id,
-        conversation_id=row.conversation_id,
-        resource_ref=row.target.uri,
-        activation=row.activation,
-        label=row.resolved.label,
-        summary=row.resolved.summary,
-        missing=row.resolved.missing,
-        created_at=row.created_at,
-    )
 
 
 @router.get("/conversations/{conversation_id}/context-refs")
@@ -52,7 +39,7 @@ def list_context_refs(
     rows = context_service.list_context_refs(
         db, viewer_id=viewer.user_id, conversation_id=conversation_id
     )
-    return ok([_context_ref_out(row) for row in rows])
+    return ok([context_ref_out(row) for row in rows])
 
 
 @router.delete("/conversations/{conversation_id}/context-refs/{edge_id}", status_code=204)

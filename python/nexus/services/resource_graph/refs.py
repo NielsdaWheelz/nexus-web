@@ -1,15 +1,13 @@
-"""ResourceRef grammar: the one persisted resource-identity vocabulary (spec §7).
+"""The persisted resource-identity grammar: ``<scheme>:<uuid>`` over a closed scheme set.
 
-A ref is ``<scheme>:<uuid>`` with a closed scheme set. This module is pure —
-no database, no permissions. Hard cutover: the old ``span:``/``chunk:``
-aliases are gone (``evidence_span:``/``content_chunk:`` only, D2); parsing is
-strict (canonical lowercase UUID) and returns a typed failure, never ``None``.
+Pure: no database, no permissions. Parsing is strict (canonical lowercase UUID) and
+returns a typed failure, never ``None``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal, cast, get_args
 from uuid import UUID
 
 ResourceScheme = Literal[
@@ -34,27 +32,7 @@ ResourceScheme = Literal[
     "passage_anchor",
 ]
 
-RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = (
-    "media",
-    "library",
-    "evidence_span",
-    "content_chunk",
-    "highlight",
-    "page",
-    "note_block",
-    "fragment",
-    "conversation",
-    "message",
-    "oracle_reading",
-    "oracle_passage_anchor",
-    "artifact",
-    "artifact_revision",
-    "external_snapshot",
-    "contributor",
-    "podcast",
-    "reader_apparatus_item",
-    "passage_anchor",
-)
+RESOURCE_SCHEMES: tuple[ResourceScheme, ...] = get_args(ResourceScheme)
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,8 +52,8 @@ class ResourceRefParseFailure:
 
 
 def parse_resource_ref(raw: str) -> ResourceRef | ResourceRefParseFailure:
-    scheme, sep, ident = raw.partition(":")
-    if not sep:
+    scheme, separator, ident = raw.partition(":")
+    if not separator:
         return ResourceRefParseFailure(raw=raw, reason="invalid_format")
     if scheme not in RESOURCE_SCHEMES:
         return ResourceRefParseFailure(raw=raw, reason="unsupported_scheme")
@@ -89,11 +67,8 @@ def parse_resource_ref(raw: str) -> ResourceRef | ResourceRefParseFailure:
 
 
 def assert_resource_ref(raw: str) -> ResourceRef:
-    """Parse a ref the caller asserts is valid; a failure is a defect."""
+    """Parse a ref built from typed columns or already-validated input."""
     parsed = parse_resource_ref(raw)
     if isinstance(parsed, ResourceRefParseFailure):
-        # justify-defect: callers use this only for refs built from typed
-        # columns or already-validated input; a parse failure here means code
-        # or stored data no longer matches the ref grammar.
         raise AssertionError(f"invalid resource ref {raw!r}: {parsed.reason}")
     return parsed

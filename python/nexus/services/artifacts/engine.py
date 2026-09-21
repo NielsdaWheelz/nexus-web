@@ -126,14 +126,15 @@ from nexus.services.artifacts.subject_policy import (
     ResolvedSubject,
     SubjectPolicy,
 )
-from nexus.services.generation_events import BackendTerminal
-from nexus.services.generation_history import GenerationHistory, read_generation_history
-from nexus.services.generation_intent import GenerationIntent
+from nexus.services.generation_backend import BackendTerminal
 from nexus.services.generation_spec import (
+    GenerationHistory,
+    GenerationIntent,
     GenerationSpec,
     ImmutablePromptPayloadRef,
     decode_generation_spec_document,
     generation_fact_digest,
+    read_generation_history,
 )
 from nexus.services.llm_execution import (
     AcceptedGenerationFailure,
@@ -3354,7 +3355,7 @@ def _admitted_generation(db: Session, build_id: UUID) -> DossierBuildAdmittedGen
     if record is None:
         return None
     return DossierBuildAdmittedGeneration(
-        spec=read_generation_history(dict(record.spec.value)),
+        spec=read_generation_history(record.spec),
         tool_positions=len(read_tool_positions(db, generation_id=record.id)),
     )
 

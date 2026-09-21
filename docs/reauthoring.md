@@ -34,14 +34,14 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | media-core | 5.7k | 3k | reauthor | open |
 | chat (runs, conversations, forks, composer, tails) | 29.6k | 10k | reauthor; 17 chat_run_* files → 3 | open |
 | chat-tools (runtime, authority, MCP, six tools) | 5.8k | 2.5k | reauthor: six tools + one dispatcher | first pass landed (size/chat-tools) at 5.8k, −32%; remaining levers: MCP transport 0.9k, HostTable research plan 0.5k, ledger density |
-| generation (catalog, ledger, codex + 7 provider APIs, picker) | 13.5k | 3k | codex + 1–2 providers; drop model lifecycle | open |
+| generation (catalog, ledger, codex + 7 provider APIs, picker) | 10.2k | 3k | codex + 1–2 providers; drop model lifecycle | python first pass landed (size/generation-py): 10.9k→7.6k, −30%; model lifecycle deleted; picker web 2.6k open |
 | dossiers (engine 3.4k, ten subject bindings, web document runtime) | 18.7k | 5k | reauthor: one engine, one binding table | open |
 | oracle-atlas (oracle, plates, concordance, corpus ops, atlas, manifests, deploy plate train) | 12.6k | 0–4k | deferred by owner 2026-09-21; keep and reauthor: delete, or keep at 4k | open |
 | synapse-connections (resonance, synapse, dawn write, connections surface, reading slate) | 7.8k | 2k | keep synapse + connections; DELETE dawn write (decided 2026-09-21); reading slate deferred | dawn write deleted (size/dawn); rest open |
 | search-browse-nexus (index, 11 retrievers, browse adapters, nexus launcher, switchboard, /search) | 26.4k | 8k | reauthor: one search UI, one retriever | python search/index/retrieval first pass landed (size/search-py) at 6.0k of 9.0k, −33%; browse and the three web search UIs open |
 | podcasts (subscriptions, sync, refresh runs, backfill, transcription, OPML, detail panes) | 14.1k | 6k | reauthor; drop refresh-run ledger, OPML | python first pass landed (size/podcasts-py): 10.9k→7.1k, −35%; OPML and the refresh-run ledger deleted (0239); web 7.0k open |
 | player (browser + android runtimes, protocol, lectern, walknotes, native player) | 21.3k | 6k | one runtime behind one transport; deferred by owner 2026-09-21; keep and reauthor walknotes | open |
-| consumption-stats (spans, projection, stats pane, outbox, exclusions) | 13.5k | 3k | reauthor; keep stats + exclusions | open |
+| consumption-stats (spans, projection, stats pane, outbox, exclusions) | 12.2k | 3k | reauthor; keep stats + exclusions | python first pass landed (size/consumption-py): 6.0k→4.6k, −23%; web 6.0k and android outbox open |
 | library (libraries, entries, listing, placement 3.2k) | 15.5k | 5k | reauthor | open |
 | library-sharing (memberships, invitations, governance) | 5.0k | 2k | keep, reauthor | open |
 | resource-sharing (grants, public /s reader, share overlay) | 7.2k | 2.5k | keep grants + link; /s reader reuses the reader | open |
@@ -51,7 +51,7 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | vault (export/sync/watch CLI + pane) | 1.9k | 0–1k | deferred by owner 2026-09-21; keep and reauthor: keep at 1k or delete | open |
 | billing-settings (billing, entitlements, quota, 7 settings panes) | 4.4k | 2k | keep, reauthor | open |
 | auth-extension (auth, users, sessions, extension 2.8k of which 2.3k vendored Readability) | 4.9k | 2k | deferred by owner 2026-09-21; keep and reauthor extension; keep auth | open |
-| substrate: resource graph (refs, edges, citations) | 6.9k | 2k | reauthor | open |
+| substrate: resource graph (refs, edges, citations) | 5.2k | 2k | reauthor | first pass landed (size/resource-graph-py): 6.6k→4.9k, −25%; two blocks await the action-menu rewrite |
 | substrate: action menu (snapshot→planner→runtime→cache) | 11.4k | 1.5k | one catalog + one menu | open |
 | substrate: workspace/panes (store, host, memento, mobile chrome, pane find, route model) | 20.7k | 6k | reauthor | open |
 | substrate: api/auth/bff (proxy, sse, session; BFF routes already collapsed) | 14.5k | 4k | reauthor | open |

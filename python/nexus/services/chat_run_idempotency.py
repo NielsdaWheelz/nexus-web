@@ -15,7 +15,7 @@ from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
 from nexus.schemas.chat_reader_selection import ReaderSelectionKey
 from nexus.schemas.conversation import AcceptedChatAdmission, ChatAdmissionReceipt, ChatDestination
-from nexus.services.generation_selection import CodexPersonalSelection, ProviderApiSelection
+from nexus.services.generation_spec import CodexPersonalSelection, ProviderApiSelection
 from nexus.services.resource_mutation_replay import lookup_replay, record_replay
 
 CHAT_ADMISSION_SCOPE = "chat:admission"

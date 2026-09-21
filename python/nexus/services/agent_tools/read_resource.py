@@ -34,7 +34,7 @@ from nexus.services.resource_graph.refs import (
     ResourceRefParseFailure,
     parse_resource_ref,
 )
-from nexus.services.resource_graph.resolve import LoadedResource, load_resource_batch
+from nexus.services.resource_graph.resolve import ResolvedResource, load_resource_batch
 from nexus.services.resource_items.capabilities import (
     resource_citation_result_type,
     resource_read_policy,
@@ -133,7 +133,7 @@ def _read_page_range(db: Session, viewer_id: UUID, uri: str) -> ReadResourceResu
     )
 
 
-def _present_read(loaded: LoadedResource) -> ReadResourceResult | ReadRefusal:
+def _present_read(loaded: ResolvedResource) -> ReadResourceResult | ReadRefusal:
     if loaded.missing:
         return ReadRefusal("missing")
     parsed = _loaded_ref(loaded)
@@ -192,7 +192,7 @@ def _present_read(loaded: LoadedResource) -> ReadResourceResult | ReadRefusal:
     raise AssertionError(f"Unreadable resource URI scheme reached read presenter: {scheme}")
 
 
-def _loaded_ref(loaded: LoadedResource) -> ResourceRef:
+def _loaded_ref(loaded: ResolvedResource) -> ResourceRef:
     parsed = parse_resource_ref(loaded.uri)
     if isinstance(parsed, ResourceRefParseFailure):
         # justify-defect: loaded resources come from typed ResourceRef loader inputs.

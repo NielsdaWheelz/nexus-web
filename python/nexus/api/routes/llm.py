@@ -20,10 +20,7 @@ router = APIRouter(tags=["llm"])
 async def get_llm_catalog(
     response: Response,
     viewer: Annotated[Viewer, Depends(get_viewer)],
-    catalog_service: Annotated[
-        GenerationCatalogService,
-        Depends(get_generation_catalog_service),
-    ],
+    catalog_service: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
 ) -> dict:
     """Return exact selectable and visible-ineligible generation facts."""
 

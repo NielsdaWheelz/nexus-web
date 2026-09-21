@@ -59,43 +59,22 @@ export type GenerationReadiness =
       readonly explanation: string;
       readonly action: string;
       readonly last_checked: string;
-    }
-  | {
-      readonly kind: "CapacityPaused";
-      readonly code: "quota_unavailable";
-      readonly explanation: string;
-      readonly reset_at: Presence<string>;
-      readonly next_check_at: string;
-      readonly last_checked: string;
     };
 
 export type GenerationReadinessCode =
   | "catalog_refresh_failed"
   | "codex_host_unavailable"
-  | "credential_unavailable"
-  | "provider_unavailable"
-  | "quota_unavailable";
+  | "credential_unavailable";
 
 export type GenerationSelectionState =
   | { readonly kind: "Selectable" }
   | {
       readonly kind: "Ineligible";
-      readonly code:
-        | "missing_target_qualification"
-        | "missing_reasoning_qualification"
-        | "missing_chat_tool_qualification"
-        | "unsupported_capability"
-        | "selection_not_configured";
+      readonly code: "unsupported_capability" | "selection_not_configured";
       readonly explanation: string;
     }
   | Extract<GenerationReadiness, { readonly kind: "OperatorActionRequired" }>
-  | Extract<GenerationReadiness, { readonly kind: "TemporarilyUnavailable" }>
-  | Extract<GenerationReadiness, { readonly kind: "CapacityPaused" }>
-  | {
-      readonly kind: "Retired";
-      readonly explanation: string;
-      readonly upgrade_target: Presence<GenerationSelectionSpec>;
-    };
+  | Extract<GenerationReadiness, { readonly kind: "TemporarilyUnavailable" }>;
 
 export type BillingDisclosure =
   | { readonly kind: "Subscription"; readonly label: "Codex subscription" }
@@ -125,8 +104,6 @@ export interface GenerationReasoningRow {
   readonly label: string;
   readonly readiness: GenerationReadiness;
   readonly chat_state: GenerationSelectionState;
-  readonly target_qualification_revision: Presence<string>;
-  readonly reasoning_wire_qualification_revision: Presence<string>;
 }
 
 export interface GenerationModelRow {
@@ -137,16 +114,8 @@ export interface GenerationModelRow {
   readonly source_max_output_tokens: Presence<number>;
   readonly effective_chat_context_budget_tokens: number;
   readonly effective_chat_output_budget_tokens: number;
-  readonly lifecycle: "Active" | "Retiring" | "Retired";
-  readonly retires_at: Presence<string>;
-  readonly upgrade_selection: Presence<GenerationSelectionSpec>;
   readonly readiness: GenerationReadiness;
   readonly input_modalities: readonly ("text" | "image")[];
-  readonly qualified_capabilities: readonly (
-    | "Text"
-    | "StrictStructured"
-    | "ToolsContinuation"
-  )[];
   readonly source_default_reasoning: Presence<string>;
   readonly reasoning: readonly GenerationReasoningRow[];
 }
@@ -215,13 +184,8 @@ const READINESS_CODES = [
   "catalog_refresh_failed",
   "codex_host_unavailable",
   "credential_unavailable",
-  "provider_unavailable",
-  "quota_unavailable",
 ] as const;
 const INELIGIBLE_CODES = [
-  "missing_target_qualification",
-  "missing_reasoning_qualification",
-  "missing_chat_tool_qualification",
   "unsupported_capability",
   "selection_not_configured",
 ] as const;
@@ -298,42 +262,6 @@ function decodeReadiness(raw: unknown, name: string): GenerationReadiness {
       last_checked: expectIsoInstant(value.last_checked, `${name}.last_checked`),
     };
   }
-  if (raw.kind === "CapacityPaused") {
-    const value = expectExactRecord(
-      raw,
-      [
-        "kind",
-        "code",
-        "explanation",
-        "reset_at",
-        "next_check_at",
-        "last_checked",
-      ],
-      name,
-    );
-    if (value.code !== "quota_unavailable") {
-      throw new TypeError(`${name}.code must be quota_unavailable`);
-    }
-    return {
-      kind: "CapacityPaused",
-      code: "quota_unavailable",
-      explanation: expectNonemptyString(
-        value.explanation,
-        `${name}.explanation`,
-      ),
-      reset_at: decodePresence(value.reset_at, (instant) =>
-        expectIsoInstant(instant, `${name}.reset_at.value`),
-      ),
-      next_check_at: expectIsoInstant(
-        value.next_check_at,
-        `${name}.next_check_at`,
-      ),
-      last_checked: expectIsoInstant(
-        value.last_checked,
-        `${name}.last_checked`,
-      ),
-    };
-  }
   if (raw.kind !== "OperatorActionRequired" && raw.kind !== "TemporarilyUnavailable") {
     throw new TypeError(`${name}.kind is not a supported readiness variant`);
   }
@@ -368,20 +296,6 @@ function decodeSelectionState(
       kind: "Ineligible",
       code: expectOneOf(value.code, INELIGIBLE_CODES, `${name}.code`),
       explanation: expectNonemptyString(value.explanation, `${name}.explanation`),
-    };
-  }
-  if (raw.kind === "Retired") {
-    const value = expectExactRecord(
-      raw,
-      ["kind", "explanation", "upgrade_target"],
-      name,
-    );
-    return {
-      kind: "Retired",
-      explanation: expectNonemptyString(value.explanation, `${name}.explanation`),
-      upgrade_target: decodePresence(value.upgrade_target, (selection) =>
-        decodeGenerationSelectionSpec(selection, `${name}.upgrade_target.value`),
-      ),
     };
   }
   const readiness = decodeReadiness(raw, name);
@@ -468,8 +382,6 @@ function decodeReasoning(
       "label",
       "readiness",
       "chat_state",
-      "target_qualification_revision",
-      "reasoning_wire_qualification_revision",
     ],
     name,
   );
@@ -478,22 +390,6 @@ function decodeReasoning(
     label: expectNonemptyString(value.label, `${name}.label`),
     readiness: decodeReadiness(value.readiness, `${name}.readiness`),
     chat_state: decodeSelectionState(value.chat_state, `${name}.chat_state`),
-    target_qualification_revision: decodePresence(
-      value.target_qualification_revision,
-      (revision) =>
-        expectNonemptyString(
-          revision,
-          `${name}.target_qualification_revision.value`,
-        ),
-    ),
-    reasoning_wire_qualification_revision: decodePresence(
-      value.reasoning_wire_qualification_revision,
-      (revision) =>
-        expectNonemptyString(
-          revision,
-          `${name}.reasoning_wire_qualification_revision.value`,
-        ),
-    ),
   };
 }
 
@@ -508,12 +404,8 @@ function decodeModel(raw: unknown, name: string): GenerationModelRow {
       "source_max_output_tokens",
       "effective_chat_context_budget_tokens",
       "effective_chat_output_budget_tokens",
-      "lifecycle",
-      "retires_at",
-      "upgrade_selection",
       "readiness",
       "input_modalities",
-      "qualified_capabilities",
       "source_default_reasoning",
       "reasoning",
     ],
@@ -547,17 +439,6 @@ function decodeModel(raw: unknown, name: string): GenerationModelRow {
       value.effective_chat_output_budget_tokens,
       `${name}.effective_chat_output_budget_tokens`,
     ),
-    lifecycle: expectOneOf(
-      value.lifecycle,
-      ["Active", "Retiring", "Retired"] as const,
-      `${name}.lifecycle`,
-    ),
-    retires_at: decodePresence(value.retires_at, (instant) =>
-      expectIsoInstant(instant, `${name}.retires_at.value`),
-    ),
-    upgrade_selection: decodePresence(value.upgrade_selection, (selection) =>
-      decodeGenerationSelectionSpec(selection, `${name}.upgrade_selection.value`),
-    ),
     readiness: decodeReadiness(value.readiness, `${name}.readiness`),
     input_modalities: expectArray(
       value.input_modalities,
@@ -568,16 +449,6 @@ function decodeModel(raw: unknown, name: string): GenerationModelRow {
           `${name}.input_modalities[${index}]`,
         ),
       `${name}.input_modalities`,
-    ),
-    qualified_capabilities: expectArray(
-      value.qualified_capabilities,
-      (capability, index) =>
-        expectOneOf(
-          capability,
-          ["Text", "StrictStructured", "ToolsContinuation"] as const,
-          `${name}.qualified_capabilities[${index}]`,
-        ),
-      `${name}.qualified_capabilities`,
     ),
     source_default_reasoning: decodePresence(
       value.source_default_reasoning,
@@ -812,10 +683,8 @@ export function selectionStateExplanation(state: GenerationSelectionState): stri
     case "Selectable":
       return "Ready to use.";
     case "Ineligible":
-    case "Retired":
     case "OperatorActionRequired":
     case "TemporarilyUnavailable":
-    case "CapacityPaused":
       return state.explanation;
   }
 }
@@ -824,8 +693,6 @@ export function readinessAction(readiness: GenerationReadiness): string | null {
   switch (readiness.kind) {
     case "Ready":
       return null;
-    case "CapacityPaused":
-      return `Wait until the next capacity check at ${readiness.next_check_at}.`;
     case "OperatorActionRequired":
     case "TemporarilyUnavailable":
       return readiness.action;

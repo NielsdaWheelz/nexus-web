@@ -1,6 +1,5 @@
-"""Consumption owner package (Lectern membership/order, explicit state, listening
-heartbeat, and the read-model projection).
+"""Consumption: activity capture, personal history, and the read model.
 
-``service`` is the sole public boundary; the underscored store/projection modules
-are internal. See ``docs/cutovers/lectern-player-lifecycle-hard-cutover.md`` §3.
+``service`` is the public boundary; ``projection`` additionally exposes the
+composable read-state SQL that listing surfaces join.
 """

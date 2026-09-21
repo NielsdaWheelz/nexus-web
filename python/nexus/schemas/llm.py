@@ -9,7 +9,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from nexus.config import GenerationApiProvider
 from nexus.schemas.presence import Presence
-from nexus.services.generation_selection import GenerationSelectionSpec
+from nexus.services.generation_spec import (
+    BillingDisclosure,
+    GenerationSelectionSpec,
+    MeteredApiBilling,
+    PrivacyDisclosure,
+    ProcessorChain,
+    SelectionPresentation,
+    SubscriptionBilling,
+)
 
 
 class _StrictGenerationModel(BaseModel):
@@ -23,11 +31,7 @@ def _aware(value: datetime) -> datetime:
 
 
 ReadinessCode = Literal[
-    "catalog_refresh_failed",
-    "codex_host_unavailable",
-    "credential_unavailable",
-    "provider_unavailable",
-    "quota_unavailable",
+    "catalog_refresh_failed", "codex_host_unavailable", "credential_unavailable"
 ]
 
 
@@ -59,6 +63,8 @@ class TemporarilyUnavailable(_StrictGenerationModel):
 
 
 class CapacityPaused(_StrictGenerationModel):
+    """A parked Codex capacity refusal, rendered by the dossier surface."""
+
     kind: Literal["CapacityPaused"] = "CapacityPaused"
     code: Literal["quota_unavailable"] = "quota_unavailable"
     explanation: str = Field(min_length=1, max_length=1_000)
@@ -73,8 +79,7 @@ class CapacityPaused(_StrictGenerationModel):
 
 
 Readiness = Annotated[
-    Ready | OperatorActionRequired | TemporarilyUnavailable | CapacityPaused,
-    Field(discriminator="kind"),
+    Ready | OperatorActionRequired | TemporarilyUnavailable, Field(discriminator="kind")
 ]
 
 
@@ -84,33 +89,15 @@ class Selectable(_StrictGenerationModel):
 
 class Ineligible(_StrictGenerationModel):
     kind: Literal["Ineligible"] = "Ineligible"
-    code: Literal[
-        "missing_target_qualification",
-        "missing_reasoning_qualification",
-        "missing_chat_tool_qualification",
-        "unsupported_capability",
-        "selection_not_configured",
-    ]
+    code: Literal["unsupported_capability", "selection_not_configured"]
     explanation: str = Field(min_length=1, max_length=1_000)
-
-
-class Retired(_StrictGenerationModel):
-    kind: Literal["Retired"] = "Retired"
-    explanation: str = Field(min_length=1, max_length=1_000)
-    upgrade_target: Presence[GenerationSelectionSpec]
 
 
 NonSelectableState = Annotated[
-    Ineligible | OperatorActionRequired | TemporarilyUnavailable | CapacityPaused | Retired,
-    Field(discriminator="kind"),
+    Ineligible | OperatorActionRequired | TemporarilyUnavailable, Field(discriminator="kind")
 ]
 SelectionState = Annotated[
-    Selectable
-    | Ineligible
-    | OperatorActionRequired
-    | TemporarilyUnavailable
-    | CapacityPaused
-    | Retired,
+    Selectable | Ineligible | OperatorActionRequired | TemporarilyUnavailable,
     Field(discriminator="kind"),
 ]
 
@@ -124,49 +111,7 @@ class ProviderApiRoute(_StrictGenerationModel):
     provider: GenerationApiProvider
 
 
-GenerationRoute = Annotated[
-    CodexPersonalRoute | ProviderApiRoute,
-    Field(discriminator="kind"),
-]
-
-
-class SubscriptionBilling(_StrictGenerationModel):
-    kind: Literal["Subscription"] = "Subscription"
-    label: Literal["Codex subscription"] = "Codex subscription"
-
-
-class MeteredApiBilling(_StrictGenerationModel):
-    kind: Literal["MeteredApi"] = "MeteredApi"
-    label: Literal["Metered API"] = "Metered API"
-
-
-BillingDisclosure = Annotated[
-    SubscriptionBilling | MeteredApiBilling,
-    Field(discriminator="kind"),
-]
-
-
-class PrivacyDisclosure(_StrictGenerationModel):
-    summary: str = Field(min_length=1, max_length=1_000)
-    retention: str = Field(min_length=1, max_length=1_000)
-    training: str = Field(min_length=1, max_length=1_000)
-
-
-class ProcessorChain(_StrictGenerationModel):
-    processors: tuple[str, ...] = Field(min_length=1, max_length=4)
-
-
-class SelectionPresentation(_StrictGenerationModel):
-    route_label: str = Field(min_length=1, max_length=128)
-    model_label: str = Field(min_length=1, max_length=256)
-    reasoning_label: str = Field(min_length=1, max_length=128)
-    billing: BillingDisclosure
-    privacy: PrivacyDisclosure
-    processor_chain: ProcessorChain
-
-
-QualifiedCapability = Literal["Text", "StrictStructured", "ToolsContinuation"]
-Lifecycle = Literal["Active", "Retiring", "Retired"]
+GenerationRoute = Annotated[CodexPersonalRoute | ProviderApiRoute, Field(discriminator="kind")]
 
 
 class GenerationReasoningRow(_StrictGenerationModel):
@@ -174,8 +119,6 @@ class GenerationReasoningRow(_StrictGenerationModel):
     label: str = Field(min_length=1, max_length=256)
     readiness: Readiness
     chat_state: SelectionState
-    target_qualification_revision: Presence[str]
-    reasoning_wire_qualification_revision: Presence[str]
 
 
 class GenerationModelRow(_StrictGenerationModel):
@@ -186,12 +129,8 @@ class GenerationModelRow(_StrictGenerationModel):
     source_max_output_tokens: Presence[int]
     effective_chat_context_budget_tokens: int = Field(gt=0)
     effective_chat_output_budget_tokens: int = Field(gt=0)
-    lifecycle: Lifecycle
-    retires_at: Presence[datetime]
-    upgrade_selection: Presence[GenerationSelectionSpec]
     readiness: Readiness
     input_modalities: tuple[Literal["text", "image"], ...] = Field(min_length=1)
-    qualified_capabilities: tuple[QualifiedCapability, ...]
     source_default_reasoning: Presence[str]
     reasoning: tuple[GenerationReasoningRow, ...] = Field(min_length=1)
 
@@ -336,9 +275,9 @@ ExpectedChatFailure = Annotated[
 __all__ = [
     "AssistantUnavailableChatFailure",
     "BillingDisclosure",
+    "CancelledChatFailure",
     "CapacityPaused",
     "CatalogDefinitionStale",
-    "CancelledChatFailure",
     "ChatSeed",
     "CodexPersonalRoute",
     "ContextTooLargeChatFailure",
@@ -353,18 +292,18 @@ __all__ = [
     "GenerationSelectionUnavailable",
     "IncompleteChatFailure",
     "Ineligible",
-    "InvalidOutputChatFailure",
     "InvalidGenerationSelection",
+    "InvalidOutputChatFailure",
     "MeteredApiBilling",
     "NonSelectableState",
-    "OperatorDefectChatFailure",
     "OperatorActionRequired",
+    "OperatorDefectChatFailure",
     "PrivacyDisclosure",
     "ProcessorChain",
     "ProviderApiRoute",
     "Readiness",
+    "ReadinessCode",
     "Ready",
-    "Retired",
     "RunSelectionOut",
     "Selectable",
     "SelectionPresentation",

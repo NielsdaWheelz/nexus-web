@@ -57,7 +57,7 @@ from nexus.services.collection_revisions import (
     bump_all_collection_families,
     read_collection_revision,
 )
-from nexus.services.consumption import _projection
+from nexus.services.consumption import projection
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
 # Mirrors index ix_library_entries_library_order (library_id, position, created_at DESC,
@@ -196,7 +196,7 @@ def library_anchor_facts(
                     {destination_membership_rows_sql()}
                 ),
                 engagement AS (
-                    {_projection.engagement_fact_rows_sql()}
+                    {projection.engagement_fact_rows_sql()}
                 ),
                 episodes AS (
                     {episode_publication_rows_sql()}

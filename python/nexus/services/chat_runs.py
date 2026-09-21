@@ -91,7 +91,6 @@ from nexus.schemas.llm import (
     GenerationSelectionUnavailable,
     Ineligible,
     InvalidGenerationSelection,
-    Retired,
     RunSelectionOut,
     Selectable,
 )
@@ -168,16 +167,7 @@ from nexus.services.durable_step_journal import (
     encode_step_result,
 )
 from nexus.services.generation_admission import GenerationOperationUnavailable
-from nexus.services.generation_catalog import (
-    CatalogDefinitionStaleError,
-    GenerationCatalogRefreshError,
-    GenerationCatalogService,
-    GenerationCatalogSnapshot,
-    GenerationSelectionUnavailableError,
-    InvalidGenerationSelectionError,
-    ResolvedCatalogPair,
-)
-from nexus.services.generation_events import (
+from nexus.services.generation_backend import (
     BackendEvent,
     BackendTerminal,
     BackendTextDelta,
@@ -187,18 +177,25 @@ from nexus.services.generation_events import (
     CodexTerminalEvidence,
     ProviderTerminalEvidence,
 )
-from nexus.services.generation_intent import GenerationIntent
-from nexus.services.generation_selection import (
-    CodexPersonalSelection,
-    ProviderApiSelection,
+from nexus.services.generation_catalog import (
+    CatalogDefinitionStaleError,
+    GenerationCatalogRefreshError,
+    GenerationCatalogService,
+    GenerationCatalogSnapshot,
+    GenerationSelectionUnavailableError,
+    InvalidGenerationSelectionError,
+    ResolvedCatalogPair,
 )
 from nexus.services.generation_service import (
     ChatToolAuthority,
     GenerationService,
 )
 from nexus.services.generation_spec import (
+    CodexPersonalSelection,
     FrozenToolScope,
+    GenerationIntent,
     GenerationSpec,
+    ProviderApiSelection,
     generation_fact_digest,
 )
 from nexus.services.llm_execution import (
@@ -483,7 +480,7 @@ async def admit_chat_selection(
     except GenerationSelectionUnavailableError as error:
         if isinstance(error.pair.state, Selectable):
             raise AssertionError("unavailable selection carried Selectable state") from error
-        if not isinstance(error.pair.state, Ineligible | Retired):
+        if not isinstance(error.pair.state, Ineligible):
             # Readiness is volatile operational evidence, not an immutable
             # rejection of this exact command. Keep its key unsettled.
             raise ApiError(

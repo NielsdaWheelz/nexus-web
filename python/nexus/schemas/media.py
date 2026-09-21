@@ -320,7 +320,7 @@ class MediaOut(BaseModel):
     # Derived per-viewer read-state. The explicit consumption override wins;
     # otherwise documents derive from retained reader engagement and podcast
     # episodes from listening state. Populated post-hoc by the consumption
-    # projection (`services.consumption._projection.media_read_states`, applied in
+    # projection (`services.consumption.projection.media_read_states`, applied in
     # `services.media`) for viewer-scoped listings; absent (None) only on contexts
     # that never derive it (e.g. SSE snapshots).
     read_state: MediaReadState | None = None
@@ -330,7 +330,7 @@ class MediaOut(BaseModel):
     # New field (spec `lectern-player-lifecycle-hard-cutover.md` §6: "Lectern,
     # podcast, and media DTOs reuse the same server-derived title/subtitle +
     # FooterAudio descriptor"). Populated by `services.media._apply_consumption_state`
-    # via the one projection owner, `services.consumption._projection.player_descriptors`, which
+    # via the one projection owner, `services.consumption.projection.player_descriptors`, which
     # derives it exactly like a Lectern item. Present only when this media is a
     # podcast episode whose derived activation is FooterAudio; Absent otherwise
     # (including podcast episodes without playable audio, and every other kind).

@@ -24,9 +24,9 @@ from provider_runtime.agent_runtime.tool_projection import PublishedMcpTools
 
 from nexus.schemas.presence import Presence, Present
 from nexus.services.codex_generation_contract import GenerationCommand
-from nexus.services.generation_selection import CodexPersonalSelection
 from nexus.services.generation_spec import (
     CodexDispatchTargetSnapshot,
+    CodexPersonalSelection,
     StrictJsonOutputSnapshot,
     TextOutputSnapshot,
 )
@@ -61,11 +61,7 @@ class CodexModelToolPlanRegistry:
         object.__setattr__(self, "_by_revision", MappingProxyType(indexed))
 
     def publish(
-        self,
-        snapshot: FrozenToolPlanSnapshot,
-        *,
-        mcp_origin: str,
-        tool_credential: CredentialRef,
+        self, snapshot: FrozenToolPlanSnapshot, *, mcp_origin: str, tool_credential: CredentialRef
     ) -> PublishedMcpTools:
         try:
             operation = self._by_revision[snapshot.plan_revision]
@@ -135,9 +131,7 @@ def resolve_codex_generation(
         if mcp_origin is None or tool_credential is None:
             raise ValueError("ModelTools lowering requires host MCP configuration")
         published = model_tool_registry.publish(
-            plan_presence.value,
-            mcp_origin=mcp_origin,
-            tool_credential=tool_credential,
+            plan_presence.value, mcp_origin=mcp_origin, tool_credential=tool_credential
         )
         filesystem = "workspace_write"
         network = "unrestricted"
@@ -193,13 +187,3 @@ def _output(command: GenerationCommand) -> TextAgentOutput | JsonSchemaAgentOutp
     if isinstance(output, StrictJsonOutputSnapshot):
         return JsonSchemaAgentOutput(name=output.name, schema=output.json_schema)
     raise AssertionError("generation output union was not exhaustive")
-
-
-__all__ = [
-    "AUTH_PROFILE",
-    "MODEL_TOOL_MCP_SERVER_NAME",
-    "CodexModelToolPlanRegistry",
-    "ResolvedCodexGeneration",
-    "compose_codex_model_tool_plan_registry",
-    "resolve_codex_generation",
-]
