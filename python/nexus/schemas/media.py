@@ -42,7 +42,6 @@ MediaSourceAttemptStatus = Literal[
     "failed",
 ]
 
-MediaUnitStatus = Literal["building", "ready", "failed"]
 
 MediaReadState = Literal["unread", "in_progress", "finished"]
 
