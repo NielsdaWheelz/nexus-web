@@ -1,6 +1,4 @@
-"""Note body indexing into the shared content/evidence pipeline."""
-
-from __future__ import annotations
+"""The one bridge between note bodies and the shared content index."""
 
 from uuid import UUID
 
@@ -24,13 +22,6 @@ def build_note_indexable_blocks(block: NoteBlock) -> list[IndexableBlock]:
     body = block.body_text or ""
     if not body.strip():
         return []
-    locator = {
-        "kind": "note_text",
-        "note_block_id": str(block.id),
-        "start_offset": 0,
-        "end_offset": len(body),
-        "text_quote": {"exact": body, "prefix": "", "suffix": ""},
-    }
     return [
         IndexableBlock(
             owner=IndexOwner("note_block", block.id),
@@ -40,7 +31,13 @@ def build_note_indexable_blocks(block: NoteBlock) -> list[IndexableBlock]:
             canonical_text=body,
             source_start_offset=0,
             source_end_offset=len(body),
-            locator=locator,
+            locator={
+                "kind": "note_text",
+                "note_block_id": str(block.id),
+                "start_offset": 0,
+                "end_offset": len(body),
+                "text_quote": {"exact": body, "prefix": "", "suffix": ""},
+            },
             heading_path=(),
         )
     ]
@@ -64,6 +61,7 @@ def rebuild_note_content_index(
 
 
 def enqueue_note_reindex(db: Session, *, note_block_id: UUID, reason: str) -> None:
+    """At most one inflight job per block: the partial unique index is the guard."""
     mark_content_index_pending(db, owner=IndexOwner("note_block", note_block_id), reason=reason)
     try:
         with db.begin_nested():

@@ -411,7 +411,7 @@ def highlight_visibility_filter(viewer_user_id: UUID, media_id: MediaIdExpressio
     Correlates with Highlight.user_id from the outer query.
 
     Caller must separately verify viewer can read the anchor media
-    (e.g. via get_fragment_for_viewer_or_404).
+    (e.g. via highlight reads).
     """
     return or_(
         Highlight.user_id == viewer_user_id,

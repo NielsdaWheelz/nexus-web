@@ -1,10 +1,9 @@
-"""Worker job handler for note body content indexing."""
+"""Worker handler for ``note_reindex_job``."""
 
 from uuid import UUID
 
 from nexus.db.models import NoteBlock
 from nexus.db.session import get_session_factory
-from nexus.errors import ApiErrorCode
 from nexus.jobs.queue import JobExecutionContext
 from nexus.logging import get_logger
 from nexus.services import synapse
@@ -14,33 +13,11 @@ from nexus.services.resource_graph.refs import ResourceRef
 logger = get_logger(__name__)
 
 
-def note_reindex_job(
-    note_block_id: str,
-    reason: str,
-    context: JobExecutionContext,
-) -> dict:
-    try:
-        block_id = UUID(note_block_id)
-    except (TypeError, ValueError):
-        logger.error(
-            "note_reindex_invalid_note_block_id",
-            note_block_id=note_block_id,
-            reason=reason,
-            job_id=str(context.job_id),
-        )
-        return {"status": "failed", "error_code": ApiErrorCode.E_INVALID_REQUEST.value}
-
+def note_reindex_job(note_block_id: str, reason: str, context: JobExecutionContext) -> dict:
+    block_id = UUID(note_block_id)
     db = get_session_factory()()
     try:
         index_result = rebuild_note_content_index(db, note_block_id=block_id, reason=reason)
-        result = {
-            "owner": {
-                "kind": index_result.owner.kind,
-                "id": str(index_result.owner.id),
-            },
-            "status": index_result.status,
-            "chunk_count": index_result.chunk_count,
-        }
         block = db.get(NoteBlock, block_id)
         if block is not None:
             synapse.queue_synapse_scan(
@@ -50,22 +27,18 @@ def note_reindex_job(
                 reason="note_reindex",
             )
         db.commit()
-        logger.info(
-            "note_reindex_task_completed",
-            note_block_id=note_block_id,
-            reason=reason,
-            result=result,
-            job_id=str(context.job_id),
-        )
-        return result
-    except Exception as exc:
+        return {
+            "owner": {"kind": index_result.owner.kind, "id": str(index_result.owner.id)},
+            "status": index_result.status,
+            "chunk_count": index_result.chunk_count,
+        }
+    except Exception:
         db.rollback()
         logger.exception(
             "note_reindex_task_failed",
             note_block_id=note_block_id,
             reason=reason,
             job_id=str(context.job_id),
-            error=str(exc),
         )
         raise
     finally:
