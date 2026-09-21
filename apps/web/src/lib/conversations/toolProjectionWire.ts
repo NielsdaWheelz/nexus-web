@@ -82,7 +82,6 @@ export function decodeToolProjectionFields(
           "error_type",
         ) as ToolErrorType);
 
-  const shape = TOOL_CONTRACT_PROJECTION.record_shapes[recordKind];
   const projection = {
     activity_label: activityLabel,
     canonical_tool_id: canonicalToolId,
@@ -92,10 +91,21 @@ export function decodeToolProjectionFields(
     record_kind: recordKind,
     result_kind: resultKind,
   };
-  if (shape.non_null_fields.some((field) => projection[field] === null)) {
+  if (recordKind === "attached_context") {
+    if (
+      canonicalToolId !== null ||
+      providerWireName !== null ||
+      effect !== null ||
+      errorType !== null
+    ) {
+      throw new Error("Invalid tool projection: tagged field must be null");
+    }
+  } else if (canonicalToolId === null || effect === null) {
     throw new Error("Invalid tool projection: tagged field must be non-null");
-  }
-  if (shape.null_fields.some((field) => projection[field] !== null)) {
+  } else if (
+    recordKind === "historical_execution" &&
+    (providerWireName !== null || errorType !== null)
+  ) {
     throw new Error("Invalid tool projection: tagged field must be null");
   }
   if (

@@ -1,1 +1,1 @@
-"""Nexus-owned declarations and operation profiles for portable LLM tools."""
+"""Nexus-owned declarations, plans, and durable execution for portable LLM tools."""

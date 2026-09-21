@@ -1,10 +1,15 @@
-"""Shared evidence indexing for text-bearing media."""
+"""Turning text-bearing media and notes into the searchable materialization.
+
+One linear pipeline: source snapshot → indexable blocks → chunks anchored to a
+single locator → embeddings in bounded batches → one atomic republish of
+blocks, evidence spans, chunks, embeddings and the index state. Plus the media
+reindex lifecycle that fences each republish behind a monotonic revision.
+"""
 
 from __future__ import annotations
 
 import base64
 import json
-import math
 import re
 from array import array
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -67,22 +72,24 @@ CHUNK_OVERLAP_TOKENS = 60
 CONTENT_INDEX_EMBEDDING_BATCH_SIZE = 64
 CONTENT_INDEX_CHUNK_MAX_BYTES = 256 * 1024
 CONTENT_INDEX_SPOOL_MAX_BYTES = 384 * 1024 * 1024
-_CONTENT_INDEX_SPOOL_RECORD_MAX_BYTES = CONTENT_INDEX_CHUNK_MAX_BYTES * 16 + 1024 * 1024
+_SPOOL_RECORD_MAX_BYTES = CONTENT_INDEX_CHUNK_MAX_BYTES * 16 + 1024 * 1024
 MEDIA_CONTENT_REINDEX_JOB_KIND = "media_content_reindex_job"
 MEDIA_CONTENT_REINDEX_REASONS = frozenset(
-    {
-        "source_success",
-        "reconciliation",
-        "oracle_corpus_seed",
-    }
+    {"source_success", "reconciliation", "oracle_corpus_seed"}
 )
 DocumentSourceKind = Literal["web_article", "epub", "pdf"]
+_SOURCE_KINDS = ("web_article", "epub", "pdf", "transcript", "note")
+_RESOLVER_KINDS = {
+    "web_article": "web",
+    "epub": "epub",
+    "pdf": "pdf",
+    "transcript": "transcript",
+    "note": "note",
+}
 
 
 @dataclass(frozen=True)
 class IndexOwner:
-    """Polymorphic owner of a content index. Forward-compatible with ResourceRef."""
-
     kind: Literal["media", "note_block"]
     id: UUID
 
@@ -132,17 +139,10 @@ class PlannedContentChunk:
     embedding_f32: bytes
 
 
-class ContentIndexResourceLimitExceeded(Exception):
-    """Expected rejection when a document cannot fit the indexing envelope."""
-
-    error_code = ApiErrorCode.E_SOURCE_TOO_LARGE
-
-    def __init__(self) -> None:
-        super().__init__("Document content exceeds the bounded indexing envelope.")
-
-
 @dataclass(frozen=True)
 class ContentIndexPlan:
+    """The note/transcript path: a complete materialization held in memory."""
+
     owner: IndexOwner
     source_kind: str
     blocks: tuple[IndexableBlock, ...]
@@ -154,6 +154,8 @@ class ContentIndexPlan:
 
 @dataclass(frozen=True)
 class SpooledContentIndexPlan:
+    """The document path: the same materialization streamed through local scratch."""
+
     owner: IndexOwner
     source_kind: DocumentSourceKind
     blocks: tuple[IndexableBlock, ...]
@@ -164,389 +166,59 @@ class SpooledContentIndexPlan:
     embedding_dimensions: int
 
 
-TextEmbeddingBatch = Callable[
-    [list[str]],
-    tuple[str, Sequence[Sequence[float]]],
-]
+class ContentIndexResourceLimitExceeded(Exception):
+    """Expected rejection when a document cannot fit the indexing envelope."""
+
+    error_code = ApiErrorCode.E_SOURCE_TOO_LARGE
+
+    def __init__(self) -> None:
+        super().__init__("Document content exceeds the bounded indexing envelope.")
 
 
-def plan_content_index(
-    *,
-    owner: IndexOwner,
-    source_kind: str,
-    blocks: list[IndexableBlock],
-) -> ContentIndexPlan:
-    """Build and embed one complete materialization with no database access."""
-    _validate_blocks(owner=owner, source_kind=source_kind, blocks=blocks)
-
-    embedding_model = current_transcript_embedding_model()
-    embedding_dimensions = transcript_embedding_dimensions()
-    embedding_provider = current_transcript_embedding_provider()
-
-    planned_chunks = tuple(
-        _iter_planned_chunks(
-            source_kind=source_kind,
-            blocks=blocks,
-            embedding_model=embedding_model,
-            embedding_dimensions=embedding_dimensions,
-            maximum_chunk_bytes=None,
-            embed_texts=build_text_embeddings,
-        )
-    )
-
-    return ContentIndexPlan(
-        owner=owner,
-        source_kind=source_kind,
-        blocks=tuple(blocks),
-        chunks=planned_chunks,
-        embedding_provider=embedding_provider,
-        embedding_model=embedding_model,
-        embedding_dimensions=embedding_dimensions,
-    )
+TextEmbeddingBatch = Callable[[list[str]], tuple[str, Sequence[Sequence[float]]]]
 
 
-def build_spooled_content_index_plan(
-    *,
-    owner: IndexOwner,
-    source_kind: DocumentSourceKind,
-    blocks: Sequence[IndexableBlock],
-    spool_path: Path,
-    embed_texts: TextEmbeddingBatch,
-) -> SpooledContentIndexPlan:
-    """Build a bounded document plan outside the publication transaction."""
-    if owner.kind != "media" or source_kind not in {"web_article", "epub", "pdf"}:
-        raise ValueError("spooled content-index planning is document-media only")
-    block_list = list(blocks)
-    _validate_blocks(owner=owner, source_kind=source_kind, blocks=block_list)
-    embedding_model = current_transcript_embedding_model()
-    embedding_dimensions = transcript_embedding_dimensions()
-    embedding_provider = current_transcript_embedding_provider()
-    written_bytes = 0
-    chunk_count = 0
-    try:
-        with spool_path.open("xb") as spool:
-            for chunk in _iter_planned_chunks(
-                source_kind=source_kind,
-                blocks=block_list,
-                embedding_model=embedding_model,
-                embedding_dimensions=embedding_dimensions,
-                maximum_chunk_bytes=CONTENT_INDEX_CHUNK_MAX_BYTES,
-                embed_texts=embed_texts,
-            ):
-                written_bytes = _write_spool_record(
-                    spool, _spool_chunk_record(chunk), written_bytes=written_bytes
-                )
-                chunk_count += 1
-    except Exception:
-        spool_path.unlink(missing_ok=True)
-        raise
-    return SpooledContentIndexPlan(
-        owner=owner,
-        source_kind=source_kind,
-        blocks=tuple(block_list),
-        spool_path=spool_path,
-        chunk_count=chunk_count,
-        embedding_provider=embedding_provider,
-        embedding_model=embedding_model,
-        embedding_dimensions=embedding_dimensions,
-    )
+def _is_document_source_kind(value: object) -> TypeGuard[DocumentSourceKind]:
+    return isinstance(value, str) and value in {"web_article", "epub", "pdf"}
 
 
-def publish_content_index(
-    db: Session,
-    *,
-    plan: ContentIndexPlan | SpooledContentIndexPlan,
-    reason: str,
-) -> ContentIndexResult:
-    """Replace one complete materialization inside the caller's transaction."""
-    now = datetime.now(UTC)
-    replace_content_index_materialization(db, owner=plan.owner)
-
-    block_ids_by_idx: dict[int, UUID] = {}
-    for expected_idx, block in enumerate(plan.blocks):
-        block_id = db.execute(
-            text(
-                """
-                INSERT INTO content_blocks (
-                    owner_kind,
-                    owner_id,
-                    block_idx,
-                    block_kind,
-                    canonical_text,
-                    heading_path,
-                    locator,
-                    created_at
-                )
-                VALUES (
-                    :owner_kind,
-                    :owner_id,
-                    :block_idx,
-                    :block_kind,
-                    :canonical_text,
-                    CAST(:heading_path AS jsonb),
-                    CAST(:locator AS jsonb),
-                    :now
-                )
-                RETURNING id
-                """
-            ),
-            {
-                "owner_kind": plan.owner.kind,
-                "owner_id": plan.owner.id,
-                "block_idx": block.block_idx,
-                "block_kind": block.block_kind,
-                "canonical_text": block.canonical_text,
-                "heading_path": json.dumps(list(block.heading_path)),
-                "locator": json.dumps(block.locator),
-                "now": now,
-            },
-        ).scalar_one()
-        block_ids_by_idx[expected_idx] = block_id
-
-    planned_chunks = iter(_content_index_plan_chunks(plan))
-    try:
-        first_chunk = next(planned_chunks)
-    except StopIteration:
-        first_chunk = None
-
-    if first_chunk is None:
-        _set_index_state(
-            db,
-            owner=plan.owner,
-            status="no_text",
-            status_reason="no_text",
-            embedding_provider=None,
-            embedding_model=None,
-            now=now,
-        )
-        return ContentIndexResult(owner=plan.owner, status="no_text", chunk_count=0)
-
-    published_chunk_count = 0
-    for chunk_idx, chunk in enumerate(chain((first_chunk,), planned_chunks)):
-        if chunk is None:
-            # justify-defect: the empty-plan branch returned above.
-            raise AssertionError("content-index chunk iterator yielded an absent first chunk")
-        published_chunk_count += 1
-        chunk_parts = chunk.parts
-        chunk_text = chunk.text
-        summary_locator = chunk.locator
-        first_block, first_start, _, _ = chunk_parts[0]
-        last_block, _, last_end, _ = chunk_parts[-1]
-        first_block_id = block_ids_by_idx[first_block.block_idx]
-        last_block_id = block_ids_by_idx[last_block.block_idx]
-        citation_label = str(first_block.heading_path[-1]) if first_block.heading_path else "Source"
-        evidence_span_id = db.execute(
-            text(
-                """
-                INSERT INTO evidence_spans (
-                    owner_kind,
-                    owner_id,
-                    start_block_id,
-                    end_block_id,
-                    start_block_offset,
-                    end_block_offset,
-                    span_text,
-                    selector,
-                    citation_label,
-                    resolver_kind,
-                    created_at
-                )
-                VALUES (
-                    :owner_kind,
-                    :owner_id,
-                    :start_block_id,
-                    :end_block_id,
-                    :start_block_offset,
-                    :end_offset,
-                    :span_text,
-                    CAST(:selector AS jsonb),
-                    :citation_label,
-                    :resolver_kind,
-                    :now
-                )
-                RETURNING id
-                """
-            ),
-            {
-                "owner_kind": plan.owner.kind,
-                "owner_id": plan.owner.id,
-                "start_block_id": first_block_id,
-                "end_block_id": last_block_id,
-                "start_block_offset": first_start,
-                "end_offset": last_end,
-                "span_text": chunk_text,
-                "selector": json.dumps(summary_locator),
-                "citation_label": citation_label,
-                "resolver_kind": _resolver_kind(plan.source_kind),
-                "now": now,
-            },
-        ).scalar_one()
-
-        chunk_id = db.execute(
-            text(
-                """
-                INSERT INTO content_chunks (
-                    owner_kind,
-                    owner_id,
-                    primary_evidence_span_id,
-                    chunk_idx,
-                    source_kind,
-                    chunk_text,
-                    heading_path,
-                    summary_locator,
-                    created_at
-                )
-                VALUES (
-                    :owner_kind,
-                    :owner_id,
-                    :evidence_span_id,
-                    :chunk_idx,
-                    :source_kind,
-                    :chunk_text,
-                    CAST(:heading_path AS jsonb),
-                    CAST(:summary_locator AS jsonb),
-                    :now
-                )
-                RETURNING id
-                """
-            ),
-            {
-                "owner_kind": plan.owner.kind,
-                "owner_id": plan.owner.id,
-                "evidence_span_id": evidence_span_id,
-                "chunk_idx": chunk_idx,
-                "source_kind": plan.source_kind,
-                "chunk_text": chunk_text,
-                "heading_path": json.dumps(list(first_block.heading_path)),
-                "summary_locator": json.dumps(summary_locator),
-                "now": now,
-            },
-        ).scalar_one()
-
-        db.execute(
-            text(
-                f"""
-                INSERT INTO content_embeddings (
-                    chunk_id,
-                    embedding_provider,
-                    embedding_model,
-                    embedding_dimensions,
-                    embedding_vector,
-                    created_at
-                )
-                VALUES (
-                    :chunk_id,
-                    :embedding_provider,
-                    :embedding_model,
-                    :embedding_dimensions,
-                    CAST(:embedding_vector AS vector({plan.embedding_dimensions})),
-                    :now
-                )
-                """
-            ),
-            {
-                "chunk_id": chunk_id,
-                "embedding_provider": plan.embedding_provider,
-                "embedding_model": plan.embedding_model,
-                "embedding_dimensions": plan.embedding_dimensions,
-                "embedding_vector": _packed_embedding_literal(
-                    chunk.embedding_f32,
-                    dimensions=plan.embedding_dimensions,
-                ),
-                "now": now,
-            },
-        )
-
-    expected_chunk_count = (
-        len(plan.chunks) if isinstance(plan, ContentIndexPlan) else plan.chunk_count
-    )
-    if published_chunk_count != expected_chunk_count:
-        # justify-defect: the closed plan count must match its streamed records.
-        raise AssertionError("content-index plan chunk count changed during publication")
-
-    _set_index_state(
-        db,
-        owner=plan.owner,
-        status="ready",
-        status_reason=reason,
-        embedding_provider=plan.embedding_provider,
-        embedding_model=plan.embedding_model,
-        now=now,
-    )
-    # Single owner of the per-media unit trigger: every text-bearing media source
-    # kind funnels through this ready branch, so the unit (re)build is enqueued
-    # here once rather than at each ingest call site. Participates in the caller's
-    # transaction so the enqueue commits atomically with the content-index write.
-    # Page indexes carry no media unit, so this is gated to media owners only.
-    if plan.owner.kind == "media":
-        media_intelligence_lifecycle.ensure_media_unit_in_tx(db, media_id=plan.owner.id)
-    return ContentIndexResult(
-        owner=plan.owner,
-        status="ready",
-        chunk_count=published_chunk_count,
-    )
+# =============================================================================
+# Source snapshot → indexable blocks
+# =============================================================================
 
 
-def rebuild_content_index(
-    db: Session,
-    *,
-    owner: IndexOwner,
-    source_kind: str,
-    blocks: list[IndexableBlock],
-    reason: str,
-) -> ContentIndexResult:
-    """Synchronous note doorway; durable media jobs plan and publish separately."""
-    if owner.kind == "media":
-        db.execute(
-            text("SELECT id FROM media WHERE id = :owner_id FOR NO KEY UPDATE"),
-            {"owner_id": owner.id},
-        ).scalar_one()
-    return publish_content_index(
-        db,
-        plan=plan_content_index(owner=owner, source_kind=source_kind, blocks=blocks),
-        reason=reason,
-    )
+def _text_quote(text_value: str, start_offset: int, end_offset: int) -> dict[str, str]:
+    return {
+        "exact": text_value[start_offset:end_offset],
+        "prefix": text_value[max(0, start_offset - 64) : start_offset],
+        "suffix": text_value[end_offset : min(len(text_value), end_offset + 64)],
+    }
 
 
-def build_fragment_indexable_blocks(
+def _fragment_blocks(
     *,
     media_id: UUID,
     source_kind: str,
-    fragments: Sequence[Any],
-    fragment_blocks_by_id: dict[UUID, list[Any]],
+    fragments: Sequence[Mapping[Any, Any]],
+    blocks_by_fragment: dict[UUID, list[Mapping[Any, Any]]],
 ) -> list[IndexableBlock]:
-    """Build fragment blocks from an immutable source snapshot."""
-    if not _is_document_source_kind(source_kind):
-        # justify-defect: fragment document indexing has a closed source-kind contract.
-        raise AssertionError("fragment content-index source kind is ineligible")
+    """Blocks for a fragment-backed document (web article or epub)."""
     blocks: list[IndexableBlock] = []
     source_offset = 0
-    for fragment in sorted(
-        fragments,
-        key=lambda item: int(str(_field(item, "idx", -1))),
-    ):
-        fragment_id = UUID(str(_field(fragment, "id", "")))
-        fragment_idx = int(str(_field(fragment, "idx", -1)))
-        fragment_text = str(_field(fragment, "canonical_text", "") or "")
+    for fragment in sorted(fragments, key=lambda item: int(item["idx"])):
+        fragment_id = UUID(str(fragment["id"]))
+        fragment_idx = int(fragment["idx"])
+        fragment_text = str(fragment["canonical_text"] or "")
         source_base = source_offset
         if source_kind == "web_article":
-            html_sanitized = str(_field(fragment, "html_sanitized", "") or "")
-            if (
-                add_heading_anchors(
-                    html_sanitized,
-                    fragment_idx=fragment_idx,
-                )
-                != html_sanitized
-            ):
-                # justify-defect: source success owns deterministic heading
-                # normalization before it requests an index revision.
+            html = str(fragment["html_sanitized"] or "")
+            if add_heading_anchors(html, fragment_idx=fragment_idx) != html:
+                # Source success owns deterministic heading normalization before
+                # it requests an index revision.
                 raise AssertionError("web source fragment is missing Nexus heading anchors")
             for spec in build_web_article_index_blocks(
-                html_sanitized=html_sanitized,
-                canonical_text=fragment_text,
-                fragment_idx=fragment_idx,
+                html_sanitized=html, canonical_text=fragment_text, fragment_idx=fragment_idx
             ):
-                block_text = fragment_text[spec.start_offset : spec.end_offset]
                 locator: dict[str, object] = {
                     "type": "web_text_offsets",
                     "kind": "web_text",
@@ -554,11 +226,7 @@ def build_fragment_indexable_blocks(
                     "fragment_idx": fragment_idx,
                     "start_offset": spec.start_offset,
                     "end_offset": spec.end_offset,
-                    "text_quote": _text_quote(
-                        fragment_text,
-                        spec.start_offset,
-                        spec.end_offset,
-                    ),
+                    "text_quote": _text_quote(fragment_text, spec.start_offset, spec.end_offset),
                 }
                 if spec.section_id is not None:
                     locator["section_id"] = spec.section_id
@@ -576,7 +244,7 @@ def build_fragment_indexable_blocks(
                         source_kind=source_kind,
                         block_idx=len(blocks),
                         block_kind=spec.block_kind,
-                        canonical_text=block_text,
+                        canonical_text=fragment_text[spec.start_offset : spec.end_offset],
                         source_start_offset=source_base + spec.start_offset,
                         source_end_offset=source_base + spec.end_offset,
                         locator=locator,
@@ -586,68 +254,48 @@ def build_fragment_indexable_blocks(
             source_offset += len(fragment_text) + 2
             continue
 
-        block_rows = fragment_blocks_by_id.get(fragment_id, [])
-        if not block_rows:
-            block_rows = [(0, 0, len(fragment_text))]
-        for row in block_rows:
-            start_offset = int(row[-2])
-            end_offset = int(row[-1])
-            block_text = fragment_text[start_offset:end_offset]
-            locator_kind = "epub_text" if source_kind == "epub" else "web_text"
-            locator: dict[str, object] = {
-                "kind": locator_kind,
-                "fragment_id": str(fragment_id),
-                "fragment_idx": fragment_idx,
-                "start_offset": start_offset,
-                "end_offset": end_offset,
-                "text_quote": _text_quote(fragment_text, start_offset, end_offset),
-            }
+        rows = blocks_by_fragment.get(fragment_id) or [
+            {"start_offset": 0, "end_offset": len(fragment_text)}
+        ]
+        for row in rows:
+            start = int(row["start_offset"])
+            end = int(row["end_offset"])
             blocks.append(
                 IndexableBlock(
                     owner=IndexOwner("media", media_id),
                     source_kind=source_kind,
                     block_idx=len(blocks),
                     block_kind="paragraph",
-                    canonical_text=block_text,
-                    source_start_offset=source_base + start_offset,
-                    source_end_offset=source_base + end_offset,
-                    locator=locator,
+                    canonical_text=fragment_text[start:end],
+                    source_start_offset=source_base + start,
+                    source_end_offset=source_base + end,
+                    locator={
+                        "kind": "epub_text" if source_kind == "epub" else "web_text",
+                        "fragment_id": str(fragment_id),
+                        "fragment_idx": fragment_idx,
+                        "start_offset": start,
+                        "end_offset": end,
+                        "text_quote": _text_quote(fragment_text, start, end),
+                    },
                     heading_path=(),
                 )
             )
         source_offset += len(fragment_text) + 2
-
     return blocks
 
 
 def build_transcript_indexable_blocks(
-    *,
-    media_id: UUID,
-    transcript_segments: Sequence[TranscriptSegmentInput],
+    *, media_id: UUID, transcript_segments: Sequence[TranscriptSegmentInput]
 ) -> list[IndexableBlock]:
-    """Build an immutable transcript plan input without provider or DB work."""
+    """Blocks for a transcript: one per timed segment, in playback order."""
     blocks: list[IndexableBlock] = []
     source_offset = 0
     for segment in transcript_segments:
         text_value = segment.canonical_text.strip()
-        t_start_ms = segment.t_start_ms
-        t_end_ms = segment.t_end_ms
-        if not text_value:
-            continue
-        if t_end_ms <= t_start_ms:
+        if not text_value or segment.t_end_ms <= segment.t_start_ms:
             continue
         if blocks:
             source_offset += 2
-        locator = {
-            "kind": "transcript_time_text",
-            "t_start_ms": t_start_ms,
-            "t_end_ms": t_end_ms,
-            "text_quote": {
-                "exact": text_value,
-                "prefix": "",
-                "suffix": "",
-            },
-        }
         blocks.append(
             IndexableBlock(
                 owner=IndexOwner("media", media_id),
@@ -657,36 +305,42 @@ def build_transcript_indexable_blocks(
                 canonical_text=text_value,
                 source_start_offset=source_offset,
                 source_end_offset=source_offset + len(text_value),
-                locator=locator,
+                locator={
+                    "kind": "transcript_time_text",
+                    "t_start_ms": segment.t_start_ms,
+                    "t_end_ms": segment.t_end_ms,
+                    "text_quote": {"exact": text_value, "prefix": "", "suffix": ""},
+                },
                 heading_path=(),
             )
         )
         source_offset += len(text_value)
-
     return blocks
 
 
-def build_pdf_indexable_blocks(
-    *,
-    media_id: UUID,
-    plain_text: str,
-    page_spans: Sequence[Any],
-) -> list[IndexableBlock]:
-    """Build the single current PDF evidence JSON shape."""
+def _positive_dimension(value: Any) -> float | None:
+    if value is None:
+        return None
+    number = float(value)
+    if number <= 0:
+        raise ValueError("PDF page span dimensions must be positive")
+    return number
 
+
+def _pdf_blocks(
+    *, media_id: UUID, plain_text: str, page_spans: Sequence[Mapping[Any, Any]]
+) -> list[IndexableBlock]:
+    """Blocks for a PDF: one per page span of the extracted plain text."""
     blocks: list[IndexableBlock] = []
-    for page_span in page_spans:
-        page_number = _pdf_span_required_int(page_span, "page_number")
-        start = _pdf_span_required_int(page_span, "start_offset")
-        end = _pdf_span_required_int(page_span, "end_offset")
-        if page_number < 1:
-            raise ValueError("PDF page span page_number must be positive")
-        if start < 0 or end < start:
+    for page in page_spans:
+        page_number = int(page["page_number"])
+        start = int(page["start_offset"])
+        end = int(page["end_offset"])
+        if page_number < 1 or start < 0 or end < start:
             raise ValueError("PDF page span offsets are invalid")
         page_text = plain_text[start:end]
-        page_label_value = _field(page_span, "page_label", None)
-        page_label = str(page_label_value) if page_label_value else None
-        locator = {
+        page_label = str(page["page_label"]) if page["page_label"] else None
+        locator: dict[str, object] = {
             "kind": "pdf_text",
             "page_number": page_number,
             "physical_page_number": page_number,
@@ -697,18 +351,14 @@ def build_pdf_indexable_blocks(
             "page_text_end_offset": len(page_text),
             "text_quote": _text_quote(plain_text, start, end),
         }
-        page_width = _pdf_span_positive_number_or_none(page_span, "page_width")
-        page_height = _pdf_span_positive_number_or_none(page_span, "page_height")
-        if page_width is not None and page_height is not None:
+        width = _positive_dimension(page["page_width"])
+        height = _positive_dimension(page["page_height"])
+        if width is not None and height is not None:
             locator["geometry"] = {
                 "coordinate_space": "pdf_points",
-                "page_width": page_width,
-                "page_height": page_height,
-                "page_rotation_degrees": _pdf_span_optional_non_negative_int(
-                    page_span,
-                    "page_rotation_degrees",
-                    default=0,
-                ),
+                "page_width": width,
+                "page_height": height,
+                "page_rotation_degrees": int(page["page_rotation_degrees"] or 0),
                 "page_box": "crop",
                 "quads": [],
             }
@@ -728,230 +378,41 @@ def build_pdf_indexable_blocks(
     return blocks
 
 
-def prepare_media_content_reindex(
-    db: Session,
-    *,
-    media_id: UUID,
-    revision: int,
-    reason: str,
-    context: JobExecutionContext,
-    lease_seconds: int,
-) -> MediaContentReindexWork | None:
-    """Fence, snapshot, and mark one current document revision indexing."""
-    _validate_media_reindex_reason(reason)
-    media = (
-        db.execute(
-            text(
-                """
-                SELECT id, kind, processing_status, title, language, plain_text
-                FROM media
-                WHERE id = :media_id
-                FOR NO KEY UPDATE
-                """
-            ),
-            {"media_id": media_id},
-        )
-        .mappings()
-        .one_or_none()
-    )
-    if media is None:
-        return None
-    source_kind = media["kind"]
-    if not _is_document_source_kind(source_kind):
-        # justify-defect: the durable payload accepts only document media.
-        raise AssertionError("media content-reindex owner kind is ineligible")
-
-    state = _lock_media_index_state(db, media_id)
-    if state is None:
-        return None
-
-    from nexus.jobs.queue import lock_and_renew_running_job_claim
-
-    job = lock_and_renew_running_job_claim(
-        db,
-        context=context,
-        lease_seconds=lease_seconds,
-    )
-    if job is None:
-        return None
-    if (
-        job.kind != MEDIA_CONTENT_REINDEX_JOB_KIND
-        or str(job.payload.get("media_id")) != str(media_id)
-        or _job_revision(job.payload) != revision
-    ):
-        # justify-defect: the worker context must name this exact closed payload.
-        raise AssertionError("media content-reindex job identity is malformed")
-    if _validated_media_revision(state["revision"]) != revision:
-        _record_index_event(
-            db,
-            media_id=media_id,
-            facts=IndexSuperseded(
-                revision=revision, job_id=job.id, execution_id=context.execution_id
-            ),
-        )
-        return None
-    if media["processing_status"] != "ready_for_reading":
-        # justify-defect: only source success may request a document index revision.
-        raise AssertionError("media content-reindex owner is not readable")
-    _record_index_event(
-        db,
-        media_id=media_id,
-        facts=IndexExecutionStarted(
-            revision=revision, job_id=job.id, execution_id=context.execution_id
-        ),
-    )
-
-    blocks = _snapshot_media_indexable_blocks(
-        db,
-        media_id=media_id,
-        source_kind=source_kind,
-        plain_text=str(media["plain_text"] or ""),
-    )
-    db.execute(
-        text(
-            """
-            UPDATE content_index_states
-            SET
-                status = 'indexing',
-                status_reason = :reason,
-                active_embedding_provider = NULL,
-                active_embedding_model = NULL,
-                updated_at = now()
-            WHERE owner_kind = 'media'
-              AND owner_id = :media_id
-              AND revision = :revision
-            """
-        ),
-        {"media_id": media_id, "revision": revision, "reason": reason},
-    )
-    return MediaContentReindexWork(
-        media_id=media_id,
-        revision=revision,
-        source_kind=source_kind,
-        reason=reason,
-        blocks=tuple(blocks),
-    )
-
-
-def publish_media_content_reindex(
-    db: Session,
-    *,
-    work: MediaContentReindexWork,
-    plan: ContentIndexPlan | SpooledContentIndexPlan,
-    context: JobExecutionContext,
-    lease_seconds: int,
-) -> ContentIndexResult | None:
-    """Fence and atomically publish one complete current document revision."""
-    media = (
-        db.execute(
-            text("SELECT id, kind FROM media WHERE id = :media_id FOR NO KEY UPDATE"),
-            {"media_id": work.media_id},
-        )
-        .mappings()
-        .one_or_none()
-    )
-    if media is None:
-        return None
-    if str(media["kind"]) != work.source_kind:
-        # justify-defect: a media row cannot change document kind.
-        raise AssertionError("media kind changed during content reindex")
-    state = _lock_media_index_state(db, work.media_id)
-    if state is None:
-        return None
-
-    from nexus.jobs.queue import lock_and_renew_running_job_claim
-
-    job = lock_and_renew_running_job_claim(
-        db,
-        context=context,
-        lease_seconds=lease_seconds,
-    )
-    if job is None:
-        return None
-    if (
-        job.kind != MEDIA_CONTENT_REINDEX_JOB_KIND
-        or str(job.payload.get("media_id")) != str(work.media_id)
-        or _job_revision(job.payload) != work.revision
-    ):
-        # justify-defect: publication is authorized only by this exact payload.
-        raise AssertionError("media content-reindex publication identity is malformed")
-    if _validated_media_revision(state["revision"]) != work.revision:
-        _record_index_event(
-            db,
-            media_id=work.media_id,
-            facts=IndexSuperseded(
-                revision=work.revision, job_id=job.id, execution_id=context.execution_id
-            ),
-        )
-        return None
-    if plan.owner != IndexOwner("media", work.media_id) or plan.source_kind != work.source_kind:
-        # justify-defect: the immutable plan must belong to the prepared snapshot.
-        raise AssertionError("media content-index plan identity is malformed")
-
-    result = publish_content_index(db, plan=plan, reason=work.reason)
-    _record_index_event(
-        db,
-        media_id=work.media_id,
-        facts=IndexSucceeded(
-            revision=work.revision, job_id=job.id, execution_id=context.execution_id
-        ),
-    )
-    plan_chunk_count = len(plan.chunks) if isinstance(plan, ContentIndexPlan) else plan.chunk_count
-    if work.source_kind == "pdf" and plan_chunk_count == 0:
-        db.execute(
-            text(
-                """
-                UPDATE content_index_states
-                SET
-                    status = 'ocr_required',
-                    status_reason = 'ocr_required',
-                    active_embedding_provider = NULL,
-                    active_embedding_model = NULL,
-                    updated_at = now()
-                WHERE owner_kind = 'media'
-                  AND owner_id = :media_id
-                  AND revision = :revision
-                """
-            ),
-            {"media_id": work.media_id, "revision": work.revision},
-        )
-        return ContentIndexResult(result.owner, "ocr_required", 0)
-    return result
-
-
-def _snapshot_media_indexable_blocks(
-    db: Session,
-    *,
-    media_id: UUID,
-    source_kind: str,
-    plain_text: str,
+def _snapshot_media_blocks(
+    db: Session, *, media_id: UUID, source_kind: str, plain_text: str
 ) -> list[IndexableBlock]:
+    """Read one immutable source snapshot for the media's document kind."""
     if source_kind == "pdf":
-        page_rows = db.execute(
-            text(
-                """
-                SELECT
-                    page_number,
-                    start_offset,
-                    end_offset,
-                    page_label,
-                    page_width,
-                    page_height,
-                    page_rotation_degrees
-                FROM pdf_page_text_spans
-                WHERE media_id = :media_id
-                ORDER BY page_number ASC
-                """
-            ),
-            {"media_id": media_id},
-        ).fetchall()
-        if not page_rows and plain_text:
-            page_rows = [(1, 0, len(plain_text), None, None, None, None)]
-        return build_pdf_indexable_blocks(
-            media_id=media_id,
-            plain_text=plain_text,
-            page_spans=page_rows,
+        pages = (
+            db.execute(
+                text(
+                    """
+                    SELECT page_number, start_offset, end_offset, page_label,
+                           page_width, page_height, page_rotation_degrees
+                    FROM pdf_page_text_spans
+                    WHERE media_id = :media_id
+                    ORDER BY page_number ASC
+                    """
+                ),
+                {"media_id": media_id},
+            )
+            .mappings()
+            .all()
         )
+        spans: Sequence[Mapping[Any, Any]] = pages
+        if not pages and plain_text:
+            spans = [
+                {
+                    "page_number": 1,
+                    "start_offset": 0,
+                    "end_offset": len(plain_text),
+                    "page_label": None,
+                    "page_width": None,
+                    "page_height": None,
+                    "page_rotation_degrees": None,
+                }
+            ]
+        return _pdf_blocks(media_id=media_id, plain_text=plain_text, page_spans=spans)
 
     fragments = (
         db.execute(
@@ -968,469 +429,575 @@ def _snapshot_media_indexable_blocks(
         .mappings()
         .all()
     )
-    fragment_blocks_by_id: dict[UUID, list[Any]] = {}
+    blocks_by_fragment: dict[UUID, list[Mapping[Any, Any]]] = {}
     fragment_ids = [UUID(str(fragment["id"])) for fragment in fragments]
     if fragment_ids:
-        for row in db.execute(
-            text(
-                """
-                SELECT fragment_id, block_idx, start_offset, end_offset
-                FROM fragment_blocks
-                WHERE fragment_id = ANY(:fragment_ids)
-                ORDER BY fragment_id ASC, block_idx ASC
-                """
-            ),
-            {"fragment_ids": fragment_ids},
-        ).fetchall():
-            fragment_blocks_by_id.setdefault(row[0], []).append(row)
-    return build_fragment_indexable_blocks(
+        rows = (
+            db.execute(
+                text(
+                    """
+                    SELECT fragment_id, block_idx, start_offset, end_offset
+                    FROM fragment_blocks
+                    WHERE fragment_id = ANY(:fragment_ids)
+                    ORDER BY fragment_id ASC, block_idx ASC
+                    """
+                ),
+                {"fragment_ids": fragment_ids},
+            )
+            .mappings()
+            .all()
+        )
+        for row in rows:
+            blocks_by_fragment.setdefault(row["fragment_id"], []).append(row)
+    return _fragment_blocks(
         media_id=media_id,
         source_kind=source_kind,
         fragments=fragments,
-        fragment_blocks_by_id=fragment_blocks_by_id,
+        blocks_by_fragment=blocks_by_fragment,
     )
 
 
-def request_media_content_reindex(
-    db: Session,
-    *,
-    media_id: UUID,
-    reason: str,
-    request_id: str | None,
-) -> MediaContentReindexIntent:
-    """Create a new media index intent inside the caller's transaction."""
-    _validate_media_reindex_reason(reason)
-    _lock_media_for_reindex(db, media_id)
-    state = _lock_media_index_state(db, media_id)
-    if state is None:
-        db.execute(
-            text(
-                """
-                INSERT INTO content_index_states (
-                    owner_kind,
-                    owner_id,
-                    status,
-                    status_reason,
-                    active_embedding_provider,
-                    active_embedding_model,
-                    revision,
-                    updated_at,
-                    created_at
-                )
-                VALUES (
-                    'media',
-                    :media_id,
-                    'pending',
-                    :reason,
-                    NULL,
-                    NULL,
-                    0,
-                    now(),
-                    now()
-                )
-                """
-            ),
-            {"media_id": media_id, "reason": reason},
-        )
-        state = _lock_media_index_state(db, media_id)
-        if state is None:
-            # justify-defect: the locked media row protects first state creation.
-            raise AssertionError("media content-index state insert was not visible")
-
-    revision = _validated_media_revision(state["revision"]) + 1
-    db.execute(
-        text(
-            """
-            UPDATE content_index_states
-            SET
-                revision = :revision,
-                status = 'pending',
-                status_reason = :reason,
-                active_embedding_provider = NULL,
-                active_embedding_model = NULL,
-                updated_at = now()
-            WHERE owner_kind = 'media'
-              AND owner_id = :media_id
-            """
-        ),
-        {"media_id": media_id, "revision": revision, "reason": reason},
-    )
-
-    from nexus.jobs.queue import (
-        enqueue_job,
-        lock_jobs_for_payload,
-        reset_unclaimed_job_for_new_intent,
-        supersede_unclaimed_job,
-    )
-    from nexus.jobs.registry import get_default_registry
-
-    definition = get_default_registry()[MEDIA_CONTENT_REINDEX_JOB_KIND]
-    payload = _media_reindex_payload(
-        media_id=media_id,
-        revision=revision,
-        reason=reason,
-        request_id=request_id,
-    )
-    jobs = lock_jobs_for_payload(
-        db,
-        kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
-        expected_payload_match={"media_id": str(media_id)},
-    )
-    waiting = [
-        job for job in jobs if job.status in {"pending", "failed"} and job.claimed_by is None
-    ]
-    if waiting:
-        selected = reset_unclaimed_job_for_new_intent(
-            db,
-            job_id=waiting[0].id,
-            kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
-            payload=payload,
-            max_attempts=definition.max_attempts,
-        )
-        for obsolete in waiting[1:]:
-            supersede_unclaimed_job(
-                db,
-                job_id=obsolete.id,
-                kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
-            )
-    else:
-        selected = enqueue_job(
-            db,
-            kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
-            payload=payload,
-            max_attempts=definition.max_attempts,
-        )
-
-    _record_index_event(
-        db, media_id=media_id, facts=IndexAccepted(revision=revision, job_id=selected.id)
-    )
-    return MediaContentReindexIntent(
-        revision=revision,
-        background_job_id=selected.id,
-        suspended=False,
-        enqueued=not waiting,
-    )
-
-
-def ensure_media_content_reindex_job(
-    db: Session,
-    *,
-    media_id: UUID,
-    reason: str,
-    request_id: str | None,
-) -> MediaContentReindexIntent:
-    """Ensure the current pending/indexing revision has an owned queue row."""
-    _validate_media_reindex_reason(reason)
-    _lock_media_for_reindex(db, media_id)
-    state = _lock_media_index_state(db, media_id)
-    if state is None:
-        # justify-defect: reconciliation selects an existing media index state.
-        raise AssertionError("cannot ensure a job without a media content-index state")
-    revision = _validated_media_revision(state["revision"])
-
-    from nexus.jobs.queue import enqueue_job, lock_jobs_for_payload
-    from nexus.jobs.registry import get_default_registry
-
-    jobs = lock_jobs_for_payload(
-        db,
-        kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
-        expected_payload_match={"media_id": str(media_id)},
-    )
-    current = [job for job in jobs if _job_revision(job.payload) == revision]
-    waiting = [
-        job for job in current if job.status in {"pending", "failed"} and job.claimed_by is None
-    ]
-    if len(waiting) > 1:
-        # justify-defect: the media/state lock serializes every canonical enqueue.
-        raise AssertionError("multiple waiting jobs exist for one media index revision")
-    running = [job for job in current if job.status == "running"]
-    dead = [job for job in current if job.status == "dead"]
-    if len(running) > 1 or len(dead) > 1:
-        # justify-defect: one revision has one execution identity.
-        raise AssertionError("multiple owned jobs exist for one media index revision")
-    if waiting:
-        return MediaContentReindexIntent(revision, waiting[0].id, False, False)
-    if running:
-        return MediaContentReindexIntent(revision, running[0].id, False, False)
-    if dead:
-        return MediaContentReindexIntent(revision, dead[0].id, True, False)
-
-    definition = get_default_registry()[MEDIA_CONTENT_REINDEX_JOB_KIND]
-    inserted = enqueue_job(
-        db,
-        kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
-        payload=_media_reindex_payload(
-            media_id=media_id,
-            revision=revision,
-            reason=reason,
-            request_id=request_id,
-        ),
-        max_attempts=definition.max_attempts,
-    )
-    _record_index_event(
-        db, media_id=media_id, facts=IndexAccepted(revision=revision, job_id=inserted.id)
-    )
-    return MediaContentReindexIntent(revision, inserted.id, False, True)
-
-
-def _record_index_event(db: Session, *, media_id: UUID, facts: IndexFacts) -> None:
-    append_processing_event(
-        db, media_id=media_id, facts=facts, stage=present("Index"), failure_code=absent()
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class SearchRecoveryFacts:
-    """The current index revision and, when its exact reindex job is dead, that job."""
-
-    revision: int
-    dead_job_id: UUID | None
-    is_creator: bool
-    is_operator: bool
-
-
-def search_recovery(facts: SearchRecoveryFacts) -> SearchRecoveryAnswer:
-    """The one recovery answer for a media's search-index obligation (contract D6)."""
-    if facts.dead_job_id is None:
-        return None
-    if not (facts.is_creator or facts.is_operator):
-        return "NotOwner"
-    return RepairSearchOffer(expected_revision=facts.revision, expected_job_id=facts.dead_job_id)
-
-
-def repair_dead_media_reindex(
-    db: Session,
-    *,
-    actor: RecoveryActor,
-    media_id: UUID,
-    expected_revision: int,
-    expected_job_id: UUID,
-) -> SearchRepairAdmission:
-    """Requeue the exact dead reindex job of the current index revision. Never
-    touches source rows or the published materialization: search repair repeats
-    indexing, so a ``ready`` document keeps serving search until the rerun itself
-    marks it indexing."""
-    scope = f"media_search_repair:{media_id}"
-    request_bytes = canonical_json_bytes(
-        {"expected_revision": expected_revision, "expected_job_id": str(expected_job_id)}
-    )
-
-    def admit() -> SearchRepairAdmission:
-        match actor:
-            case ViewerRecovery(viewer_id=viewer_id):
-                if not can_read_media(db, viewer_id, media_id):
-                    raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-                creator_id = db.execute(
-                    text("SELECT created_by_user_id FROM media WHERE id = :media_id"),
-                    {"media_id": media_id},
-                ).scalar_one_or_none()
-                if creator_id is None:
-                    raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-                is_creator = creator_id == viewer_id
-                is_operator = False
-                if not is_creator:
-                    raise ForbiddenError(ApiErrorCode.E_OWNER_REQUIRED, "Media owner required")
-                replay = lookup_replay(
-                    db,
-                    viewer_id=viewer_id,
-                    scope=scope,
-                    client_mutation_id=actor.client_mutation_id,
-                    request_bytes=request_bytes,
-                )
-                if replay is not None:
-                    db.rollback()
-                    return SearchRepairAdmission.model_validate(replay)
-            case OperatorRecovery():
-                is_creator, is_operator = False, True
-        _lock_media_for_reindex(db, media_id)
-        state = _lock_media_index_state(db, media_id)
-        if state is None:
-            raise ConflictError(
-                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no search index to repair."
-            )
-        revision = _validated_media_revision(state["revision"])
-        dead = current_dead_job_for_payload(
-            db,
-            kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
-            expected_payload_match={"media_id": str(media_id), "revision": revision},
-        )
-        offer = search_recovery(
-            SearchRecoveryFacts(
-                revision=revision,
-                dead_job_id=None if dead is None else dead.id,
-                is_creator=is_creator,
-                is_operator=is_operator,
-            )
-        )
-        if offer == "NotOwner":
-            # justify-defect: creator-or-admin authority was established before the lock.
-            raise AssertionError("search repair policy refused an authorized actor")
-        current: dict[str, object] = {"revision": revision}
-        if dead is not None:
-            current["job_id"] = str(dead.id)
-        if offer is None or (offer.expected_revision, offer.expected_job_id) != (
-            expected_revision,
-            expected_job_id,
+def _validate_blocks(
+    *, owner: IndexOwner, source_kind: str, blocks: Sequence[IndexableBlock]
+) -> None:
+    """The one check the locator resolver depends on: each block's quote is its
+    own text, and the block offsets tile the source without gap or overlap."""
+    if source_kind not in _SOURCE_KINDS:
+        raise ValueError(f"Unsupported source_kind: {source_kind}")
+    previous_end: int | None = None
+    for expected_idx, block in enumerate(blocks):
+        if block.owner != owner or block.source_kind != source_kind:
+            raise ValueError("IndexableBlock does not belong to this materialization")
+        if block.block_idx != expected_idx:
+            raise ValueError("IndexableBlock rows must be contiguous and ordered")
+        if block.source_start_offset < 0 or (
+            block.source_end_offset - block.source_start_offset != len(block.canonical_text)
         ):
-            raise ConflictError(
-                ApiErrorCode.E_RESOURCE_CONFLICT,
-                "The inspected search index execution is no longer current.",
-                details={"current": current},
+            raise ValueError("IndexableBlock source offsets do not match canonical_text")
+        if previous_end is not None and block.source_start_offset < previous_end:
+            raise ValueError("IndexableBlock offsets must be sorted and non-overlapping")
+        previous_end = block.source_end_offset
+        quote = block.locator.get("text_quote")
+        if not isinstance(quote, dict) or quote.get("exact") != block.canonical_text:
+            raise ValueError("IndexableBlock text_quote exact does not match its text")
+
+
+# =============================================================================
+# Chunking: never across a locator anchor, so every chunk has one citable spot
+# =============================================================================
+
+
+def _block_pieces(text_value: str) -> Iterator[tuple[int, int, int]]:
+    """Sliding token windows over one block: ``(start, end, token_count)``."""
+    matches = iter(re.finditer(r"\S+", text_value))
+    window = list(islice(matches, CHUNK_MAX_TOKENS + 1))
+    if not window:
+        yield (0, len(text_value), 0)
+        return
+    step = CHUNK_MAX_TOKENS - CHUNK_OVERLAP_TOKENS
+    while window:
+        has_more = len(window) > CHUNK_MAX_TOKENS
+        current = window[:CHUNK_MAX_TOKENS] if has_more else window
+        yield (current[0].start(), current[-1].end(), len(current))
+        if not has_more:
+            return
+        window = window[step:]
+        window.extend(islice(matches, CHUNK_MAX_TOKENS + 1 - len(window)))
+
+
+def _separator_before(previous_block: IndexableBlock | None, block: IndexableBlock) -> str:
+    if previous_block is None or previous_block.source_end_offset == block.source_start_offset:
+        return ""
+    return "\n\n"
+
+
+def _same_locator_anchor(left: IndexableBlock, right: IndexableBlock) -> bool:
+    """Two blocks may share a chunk only inside one citable anchor."""
+    kind = left.locator.get("kind")
+    if kind != right.locator.get("kind"):
+        return False
+    if kind in ("web_text", "epub_text"):
+        return left.locator.get("fragment_id") == right.locator.get("fragment_id")
+    if kind == "pdf_text":
+        return left.locator.get("page_number") == right.locator.get("page_number")
+    if kind == "transcript_time_text":
+        return left.locator.get("t_start_ms") == right.locator.get(
+            "t_start_ms"
+        ) and left.locator.get("t_end_ms") == right.locator.get("t_end_ms")
+    if kind == "note_text":
+        # Anchoring on note_block_id forbids cross-block coalescing: every note
+        # chunk stays inside one block and stays citable to it.
+        return left.locator.get("note_block_id") == right.locator.get("note_block_id")
+    raise ValueError(f"Unsupported locator kind: {kind}")
+
+
+def _iter_chunk_parts(
+    blocks: Sequence[IndexableBlock],
+) -> Iterator[list[tuple[IndexableBlock, int, int, int]]]:
+    """Yield one chunk descriptor at a time, never retaining a second corpus."""
+    parts: list[tuple[IndexableBlock, int, int, int]] = []
+    tokens = 0
+    for block in blocks:
+        for start_offset, end_offset, token_count in _block_pieces(block.canonical_text):
+            if token_count == 0:
+                continue
+            if parts:
+                previous_block, _, previous_end, _ = parts[-1]
+                if (
+                    tokens + token_count > CHUNK_MAX_TOKENS
+                    or not _same_locator_anchor(previous_block, block)
+                    or previous_end != len(previous_block.canonical_text)
+                    or start_offset != 0
+                    or _separator_before(previous_block, block) != ""
+                ):
+                    yield parts
+                    parts = []
+                    tokens = 0
+            parts.append((block, start_offset, end_offset, token_count))
+            tokens += token_count
+    if parts:
+        yield parts
+
+
+def _chunk_text(parts: Sequence[tuple[IndexableBlock, int, int, int]]) -> str:
+    pieces: list[str] = []
+    previous_block: IndexableBlock | None = None
+    for block, start_offset, end_offset, _ in parts:
+        pieces.append(_separator_before(previous_block, block))
+        pieces.append(block.canonical_text[start_offset:end_offset])
+        previous_block = block
+    return "".join(pieces)
+
+
+def _chunk_locator(
+    parts: Sequence[tuple[IndexableBlock, int, int, int]], chunk_text: str
+) -> dict[str, object]:
+    """Widen the first block's locator to cover the whole chunk."""
+    first_block, first_start, _, _ = parts[0]
+    last_block, _, last_end, _ = parts[-1]
+    locator = dict(first_block.locator)
+    locator["text_quote"] = {"exact": chunk_text, "prefix": "", "suffix": ""}
+    kind = locator.get("kind")
+
+    if kind in ("web_text", "epub_text"):
+        if all(
+            block.locator.get("fragment_id") == first_block.locator.get("fragment_id")
+            for block, _, _, _ in parts
+        ):
+            locator["start_offset"] = _offset(first_block, "start_offset") + first_start
+            locator["end_offset"] = _offset(last_block, "start_offset") + last_end
+    elif kind == "pdf_text":
+        if all(
+            block.locator.get("page_number") == first_block.locator.get("page_number")
+            for block, _, _, _ in parts
+        ):
+            page_start = _offset(first_block, "page_text_start_offset") + first_start
+            locator["page_text_start_offset"] = page_start
+            locator["page_text_end_offset"] = (
+                _offset(last_block, "page_text_start_offset") + last_end
             )
-        if not requeue_dead_job(db, job_id=offer.expected_job_id):
-            # justify-defect: current_dead_job_for_payload locked this exact dead row.
-            raise AssertionError("locked dead reindex job could not be requeued")
-        _record_index_event(
-            db,
-            media_id=media_id,
-            facts=IndexRecoveryAccepted(revision=revision, job_id=offer.expected_job_id),
-        )
-        admission = SearchRepairAdmission(
-            media_id=media_id, revision=revision, job_id=offer.expected_job_id
-        )
-        if isinstance(actor, ViewerRecovery):
-            record_replay(
-                db,
-                viewer_id=actor.viewer_id,
-                scope=scope,
-                client_mutation_id=actor.client_mutation_id,
-                request_bytes=request_bytes,
-                response_json=admission.model_dump(mode="json"),
+            locator["plain_text_start_offset"] = (
+                _offset(first_block, "plain_text_start_offset") + first_start
             )
-        db.commit()
-        return admission
+            locator["plain_text_end_offset"] = (
+                _offset(last_block, "plain_text_start_offset") + last_end
+            )
+            geometry = locator.get("geometry")
+            if isinstance(geometry, dict) and geometry.get("quads") == []:
+                projected = _projected_quads(
+                    geometry, page_start, _offset(first_block, "page_text_end_offset")
+                )
+                if projected is not None:
+                    locator["geometry"] = projected
+    elif kind == "transcript_time_text":
+        locator["t_start_ms"] = first_block.locator.get("t_start_ms")
+        locator["t_end_ms"] = last_block.locator.get("t_end_ms")
+    elif kind == "note_text":
+        # Single-block by construction: first_block is last_block.
+        block_start = _offset(first_block, "start_offset")
+        locator["start_offset"] = block_start + first_start
+        locator["end_offset"] = block_start + last_end
+    else:
+        raise ValueError(f"Unsupported locator kind: {kind}")
+    return locator
 
-    return admit_serializable(db, "repair_dead_media_reindex", admit)
+
+def _offset(block: IndexableBlock, key: str) -> int:
+    return int(str(block.locator.get(key) or 0))
 
 
-def _lock_media_for_reindex(db: Session, media_id: UUID) -> None:
-    """Hold the media row for a transaction that goes on to lock its queue rows.
-
-    ``FOR NO KEY UPDATE`` admits the ``KEY SHARE`` the worker's history insert
-    takes on this row inside its own queue transition, so a transition and a
-    media-locked caller never wait on each other's locks.
-    """
+def _projected_quads(
+    geometry: dict[str, object], page_start: int, full_page_end: int
+) -> dict[str, object] | None:
+    """Approximate the chunk's band on the page from its text offsets."""
+    width = geometry.get("page_width")
+    height = geometry.get("page_height")
     if (
-        db.execute(
-            text("SELECT id FROM media WHERE id = :media_id FOR NO KEY UPDATE"),
-            {"media_id": media_id},
-        ).scalar_one_or_none()
-        is None
+        full_page_end <= 0
+        or not isinstance(width, int | float)
+        or not isinstance(height, int | float)
     ):
-        # justify-defect: source success and reconciliation carry a durable media id.
-        raise AssertionError("media content-index owner does not exist")
+        return None
+    page_width = float(width)
+    page_height = float(height)
+    top = max(0.0, min(page_height, page_height * page_start / full_page_end))
+    bottom = min(page_height, top + max(8.0, min(18.0, page_height / 60.0)))
+    if bottom <= top:
+        return None
+    inset = min(48.0, page_width * 0.08)
+    return {
+        **geometry,
+        "projection": "proportional_text_offsets",
+        "quads": [
+            {
+                "x1": inset,
+                "y1": top,
+                "x2": page_width - inset,
+                "y2": top,
+                "x3": page_width - inset,
+                "y3": bottom,
+                "x4": inset,
+                "y4": bottom,
+            }
+        ],
+    }
 
 
-def _lock_media_index_state(db: Session, media_id: UUID) -> Mapping[str, object] | None:
-    row = (
-        db.execute(
+# =============================================================================
+# Embedding, and the local spool the document path streams through
+# =============================================================================
+
+
+def _iter_planned_chunks(
+    *,
+    blocks: Sequence[IndexableBlock],
+    embedding_model: str,
+    embedding_dimensions: int,
+    maximum_chunk_bytes: int | None,
+    embed_texts: TextEmbeddingBatch,
+) -> Iterator[PlannedContentChunk]:
+    """Yield every planned chunk, embedding them in bounded batches."""
+    batch: list[list[tuple[IndexableBlock, int, int, int]]] = []
+    for parts in _iter_chunk_parts(blocks):
+        batch.append(parts)
+        if len(batch) == CONTENT_INDEX_EMBEDDING_BATCH_SIZE:
+            yield from _plan_batch(
+                batch, embedding_model, embedding_dimensions, maximum_chunk_bytes, embed_texts
+            )
+            batch = []
+    if batch:
+        yield from _plan_batch(
+            batch, embedding_model, embedding_dimensions, maximum_chunk_bytes, embed_texts
+        )
+
+
+def _plan_batch(
+    batch: Sequence[list[tuple[IndexableBlock, int, int, int]]],
+    embedding_model: str,
+    embedding_dimensions: int,
+    maximum_chunk_bytes: int | None,
+    embed_texts: TextEmbeddingBatch,
+) -> list[PlannedContentChunk]:
+    """Embed one bounded batch and keep vectors in pgvector's float32 shape."""
+    texts = [_chunk_text(parts) for parts in batch]
+    if maximum_chunk_bytes is not None and any(
+        utf8_byte_length(chunk_text) > maximum_chunk_bytes for chunk_text in texts
+    ):
+        raise ContentIndexResourceLimitExceeded()
+    returned_model, embeddings = embed_texts(texts)
+    if returned_model != embedding_model:
+        raise ValueError("Embedding model changed during content indexing")
+    if len(embeddings) != len(batch):
+        raise ValueError("Embedding count does not match chunk count")
+    planned: list[PlannedContentChunk] = []
+    for parts, chunk_text, embedding in zip(batch, texts, embeddings, strict=True):
+        if len(embedding) != embedding_dimensions:
+            raise ValueError("Embedding dimensions do not match configured dimensions")
+        planned.append(
+            PlannedContentChunk(
+                parts=tuple(parts),
+                text=chunk_text,
+                locator=_chunk_locator(parts, chunk_text),
+                embedding_f32=array("f", [float(value) for value in embedding]).tobytes(),
+            )
+        )
+    return planned
+
+
+def _write_spool_record(spool: BinaryIO, chunk: PlannedContentChunk, *, written_bytes: int) -> int:
+    """Append one JSONL record, holding the document to its size envelope."""
+    record = {
+        "embedding_f32": base64.b64encode(chunk.embedding_f32).decode("ascii"),
+        "locator": chunk.locator,
+        "parts": [
+            {
+                "block_idx": block.block_idx,
+                "end_offset": end_offset,
+                "start_offset": start_offset,
+                "token_count": token_count,
+            }
+            for block, start_offset, end_offset, token_count in chunk.parts
+        ],
+        "text": chunk.text,
+    }
+    encoded = (json.dumps(record, separators=(",", ":")) + "\n").encode("utf-8")
+    if (
+        len(encoded) > _SPOOL_RECORD_MAX_BYTES
+        or written_bytes + len(encoded) > CONTENT_INDEX_SPOOL_MAX_BYTES
+    ):
+        raise ContentIndexResourceLimitExceeded()
+    spool.write(encoded)
+    return written_bytes + len(encoded)
+
+
+def _plan_chunks(plan: ContentIndexPlan | SpooledContentIndexPlan) -> Iterator[PlannedContentChunk]:
+    """The one chunk iterator over either plan shape."""
+    if isinstance(plan, ContentIndexPlan):
+        yield from plan.chunks
+        return
+    with plan.spool_path.open("rb") as spool:
+        for line in spool:
+            record: dict[str, Any] = json.loads(line)
+            yield PlannedContentChunk(
+                parts=tuple(
+                    (
+                        plan.blocks[part["block_idx"]],
+                        part["start_offset"],
+                        part["end_offset"],
+                        part["token_count"],
+                    )
+                    for part in record["parts"]
+                ),
+                text=record["text"],
+                locator=record["locator"],
+                embedding_f32=base64.b64decode(record["embedding_f32"]),
+            )
+
+
+def plan_content_index(
+    *, owner: IndexOwner, source_kind: str, blocks: list[IndexableBlock]
+) -> ContentIndexPlan:
+    """Build and embed one complete materialization with no database access."""
+    _validate_blocks(owner=owner, source_kind=source_kind, blocks=blocks)
+    model = current_transcript_embedding_model()
+    dimensions = transcript_embedding_dimensions()
+    return ContentIndexPlan(
+        owner=owner,
+        source_kind=source_kind,
+        blocks=tuple(blocks),
+        chunks=tuple(
+            _iter_planned_chunks(
+                blocks=blocks,
+                embedding_model=model,
+                embedding_dimensions=dimensions,
+                maximum_chunk_bytes=None,
+                embed_texts=build_text_embeddings,
+            )
+        ),
+        embedding_provider=current_transcript_embedding_provider(),
+        embedding_model=model,
+        embedding_dimensions=dimensions,
+    )
+
+
+def build_spooled_content_index_plan(
+    *,
+    owner: IndexOwner,
+    source_kind: DocumentSourceKind,
+    blocks: Sequence[IndexableBlock],
+    spool_path: Path,
+    embed_texts: TextEmbeddingBatch,
+) -> SpooledContentIndexPlan:
+    """Build a bounded document plan outside the publication transaction."""
+    block_list = list(blocks)
+    _validate_blocks(owner=owner, source_kind=source_kind, blocks=block_list)
+    model = current_transcript_embedding_model()
+    dimensions = transcript_embedding_dimensions()
+    written_bytes = 0
+    chunk_count = 0
+    try:
+        with spool_path.open("xb") as spool:
+            for chunk in _iter_planned_chunks(
+                blocks=block_list,
+                embedding_model=model,
+                embedding_dimensions=dimensions,
+                maximum_chunk_bytes=CONTENT_INDEX_CHUNK_MAX_BYTES,
+                embed_texts=embed_texts,
+            ):
+                written_bytes = _write_spool_record(spool, chunk, written_bytes=written_bytes)
+                chunk_count += 1
+    except Exception:
+        spool_path.unlink(missing_ok=True)
+        raise
+    return SpooledContentIndexPlan(
+        owner=owner,
+        source_kind=source_kind,
+        blocks=tuple(block_list),
+        spool_path=spool_path,
+        chunk_count=chunk_count,
+        embedding_provider=current_transcript_embedding_provider(),
+        embedding_model=model,
+        embedding_dimensions=dimensions,
+    )
+
+
+# =============================================================================
+# Publication: one transaction replaces the whole materialization
+# =============================================================================
+
+
+def publish_content_index(
+    db: Session, *, plan: ContentIndexPlan | SpooledContentIndexPlan, reason: str
+) -> ContentIndexResult:
+    """Replace one complete materialization inside the caller's transaction."""
+    now = datetime.now(UTC)
+    replace_content_index_materialization(db, owner=plan.owner)
+    owner_params = {"owner_kind": plan.owner.kind, "owner_id": plan.owner.id}
+
+    block_ids: list[UUID] = []
+    for block in plan.blocks:
+        block_ids.append(
+            db.execute(
+                text(
+                    """
+                    INSERT INTO content_blocks (owner_kind, owner_id, block_idx, block_kind,
+                        canonical_text, heading_path, locator, created_at)
+                    VALUES (:owner_kind, :owner_id, :block_idx, :block_kind, :canonical_text,
+                        CAST(:heading_path AS jsonb), CAST(:locator AS jsonb), :now)
+                    RETURNING id
+                    """
+                ),
+                {
+                    **owner_params,
+                    "block_idx": block.block_idx,
+                    "block_kind": block.block_kind,
+                    "canonical_text": block.canonical_text,
+                    "heading_path": json.dumps(list(block.heading_path)),
+                    "locator": json.dumps(block.locator),
+                    "now": now,
+                },
+            ).scalar_one()
+        )
+
+    chunks = iter(_plan_chunks(plan))
+    first_chunk = next(chunks, None)
+    if first_chunk is None:
+        _set_index_state(db, owner=plan.owner, status="no_text", reason="no_text", now=now)
+        return ContentIndexResult(owner=plan.owner, status="no_text", chunk_count=0)
+
+    published = 0
+    for chunk_idx, chunk in enumerate(chain((first_chunk,), chunks)):
+        published += 1
+        first_block, first_start, _, _ = chunk.parts[0]
+        last_block, _, last_end, _ = chunk.parts[-1]
+        span_id = db.execute(
             text(
                 """
-                SELECT id, status, revision
-                FROM content_index_states
-                WHERE owner_kind = 'media'
-                  AND owner_id = :media_id
-                FOR UPDATE
+                INSERT INTO evidence_spans (owner_kind, owner_id, start_block_id, end_block_id,
+                    start_block_offset, end_block_offset, span_text, selector, citation_label,
+                    resolver_kind, created_at)
+                VALUES (:owner_kind, :owner_id, :start_block_id, :end_block_id,
+                    :start_block_offset, :end_offset, :span_text, CAST(:selector AS jsonb),
+                    :citation_label, :resolver_kind, :now)
+                RETURNING id
                 """
             ),
-            {"media_id": media_id},
+            {
+                **owner_params,
+                "start_block_id": block_ids[first_block.block_idx],
+                "end_block_id": block_ids[last_block.block_idx],
+                "start_block_offset": first_start,
+                "end_offset": last_end,
+                "span_text": chunk.text,
+                "selector": json.dumps(chunk.locator),
+                "citation_label": (
+                    str(first_block.heading_path[-1]) if first_block.heading_path else "Source"
+                ),
+                "resolver_kind": _RESOLVER_KINDS[plan.source_kind],
+                "now": now,
+            },
+        ).scalar_one()
+        chunk_id = db.execute(
+            text(
+                """
+                INSERT INTO content_chunks (owner_kind, owner_id, primary_evidence_span_id,
+                    chunk_idx, source_kind, chunk_text, heading_path, summary_locator, created_at)
+                VALUES (:owner_kind, :owner_id, :evidence_span_id, :chunk_idx, :source_kind,
+                    :chunk_text, CAST(:heading_path AS jsonb),
+                    CAST(:summary_locator AS jsonb), :now)
+                RETURNING id
+                """
+            ),
+            {
+                **owner_params,
+                "evidence_span_id": span_id,
+                "chunk_idx": chunk_idx,
+                "source_kind": plan.source_kind,
+                "chunk_text": chunk.text,
+                "heading_path": json.dumps(list(first_block.heading_path)),
+                "summary_locator": json.dumps(chunk.locator),
+                "now": now,
+            },
+        ).scalar_one()
+        vector = array("f")
+        vector.frombytes(chunk.embedding_f32)
+        db.execute(
+            text(
+                f"""
+                INSERT INTO content_embeddings (chunk_id, embedding_provider, embedding_model,
+                    embedding_dimensions, embedding_vector, created_at)
+                VALUES (:chunk_id, :embedding_provider, :embedding_model, :embedding_dimensions,
+                    CAST(:embedding_vector AS vector({plan.embedding_dimensions})), :now)
+                """
+            ),
+            {
+                "chunk_id": chunk_id,
+                "embedding_provider": plan.embedding_provider,
+                "embedding_model": plan.embedding_model,
+                "embedding_dimensions": plan.embedding_dimensions,
+                "embedding_vector": to_pgvector_literal(list(vector)),
+                "now": now,
+            },
         )
-        .mappings()
-        .one_or_none()
-    )
-    if row is None:
-        return None
-    return {
-        "id": row["id"],
-        "status": row["status"],
-        "revision": row["revision"],
-    }
 
-
-def _validated_media_revision(value: object) -> int:
-    if not _is_int(value) or value < 0:
-        # justify-defect: trusted media revision storage must be non-negative.
-        raise AssertionError("media content-index revision is malformed")
-    return value
-
-
-def _validate_media_reindex_reason(reason: str) -> None:
-    if reason not in MEDIA_CONTENT_REINDEX_REASONS:
-        # justify-defect: all callers use the closed same-system reason contract.
-        raise AssertionError(f"unsupported media content-reindex reason: {reason}")
-
-
-def _media_reindex_payload(
-    *,
-    media_id: UUID,
-    revision: int,
-    reason: str,
-    request_id: str | None,
-) -> dict[str, object]:
-    return {
-        "media_id": str(media_id),
-        "revision": revision,
-        "reason": reason,
-        "request_id": (
-            {"kind": "Absent"} if request_id is None else {"kind": "Present", "value": request_id}
-        ),
-    }
-
-
-def _job_revision(payload: Mapping[str, object]) -> int:
-    return _validated_media_revision(payload.get("revision"))
-
-
-def mark_content_index_pending(db: Session, *, owner: IndexOwner, reason: str) -> None:
-    """Flag an owner's index stale (gated out of search) without deleting its rows;
-    the reindex job rebuilds and flips it back to ready."""
     _set_index_state(
         db,
-        owner=owner,
-        status="pending",
-        status_reason=reason,
-        embedding_provider=None,
-        embedding_model=None,
-        now=datetime.now(UTC),
-    )
-
-
-def deactivate_content_index(db: Session, *, owner: IndexOwner, reason: str) -> None:
-    now = datetime.now(UTC)
-    # A replacement invalidates the current materialization, not the durable
-    # identity of the owner's indexing intent.  Retaining the state row is what
-    # makes `revision` monotonic across source refreshes; deleting it would let
-    # an obsolete worker publish again after the revision restarted at zero.
-    replace_content_index_materialization(db, owner=owner)
-    _set_index_state(
-        db,
-        owner=owner,
-        status="pending",
-        status_reason=reason,
-        embedding_provider=None,
-        embedding_model=None,
+        owner=plan.owner,
+        status="ready",
+        reason=reason,
         now=now,
+        embedding_provider=plan.embedding_provider,
+        embedding_model=plan.embedding_model,
     )
+    # Every text-bearing media source funnels through this ready branch, so the
+    # per-media unit (re)build is enqueued here once, in the caller's
+    # transaction. Notes carry no media unit.
+    if plan.owner.kind == "media":
+        media_intelligence_lifecycle.ensure_media_unit_in_tx(db, media_id=plan.owner.id)
+    return ContentIndexResult(owner=plan.owner, status="ready", chunk_count=published)
 
 
-def delete_content_index(db: Session, *, owner: IndexOwner) -> None:
-    """Delete the complete index owner, including its state row."""
-    replace_content_index_materialization(db, owner=owner)
-    db.execute(
-        text(
-            "DELETE FROM content_index_states "
-            "WHERE owner_kind = :owner_kind AND owner_id = :owner_id"
-        ),
-        {"owner_kind": owner.kind, "owner_id": owner.id},
+def rebuild_content_index(
+    db: Session, *, owner: IndexOwner, source_kind: str, blocks: list[IndexableBlock], reason: str
+) -> ContentIndexResult:
+    """The synchronous note doorway; media plan and publish in separate jobs."""
+    if owner.kind == "media":
+        db.execute(
+            text("SELECT id FROM media WHERE id = :owner_id FOR NO KEY UPDATE"),
+            {"owner_id": owner.id},
+        ).scalar_one()
+    return publish_content_index(
+        db,
+        plan=plan_content_index(owner=owner, source_kind=source_kind, blocks=blocks),
+        reason=reason,
     )
 
 
 def replace_content_index_materialization(db: Session, *, owner: IndexOwner) -> None:
-    """Delete replaceable index rows while retaining the owner's state identity."""
+    """Delete the replaceable index rows, retaining the owner's state identity."""
     params = {"owner_kind": owner.kind, "owner_id": owner.id}
-    # The per-media unit's claims reference this media's evidence_spans with a
+    # The per-media unit's claims reference these evidence_spans with a
     # non-cascading FK; clear them through their sole owner before the spans go.
-    # Pages carry no media unit, so this is gated to media owners only.
     if owner.kind == "media":
         media_intelligence_lifecycle.clear_media_claims_for_reindex(db, media_id=owner.id)
     db.execute(
@@ -1440,17 +1007,14 @@ def replace_content_index_materialization(db: Session, *, owner: IndexOwner) -> 
             SET evidence_span_id = NULL
             FROM evidence_spans es
             WHERE mr.evidence_span_id = es.id
-              AND es.owner_kind = :owner_kind
-              AND es.owner_id = :owner_id
+              AND es.owner_kind = :owner_kind AND es.owner_id = :owner_id
             """
         ),
         params,
     )
-    # Graph cleanup, set-batched over every destroyed span/chunk (§9.6, AC12):
-    # bare edges touching one die with it; cited edges keep rendering from their
-    # snapshots and the jump fails closed. Two DELETEs total, not N+1 per row —
-    # this is a hot reindex path. Runs in the caller's transaction, before the
-    # rows below disappear.
+    # Graph cleanup, set-batched over every destroyed span/chunk: bare edges die
+    # with the row, cited edges keep rendering from their snapshots and the jump
+    # fails closed. Two DELETEs, not N+1 — this is a hot reindex path.
     span_ids = (
         db.execute(
             text(
@@ -1491,18 +1055,11 @@ def replace_content_index_materialization(db: Session, *, owner: IndexOwner) -> 
         ),
         params,
     )
-    db.execute(
-        text("DELETE FROM content_chunks WHERE owner_kind = :owner_kind AND owner_id = :owner_id"),
-        params,
-    )
-    db.execute(
-        text("DELETE FROM evidence_spans WHERE owner_kind = :owner_kind AND owner_id = :owner_id"),
-        params,
-    )
-    db.execute(
-        text("DELETE FROM content_blocks WHERE owner_kind = :owner_kind AND owner_id = :owner_id"),
-        params,
-    )
+    for table in ("content_chunks", "evidence_spans", "content_blocks"):
+        db.execute(
+            text(f"DELETE FROM {table} WHERE owner_kind = :owner_kind AND owner_id = :owner_id"),
+            params,
+        )
 
 
 def _set_index_state(
@@ -1510,37 +1067,19 @@ def _set_index_state(
     *,
     owner: IndexOwner,
     status: str,
-    status_reason: str | None,
-    embedding_provider: str | None,
-    embedding_model: str | None,
+    reason: str | None,
     now: datetime,
+    embedding_provider: str | None = None,
+    embedding_model: str | None = None,
 ) -> None:
-    if status != "ready":
-        embedding_provider = None
-        embedding_model = None
+    """Upsert the owner's index state; only ``ready`` carries an active model."""
     db.execute(
         text(
             """
-            INSERT INTO content_index_states (
-                owner_kind,
-                owner_id,
-                status,
-                status_reason,
-                active_embedding_provider,
-                active_embedding_model,
-                updated_at,
-                created_at
-            )
-            VALUES (
-                :owner_kind,
-                :owner_id,
-                :status,
-                :status_reason,
-                :embedding_provider,
-                :embedding_model,
-                :now,
-                :now
-            )
+            INSERT INTO content_index_states (owner_kind, owner_id, status, status_reason,
+                active_embedding_provider, active_embedding_model, updated_at, created_at)
+            VALUES (:owner_kind, :owner_id, :status, :status_reason, :embedding_provider,
+                :embedding_model, :now, :now)
             ON CONFLICT ON CONSTRAINT uq_content_index_states_owner DO UPDATE
             SET status = EXCLUDED.status,
                 status_reason = EXCLUDED.status_reason,
@@ -1553,623 +1092,475 @@ def _set_index_state(
             "owner_kind": owner.kind,
             "owner_id": owner.id,
             "status": status,
-            "status_reason": status_reason,
-            "embedding_provider": embedding_provider,
-            "embedding_model": embedding_model,
+            "status_reason": reason,
+            "embedding_provider": embedding_provider if status == "ready" else None,
+            "embedding_model": embedding_model if status == "ready" else None,
             "now": now,
         },
     )
 
 
-def _validate_blocks(
-    *,
-    owner: IndexOwner,
-    source_kind: str,
-    blocks: list[IndexableBlock],
-) -> None:
-    if source_kind not in {"web_article", "epub", "pdf", "transcript", "note"}:
-        raise ValueError(f"Unsupported source_kind: {source_kind}")
-
-    previous_source_end: int | None = None
-    for expected_idx, block in enumerate(blocks):
-        if block.owner != owner:
-            raise ValueError("IndexableBlock owner does not match target owner")
-        if block.source_kind != source_kind:
-            raise ValueError("IndexableBlock source_kind does not match target source")
-        if block.block_idx != expected_idx:
-            raise ValueError("IndexableBlock rows must be contiguous and ordered")
-        if not block.block_kind.strip():
-            raise ValueError("IndexableBlock block_kind is required")
-        if not _is_int(block.source_start_offset) or not _is_int(block.source_end_offset):
-            raise ValueError("IndexableBlock source offsets must be integers")
-        if block.source_start_offset < 0 or block.source_end_offset < block.source_start_offset:
-            raise ValueError("IndexableBlock offsets are invalid")
-        if block.source_end_offset - block.source_start_offset != len(block.canonical_text):
-            raise ValueError("IndexableBlock source offsets do not match canonical_text")
-        if previous_source_end is not None and block.source_start_offset < previous_source_end:
-            raise ValueError("IndexableBlock source offsets must be sorted and non-overlapping")
-        previous_source_end = block.source_end_offset
-        if any(not isinstance(heading, str) for heading in block.heading_path):
-            raise ValueError("IndexableBlock heading_path must contain strings")
-        _validate_selector(
-            source_kind, block.locator, block.canonical_text, context="block locator"
-        )
+def mark_content_index_pending(db: Session, *, owner: IndexOwner, reason: str) -> None:
+    """Gate an owner out of search without deleting its rows; the reindex job
+    rebuilds and flips it back to ready."""
+    _set_index_state(db, owner=owner, status="pending", reason=reason, now=datetime.now(UTC))
 
 
-def _validate_selector(
-    source_kind: str,
-    selector: dict[str, object],
-    text_value: str,
-    *,
-    context: str,
-) -> None:
-    if not isinstance(selector, dict):
-        raise ValueError(f"{context} must be an object")
-    quote = selector.get("text_quote")
-    if not isinstance(quote, dict):
-        raise ValueError(f"{context} text_quote is required")
-    exact = quote.get("exact")
-    prefix = quote.get("prefix")
-    suffix = quote.get("suffix")
-    if not isinstance(exact, str) or not isinstance(prefix, str) or not isinstance(suffix, str):
-        raise ValueError(f"{context} text_quote values must be strings")
-    if exact != text_value:
-        raise ValueError(f"{context} text_quote exact does not match text")
-
-    kind = selector.get("kind")
-
-    if source_kind == "web_article":
-        if kind != "web_text":
-            raise ValueError(f"{context} kind is invalid for web_article")
-        _validate_fragment_selector(selector, text_value, context=context)
-        return
-    if source_kind == "epub":
-        if kind != "epub_text":
-            raise ValueError(f"{context} kind is invalid for epub")
-        _validate_fragment_selector(selector, text_value, context=context)
-        section_id = selector.get("section_id")
-        if section_id is not None and not isinstance(section_id, str):
-            raise ValueError(f"{context} section_id is invalid")
-        return
-    if source_kind == "pdf":
-        if kind not in {"pdf_text", "pdf_text_quote"}:
-            raise ValueError(f"{context} kind is invalid for pdf")
-        _validate_pdf_selector(selector, text_value, context=context)
-        return
-    if source_kind == "transcript":
-        if kind != "transcript_time_text":
-            raise ValueError(f"{context} kind is invalid for transcript")
-        _validate_transcript_selector(selector, context=context)
-        return
-    if source_kind == "note":
-        if kind != "note_text":
-            raise ValueError(f"{context} kind is invalid for note")
-        _validate_fragment_selector(selector, text_value, id_key="note_block_id", context=context)
-        return
-    raise ValueError(f"Unsupported source_kind: {source_kind}")
+def deactivate_content_index(db: Session, *, owner: IndexOwner, reason: str) -> None:
+    """Drop the materialization but keep the state row, so ``revision`` stays
+    monotonic across source refreshes and no obsolete worker can publish again."""
+    replace_content_index_materialization(db, owner=owner)
+    _set_index_state(db, owner=owner, status="pending", reason=reason, now=datetime.now(UTC))
 
 
-def _validate_fragment_selector(
-    selector: dict[str, object],
-    text_value: str,
-    *,
-    id_key: str = "fragment_id",
-    context: str,
-) -> None:
-    owner_id = selector.get(id_key)
-    if not isinstance(owner_id, str):
-        raise ValueError(f"{context} {id_key} is required")
-    try:
-        UUID(owner_id)
-    except ValueError:
-        raise ValueError(f"{context} {id_key} is invalid") from None
-    start_offset = selector.get("start_offset")
-    end_offset = selector.get("end_offset")
-    if not _is_int(start_offset) or not _is_int(end_offset):
-        raise ValueError(f"{context} offsets must be integers")
-    if start_offset < 0 or end_offset < start_offset:
-        raise ValueError(f"{context} offsets are invalid")
-    if end_offset - start_offset != len(text_value):
-        raise ValueError(
-            f"{context} offsets do not match text length "
-            f"(start={start_offset}, end={end_offset}, text_length={len(text_value)})"
-        )
+def delete_content_index(db: Session, *, owner: IndexOwner) -> None:
+    """Delete the complete index owner, including its state row."""
+    replace_content_index_materialization(db, owner=owner)
+    db.execute(
+        text(
+            "DELETE FROM content_index_states "
+            "WHERE owner_kind = :owner_kind AND owner_id = :owner_id"
+        ),
+        {"owner_kind": owner.kind, "owner_id": owner.id},
+    )
 
 
-def _validate_pdf_selector(
-    selector: dict[str, object],
-    text_value: str,
-    *,
-    context: str,
-) -> None:
-    page_number = selector.get("page_number")
-    physical_page_number = selector.get("physical_page_number")
-    if not _is_int(page_number) or page_number < 1:
-        raise ValueError(f"{context} page_number is invalid")
-    if physical_page_number is not None and (
-        not _is_int(physical_page_number) or physical_page_number < 1
-    ):
-        raise ValueError(f"{context} physical_page_number is invalid")
-    page_label = selector.get("page_label")
-    if page_label is not None and not isinstance(page_label, str):
-        raise ValueError(f"{context} page_label is invalid")
-
-    page_start = selector.get("page_text_start_offset")
-    page_end = selector.get("page_text_end_offset")
-    if not _is_int(page_start) or not _is_int(page_end):
-        raise ValueError(f"{context} page text offsets must be integers")
-    if page_start < 0 or page_end < page_start or page_end - page_start != len(text_value):
-        raise ValueError(f"{context} page text offsets are invalid")
-
-    plain_start = selector.get("plain_text_start_offset")
-    plain_end = selector.get("plain_text_end_offset")
-    if plain_start is not None or plain_end is not None:
-        if not _is_int(plain_start) or not _is_int(plain_end):
-            raise ValueError(f"{context} plain text offsets must be integers")
-        if plain_start < 0 or plain_end < plain_start or plain_end - plain_start != len(text_value):
-            raise ValueError(f"{context} plain text offsets are invalid")
-
-    geometry = selector.get("geometry")
-    if geometry is not None:
-        _validate_pdf_geometry(geometry, context=context)
+# =============================================================================
+# The media reindex lifecycle, fenced on a monotonic revision
+# =============================================================================
 
 
-def _validate_pdf_geometry(value: object, *, context: str) -> None:
-    if not isinstance(value, dict):
-        raise ValueError(f"{context} geometry must be an object")
-    if value.get("coordinate_space") != "pdf_points":
-        raise ValueError(f"{context} geometry coordinate_space is invalid")
-    page_width = value.get("page_width")
-    page_height = value.get("page_height")
-    if not _is_positive_number(page_width) or not _is_positive_number(page_height):
-        raise ValueError(f"{context} geometry page size is invalid")
-    rotation = value.get("page_rotation_degrees")
-    if not _is_int(rotation) or rotation < 0:
-        raise ValueError(f"{context} geometry page_rotation_degrees is invalid")
-    quads = value.get("quads")
-    if not isinstance(quads, list):
-        raise ValueError(f"{context} geometry quads must be an array")
-    for raw_quad in quads:
-        if not isinstance(raw_quad, dict):
-            raise ValueError(f"{context} geometry quad must be an object")
-        for key in ("x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4"):
-            if not _is_number(raw_quad.get(key)):
-                raise ValueError(f"{context} geometry quad coordinate is invalid")
+def _record_index_event(db: Session, *, media_id: UUID, facts: IndexFacts) -> None:
+    append_processing_event(
+        db, media_id=media_id, facts=facts, stage=present("Index"), failure_code=absent()
+    )
 
 
-def _validate_transcript_selector(selector: dict[str, object], *, context: str) -> None:
-    t_start_ms = selector.get("t_start_ms")
-    t_end_ms = selector.get("t_end_ms")
-    if not _is_int(t_start_ms) or not _is_int(t_end_ms):
-        raise ValueError(f"{context} transcript times must be integers")
-    if t_start_ms < 0 or t_end_ms <= t_start_ms:
-        raise ValueError(f"{context} transcript times are invalid")
+def _lock_media(db: Session, media_id: UUID) -> None:
+    """Hold the media row for a transaction that goes on to lock its queue rows.
+
+    ``FOR NO KEY UPDATE`` admits the ``KEY SHARE`` the worker's history insert
+    takes on this row inside its own queue transition, so a transition and a
+    media-locked caller never wait on each other.
+    """
+    db.execute(
+        text("SELECT id FROM media WHERE id = :media_id FOR NO KEY UPDATE"),
+        {"media_id": media_id},
+    ).scalar_one()
 
 
-def _is_int(value: object) -> TypeGuard[int]:
-    return isinstance(value, int) and not isinstance(value, bool)
+def _lock_index_revision(db: Session, media_id: UUID) -> int | None:
+    row = db.execute(
+        text(
+            """
+            SELECT revision FROM content_index_states
+            WHERE owner_kind = 'media' AND owner_id = :media_id
+            FOR UPDATE
+            """
+        ),
+        {"media_id": media_id},
+    ).scalar_one_or_none()
+    return None if row is None else int(row)
 
 
-def _is_document_source_kind(value: object) -> TypeGuard[DocumentSourceKind]:
-    return isinstance(value, str) and value in {"web_article", "epub", "pdf"}
-
-
-def _is_number(value: object) -> TypeGuard[int | float]:
-    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
-
-
-def _is_positive_number(value: object) -> TypeGuard[int | float]:
-    return _is_number(value) and float(value) > 0
-
-
-def _iter_content_chunk_parts(
-    blocks: Sequence[IndexableBlock],
-) -> Iterator[list[tuple[IndexableBlock, int, int, int]]]:
-    """Yield one chunk descriptor at a time without retaining a second corpus graph."""
-    current_parts: list[tuple[IndexableBlock, int, int, int]] = []
-    current_tokens = 0
-    for block in blocks:
-        for start_offset, end_offset, token_count in _block_pieces(block.canonical_text):
-            if token_count == 0:
-                continue
-            if current_parts:
-                previous_block, _, previous_end_offset, _ = current_parts[-1]
-                if (
-                    current_tokens + token_count > CHUNK_MAX_TOKENS
-                    or not _same_locator_anchor(previous_block, block)
-                    or previous_end_offset != len(previous_block.canonical_text)
-                    or start_offset != 0
-                    or _separator_before(previous_block, block) != ""
-                ):
-                    yield current_parts
-                    current_parts = []
-                    current_tokens = 0
-            current_parts.append((block, start_offset, end_offset, token_count))
-            current_tokens += token_count
-    if current_parts:
-        yield current_parts
-
-
-def _iter_planned_chunks(
-    *,
-    source_kind: str,
-    blocks: Sequence[IndexableBlock],
-    embedding_model: str,
-    embedding_dimensions: int,
-    maximum_chunk_bytes: int | None,
-    embed_texts: TextEmbeddingBatch,
-) -> Iterator[PlannedContentChunk]:
-    """Yield every planned chunk, embedding them in bounded batches."""
-    chunk_batch: list[list[tuple[IndexableBlock, int, int, int]]] = []
-    for chunk_parts in _iter_content_chunk_parts(blocks):
-        chunk_batch.append(chunk_parts)
-        if len(chunk_batch) == CONTENT_INDEX_EMBEDDING_BATCH_SIZE:
-            yield from _plan_content_chunk_batch(
-                source_kind=source_kind,
-                chunk_parts_batch=chunk_batch,
-                embedding_model=embedding_model,
-                embedding_dimensions=embedding_dimensions,
-                maximum_chunk_bytes=maximum_chunk_bytes,
-                embed_texts=embed_texts,
-            )
-            chunk_batch = []
-    if chunk_batch:
-        yield from _plan_content_chunk_batch(
-            source_kind=source_kind,
-            chunk_parts_batch=chunk_batch,
-            embedding_model=embedding_model,
-            embedding_dimensions=embedding_dimensions,
-            maximum_chunk_bytes=maximum_chunk_bytes,
-            embed_texts=embed_texts,
-        )
-
-
-def _plan_content_chunk_batch(
-    *,
-    source_kind: str,
-    chunk_parts_batch: Sequence[list[tuple[IndexableBlock, int, int, int]]],
-    embedding_model: str,
-    embedding_dimensions: int,
-    maximum_chunk_bytes: int | None,
-    embed_texts: TextEmbeddingBatch,
-) -> list[PlannedContentChunk]:
-    """Embed one bounded batch and retain vectors in pgvector's float32 shape."""
-    if not 1 <= len(chunk_parts_batch) <= CONTENT_INDEX_EMBEDDING_BATCH_SIZE:
-        raise AssertionError("content-index embedding batch is outside its closed bound")
-    chunk_texts = [_chunk_text(chunk_parts) for chunk_parts in chunk_parts_batch]
-    if maximum_chunk_bytes is not None and any(
-        utf8_byte_length(chunk_text) > maximum_chunk_bytes for chunk_text in chunk_texts
-    ):
-        raise ContentIndexResourceLimitExceeded()
-    chunk_locators: list[dict[str, object]] = []
-    for chunk_parts, chunk_text in zip(chunk_parts_batch, chunk_texts, strict=True):
-        chunk_locator = _chunk_locator(chunk_parts, chunk_text)
-        _validate_selector(
-            source_kind,
-            chunk_locator,
-            chunk_text,
-            context="content chunk summary locator",
-        )
-        chunk_locators.append(chunk_locator)
-
-    returned_embedding_model, embeddings = embed_texts(chunk_texts)
-    if returned_embedding_model != embedding_model:
-        raise ValueError("Embedding model changed during content indexing")
-    if len(embeddings) != len(chunk_parts_batch):
-        raise ValueError("Embedding count does not match chunk count")
-
-    planned: list[PlannedContentChunk] = []
-    for chunk_parts, chunk_text, chunk_locator, embedding in zip(
-        chunk_parts_batch,
-        chunk_texts,
-        chunk_locators,
-        embeddings,
-        strict=True,
-    ):
-        if len(embedding) != embedding_dimensions:
-            raise ValueError("Embedding dimensions do not match configured dimensions")
-        normalized_embedding: list[float] = []
-        for value in embedding:
-            numeric = float(value)
-            if not math.isfinite(numeric):
-                raise ValueError("Embedding values must be finite")
-            normalized_embedding.append(numeric)
-        planned.append(
-            PlannedContentChunk(
-                parts=tuple(chunk_parts),
-                text=chunk_text,
-                locator=chunk_locator,
-                embedding_f32=array("f", normalized_embedding).tobytes(),
-            )
-        )
-    return planned
-
-
-def _packed_embedding_literal(value: bytes, *, dimensions: int) -> str:
-    if len(value) != dimensions * array("f").itemsize:
-        raise AssertionError("packed content-index embedding has an invalid byte length")
-    vector = array("f")
-    vector.frombytes(value)
-    return to_pgvector_literal(list(vector))
-
-
-def _spool_chunk_record(chunk: PlannedContentChunk) -> dict[str, object]:
-    return {
-        "embedding_f32": base64.b64encode(chunk.embedding_f32).decode("ascii"),
-        "locator": chunk.locator,
-        "parts": [
-            {
-                "block_idx": block.block_idx,
-                "end_offset": end_offset,
-                "start_offset": start_offset,
-                "token_count": token_count,
-            }
-            for block, start_offset, end_offset, token_count in chunk.parts
-        ],
-        "text": chunk.text,
-    }
-
-
-def _write_spool_record(
-    spool: BinaryIO,
-    record: Mapping[str, object],
-    *,
-    written_bytes: int,
-) -> int:
-    """Append one JSONL record, holding the document to its size envelope."""
-    encoded = (json.dumps(record, separators=(",", ":")) + "\n").encode("utf-8")
-    if (
-        len(encoded) > _CONTENT_INDEX_SPOOL_RECORD_MAX_BYTES
-        or written_bytes + len(encoded) > CONTENT_INDEX_SPOOL_MAX_BYTES
-    ):
-        raise ContentIndexResourceLimitExceeded()
-    spool.write(encoded)
-    return written_bytes + len(encoded)
-
-
-def read_spooled_content_index_chunks(
-    plan: SpooledContentIndexPlan,
-) -> Iterator[PlannedContentChunk]:
-    """Stream one complete document plan back from its private local scratch."""
-    with plan.spool_path.open("rb") as spool:
-        for line in spool:
-            record: dict[str, Any] = json.loads(line)
-            yield PlannedContentChunk(
-                parts=tuple(
-                    (
-                        plan.blocks[part["block_idx"]],
-                        part["start_offset"],
-                        part["end_offset"],
-                        part["token_count"],
-                    )
-                    for part in record["parts"]
-                ),
-                text=record["text"],
-                locator=record["locator"],
-                embedding_f32=base64.b64decode(record["embedding_f32"]),
-            )
-
-
-def _content_index_plan_chunks(
-    plan: ContentIndexPlan | SpooledContentIndexPlan,
-) -> Iterator[PlannedContentChunk]:
-    if isinstance(plan, ContentIndexPlan):
-        yield from plan.chunks
-        return
-    yield from read_spooled_content_index_chunks(plan)
-
-
-def _block_pieces(text_value: str) -> Iterator[tuple[int, int, int]]:
-    matches = iter(re.finditer(r"\S+", text_value))
-    window = list(islice(matches, CHUNK_MAX_TOKENS + 1))
-    if not window:
-        yield (0, len(text_value), 0)
-        return
-    step = CHUNK_MAX_TOKENS - CHUNK_OVERLAP_TOKENS
-    while window:
-        has_more = len(window) > CHUNK_MAX_TOKENS
-        current = window[:CHUNK_MAX_TOKENS] if has_more else window
-        yield (current[0].start(), current[-1].end(), len(current))
-        if not has_more:
-            return
-        window = window[step:]
-        window.extend(islice(matches, CHUNK_MAX_TOKENS + 1 - len(window)))
-
-
-def _separator_before(previous_block: IndexableBlock | None, block: IndexableBlock) -> str:
-    if previous_block is None:
-        return ""
-    if previous_block.source_end_offset == block.source_start_offset:
-        return ""
-    return "\n\n"
-
-
-def _same_locator_anchor(left: IndexableBlock, right: IndexableBlock) -> bool:
-    left_kind = left.locator.get("kind")
-    if left_kind != right.locator.get("kind"):
-        return False
-    if left_kind in ("web_text", "epub_text"):
-        return left.locator.get("fragment_id") == right.locator.get("fragment_id")
-    if left_kind == "pdf_text":
-        return left.locator.get("page_number") == right.locator.get("page_number")
-    if left_kind == "transcript_time_text":
-        return left.locator.get("t_start_ms") == right.locator.get(
-            "t_start_ms"
-        ) and left.locator.get("t_end_ms") == right.locator.get("t_end_ms")
-    if left_kind == "note_text":
-        # Anchor on note_block_id forbids cross-block coalescing (D10): every
-        # note chunk stays inside one block and is citeable to that block.
-        return left.locator.get("note_block_id") == right.locator.get("note_block_id")
-    raise ValueError(f"Unsupported locator kind: {left_kind}")
-
-
-def _chunk_text(parts: list[tuple[IndexableBlock, int, int, int]]) -> str:
-    chunks = []
-    previous_block: IndexableBlock | None = None
-    for block, start_offset, end_offset, _ in parts:
-        chunks.append(_separator_before(previous_block, block))
-        chunks.append(block.canonical_text[start_offset:end_offset])
-        previous_block = block
-    return "".join(chunks)
-
-
-def _chunk_locator(
-    parts: list[tuple[IndexableBlock, int, int, int]],
-    chunk_text: str,
+def _reindex_payload(
+    *, media_id: UUID, revision: int, reason: str, request_id: str | None
 ) -> dict[str, object]:
-    first_block, first_start, _, _ = parts[0]
-    last_block, _, last_end, _ = parts[-1]
-    locator = dict(first_block.locator)
-    locator["text_quote"] = {"exact": chunk_text, "prefix": "", "suffix": ""}
-
-    if locator.get("kind") in ("web_text", "epub_text"):
-        same_fragment = all(
-            block.locator.get("fragment_id") == first_block.locator.get("fragment_id")
-            for block, _, _, _ in parts
-        )
-        if same_fragment:
-            locator["start_offset"] = (
-                int(str(first_block.locator.get("start_offset") or 0)) + first_start
-            )
-            locator["end_offset"] = int(str(last_block.locator.get("start_offset") or 0)) + last_end
-    elif locator.get("kind") == "pdf_text":
-        same_page = all(
-            block.locator.get("page_number") == first_block.locator.get("page_number")
-            for block, _, _, _ in parts
-        )
-        if same_page:
-            full_page_text_end = int(str(first_block.locator.get("page_text_end_offset") or 0))
-            page_start = (
-                int(str(first_block.locator.get("page_text_start_offset") or 0)) + first_start
-            )
-            page_end = int(str(last_block.locator.get("page_text_start_offset") or 0)) + last_end
-            plain_start = (
-                int(str(first_block.locator.get("plain_text_start_offset") or 0)) + first_start
-            )
-            plain_end = int(str(last_block.locator.get("plain_text_start_offset") or 0)) + last_end
-            locator["page_text_start_offset"] = page_start
-            locator["page_text_end_offset"] = page_end
-            locator["plain_text_start_offset"] = plain_start
-            locator["plain_text_end_offset"] = plain_end
-            geometry = locator.get("geometry")
-            if isinstance(geometry, dict) and geometry.get("quads") == []:
-                page_width = geometry.get("page_width")
-                page_height = geometry.get("page_height")
-                if (
-                    full_page_text_end > 0
-                    and _is_positive_number(page_width)
-                    and _is_positive_number(page_height)
-                ):
-                    page_width_f = float(page_width)
-                    page_height_f = float(page_height)
-                    top = max(
-                        0.0, min(page_height_f, page_height_f * page_start / full_page_text_end)
-                    )
-                    highlight_height = max(8.0, min(18.0, page_height_f / 60.0))
-                    bottom = top + highlight_height
-                    bottom = min(page_height_f, bottom)
-                    if bottom > top:
-                        horizontal_inset = min(48.0, page_width_f * 0.08)
-                        locator["geometry"] = {
-                            **geometry,
-                            "projection": "proportional_text_offsets",
-                            "quads": [
-                                {
-                                    "x1": horizontal_inset,
-                                    "y1": top,
-                                    "x2": page_width_f - horizontal_inset,
-                                    "y2": top,
-                                    "x3": page_width_f - horizontal_inset,
-                                    "y3": bottom,
-                                    "x4": horizontal_inset,
-                                    "y4": bottom,
-                                }
-                            ],
-                        }
-    elif locator.get("kind") == "transcript_time_text":
-        locator["t_start_ms"] = first_block.locator.get("t_start_ms")
-        locator["t_end_ms"] = last_block.locator.get("t_end_ms")
-    elif locator.get("kind") == "note_text":
-        # Single-block by construction (D10): first_block is last_block. Offsets
-        # are within the note_block body; shift the block-relative range by the piece.
-        block_start = int(str(first_block.locator.get("start_offset") or 0))
-        locator["start_offset"] = block_start + first_start
-        locator["end_offset"] = block_start + last_end
-    else:
-        raise ValueError(f"Unsupported locator kind: {locator.get('kind')}")
-
-    return locator
-
-
-def _text_quote(text_value: str, start_offset: int, end_offset: int) -> dict[str, str]:
     return {
-        "exact": text_value[start_offset:end_offset],
-        "prefix": text_value[max(0, start_offset - 64) : start_offset],
-        "suffix": text_value[end_offset : min(len(text_value), end_offset + 64)],
+        "media_id": str(media_id),
+        "revision": revision,
+        "reason": reason,
+        "request_id": (
+            {"kind": "Absent"} if request_id is None else {"kind": "Present", "value": request_id}
+        ),
     }
 
 
-def _field(value: Any, name: str, default: object) -> object:
-    if isinstance(value, Mapping):
-        return value.get(name, default)
-    if hasattr(value, name):
-        return getattr(value, name)
-    try:
-        if name == "page_number":
-            return value[0]
-        if name == "start_offset":
-            return value[1]
-        if name == "end_offset":
-            return value[2]
-        if name == "page_label":
-            return value[3]
-        if name == "page_width":
-            return value[4]
-        if name == "page_height":
-            return value[5]
-        if name == "page_rotation_degrees":
-            return value[6]
-    except (IndexError, TypeError):
-        return default
-    return default
+def request_media_content_reindex(
+    db: Session, *, media_id: UUID, reason: str, request_id: str | None
+) -> MediaContentReindexIntent:
+    """Raise the index revision and leave exactly one waiting job for it."""
+    from nexus.jobs.queue import (
+        enqueue_job,
+        lock_jobs_for_payload,
+        reset_unclaimed_job_for_new_intent,
+        supersede_unclaimed_job,
+    )
+    from nexus.jobs.registry import get_default_registry
+
+    _lock_media(db, media_id)
+    current = _lock_index_revision(db, media_id)
+    if current is None:
+        db.execute(
+            text(
+                """
+                INSERT INTO content_index_states (owner_kind, owner_id, status, status_reason,
+                    active_embedding_provider, active_embedding_model, revision,
+                    updated_at, created_at)
+                VALUES ('media', :media_id, 'pending', :reason, NULL, NULL, 0, now(), now())
+                """
+            ),
+            {"media_id": media_id, "reason": reason},
+        )
+        current = 0
+    revision = current + 1
+    db.execute(
+        text(
+            """
+            UPDATE content_index_states
+            SET revision = :revision, status = 'pending', status_reason = :reason,
+                active_embedding_provider = NULL, active_embedding_model = NULL,
+                updated_at = now()
+            WHERE owner_kind = 'media' AND owner_id = :media_id
+            """
+        ),
+        {"media_id": media_id, "revision": revision, "reason": reason},
+    )
+
+    definition = get_default_registry()[MEDIA_CONTENT_REINDEX_JOB_KIND]
+    payload = _reindex_payload(
+        media_id=media_id, revision=revision, reason=reason, request_id=request_id
+    )
+    jobs = lock_jobs_for_payload(
+        db,
+        kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+        expected_payload_match={"media_id": str(media_id)},
+    )
+    waiting = [
+        job for job in jobs if job.status in {"pending", "failed"} and job.claimed_by is None
+    ]
+    if waiting:
+        selected = reset_unclaimed_job_for_new_intent(
+            db,
+            job_id=waiting[0].id,
+            kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+            payload=payload,
+            max_attempts=definition.max_attempts,
+        )
+        for obsolete in waiting[1:]:
+            supersede_unclaimed_job(db, job_id=obsolete.id, kind=MEDIA_CONTENT_REINDEX_JOB_KIND)
+    else:
+        selected = enqueue_job(
+            db,
+            kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+            payload=payload,
+            max_attempts=definition.max_attempts,
+        )
+    _record_index_event(
+        db, media_id=media_id, facts=IndexAccepted(revision=revision, job_id=selected.id)
+    )
+    return MediaContentReindexIntent(revision, selected.id, False, not waiting)
 
 
-def _pdf_span_required_int(value: Any, name: str) -> int:
-    raw = _field(value, name, None)
-    if _is_int(raw):
-        return raw
-    raise ValueError(f"PDF page span {name} must be an integer")
+def ensure_media_content_reindex_job(
+    db: Session, *, media_id: UUID, reason: str, request_id: str | None
+) -> MediaContentReindexIntent:
+    """Ensure the current revision owns a queue row, without raising it."""
+    from nexus.jobs.queue import enqueue_job, lock_jobs_for_payload
+    from nexus.jobs.registry import get_default_registry
+
+    _lock_media(db, media_id)
+    revision = _lock_index_revision(db, media_id)
+    if revision is None:
+        raise AssertionError("cannot ensure a job without a media content-index state")
+
+    jobs = [
+        job
+        for job in lock_jobs_for_payload(
+            db,
+            kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+            expected_payload_match={"media_id": str(media_id)},
+        )
+        if int(job.payload["revision"]) == revision
+    ]
+    waiting = next(
+        (job for job in jobs if job.status in {"pending", "failed"} and job.claimed_by is None),
+        None,
+    )
+    if waiting is not None:
+        return MediaContentReindexIntent(revision, waiting.id, False, False)
+    running = next((job for job in jobs if job.status == "running"), None)
+    if running is not None:
+        return MediaContentReindexIntent(revision, running.id, False, False)
+    dead = next((job for job in jobs if job.status == "dead"), None)
+    if dead is not None:
+        return MediaContentReindexIntent(revision, dead.id, True, False)
+
+    definition = get_default_registry()[MEDIA_CONTENT_REINDEX_JOB_KIND]
+    inserted = enqueue_job(
+        db,
+        kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+        payload=_reindex_payload(
+            media_id=media_id, revision=revision, reason=reason, request_id=request_id
+        ),
+        max_attempts=definition.max_attempts,
+    )
+    _record_index_event(
+        db, media_id=media_id, facts=IndexAccepted(revision=revision, job_id=inserted.id)
+    )
+    return MediaContentReindexIntent(revision, inserted.id, False, True)
 
 
-def _pdf_span_optional_non_negative_int(value: Any, name: str, *, default: int) -> int:
-    raw = _field(value, name, None)
-    if raw is None:
-        return default
-    if not _is_int(raw):
-        raise ValueError(f"PDF page span {name} must be an integer")
-    if raw < 0:
-        raise ValueError(f"PDF page span {name} must be non-negative")
-    return raw
+def prepare_media_content_reindex(
+    db: Session,
+    *,
+    media_id: UUID,
+    revision: int,
+    reason: str,
+    context: JobExecutionContext,
+    lease_seconds: int,
+) -> MediaContentReindexWork | None:
+    """Fence, snapshot, and mark one current document revision indexing."""
+    from nexus.jobs.queue import lock_and_renew_running_job_claim
 
-
-def _pdf_span_positive_number_or_none(value: Any, name: str) -> float | None:
-    raw = _field(value, name, None)
-    if raw is None:
+    media = (
+        db.execute(
+            text(
+                """
+                SELECT id, kind, processing_status, plain_text FROM media
+                WHERE id = :media_id
+                FOR NO KEY UPDATE
+                """
+            ),
+            {"media_id": media_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if media is None:
         return None
-    if _is_positive_number(raw):
-        return float(raw)
-    raise ValueError(f"PDF page span {name} must be a positive number")
+    source_kind = media["kind"]
+    if not _is_document_source_kind(source_kind):
+        raise AssertionError("media content-reindex owner kind is ineligible")
+    current = _lock_index_revision(db, media_id)
+    if current is None:
+        return None
+    job = lock_and_renew_running_job_claim(db, context=context, lease_seconds=lease_seconds)
+    if job is None:
+        return None
+    if current != revision:
+        _record_index_event(
+            db,
+            media_id=media_id,
+            facts=IndexSuperseded(
+                revision=revision, job_id=job.id, execution_id=context.execution_id
+            ),
+        )
+        return None
+    if media["processing_status"] != "ready_for_reading":
+        raise AssertionError("media content-reindex owner is not readable")
+    _record_index_event(
+        db,
+        media_id=media_id,
+        facts=IndexExecutionStarted(
+            revision=revision, job_id=job.id, execution_id=context.execution_id
+        ),
+    )
+    blocks = _snapshot_media_blocks(
+        db,
+        media_id=media_id,
+        source_kind=source_kind,
+        plain_text=str(media["plain_text"] or ""),
+    )
+    db.execute(
+        text(
+            """
+            UPDATE content_index_states
+            SET status = 'indexing', status_reason = :reason, active_embedding_provider = NULL,
+                active_embedding_model = NULL, updated_at = now()
+            WHERE owner_kind = 'media' AND owner_id = :media_id AND revision = :revision
+            """
+        ),
+        {"media_id": media_id, "revision": revision, "reason": reason},
+    )
+    return MediaContentReindexWork(
+        media_id=media_id,
+        revision=revision,
+        source_kind=source_kind,
+        reason=reason,
+        blocks=tuple(blocks),
+    )
 
 
-def _resolver_kind(source_kind: str) -> str:
-    if source_kind == "web_article":
-        return "web"
-    if source_kind == "epub":
-        return "epub"
-    if source_kind == "pdf":
-        return "pdf"
-    if source_kind == "transcript":
-        return "transcript"
-    if source_kind == "note":
-        return "note"
-    raise ValueError(f"Unsupported source_kind: {source_kind}")
+def publish_media_content_reindex(
+    db: Session,
+    *,
+    work: MediaContentReindexWork,
+    plan: ContentIndexPlan | SpooledContentIndexPlan,
+    context: JobExecutionContext,
+    lease_seconds: int,
+) -> ContentIndexResult | None:
+    """Re-check the fence, then atomically publish one current revision."""
+    from nexus.jobs.queue import lock_and_renew_running_job_claim
+
+    media = db.execute(
+        text("SELECT id FROM media WHERE id = :media_id FOR NO KEY UPDATE"),
+        {"media_id": work.media_id},
+    ).scalar_one_or_none()
+    if media is None:
+        return None
+    current = _lock_index_revision(db, work.media_id)
+    if current is None:
+        return None
+    job = lock_and_renew_running_job_claim(db, context=context, lease_seconds=lease_seconds)
+    if job is None:
+        return None
+    if current != work.revision:
+        _record_index_event(
+            db,
+            media_id=work.media_id,
+            facts=IndexSuperseded(
+                revision=work.revision, job_id=job.id, execution_id=context.execution_id
+            ),
+        )
+        return None
+
+    result = publish_content_index(db, plan=plan, reason=work.reason)
+    _record_index_event(
+        db,
+        media_id=work.media_id,
+        facts=IndexSucceeded(
+            revision=work.revision, job_id=job.id, execution_id=context.execution_id
+        ),
+    )
+    chunk_count = len(plan.chunks) if isinstance(plan, ContentIndexPlan) else plan.chunk_count
+    if work.source_kind == "pdf" and chunk_count == 0:
+        db.execute(
+            text(
+                """
+                UPDATE content_index_states
+                SET status = 'ocr_required', status_reason = 'ocr_required',
+                    active_embedding_provider = NULL, active_embedding_model = NULL,
+                    updated_at = now()
+                WHERE owner_kind = 'media' AND owner_id = :media_id AND revision = :revision
+                """
+            ),
+            {"media_id": work.media_id, "revision": work.revision},
+        )
+        return ContentIndexResult(result.owner, "ocr_required", 0)
+    return result
+
+
+# =============================================================================
+# Repairing a dead reindex execution
+# =============================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class SearchRecoveryFacts:
+    """The current index revision and, when its reindex job is dead, that job."""
+
+    revision: int
+    dead_job_id: UUID | None
+    is_creator: bool
+    is_operator: bool
+
+
+def search_recovery(facts: SearchRecoveryFacts) -> SearchRecoveryAnswer:
+    """The one recovery answer for a media's search-index obligation."""
+    if facts.dead_job_id is None:
+        return None
+    if not (facts.is_creator or facts.is_operator):
+        return "NotOwner"
+    return RepairSearchOffer(expected_revision=facts.revision, expected_job_id=facts.dead_job_id)
+
+
+def repair_dead_media_reindex(
+    db: Session,
+    *,
+    actor: RecoveryActor,
+    media_id: UUID,
+    expected_revision: int,
+    expected_job_id: UUID,
+) -> SearchRepairAdmission:
+    """Requeue the exact dead reindex job of the current index revision.
+
+    Never touches source rows or the published materialization: repair repeats
+    indexing, so a ``ready`` document keeps serving search until the rerun
+    itself marks it indexing. Idempotent per ``client_mutation_id``.
+    """
+    scope = f"media_search_repair:{media_id}"
+    request_bytes = canonical_json_bytes(
+        {"expected_revision": expected_revision, "expected_job_id": str(expected_job_id)}
+    )
+
+    def admit() -> SearchRepairAdmission:
+        match actor:
+            case ViewerRecovery(viewer_id=viewer_id):
+                if not can_read_media(db, viewer_id, media_id):
+                    raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+                creator_id = db.execute(
+                    text("SELECT created_by_user_id FROM media WHERE id = :media_id"),
+                    {"media_id": media_id},
+                ).scalar_one_or_none()
+                if creator_id is None:
+                    raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+                if creator_id != viewer_id:
+                    raise ForbiddenError(ApiErrorCode.E_OWNER_REQUIRED, "Media owner required")
+                is_creator, is_operator = True, False
+                replay = lookup_replay(
+                    db,
+                    viewer_id=viewer_id,
+                    scope=scope,
+                    client_mutation_id=actor.client_mutation_id,
+                    request_bytes=request_bytes,
+                )
+                if replay is not None:
+                    db.rollback()
+                    return SearchRepairAdmission.model_validate(replay)
+            case OperatorRecovery():
+                is_creator, is_operator = False, True
+
+        _lock_media(db, media_id)
+        revision = _lock_index_revision(db, media_id)
+        if revision is None:
+            raise ConflictError(
+                ApiErrorCode.E_REPAIR_NOT_ALLOWED, "Media has no search index to repair."
+            )
+        dead = current_dead_job_for_payload(
+            db,
+            kind=MEDIA_CONTENT_REINDEX_JOB_KIND,
+            expected_payload_match={"media_id": str(media_id), "revision": revision},
+        )
+        offer = search_recovery(
+            SearchRecoveryFacts(
+                revision=revision,
+                dead_job_id=None if dead is None else dead.id,
+                is_creator=is_creator,
+                is_operator=is_operator,
+            )
+        )
+        if not isinstance(offer, RepairSearchOffer) or (
+            offer.expected_revision,
+            offer.expected_job_id,
+        ) != (expected_revision, expected_job_id):
+            current: dict[str, object] = {"revision": revision}
+            if dead is not None:
+                current["job_id"] = str(dead.id)
+            raise ConflictError(
+                ApiErrorCode.E_RESOURCE_CONFLICT,
+                "The inspected search index execution is no longer current.",
+                details={"current": current},
+            )
+        requeue_dead_job(db, job_id=offer.expected_job_id)
+        _record_index_event(
+            db,
+            media_id=media_id,
+            facts=IndexRecoveryAccepted(revision=revision, job_id=offer.expected_job_id),
+        )
+        admission = SearchRepairAdmission(
+            media_id=media_id, revision=revision, job_id=offer.expected_job_id
+        )
+        if isinstance(actor, ViewerRecovery):
+            record_replay(
+                db,
+                viewer_id=actor.viewer_id,
+                scope=scope,
+                client_mutation_id=actor.client_mutation_id,
+                request_bytes=request_bytes,
+                response_json=admission.model_dump(mode="json"),
+            )
+        db.commit()
+        return admission
+
+    return admit_serializable(db, "repair_dead_media_reindex", admit)

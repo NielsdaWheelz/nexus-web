@@ -45,11 +45,15 @@ from nexus.services.search.candidates import (
     link_candidates,
     reference_candidates,
 )
-from nexus.services.search.constants import CANDIDATES_PER_TYPE, MIN_QUERY_LENGTH
-from nexus.services.search.cursor import decode_search_cursor, encode_search_cursor
 from nexus.services.search.projection import _truncate_snippet
+from nexus.services.search.query import (
+    CANDIDATES_PER_TYPE,
+    MIN_QUERY_LENGTH,
+    decode_search_cursor,
+    encode_search_cursor,
+)
 from nexus.services.search.results import _RankedFragmentResult
-from nexus.services.search.retrievers.fragments import read_fragment_search_content
+from nexus.services.search.retrievers import read_fragment_search_content
 from nexus.services.text_quote import QuoteStatus
 
 # Initial per-source retrieval caps; the refill loop doubles them while the

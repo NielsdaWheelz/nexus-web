@@ -39,7 +39,7 @@ from nexus.services.conversation_branches import ensure_branch_metadata, persist
 from nexus.services.generation_catalog import GenerationCatalogService, ResolvedCatalogPair
 from nexus.services.generation_service import GenerationService
 from nexus.services.seq import assign_next_message_seq
-from nexus.services.tool_runtime.composition import ComposedToolRuntime
+from nexus.services.tool_runtime.catalog import ComposedToolRuntime
 
 type RepeatOperation = Literal["rerun", "regenerate"]
 

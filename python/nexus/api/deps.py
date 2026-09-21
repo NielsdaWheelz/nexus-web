@@ -14,7 +14,7 @@ from nexus.services import stream_tokens
 from nexus.services.generation_catalog import GenerationCatalogService
 from nexus.services.generation_runtime import compose_generation_execution_runtime
 from nexus.services.llm_execution import ExecutionRuntime
-from nexus.services.tool_runtime.composition import ComposedToolRuntime
+from nexus.services.tool_runtime.catalog import ComposedToolRuntime
 from nexus.services.tool_runtime.declarations import BROWSER_TOOL_PROJECTION_REVISION
 
 TOOL_PROJECTION_HEADER = "X-Nexus-Tool-Projection"

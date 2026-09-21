@@ -1,8 +1,8 @@
 """Route-neutral inspect-resource tool: the model's document map.
 
-Navigation, not evidence. Given a ``media:`` URI already admitted to the
-generation, it returns the existing ordered document map. The canonical
-tool-runtime binding owns the bounded model-facing JSON projection.
+Navigation, not evidence. Given an admitted ``media:`` URI it returns the
+existing ordered document map; the tool handler owns admission and the bounded
+model-facing JSON projection.
 """
 
 from __future__ import annotations
@@ -17,46 +17,30 @@ from nexus.services.media_read_map import MediaReadMap, get_media_read_map_for_v
 from nexus.services.resource_graph.refs import ResourceRefParseFailure, parse_resource_ref
 from nexus.services.resource_items.capabilities import resource_inspect_policy
 
+type InspectRefusalCode = Literal["unknown_scheme", "invalid_uri", "not_inspectable", "missing"]
 
-@dataclass(slots=True)
-class InspectResourceResult:
-    uri: str
-    status: Literal["complete", "error"]
-    document_map: MediaReadMap | None = None
-    error_code: str | None = None
 
-    @property
-    def is_error(self) -> bool:
-        return self.status == "error"
+@dataclass(frozen=True, slots=True)
+class InspectRefusal:
+    code: InspectRefusalCode
 
 
 def execute_inspect_resource(
     db: Session,
     *,
     viewer_id: UUID,
-    admitted_resource_uris: frozenset[str],
     uri: str,
-) -> InspectResourceResult:
-    """Return a document map under one operation-frozen admission set."""
+) -> MediaReadMap | InspectRefusal:
+    """Return the document map for one admitted media URI."""
 
     parsed = parse_resource_ref(uri)
     if isinstance(parsed, ResourceRefParseFailure):
         if parsed.reason == "unsupported_scheme":
-            return _error(uri, "unknown_scheme")
-        return _error(uri, "invalid_uri")
-
-    inspect_policy = resource_inspect_policy(parsed)
-    if inspect_policy != "media_document_map":
-        return _error(uri, "not_inspectable")
-
-    if uri not in admitted_resource_uris:
-        return _error(uri, "not_in_context_refs")
-
+            return InspectRefusal("unknown_scheme")
+        return InspectRefusal("invalid_uri")
+    if resource_inspect_policy(parsed) != "media_document_map":
+        return InspectRefusal("not_inspectable")
     document_map = get_media_read_map_for_viewer(db, viewer_id, parsed.id)
     if document_map is None:
-        return _error(uri, "missing")
-    return InspectResourceResult(uri=uri, status="complete", document_map=document_map)
-
-
-def _error(uri: str, error_code: str) -> InspectResourceResult:
-    return InspectResourceResult(uri=uri, status="error", error_code=error_code)
+        return InspectRefusal("missing")
+    return document_map

@@ -1,16 +1,18 @@
 """Pinned Codex MCP adapter for a leased model-tool attempt.
 
-The SDK owns JSON-RPC and Streamable HTTP.  This module owns only the bearer
-gate, grant-to-run authorization, declaration projection, and the handoff to
-the shared generation tool executor.
+The SDK owns JSON-RPC and Streamable HTTP. This module owns only the bearer
+gate, the process-local index of live authorities, declaration projection, and
+the handoff to the shared generation tool executor. The mount is publicly
+reachable, so the bearer, its expiry, the transport-security settings, and the
+per-source rate window are all load-bearing.
 """
 
 from __future__ import annotations
 
 import asyncio
-import inspect
 import ipaddress
 import json
+import secrets
 import threading
 import time
 from collections import OrderedDict
@@ -22,10 +24,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, cast
 from uuid import UUID
 
 from fastapi import Request
-from llm_tools import (
-    Native,
-    ToolId,
-)
+from llm_tools import Native, ToolId
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.tools import Tool
@@ -39,14 +38,15 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from nexus.db.async_session import open_async_session
-from nexus.services.agent_tool_grants import AgentToolGrantClaims, verify_agent_tool_grant
+from nexus.services import generation_policy
 from nexus.services.tool_authority import (
     GenerationToolExecutor,
     ModelToolExecutionResult,
+    ToolAuthority,
     ToolAuthorityRefused,
 )
-from nexus.services.tool_runtime.composition import (
-    compose_product_tool_runtime,
+from nexus.services.tool_runtime.catalog import (
+    compose_tool_runtime,
     freeze_tool_plan_snapshot,
     operation_presented_declarations,
     project_provider_model_tools,
@@ -64,23 +64,24 @@ if TYPE_CHECKING:
     from nexus.services.generation_spec import GenerationSpec
     from nexus.services.llm_ledger import LlmCallOwner
     from nexus.services.tool_authority import ToolExecutionProjection
-    from nexus.services.tool_runtime.composition import FrozenToolOperation
+    from nexus.services.tool_runtime.catalog import FrozenToolOperation
     from nexus.services.tool_runtime.declarations import PresentedToolDeclaration
 
 MCP_PATH: Final[str] = "/internal/agent-tools/mcp"
 MCP_PROTOCOL_VERSION: Final[str] = "2025-06-18"
-_MCP_SERVER_NAME: Final[str] = "nexus"
-_MCP_JSON_CONTENT_TYPE: Final[bytes] = b"application/json"
-_MCP_STREAMABLE_HTTP_ACCEPT: Final[bytes] = b"application/json, text/event-stream"
 MAX_MCP_REQUEST_BODY_BYTES: Final[int] = 512 * 1024
 MCP_RATE_WINDOW_SECONDS: Final[float] = 60.0
 MCP_SOURCE_RATE_BURST: Final[int] = 120
-_MAX_MCP_SOURCE_WINDOWS: Final[int] = 4_096
 MCP_TOOL_DRAIN_TIMEOUT_SECONDS: Final[float] = 35.0
+MAX_AGENT_TOOL_GRANT_TTL_SECONDS: Final[int] = (
+    generation_policy.MODEL_TOOL_ADMISSION_RUNTIME_SECONDS
+)
+_MCP_SERVER_NAME: Final[str] = "nexus"
+_MCP_JSON_CONTENT_TYPE: Final[bytes] = b"application/json"
+_MCP_STREAMABLE_HTTP_ACCEPT: Final[bytes] = b"application/json, text/event-stream"
+_MAX_MCP_SOURCE_WINDOWS: Final[int] = 4_096
 _MAX_JSON_RPC_INTEGER: Final[int] = 2**63 - 1
 _MAX_JSON_RPC_STRING: Final[int] = 256
-
-type AgentToolRequestAuthorizer = Callable[[AgentToolGrantClaims], Awaitable[bool]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,14 +115,6 @@ class JsonRpcId:
             return cls("string", value)
         raise ValueError("JSON-RPC id must be an integer or string")
 
-    @classmethod
-    def integer(cls, value: int) -> JsonRpcId:
-        return cls("integer", value)
-
-    @classmethod
-    def string(cls, value: str) -> JsonRpcId:
-        return cls("string", value)
-
     def key(self) -> str:
         return f"{self.kind}:{self.value}"
 
@@ -130,13 +123,13 @@ class JsonRpcId:
 class ActiveAgentToolRegistry:
     """Process-local index of leased authorities owned by the interactive worker.
 
-    The registry contains no ORM objects or sessions.  DB lease and generation
+    The registry contains no ORM objects or sessions. DB lease and generation
     checks remain authoritative on every routed call; this index only selects
-    the currently live authority for a signed grant.
+    the live authority a presented bearer belongs to.
     """
 
     session_factory: sessionmaker[Session]
-    _authorities: dict[str, AgentToolAuthority] = field(default_factory=dict)
+    _authorities: list[AgentToolAuthority] = field(default_factory=list)
     _registry_lock: Any = field(default_factory=threading.RLock, repr=False)
     _operations_by_revision: dict[str, FrozenToolOperation] = field(default_factory=dict)
 
@@ -179,19 +172,21 @@ class ActiveAgentToolRegistry:
 
     def register(self, authority: AgentToolAuthority) -> None:
         with self._registry_lock:
-            existing = self._authorities.get(authority.grant_jti)
-            if existing is not None and existing is not authority:
-                raise RuntimeError("agent-tool grant JTI is already active")
-            self._authorities[authority.grant_jti] = authority
+            self._authorities.append(authority)
 
     def unregister(self, authority: AgentToolAuthority) -> None:
         with self._registry_lock:
-            if self._authorities.get(authority.grant_jti) is authority:
-                self._authorities.pop(authority.grant_jti, None)
+            self._authorities = [item for item in self._authorities if item is not authority]
 
-    def resolve(self, claims: AgentToolGrantClaims) -> AgentToolAuthority | None:
+    def resolve(self, bearer: str) -> AgentToolAuthority | None:
+        # Bytes, not str: compare_digest rejects non-ASCII text a caller controls.
+        presented = bearer.encode("utf-8")
         with self._registry_lock:
-            return self._authorities.get(claims.jti)
+            live = tuple(self._authorities)
+        for authority in live:
+            if secrets.compare_digest(authority.bearer.encode("utf-8"), presented):
+                return authority
+        return None
 
     async def database_now(self) -> datetime:
         async with open_async_session(self.session_factory) as db:
@@ -214,123 +209,15 @@ def active_agent_tool_registry() -> ActiveAgentToolRegistry | None:
     return _ACTIVE_REGISTRY
 
 
-class _AuthorityRouter:
-    def __init__(self, registry: ActiveAgentToolRegistry) -> None:
-        self.registry = registry
-
-    def canonical_tool_id(self, wire_name: str, claims: AgentToolGrantClaims) -> str | None:
-        """Reverse an admitted plan's library-owned wire alias."""
-
-        authority = self.registry.resolve(claims)
-        if authority is None:
-            return None
-        publication = project_provider_model_tools(authority.operation)
-        if publication is None:
-            return None
-        canonical_ids = tuple(str(grant.id) for grant in authority.operation.profile.ordered_grants)
-        aliases = tuple(tool.name for tool in publication.tools)
-        return dict(zip(aliases, canonical_ids, strict=True)).get(wire_name)
-
-    async def authorize_request(
-        self,
-        *,
-        claims: AgentToolGrantClaims,
-        on_policy_violation: Callable[[UUID], Awaitable[None]],
-    ) -> bool:
-        authority = self.registry.resolve(claims)
-        if authority is None:
-            return False
-        return await authority.authorize_request(
-            claims=claims,
-            on_policy_violation=on_policy_violation,
-        )
-
-    async def invoke(self, **kwargs: Any) -> Any:
-        claims = cast(AgentToolGrantClaims, kwargs["claims"])
-        authority = self.registry.resolve(claims)
-        if authority is None:
-            raise MCPError(
-                code=INVALID_REQUEST,
-                message="MCP call is outside the active generation policy",
-            )
-        return await authority.invoke(**kwargs)
-
-    async def reject_unknown(self, **kwargs: Any) -> Any:
-        claims = cast(AgentToolGrantClaims, kwargs["claims"])
-        authority = self.registry.resolve(claims)
-        if authority is None:
-            raise MCPError(
-                code=INVALID_REQUEST,
-                message="MCP call is outside the active generation policy",
-            )
-        return await authority.reject_unknown(**kwargs)
-
-
-class _AgentToolsMCPServer(MCPServer[Any]):
-    """MCP handler with durable unknown-tool rejection below the SDK gate."""
-
-    def __init__(
-        self,
-        *,
-        authority: Any,
-        on_policy_violation: Callable[[UUID], Awaitable[None]],
-        tools: list[Tool],
-        lifespan: Callable[[Any], AbstractAsyncContextManager[Any]] | None = None,
-    ) -> None:
-        super().__init__(
-            name=_MCP_SERVER_NAME,
-            version="nexus-agent-tools-2025-06-18",
-            tools=tools,
-            lifespan=lifespan,
-        )
-        self._agent_tool_authority = authority
-        self._on_policy_violation = on_policy_violation
-
-    async def call_tool(
-        self,
-        name: str,
-        arguments: dict[str, Any],
-        context: Context[Any, Any] | None = None,
-    ) -> Any:
-        if context is None:
-            raise MCPError(code=INVALID_REQUEST, message="MCP request context is required")
-        request = cast(Request, context.request_context.request)
-        claims = cast(AgentToolGrantClaims, request.state.agent_tool_grant)
-        request_id = JsonRpcId.from_raw(context.request_context.request_id)
-        canonical_tool_id = self._agent_tool_authority.canonical_tool_id(name, claims)
-        if canonical_tool_id is not None:
-            receipt = await self._agent_tool_authority.invoke(
-                tool_id=canonical_tool_id,
-                provider_wire_name=name,
-                arguments=arguments,
-                request_id=request_id,
-                claims=claims,
-                on_policy_violation=self._on_policy_violation,
-            )
-            return _wire_tool_result(receipt)
-        if not 1 <= len(name) <= 128:
-            raise MCPError(
-                code=INVALID_REQUEST,
-                message="MCP tool name must contain 1-128 characters",
-            )
-        receipt = await self._agent_tool_authority.reject_unknown(
-            provider_wire_name=name,
-            arguments=arguments,
-            request_id=request_id,
-            claims=claims,
-            on_policy_violation=self._on_policy_violation,
-        )
-        return _wire_tool_result(receipt)
-
-
 @dataclass(slots=True)
 class AgentToolAuthority:
     """Codex MCP mount over the shared route-neutral generation executor."""
 
     registry: ActiveAgentToolRegistry
     executor: GenerationToolExecutor
-    grant_jti: str
-    _notified_policy_violations: set[UUID] = field(default_factory=set)
+    bearer: str
+    expires_at: datetime
+    _notified_policy_violation: bool = False
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _activity_lock: Any = field(default_factory=threading.Lock, repr=False)
     _idle: Any = field(default_factory=threading.Event, repr=False)
@@ -338,11 +225,6 @@ class AgentToolAuthority:
     _accepting_calls: bool = True
 
     def __post_init__(self) -> None:
-        try:
-            if str(UUID(self.grant_jti)) != self.grant_jti:
-                raise ValueError
-        except ValueError as error:
-            raise ValueError("agent-tool authority grant jti must be a canonical UUID") from error
         listener_operation = self.registry.operation_for(
             freeze_tool_plan_snapshot(self.executor.authority.operation)
         )
@@ -351,20 +233,6 @@ class AgentToolAuthority:
                 authority=replace(self.executor.authority, operation=listener_operation)
             )
         self._idle.set()
-
-    @classmethod
-    def from_generation_tool_executor(
-        cls,
-        *,
-        executor: GenerationToolExecutor,
-        registry: ActiveAgentToolRegistry,
-        grant_jti: str,
-    ) -> AgentToolAuthority:
-        """Register a minted bearer nonce against one already-frozen executor."""
-
-        authority = cls(registry=registry, executor=executor, grant_jti=grant_jti)
-        registry.register(authority)
-        return authority
 
     @property
     def generation_id(self) -> UUID:
@@ -386,16 +254,25 @@ class AgentToolAuthority:
         if not idle:
             raise RuntimeError("active MCP tool call did not drain before its bounded deadline")
 
+    def canonical_tool_id(self, wire_name: str) -> str | None:
+        """Reverse the admitted plan's library-owned wire alias."""
+
+        publication = project_provider_model_tools(self.operation)
+        if publication is None:
+            return None
+        canonical_ids = tuple(str(grant.id) for grant in self.operation.profile.ordered_grants)
+        aliases = tuple(tool.name for tool in publication.tools)
+        return dict(zip(aliases, canonical_ids, strict=True)).get(wire_name)
+
     async def authorize_request(
         self,
         *,
-        claims: AgentToolGrantClaims,
         on_policy_violation: Callable[[UUID], Awaitable[None]],
     ) -> bool:
-        """Authenticate the bearer facts and revalidate live durable authority."""
+        """Revalidate live durable authority behind the authenticated bearer."""
 
         try:
-            await self._authorize_claims(claims)
+            await self._reauthorize()
         except ToolAuthorityRefused:
             await self._notify_once(on_policy_violation)
             return False
@@ -405,23 +282,22 @@ class AgentToolAuthority:
         self,
         *,
         tool_id: str,
+        provider_wire_name: str,
         arguments: dict[str, Any],
         request_id: JsonRpcId,
-        claims: AgentToolGrantClaims,
         on_policy_violation: Callable[[UUID], Awaitable[None]],
-        provider_wire_name: str | None = None,
     ) -> ModelToolExecutionResult:
         started = False
         try:
             self._call_started()
             started = True
             async with self._lock:
-                await self._authorize_claims(claims)
+                await self._reauthorize()
                 return await self.executor.execute_canonical(
                     transport_kind="CodexMcp",
                     model_turn_seq=1,
                     transport_call_id=f"mcp:{request_id.key()}",
-                    provider_wire_name=provider_wire_name or tool_id,
+                    provider_wire_name=provider_wire_name,
                     tool_id=ToolId(tool_id),
                     arguments=arguments,
                 )
@@ -435,19 +311,15 @@ class AgentToolAuthority:
     async def reject_unknown(
         self,
         *,
-        provider_wire_name: str,
-        arguments: dict[str, Any],
         request_id: JsonRpcId,
-        claims: AgentToolGrantClaims,
         on_policy_violation: Callable[[UUID], Awaitable[None]],
     ) -> ModelToolExecutionResult:
-        del provider_wire_name, arguments
         started = False
         try:
             self._call_started()
             started = True
             async with self._lock:
-                await self._authorize_claims(claims)
+                await self._reauthorize()
                 return self.executor.refuse_unknown_call(
                     transport_call_id=f"mcp:{request_id.key()}"
                 )
@@ -458,14 +330,12 @@ class AgentToolAuthority:
             if started:
                 self._call_finished()
 
-    async def _authorize_claims(self, claims: AgentToolGrantClaims) -> None:
-        if claims.jti != self.grant_jti:
-            raise ToolAuthorityRefused("bearer nonce differs from mounted generation authority")
+    async def _reauthorize(self) -> None:
         authority = self.executor.authority
 
         def authorize(db: Session) -> None:
             with db.begin():
-                authority.authorize_in_current_transaction(db, claims)
+                authority.lock_in_current_transaction(db)
 
         async with open_async_session(authority.session_factory) as database:
             await database.run_sync(authorize)
@@ -485,19 +355,16 @@ class AgentToolAuthority:
             if self._active_calls == 0:
                 self._idle.set()
 
-    async def _notify_once(
-        self,
-        callback: Callable[[UUID], Awaitable[None]],
-    ) -> None:
+    async def _notify_once(self, callback: Callable[[UUID], Awaitable[None]]) -> None:
         with self._activity_lock:
-            if self.generation_id in self._notified_policy_violations:
+            if self._notified_policy_violation:
                 return
-            self._notified_policy_violations.add(self.generation_id)
+            self._notified_policy_violation = True
         try:
             await callback(self.generation_id)
         except BaseException:
             with self._activity_lock:
-                self._notified_policy_violations.discard(self.generation_id)
+                self._notified_policy_violation = False
             raise
 
 
@@ -518,7 +385,6 @@ class CodexGenerationToolBinding:
     operation: FrozenToolOperation = field(repr=False)
     spec: GenerationSpec = field(repr=False)
     intent: GenerationIntent = field(repr=False)
-    signing_key: SecretStr = field(repr=False)
     projection: ToolExecutionProjection | None = field(default=None, repr=False)
     _bind_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _admission: GenerationAdmission | None = field(default=None, init=False, repr=False)
@@ -530,13 +396,11 @@ class CodexGenerationToolBinding:
         """Bind the exact accepted host slot once; exact repeats replay in memory."""
 
         from nexus.jobs.queue import get_job, lock_running_job_claim
-        from nexus.services.agent_tool_grants import issue_generation_tool_grant
         from nexus.services.codex_generation_contract import (
             GenerationCommandDraft,
             generation_command_from_draft,
         )
         from nexus.services.generation_intent import BearerToolGrant
-        from nexus.services.tool_authority import compose_generation_tool_executor
 
         async with self._bind_lock:
             if self._closed:
@@ -550,14 +414,16 @@ class CodexGenerationToolBinding:
             if admission.runtime_deadline_seconds != self.spec.bounds.turn_timeout_seconds:
                 raise ValueError("Codex admission runtime deadline differs from frozen bounds")
 
-            executor = await compose_generation_tool_executor(
-                session_factory=self.session_factory,
-                user_id=self.user_id,
-                owner=self.owner,
-                generation_id=self.generation_id,
-                job_context=self.job_context,
-                operation=self.operation,
-                projection=self.projection,
+            executor = GenerationToolExecutor(
+                authority=await ToolAuthority.from_claimed_generation_attempt(
+                    session_factory=self.session_factory,
+                    user_id=self.user_id,
+                    owner=self.owner,
+                    generation_id=self.generation_id,
+                    job_context=self.job_context,
+                    operation=self.operation,
+                    projection=self.projection,
+                )
             )
             if executor.authority.spec != self.spec:
                 raise ToolAuthorityRefused(
@@ -576,30 +442,33 @@ class CodexGenerationToolBinding:
                         raise ToolAuthorityRefused("generation tool grant has no live lease")
                     if not isinstance(database_now, datetime):
                         raise AssertionError("database clock did not return a timestamp")
-                    lease_expires_at = job.lease_expires_at
-
-                    return database_now, lease_expires_at
+                    return database_now, job.lease_expires_at
 
             async with open_async_session(self.session_factory) as database:
                 database_now, lease_expires_at = await database.run_sync(read_lease)
 
+            # Authority dies at the earliest of the lease, the host's runtime
+            # deadline, and the fixed grant ceiling.
+            now = _aware_utc(database_now)
             admitted_at = datetime.fromisoformat(admission.admitted_at.removesuffix("Z") + "+00:00")
-            issued = issue_generation_tool_grant(
-                executor.authority.grant_authority(),
-                signing_key=self.signing_key,
-                now=_aware_utc(database_now),
-                lease_expires_at=_aware_utc(lease_expires_at),
-                transport_deadline_at=admitted_at
-                + timedelta(seconds=admission.runtime_deadline_seconds),
+            expires_at = min(
+                _aware_utc(lease_expires_at),
+                admitted_at + timedelta(seconds=admission.runtime_deadline_seconds),
+                now + timedelta(seconds=MAX_AGENT_TOOL_GRANT_TTL_SECONDS),
             )
+            if expires_at <= now:
+                raise ValueError("generation tool authority has no remaining validity interval")
             registry = active_agent_tool_registry()
             if registry is None:
                 raise RuntimeError("active agent-tool registry is not installed")
-            authority = AgentToolAuthority.from_generation_tool_executor(
-                executor=executor,
+            bearer = secrets.token_urlsafe(32)
+            authority = AgentToolAuthority(
                 registry=registry,
-                grant_jti=issued.jti,
+                executor=executor,
+                bearer=bearer,
+                expires_at=expires_at,
             )
+            registry.register(authority)
             try:
                 command = generation_command_from_draft(
                     GenerationCommandDraft(
@@ -607,7 +476,7 @@ class CodexGenerationToolBinding:
                         spec=self.spec,
                         intent=self.intent,
                     ),
-                    tool_grant=BearerToolGrant(token=issued.token),
+                    tool_grant=BearerToolGrant(token=SecretStr(bearer)),
                 )
             except BaseException:
                 authority.close()
@@ -641,35 +510,6 @@ class CodexGenerationToolBinding:
             authority.close()
 
 
-def compose_codex_generation_tool_binding(
-    *,
-    session_factory: sessionmaker[Session],
-    user_id: UUID,
-    owner: LlmCallOwner,
-    generation_id: UUID,
-    job_context: JobExecutionContext,
-    operation: FrozenToolOperation,
-    spec: GenerationSpec,
-    intent: GenerationIntent,
-    settings: Settings,
-    projection: ToolExecutionProjection | None = None,
-) -> CodexGenerationToolBinding:
-    """Compose the one grant lifecycle shared by Chat and background Codex."""
-
-    return CodexGenerationToolBinding(
-        session_factory=session_factory,
-        user_id=user_id,
-        owner=owner,
-        generation_id=generation_id,
-        job_context=job_context,
-        operation=operation,
-        spec=spec,
-        intent=intent,
-        signing_key=settings.effective_agent_tool_grant_signing_key,
-        projection=projection,
-    )
-
-
 def _aware_utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
@@ -677,21 +517,14 @@ def _aware_utc(value: datetime) -> datetime:
 def create_agent_tools_mcp_app(
     *,
     registry: ActiveAgentToolRegistry,
-    signing_key: SecretStr,
     on_policy_violation: Callable[[UUID], Awaitable[None]],
     settings: Settings,
 ) -> Any:
-    """Build the worker listener whose authority is selected per grant."""
+    """Build the worker listener whose authority is selected per bearer."""
 
-    authority = _AuthorityRouter(registry)
-    tools = [
-        _sdk_tool(authority, wire_name, entry, on_policy_violation)
-        for wire_name, entry in _model_tool_wire_declarations()
-    ]
     server = _AgentToolsMCPServer(
-        authority=authority,
         on_policy_violation=on_policy_violation,
-        tools=tools,
+        tools=[_sdk_tool(wire_name, entry) for wire_name, entry in _model_tool_wire_declarations()],
         lifespan=_active_listener_lifespan(registry, settings),
     )
     app = server.streamable_http_app(
@@ -701,18 +534,10 @@ def create_agent_tools_mcp_app(
         max_request_body_size=MAX_MCP_REQUEST_BODY_BYTES,
         transport_security=_transport_security(settings.agent_tools_mcp_origin),
     )
-
-    async def authorize_request(claims: AgentToolGrantClaims) -> bool:
-        return await authority.authorize_request(
-            claims=claims,
-            on_policy_violation=on_policy_violation,
-        )
-
     app.add_middleware(
         _GrantGate,
-        signing_key=signing_key,
-        clock=registry.database_now,
-        authorize_request=authorize_request,
+        registry=registry,
+        on_policy_violation=on_policy_violation,
         max_body_bytes=MAX_MCP_REQUEST_BODY_BYTES,
     )
     app.add_middleware(_McpSourceRateGate)
@@ -729,18 +554,16 @@ def _active_listener_lifespan(
     async def lifespan(_server: Any) -> AsyncIterator[None]:
         import httpx
 
-        from nexus.services.tool_runtime.composition import (
-            compose_configured_web_search_provider,
-            compose_product_tool_runtime,
-        )
+        from nexus.services.tool_runtime.catalog import compose_configured_web_search_provider
 
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(60.0, connect=10.0),
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
             trust_env=False,
         ) as client:
-            provider = compose_configured_web_search_provider(client, settings=settings)
-            runtime = compose_product_tool_runtime(provider)
+            runtime = compose_tool_runtime(
+                compose_configured_web_search_provider(client, settings=settings)
+            )
             operations = tuple(
                 operation
                 for operation in runtime.operations.values()
@@ -764,6 +587,99 @@ def _transport_security(mcp_origin: str) -> TransportSecuritySettings:
         allowed_hosts=[allowed_host],
         allowed_origins=[allowed_origin],
     )
+
+
+class _AgentToolsMCPServer(MCPServer[Any]):
+    """MCP handler with durable unknown-tool rejection below the SDK gate."""
+
+    def __init__(
+        self,
+        *,
+        on_policy_violation: Callable[[UUID], Awaitable[None]],
+        tools: list[Tool],
+        lifespan: Callable[[Any], AbstractAsyncContextManager[Any]] | None = None,
+    ) -> None:
+        super().__init__(
+            name=_MCP_SERVER_NAME,
+            version="nexus-agent-tools-2025-06-18",
+            tools=tools,
+            lifespan=lifespan,
+        )
+        self._on_policy_violation = on_policy_violation
+
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: Context[Any, Any] | None = None,
+    ) -> Any:
+        if context is None:
+            raise MCPError(code=INVALID_REQUEST, message="MCP request context is required")
+        request = cast(Request, context.request_context.request)
+        authority = cast(AgentToolAuthority, request.state.agent_tool_authority)
+        request_id = JsonRpcId.from_raw(context.request_context.request_id)
+        canonical_tool_id = authority.canonical_tool_id(name)
+        if canonical_tool_id is not None:
+            return _wire_tool_result(
+                await authority.invoke(
+                    tool_id=canonical_tool_id,
+                    provider_wire_name=name,
+                    arguments=arguments,
+                    request_id=request_id,
+                    on_policy_violation=self._on_policy_violation,
+                )
+            )
+        if not 1 <= len(name) <= 128:
+            raise MCPError(
+                code=INVALID_REQUEST,
+                message="MCP tool name must contain 1-128 characters",
+            )
+        return _wire_tool_result(
+            await authority.reject_unknown(
+                request_id=request_id,
+                on_policy_violation=self._on_policy_violation,
+            )
+        )
+
+
+async def _unreachable(ctx: Context) -> CallToolResult:
+    """Placeholder handler: ``_AgentToolsMCPServer.call_tool`` fully overrides dispatch."""
+
+    del ctx
+    raise AssertionError("MCP tool dispatch bypasses the SDK handler")
+
+
+def _sdk_tool(wire_name: str, entry: PresentedToolDeclaration) -> Tool:
+    tool = Tool.from_function(
+        _unreachable,
+        name=wire_name,
+        description=entry.spec.summary,
+        structured_output=False,
+    )
+    # MCP consumes the model-facing JSON Schema. The portable kernel keeps a
+    # separate semantic projection for identity and a presentation projection
+    # with titles/descriptions; crossing the boundary must choose explicitly.
+    tool.parameters = entry.spec.input_schema.presentation
+    return tool
+
+
+def _model_tool_wire_declarations() -> tuple[tuple[str, PresentedToolDeclaration], ...]:
+    """Project the union server table only from exact operation-owned plans."""
+
+    runtime = compose_tool_runtime(None)
+    declarations_by_alias: dict[str, PresentedToolDeclaration] = {}
+    for operation in runtime.operations.values():
+        if not isinstance(operation.plan.exposure, Native):
+            continue
+        publication = project_provider_model_tools(operation)
+        if publication is None:
+            raise AssertionError("native model-tool plan lowered to no publication")
+        presented = operation_presented_declarations(operation)
+        for tool, entry in zip(publication.tools, presented, strict=True):
+            existing = declarations_by_alias.setdefault(tool.name, entry)
+            if existing.spec is not entry.spec:
+                raise ValueError(f"model-tool wire alias collision: {tool.name}")
+    return tuple(declarations_by_alias.items())
 
 
 @dataclass(slots=True)
@@ -796,12 +712,9 @@ class _McpSourceRateGate(BaseHTTPMiddleware):
             if window.requests >= MCP_SOURCE_RATE_BURST:
                 return Response(status_code=429)
             window.requests += 1
-            self._prune()
+            while len(self._windows) > _MAX_MCP_SOURCE_WINDOWS:
+                self._windows.popitem(last=False)
         return await call_next(request)
-
-    def _prune(self) -> None:
-        while len(self._windows) > _MAX_MCP_SOURCE_WINDOWS:
-            self._windows.popitem(last=False)
 
 
 def _trusted_mcp_source(request: Request) -> str | None:
@@ -826,90 +739,18 @@ def _trusted_mcp_source(request: Request) -> str | None:
     return peer.compressed
 
 
-def _sdk_tool(
-    authority: Any,
-    wire_name: str,
-    entry: PresentedToolDeclaration,
-    on_policy_violation: Callable[[UUID], Awaitable[None]],
-) -> Tool:
-    async def dispatch(ctx: Context, **kwargs: Any) -> CallToolResult:
-        request = cast(Request, ctx.request_context.request)
-        claims = cast(AgentToolGrantClaims, request.state.agent_tool_grant)
-        request_id = JsonRpcId.from_raw(ctx.request_context.request_id)
-        receipt = await authority.invoke(
-            tool_id=str(entry.spec.id),
-            provider_wire_name=wire_name,
-            arguments=kwargs,
-            request_id=request_id,
-            claims=claims,
-            on_policy_violation=on_policy_violation,
-        )
-        return _wire_tool_result(receipt)
-
-    fields = entry.spec.input_type.model_fields
-    parameters = [
-        inspect.Parameter(
-            field.alias or name,
-            inspect.Parameter.KEYWORD_ONLY,
-            annotation=field.annotation,
-            default=inspect.Parameter.empty if field.is_required() else field.default,
-        )
-        for name, field in fields.items()
-    ]
-    cast(Any, dispatch).__signature__ = inspect.Signature(
-        parameters, return_annotation=CallToolResult
-    )
-    dispatch.__annotations__ = {
-        "ctx": Context,
-        **{field.alias or name: field.annotation for name, field in fields.items()},
-        "return": CallToolResult,
-    }
-    tool = Tool.from_function(
-        dispatch,
-        name=wire_name,
-        description=entry.spec.summary,
-        structured_output=False,
-    )
-    # MCP consumes the model-facing JSON Schema.  The portable kernel keeps a
-    # separate semantic projection for identity and a presentation projection
-    # with titles/descriptions; crossing the boundary must choose explicitly.
-    tool.parameters = entry.spec.input_schema.presentation
-    return tool
-
-
-def _model_tool_wire_declarations() -> tuple[tuple[str, PresentedToolDeclaration], ...]:
-    """Project the union server table only from exact operation-owned plans."""
-
-    runtime = compose_product_tool_runtime(None)
-    declarations_by_alias: dict[str, PresentedToolDeclaration] = {}
-    for operation in runtime.operations.values():
-        if not isinstance(operation.plan.exposure, Native):
-            continue
-        publication = project_provider_model_tools(operation)
-        if publication is None:
-            raise AssertionError("native model-tool plan lowered to no publication")
-        presented = operation_presented_declarations(operation)
-        for tool, entry in zip(publication.tools, presented, strict=True):
-            existing = declarations_by_alias.setdefault(tool.name, entry)
-            if existing.spec is not entry.spec:
-                raise ValueError(f"model-tool wire alias collision: {tool.name}")
-    return tuple(declarations_by_alias.items())
-
-
 class _GrantGate(BaseHTTPMiddleware):
     def __init__(
         self,
         app: Any,
         *,
-        signing_key: SecretStr,
-        clock: Callable[[], Awaitable[datetime]],
-        authorize_request: AgentToolRequestAuthorizer,
+        registry: ActiveAgentToolRegistry,
+        on_policy_violation: Callable[[UUID], Awaitable[None]],
         max_body_bytes: int,
     ) -> None:
         super().__init__(app)
-        self._signing_key = signing_key
-        self._clock = clock
-        self._authorize_request = authorize_request
+        self._registry = registry
+        self._on_policy_violation = on_policy_violation
         self._max_body_bytes = max_body_bytes
 
     async def dispatch(self, request: Request, call_next: Callable[[Request], Any]) -> Response:
@@ -918,17 +759,12 @@ class _GrantGate(BaseHTTPMiddleware):
         authorization = request.headers.get("Authorization", "")
         if not authorization.startswith("Bearer "):
             return Response(status_code=401)
-        try:
-            claims = verify_agent_tool_grant(
-                authorization.removeprefix("Bearer "),
-                signing_key=self._signing_key,
-                now=await self._clock(),
-            )
-        except ValueError:
+        authority = self._registry.resolve(authorization.removeprefix("Bearer "))
+        if authority is None or authority.expires_at <= await self._registry.database_now():
             return Response(status_code=401)
-        if not await self._authorize_request(claims):
+        if not await authority.authorize_request(on_policy_violation=self._on_policy_violation):
             return Response(status_code=401)
-        request.state.agent_tool_grant = claims
+        request.state.agent_tool_authority = authority
         if request.method != "POST":
             return Response(status_code=405, headers={"Allow": "POST"})
         if not _has_exact_single_wire_header(
@@ -944,12 +780,12 @@ class _GrantGate(BaseHTTPMiddleware):
         if request.headers.get("content-length") is not None:
             try:
                 declared_bytes = int(request.headers["content-length"])
-                if declared_bytes < 0:
-                    return Response(status_code=400)
-                if declared_bytes > self._max_body_bytes:
-                    return Response(status_code=413)
             except ValueError:
                 return Response(status_code=400)
+            if declared_bytes < 0:
+                return Response(status_code=400)
+            if declared_bytes > self._max_body_bytes:
+                return Response(status_code=413)
         body = await _read_bounded_body(request, max_bytes=self._max_body_bytes)
         if body is None:
             return Response(status_code=413)
@@ -959,9 +795,8 @@ class _GrantGate(BaseHTTPMiddleware):
             wire = None
         if not isinstance(wire, dict) or not isinstance(wire.get("method"), str):
             return Response(status_code=400)
-        method = wire["method"]
         version_header = request.headers.get("MCP-Protocol-Version")
-        if method == "initialize":
+        if wire["method"] == "initialize":
             params = wire.get("params")
             requested_version = params.get("protocolVersion") if isinstance(params, dict) else None
             if requested_version != MCP_PROTOCOL_VERSION or version_header not in {
@@ -974,7 +809,7 @@ class _GrantGate(BaseHTTPMiddleware):
         if request.headers.get("Mcp-Session-Id") is not None:
             # The pinned Codex client accepts a server without a transport
             # session. Refusing client-supplied session state keeps authority
-            # entirely in the signed grant and durable Nexus journal.
+            # entirely in the bearer and the durable Nexus journal.
             return Response(status_code=400)
         return await call_next(request)
 
@@ -1008,11 +843,21 @@ async def _read_bounded_body(request: Request, *, max_bytes: int) -> bytes | Non
     return body
 
 
-def _wire_tool_result(receipt: Any) -> CallToolResult:
+def _wire_tool_result(receipt: ModelToolExecutionResult) -> CallToolResult:
     """Expose only the model-facing receipt; durable audit facts stay private."""
 
-    output = receipt.model_output
     return CallToolResult(
-        content=[TextContent(type="text", text=output.output)],
-        is_error=output.is_error,
+        content=[TextContent(type="text", text=receipt.model_output.output)],
+        is_error=receipt.model_output.is_error,
     )
+
+
+__all__ = [
+    "MCP_PATH",
+    "ActiveAgentToolRegistry",
+    "AgentToolAuthority",
+    "CodexGenerationToolBinding",
+    "active_agent_tool_registry",
+    "create_agent_tools_mcp_app",
+    "set_active_agent_tool_registry",
+]

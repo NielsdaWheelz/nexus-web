@@ -120,7 +120,6 @@ def _start_agent_tools_listener(
 
     app = create_agent_tools_mcp_app(
         registry=registry,
-        signing_key=settings.effective_agent_tool_grant_signing_key,
         on_policy_violation=policy_violation,
         settings=settings,
     )

@@ -25,14 +25,13 @@ from llm_tools import (
     ToolEffect,
     ToolGrant,
     ToolId,
-    ToolLimits,
     ToolPlan,
     ToolSpec,
     canonical_json_bytes,
 )
 
-from nexus.services.tool_runtime.authority import TOOL_PLAN_AUTHORITY_REVISIONS
 from nexus.services.tool_runtime.declarations import NEXUS_TOOL_DECLARATIONS
+from nexus.services.tool_runtime.plan_revisions import TOOL_PLAN_AUTHORITY_REVISIONS
 
 type ToolExposureName = Literal["HostTable", "Native"]
 
@@ -56,13 +55,6 @@ _NEXUS_ADDITIVE_WRITE_TOOL_IDS: Final[tuple[ToolId, ...]] = tuple(
         "nexus.queue.add",
     )
 )
-_MODEL_TOOL_PLAN_IDS: Final[tuple[str, ...]] = (
-    "ChatRead",
-    "ChatReadAdditiveWrite",
-    "LibraryDossierRead",
-    "IdeaDossierRead",
-    "MetadataRead",
-)
 
 
 def _closed_tool_specs() -> MappingProxyType[ToolId, ToolSpec[Any, Any, Any]]:
@@ -73,48 +65,6 @@ def _closed_tool_specs() -> MappingProxyType[ToolId, ToolSpec[Any, Any, Any]]:
 
 
 _TOOL_SPECS = _closed_tool_specs()
-
-
-@dataclass(frozen=True, slots=True)
-class ToolGrantPolicyFacts:
-    """Immutable semantic facts covered by one plan-definition revision."""
-
-    effect: ToolEffect
-    id: ToolId
-    limits: ToolLimits
-    tool_contract_revision: str
-
-    def json(self) -> dict[str, object]:
-        return {
-            "effect": self.effect.value,
-            "id": str(self.id),
-            "limits": self.limits.json(),
-            "tool_contract_revision": self.tool_contract_revision,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class ToolPlanPolicyFacts:
-    """Pure policy projection; safe to hash without composing runtime bindings."""
-
-    authority_revision: str
-    exposure: ToolExposureName
-    grants: tuple[ToolGrantPolicyFacts, ...]
-    max_live_writes: int | None
-    plan_id: str
-    profile_id: str
-    run_limits: RunLimits
-
-    def json(self) -> dict[str, object]:
-        return {
-            "authority_revision": self.authority_revision,
-            "exposure": self.exposure,
-            "grants": [grant.json() for grant in self.grants],
-            "max_live_writes": self.max_live_writes,
-            "plan_id": self.plan_id,
-            "profile_id": self.profile_id,
-            "run_limits": self.run_limits.json(),
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,25 +104,6 @@ class ToolPlanDefinition:
             self,
             "authority_revision",
             hashlib.sha256(canonical_json_bytes(semantic)).hexdigest(),
-        )
-
-    def policy_facts(self) -> ToolPlanPolicyFacts:
-        return ToolPlanPolicyFacts(
-            authority_revision=self.authority_revision,
-            exposure=_exposure_name(self.plan),
-            grants=tuple(
-                ToolGrantPolicyFacts(
-                    effect=(spec := _TOOL_SPECS[grant.id]).effect,
-                    id=grant.id,
-                    limits=grant.limits or spec.limits,
-                    tool_contract_revision=spec.tool_contract_revision,
-                )
-                for grant in self.profile.grants
-            ),
-            max_live_writes=self.max_live_writes,
-            plan_id=self.plan_id,
-            profile_id=str(self.profile.id),
-            run_limits=self.profile.run_limits,
         )
 
 
@@ -350,17 +281,6 @@ TOOL_PLAN_DEFINITIONS_BY_ID: Final[MappingProxyType[str, ToolPlanDefinition]] = 
 )
 
 
-def tool_plan_policy_facts() -> tuple[ToolPlanPolicyFacts, ...]:
-    """Return model-callable plan definitions in canonical order."""
-
-    facts = tuple(
-        TOOL_PLAN_DEFINITIONS_BY_ID[plan_id].policy_facts() for plan_id in _MODEL_TOOL_PLAN_IDS
-    )
-    if tuple(fact.plan_id for fact in facts) != _MODEL_TOOL_PLAN_IDS:
-        raise AssertionError("model tool-plan policy order drifted")
-    return facts
-
-
 __all__ = [
     "CHAT_READ_ADDITIVE_WRITE_TOOL_DEFINITION",
     "CHAT_READ_TOOL_DEFINITION",
@@ -369,8 +289,5 @@ __all__ = [
     "LIBRARY_DOSSIER_READ_TOOL_DEFINITION",
     "TOOL_PLAN_DEFINITIONS",
     "TOOL_PLAN_DEFINITIONS_BY_ID",
-    "ToolGrantPolicyFacts",
     "ToolPlanDefinition",
-    "ToolPlanPolicyFacts",
-    "tool_plan_policy_facts",
 ]

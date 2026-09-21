@@ -2031,8 +2031,6 @@ def _cancel_prepared_build_generation_in_current_transaction(
     if active_generation is None or active_generation[1].dispatch_phase is step_journal.Uncertain:
         return True
     step_path, state = active_generation
-    if isinstance(state.tool_execution, Present):
-        raise AssertionError("prepared dossier generation carries tool execution metadata")
     completed = cancel_prepared_generation_without_dispatch_in_current_transaction(
         db,
         owner=owner,
@@ -2068,10 +2066,7 @@ def _active_build_generation(
         raise AssertionError("dossier build has multiple active generation steps")
     if not active:
         return None
-    step_path, state = active[0]
-    if isinstance(state.tool_execution, Present):
-        raise AssertionError(f"active Dossier generation {step_path!r} carries tool metadata")
-    return step_path, state
+    return active[0]
 
 
 def _terminal_inputs_are_current(
@@ -2808,8 +2803,6 @@ def _cancel_prepared_learn_requests_before_purge(
         )
         if state.generation_id != expected_generation_id:
             raise AssertionError("Idea-resolution generation identity changed during teardown")
-        if isinstance(state.tool_execution, Present):
-            raise AssertionError("Idea-resolution generation carries tool metadata")
         if state.dispatch_phase is step_journal.Uncertain:
             raise GenerationUncertain(
                 f"cannot purge uncertain Dossier Idea resolution {request_id}"

@@ -2048,8 +2048,6 @@ class LLMToolPosition(Base):
     tool_contract_revision: Mapped[str] = mapped_column(Text, nullable=False)
     plan_revision: Mapped[str] = mapped_column(Text, nullable=False)
     binding_revision: Mapped[str] = mapped_column(Text, nullable=False)
-    scope_digest: Mapped[str] = mapped_column(Text, nullable=False)
-    budget_digest: Mapped[str] = mapped_column(Text, nullable=False)
     reservation: Mapped[dict[str, object] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
