@@ -1,8 +1,7 @@
-"""Conversation and Message Pydantic schemas.
+"""Conversation, message, chat-run and trust-trail wire contracts.
 
-Contains request and response models for conversation and message endpoints.
-
-Message creation happens through durable chat runs.
+Every model here is decoded key-exactly by ``apps/web/src/lib/conversations``
+and ``apps/web/src/lib/api/sse``; fields and closed literal sets are frozen.
 """
 
 from __future__ import annotations
@@ -33,8 +32,9 @@ from nexus.schemas.retrieval import RetrievalContextRef, RetrievalLocator, Retri
 from nexus.schemas.search_types import SEARCH_RESULT_TYPES
 from nexus.services.generation_spec import GenerationSelectionSpec
 
-# Valid assistant tool-call statuses - must match message_tool_calls.status
 MESSAGE_TOOL_STATUSES = Literal["pending", "running", "complete", "error", "cancelled"]
+# ``historical_execution`` has no writer; the value stays because the database
+# CHECK and the browser decoder still admit backfilled rows.
 TOOL_RECORD_KINDS = Literal[
     "attached_context",
     "current_execution",
@@ -61,7 +61,6 @@ CHAT_RUN_EVENT_TYPES = Literal[
     "assistant_activity",
     "assistant_text_delta",
     "tool_call_start",
-    "tool_call_delta",
     "tool_call_done",
     "tool_result",
     "citation_index",
@@ -78,20 +77,11 @@ EVIDENCE_RETRIEVAL_STATUSES = Literal[
     "web_result",
 ]
 
-
-# =============================================================================
-# Response Schemas
-# =============================================================================
+MAX_MESSAGE_CONTENT_LENGTH = 20000
+TRUST_TRAIL_VERSION = "assistant_trust_trail.v1"
 
 
 class ConversationOut(BaseModel):
-    """Response schema for a conversation.
-
-    Conversations are owned by exactly one user. Owner fields:
-    - owner_user_id: UUID of the conversation owner
-    - is_owner: viewer-local convenience flag
-    """
-
     id: UUID
     title: str
     owner_user_id: UUID
@@ -104,8 +94,6 @@ class ConversationOut(BaseModel):
 
 
 class ConversationListItemOut(BaseModel):
-    """Compact row contract for the finite primary conversation index."""
-
     id: UUID
     title: str
     message_count: int
@@ -130,18 +118,10 @@ class MessageDocument(BaseModel):
 
 
 class MessageOut(BaseModel):
-    """Response schema for a message.
-
-    Message text and evidence render from message_document blocks.
-    Messages are ordered by seq within a conversation.
-    """
-
     id: UUID
     seq: int
     role: str  # "user" | "assistant"
     message_document: MessageDocument = Field(default_factory=MessageDocument)
-    # Citations rehydrated from the assistant message's citation edges (AC23/§5.2);
-    # empty for user messages and assistants with no cited evidence.
     citations: list[CitationOut] = Field(default_factory=list)
     trust_trail: AssistantTrustTrailOut | None = None
     parent_message_id: UUID | None = None
@@ -150,9 +130,6 @@ class MessageOut(BaseModel):
     branch_anchor: dict[str, Any] = Field(default_factory=dict)
     status: str  # "pending" | "complete" | "error" | "cancelled"
     can_rerun: bool = False
-    # The immutable reader-quote snapshot projection; Present only on a quoted
-    # user message, Absent everywhere else. Activation is recomputed from the
-    # immutable locator and current source visibility (may be kind="none").
     reader_selection: Presence[ReaderSelectionOut] = Field(default_factory=absent)
     created_at: datetime
     updated_at: datetime
@@ -171,8 +148,6 @@ class MessageOut(BaseModel):
 
 
 class MessageDeleteOut(BaseModel):
-    """Authoritative receipt for a committed message-subtree deletion."""
-
     conversation_id: UUID = Field(alias="conversationId")
     conversation_deleted: bool = Field(alias="conversationDeleted")
     collection_revision: CollectionRevision = Field(alias="collectionRevision")
@@ -181,8 +156,6 @@ class MessageDeleteOut(BaseModel):
 
 
 class MessageRetrievalOut(BaseModel):
-    """Persisted app-search retrieval metadata for assistant tool calls."""
-
     id: UUID
     tool_call_id: UUID
     ordinal: int
@@ -234,6 +207,11 @@ class MessageRetrievalOut(BaseModel):
         return self
 
 
+# =============================================================================
+# SSE event payloads
+# =============================================================================
+
+
 class ChatRunMetaSubjectPayload(BaseModel):
     requested_resource_ref: str
     resource_ref: str
@@ -244,8 +222,6 @@ class ChatRunMetaSubjectPayload(BaseModel):
 
 
 class ChatRunMetaEventPayload(BaseModel):
-    """Strict SSE payload emitted when a durable run is created."""
-
     run_id: UUID
     conversation_id: UUID
     user_message_id: UUID
@@ -257,8 +233,6 @@ class ChatRunMetaEventPayload(BaseModel):
 
 
 class ChatRunAssistantActivityEventPayload(BaseModel):
-    """Strict SSE payload for safe assistant activity state."""
-
     assistant_message_id: UUID
     phase: Literal[
         "queued",
@@ -277,8 +251,6 @@ class ChatRunAssistantActivityEventPayload(BaseModel):
 
 
 class ChatRunAssistantTextDeltaEventPayload(BaseModel):
-    """Strict SSE payload for assistant text deltas."""
-
     assistant_message_id: UUID
     text: str = Field(min_length=1)
     provider_event_seq_start: int = Field(ge=0)
@@ -301,22 +273,9 @@ class ToolProjectionOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
-    def validate_closed_projection(self) -> ToolProjectionOut:
-        # Late binding avoids the declaration -> app-search -> schema import
-        # cycle while retaining one semantic contract owner.
-        from nexus.services.tool_runtime.declarations import (
-            BROWSER_TOOL_PROJECTION_CONTRACT,
-            CHAT_TOOL_DECLARATIONS_BY_ID,
-        )
-
-        contract = BROWSER_TOOL_PROJECTION_CONTRACT
-        if self.effect is not None and self.effect.value not in contract["effects"]:
-            raise ValueError("unknown tool projection effect")
-        if self.result_kind not in contract["result_kinds"]:
-            raise ValueError("unknown tool projection result kind")
-        if self.error_type is not None and self.error_type not in contract["error_types"]:
-            raise ValueError("unknown tool projection error type")
-
+    def validate_record_kind_shape(self) -> ToolProjectionOut:
+        # ``record_kind`` is the union tag: an attached-context row carries no
+        # tool identity, an execution row always carries one.
         if self.record_kind == "attached_context":
             if (
                 self.canonical_tool_id is not None
@@ -327,33 +286,6 @@ class ToolProjectionOut(BaseModel):
                 raise ValueError("tool projection populated a forbidden tagged field")
         elif self.canonical_tool_id is None or self.effect is None:
             raise ValueError("tool projection is missing a required tagged field")
-        elif self.record_kind == "historical_execution" and (
-            self.provider_wire_name is not None or self.error_type is not None
-        ):
-            raise ValueError("tool projection populated a forbidden tagged field")
-
-        if self.record_kind in {"current_execution", "historical_execution"}:
-            declaration = CHAT_TOOL_DECLARATIONS_BY_ID.get(self.canonical_tool_id or "")
-            if declaration is None:
-                raise ValueError("unknown canonical tool projection identity")
-            if (
-                self.record_kind == "current_execution"
-                and self.provider_wire_name is not None
-                and self.provider_wire_name != self.canonical_tool_id
-            ):
-                raise ValueError("current tool wire name differs from canonical identity")
-            expected = (
-                declaration.spec.effect,
-                declaration.result_kind,
-                declaration.activity_label,
-            )
-            if (self.effect, self.result_kind, self.activity_label) != expected:
-                raise ValueError("canonical tool projection presentation drift")
-        elif (
-            self.result_kind != "attached_context"
-            or self.activity_label != "Attached conversation context"
-        ):
-            raise ValueError("attached-context projection presentation drift")
         return self
 
 
@@ -371,20 +303,6 @@ def tool_projection_from_persisted_record(record: Any) -> ToolProjectionOut:
     from nexus.services.tool_runtime.declarations import CHAT_TOOL_DECLARATIONS_BY_ID
 
     record_kind: TOOL_RECORD_KINDS = record.record_kind
-    if record_kind in {"current_execution", "historical_execution"}:
-        declaration = CHAT_TOOL_DECLARATIONS_BY_ID.get(record.canonical_tool_id)
-        if declaration is None:
-            raise AssertionError("decoded tool row has no presentation declaration")
-        error_type = record.error_code if record_kind == "current_execution" else None
-        return ToolProjectionOut(
-            record_kind=record_kind,
-            canonical_tool_id=record.canonical_tool_id,
-            provider_wire_name=record.provider_wire_name,
-            effect=declaration.spec.effect,
-            result_kind=declaration.result_kind,
-            activity_label=declaration.activity_label,
-            error_type=error_type,
-        )
     if record_kind == "attached_context":
         return ToolProjectionOut(
             record_kind=record_kind,
@@ -395,31 +313,25 @@ def tool_projection_from_persisted_record(record: Any) -> ToolProjectionOut:
             activity_label="Attached conversation context",
             error_type=None,
         )
-    raise AssertionError("decoded tool row has an unknown record kind")
+    declaration = CHAT_TOOL_DECLARATIONS_BY_ID.get(record.canonical_tool_id)
+    if declaration is None:
+        raise AssertionError("decoded tool row has no presentation declaration")
+    return ToolProjectionOut(
+        record_kind=record_kind,
+        canonical_tool_id=record.canonical_tool_id,
+        provider_wire_name=record.provider_wire_name,
+        effect=declaration.spec.effect,
+        result_kind=declaration.result_kind,
+        activity_label=declaration.activity_label,
+        error_type=record.error_code if record_kind == "current_execution" else None,
+    )
 
 
 class ChatRunToolCallStartEventPayload(StoredToolProjection):
-    """Strict SSE payload for provider tool-call start."""
-
     tool_call_id: UUID | None = None
     assistant_message_id: UUID
     tool_call_index: int = Field(ge=0)
     provider_tool_call_id: str | None = Field(default=None, min_length=1)
-    provider_event_seq_start: int = Field(ge=0)
-    provider_event_seq_end: int = Field(ge=0)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class ChatRunToolCallDeltaEventPayload(StoredToolProjection):
-    """Strict SSE payload for render-only provider tool argument deltas."""
-
-    tool_call_id: UUID | None = None
-    assistant_message_id: UUID
-    tool_call_index: int = Field(ge=0)
-    provider_tool_call_id: str | None = Field(default=None, min_length=1)
-    input_delta: str = Field(min_length=1)
-    input_preview: str | None = Field(default=None, max_length=512)
     provider_event_seq_start: int = Field(ge=0)
     provider_event_seq_end: int = Field(ge=0)
 
@@ -427,8 +339,6 @@ class ChatRunToolCallDeltaEventPayload(StoredToolProjection):
 
 
 class ChatRunToolCallDoneEventPayload(StoredToolProjection):
-    """Strict SSE payload for a complete provider tool call."""
-
     tool_call_id: UUID | None = None
     assistant_message_id: UUID
     tool_call_index: int = Field(ge=0)
@@ -441,8 +351,6 @@ class ChatRunToolCallDoneEventPayload(StoredToolProjection):
 
 
 class ChatRunToolResultEventPayload(StoredToolProjection):
-    """Strict SSE payload for executed app/tool results."""
-
     tool_call_id: UUID | None = None
     assistant_message_id: UUID
     tool_call_index: int = Field(ge=0)
@@ -468,18 +376,12 @@ class ChatRunToolResultEventPayload(StoredToolProjection):
         )
         if self.record_kind == "current_execution" and any(value is None for value in audit):
             raise ValueError("current tool result is missing replay identity")
-        if self.record_kind == "historical_execution" and (
-            self.tool_contract_revision is None or self.binding_policy_revision is None
-        ):
-            raise ValueError("historical tool result is missing reviewed revisions")
         if self.record_kind == "attached_context" and any(value is not None for value in audit):
             raise ValueError("non-executable tool result carries replay identity")
         return self
 
 
 class ChatPublicationWarning(BaseModel):
-    """The sole warning carried by a successfully published degraded answer."""
-
     code: Literal["CitationsUnavailable"] = "CitationsUnavailable"
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -488,7 +390,6 @@ class ChatPublicationWarning(BaseModel):
 def chat_publication_warning_from_nullable(
     code: str | None,
 ) -> Absent | Present[ChatPublicationWarning]:
-    """Project the nullable run-row code into the one owned warning shape."""
     if code is None:
         return absent()
     if code != "CitationsUnavailable":
@@ -497,8 +398,6 @@ def chat_publication_warning_from_nullable(
 
 
 class ChatRunDoneEventPayload(BaseModel):
-    """Strict SSE payload emitted when a run reaches a terminal status."""
-
     status: Literal["complete", "error", "cancelled"]
     error_code: Presence[str]
     support_id: Presence[str]
@@ -512,8 +411,6 @@ class ChatRunDoneEventPayload(BaseModel):
 
 
 class ChatRunCitationIndexItem(BaseModel):
-    """One citation edge paired with the backend-built citation read model."""
-
     citation_edge_id: UUID
     citation: CitationOut
 
@@ -521,8 +418,6 @@ class ChatRunCitationIndexItem(BaseModel):
 
 
 class ChatRunCitationIndexEventPayload(BaseModel):
-    """Strict SSE payload carrying backend-built citation read models."""
-
     assistant_message_id: UUID
     citations: list[ChatRunCitationIndexItem]
 
@@ -545,53 +440,50 @@ class ChatRunContextRefAddedEventPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-def chat_run_event_payload_json(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Validate strict chat-run SSE payloads before storage/replay."""
+_EVENT_PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
+    "meta": ChatRunMetaEventPayload,
+    "assistant_activity": ChatRunAssistantActivityEventPayload,
+    "assistant_text_delta": ChatRunAssistantTextDeltaEventPayload,
+    "tool_call_start": ChatRunToolCallStartEventPayload,
+    "tool_call_done": ChatRunToolCallDoneEventPayload,
+    "tool_result": ChatRunToolResultEventPayload,
+    "citation_index": ChatRunCitationIndexEventPayload,
+    "context_ref_added": ChatRunContextRefAddedEventPayload,
+    "done": ChatRunDoneEventPayload,
+}
 
-    if event_type == "meta":
-        return ChatRunMetaEventPayload.model_validate(payload).model_dump(mode="json")
-    if event_type == "assistant_activity":
-        return ChatRunAssistantActivityEventPayload.model_validate(payload).model_dump(mode="json")
-    if event_type == "assistant_text_delta":
-        return ChatRunAssistantTextDeltaEventPayload.model_validate(payload).model_dump(mode="json")
-    if event_type == "tool_call_start":
-        return ChatRunToolCallStartEventPayload.model_validate(payload).model_dump(mode="json")
-    if event_type == "tool_call_delta":
-        return ChatRunToolCallDeltaEventPayload.model_validate(payload).model_dump(mode="json")
-    if event_type == "tool_call_done":
-        return ChatRunToolCallDoneEventPayload.model_validate(payload).model_dump(mode="json")
-    if event_type == "tool_result":
-        return ChatRunToolResultEventPayload.model_validate(payload).model_dump(mode="json")
-    if event_type == "citation_index":
-        return ChatRunCitationIndexEventPayload.model_validate(payload).model_dump(mode="json")
-    if event_type == "context_ref_added":
-        return ChatRunContextRefAddedEventPayload.model_validate(payload).model_dump(mode="json")
-    if event_type == "done":
-        return ChatRunDoneEventPayload.model_validate(payload).model_dump(mode="json")
-    raise ValueError("unknown chat-run event type")
-
-
-def chat_run_public_event_payload_json(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Validate stored data, then remove replay/audit facts from the SSE wire."""
-
-    validated = chat_run_event_payload_json(event_type, payload)
-    if event_type not in {
-        "tool_call_start",
-        "tool_call_delta",
-        "tool_call_done",
-        "tool_result",
-    }:
-        return validated
-    private_fields = {
+# Replay/audit identity persisted on tool events; never crosses the SSE wire.
+_PRIVATE_EVENT_FIELDS = frozenset(
+    {
         "binding_policy_revision",
         "canonical_input_sha256",
         "error_code",
         "tool_contract_revision",
     }
-    return {key: value for key, value in validated.items() if key not in private_fields}
+)
+_TOOL_EVENT_TYPES = frozenset({"tool_call_start", "tool_call_done", "tool_result"})
 
 
-TRUST_TRAIL_VERSION = "assistant_trust_trail.v1"
+def chat_run_event_payload_json(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate a strict chat-run SSE payload before storage (write path only)."""
+
+    model = _EVENT_PAYLOAD_MODELS.get(event_type)
+    if model is None:
+        raise ValueError("unknown chat-run event type")
+    return model.model_validate(payload).model_dump(mode="json")
+
+
+def chat_run_public_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Strip the replay/audit facts from one stored payload on the read path."""
+
+    if event_type not in _TOOL_EVENT_TYPES:
+        return payload
+    return {key: value for key, value in payload.items() if key not in _PRIVATE_EVENT_FIELDS}
+
+
+# =============================================================================
+# Trust trail read model
+# =============================================================================
 
 
 class TrustPromptAssemblyOut(BaseModel):
@@ -644,8 +536,6 @@ class TrustToolCallOut(ToolProjectionOut):
     result_refs: list[dict[str, Any]]
     selected_context_refs: list[dict[str, Any]]
     machine_authorships: list[MachineAuthorshipOut] = Field(default_factory=list)
-    # Undo lifecycle for assistant write tool calls: set once the call is
-    # reverted (amanuensis §5.6, D-3); the FE greys the row to "Undone".
     reverted_at: datetime | None = None
     retrievals: list[TrustRetrievalOut] = Field(default_factory=list)
     created_at: datetime
@@ -709,27 +599,14 @@ class AssistantTrustTrailOut(BaseModel):
 MessageOut.model_rebuild()
 
 
-# Max content length
-MAX_MESSAGE_CONTENT_LENGTH = 20000
-
-
 class PageInfo(BaseModel):
-    """Pagination information for list responses."""
+    """Manual-paging cursor envelope for the two retained conversation modes."""
 
     next_cursor: str | None = None
 
 
 # =============================================================================
-# Request Schemas
-# =============================================================================
-
-
-# Note: conversation creation has no request body.
-# POST /conversations creates an empty private conversation.
-
-
-# =============================================================================
-# Chat-run request schemas
+# Branch / fork wire models
 # =============================================================================
 
 
@@ -855,6 +732,11 @@ class RenameBranchRequest(BaseModel):
         return self
 
 
+# =============================================================================
+# Chat-run admission
+# =============================================================================
+
+
 class NewChatDestination(BaseModel):
     """Create a fresh conversation atomically with this send — no pre-create."""
 
@@ -877,9 +759,6 @@ class EmptyInsertion(BaseModel):
 
 
 class ReplyInsertion(BaseModel):
-    """Reply to the active leaf of a populated conversation, applying the branch
-    contract."""
-
     kind: Literal["Reply"]
     parent_message_id: UUID
     branch_anchor: BranchAnchorRequest = Field(default_factory=NoBranchAnchorRequest)
@@ -972,9 +851,7 @@ class ChatAdmissionReceipt(BaseModel):
 class ChatRunCreateRequest(BaseModel):
     """Request schema for creating a durable chat run.
 
-    ``destination`` carries the target and, for an existing conversation, the
-    insertion semantics; ``New`` never represents a parent or branch anchor. The
-    reader quote is a durable ``ReaderSelectionKey`` plus a compare-on-send
+    The reader quote is a durable ``ReaderSelectionKey`` plus a compare-on-send
     ``revision`` only — the server derives subject/companion/exact/locator from
     the locked Highlight and never accepts client quote text.
     """
@@ -1006,14 +883,6 @@ class ChatRunRepeatRequest(BaseModel):
 
 
 class ChatRunOut(BaseModel):
-    """Response schema for a durable chat run.
-
-    ``run_selection`` is the immutable dispatch projection plus its current
-    server-owned availability. ``failure`` is the one ``chat_failure_projection`` read —
-    ``None`` for a run that is not a card-bearing failure (still running, or a
-    defect with no stored closed code).
-    """
-
     id: UUID
     status: CHAT_RUN_STATUSES
     conversation_id: UUID
@@ -1077,8 +946,6 @@ class ChatRunStreamStateOut(BaseModel):
 
 
 class ChatRunResponse(BaseModel):
-    """Response schema for create/read chat-run endpoints."""
-
     run: ChatRunOut
     conversation: ConversationOut
     user_message: MessageOut
@@ -1087,7 +954,7 @@ class ChatRunResponse(BaseModel):
 
 
 class ChatRunEventOut(BaseModel):
-    """Persisted stream event for a chat run."""
+    """One persisted replay event, with its private audit fields stripped."""
 
     seq: int
     event_type: CHAT_RUN_EVENT_TYPES
@@ -1095,6 +962,6 @@ class ChatRunEventOut(BaseModel):
     created_at: datetime
 
     @model_validator(mode="after")
-    def validate_payload(self) -> ChatRunEventOut:
-        self.payload = chat_run_public_event_payload_json(self.event_type, self.payload)
+    def strip_private_payload_fields(self) -> ChatRunEventOut:
+        self.payload = chat_run_public_event_payload(self.event_type, self.payload)
         return self

@@ -1,16 +1,4 @@
-"""Conversation branch/fork API routes.
-
-Routes for the conversation branch tree: active-path selection and fork
-list/rename/delete. Each route is transport-only and calls exactly one
-service function.
-
-Routes:
-- GET    /api/conversations/{conversation_id}/tree
-- POST   /api/conversations/{conversation_id}/active-path
-- GET    /api/conversations/{conversation_id}/forks
-- PATCH  /api/conversations/{conversation_id}/forks/{branch_id}
-- DELETE /api/conversations/{conversation_id}/forks/{branch_id}
-"""
+"""Conversation branch routes: the tree, the active path, and fork editing."""
 
 from typing import Annotated
 from uuid import UUID
@@ -41,13 +29,14 @@ async def get_conversation_tree(
 ) -> dict:
     catalog_snapshot = await catalog.read_chat()
     get_repeatable_read_db(db)
-    result = conversation_branches_service.get_conversation_tree(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_id=conversation_id,
-        catalog_snapshot=catalog_snapshot,
+    return ok(
+        conversation_branches_service.get_conversation_tree(
+            db=db,
+            viewer_id=viewer.user_id,
+            conversation_id=conversation_id,
+            catalog_snapshot=catalog_snapshot,
+        )
     )
-    return ok(result)
 
 
 @router.post(
@@ -62,14 +51,15 @@ async def set_conversation_active_path(
     catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
 ) -> dict:
     catalog_snapshot = await catalog.read_chat()
-    result = conversation_branches_service.set_active_path(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_id=conversation_id,
-        active_leaf_message_id=body.active_leaf_message_id,
-        catalog_snapshot=catalog_snapshot,
+    return ok(
+        conversation_branches_service.set_active_path(
+            db=db,
+            viewer_id=viewer.user_id,
+            conversation_id=conversation_id,
+            active_leaf_message_id=body.active_leaf_message_id,
+            catalog_snapshot=catalog_snapshot,
+        )
     )
-    return ok(result)
 
 
 @router.get("/conversations/{conversation_id}/forks")
@@ -79,13 +69,14 @@ def list_conversation_forks(
     db: Annotated[Session, Depends(get_repeatable_read_db)],
     search: str | None = Query(default=None, description="Fork search query"),
 ) -> dict:
-    result = conversation_branches_service.list_forks(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_id=conversation_id,
-        search=search,
+    return ok(
+        conversation_branches_service.list_forks(
+            db=db,
+            viewer_id=viewer.user_id,
+            conversation_id=conversation_id,
+            search=search,
+        )
     )
-    return ok(result)
 
 
 @router.patch("/conversations/{conversation_id}/forks/{branch_id}")
@@ -96,14 +87,15 @@ def rename_conversation_fork(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    result = conversation_branches_service.rename_branch(
-        db=db,
-        viewer_id=viewer.user_id,
-        conversation_id=conversation_id,
-        branch_id=branch_id,
-        title=body.title,
+    return ok(
+        conversation_branches_service.rename_branch(
+            db=db,
+            viewer_id=viewer.user_id,
+            conversation_id=conversation_id,
+            branch_id=branch_id,
+            title=body.title,
+        )
     )
-    return ok(result)
 
 
 @router.delete("/conversations/{conversation_id}/forks/{branch_id}", status_code=204)

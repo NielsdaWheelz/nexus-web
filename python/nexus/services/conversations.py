@@ -1,20 +1,9 @@
-"""Conversation and Message service layer.
+"""Conversation and message service layer.
 
-Read visibility: shared read allowed via canonical visibility predicate
-(owner, or library-shared with active dual membership).
-Write boundary: owner-only for all mutation operations.
-
-Error masking: E_CONVERSATION_NOT_FOUND / E_MESSAGE_NOT_FOUND consistently (prevent probing).
-Pagination: cursor-based. The primary index pages one of its advertised
-`ConversationIndexView` orders; the retained manual modes stay on
-updated_at DESC, id DESC.
-
-Conversation access helpers:
-- get_conversation_for_visible_read_or_404: read path (visibility predicate)
-- get_conversation_for_owner_write_or_404: write path (owner-only)
-
-Service functions correspond 1:1 with route handlers.
-Routes are transport-only and call exactly one service function.
+Reads go through the canonical visibility predicate (owner, or library-shared
+with active dual membership); every write is owner-only. Missing and foreign
+identities are masked as E_CONVERSATION_NOT_FOUND / E_MESSAGE_NOT_FOUND so the
+API cannot be probed.
 """
 
 from collections.abc import Sequence
@@ -22,23 +11,14 @@ from dataclasses import dataclass
 from typing import assert_never, cast
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import RowMapping, delete, func, select, text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_conversation, visible_conversation_ids_cte_sql
-from nexus.db.models import (
-    ChatRun,
-    Conversation,
-    Message,
-)
+from nexus.db.models import ChatRun, Conversation, Message
 from nexus.db.retries import retry_read_committed
-from nexus.errors import (
-    ApiErrorCode,
-    InvalidRequestError,
-    NotFoundError,
-)
+from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.jobs.queue import revoke_jobs_by_dedupe_keys
-from nexus.logging import get_logger
 from nexus.schemas.chat_reader_selection import ReaderSelectionOut
 from nexus.schemas.citation import CitationOut
 from nexus.schemas.collection_page import (
@@ -83,7 +63,6 @@ from nexus.services.collection_revisions import (
     require_collection_revision,
 )
 from nexus.services.keyset_cursor import (
-    KeysetValue,
     KeysetValueKind,
     decode_keyset_cursor,
     encode_keyset_cursor,
@@ -97,69 +76,44 @@ from nexus.services.resource_graph.refs import (
     parse_resource_ref,
 )
 
-logger = get_logger(__name__)
-
-
-# =============================================================================
-# Constants
-# =============================================================================
-
-# Pagination limits
 DEFAULT_LIMIT = 50
-MIN_LIMIT = 1
 MAX_LIMIT = 100
 DEFAULT_CONVERSATION_TITLE = "Chat"
 MAX_CONVERSATION_TITLE_LENGTH = 120
-# Defensive upper bound on the destination-picker title-search query.
 MAX_CONVERSATION_SEARCH_QUERY = 200
 
 
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-
-def clamp_limit(limit: int) -> int:
-    """Clamp limit to valid range [MIN_LIMIT, MAX_LIMIT]."""
-    return min(max(limit, MIN_LIMIT), MAX_LIMIT)
-
-
-def _escape_title_search(value: str) -> str:
-    """Escape LIKE metacharacters so ``q`` matches as a literal substring under
-    Postgres' default backslash escape. Backslash is escaped first so the escapes
-    added for ``%``/``_`` are not themselves re-escaped."""
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 def derive_conversation_title(content: str | None) -> str:
-    """Derive a conversation title from user content.
+    """Derive a conversation title from user content; blank falls back."""
 
-    Empty or whitespace-only input falls back to the default title.
-    """
-    if content is None:
-        return DEFAULT_CONVERSATION_TITLE
-    normalized = " ".join(content.split()).strip()
+    normalized = " ".join((content or "").split()).strip()
     if not normalized:
         return DEFAULT_CONVERSATION_TITLE
     return normalized[:MAX_CONVERSATION_TITLE_LENGTH].rstrip()
 
 
+def message_document(role: str, content: str) -> dict[str, object]:
+    """The rendered-text document; the only text the reader renders."""
+
+    return {
+        "type": "message_document",
+        "blocks": []
+        if not content.strip()
+        else [
+            {
+                "type": "text",
+                "format": "markdown" if role == "assistant" else "plain",
+                "text": content,
+            }
+        ],
+    }
+
+
 def get_conversation_for_visible_read_or_404(
     db: Session, viewer_id: UUID, conversation_id: UUID
 ) -> Conversation:
-    """Load conversation and verify canonical read visibility.
-
-    Visible iff viewer is owner, or conversation is library-shared with both
-    viewer and owner as members of a share-target library.
-
-    Raises:
-        NotFoundError(E_CONVERSATION_NOT_FOUND): If conversation doesn't exist
-            or viewer cannot read it.
-    """
     conversation = db.get(Conversation, conversation_id)
-    if conversation is None:
-        raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
-    if not can_read_conversation(db, viewer_id, conversation_id):
+    if conversation is None or not can_read_conversation(db, viewer_id, conversation_id):
         raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
     return conversation
 
@@ -167,12 +121,6 @@ def get_conversation_for_visible_read_or_404(
 def get_conversation_for_owner_write_or_404(
     db: Session, viewer_id: UUID, conversation_id: UUID
 ) -> Conversation:
-    """Load conversation and verify owner-only write access.
-
-    Raises:
-        NotFoundError(E_CONVERSATION_NOT_FOUND): If conversation doesn't exist
-            OR viewer is not the owner.
-    """
     conversation = db.get(Conversation, conversation_id)
     if conversation is None or conversation.owner_user_id != viewer_id:
         raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
@@ -180,11 +128,14 @@ def get_conversation_for_owner_write_or_404(
 
 
 def get_message_count(db: Session, conversation_id: UUID) -> int:
-    """Get the count of messages in a conversation."""
-    result = db.scalar(
-        select(func.count()).select_from(Message).where(Message.conversation_id == conversation_id)
+    return (
+        db.scalar(
+            select(func.count())
+            .select_from(Message)
+            .where(Message.conversation_id == conversation_id)
+        )
+        or 0
     )
-    return result or 0
 
 
 def conversation_to_out(
@@ -193,7 +144,6 @@ def conversation_to_out(
     message_count: int,
     viewer_id: UUID | None = None,
 ) -> ConversationOut:
-    """Convert Conversation ORM model to ConversationOut schema."""
     return ConversationOut(
         id=conversation.id,
         title=conversation.title,
@@ -214,17 +164,13 @@ def message_to_out(
     citations: list[CitationOut] | None = None,
     trust_trail: AssistantTrustTrailOut | None = None,
 ) -> MessageOut:
-    """Convert Message ORM model to MessageOut schema.
+    """The one run/history/tree ``MessageOut`` projector.
 
-    The one run/history/tree ``MessageOut`` projector. ``citations`` (the
-    server-built ``[N]`` read-model for assistant messages) is computed by the
-    caller and threaded through here. ``reader_selection`` projects the immutable
-    per-message reader-quote snapshot (Present only on a quoted user message,
-    Absent otherwise); activation is recomputed from ``viewer_id``'s current
-    source visibility.
+    ``reader_selection`` projects the immutable per-message quote snapshot;
+    its activation is recomputed from the viewer's current source visibility.
     """
-    branch_anchor = {"kind": message.branch_anchor_kind, **(message.branch_anchor or {})}
-    reader_selection: Presence[ReaderSelectionOut]
+
+    reader_selection: Presence[ReaderSelectionOut] = absent()
     if message.reader_selection_snapshot is not None:
         reader_selection = present(
             reader_selection_out(
@@ -233,8 +179,6 @@ def message_to_out(
                 snapshot=decode_reader_selection_snapshot(message.reader_selection_snapshot),
             )
         )
-    else:
-        reader_selection = absent()
     return MessageOut(
         id=message.id,
         seq=message.seq,
@@ -245,7 +189,7 @@ def message_to_out(
         parent_message_id=message.parent_message_id,
         branch_root_message_id=message.branch_root_message_id,
         branch_anchor_kind=cast(BRANCH_ANCHOR_KINDS, message.branch_anchor_kind),
-        branch_anchor=branch_anchor,
+        branch_anchor={"kind": message.branch_anchor_kind, **(message.branch_anchor or {})},
         status=message.status,
         can_rerun=can_rerun,
         reader_selection=reader_selection,
@@ -261,38 +205,26 @@ def rerunnable_assistant_message_ids(
     assistant_message_ids: Sequence[UUID],
 ) -> set[UUID]:
     """Messages whose unique owning run is failed/cancelled and rerunnable."""
+
     if not assistant_message_ids:
         return set()
-
-    runs = (
-        db.execute(
-            select(ChatRun).where(
-                ChatRun.owner_user_id == viewer_id,
-                ChatRun.assistant_message_id.in_(assistant_message_ids),
-                ChatRun.status.in_(("error", "cancelled")),
-            )
+    runs = db.scalars(
+        select(ChatRun).where(
+            ChatRun.owner_user_id == viewer_id,
+            ChatRun.assistant_message_id.in_(assistant_message_ids),
+            ChatRun.status.in_(("error", "cancelled")),
         )
-        .scalars()
-        .all()
-    )
+    ).all()
     rerunnable: set[UUID] = set()
     for run in runs:
-        message_id = run.assistant_message_id
         error_code = "cancelled" if run.status == "cancelled" else run.error_code
-        if error_code is None:
-            continue
-        if rerun_eligibility(
+        if error_code is not None and rerun_eligibility(
             error_code=error_code,
             run_status=run.status,
             selection_selectable=True,
         ):
-            rerunnable.add(message_id)
+            rerunnable.add(run.assistant_message_id)
     return rerunnable
-
-
-# =============================================================================
-# Service Functions
-# =============================================================================
 
 
 def create_conversation(
@@ -300,75 +232,54 @@ def create_conversation(
     viewer_id: UUID,
     initial_context_refs: Sequence[str] | None = None,
 ) -> ConversationOut:
-    """Create a new empty private conversation.
+    """Create an empty private conversation with its initial context edges.
 
-    Initial context refs are validated and inserted in the same transaction as the
-    conversation row. Any validation or visibility failure leaves no partial
-    conversation behind.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the user creating the conversation.
-        initial_context_refs: Optional resource URIs to attach immediately.
-
-    Returns:
-        The created conversation with message_count=0.
+    Any validation or visibility failure leaves no partial conversation behind.
     """
+
     conversation = Conversation(
         owner_user_id=viewer_id,
         title=DEFAULT_CONVERSATION_TITLE,
         next_seq=1,
     )
-
     db.add(conversation)
     db.flush()
-
     result = conversation_to_out(db, conversation, message_count=0, viewer_id=viewer_id)
 
-    if initial_context_refs:
-        for index, resource_uri in enumerate(initial_context_refs):
-            ref = parse_resource_ref(resource_uri)
-            if isinstance(ref, ResourceRefParseFailure):
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    f"Invalid resource_uri: {resource_uri!r}. Expected '<scheme>:<uuid>'.",
-                )
-            context_service.add_context_ref_without_commit(
-                db,
-                viewer_id=viewer_id,
-                conversation_id=conversation.id,
-                target=ref,
-                origin="user",
-                source_order_key=f"{index + 1:010d}",
+    for index, resource_uri in enumerate(initial_context_refs or ()):
+        ref = parse_resource_ref(resource_uri)
+        if isinstance(ref, ResourceRefParseFailure):
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_REQUEST,
+                f"Invalid resource_uri: {resource_uri!r}. Expected '<scheme>:<uuid>'.",
             )
+        context_service.add_context_ref_without_commit(
+            db,
+            viewer_id=viewer_id,
+            conversation_id=conversation.id,
+            target=ref,
+            origin="user",
+            source_order_key=f"{index + 1:010d}",
+        )
 
-    bump_collection_revision(
-        db,
-        viewer_id=viewer_id,
-        family=CollectionFamily.ConversationIndex,
-    )
+    bump_collection_revision(db, viewer_id=viewer_id, family=CollectionFamily.ConversationIndex)
     db.commit()
     return result
 
 
 def get_conversation(db: Session, viewer_id: UUID, conversation_id: UUID) -> ConversationOut:
-    """Get a conversation by ID.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        conversation_id: The ID of the conversation.
-
-    Returns:
-        The conversation with message_count.
-
-    Raises:
-        NotFoundError(E_CONVERSATION_NOT_FOUND): If conversation doesn't exist
-            or viewer is not the owner.
-    """
     conversation = get_conversation_for_visible_read_or_404(db, viewer_id, conversation_id)
-    message_count = get_message_count(db, conversation_id)
-    return conversation_to_out(db, conversation, message_count, viewer_id=viewer_id)
+    return conversation_to_out(
+        db,
+        conversation,
+        get_message_count(db, conversation_id),
+        viewer_id=viewer_id,
+    )
+
+
+# =============================================================================
+# The conversation index (one paging machinery)
+# =============================================================================
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,6 +303,8 @@ _INDEX_QUERY_KEYS = frozenset({"sort", "direction"})
 # Versioned family: a cursor minted under the single unordered index carried no
 # plan and no revision, so none is decodable against a chosen order.
 _INDEX_CURSOR_FAMILY = f"{CollectionFamily.ConversationIndex.value}:v2"
+# The retained destination picker pages the same rows without a revision.
+_TITLE_SEARCH_CURSOR_FAMILY = "ConversationDestination"
 # The presented chat title, matching `conversations/presentation.ts`. Ordering on
 # the raw column would sort by a string the reader never sees.
 _PRESENTED_TITLE_SQL = "coalesce(nullif(btrim(c.title), ''), 'Untitled chat')"
@@ -400,11 +313,13 @@ _PRESENTED_TITLE_SQL = "coalesce(nullif(btrim(c.title), ''), 'Untitled chat')"
 def parse_conversation_index_query(
     items: Sequence[tuple[str, str]],
 ) -> tuple[ConversationIndexView, ParsedCollectionQuery]:
-    """Strict chat-index view parse. ``items`` is the request's ``multi_items()``
-    so duplicate keys are visible. Both keys absent is the canonical
-    newest-first view; anything else must name one advertised non-default view
-    exactly. ``updated+desc`` is rejected rather than normalized so the canonical
-    view keeps exactly one URL."""
+    """Strict chat-index view parse over the request's ``multi_items()``.
+
+    Both keys absent is the canonical newest-first view; anything else must name
+    one advertised non-default view exactly. ``updated+desc`` is rejected rather
+    than normalized so the canonical view keeps exactly one URL.
+    """
+
     query = parse_collection_query(items, domain_keys=_INDEX_QUERY_KEYS)
     sort = query.parameters.get("sort")
     direction = query.parameters.get("direction")
@@ -412,16 +327,17 @@ def parse_conversation_index_query(
         return ChatsUpdatedNewest(), query
     if sort == "updated" and direction == "asc":
         return ChatsUpdatedOldest(), query
-    if sort == "title" and (direction == "asc" or direction == "desc"):
-        return ChatsTitle(direction), query
+    if sort == "title" and direction in ("asc", "desc"):
+        return ChatsTitle(cast(Direction, direction)), query
     raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported chat index view")
 
 
 def _index_plan(view: ConversationIndexView) -> list[SortKey]:
-    """The total, stable sort-key plan that drives ORDER BY, the keyset, and the
-    cursor `after`. The conversation id is unique, so every plan is total; the
+    """The total, stable sort-key plan behind ORDER BY, the keyset, and the
+    cursor ``after``. The conversation id is unique, so every plan is total; the
     title orders keep ``updated_at DESC, id DESC`` in both directions so equally
     titled chats always read newest-first."""
+
     match view:
         case ChatsUpdatedNewest():
             return [
@@ -444,6 +360,63 @@ def _index_plan(view: ConversationIndexView) -> list[SortKey]:
             assert_never(view)
 
 
+def _conversation_rows(
+    db: Session,
+    *,
+    plan: Sequence[SortKey],
+    params: dict[str, object],
+    keyset_sql: str,
+    title_search: str,
+) -> Sequence[RowMapping]:
+    """One page of the viewer's conversations in the plan's order.
+
+    ``facts`` projects the derived sort columns once so ORDER BY, the keyset and
+    the cursor read identical expressions.
+    """
+
+    title_sql = ""
+    if title_search:
+        title_sql = "AND strpos(lower(c.title), lower(:title_search)) > 0"
+        params["title_search"] = title_search
+    return (
+        db.execute(
+            text(
+                f"""
+                WITH chats AS (
+                    SELECT
+                        c.id,
+                        c.title,
+                        c.owner_user_id,
+                        c.created_at,
+                        c.updated_at,
+                        {_PRESENTED_TITLE_SQL} AS presented_title,
+                        (
+                            SELECT COUNT(*)
+                            FROM messages m
+                            WHERE m.conversation_id = c.id
+                        ) AS message_count
+                    FROM conversations c
+                    WHERE c.owner_user_id = :viewer_id
+                      {title_sql}
+                ),
+                facts AS (
+                    SELECT chats.*, lower(chats.presented_title) AS title_key
+                    FROM chats
+                )
+                SELECT * FROM facts
+                WHERE 1 = 1
+                  {keyset_sql}
+                ORDER BY {order_by_sql(plan, alias="facts")}
+                LIMIT :limit_plus_one
+                """
+            ),
+            params,
+        )
+        .mappings()
+        .all()
+    )
+
+
 def list_conversation_index(
     db: Session,
     *,
@@ -453,11 +426,11 @@ def list_conversation_index(
     collection_revision: CollectionRevision | None,
     view: ConversationIndexView,
 ) -> CollectionPage[ConversationListItemOut]:
-    """One revision-consistent page of the finite primary conversation index, in
-    the requested total order. The ``facts`` wrapper projects the derived sort
-    columns once so ORDER BY, the keyset, and the cursor read identical
-    expressions; the returned cursor is bound to this exact viewer, plan, and
-    revision."""
+    """One revision-consistent page of the finite primary conversation index.
+
+    The returned cursor is bound to this exact viewer, plan, and revision.
+    """
+
     current_revision = (
         read_collection_revision(
             db,
@@ -479,10 +452,7 @@ def list_conversation_index(
         "revision": current_revision,
         "viewerId": str(viewer_id),
     }
-    params: dict[str, object] = {
-        "viewer_id": viewer_id,
-        "limit_plus_one": limit + 1,
-    }
+    params: dict[str, object] = {"viewer_id": viewer_id, "limit_plus_one": limit + 1}
     keyset_sql = ""
     if cursor is not None:
         keyset_sql = keyset_clause(plan, alias="facts")
@@ -497,49 +467,13 @@ def list_conversation_index(
                 ),
             )
         )
-
-    rows = (
-        db.execute(
-            text(
-                f"""
-                WITH chats AS (
-                    SELECT
-                        c.id,
-                        c.title,
-                        c.updated_at,
-                        {_PRESENTED_TITLE_SQL} AS presented_title,
-                        (
-                            SELECT COUNT(*)
-                            FROM messages m
-                            WHERE m.conversation_id = c.id
-                        ) AS message_count
-                    FROM conversations c
-                    WHERE c.owner_user_id = :viewer_id
-                ),
-                facts AS (
-                    SELECT chats.*, lower(chats.presented_title) AS title_key
-                    FROM chats
-                )
-                SELECT
-                    facts.id,
-                    facts.title,
-                    facts.updated_at,
-                    facts.message_count,
-                    facts.presented_title,
-                    facts.title_key
-                FROM facts
-                WHERE 1 = 1
-                  {keyset_sql}
-                ORDER BY {order_by_sql(plan, alias="facts")}
-                LIMIT :limit_plus_one
-                """
-            ),
-            params,
-        )
-        .mappings()
-        .all()
+    rows = _conversation_rows(
+        db,
+        plan=plan,
+        params=params,
+        keyset_sql=keyset_sql,
+        title_search="",
     )
-
     page_rows = rows[:limit]
     next_cursor: CollectionCursor | None = None
     if len(rows) > limit and page_rows:
@@ -548,7 +482,6 @@ def list_conversation_index(
             query=cursor_query,
             after=after_values(plan, page_rows[-1]),
         )
-
     return CollectionPage[ConversationListItemOut](
         items=[
             ConversationListItemOut(
@@ -564,220 +497,126 @@ def list_conversation_index(
     )
 
 
-def list_retained_conversations(
+def list_conversations_matching_title(
     db: Session,
-    viewer_id: UUID,
-    limit: int = DEFAULT_LIMIT,
-    cursor: str | None = None,
-    has_context_ref: str | None = None,
-    q: str | None = None,
-) -> tuple[list[ConversationOut], PageInfo]:
-    """List conversations for one retained manual-paging route mode.
-
-    When ``q`` is supplied (the destination-picker title search), the query
-    composes only with ``cursor``/``limit``; a ``has_context_ref`` filter is
-    rejected. ``q`` is trimmed and length-bounded; a blank query applies no
-    title filter. Ordering stays ``(updated_at DESC, id DESC)`` so a cursor
-    stays stable while ``q`` is fixed (changing ``q`` clears the cursor
-    caller-side).
-
-    When ``has_context_ref`` is supplied, returns conversations with any edge to
-    that resource URI (single-user: viewer-owned only). Unmarked primary index
-    reads are owned exclusively by ``list_conversation_index``.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        limit: Maximum number of results (clamped to 1-100).
-        cursor: Opaque pagination cursor.
-        has_context_ref: Resource URI to filter conversations by context edge.
-        q: Owner-scoped title search (destination picker); composes only with
-            cursor/limit.
-
-    Returns:
-        Tuple of (conversations, page_info).
-
-    Raises:
-        InvalidRequestError(E_INVALID_REQUEST): If the has_context_ref URI is
-            malformed, or ``q`` is combined with a context filter or exceeds its
-            length bound.
-        InvalidRequestError(E_INVALID_CURSOR): If cursor is malformed.
-    """
-    if q is not None:
-        if has_context_ref is not None:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "q composes only with cursor and limit",
-            )
-        normalized_q = q.strip()
-        if len(normalized_q) > MAX_CONVERSATION_SEARCH_QUERY:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                f"q must be at most {MAX_CONVERSATION_SEARCH_QUERY} characters",
-            )
-        return _list_conversations_mine(
-            db,
-            viewer_id,
-            clamp_limit(limit),
-            cursor,
-            normalized_q=normalized_q,
-        )
-
-    if has_context_ref is not None:
-        ref = parse_resource_ref(has_context_ref)
-        if isinstance(ref, ResourceRefParseFailure):
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                f"Invalid has_context_ref: {has_context_ref!r}. Expected '<scheme>:<uuid>'.",
-            )
-        page = context_service.list_conversations_with_any_edge_to_ref(
-            db, viewer_id=viewer_id, target=ref, limit=limit, cursor=cursor
-        )
-        return page.conversations, page.page
-
-    raise ValueError("Retained conversation listing requires q or has_context_ref")
-
-
-def _list_conversations_mine(
-    db: Session,
+    *,
     viewer_id: UUID,
     limit: int,
     cursor: str | None,
-    normalized_q: str,
+    q: str,
 ) -> tuple[list[ConversationOut], PageInfo]:
-    """List only conversations owned by viewer.
+    """The retained destination picker: owner-scoped literal title search.
 
-    When ``title_search`` is set, applies a case-insensitive literal-substring
-    title match alongside the same cursor/order so pagination stays stable.
+    Ordering stays ``(updated_at DESC, id DESC)`` so a cursor stays stable while
+    ``q`` is fixed; changing ``q`` invalidates the cursor's query digest.
     """
-    params: dict[str, object] = {"viewer_id": viewer_id, "limit": limit + 1}
-    cursor_clause = ""
-    cursor_query: dict[str, object] = {
-        "viewerId": str(viewer_id),
-        "q": normalized_q,
-    }
+
+    normalized_q = q.strip()
+    if len(normalized_q) > MAX_CONVERSATION_SEARCH_QUERY:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"q must be at most {MAX_CONVERSATION_SEARCH_QUERY} characters",
+        )
+    plan = _index_plan(ChatsUpdatedNewest())
+    cursor_query: dict[str, object] = {"viewerId": str(viewer_id), "q": normalized_q}
+    params: dict[str, object] = {"viewer_id": viewer_id, "limit_plus_one": limit + 1}
+    keyset_sql = ""
     if cursor is not None:
-        updated_at, conversation_id = decode_keyset_cursor(
-            cursor,
-            family="ConversationDestination",
-            query=cursor_query,
-            expected_kinds=(
-                KeysetValueKind.DateTime,
-                KeysetValueKind.Uuid,
-            ),
-        )
+        keyset_sql = keyset_clause(plan, alias="facts")
         params.update(
-            cursor_updated_at=updated_at,
-            cursor_id=conversation_id,
+            keyset_params(
+                plan,
+                decode_keyset_cursor(
+                    cursor,
+                    family=_TITLE_SEARCH_CURSOR_FAMILY,
+                    query=cursor_query,
+                    expected_kinds=expected_kinds(plan),
+                ),
+            )
         )
-        cursor_clause = """
-          AND (
-            c.updated_at < :cursor_updated_at
-            OR (c.updated_at = :cursor_updated_at AND c.id < :cursor_id)
-          )
-        """
-
-    title_clause = ""
-    if normalized_q:
-        title_clause = "AND c.title ILIKE :title_search"
-        params["title_search"] = f"%{_escape_title_search(normalized_q)}%"
-
-    result = db.execute(
-        text(f"""
-            SELECT c.id, c.owner_user_id, c.title, c.created_at, c.updated_at,
-                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
-            FROM conversations c
-            WHERE c.owner_user_id = :viewer_id
-              {title_clause}
-              {cursor_clause}
-            ORDER BY c.updated_at DESC, c.id DESC
-            LIMIT :limit
-        """),
-        params,
+    rows = _conversation_rows(
+        db,
+        plan=plan,
+        params=params,
+        keyset_sql=keyset_sql,
+        title_search=normalized_q,
     )
-
-    return _build_conversation_page(
-        result.fetchall(),
-        limit,
-        viewer_id,
-        cursor_query=cursor_query,
-    )
-
-
-def _build_conversation_page(
-    rows: Sequence,
-    limit: int,
-    viewer_id: UUID,
-    *,
-    cursor_query: dict[str, object],
-) -> tuple[list[ConversationOut], PageInfo]:
-    """Build paginated response from raw rows.
-
-    Row columns (in order): id, owner_user_id, title, created_at, updated_at,
-    message_count.
-    """
-    has_more = len(rows) > limit
-    if has_more:
-        rows = rows[:limit]
-
-    conversations = [
-        ConversationOut(
-            id=row[0],
-            owner_user_id=row[1],
-            title=row[2],
-            is_owner=(row[1] == viewer_id),
-            created_at=row[3],
-            updated_at=row[4],
-            message_count=row[5],
-        )
-        for row in rows
-    ]
-
+    page_rows = rows[:limit]
     next_cursor = None
-    if has_more and conversations:
-        last = conversations[-1]
+    if len(rows) > limit and page_rows:
         next_cursor = encode_keyset_cursor(
-            family="ConversationDestination",
+            family=_TITLE_SEARCH_CURSOR_FAMILY,
             query=cursor_query,
-            after=(
-                KeysetValue(KeysetValueKind.DateTime, last.updated_at),
-                KeysetValue(KeysetValueKind.Uuid, last.id),
-            ),
+            after=after_values(plan, page_rows[-1]),
         )
+    return [
+        ConversationOut(
+            id=row["id"],
+            title=row["title"],
+            owner_user_id=row["owner_user_id"],
+            is_owner=True,
+            message_count=row["message_count"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+        for row in page_rows
+    ], PageInfo(next_cursor=next_cursor)
 
-    return conversations, PageInfo(next_cursor=next_cursor)
+
+def list_conversations_with_context_ref(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    has_context_ref: str,
+    limit: int,
+    cursor: str | None,
+) -> tuple[list[ConversationOut], PageInfo]:
+    """The retained resource-graph mode: conversations with an edge to a ref."""
+
+    ref = parse_resource_ref(has_context_ref)
+    if isinstance(ref, ResourceRefParseFailure):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"Invalid has_context_ref: {has_context_ref!r}. Expected '<scheme>:<uuid>'.",
+        )
+    page = context_service.list_conversations_with_any_edge_to_ref(
+        db, viewer_id=viewer_id, target=ref, limit=limit, cursor=cursor
+    )
+    return page.conversations, page.page
+
+
+# =============================================================================
+# Batched viewer-scoped facts
+# =============================================================================
 
 
 def owned_conversation_ids(
     db: Session, *, viewer_id: UUID, conversation_ids: list[UUID]
 ) -> set[UUID]:
-    """The subset of the supplied conversation ids the viewer owns, in one set query.
+    """The subset of the supplied ids the viewer owns — the delete authority."""
 
-    Ownership is the delete authority :func:`delete_conversation` enforces (write is
-    owner-only). The action-snapshot aggregator uses this set-based read to gate the
-    ``DeleteConversation`` capability without a per-ref ownership check."""
     ordered = list(dict.fromkeys(conversation_ids))
     if not ordered:
         return set()
-    rows = db.execute(
-        select(Conversation.id).where(
-            Conversation.owner_user_id == viewer_id,
-            Conversation.id.in_(ordered),
+    return set(
+        db.scalars(
+            select(Conversation.id).where(
+                Conversation.owner_user_id == viewer_id,
+                Conversation.id.in_(ordered),
+            )
         )
-    ).all()
-    return {row[0] for row in rows}
+    )
 
 
 def visible_conversation_ids(
     db: Session, *, viewer_id: UUID, conversation_ids: list[UUID]
 ) -> set[UUID]:
-    """The subset of the supplied conversation ids the viewer can read, in one set query.
+    """The subset of the supplied ids the viewer can read, in one set query.
 
-    The set-based twin of :func:`nexus.auth.permissions.can_read_conversation`: it
-    reuses the shared :func:`visible_conversation_ids_cte_sql` visibility rule
-    (owner OR library-shared with dual membership), so the batched read
-    and the per-ref predicate cannot drift. The action-snapshot aggregator uses this
-    instead of looping ``can_read_conversation`` per ref (AC9)."""
+    The set-based twin of ``can_read_conversation``: it reuses the shared
+    visibility rule, so the batched read and the per-ref predicate cannot drift.
+    """
+
     ordered = list(dict.fromkeys(conversation_ids))
     if not ordered:
         return set()
@@ -809,6 +648,7 @@ def message_action_facts(
     db: Session, *, viewer_id: UUID, message_ids: list[UUID]
 ) -> dict[UUID, MessageActionFacts]:
     """Batch viewer-scoped Message action facts with bounded query count."""
+
     ordered = list(dict.fromkeys(message_ids))
     if not ordered:
         return {}
@@ -830,19 +670,19 @@ def message_action_facts(
         .all()
     )
     assistant_ids = [UUID(str(row["id"])) for row in rows if str(row["role"]) == "assistant"]
-    runs = (
-        list(
+    run_by_message = {
+        run.assistant_message_id: run
+        for run in (
             db.scalars(
                 select(ChatRun).where(
                     ChatRun.assistant_message_id.in_(assistant_ids),
                     ChatRun.status.in_(("complete", "error", "cancelled")),
                 )
             )
+            if assistant_ids
+            else []
         )
-        if assistant_ids
-        else []
-    )
-    run_by_message = {run.assistant_message_id: run for run in runs}
+    }
     citation_counts = citation_counts_for_sources(
         db,
         source_scheme="message",
@@ -853,26 +693,15 @@ def message_action_facts(
         message_id = UUID(str(row["id"]))
         is_assistant = str(row["role"]) == "assistant"
         is_complete = str(row["status"]) == "complete"
-        owning_run = run_by_message.get(message_id)
-        terminal_run = (
-            owning_run
-            if owning_run is not None and owning_run.status in ("error", "cancelled")
-            else None
-        )
+        run = run_by_message.get(message_id)
         rerun_applicable = False
-        if terminal_run is not None:
-            error_code = (
-                "cancelled" if terminal_run.status == "cancelled" else terminal_run.error_code
+        if run is not None and run.status in ("error", "cancelled"):
+            error_code = "cancelled" if run.status == "cancelled" else run.error_code
+            rerun_applicable = error_code is not None and rerun_eligibility(
+                error_code=error_code,
+                run_status=run.status,
+                selection_selectable=True,
             )
-            if error_code is not None:
-                rerun_applicable = rerun_eligibility(
-                    error_code=error_code,
-                    run_status=terminal_run.status,
-                    selection_selectable=True,
-                )
-        complete_run = (
-            owning_run if owning_run is not None and owning_run.status == "complete" else None
-        )
         facts[message_id] = MessageActionFacts(
             is_owner=UUID(str(row["owner_user_id"])) == viewer_id,
             fork_applicable=is_assistant and is_complete,
@@ -880,9 +709,14 @@ def message_action_facts(
                 is_assistant and is_complete and citation_counts.get(message_id, 0) >= 2
             ),
             rerun_applicable=rerun_applicable,
-            regenerate_applicable=complete_run is not None,
+            regenerate_applicable=run is not None and run.status == "complete",
         )
     return facts
+
+
+# =============================================================================
+# Deletion (no FK cascade: every owned table is named here)
+# =============================================================================
 
 
 def delete_conversation(
@@ -890,34 +724,17 @@ def delete_conversation(
     viewer_id: UUID,
     conversation_id: UUID,
 ) -> CollectionRevisionOut:
-    """Delete a conversation and its owned rows.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        conversation_id: The ID of the conversation to delete.
-
-    Raises:
-        NotFoundError(E_CONVERSATION_NOT_FOUND): If conversation doesn't exist
-            or viewer is not the owner.
-    """
-
     def attempt() -> CollectionRevisionOut:
-        # Verify ownership (write = owner-only) and hold the parent row lock while
-        # deleting child rows. Branch path writes insert FK-backed rows concurrently
-        # during active chat panes; the lock prevents a new child from appearing
-        # between explicit child cleanup and the parent delete.
+        # Hold the parent row lock while deleting child rows: branch-path writes
+        # insert FK-backed rows concurrently during active chat panes, and the
+        # lock prevents a new child appearing between cleanup and the delete.
         conversation = db.scalar(
             select(Conversation).where(Conversation.id == conversation_id).with_for_update()
         )
         if conversation is None or conversation.owner_user_id != viewer_id:
             raise NotFoundError(ApiErrorCode.E_CONVERSATION_NOT_FOUND, "Conversation not found")
-
         delete_conversation_rows_without_commit(db, conversation_id)
-        bump_all_collection_revisions(
-            db,
-            family=CollectionFamily.ConversationIndex,
-        )
+        bump_all_collection_revisions(db, family=CollectionFamily.ConversationIndex)
         revision = read_collection_revision(
             db,
             viewer_id=viewer_id,
@@ -930,24 +747,12 @@ def delete_conversation(
 
 
 def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> MessageDeleteOut:
-    """Delete a single message.
-
-    If this is the last message in the conversation, deletes the conversation too.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        message_id: The ID of the message to delete.
-
-    Raises:
-        NotFoundError(E_MESSAGE_NOT_FOUND): If message doesn't exist
-            or viewer is not the conversation owner.
-    """
+    """Delete a message and its subtree; the conversation too when none remain."""
 
     def attempt() -> MessageDeleteOut:
-        # Message creation and every Conversation delete linearize on the parent
-        # row. Join through the requested Message so missing/foreign identities stay
-        # masked, then hold that same lock through subtree enumeration, the
+        # Message creation and every conversation delete linearize on the parent
+        # row. Join through the requested Message so missing/foreign identities
+        # stay masked, then hold that lock through subtree enumeration, the
         # remaining-count decision, and commit.
         conversation = db.scalar(
             select(Conversation)
@@ -957,10 +762,7 @@ def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> MessageDel
         )
         if conversation is None or conversation.owner_user_id != viewer_id:
             raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
-
         conversation_id = conversation.id
-        # Revalidate under the parent lock. Every competing Message/Conversation
-        # mutator takes this lock, so the deletion set is now stable.
         if (
             db.scalar(
                 select(Message.id).where(
@@ -972,28 +774,37 @@ def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> MessageDel
         ):
             raise NotFoundError(ApiErrorCode.E_MESSAGE_NOT_FOUND, "Message not found")
 
-        message_ids = _message_subtree_ids(db, conversation_id, message_id)
-        delete_message_rows_without_commit(db, message_ids)
+        delete_message_rows_without_commit(
+            db,
+            _message_ids(
+                db,
+                """
+                WITH RECURSIVE subtree AS (
+                    SELECT id
+                    FROM messages
+                    WHERE conversation_id = :conversation_id
+                      AND id = :message_id
+                    UNION ALL
+                    SELECT child.id
+                    FROM messages child
+                    JOIN subtree parent ON parent.id = child.parent_message_id
+                    WHERE child.conversation_id = :conversation_id
+                )
+                SELECT id FROM subtree
+                """,
+                {"conversation_id": conversation_id, "message_id": message_id},
+            ),
+        )
         db.flush()
-
-        # Check remaining message count in same transaction
-        remaining = db.scalar(
+        conversation_deleted = not db.scalar(
             select(func.count())
             .select_from(Message)
             .where(Message.conversation_id == conversation_id)
         )
-
-        conversation_deleted = remaining == 0
-
-        # If no messages remain, delete conversation
         if conversation_deleted:
             delete_conversation_rows_without_commit(db, conversation_id)
             db.flush()
-
-        bump_all_collection_revisions(
-            db,
-            family=CollectionFamily.ConversationIndex,
-        )
+        bump_all_collection_revisions(db, family=CollectionFamily.ConversationIndex)
         collection_revision = read_collection_revision(
             db,
             viewer_id=viewer_id,
@@ -1010,18 +821,26 @@ def delete_message(db: Session, viewer_id: UUID, message_id: UUID) -> MessageDel
 
 
 def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) -> None:
-    message_ids = _message_ids_for_conversation(db, conversation_id)
-    delete_message_rows_without_commit(db, message_ids)
-
-    graph_cleanup.delete_edges_for_deleted_resource(
-        db, ref=ResourceRef(scheme="conversation", id=conversation_id)
+    delete_message_rows_without_commit(
+        db,
+        _message_ids(
+            db,
+            """
+            SELECT id FROM messages
+            WHERE conversation_id = :conversation_id
+            ORDER BY seq ASC, id ASC
+            """,
+            {"conversation_id": conversation_id},
+        ),
     )
+    conversation_ref = ResourceRef(scheme="conversation", id=conversation_id)
+    graph_cleanup.delete_edges_for_deleted_resource(db, ref=conversation_ref)
 
-    # FK-less artifact subject cleanup: drop this conversation's Dossier head +
-    # revisions + events + citation edges (D-10; no cascade, D-2).
+    # FK-less artifact subject cleanup: this conversation's Dossier head,
+    # revisions, events and citation edges.
     from nexus.services.artifacts import engine as artifact_engine
 
-    artifact_engine.on_subject_deleted(db, ResourceRef(scheme="conversation", id=conversation_id))
+    artifact_engine.on_subject_deleted(db, conversation_ref)
 
     db.execute(
         text("DELETE FROM conversation_active_paths WHERE conversation_id = :conversation_id"),
@@ -1038,23 +857,28 @@ def delete_conversation_rows_without_commit(db: Session, conversation_id: UUID) 
 def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID]) -> None:
     if not message_ids:
         return
-
+    ids = list(message_ids)
     db.execute(
-        text("""
-            DELETE FROM conversation_active_paths
-            WHERE active_leaf_message_id = ANY(:message_ids)
-        """),
-        {"message_ids": list(message_ids)},
+        text(
+            "DELETE FROM conversation_active_paths WHERE active_leaf_message_id = ANY(:message_ids)"
+        ),
+        {"message_ids": ids},
     )
     db.execute(
-        text("""
-            DELETE FROM conversation_branches
-            WHERE branch_user_message_id = ANY(:message_ids)
-        """),
-        {"message_ids": list(message_ids)},
+        text("DELETE FROM conversation_branches WHERE branch_user_message_id = ANY(:message_ids)"),
+        {"message_ids": ids},
     )
 
-    chat_run_ids = _chat_run_ids_for_messages(db, message_ids)
+    chat_run_ids = _message_ids(
+        db,
+        """
+        SELECT id FROM chat_runs
+        WHERE user_message_id = ANY(:message_ids)
+           OR assistant_message_id = ANY(:message_ids)
+        ORDER BY created_at ASC, id ASC
+        """,
+        {"message_ids": ids},
+    )
     if chat_run_ids:
         revoke_jobs_by_dedupe_keys(
             db,
@@ -1065,16 +889,21 @@ def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID])
             text("DELETE FROM chat_run_events WHERE run_id = ANY(:chat_run_ids)"),
             {"chat_run_ids": chat_run_ids},
         )
-
     db.execute(
-        text("""
-            DELETE FROM chat_prompt_assemblies
-            WHERE assistant_message_id = ANY(:message_ids)
-        """),
-        {"message_ids": list(message_ids)},
+        text("DELETE FROM chat_prompt_assemblies WHERE assistant_message_id = ANY(:message_ids)"),
+        {"message_ids": ids},
     )
 
-    tool_call_ids = _message_tool_call_ids_for_messages(db, message_ids)
+    tool_call_ids = _message_ids(
+        db,
+        """
+        SELECT id FROM message_tool_calls
+        WHERE user_message_id = ANY(:message_ids)
+           OR assistant_message_id = ANY(:message_ids)
+        ORDER BY tool_call_index ASC, id ASC
+        """,
+        {"message_ids": ids},
+    )
     if tool_call_ids:
         db.execute(
             text("DELETE FROM message_retrievals WHERE tool_call_id = ANY(:tool_call_ids)"),
@@ -1084,86 +913,20 @@ def delete_message_rows_without_commit(db: Session, message_ids: Sequence[UUID])
             text("DELETE FROM message_tool_calls WHERE id = ANY(:tool_call_ids)"),
             {"tool_call_ids": tool_call_ids},
         )
-
     if chat_run_ids:
         db.execute(
             text("DELETE FROM chat_runs WHERE id = ANY(:chat_run_ids)"),
             {"chat_run_ids": chat_run_ids},
         )
-
-    for message_id in message_ids:
+    for message_id in ids:
         graph_cleanup.delete_edges_for_deleted_resource(
             db, ref=ResourceRef(scheme="message", id=message_id)
         )
-    # NOTE: the unified generation ledger ``llm_calls`` is keyed on the run
-    # parent (owner_kind='chat_run', owner_id=chat_runs.id), not on message_id,
-    # and carries no FK. It deliberately survives conversation/message deletion
-    # as an operational ledger with its own lifecycle, so there is no
-    # replacement DELETE here.
-    db.execute(delete(Message).where(Message.id.in_(message_ids)))
+    # The generation ledger ``llm_calls`` is keyed on the run parent, carries no
+    # FK, and deliberately survives message deletion as an operational ledger.
+    db.execute(delete(Message).where(Message.id.in_(ids)))
     db.flush()
 
 
-def _message_ids_for_conversation(db: Session, conversation_id: UUID) -> list[UUID]:
-    return list(
-        db.scalars(
-            select(Message.id)
-            .where(Message.conversation_id == conversation_id)
-            .order_by(Message.seq.asc(), Message.id.asc())
-        )
-    )
-
-
-def _query_uuid_ids(db: Session, sql: str, params: dict[str, object]) -> list[UUID]:
-    """Execute a SELECT id query and return the IDs as a list."""
-    rows = db.execute(text(sql), params)
-    return [row[0] for row in rows]
-
-
-def _message_subtree_ids(db: Session, conversation_id: UUID, message_id: UUID) -> list[UUID]:
-    return _query_uuid_ids(
-        db,
-        """
-        WITH RECURSIVE subtree AS (
-            SELECT id
-            FROM messages
-            WHERE conversation_id = :conversation_id
-              AND id = :message_id
-            UNION ALL
-            SELECT child.id
-            FROM messages child
-            JOIN subtree parent ON parent.id = child.parent_message_id
-            WHERE child.conversation_id = :conversation_id
-        )
-        SELECT id FROM subtree
-        """,
-        {"conversation_id": conversation_id, "message_id": message_id},
-    )
-
-
-def _chat_run_ids_for_messages(db: Session, message_ids: Sequence[UUID]) -> list[UUID]:
-    return _query_uuid_ids(
-        db,
-        """
-        SELECT id
-        FROM chat_runs
-        WHERE user_message_id = ANY(:message_ids)
-           OR assistant_message_id = ANY(:message_ids)
-        ORDER BY created_at ASC, id ASC
-        """,
-        {"message_ids": list(message_ids)},
-    )
-
-
-def _message_tool_call_ids_for_messages(db: Session, message_ids: Sequence[UUID]) -> list[UUID]:
-    return _query_uuid_ids(
-        db,
-        """
-        SELECT id
-        FROM message_tool_calls
-        WHERE user_message_id = ANY(:message_ids)
-           OR assistant_message_id = ANY(:message_ids)
-        ORDER BY tool_call_index ASC, id ASC
-        """,
-        {"message_ids": list(message_ids)},
-    )
+def _message_ids(db: Session, sql: str, params: dict[str, object]) -> list[UUID]:
+    return [row[0] for row in db.execute(text(sql), params)]

@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, assert_never
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.config import get_settings
 from nexus.db.models import ChatRun
 from nexus.db.session import get_session_factory
 from nexus.jobs.queue import (
@@ -19,93 +17,42 @@ from nexus.jobs.queue import (
     requeue_dead_job,
 )
 from nexus.logging import get_logger
-from nexus.services.chat_runs import (
-    CancelledChatExecution,
-    ChatExecutionOutcome,
-    DegradedChatExecution,
-    FailedChatExecution,
-    PublishedChatExecution,
-    SkippedChatExecution,
-    execute_chat_run,
-)
+from nexus.services.chat_run_worker import execute_chat_run
 from nexus.services.llm_execution import ExecutionRuntime
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
 
-_CHAT_RUN_SPEC = LlmTaskSpec(
-    label="chat_run",
-)
+_CHAT_RUN_SPEC = LlmTaskSpec(label="chat_run")
 
 
-def chat_run(run_id: str, *, context: JobExecutionContext) -> dict[str, Any] | RescheduleRequested:
-    run_uuid = UUID(run_id)
-    settings = get_settings()
+def chat_run(run_id: str, *, context: JobExecutionContext) -> RescheduleRequested | None:
+    """Run one claimed chat job.
 
-    async def _handler(
-        db: Session, runtime: ExecutionRuntime
-    ) -> ChatExecutionOutcome | RescheduleRequested:
+    Defects escape unchanged: the queue owns retries and durable suspension,
+    and expected product failures are already folded by the worker.
+    """
+
+    async def handler(db: Session, runtime: ExecutionRuntime) -> RescheduleRequested | None:
         job = get_job(db, context.job_id)
         if job is None or str(job.payload.get("run_id")) != run_id:
             raise AssertionError("claimed chat job does not match its run payload")
         return await execute_chat_run(
             db,
-            run_id=run_uuid,
+            run_id=UUID(run_id),
             job=job,
             execution_context=context,
             session_factory=get_session_factory(),
             runtime=runtime,
-            settings=settings,
         )
 
-    # Defects escape this handler unchanged. The queue owns retries and durable
-    # suspension; expected product failures are already folded by the executor.
-    logger.info("chat_run_started", run_id=run_id)
-    outcome = run_llm_task(_CHAT_RUN_SPEC, _handler)
-    if isinstance(outcome, RescheduleRequested):
-        logger.info(
-            "chat_run_capacity_rescheduled",
-            run_id=run_id,
-        )
-        return outcome
-    result = _serialize_chat_execution(outcome)
-    logger.info("chat_run_completed", run_id=run_id, result=result)
-    return result
-
-
-def _serialize_chat_execution(outcome: ChatExecutionOutcome) -> dict[str, Any]:
-    """The sole chat-owned outcome to generic queue-payload adapter."""
-    if isinstance(outcome, PublishedChatExecution):
-        return {
-            "kind": outcome.kind,
-            "run_id": str(outcome.run_id),
-            "message_id": str(outcome.message_id),
-            "citation_count": outcome.citation_count,
-        }
-    if isinstance(outcome, DegradedChatExecution):
-        return {
-            "kind": outcome.kind,
-            "run_id": str(outcome.run_id),
-            "message_id": str(outcome.message_id),
-            "warning_code": outcome.warning_code,
-            "support_id": outcome.support_id,
-        }
-    if isinstance(outcome, FailedChatExecution):
-        return {
-            "kind": outcome.kind,
-            "run_id": str(outcome.run_id),
-            "error_code": outcome.error_code.model_dump(mode="json"),
-            "support_id": outcome.support_id.model_dump(mode="json"),
-        }
-    if isinstance(outcome, CancelledChatExecution):
-        return {"kind": outcome.kind, "run_id": str(outcome.run_id)}
-    if isinstance(outcome, SkippedChatExecution):
-        return {"kind": outcome.kind, "reason": outcome.reason}
-    assert_never(outcome)
+    outcome = run_llm_task(_CHAT_RUN_SPEC, handler)
+    return outcome if isinstance(outcome, RescheduleRequested) else None
 
 
 def record_dead_lettered_chat_run(db: Session, job: JobRow) -> None:
     """Suspend the run, or requeue the same job to fold a prior cancellation."""
+
     raw_run_id = job.payload.get("run_id")
     if raw_run_id is None:
         raise ValueError("chat_run dead-letter payload is missing run_id")
