@@ -2,7 +2,7 @@
 subscription and the panes observe the subscription rows themselves.
 
 Revision ID: 0239
-Revises: 0237
+Revises: 0238
 Create Date: 2026-09-21
 """
 
@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "0239"
-down_revision: str | Sequence[str] | None = "0237"
+down_revision: str | Sequence[str] | None = "0238"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
