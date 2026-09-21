@@ -32,7 +32,8 @@ from nexus.services.contributor_taxonomy import (
     build_observation,
     clean_contributor_display,
 )
-from nexus.services.contributors import MediaTarget, replace_observed_role_slices_batch
+from nexus.services.contributor_writes import MediaTarget
+from nexus.services.contributors import replace_observed_role_slices_batch
 from nexus.services.media_processing_state import mark_media_failed_by_id
 from nexus.services.media_source_ingest import (
     build_intent_key,

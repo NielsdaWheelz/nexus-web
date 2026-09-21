@@ -27,10 +27,8 @@ from nexus.services.contributor_taxonomy import (
     RawCreditEntry,
     build_observation,
 )
-from nexus.services.contributors import (
-    MediaTarget,
-    apply_observed_role_slices_in_current_transaction,
-)
+from nexus.services.contributor_writes import MediaTarget
+from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
 from nexus.services.library_entries import (
     ensure_subscription_episode_default_in_current_transaction,
 )

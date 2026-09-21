@@ -36,10 +36,8 @@ from nexus.services.collection_revisions import (
     ENTRY_VISIBILITY_FAMILIES,
     bump_all_collection_families,
 )
-from nexus.services.contributors import (
-    MediaTarget,
-    apply_observed_role_slices_in_current_transaction,
-)
+from nexus.services.contributor_writes import MediaTarget
+from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
 from nexus.services.durable_step_journal import (
     Completed,
     Prepared,

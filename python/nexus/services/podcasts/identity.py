@@ -17,10 +17,8 @@ from nexus.schemas.contributors import ContributorCreditIn
 from nexus.schemas.podcast import PodcastSourceFacts
 from nexus.services.collection_revisions import CollectionFamily, bump_all_collection_families
 from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
-from nexus.services.contributors import (
-    PodcastTarget,
-    apply_observed_role_slices_in_current_transaction,
-)
+from nexus.services.contributor_writes import PodcastTarget
+from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
 from nexus.services.url_normalize import normalize_url_for_display, validate_requested_url
 
 from .provider import PODCAST_PROVIDER
