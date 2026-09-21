@@ -470,8 +470,9 @@ endnotes, sidenotes, bibliography entries, and in-document citation markers. It
 is not generated chat citation evidence and must not write or read
 `message_retrievals`.
 
-- Backend extraction is owned by `reader_apparatus.py` and the relevant ingest
-  path before semantic source attributes are sanitized away.
+- Backend extraction is owned by `html_apparatus.py` and the relevant ingest
+  path before semantic source attributes are sanitized away; `reader_apparatus.py`
+  owns the persisted rows.
 - Source-authored standalone margin notes are valid target-only apparatus rows:
   they appear in Evidence and can jump to the note target, but they do not get
   invented marker edges or hover previews.
@@ -479,11 +480,9 @@ is not generated chat citation evidence and must not write or read
   source references from generated citations in the typed item contract.
 - Web/EPUB rows may support hover previews and marker/target activation when
   exact locators exist.
-- PDF rows are capability-gated. Current PDF support is scoped to native
-  internal `cite.*` link graphs, arXiv source-package TeX/BibTeX graphs, and
-  strict law-review-style same-page legal footnotes with footnote-sized target
-  text. Generic PDF superscripts, reference sections, and plain extracted text
-  do not create apparatus rows.
+- Current PDF support is scoped to native internal `cite.*` link graphs.
+  Generic PDF superscripts, reference sections, and plain extracted text do not
+  create apparatus rows.
 
 ### reader connections
 

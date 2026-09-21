@@ -8,7 +8,6 @@ Does NOT own lifecycle transitions or background-job dispatch.
 """
 
 import re
-import tarfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -25,10 +24,6 @@ from nexus.db.models import (
 )
 from nexus.errors import ApiErrorCode, ResourceFailureDimension
 from nexus.logging import get_logger
-from nexus.services.latex_apparatus import (
-    LatexSourceArchiveUnsafe,
-    extract_latex_biblatex_apparatus_from_archive,
-)
 from nexus.services.parser_temp import (
     StorageObjectIntegrityError,
     nested_utf8_byte_length,
@@ -42,11 +37,7 @@ from nexus.services.pdf_highlight_geometry import (
     canonicalize_geometry,
     validate_exact_length,
 )
-from nexus.services.reader_apparatus import (
-    replace_media_apparatus,
-    source_fingerprint,
-)
-from nexus.storage.client import StorageError
+from nexus.services.reader_apparatus import replace_media_apparatus, stable_token
 from nexus.text import normalize_whitespace
 
 logger = get_logger(__name__)
@@ -60,11 +51,6 @@ PDF_APPARATUS_MAX_RETAINED_UTF8_BYTES = 8 * 1024 * 1024
 _PDF_REFERENCE_LINK_Y_TOLERANCE_PT = 5.0
 _PDF_REFERENCE_LINK_X_TOLERANCE_PT = 2.0
 _PDF_REFERENCE_LINK_AMBIGUOUS_DELTA_PT = 0.25
-_PDF_LEGAL_FOOTNOTE_BAND_TOP_RATIO = 0.55
-_PDF_LEGAL_FOOTNOTE_LABEL_X_MAX = 120.0
-_PDF_LEGAL_FOOTNOTE_LINE_Y_TOLERANCE_PT = 3.0
-_PDF_LEGAL_FOOTNOTE_MARKER_SIZE_RATIO = 0.75
-_PDF_LEGAL_FOOTNOTE_TARGET_SIZE_RATIO = 0.75
 
 # ---------------------------------------------------------------------------
 # Parser-agnostic typed outcomes
@@ -120,18 +106,6 @@ class PdfApparatusResult:
     status: str = "empty"
     items: list[dict[str, object]] = field(default_factory=list)
     edges: list[dict[str, object]] = field(default_factory=list)
-    diagnostics: dict[str, object] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class PdfSourcePackageArtifact:
-    storage_path: str
-    content_type: str
-    size_bytes: int
-    sha256_hex: str
-    source_url: str
-    source_kind: str
-    source_ref: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -141,8 +115,6 @@ class PdfExtractionPlan:
     storage_path: str
     source_size_bytes: int
     source_sha256_hex: str
-    source_package: PdfSourcePackageArtifact | None
-    source_package_diagnostics: dict[str, object] | None
 
 
 @dataclass(frozen=True)
@@ -151,22 +123,6 @@ class PdfReferenceBlock:
     label: str
     label_number: int
     body_text: str
-    rect_coords: tuple[float, float, float, float]
-
-
-@dataclass(frozen=True)
-class PdfLegalFootnoteTarget:
-    label_number: int
-    page_index: int
-    body_text: str
-    body_rect_coords: tuple[float, float, float, float]
-    label_rect_coords: tuple[float, float, float, float]
-
-
-@dataclass(frozen=True)
-class PdfLegalFootnoteMarker:
-    label_number: int
-    page_index: int
     rect_coords: tuple[float, float, float, float]
 
 
@@ -188,12 +144,6 @@ class _PdfNativeCitationLink:
     link_xref: int | None
 
 
-class _PdfSourcePackageDigestDrift(AssertionError):
-    """justify-defect: Nexus wrote this package and recorded its digest in one
-    operation, so bytes that no longer match it are our own storage bookkeeping
-    breaking, not a fact about the user's source."""
-
-
 class _PdfResourceLimitExceeded(Exception):
     """A declared PDF parser budget breach, named by the site that detects it."""
 
@@ -209,12 +159,6 @@ class _PdfApparatusScan:
     in_references: bool = False
     reference_blocks: list[PdfReferenceBlock] = field(default_factory=list)
     native_links: list[_PdfNativeCitationLink] = field(default_factory=list)
-    native_total_links: int = 0
-    native_internal_links: int = 0
-    native_skipped: dict[str, int] = field(default_factory=dict)
-    legal_targets: list[PdfLegalFootnoteTarget] = field(default_factory=list)
-    legal_marker_candidates: dict[int, list[PdfLegalFootnoteMarker]] = field(default_factory=dict)
-    legal_skipped: dict[str, int] = field(default_factory=dict)
     page_heights: list[float | None] = field(default_factory=list)
     retained_item_count: int = 0
     retained_utf8_bytes: int = 0
@@ -430,14 +374,7 @@ def _extract_with_pymupdf(
                 pdf_subject=pdf_subject,
             )
         try:
-            apparatus = _merge_pdf_apparatus_results(
-                _materialize_pdf_native_link_apparatus(apparatus_scan, media_id=media_id),
-                _materialize_pdf_legal_footnote_apparatus(
-                    apparatus_scan,
-                    media_id=media_id,
-                    page_count=page_count,
-                ),
-            )
+            apparatus = _materialize_pdf_native_link_apparatus(apparatus_scan, media_id=media_id)
             _validate_pdf_apparatus_budget(apparatus)
         except _PdfResourceLimitExceeded as exc:
             return _pdf_resource_limit_error(str(exc), dimension=exc.dimension)
@@ -498,33 +435,20 @@ def _scan_pdf_page_apparatus(
             dimension="Structure",
         )
     for link_index, link in enumerate(links):
-        scan.native_total_links += 1
-        if "page" in link:
-            scan.native_internal_links += 1
         name = str(link.get("nameddest") or "")
-        if not name.startswith("cite."):
-            _increment(scan.native_skipped, "non_citation_destination")
-            continue
-        if "uri" in link:
-            _increment(scan.native_skipped, "external_uri")
-            continue
-        if "page" not in link:
-            _increment(scan.native_skipped, "missing_destination_page")
+        if not name.startswith("cite.") or "uri" in link or "page" not in link:
             continue
         source_rect = _pdf_rect_coords(link.get("from"))
         if source_rect is None:
-            _increment(scan.native_skipped, "missing_source_rect")
             continue
         exact = _pdf_link_text_from_snapshot(snapshot, source_rect)
         if not exact:
-            _increment(scan.native_skipped, "missing_marker_text")
             continue
         try:
             validate_exact_length(exact)
             canonicalize_geometry(page_index + 1, [_quad_from_rect_coords(source_rect)])
             destination_page_index = int(link["page"])
         except (GeometryValidationError, TypeError, ValueError):
-            _increment(scan.native_skipped, "invalid_geometry")
             continue
         destination_point = _pdf_point_coords(link.get("to"))
         citation_link = _PdfNativeCitationLink(
@@ -540,36 +464,11 @@ def _scan_pdf_page_apparatus(
         _retain_pdf_scan_item(scan, citation_link.name, citation_link.exact)
         scan.native_links.append(citation_link)
 
-    try:
-        lines = snapshot.lines
-        if len(lines) > PDF_APPARATUS_MAX_ITEMS:
-            raise _PdfResourceLimitExceeded(
-                "PDF page line count exceeds apparatus limit",
-                dimension="Structure",
-            )
-        body_font_size = _pdf_body_font_size(page, lines)
-        page_targets = _pdf_legal_footnote_targets_for_page(
-            page,
-            page_index,
-            lines,
-            body_font_size=body_font_size,
-            skipped=scan.legal_skipped,
+    if len(snapshot.lines) > PDF_APPARATUS_MAX_ITEMS:
+        raise _PdfResourceLimitExceeded(
+            "PDF page line count exceeds apparatus limit",
+            dimension="Structure",
         )
-        for target in page_targets:
-            _retain_pdf_scan_item(scan, target.body_text)
-            scan.legal_targets.append(target)
-        target_labels = {target.label_number for target in page_targets}
-        for marker in _pdf_legal_footnote_markers_for_page(
-            page,
-            page_index,
-            lines,
-            target_labels=target_labels,
-            body_font_size=body_font_size,
-        ):
-            _retain_pdf_scan_item(scan)
-            scan.legal_marker_candidates.setdefault(marker.label_number, []).append(marker)
-    except (RuntimeError, ValueError, AttributeError, TypeError, IndexError):
-        _increment(scan.legal_skipped, "page_parse_failed")
 
 
 def _retain_pdf_scan_item(scan: _PdfApparatusScan, *text_values: str) -> None:
@@ -601,7 +500,7 @@ def _materialize_pdf_native_link_apparatus(
     for link in scan.native_links:
         stable_key = (
             "pdf:native-citation-ref:"
-            f"{link.page_index + 1:04d}:{link.link_index:04d}:{_stable_token(link.name)}"
+            f"{link.page_index + 1:04d}:{link.link_index:04d}:{stable_token(link.name)}"
         )
         geometry = canonicalize_geometry(
             link.page_index + 1,
@@ -640,31 +539,11 @@ def _materialize_pdf_native_link_apparatus(
         )
         target_key = target_key_by_destination.get(link.name)
         if target_key is None:
-            target = _pdf_reference_block_for_destination(
-                destination_page_index=link.destination_page_index,
-                destination_point=link.destination_point,
-                reference_blocks=scan.reference_blocks,
-                page_heights=scan.page_heights,
+            target_key = _pdf_target_key_for_link(
+                link, media_id=media_id, scan=scan, items=items, keys_by_block=target_key_by_block
             )
-            if target is None:
-                _increment(scan.native_skipped, "missing_reference_target")
-            else:
-                block_key = _pdf_reference_block_key(target)
-                target_key = target_key_by_block.get(block_key)
-                if target_key is None:
-                    target_item = _pdf_native_link_target_item(
-                        media_id=media_id,
-                        destination_name=link.name,
-                        destination_point=link.destination_point,
-                        target=target,
-                        skipped=scan.native_skipped,
-                    )
-                    if target_item is not None:
-                        target_key = str(target_item["stable_key"])
-                        target_key_by_block[block_key] = target_key
-                        items.append(target_item)
-                if target_key is not None:
-                    target_key_by_destination[link.name] = target_key
+            if target_key is not None:
+                target_key_by_destination[link.name] = target_key
         if target_key is not None:
             edges.append(
                 {
@@ -679,176 +558,49 @@ def _materialize_pdf_native_link_apparatus(
                 }
             )
 
-    unresolved_marker_count = len(scan.native_links) - len(edges)
-    if not items:
-        state_status = "empty"
-        status = "no_supported_citation_links"
-    elif unresolved_marker_count == 0 and edges:
-        state_status = "ready"
-        status = "targets_materialized"
-    else:
-        state_status = "partial"
-        status = "target_materialization_partial"
-    return PdfApparatusResult(
-        status=state_status,
-        items=items,
-        edges=edges,
-        diagnostics={
-            "pdf_native_link": {
-                "status": status,
-                "marker_count": len(scan.native_links),
-                "target_count": len(target_key_by_block),
-                "edge_count": len(edges),
-                "unresolved_marker_count": unresolved_marker_count,
-                "total_link_count": scan.native_total_links,
-                "internal_link_count": scan.native_internal_links,
-                "citation_link_count": len(scan.native_links),
-                "skipped": scan.native_skipped,
-            }
-        },
-    )
-
-
-def _materialize_pdf_legal_footnote_apparatus(
-    scan: _PdfApparatusScan,
-    *,
-    media_id: UUID,
-    page_count: int,
-) -> PdfApparatusResult:
-    targets = scan.legal_targets
-    skipped = scan.legal_skipped
-    if not targets:
-        return PdfApparatusResult(
-            diagnostics={
-                "pdf_legal_footnotes": {
-                    "status": "no_supported_legal_footnotes",
-                    "adapter_version": "pdf_legal_footnotes_v1",
-                    "page_count": page_count,
-                    "marker_count": 0,
-                    "target_count": 0,
-                    "edge_count": 0,
-                    "unresolved_marker_count": 0,
-                    "unpaired_target_count": 0,
-                    "skipped": skipped,
-                }
-            }
-        )
-    targets_by_label = {target.label_number: target for target in targets}
-    if len(targets_by_label) != len(targets):
-        _increment(skipped, "duplicate_target_label")
-        return _empty_pdf_legal_footnote_result(
-            "ambiguous_target_labels", skipped, page_count=page_count
-        )
-    expected_labels = list(range(1, len(targets) + 1))
-    if sorted(targets_by_label) != expected_labels:
-        _increment(skipped, "non_contiguous_target_labels")
-        return _empty_pdf_legal_footnote_result(
-            "ambiguous_target_labels", skipped, page_count=page_count
-        )
-    markers_by_label: dict[int, PdfLegalFootnoteMarker] = {}
-    for label in expected_labels:
-        candidates = scan.legal_marker_candidates.get(label, [])
-        if len(candidates) != 1:
-            _increment(skipped, "missing_marker" if not candidates else "ambiguous_marker")
-            return _empty_pdf_legal_footnote_result(
-                "ambiguous_marker_targets", skipped, page_count=page_count
-            )
-        markers_by_label[label] = candidates[0]
-
-    items: list[dict[str, object]] = []
-    edges: list[dict[str, object]] = []
-    target_key_by_label: dict[int, str] = {}
-    for target in sorted(targets, key=lambda row: row.label_number):
-        target_item = _pdf_legal_footnote_target_item(media_id=media_id, target=target)
-        if target_item is None:
-            _increment(skipped, "invalid_target_geometry")
-            return _empty_pdf_legal_footnote_result(
-                "invalid_geometry", skipped, page_count=page_count
-            )
-        target_key_by_label[target.label_number] = str(target_item["stable_key"])
-        items.append(target_item)
-    for label in expected_labels:
-        marker = markers_by_label[label]
-        marker_item = _pdf_legal_footnote_marker_item(media_id=media_id, marker=marker)
-        if marker_item is None:
-            _increment(skipped, "invalid_marker_geometry")
-            return _empty_pdf_legal_footnote_result(
-                "invalid_geometry", skipped, page_count=page_count
-            )
-        marker_key = str(marker_item["stable_key"])
-        target_key = target_key_by_label[label]
-        items.append(marker_item)
-        edges.append(
-            {
-                "stable_key": f"{marker_key}->{target_key}",
-                "from_stable_key": marker_key,
-                "to_stable_key": target_key,
-                "relation": "points_to_note",
-                "confidence": "strong",
-                "extraction_method": "pdf_legal_footnote_pair",
-                "source_ref": dict(marker_item["source_ref"]),
-                "sort_key": f"{marker.page_index + 1:04d}.{label:04d}.edge",
-            }
-        )
-    return PdfApparatusResult(
-        status="ready",
-        items=items,
-        edges=edges,
-        diagnostics={
-            "pdf_legal_footnotes": {
-                "status": "targets_materialized",
-                "adapter_version": "pdf_legal_footnotes_v1",
-                "page_count": page_count,
-                "marker_count": len(markers_by_label),
-                "target_count": len(targets),
-                "edge_count": len(edges),
-                "unresolved_marker_count": 0,
-                "unpaired_target_count": 0,
-                "skipped": skipped,
-            }
-        },
-    )
-
-
-def _empty_pdf_legal_footnote_result(
-    status: str,
-    skipped: dict[str, int],
-    *,
-    page_count: int,
-) -> PdfApparatusResult:
-    return PdfApparatusResult(
-        diagnostics={
-            "pdf_legal_footnotes": {
-                "status": status,
-                "adapter_version": "pdf_legal_footnotes_v1",
-                "page_count": page_count,
-                "marker_count": 0,
-                "target_count": 0,
-                "edge_count": 0,
-                "unresolved_marker_count": 0,
-                "unpaired_target_count": 0,
-                "skipped": skipped,
-            }
-        }
-    )
-
-
-def _merge_pdf_apparatus_results(*results: PdfApparatusResult) -> PdfApparatusResult:
-    items: list[dict[str, object]] = []
-    edges: list[dict[str, object]] = []
-    diagnostics: dict[str, object] = {}
-    statuses = [result.status for result in results]
-    for result in results:
-        items.extend(result.items)
-        edges.extend(result.edges)
-        diagnostics.update(result.diagnostics)
     if not items:
         status = "empty"
-    elif "partial" in statuses:
-        status = "partial"
-    else:
+    elif edges and len(edges) == len(scan.native_links):
         status = "ready"
-    return PdfApparatusResult(status=status, items=items, edges=edges, diagnostics=diagnostics)
+    else:
+        # Some marker found no reference block to point at.
+        status = "partial"
+    return PdfApparatusResult(status=status, items=items, edges=edges)
+
+
+def _pdf_target_key_for_link(
+    link: _PdfNativeCitationLink,
+    *,
+    media_id: UUID,
+    scan: _PdfApparatusScan,
+    items: list[dict[str, object]],
+    keys_by_block: dict[str, str],
+) -> str | None:
+    """The reference block this link lands on, materialised once per distinct block."""
+    target = _pdf_reference_block_for_destination(
+        destination_page_index=link.destination_page_index,
+        destination_point=link.destination_point,
+        reference_blocks=scan.reference_blocks,
+        page_heights=scan.page_heights,
+    )
+    if target is None:
+        return None
+    block_key = _pdf_reference_block_key(target)
+    target_key = keys_by_block.get(block_key)
+    if target_key is not None:
+        return target_key
+    target_item = _pdf_native_link_target_item(
+        media_id=media_id,
+        destination_name=link.name,
+        destination_point=link.destination_point,
+        target=target,
+    )
+    if target_item is None:
+        return None
+    target_key = str(target_item["stable_key"])
+    keys_by_block[block_key] = target_key
+    items.append(target_item)
+    return target_key
 
 
 def _validate_pdf_apparatus_budget(result: PdfApparatusResult) -> None:
@@ -882,289 +634,6 @@ def _pdf_resource_limit_error(
         terminal=True,
         resource_limit_dimension=dimension,
     )
-
-
-def _extract_pdf_source_package_apparatus(
-    *,
-    storage_client,
-    attempt_directory: Path,
-    media_id: UUID,
-    source_package: PdfSourcePackageArtifact | None,
-    source_package_diagnostics: dict[str, object] | None,
-) -> PdfApparatusResult | PdfExtractionError:
-    diagnostics: dict[str, object] = {}
-    if source_package_diagnostics:
-        diagnostics["arxiv_source_package"] = dict(source_package_diagnostics)
-    if source_package is None:
-        return PdfApparatusResult(diagnostics=diagnostics)
-
-    try:
-        source_path = attempt_directory / "source-package.tar"
-        stream_storage_object_to_file(
-            storage_client,
-            storage_path=source_package.storage_path,
-            destination=source_path,
-            expected_size_bytes=source_package.size_bytes,
-            expected_source_sha256=source_package.sha256_hex,
-        )
-    except StorageObjectIntegrityError as exc:
-        raise _PdfSourcePackageDigestDrift(str(exc)) from exc
-    except StorageError as exc:
-        return PdfApparatusResult(
-            diagnostics={
-                **diagnostics,
-                "arxiv_source_package": {
-                    "status": "storage_missing",
-                    "storage_path": source_package.storage_path,
-                    "error": str(exc),
-                },
-            }
-        )
-
-    source_ref = {
-        "format": source_package.source_kind,
-        "media_id": str(media_id),
-        "source_url": source_package.source_url,
-        "storage_path": source_package.storage_path,
-        "content_type": source_package.content_type,
-        "size_bytes": source_package.size_bytes,
-        "sha256_hex": source_package.sha256_hex,
-        **source_package.source_ref,
-    }
-    try:
-        result = extract_latex_biblatex_apparatus_from_archive(
-            source_path,
-            source_kind=f"pdf:{media_id}:source-package",
-            source_ref=source_ref,
-        )
-    except LatexSourceArchiveUnsafe as exc:
-        if exc.resource_limit_dimension is not None:
-            return _pdf_resource_limit_error(
-                f"PDF source package exceeds limits: {exc}",
-                dimension=exc.resource_limit_dimension,
-            )
-        return PdfApparatusResult(
-            diagnostics={
-                **diagnostics,
-                "arxiv_source_package": {
-                    "status": "unsafe_archive",
-                    "storage_path": source_package.storage_path,
-                    "source_url": source_package.source_url,
-                    "reason": exc.reason,
-                },
-            }
-        )
-    except (tarfile.TarError, UnicodeError, ValueError, OSError) as exc:
-        return PdfApparatusResult(
-            diagnostics={
-                **diagnostics,
-                "arxiv_source_package": {
-                    "status": "parse_failed",
-                    "storage_path": source_package.storage_path,
-                    "source_url": source_package.source_url,
-                    "error": str(exc),
-                },
-            }
-        )
-    return PdfApparatusResult(
-        status=result.status,
-        items=result.items,
-        edges=result.edges,
-        diagnostics={**diagnostics, **result.diagnostics},
-    )
-
-
-def _pdf_legal_footnote_targets_for_page(
-    page,
-    page_index: int,
-    lines: list[dict[str, Any]],
-    *,
-    body_font_size: float | None,
-    skipped: dict[str, int],
-) -> list[PdfLegalFootnoteTarget]:
-    if body_font_size is None:
-        return []
-    band_top = float(page.rect.height) * _PDF_LEGAL_FOOTNOTE_BAND_TOP_RATIO
-    lower_lines = sorted(
-        [line for line in lines if float(line["top"]) >= band_top],
-        key=lambda line: (float(line["top"]), float(line["left"])),
-    )
-    label_rows: list[tuple[int, dict[str, Any]]] = []
-    for line in lower_lines:
-        label = _numeric_label(str(line["text"]))
-        if label is None:
-            continue
-        if float(line["left"]) > _PDF_LEGAL_FOOTNOTE_LABEL_X_MAX:
-            continue
-        label_rows.append((label, line))
-
-    targets: list[PdfLegalFootnoteTarget] = []
-    for index, (label, label_line) in enumerate(label_rows):
-        next_label_line = label_rows[index + 1][1] if index + 1 < len(label_rows) else None
-        body_lines: list[dict[str, Any]] = []
-        for line in lower_lines:
-            if line is label_line:
-                continue
-            if (
-                float(line["top"])
-                < float(label_line["top"]) - _PDF_LEGAL_FOOTNOTE_LINE_Y_TOLERANCE_PT
-            ):
-                continue
-            if next_label_line is not None and (
-                float(line["top"])
-                >= float(next_label_line["top"]) - _PDF_LEGAL_FOOTNOTE_LINE_Y_TOLERANCE_PT
-            ):
-                continue
-            if float(line["left"]) <= float(label_line["right"]):
-                continue
-            body_lines.append(line)
-        body_text = normalize_whitespace(" ".join(str(line["text"]) for line in body_lines))
-        if not body_text:
-            continue
-        if not _pdf_legal_footnote_target_has_note_style(
-            label_line,
-            body_lines,
-            body_font_size=body_font_size,
-        ):
-            _increment(skipped, "target_body_not_footnote_style")
-            continue
-        targets.append(
-            PdfLegalFootnoteTarget(
-                label_number=label,
-                page_index=page_index,
-                body_text=body_text,
-                body_rect_coords=_pdf_union_rect(body_lines),
-                label_rect_coords=(
-                    float(label_line["left"]),
-                    float(label_line["top"]),
-                    float(label_line["right"]),
-                    float(label_line["bottom"]),
-                ),
-            )
-        )
-    return targets
-
-
-def _pdf_legal_footnote_markers_for_page(
-    page,
-    page_index: int,
-    lines: list[dict[str, Any]],
-    *,
-    target_labels: set[int],
-    body_font_size: float | None,
-) -> list[PdfLegalFootnoteMarker]:
-    if not target_labels or body_font_size is None:
-        return []
-    band_top = float(page.rect.height) * _PDF_LEGAL_FOOTNOTE_BAND_TOP_RATIO
-    max_marker_size = body_font_size * _PDF_LEGAL_FOOTNOTE_MARKER_SIZE_RATIO
-    markers: list[PdfLegalFootnoteMarker] = []
-    for line in lines:
-        if float(line["top"]) >= band_top:
-            continue
-        for span in line["spans"]:
-            text_value = str(span["text"]).strip()
-            label = _numeric_label(text_value)
-            if label is None or label not in target_labels:
-                continue
-            if float(span["size"]) > max_marker_size:
-                continue
-            if not _pdf_span_is_raised_marker(span, line, lines):
-                continue
-            markers.append(
-                PdfLegalFootnoteMarker(
-                    label_number=label,
-                    page_index=page_index,
-                    rect_coords=(
-                        float(span["left"]),
-                        float(span["top"]),
-                        float(span["right"]),
-                        float(span["bottom"]),
-                    ),
-                )
-            )
-    return markers
-
-
-def _pdf_legal_footnote_target_item(
-    *,
-    media_id: UUID,
-    target: PdfLegalFootnoteTarget,
-) -> dict[str, Any] | None:
-    try:
-        validate_exact_length(target.body_text)
-        geometry = canonicalize_geometry(
-            target.page_index + 1,
-            [_quad_from_rect_coords(target.body_rect_coords)],
-        )
-    except GeometryValidationError:
-        return None
-    target_key = f"pdf:legal-footnote-target:{target.page_index + 1:04d}:{target.label_number:04d}"
-    return {
-        "stable_key": target_key,
-        "kind": "footnote",
-        "label": str(target.label_number),
-        "body_text": target.body_text,
-        "locator": {
-            "type": "pdf_page_geometry",
-            "media_id": str(media_id),
-            "page_number": target.page_index + 1,
-            "quads": [_quad_json(quad) for quad in geometry.quads],
-            "exact": target.body_text,
-            "text_quote_selector": {"exact": target.body_text},
-        },
-        "locator_status": "exact",
-        "confidence": "strong",
-        "extraction_method": "pdf_legal_footnote_target",
-        "source_ref": {
-            "format": "pdf",
-            "page_number": target.page_index + 1,
-            "target_label": str(target.label_number),
-            "target_body_rect": _pdf_rect_json(target.body_rect_coords),
-            "target_label_rect": _pdf_rect_json(target.label_rect_coords),
-        },
-        "sort_key": f"{target.page_index + 1:04d}.{target.label_number:04d}.target",
-    }
-
-
-def _pdf_legal_footnote_marker_item(
-    *,
-    media_id: UUID,
-    marker: PdfLegalFootnoteMarker,
-) -> dict[str, Any] | None:
-    label = str(marker.label_number)
-    try:
-        validate_exact_length(label)
-        geometry = canonicalize_geometry(
-            marker.page_index + 1,
-            [_quad_from_rect_coords(marker.rect_coords)],
-        )
-    except GeometryValidationError:
-        return None
-    marker_key = f"pdf:legal-footnote-ref:{marker.page_index + 1:04d}:{marker.label_number:04d}"
-    return {
-        "stable_key": marker_key,
-        "kind": "footnote_ref",
-        "label": label,
-        "body_text": None,
-        "locator": {
-            "type": "pdf_page_geometry",
-            "media_id": str(media_id),
-            "page_number": marker.page_index + 1,
-            "quads": [_quad_json(quad) for quad in geometry.quads],
-            "exact": label,
-            "text_quote_selector": {"exact": label},
-        },
-        "locator_status": "exact",
-        "confidence": "strong",
-        "extraction_method": "pdf_legal_footnote_marker",
-        "source_ref": {
-            "format": "pdf",
-            "page_number": marker.page_index + 1,
-            "marker_label": label,
-            "source_rect": _pdf_rect_json(marker.rect_coords),
-        },
-        "sort_key": f"{marker.page_index + 1:04d}.{marker.label_number:04d}.marker",
-    }
 
 
 def _pdf_page_text_snapshot(page: Any) -> _PdfPageTextSnapshot:
@@ -1300,106 +769,6 @@ def _pdf_text_lines(text_dict: dict[str, Any]) -> list[dict[str, Any]]:
     return lines
 
 
-def _pdf_body_font_size(page, lines: list[dict[str, Any]]) -> float | None:
-    band_top = float(page.rect.height) * _PDF_LEGAL_FOOTNOTE_BAND_TOP_RATIO
-    sizes: list[float] = []
-    for line in lines:
-        if float(line["top"]) >= band_top:
-            continue
-        for span in line["spans"]:
-            text_value = str(span["text"]).strip()
-            if not re.search(r"[A-Za-z]", text_value):
-                continue
-            sizes.append(float(span["size"]))
-    if not sizes:
-        return None
-    sizes.sort()
-    return sizes[len(sizes) // 2]
-
-
-def _pdf_legal_footnote_target_has_note_style(
-    label_line: dict[str, Any],
-    body_lines: list[dict[str, Any]],
-    *,
-    body_font_size: float,
-) -> bool:
-    max_note_size = body_font_size * _PDF_LEGAL_FOOTNOTE_TARGET_SIZE_RATIO
-    note_lines = [label_line, *body_lines]
-    if any(_pdf_line_max_font_size(line) > max_note_size for line in note_lines):
-        return False
-    body_lefts = {round(float(line["left"]), 1) for line in body_lines}
-    if len(body_lefts) > 1:
-        return False
-    return bool(body_lines)
-
-
-def _pdf_span_is_raised_marker(
-    span: dict[str, Any],
-    line: dict[str, Any],
-    lines: list[dict[str, Any]],
-) -> bool:
-    body_spans = _pdf_adjacent_body_spans_for_marker(span, line, lines)
-    if not body_spans:
-        return False
-    sibling_top = min(float(sibling["top"]) for sibling in body_spans)
-    sibling_bottom = max(float(sibling["bottom"]) for sibling in body_spans)
-    sibling_height = max(sibling_bottom - sibling_top, 1.0)
-    return float(span["top"]) <= sibling_top + _PDF_LEGAL_FOOTNOTE_LINE_Y_TOLERANCE_PT and float(
-        span["bottom"]
-    ) <= sibling_bottom - (sibling_height * 0.25)
-
-
-def _pdf_adjacent_body_spans_for_marker(
-    span: dict[str, Any],
-    line: dict[str, Any],
-    lines: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    marker_top = float(span["top"])
-    marker_bottom = float(span["bottom"])
-    marker_left = float(span["left"])
-    marker_right = float(span["right"])
-    candidates: list[dict[str, Any]] = []
-    for candidate_line in lines:
-        if abs(float(candidate_line["top"]) - marker_top) > _PDF_LEGAL_FOOTNOTE_LINE_Y_TOLERANCE_PT:
-            continue
-        if float(candidate_line["bottom"]) < marker_bottom:
-            continue
-        for candidate in candidate_line["spans"]:
-            if candidate is span or not re.search(r"[A-Za-z]", str(candidate["text"])):
-                continue
-            candidate_left = float(candidate["left"])
-            candidate_right = float(candidate["right"])
-            touches_marker = (
-                abs(candidate_right - marker_left) <= _PDF_LEGAL_FOOTNOTE_LINE_Y_TOLERANCE_PT
-                or abs(candidate_left - marker_right) <= _PDF_LEGAL_FOOTNOTE_LINE_Y_TOLERANCE_PT
-                or candidate is not span
-                and candidate_line is line
-            )
-            if touches_marker:
-                candidates.append(candidate)
-    return candidates
-
-
-def _pdf_line_max_font_size(line: dict[str, Any]) -> float:
-    return max(float(span["size"]) for span in line["spans"])
-
-
-def _numeric_label(value: str) -> int | None:
-    text_value = value.strip()
-    if not re.fullmatch(r"[1-9]\d{0,2}", text_value):
-        return None
-    return int(text_value)
-
-
-def _pdf_union_rect(lines: list[dict[str, Any]]) -> tuple[float, float, float, float]:
-    return (
-        min(float(line["left"]) for line in lines),
-        min(float(line["top"]) for line in lines),
-        max(float(line["right"]) for line in lines),
-        max(float(line["bottom"]) for line in lines),
-    )
-
-
 def _pdf_rect_json(coords: tuple[float, float, float, float]) -> dict[str, float]:
     return {
         "left": coords[0],
@@ -1409,22 +778,12 @@ def _pdf_rect_json(coords: tuple[float, float, float, float]) -> dict[str, float
     }
 
 
-def _increment(counter: dict[str, int], key: str) -> None:
-    counter[key] = counter.get(key, 0) + 1
-
-
-def _stable_token(value: str) -> str:
-    token = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-")
-    return token[:96] or "item"
-
-
 def _pdf_native_link_target_item(
     *,
     media_id: UUID,
     destination_name: str,
-    destination_point: object,
+    destination_point: tuple[float, float] | None,
     target: PdfReferenceBlock,
-    skipped: dict[str, int],
 ) -> dict[str, Any] | None:
     try:
         validate_exact_length(target.body_text)
@@ -1433,12 +792,11 @@ def _pdf_native_link_target_item(
             [_quad_from_rect_coords(target.rect_coords)],
         )
     except GeometryValidationError:
-        _increment(skipped, "invalid_reference_geometry")
         return None
 
     target_key = (
         "pdf:native-citation-target:"
-        f"{target.page_index + 1:04d}:{target.label_number:04d}:{_stable_token(destination_name)}"
+        f"{target.page_index + 1:04d}:{target.label_number:04d}:{stable_token(destination_name)}"
     )
     locator = {
         "type": "pdf_page_geometry",
@@ -1613,17 +971,10 @@ def _pdf_link_text_from_snapshot(
     return normalize_whitespace("\n".join(line_texts))
 
 
-def _pdf_point_json(point: Any) -> dict[str, float] | None:
+def _pdf_point_json(point: tuple[float, float] | None) -> dict[str, float] | None:
     if point is None:
         return None
-    if isinstance(point, tuple):
-        if len(point) != 2:
-            return None
-        return {"x": float(point[0]), "y": float(point[1])}
-    try:
-        return {"x": float(point.x), "y": float(point.y)}
-    except (TypeError, ValueError, AttributeError):
-        return None
+    return {"x": float(point[0]), "y": float(point[1])}
 
 
 def _pdf_point_coords(point: Any) -> tuple[float, float] | None:
@@ -1761,8 +1112,6 @@ def build_pdf_extraction_plan(
     expected_source_sha256: str,
     storage_client,
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
-    source_package: PdfSourcePackageArtifact | None = None,
-    source_package_diagnostics: dict[str, object] | None = None,
 ) -> PdfExtractionPlan | PdfExtractionError:
     """Acquire and parse immutable PDF input without opening a DB transaction."""
     t0 = time.monotonic()
@@ -1812,28 +1161,12 @@ def build_pdf_extraction_plan(
             elapsed_ms=elapsed_ms,
             file_size=source_size_bytes,
         )
-        source_apparatus = _extract_pdf_source_package_apparatus(
-            storage_client=storage_client,
-            attempt_directory=attempt_directory,
-            media_id=media_id,
-            source_package=source_package,
-            source_package_diagnostics=source_package_diagnostics,
-        )
-        if isinstance(source_apparatus, PdfExtractionError):
-            return source_apparatus
-        try:
-            pdf_apparatus = _merge_pdf_apparatus_results(parsed.apparatus, source_apparatus)
-            _validate_pdf_apparatus_budget(pdf_apparatus)
-        except _PdfResourceLimitExceeded as exc:
-            return _pdf_resource_limit_error(str(exc), dimension=exc.dimension)
         return PdfExtractionPlan(
             result=result,
-            apparatus=pdf_apparatus,
+            apparatus=parsed.apparatus,
             storage_path=storage_path,
             source_size_bytes=source_size_bytes,
             source_sha256_hex=source_sha256_hex,
-            source_package=source_package,
-            source_package_diagnostics=source_package_diagnostics,
         )
 
 
@@ -1899,23 +1232,8 @@ def publish_pdf_extraction_plan(
     replace_media_apparatus(
         db,
         media_id=media_id,
-        media_kind="pdf",
-        source_fingerprint_value=source_fingerprint(
-            "pdf",
-            plan.storage_path,
-            plan.source_size_bytes,
-            plan.source_sha256_hex,
-            plan.source_package.storage_path if plan.source_package else None,
-            plan.source_package.size_bytes if plan.source_package else None,
-            plan.source_package.sha256_hex if plan.source_package else None,
-            plan.source_package.source_url if plan.source_package else None,
-            plan.source_package_diagnostics or {},
-            result.page_count,
-            result.source_byte_length,
-        ),
         items=plan.apparatus.items,
         edges=plan.apparatus.edges,
         status=plan.apparatus.status,
-        diagnostics=plan.apparatus.diagnostics,
     )
     return result

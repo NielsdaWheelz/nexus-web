@@ -26,8 +26,8 @@ from nexus.services.document_embeds import (
     DocumentEmbedTargetTerminal,
 )
 from nexus.services.fragment_blocks import FragmentBlockSpec
+from nexus.services.html_apparatus import extract_html_apparatus
 from nexus.services.html_tree import inner_html, serialize_html
-from nexus.services.reader_apparatus import extract_html_apparatus
 from nexus.services.sanitize_html import sanitize_html
 from nexus.text import normalize_whitespace
 

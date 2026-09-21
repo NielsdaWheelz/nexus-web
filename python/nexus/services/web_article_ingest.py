@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 from datetime import UTC, datetime
 from uuid import UUID
@@ -31,6 +30,7 @@ from nexus.services.document_embeds import (
     replace_document_embed_artifact,
 )
 from nexus.services.fragment_blocks import insert_fragment_blocks
+from nexus.services.html_apparatus import attach_fragment_locators
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.node_ingest import (
     IngestError,
@@ -39,11 +39,7 @@ from nexus.services.node_ingest import (
     local_node_ingest_command,
     run_node_ingest,
 )
-from nexus.services.reader_apparatus import (
-    attach_fragment_locators,
-    replace_media_apparatus,
-    source_fingerprint,
-)
+from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.reader_publication import replace_reader_publication
 from nexus.services.source_publication import (
     SourcePublicationFence,
@@ -275,14 +271,6 @@ def materialize_web_article_source(
             replace_media_apparatus(
                 db,
                 media_id=media_id,
-                media_kind="web_article",
-                source_fingerprint_value=source_fingerprint(
-                    "web_article",
-                    canonical_url,
-                    hashlib.sha256(ingest_result.content_html.encode("utf-8")).hexdigest(),
-                    hashlib.sha256(ingest_result.source_html.encode("utf-8")).hexdigest(),
-                    prepared.canonical_text,
-                ),
                 items=attach_fragment_locators(
                     media_id=media_id,
                     fragment_id=fragment.id,
