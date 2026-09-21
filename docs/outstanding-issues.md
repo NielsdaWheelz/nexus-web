@@ -228,6 +228,11 @@ unexpected timeouts. See
 - [open] oi-177 · dossiers · 2026-09-21 reauthoring · p3 · the three artifact_learn_* tables have no writer and await a 0240 drop: [ticket](tickets/artifact-learn-tables-are-write-free.md).
 - [open] oi-178 · dossiers · 2026-09-21 reauthoring · p2 · a recheck raising DossierInputTooLarge escapes the terminal writers and leaves a build active with no terminal: [ticket](tickets/dossier-recheck-can-raise-past-the-terminal-writer.md).
 
+- [open] 2026-09-21 cleanup audit · action menus copy offline metadata they never read: [ticket](tickets/cleanup-action-menu-offline-state-projection.md).
+- [open] 2026-09-21 cleanup audit · chat runs synchronous database phases on the api event loop: [ticket](tickets/cleanup-chat-database-work-blocks-api-event-loop.md).
+- [open] 2026-09-21 cleanup audit · denied inspection permission incorrectly selects extension file capture: [ticket](tickets/cleanup-extension-document-permission-denial.md).
+- [open] 2026-09-21 cleanup audit · node article acquisition retains unused injectable transport modes: [ticket](tickets/cleanup-node-ingest-unused-transport-ports.md).
+- [open] 2026-09-21 cleanup audit · offline reading store retains unused construction modes: [ticket](tickets/cleanup-offline-reading-unused-construction-seams.md).
 - [open] highlight offsets · 2026-09-21 reader cleanup · selection and painting use whitespace-only offsets that disagree with nfc provenance: [ticket](tickets/highlight-dom-offsets-ignore-nfc-provenance.md).
 - [open] pane find · 2026-09-21 reader cleanup · adapters echo request identities through redundant response contracts: [ticket](tickets/pane-find-response-echo-protocol.md).
 - [open] epub find · 2026-09-21 reader cleanup · private adapter retains unused transport injection: [ticket](tickets/epub-find-unused-transport-injection.md).
