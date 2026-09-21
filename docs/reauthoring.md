@@ -35,7 +35,7 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | generation (catalog, ledger, codex + 7 provider APIs, picker) | 13.5k | 3k | codex + 1–2 providers; drop model lifecycle | open |
 | dossiers (engine 3.4k, ten subject bindings, web document runtime) | 18.7k | 5k | reauthor: one engine, one binding table | open |
 | oracle-atlas (oracle, plates, concordance, corpus ops, atlas, manifests, deploy plate train) | 12.6k | 0–4k | deferred by owner 2026-09-21; keep and reauthor: delete, or keep at 4k | open |
-| synapse-connections (resonance, synapse, dawn write, connections surface, reading slate) | 8.8k | 2k | keep synapse + connections; DELETE dawn write (decided 2026-09-21); reading slate deferred | in progress (size/dawn) |
+| synapse-connections (resonance, synapse, dawn write, connections surface, reading slate) | 7.8k | 2k | keep synapse + connections; DELETE dawn write (decided 2026-09-21); reading slate deferred | dawn write deleted (size/dawn); rest open |
 | search-browse-nexus (index, 11 retrievers, browse adapters, nexus launcher, switchboard, /search) | 26.4k | 8k | reauthor: one search UI, one retriever | open |
 | podcasts (subscriptions, sync, refresh runs, backfill, transcription, OPML, detail panes) | 17.9k | 6k | reauthor; drop refresh-run ledger, OPML | open |
 | player (browser + android runtimes, protocol, lectern, walknotes, native player) | 21.3k | 6k | one runtime behind one transport; deferred by owner 2026-09-21; keep and reauthor walknotes | open |
