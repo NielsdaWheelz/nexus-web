@@ -1,199 +1,36 @@
-/**
- * Selection → Offset Conversion for highlight creation.
- *
- * This module converts browser text selections (Range objects) to canonical
- * offsets that can be sent to the backend for highlight creation.
- *
- * The algorithm:
- * 1. Resolve selection boundaries to mapped cursor text nodes
- * 2. Map DOM positions to canonical text offsets using the cursor
- * 3. Convert UTF-16 indices to codepoint indices
- * 4. Trim leading/trailing whitespace
- * 5. Validate length constraints
- * 6. Reject selections intersecting <pre>/<code>
- *
- * @see apps/web/README.md (Highlight Libraries / selectionToOffsets.ts)
- */
+import type { DomTextCursor } from "./domTextCursor";
+import { resolveDomRangeOffsets } from "./domTextRanges";
 
-import { type CanonicalCursorResult } from "./canonicalCursor";
-import { rawCpToCanonicalCp } from "./canonicalText";
-import { codepointLength, utf16ToCodepoint } from "./codepoints";
-
-// =============================================================================
-// Types
-// =============================================================================
-
-/**
- * Result of a successful selection conversion.
- */
-export type SelectionResult = {
-  success: true;
-  startOffset: number;
-  endOffset: number;
-  selectedText: string;
-};
-
-/**
- * Error types for selection failures.
- */
-export type SelectionErrorCode =
-  | "COLLAPSED" // Empty selection
-  | "OUTSIDE_CONTENT" // Selection outside rendered content
-  | "CODE_BLOCK" // Selection intersects <pre> or <code>
-  | "TOO_SHORT" // Less than 2 codepoints after trimming
-  | "TOO_LONG" // More than 2000 codepoints after trimming
-  | "EMPTY_AFTER_TRIM" // Selection is only whitespace
-  | "MISMATCH_STATE"; // Canonical text mismatch (highlighting disabled)
-
-/**
- * Result of a failed selection conversion.
- */
-export type SelectionError = {
-  success: false;
-  error: SelectionErrorCode;
-  message: string;
-};
-
-/**
- * Combined result type.
- */
-export type SelectionConversionResult = SelectionResult | SelectionError;
-
-// =============================================================================
-// Constants
-// =============================================================================
-
-/**
- * Minimum highlight length in codepoints.
- */
-export const MIN_HIGHLIGHT_LENGTH = 2;
-
-/**
- * Maximum highlight length in codepoints.
- */
-export const MAX_HIGHLIGHT_LENGTH = 2000;
-
-// =============================================================================
-// Helpers
-// =============================================================================
-
-/**
- * Check if a DOM node is inside a <pre> or <code> element.
- */
-function isInsideCodeBlock(node: Node): boolean {
-  let current: Node | null = node;
-  while (current) {
-    if (current.nodeType === Node.ELEMENT_NODE) {
-      const tag = (current as Element).tagName.toLowerCase();
-      if (tag === "pre" || tag === "code") {
-        return true;
-      }
+export type SelectionConversionResult =
+  | {
+      success: true;
+      startOffset: number;
+      endOffset: number;
+      selectedText: string;
     }
-    current = current.parentNode;
-  }
-  return false;
-}
+  | {
+      success: false;
+      error:
+        | "COLLAPSED"
+        | "OUTSIDE_CONTENT"
+        | "CODE_BLOCK"
+        | "TOO_SHORT"
+        | "TOO_LONG"
+        | "EMPTY_AFTER_TRIM"
+        | "MISMATCH_STATE";
+      message: string;
+    };
 
-/**
- * Find the first non-whitespace codepoint index from the start.
- */
-function findFirstNonWhitespace(text: string): number {
-  const codepoints = [...text];
-  for (let i = 0; i < codepoints.length; i++) {
-    if (!/\s/.test(codepoints[i])) {
-      return i;
-    }
-  }
-  return codepoints.length; // All whitespace
-}
+const MIN_HIGHLIGHT_LENGTH = 2;
+const MAX_HIGHLIGHT_LENGTH = 2000;
 
-/**
- * Find the last non-whitespace codepoint index from the end.
- * Returns the index AFTER the last non-whitespace character (exclusive end).
- */
-function findLastNonWhitespace(text: string): number {
-  const codepoints = [...text];
-  for (let i = codepoints.length - 1; i >= 0; i--) {
-    if (!/\s/.test(codepoints[i])) {
-      return i + 1;
-    }
-  }
-  return 0; // All whitespace
-}
-
-// =============================================================================
-// Main Function
-// =============================================================================
-
-/**
- * Check if a selection intersects any code blocks.
- *
- * A selection is rejected if any spanned text node is inside <pre> or <code>.
- *
- * @param cursor - The canonical cursor result
- * @param absStart - Absolute start offset (codepoints)
- * @param absEnd - Absolute end offset (codepoints)
- * @returns true if selection intersects a code block
- */
-export function selectionIntersectsCodeBlock(
-  cursor: CanonicalCursorResult,
-  absStart: number,
-  absEnd: number
-): boolean {
-  // Find all text nodes whose range intersects [absStart, absEnd)
-  for (const entry of cursor.nodes) {
-    // Check if ranges intersect: !(entry.end <= absStart || entry.start >= absEnd)
-    if (entry.start < absEnd && entry.end > absStart) {
-      // Check ancestor chain for pre or code
-      if (isInsideCodeBlock(entry.node)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-/**
- * Convert a browser selection Range to canonical offsets.
- *
- * This is the main entry point for selection → offset conversion.
- * It handles all the complexity of:
- * - Boundary resolution against mapped cursor nodes
- * - UTF-16 to codepoint conversion
- * - Whitespace trimming
- * - Length validation
- * - Code block rejection
- *
- * @param range - The browser Range object from the selection
- * @param cursor - The canonical cursor mapping from the rendered content
- * @param canonicalText - The canonical text from the fragment
- * @param mismatchDisabled - Whether highlighting is disabled due to mismatch
- * @returns Conversion result with offsets or error
- */
-function resolveDirectTextNodeMatch(
-  container: Node,
-  offset: number,
-  nodes: CanonicalCursorResult["nodes"]
-): { node: CanonicalCursorResult["nodes"][number]; offsetInNode: number } | null {
-  if (container.nodeType !== Node.TEXT_NODE) {
-    return null;
-  }
-  for (const entry of nodes) {
-    if (entry.node === container) {
-      const max = entry.node.textContent?.length ?? 0;
-      return { node: entry, offsetInNode: Math.max(0, Math.min(offset, max)) };
-    }
-  }
-  return null;
-}
-
+/** Translate selection through provenance, then enforce highlight policy. */
 export function selectionToOffsets(
   range: Range,
-  cursor: CanonicalCursorResult,
+  cursor: DomTextCursor,
   canonicalText: string,
-  mismatchDisabled: boolean = false
+  mismatchDisabled = false,
 ): SelectionConversionResult {
-  // Guard: Check mismatch state first
   if (mismatchDisabled) {
     return {
       success: false,
@@ -201,8 +38,6 @@ export function selectionToOffsets(
       message: "Highlights disabled due to content mismatch. Try reloading.",
     };
   }
-
-  // Guard: Check if selection is collapsed (empty)
   if (range.collapsed) {
     return {
       success: false,
@@ -210,131 +45,22 @@ export function selectionToOffsets(
       message: "No text selected.",
     };
   }
-
-  const startContainer = range.startContainer;
-  const endContainer = range.endContainer;
-
-  let startNode: CanonicalCursorResult["nodes"][number] | null = null;
-  let endNode: CanonicalCursorResult["nodes"][number] | null = null;
-  let startUtf16Offset = range.startOffset;
-  let endUtf16Offset = range.endOffset;
-
-  // Resolve start boundary to a mapped cursor node.
-  const startMatch = resolveDirectTextNodeMatch(
-    startContainer,
-    range.startOffset,
-    cursor.nodes
-  );
-  if (startMatch) {
-    startNode = startMatch.node;
-    startUtf16Offset = startMatch.offsetInNode;
-  }
-
-  if (!startNode) {
-    const startBoundary = document.createRange();
-    startBoundary.setStart(startContainer, range.startOffset);
-    startBoundary.collapse(true);
-
-    for (const entry of cursor.nodes) {
-      const nodeStart = document.createRange();
-      nodeStart.setStart(entry.node, 0);
-      nodeStart.collapse(true);
-      if (
-        nodeStart.compareBoundaryPoints(
-          Range.START_TO_START,
-          startBoundary
-        ) >= 0
-      ) {
-        startNode = entry;
-        startUtf16Offset = 0;
-        break;
-      }
-    }
-  }
-
-  if (!startNode) {
+  const offsets = resolveDomRangeOffsets(cursor, range);
+  if (offsets === null) {
     return {
       success: false,
       error: "OUTSIDE_CONTENT",
-      message: "Selection start is outside rendered content.",
+      message: "Selection is outside rendered content.",
     };
   }
-
-  // Resolve end boundary to a mapped cursor node.
-  const endMatch = resolveDirectTextNodeMatch(
-    endContainer,
-    range.endOffset,
-    cursor.nodes
-  );
-  if (endMatch) {
-    endNode = endMatch.node;
-    endUtf16Offset = endMatch.offsetInNode;
-  }
-
-  if (!endNode) {
-    const endBoundary = document.createRange();
-    endBoundary.setStart(endContainer, range.endOffset);
-    endBoundary.collapse(true);
-
-    for (let i = cursor.nodes.length - 1; i >= 0; i--) {
-      const entry = cursor.nodes[i];
-      const nodeEndUtf16 = entry.node.textContent?.length ?? 0;
-      const nodeEnd = document.createRange();
-      nodeEnd.setStart(entry.node, nodeEndUtf16);
-      nodeEnd.collapse(true);
-      if (
-        nodeEnd.compareBoundaryPoints(
-          Range.START_TO_START,
-          endBoundary
-        ) <= 0
-      ) {
-        endNode = entry;
-        endUtf16Offset = nodeEndUtf16;
-        break;
-      }
-    }
-  }
-
-  if (!endNode) {
-    return {
-      success: false,
-      error: "OUTSIDE_CONTENT",
-      message: "Selection end is outside rendered content.",
-    };
-  }
-
-  // Convert UTF-16 offsets to canonical codepoint offsets within each node.
-  // The cursor's start/end are in canonical (trimmed + whitespace-normalized)
-  // space, but the DOM text node contains raw text. rawCpToCanonicalCp walks
-  // the raw text simulating whitespace collapsing so that internal runs of
-  // whitespace (e.g. "Hello   world" → "Hello world") are handled correctly.
-  const startText = startNode.node.textContent || "";
-  const endText = endNode.node.textContent || "";
-
-  const startRawCp = utf16ToCodepoint(startText, startUtf16Offset);
-  const endRawCp = utf16ToCodepoint(endText, endUtf16Offset);
-
-  const startAdjustedCp = rawCpToCanonicalCp(startText, startRawCp, startNode.trimLeadCp);
-  const endAdjustedCp = rawCpToCanonicalCp(endText, endRawCp, endNode.trimLeadCp);
-
-  const startClampedCp = Math.min(startAdjustedCp, startNode.end - startNode.start);
-  const endClampedCp = Math.min(endAdjustedCp, endNode.end - endNode.start);
-
-  // Compute absolute offsets in canonical text space
-  let absStart = startNode.start + startClampedCp;
-  let absEnd = endNode.start + endClampedCp;
-
-  // Ensure absStart < absEnd (should already be true after normalization)
-  if (absStart >= absEnd) {
-    return {
-      success: false,
-      error: "COLLAPSED",
-      message: "Selection is empty after processing.",
-    };
-  }
-
-  // Check for code block intersection BEFORE trimming
-  if (selectionIntersectsCodeBlock(cursor, absStart, absEnd)) {
+  let { startOffset, endOffset } = offsets;
+  if (
+    cursor.provenance.slice(startOffset, endOffset).some((entry) =>
+      entry.spans.some(
+        (span) => span.node.parentElement?.closest("pre, code") != null,
+      ),
+    )
+  ) {
     return {
       success: false,
       error: "CODE_BLOCK",
@@ -342,49 +68,39 @@ export function selectionToOffsets(
     };
   }
 
-  // Extract the selected text from canonical_text
-  const selectedText = [...canonicalText].slice(absStart, absEnd).join("");
-
-  // Trim leading and trailing whitespace
-  const trimStartDelta = findFirstNonWhitespace(selectedText);
-  const trimmedText = selectedText.trim();
-
-  if (!trimmedText) {
+  const codepoints = [...canonicalText];
+  while (startOffset < endOffset && /\s/.test(codepoints[startOffset])) {
+    startOffset += 1;
+  }
+  while (endOffset > startOffset && /\s/.test(codepoints[endOffset - 1])) {
+    endOffset -= 1;
+  }
+  if (startOffset === endOffset) {
     return {
       success: false,
       error: "EMPTY_AFTER_TRIM",
       message: "Selection contains only whitespace.",
     };
   }
-
-  // Calculate new offsets after trimming
-  const trimEndDelta = codepointLength(selectedText) - findLastNonWhitespace(selectedText);
-  absStart += trimStartDelta;
-  absEnd -= trimEndDelta;
-
-  // Validate length constraints
-  const finalLength = codepointLength(trimmedText);
-
-  if (finalLength < MIN_HIGHLIGHT_LENGTH) {
+  const length = endOffset - startOffset;
+  if (length < MIN_HIGHLIGHT_LENGTH) {
     return {
       success: false,
       error: "TOO_SHORT",
       message: `Selection must be at least ${MIN_HIGHLIGHT_LENGTH} characters.`,
     };
   }
-
-  if (finalLength > MAX_HIGHLIGHT_LENGTH) {
+  if (length > MAX_HIGHLIGHT_LENGTH) {
     return {
       success: false,
       error: "TOO_LONG",
       message: `Selection must be at most ${MAX_HIGHLIGHT_LENGTH} characters.`,
     };
   }
-
   return {
     success: true,
-    startOffset: absStart,
-    endOffset: absEnd,
-    selectedText: trimmedText,
+    startOffset,
+    endOffset,
+    selectedText: codepoints.slice(startOffset, endOffset).join(""),
   };
 }

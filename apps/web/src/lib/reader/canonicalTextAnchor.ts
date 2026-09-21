@@ -8,7 +8,6 @@
 
 import {
   type CanonicalCursorResult,
-  type CanonicalDomSpan,
 } from "@/lib/highlights/canonicalCursor";
 import {
   getPaneScrollTopPaddingPx,
@@ -337,69 +336,6 @@ export function resolveCanonicalTextAnchor(
     firstSourceAnchor(cursor, canonicalOffset) ??
     lastSourceAnchor(cursor, canonicalOffset - 1)
   );
-}
-
-function compareDomSpans(
-  left: CanonicalDomSpan,
-  right: CanonicalDomSpan,
-): number {
-  if (left.node === right.node) {
-    return left.startUtf16 - right.startUtf16 || left.endUtf16 - right.endUtf16;
-  }
-  const position = left.node.compareDocumentPosition(right.node);
-  if (position & Node.DOCUMENT_POSITION_FOLLOWING) {
-    return -1;
-  }
-  if (position & Node.DOCUMENT_POSITION_PRECEDING) {
-    return 1;
-  }
-  throw new Error("Canonical provenance spans must share one document tree.");
-}
-
-function mergeDomSpans(spans: CanonicalDomSpan[]): CanonicalDomSpan[] {
-  const ordered = [...spans].sort(compareDomSpans);
-  const merged: CanonicalDomSpan[] = [];
-  for (const span of ordered) {
-    const previous = merged[merged.length - 1];
-    if (previous?.node === span.node && span.startUtf16 <= previous.endUtf16) {
-      previous.endUtf16 = Math.max(previous.endUtf16, span.endUtf16);
-      continue;
-    }
-    merged.push({ ...span });
-  }
-  return merged;
-}
-
-export function resolveCanonicalTextRanges(
-  cursor: CanonicalCursorResult,
-  startCanonicalOffset: number,
-  endCanonicalOffset: number,
-): Range[] | null {
-  if (
-    !Number.isInteger(startCanonicalOffset) ||
-    !Number.isInteger(endCanonicalOffset) ||
-    startCanonicalOffset < 0 ||
-    endCanonicalOffset <= startCanonicalOffset ||
-    endCanonicalOffset > cursor.length
-  ) {
-    return null;
-  }
-
-  const spans = mergeDomSpans(
-    cursor.provenance
-      .slice(startCanonicalOffset, endCanonicalOffset)
-      .flatMap((entry) => entry.spans),
-  );
-  if (spans.length === 0) {
-    return null;
-  }
-
-  return spans.map((span) => {
-    const range = span.node.ownerDocument.createRange();
-    range.setStart(span.node, span.startUtf16);
-    range.setEnd(span.node, span.endUtf16);
-    return range;
-  });
 }
 
 function anchorRect(anchor: CanonicalTextAnchor): DOMRect {

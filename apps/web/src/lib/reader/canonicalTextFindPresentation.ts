@@ -1,4 +1,4 @@
-import { resolveCanonicalTextRanges } from "@/lib/reader/canonicalTextAnchor";
+import { resolveDomTextRanges } from "@/lib/highlights/domTextRanges";
 import type { CanonicalCursorResult } from "@/lib/highlights/canonicalCursor";
 import type { PaneFindResultKey } from "@/lib/panes/paneSearch";
 import type { PaneFindAdapter } from "@/lib/panes/usePaneFind";
@@ -33,7 +33,7 @@ function resolveVisibleTarget(
   input: CanonicalTextFindPresentationInput,
   target: CanonicalTextFindPresentationTarget,
 ): Range[] {
-  const ranges = resolveCanonicalTextRanges(
+  const ranges = resolveDomTextRanges(
     input.cursor,
     target.startCp,
     target.endCp,

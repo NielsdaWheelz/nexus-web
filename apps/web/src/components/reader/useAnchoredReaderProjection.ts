@@ -13,9 +13,8 @@ import {
   projectPdfQuadToViewportRect,
   type PdfPageViewportTransform,
 } from "@/lib/highlights/coordinateTransforms";
-import { buildCanonicalCursor, type CanonicalNode } from "@/lib/highlights/canonicalCursor";
-import { canonicalCpToRawCp } from "@/lib/highlights/canonicalText";
-import { codepointToUtf16 } from "@/lib/highlights/codepoints";
+import { buildCanonicalCursor } from "@/lib/highlights/canonicalCursor";
+import { resolveDomTextRanges } from "@/lib/highlights/domTextRanges";
 import { escapeAttrValue } from "@/lib/highlights/escapeAttrValue";
 import { compareStableString } from "@/lib/display/format";
 import type { PdfHighlightQuad } from "@/lib/highlights/pdfTypes";
@@ -148,20 +147,6 @@ function pickVisibleRect(
   return visibleRect;
 }
 
-function boundaryAt(
-  nodes: CanonicalNode[],
-  offset: number,
-): { node: Text; utf16Offset: number } | null {
-  for (const entry of nodes) {
-    if (offset >= entry.start && offset <= entry.end) {
-      const text = entry.node.textContent ?? "";
-      const rawCp = canonicalCpToRawCp(text, offset - entry.start, entry.trimLeadCp);
-      return { node: entry.node, utf16Offset: codepointToUtf16(text, rawCp) };
-    }
-  }
-  return null;
-}
-
 function textAnchorRects(
   contentElement: HTMLElement,
   row: AnchoredReaderRow,
@@ -176,14 +161,9 @@ function textAnchorRects(
   );
   if (!fragment) return [];
   const cursor = buildCanonicalCursor(fragment);
-  const start = boundaryAt(cursor.nodes, anchor.start_offset);
-  const end = boundaryAt(cursor.nodes, anchor.end_offset);
-  if (!start || !end) return [];
-
-  const range = document.createRange();
-  range.setStart(start.node, start.utf16Offset);
-  range.setEnd(end.node, end.utf16Offset);
-  return Array.from(range.getClientRects())
+  const ranges = resolveDomTextRanges(cursor, anchor.start_offset, anchor.end_offset);
+  return (ranges ?? [])
+    .flatMap((range) => Array.from(range.getClientRects()))
     .filter((rect) => rect.width > 0 && rect.height > 0)
     .map((rect) => ({
       top: rect.top - viewerRect.top + viewerScrollTop,
