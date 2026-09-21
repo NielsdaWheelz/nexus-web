@@ -1,4 +1,8 @@
-"""Current inline-embed artifact owner for readable web articles."""
+"""Inline-embed artifact ownership for readable web articles.
+
+One media's embeds are replaced as a set: rows, the aggregate state row, and the
+per-viewer `resource_edges` projection that decides who can see each target.
+"""
 
 from __future__ import annotations
 
@@ -95,8 +99,7 @@ class DocumentEmbedLockSetChanged(Exception):
 
 
 def delete_document_embed_artifacts(db: Session, *, owner_user_id: UUID, media_id: UUID) -> None:
-    viewer_ids = {*_document_embed_edge_viewer_ids(db, media_id=media_id), owner_user_id}
-    for viewer_id in sorted(viewer_ids):
+    for viewer_id in sorted({*_edge_viewer_ids(db, media_id=media_id), owner_user_id}):
         _replace_graph_edges(db, viewer_id=viewer_id, media_id=media_id, rows=[])
     db.execute(delete(DocumentEmbed).where(DocumentEmbed.media_id == media_id))
     db.execute(
@@ -132,13 +135,17 @@ def replace_document_embed_artifact(
     request_id: str | None,
     locked_existing_target_media_ids: frozenset[UUID],
 ) -> list[tuple[UUID, UUID]]:
-    edge_viewer_ids = {*_document_embed_edge_viewer_ids(db, media_id=media_id), owner_user_id}
+    """Replace one media's embed rows, accepting each pending child source.
+
+    Returns the (media_id, attempt_id) pairs the caller must enqueue.
+    """
+    edge_viewer_ids = {*_edge_viewer_ids(db, media_id=media_id), owner_user_id}
     delete_document_embed_artifacts(db, owner_user_id=owner_user_id, media_id=media_id)
-    queued_children: list[tuple[UUID, UUID]] = []
-    accepted_target_media_ids: set[UUID] = set()
     library_ids = library_entries.admin_non_default_library_ids_for_media(
         db, viewer_id=owner_user_id, media_id=media_id
     )
+    queued_children: list[tuple[UUID, UUID]] = []
+    accepted_target_media_ids: set[UUID] = set()
     rows: list[DocumentEmbed] = []
     for occurrence in occurrences:
         target_media_id: UUID | None = None
@@ -172,7 +179,7 @@ def replace_document_embed_artifact(
                 ):
                     raise DocumentEmbedLockSetChanged(target_media_id)
                 diagnostics["child_source_attempt_id"] = str(accepted.source_attempt_id)
-                resolution_status = _resolution_from_child(
+                resolution_status = _child_resolution(
                     accepted.processing_status, accepted.source_attempt_status
                 )
                 if accepted.needs_enqueue:
@@ -181,8 +188,6 @@ def replace_document_embed_artifact(
         elif isinstance(target, DocumentEmbedTargetMaterialized):
             target_media_id = target.media_id
             resolution_status = "resolved"
-            error_code = None
-            error_message = None
         elif isinstance(target, DocumentEmbedTargetTerminal):
             resolution_status = target.status
             error_code = target.error_code
@@ -218,33 +223,84 @@ def replace_document_embed_artifact(
         )
     db.add_all(rows)
     db.flush()
-    _write_state(
-        db,
-        media_id=media_id,
-        source_attempt_id=source_attempt_id,
-        rows=rows,
-        extraction_failed=extraction_failed,
+
+    state = DocumentEmbedArtifactState(
+        media_id=media_id, source_attempt_id=source_attempt_id, status="empty", diagnostics={}
     )
+    if extraction_failed:
+        state.total_count = 0
+        state.resolved_count = 0
+        state.unsupported_count = 0
+        state.failed_count = 0
+        state.status = "failed"
+    else:
+        _set_state_counts(state, rows)
+    db.add(state)
+    db.flush()
+
     for viewer_id in sorted(edge_viewer_ids):
         _replace_graph_edges(db, viewer_id=viewer_id, media_id=media_id, rows=rows)
     return queued_children
 
 
-def document_embed_summaries_for_media(
-    db: Session, media_ids: Sequence[UUID]
-) -> dict[UUID, DocumentEmbedSummaryOut]:
-    if not media_ids:
-        return {}
-    rows = (
-        db.execute(
-            select(DocumentEmbedArtifactState).where(
-                DocumentEmbedArtifactState.media_id.in_(list(media_ids))
-            )
+def sync_document_embed_targets_for_media(db: Session, *, target_media_id: UUID) -> bool:
+    """Rewrite every row referring to one child media, then its parents' aggregates."""
+    rows = list(
+        db.scalars(
+            select(DocumentEmbed)
+            .where(DocumentEmbed.target_media_id == target_media_id)
+            .order_by(DocumentEmbed.media_id.asc(), DocumentEmbed.ordinal.asc())
         )
-        .scalars()
-        .all()
     )
-    return {row.media_id: _summary_out(row) for row in rows}
+    if not rows:
+        return False
+    status: Literal["resolving", "resolved", "failed"]
+    target = db.get(Media, target_media_id)
+    if target is None:
+        status, error_code, error_message = (
+            "failed",
+            "E_MEDIA_NOT_FOUND",
+            "Embedded media target was removed.",
+        )
+    elif target.processing_status is ProcessingStatus.ready_for_reading:
+        status, error_code, error_message = "resolved", None, None
+    elif target.processing_status is ProcessingStatus.failed:
+        status, error_code, error_message = (
+            "failed",
+            target.last_error_code,
+            target.last_error_message,
+        )
+    else:
+        status, error_code, error_message = "resolving", None, None
+
+    media_ids = {row.media_id for row in rows}
+    for row in rows:
+        row.resolution_status = status
+        row.error_code = error_code
+        row.error_message = error_message
+    db.flush()
+    for media_id in media_ids:
+        state = db.execute(
+            select(DocumentEmbedArtifactState).where(
+                DocumentEmbedArtifactState.media_id == media_id
+            )
+        ).scalar_one_or_none()
+        if state is not None:
+            _set_state_counts(state, _embed_rows(db, media_id=media_id))
+    db.flush()
+    return True
+
+
+def reconcile_document_embed_edges_for_viewer(
+    db: Session,
+    *,
+    viewer_id: UUID,
+    media_id: UUID,
+) -> None:
+    """Project the current document-embed targets visible to one viewer."""
+    _replace_graph_edges(
+        db, viewer_id=viewer_id, media_id=media_id, rows=_embed_rows(db, media_id=media_id)
+    )
 
 
 def reconcile_document_embed_parent_edges_for_viewer(
@@ -265,54 +321,9 @@ def reconcile_document_embed_parent_edges_for_viewer(
     if not parent_media_ids:
         return False
     for media_id in parent_media_ids:
-        reconcile_document_embed_edges_for_viewer(
-            db,
-            viewer_id=viewer_id,
-            media_id=media_id,
-        )
+        reconcile_document_embed_edges_for_viewer(db, viewer_id=viewer_id, media_id=media_id)
     db.flush()
     return True
-
-
-def list_document_embeds_for_fragments(
-    db: Session, *, viewer_id: UUID, fragment_ids: Sequence[UUID]
-) -> dict[UUID, list[DocumentEmbedOut]]:
-    if not fragment_ids:
-        return {}
-    rows = (
-        db.execute(
-            select(DocumentEmbed)
-            .where(DocumentEmbed.fragment_id.in_(list(fragment_ids)))
-            .order_by(
-                DocumentEmbed.fragment_id.asc(),
-                DocumentEmbed.ordinal.asc(),
-                DocumentEmbed.id.asc(),
-            )
-        )
-        .scalars()
-        .all()
-    )
-    out: dict[UUID, list[DocumentEmbedOut]] = {fragment_id: [] for fragment_id in fragment_ids}
-    for row in rows:
-        if row.fragment_id is None:
-            continue
-        out.setdefault(row.fragment_id, []).append(_embed_out(db, viewer_id=viewer_id, row=row))
-    return out
-
-
-def list_document_embeds_for_media(
-    db: Session, *, viewer_id: UUID, media_id: UUID
-) -> list[DocumentEmbedOut]:
-    rows = (
-        db.execute(
-            select(DocumentEmbed)
-            .where(DocumentEmbed.media_id == media_id)
-            .order_by(DocumentEmbed.ordinal.asc(), DocumentEmbed.id.asc())
-        )
-        .scalars()
-        .all()
-    )
-    return [_embed_out(db, viewer_id=viewer_id, row=row) for row in rows]
 
 
 def resolved_document_embed_target_media_ids(db: Session, *, media_id: UUID) -> list[UUID]:
@@ -332,136 +343,81 @@ def resolved_document_embed_target_media_ids(db: Session, *, media_id: UUID) -> 
     ]
 
 
-def reconcile_document_embed_edges_for_viewer(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    media_id: UUID,
-) -> None:
-    """Project the current document-embed targets visible to one viewer."""
-    rows = (
-        db.execute(
+def document_embed_summaries_for_media(
+    db: Session, media_ids: Sequence[UUID]
+) -> dict[UUID, DocumentEmbedSummaryOut]:
+    if not media_ids:
+        return {}
+    rows = db.scalars(
+        select(DocumentEmbedArtifactState).where(
+            DocumentEmbedArtifactState.media_id.in_(list(media_ids))
+        )
+    ).all()
+    return {
+        row.media_id: DocumentEmbedSummaryOut(
+            status=cast(DocumentEmbedAggregateStatus, row.status),
+            total_count=row.total_count,
+            resolved_count=row.resolved_count,
+            unsupported_count=row.unsupported_count,
+            failed_count=row.failed_count,
+        )
+        for row in rows
+    }
+
+
+def list_document_embeds_for_media(
+    db: Session, *, viewer_id: UUID, media_id: UUID
+) -> list[DocumentEmbedOut]:
+    return [
+        _embed_out(db, viewer_id=viewer_id, row=row) for row in _embed_rows(db, media_id=media_id)
+    ]
+
+
+def list_document_embeds_for_fragments(
+    db: Session, *, viewer_id: UUID, fragment_ids: Sequence[UUID]
+) -> dict[UUID, list[DocumentEmbedOut]]:
+    if not fragment_ids:
+        return {}
+    rows = db.scalars(
+        select(DocumentEmbed)
+        .where(DocumentEmbed.fragment_id.in_(list(fragment_ids)))
+        .order_by(
+            DocumentEmbed.fragment_id.asc(),
+            DocumentEmbed.ordinal.asc(),
+            DocumentEmbed.id.asc(),
+        )
+    ).all()
+    out: dict[UUID, list[DocumentEmbedOut]] = {fragment_id: [] for fragment_id in fragment_ids}
+    for row in rows:
+        if row.fragment_id is None:
+            continue
+        out.setdefault(row.fragment_id, []).append(_embed_out(db, viewer_id=viewer_id, row=row))
+    return out
+
+
+def _embed_rows(db: Session, *, media_id: UUID) -> list[DocumentEmbed]:
+    return list(
+        db.scalars(
             select(DocumentEmbed)
             .where(DocumentEmbed.media_id == media_id)
             .order_by(DocumentEmbed.ordinal.asc(), DocumentEmbed.id.asc())
         )
-        .scalars()
-        .all()
     )
-    _replace_graph_edges(db, viewer_id=viewer_id, media_id=media_id, rows=rows)
 
 
-def sync_document_embed_targets_for_media(db: Session, *, target_media_id: UUID) -> bool:
-    rows = (
-        db.execute(
-            select(DocumentEmbed)
-            .where(DocumentEmbed.target_media_id == target_media_id)
-            .order_by(DocumentEmbed.media_id.asc(), DocumentEmbed.ordinal.asc())
-        )
-        .scalars()
-        .all()
-    )
-    if not rows:
-        return False
-    status: Literal["resolving", "resolved", "failed"]
-    target = db.get(Media, target_media_id)
-    if target is None:
-        status = "failed"
-        error_code = "E_MEDIA_NOT_FOUND"
-        error_message = "Embedded media target was removed."
-    elif target.processing_status is ProcessingStatus.ready_for_reading:
-        status = "resolved"
-        error_code = None
-        error_message = None
-    elif target.processing_status is ProcessingStatus.failed:
-        status = "failed"
-        error_code = target.last_error_code
-        error_message = target.last_error_message
-    else:
-        status = "resolving"
-        error_code = None
-        error_message = None
-    media_ids = {row.media_id for row in rows}
-    for row in rows:
-        row.resolution_status = status
-        row.error_code = error_code
-        row.error_message = error_message
-    db.flush()
-    for media_id in media_ids:
-        current = (
-            db.execute(
-                select(DocumentEmbed)
-                .where(DocumentEmbed.media_id == media_id)
-                .order_by(DocumentEmbed.ordinal.asc(), DocumentEmbed.id.asc())
+def _edge_viewer_ids(db: Session, *, media_id: UUID) -> set[UUID]:
+    return set(
+        db.scalars(
+            select(ResourceEdge.user_id)
+            .where(
+                ResourceEdge.source_scheme == "media",
+                ResourceEdge.source_id == media_id,
+                ResourceEdge.origin == "document_embed",
             )
-            .scalars()
-            .all()
+            .distinct()
+            .order_by(ResourceEdge.user_id)
         )
-        state = db.execute(
-            select(DocumentEmbedArtifactState).where(
-                DocumentEmbedArtifactState.media_id == media_id
-            )
-        ).scalar_one_or_none()
-        if state is not None:
-            _set_state_counts(state, current)
-    db.flush()
-    return True
-
-
-def _write_state(
-    db: Session,
-    *,
-    media_id: UUID,
-    source_attempt_id: UUID | None,
-    rows: Sequence[DocumentEmbed],
-    extraction_failed: bool,
-) -> None:
-    state = DocumentEmbedArtifactState(
-        media_id=media_id,
-        source_attempt_id=source_attempt_id,
-        status="empty",
-        diagnostics={},
     )
-    if extraction_failed:
-        state.total_count = 0
-        state.resolved_count = 0
-        state.unsupported_count = 0
-        state.failed_count = 0
-        state.status = "failed"
-    else:
-        _set_state_counts(state, rows)
-    db.add(state)
-    db.flush()
-
-
-def _set_state_counts(state: DocumentEmbedArtifactState, rows: Sequence[DocumentEmbed]) -> None:
-    state.total_count = len(rows)
-    state.resolved_count = sum(1 for row in rows if row.resolution_status == "resolved")
-    state.unsupported_count = sum(1 for row in rows if row.resolution_status == "unsupported")
-    state.failed_count = sum(1 for row in rows if row.resolution_status == "failed")
-    state.status = _aggregate_status(
-        state.total_count,
-        state.resolved_count,
-        state.unsupported_count,
-        state.failed_count,
-    )
-
-
-def _aggregate_status(
-    total: int, resolved: int, unsupported: int, failed: int
-) -> DocumentEmbedAggregateStatus:
-    if total == 0:
-        return "empty"
-    terminal = resolved + unsupported + failed
-    if unsupported == total:
-        return "unsupported"
-    if resolved + unsupported == total:
-        return "ready"
-    if failed == total:
-        return "failed"
-    if terminal == 0:
-        return "resolving"
-    return "partial"
 
 
 def _replace_graph_edges(
@@ -471,6 +427,7 @@ def _replace_graph_edges(
     media_id: UUID,
     rows: Sequence[DocumentEmbed],
 ) -> None:
+    """Per-viewer visibility: both endpoints must be readable by that viewer."""
     source = ResourceRef(scheme="media", id=media_id)
     target_media_ids: list[UUID] = []
     if can_read_media(db, viewer_id, media_id):
@@ -499,22 +456,7 @@ def _replace_graph_edges(
     )
 
 
-def _document_embed_edge_viewer_ids(db: Session, *, media_id: UUID) -> set[UUID]:
-    return set(
-        db.scalars(
-            select(ResourceEdge.user_id)
-            .where(
-                ResourceEdge.source_scheme == "media",
-                ResourceEdge.source_id == media_id,
-                ResourceEdge.origin == "document_embed",
-            )
-            .distinct()
-            .order_by(ResourceEdge.user_id)
-        )
-    )
-
-
-def _resolution_from_child(
+def _child_resolution(
     processing_status: str, source_attempt_status: str
 ) -> Literal["resolving", "resolved", "failed"]:
     if processing_status == "ready_for_reading":
@@ -524,14 +466,29 @@ def _resolution_from_child(
     return "resolving"
 
 
-def _summary_out(row: DocumentEmbedArtifactState) -> DocumentEmbedSummaryOut:
-    return DocumentEmbedSummaryOut(
-        status=cast(DocumentEmbedAggregateStatus, row.status),
-        total_count=row.total_count,
-        resolved_count=row.resolved_count,
-        unsupported_count=row.unsupported_count,
-        failed_count=row.failed_count,
-    )
+def _set_state_counts(state: DocumentEmbedArtifactState, rows: Sequence[DocumentEmbed]) -> None:
+    state.total_count = len(rows)
+    state.resolved_count = sum(1 for row in rows if row.resolution_status == "resolved")
+    state.unsupported_count = sum(1 for row in rows if row.resolution_status == "unsupported")
+    state.failed_count = sum(1 for row in rows if row.resolution_status == "failed")
+    terminal = state.resolved_count + state.unsupported_count + state.failed_count
+    if state.total_count == 0:
+        state.status = "empty"
+    elif state.unsupported_count == state.total_count:
+        state.status = "unsupported"
+    elif state.resolved_count + state.unsupported_count == state.total_count:
+        state.status = "ready"
+    elif state.failed_count == state.total_count:
+        state.status = "failed"
+    elif terminal == 0:
+        state.status = "resolving"
+    else:
+        state.status = "partial"
+
+
+# ---------------------------------------------------------------------------
+# Wire projection: the presence wrappers `schemas/media.py` declares
+# ---------------------------------------------------------------------------
 
 
 def _embed_out(db: Session, *, viewer_id: UUID, row: DocumentEmbed) -> DocumentEmbedOut:
@@ -633,9 +590,6 @@ def _display(row: DocumentEmbed, target: DocumentEmbedTargetOut) -> DocumentEmbe
     if row.resolution_status == "resolved" and target.href:
         mode = "resolved"
         description = target.title or "Saved in Nexus"
-    elif row.resolution_status == "resolving":
-        mode = "pending"
-        description = "Resolving embedded media"
     elif row.resolution_status == "failed":
         mode = "failed"
         description = row.error_message or "Embedded media could not be saved"

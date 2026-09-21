@@ -1,4 +1,4 @@
-"""Web article artifact cleanup ownership."""
+"""Web article artifact cleanup, run before a refresh publishes new fragments."""
 
 from __future__ import annotations
 
@@ -20,38 +20,20 @@ def delete_web_article_artifacts(
     media_id: UUID,
     include_content_index: bool,
 ) -> None:
-    """Delete rewriteable non-embed web-article artifacts for a media row.
+    """Drop fragments and their blocks, keeping every authored artifact.
 
-    The document-embed owner replaces its complete artifact after new fragments
-    exist. This helper only releases old fragment locators; keeping the rows and
-    edges until replacement preserves the prior viewer-scoped graph audience.
+    Highlights, credits and apparatus survive: a refresh republishes fragments
+    and authored selectors re-resolve by quote against the new content. The
+    document-embed owner keeps its rows and viewer-scoped edges until it
+    replaces them, so only their fragment locators are released here.
     """
     prepare_document_embed_artifacts_for_fragment_replacement(db, media_id=media_id)
     if include_content_index:
         delete_content_index(db, owner=IndexOwner("media", media_id))
-
     fragment_ids = (
         db.execute(select(Fragment.id).where(Fragment.media_id == media_id)).scalars().all()
     )
-
     if fragment_ids:
         db.execute(delete(FragmentBlock).where(FragmentBlock.fragment_id.in_(fragment_ids)))
-
-    # Highlights are authored user data and are NOT deleted here: refresh
-    # publishes new fragments, then authored selectors (Highlights, passage
-    # anchors) resolve against the new current content (spec "Highlight
-    # Durability", Invariant 9). Fragment deletion only invalidates the
-    # highlight_fragment_anchors locator cache (fragment_id FK is non-cascading,
-    # non-owning); the Highlight root survives and is resolved via LEFT JOIN
-    # + quote re-resolution.
     db.execute(delete(Fragment).where(Fragment.media_id == media_id))
-    # Deliberately NOT credits/author memos: every caller of this helper is a
-    # LIVE-media refresh/re-ingest (web re-ingest, source requeue, browser
-    # re-capture, X thread/post refresh). Refresh keeps the prior author list
-    # until the post-commit observation replaces it (spec 2.4), NOT_OBSERVED
-    # re-fetches preserve it (AC 10), and a manual pin plus its replay memos
-    # survive refresh (AC 13, spec 2.8). Deletion cleanup lives with true
-    # deletions only: contributors.cleanup_credits_for_deleted_target.
-    # Apparatus likewise survives until replacement reconciles stable keys;
-    # media_deletion owns the only full apparatus delete.
     db.flush()

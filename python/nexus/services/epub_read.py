@@ -1,4 +1,4 @@
-"""EPUB source navigation and independently addressable render units."""
+"""EPUB source reads: fragments, navigation, and the public sharing projection."""
 
 from __future__ import annotations
 
@@ -28,6 +28,36 @@ from nexus.services.capabilities import is_document_status_ready
 from nexus.services.html_tree import inner_html
 from nexus.services.reader_publication import read_publication_generation
 
+_FRAGMENT_SOURCES_SQL = """
+    SELECT f.idx, COALESCE(n.label, source.package_href) AS label,
+           COALESCE(toc.depth, 0) AS depth, f.html_sanitized, f.canonical_text
+    FROM fragments f
+    JOIN epub_fragment_sources source
+      ON source.media_id = f.media_id AND source.fragment_id = f.id
+    LEFT JOIN LATERAL (
+        SELECT label, source_node_id FROM epub_nav_locations
+        WHERE media_id = f.media_id AND fragment_idx = f.idx
+        ORDER BY start_offset, ordinal LIMIT 1
+    ) n ON TRUE
+    LEFT JOIN epub_toc_nodes toc
+      ON toc.media_id = f.media_id AND toc.node_id = n.source_node_id
+    WHERE f.media_id = :media_id
+      AND (CAST(:after_ordinal AS INTEGER) IS NULL OR f.idx > :after_ordinal)
+    ORDER BY f.idx LIMIT :limit
+"""
+
+_ONE_FRAGMENT_SQL = """
+    SELECT f.id, f.idx, source.package_href, f.html_sanitized, f.canonical_text,
+           f.canonical_text_word_count, f.created_at,
+           COALESCE((SELECT SUM(prior.canonical_text_word_count)
+             FROM fragments prior WHERE prior.media_id = f.media_id AND prior.idx < f.idx),
+             0) AS document_word_start
+    FROM fragments f
+    JOIN epub_fragment_sources source
+      ON source.media_id = f.media_id AND source.fragment_id = f.id
+    WHERE f.media_id = :mid AND f.id = :fragment_id
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class EpubFragmentSourceContent:
@@ -49,23 +79,7 @@ def list_epub_fragment_sources(
 ) -> list[EpubFragmentSourceContent]:
     """Read each source fragment once; the caller establishes audience authority."""
     rows = db.execute(
-        text("""
-            SELECT f.idx, COALESCE(n.label, source.package_href) AS label,
-                   COALESCE(toc.depth, 0) AS depth, f.html_sanitized, f.canonical_text
-            FROM fragments f
-            JOIN epub_fragment_sources source
-              ON source.media_id = f.media_id AND source.fragment_id = f.id
-            LEFT JOIN LATERAL (
-                SELECT label, source_node_id FROM epub_nav_locations
-                WHERE media_id = f.media_id AND fragment_idx = f.idx
-                ORDER BY start_offset, ordinal LIMIT 1
-            ) n ON TRUE
-            LEFT JOIN epub_toc_nodes toc
-              ON toc.media_id = f.media_id AND toc.node_id = n.source_node_id
-            WHERE f.media_id = :media_id
-              AND (CAST(:after_ordinal AS INTEGER) IS NULL OR f.idx > :after_ordinal)
-            ORDER BY f.idx LIMIT :limit
-        """),
+        text(_FRAGMENT_SOURCES_SQL),
         {"media_id": media_id, "after_ordinal": after_ordinal, "limit": limit},
     ).mappings()
     return [
@@ -90,8 +104,8 @@ def get_epub_fragment_source(
     return rows[0] if rows and rows[0].ordinal == ordinal else None
 
 
-def require_readable_epub(db: Session, viewer_id: UUID, media_id: UUID) -> None:
-    """Enforce visibility before kind and readiness."""
+def require_readable_epub(db: Session, viewer_id: UUID, media_id: UUID) -> int:
+    """Enforce visibility, then kind, then readiness; return the publication generation."""
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
     row = db.execute(
@@ -104,6 +118,10 @@ def require_readable_epub(db: Session, viewer_id: UUID, media_id: UUID) -> None:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_KIND, "Endpoint only supports EPUB media")
     if not is_document_status_ready(str(row.processing_status)):
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
+    generation = read_publication_generation(db, media_id=media_id)
+    if generation is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    return generation
 
 
 def get_epub_navigation_for_viewer(
@@ -111,11 +129,7 @@ def get_epub_navigation_for_viewer(
     viewer_id: UUID,
     media_id: UUID,
 ) -> MediaNavigationOut:
-    require_readable_epub(db, viewer_id, media_id)
-    generation = read_publication_generation(db, media_id=media_id)
-    if generation is None:
-        # justify-defect: readable EPUB content is installed by the publication owner.
-        raise AssertionError("Readable EPUB has no reader publication")
+    generation = require_readable_epub(db, viewer_id, media_id)
     return read_epub_navigation(db, media_id=media_id, generation=generation)
 
 
@@ -169,8 +183,10 @@ def read_epub_navigation(
                 )
             )
         elif row["end_offset"] is not None:
-            # justify-defect: the structure write owner stores both extent coordinates together.
-            raise AssertionError("EPUB semantic extent has an unpaired end offset")
+            # The structure write owner stores both extent coordinates together.
+            raise NotFoundError(
+                ApiErrorCode.E_NOT_FOUND, "EPUB semantic extent has an unpaired end offset"
+            )
         sections.append(
             ReaderNavigationSectionOut(
                 section_id=row["location_id"],
@@ -223,8 +239,8 @@ def read_epub_navigation(
     node_by_section = {
         node.section_id.value: node for node in nodes.values() if node.section_id.kind == "Present"
     }
-    missing = [section for section in sections if section.section_id not in node_by_section]
     # Source-only headings augment the outline without changing publisher sibling order.
+    missing = [section for section in sections if section.section_id not in node_by_section]
     for section in missing:
         node_by_section[section.section_id] = ReaderNavigationTocNodeOut(
             id=section.section_id,
@@ -235,8 +251,7 @@ def read_epub_navigation(
     for section in missing:
         node = node_by_section[section.section_id]
         if section.parent_section_id.kind == "Present":
-            parent = node_by_section[section.parent_section_id.value]
-            parent.children.append(node)
+            node_by_section[section.parent_section_id.value].children.append(node)
         else:
             roots.append(node)
 
@@ -253,11 +268,7 @@ def read_epub_navigation(
                 )
             )
         locations[row["nav_type"]].append(
-            ReaderNavigationLocationOut(
-                id=row["node_id"],
-                label=row["label"],
-                target=target,
-            )
+            ReaderNavigationLocationOut(id=row["node_id"], label=row["label"], target=target)
         )
     return MediaNavigationOut(
         media_id=media_id,
@@ -294,8 +305,7 @@ def rewrite_epub_fragment_links(
         if parsed.scheme or parsed.netloc:
             continue
         # Ingestion already canonicalizes package-relative links to package paths.
-        path = parsed.path if parsed.path else href_path
-        fragment_id = fragment_ids_by_path.get(path)
+        fragment_id = fragment_ids_by_path.get(parsed.path if parsed.path else href_path)
         if fragment_id is None:
             continue
         link.set("data-nexus-fragment-id", str(fragment_id))
@@ -312,26 +322,9 @@ def get_epub_fragment_for_viewer(
     fragment_id: UUID,
 ) -> EpubFragmentOut:
     """Read one owned EPUB fragment without requiring a navigation section."""
-    require_readable_epub(db, viewer_id, media_id)
-    generation = read_publication_generation(db, media_id=media_id)
-    if generation is None:
-        # justify-defect: readable EPUB content is installed by the publication owner.
-        raise AssertionError("Readable EPUB has no reader publication")
+    generation = require_readable_epub(db, viewer_id, media_id)
     row = (
-        db.execute(
-            text("""
-            SELECT f.id, f.idx, source.package_href, f.html_sanitized, f.canonical_text,
-                   f.canonical_text_word_count, f.created_at,
-                   COALESCE((SELECT SUM(prior.canonical_text_word_count)
-                     FROM fragments prior WHERE prior.media_id = f.media_id AND prior.idx < f.idx),
-                     0) AS document_word_start
-            FROM fragments f
-            JOIN epub_fragment_sources source
-              ON source.media_id = f.media_id AND source.fragment_id = f.id
-            WHERE f.media_id = :mid AND f.id = :fragment_id
-        """),
-            {"mid": media_id, "fragment_id": fragment_id},
-        )
+        db.execute(text(_ONE_FRAGMENT_SQL), {"mid": media_id, "fragment_id": fragment_id})
         .mappings()
         .one_or_none()
     )
