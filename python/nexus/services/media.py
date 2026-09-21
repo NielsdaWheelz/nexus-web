@@ -1,10 +1,10 @@
-"""Media catalog and browser-capture service layer."""
+"""The read wire for a Media: one SQL projection hydrated into the media DTOs."""
 
 from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -21,13 +21,8 @@ from nexus.auth.permissions import (
 )
 from nexus.db.models import MediaKind
 from nexus.db.sql_patterns import escape_ilike_pattern
-from nexus.errors import (
-    ApiError,
-    ApiErrorCode,
-    InvalidRequestError,
-    NotFoundError,
-)
-from nexus.logging import get_logger
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
+from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.imports import RepairSearchOffer, RepairSourceOffer, RetrySourceOffer
 from nexus.schemas.media import (
@@ -59,9 +54,7 @@ from nexus.services.capabilities import (
 )
 from nexus.services.consumption import projection
 from nexus.services.content_indexing import SearchRecoveryFacts, search_recovery
-from nexus.services.contributor_credits import (
-    load_contributor_credits_for_media,
-)
+from nexus.services.contributor_credits import load_contributor_credits_for_media
 from nexus.services.document_embeds import (
     document_embed_summaries_for_media,
     list_document_embeds_for_fragments,
@@ -82,18 +75,12 @@ from nexus.services.resource_grants import media_grant_path_exists_sql
 from nexus.services.source_publication import (
     SourceCountedProgress as PublishedSourceCountedProgress,
 )
-from nexus.services.source_publication import (
-    SourceProgress as PublishedSourceProgress,
-)
+from nexus.services.source_publication import SourceProgress as PublishedSourceProgress
 from nexus.services.source_publication import load_source_progress
 
-logger = get_logger(__name__)
+_LIST_LIMIT_MAX = 200
+_TERMINAL_PROCESSING_STATUSES = ("ready_for_reading", "failed", "suspended")
 
-_DISPLAY_PROCESSING_STATUS_SQL = f"""CASE
-    WHEN {source_repairable_sql("m")}
-    THEN 'suspended'
-    ELSE m.processing_status::text
-END"""
 _LATEST_SOURCE_ATTEMPT_SQL = """(
     SELECT jsonb_build_object(
         'id', latest.id,
@@ -146,10 +133,8 @@ _SOURCE_ATTEMPT_STORAGE_ERROR_CODES_SQL = """
     'E_STORAGE_MISSING',
     'E_STORAGE_ERROR'
 """
-
-
-# A healthy source has no last_error_code. Collapse that SQL NULL to false so
-# file-backed attempts remain refreshable unless a storage error exists.
+# A healthy source has no last_error_code; collapse that NULL to false so
+# file-backed attempts stay refreshable unless a storage error exists.
 _SOURCE_REFRESH_AVAILABLE_SQL = f"""EXISTS(
         SELECT 1
         FROM media_source_attempts msa
@@ -170,89 +155,125 @@ _SOURCE_REFRESH_AVAILABLE_SQL = f"""EXISTS(
               LIMIT 1
           )
     )"""
-_CAN_DELETE_SQL = f"""(
-    {non_system_media_ref_exists_sql("m.id")}
-    OR {media_grant_path_exists_sql("m.id")}
-)"""
 
-_MEDIA_BASE_SELECT_COLUMNS: tuple[str, ...] = (
-    "m.id",
-    "m.kind",
-    "m.title",
-    "m.canonical_source_url",
-    "m.processing_status AS persisted_processing_status",
-    f"{_DISPLAY_PROCESSING_STATUS_SQL} AS processing_status",
-    f"{_LATEST_SOURCE_ATTEMPT_SQL} AS latest_source_attempt",
-    f"{source_repairable_sql('m')} AS source_repairable",
-    "mcis.revision AS retrieval_revision",
-    f"{_DEAD_REINDEX_JOB_ID_SQL} AS dead_reindex_job_id",
-    "m.failure_stage",
-    "m.last_error_code",
-    "m.external_playback_url",
-    "m.provider",
-    "m.provider_id",
-    "m.created_at",
-    "m.updated_at",
-    "EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file",
-    "m.created_by_user_id = :viewer_id AS is_creator",
-    f"{_SOURCE_REFRESH_AVAILABLE_SQL} AS source_refresh_available",
-    "m.original_published_date",
-    "m.edition_published_date",
-    "m.publisher",
-    "m.language",
-    "m.description",
-    "m.authors_manually_managed",
-    "m.metadata_enriched_at",
-    "pe.description_html AS podcast_description_html",
-    "pe.description_text AS podcast_description_text",
-    "mts.transcript_state",
-    "mts.transcript_coverage",
-    "mts.transcript_origin",
-    "COALESCE(mcis.status, 'pending') AS retrieval_status",
-    "mcis.status_reason AS retrieval_status_reason",
-    f"{_CAN_DELETE_SQL} AS can_delete",
+# One expression per output alias. Both projections name their aliases from here,
+# so no SQL expression exists twice.
+_SELECT_EXPRESSIONS: dict[str, str] = {
+    "id": "m.id",
+    "kind": "m.kind",
+    "title": "m.title",
+    "canonical_source_url": "m.canonical_source_url",
+    "external_playback_url": "m.external_playback_url",
+    "persisted_processing_status": "m.processing_status",
+    # A repairable latest source attempt displays as suspended whatever the row says.
+    "processing_status": (
+        f"CASE WHEN {source_repairable_sql('m')} THEN 'suspended'"
+        " ELSE m.processing_status::text END"
+    ),
+    "latest_source_attempt": _LATEST_SOURCE_ATTEMPT_SQL,
+    "source_repairable": source_repairable_sql("m"),
+    "retrieval_revision": "mcis.revision",
+    "dead_reindex_job_id": _DEAD_REINDEX_JOB_ID_SQL,
+    "retrieval_status": "COALESCE(mcis.status, 'pending')",
+    "retrieval_status_reason": "mcis.status_reason",
+    "failure_stage": "m.failure_stage",
+    "last_error_code": "m.last_error_code",
+    "provider": "m.provider",
+    "provider_id": "m.provider_id",
+    "created_at": "m.created_at",
+    "updated_at": "m.updated_at",
+    "has_file": "EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id)",
+    "is_creator": "m.created_by_user_id = :viewer_id",
+    "source_refresh_available": _SOURCE_REFRESH_AVAILABLE_SQL,
+    "original_published_date": "m.original_published_date",
+    "edition_published_date": "m.edition_published_date",
+    "publisher": "m.publisher",
+    "language": "m.language",
+    "description": "m.description",
+    "authors_manually_managed": "m.authors_manually_managed",
+    "metadata_enriched_at": "m.metadata_enriched_at",
+    "podcast_description_html": "pe.description_html",
+    "podcast_description_text": "pe.description_text",
+    "transcript_state": "mts.transcript_state",
+    "transcript_coverage": "mts.transcript_coverage",
+    "transcript_origin": "mts.transcript_origin",
+    "can_delete": (
+        f"({non_system_media_ref_exists_sql('m.id')} OR {media_grant_path_exists_sql('m.id')})"
+    ),
+    "listening_position_ms": "pls.position_ms",
+    "listening_duration_ms": "pls.duration_ms",
+    "listening_is_completed": "pls.is_completed",
+}
+
+_MEDIA_OUT_ALIASES = tuple(_SELECT_EXPRESSIONS)
+# Collection rows render no descriptions, retrieval metadata or episode prose.
+_COLLECTION_ALIASES = tuple(
+    alias
+    for alias in _SELECT_EXPRESSIONS
+    if alias
+    not in {
+        "retrieval_status",
+        "retrieval_status_reason",
+        "failure_stage",
+        "provider",
+        "provider_id",
+        "updated_at",
+        "edition_published_date",
+        "publisher",
+        "language",
+        "description",
+        "metadata_enriched_at",
+        "podcast_description_html",
+        "podcast_description_text",
+    }
 )
-_MEDIA_LISTENING_STATE_SELECT_COLUMNS: tuple[str, ...] = (
-    "pls.position_ms AS listening_position_ms",
-    "pls.duration_ms AS listening_duration_ms",
-    "pls.is_completed AS listening_is_completed",
-)
-_MEDIA_LISTENING_STATE_NULL_SELECT_COLUMNS: tuple[str, ...] = (
-    "NULL::bigint AS listening_position_ms",
-    "NULL::bigint AS listening_duration_ms",
-    "NULL::boolean AS listening_is_completed",
-)
-_COLLECTION_MEDIA_SELECT_COLUMNS: tuple[str, ...] = (
-    "m.id",
-    "m.kind",
-    "m.title",
-    "m.canonical_source_url",
-    "m.external_playback_url",
-    "m.processing_status AS persisted_processing_status",
-    f"{_DISPLAY_PROCESSING_STATUS_SQL} AS processing_status",
-    f"{_LATEST_SOURCE_ATTEMPT_SQL} AS latest_source_attempt",
-    f"{source_repairable_sql('m')} AS source_repairable",
-    "mcis.revision AS retrieval_revision",
-    f"{_DEAD_REINDEX_JOB_ID_SQL} AS dead_reindex_job_id",
-    "m.last_error_code",
-    "m.created_at",
-    "m.original_published_date",
-    "m.authors_manually_managed",
-    "EXISTS(SELECT 1 FROM media_file mf WHERE mf.media_id = m.id) AS has_file",
-    "m.created_by_user_id = :viewer_id AS is_creator",
-    f"{_SOURCE_REFRESH_AVAILABLE_SQL} AS source_refresh_available",
-    "mts.transcript_state",
-    "mts.transcript_coverage",
-    "mts.transcript_origin",
-    f"{_CAN_DELETE_SQL} AS can_delete",
-    *_MEDIA_LISTENING_STATE_SELECT_COLUMNS,
-)
+
+# podcast_episodes has media_id as its primary key, so this join never fans out.
+_FROM_SQL = """
+    FROM media m
+    JOIN visible_media vm ON vm.media_id = m.id
+    LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
+    LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
+    LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
+    LEFT JOIN podcast_listening_states pls ON pls.media_id = m.id AND pls.user_id = :viewer_id
+"""
+
+
+def _projection_sql(aliases: Sequence[str]) -> str:
+    return ",\n    ".join(f"{_SELECT_EXPRESSIONS[alias]} AS {alias}" for alias in aliases)
+
+
+def _visible_query(aliases: Sequence[str], tail: str) -> str:
+    return f"""
+        WITH visible_media AS ({visible_media_ids_cte_sql()})
+        SELECT
+        {_projection_sql(aliases)}
+        {_FROM_SQL}
+        {tail}
+    """
+
+
+def _status_to_str(value: object) -> str:
+    return value if isinstance(value, str) else str(getattr(value, "value", value))
+
+
+def _nullable_str(value: object) -> str | None:
+    return None if value is None else _status_to_str(value)
+
+
+def _dedupe_uuid_order(values: Iterable[UUID]) -> list[UUID]:
+    ordered: list[UUID] = []
+    seen: set[UUID] = set()
+    for value in values:
+        normalized = UUID(str(value))
+        if normalized not in seen:
+            seen.add(normalized)
+            ordered.append(normalized)
+    return ordered
 
 
 @dataclass(frozen=True, slots=True)
 class CompactMediaTarget:
-    """Narrow media display facts for a selected reading-surface target."""
-
     media_id: UUID
     media_kind: MediaKind
     title: str
@@ -267,8 +288,6 @@ type MediaRecoveryOffer = RetrySourceOffer | RepairSourceOffer | RepairSearchOff
 
 @dataclass(frozen=True, slots=True)
 class CollectionMediaCapabilities:
-    """Only media actions consumed by Library and Podcast collection rows."""
-
     can_quote: bool
     can_retry: bool
     can_refresh_source: bool
@@ -312,9 +331,9 @@ class CollectionMedia:
 def media_candidate_rows_sql() -> str:
     """Policy-neutral media candidate facts.
 
-    Columns: ``media_id``, ``media_kind``, canonical Nexus ``created_at``, and
-    raw partial-date ``original_published_date``. Visibility, teardown, destination
-    eligibility, and exact-date interpretation belong to the composing query.
+    Columns: ``media_id``, ``media_kind``, canonical ``created_at``, and the raw
+    partial-date ``original_published_date``. Visibility, teardown, destination
+    eligibility and exact-date interpretation belong to the composing query.
     """
     return """
         SELECT
@@ -331,503 +350,62 @@ def hydrate_compact_media_targets(
 ) -> dict[UUID, CompactMediaTarget]:
     """Batch-hydrate visible media into compact target facts.
 
-    The read is bounded by ``media_ids``. Podcast episodes use the parent
-    podcast title/artwork; other media use publisher as their optional
-    subtitle and have no image in the canonical media store.
+    Podcast episodes borrow the parent podcast's title and artwork; every other
+    kind uses its publisher as subtitle and has no image.
     """
+    from nexus.services.resource_graph.refs import ResourceRef
+    from nexus.services.resource_items.routing import resource_activations_for_refs
+
     ordered_ids = _dedupe_uuid_order(media_ids)
     if not ordered_ids:
         return {}
     rows = db.execute(
-        text(
-            f"""
-            WITH visible_media AS (
-                {visible_media_ids_cte_sql()}
-            )
+        text(f"""
+            WITH visible_media AS ({visible_media_ids_cte_sql()})
             SELECT
                 m.id AS media_id,
                 m.kind AS media_kind,
                 m.title,
-                CASE
-                    WHEN m.kind = 'podcast_episode' THEN p.title
-                    ELSE m.publisher
-                END AS subtitle,
-                CASE
-                    WHEN m.kind = 'podcast_episode' THEN p.image_url
-                    ELSE NULL
-                END AS image_url
+                CASE WHEN m.kind = 'podcast_episode' THEN p.title ELSE m.publisher END AS subtitle,
+                CASE WHEN m.kind = 'podcast_episode' THEN p.image_url ELSE NULL END AS image_url
             FROM media m
             JOIN visible_media vm ON vm.media_id = m.id
             LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
             LEFT JOIN podcasts p ON p.id = pe.podcast_id
             WHERE m.id = ANY(:media_ids)
-            """
-        ),
+        """),
         {"viewer_id": viewer_id, "media_ids": ordered_ids},
     ).mappings()
     by_id = {UUID(str(row["media_id"])): row for row in rows}
-    from nexus.services.resource_graph.refs import ResourceRef
-    from nexus.services.resource_items.routing import resource_activations_for_refs
 
-    refs = [
-        ResourceRef(scheme="media", id=media_id) for media_id in ordered_ids if media_id in by_id
-    ]
     activations = resource_activations_for_refs(
         db,
         viewer_id=viewer_id,
-        refs=refs,
+        refs=[
+            ResourceRef(scheme="media", id=media_id)
+            for media_id in ordered_ids
+            if media_id in by_id
+        ],
     )
     hydrated: dict[UUID, CompactMediaTarget] = {}
-    for media_id in ordered_ids:
-        row = by_id.get(media_id)
+    for media_id, row in ((media_id, by_id.get(media_id)) for media_id in ordered_ids):
         if row is None:
             continue
-        try:
-            media_kind = MediaKind(str(row["media_kind"]))
-        except ValueError as exc:
-            # justify-defect: media.kind is storage-owned and constrained to the
-            # closed MediaKind vocabulary.
-            raise AssertionError(f"unknown media.kind: {row['media_kind']!r}") from exc
-        subtitle = str(row["subtitle"]) if row["subtitle"] is not None else None
-        image_url = str(row["image_url"]) if row["image_url"] is not None else None
-        ref = ResourceRef(scheme="media", id=media_id)
-        href = activations[ref.uri].href
-        if href is None:
-            # justify-defect: media is a statically routeable ResourceRef and
-            # the visibility query above proved the selected row exists.
-            raise AssertionError(f"visible media target is not routeable: {ref.uri}")
         hydrated[media_id] = CompactMediaTarget(
             media_id=media_id,
-            media_kind=media_kind,
+            media_kind=MediaKind(_status_to_str(row["media_kind"])),
             title=str(row["title"]),
-            subtitle=presence_from_nullable(subtitle),
-            image_url=presence_from_nullable(image_url),
-            href=href,
+            subtitle=presence_from_nullable(_nullable_str(row["subtitle"])),
+            image_url=presence_from_nullable(_nullable_str(row["image_url"])),
+            href=cast(str, activations[ResourceRef(scheme="media", id=media_id).uri].href),
         )
     return hydrated
 
 
-def _dedupe_uuid_order(values: Iterable[UUID]) -> list[UUID]:
-    ordered: list[UUID] = []
-    seen: set[UUID] = set()
-    for value in values:
-        normalized = UUID(str(value))
-        if normalized in seen:
-            continue
-        seen.add(normalized)
-        ordered.append(normalized)
-    return ordered
-
-
-def _media_select_projection_sql(*, include_listening_state: bool) -> str:
-    columns = list(_MEDIA_BASE_SELECT_COLUMNS)
-    if include_listening_state:
-        columns.extend(_MEDIA_LISTENING_STATE_SELECT_COLUMNS)
-    else:
-        columns.extend(_MEDIA_LISTENING_STATE_NULL_SELECT_COLUMNS)
-    return ",\n                ".join(columns)
-
-
-def _collection_media_select_projection_sql() -> str:
-    return ",\n                    ".join(_COLLECTION_MEDIA_SELECT_COLUMNS)
-
-
-def _media_listening_state_join_sql(*, include_listening_state: bool) -> str:
-    if not include_listening_state:
-        return ""
-    return """
-            LEFT JOIN podcast_listening_states pls
-              ON pls.media_id = m.id
-             AND pls.user_id = :viewer_id
-    """
-
-
-def list_collection_media_for_viewer_by_ids(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    media_ids: list[UUID],
-) -> list[CollectionMedia]:
-    """Hydrate the exact media facts consumed by finite collection rows.
-
-    Visibility and input order match :func:`list_media_for_viewer_by_ids`, but
-    this projection deliberately excludes detail-only descriptions, chapters,
-    document embeds, images, retrieval metadata, and broad ``MediaOut``
-    construction.
-    """
-    ordered_media_ids = _dedupe_uuid_order(media_ids)
-    if not ordered_media_ids:
-        return []
-
-    media_rows = (
-        db.execute(
-            text(
-                f"""
-                WITH visible_media AS (
-                    {visible_media_ids_cte_sql()}
-                )
-                SELECT
-                    {_collection_media_select_projection_sql()}
-                FROM media m
-                JOIN visible_media vm
-                  ON vm.media_id = m.id
-                LEFT JOIN media_transcript_states mts
-                  ON mts.media_id = m.id
-                LEFT JOIN content_index_states mcis
-                  ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
-                {_media_listening_state_join_sql(include_listening_state=True)}
-                WHERE m.id = ANY(:media_ids)
-                """
-            ),
-            {"viewer_id": viewer_id, "media_ids": ordered_media_ids},
-        )
-        .mappings()
-        .all()
-    )
-    if not media_rows:
-        return []
-
-    row_by_media_id: dict[UUID, RowMapping] = {UUID(str(row["id"])): row for row in media_rows}
-    visible_ids = [media_id for media_id in ordered_media_ids if media_id in row_by_media_id]
-    pdf_ids = [
-        media_id
-        for media_id in visible_ids
-        if _status_to_str(row_by_media_id[media_id]["kind"]) == MediaKind.pdf.value
-    ]
-    pdf_readiness = batch_pdf_quote_text_ready(db, pdf_ids) if pdf_ids else {}
-    contributors_by_media = load_contributor_credits_for_media(db, visible_ids)
-    read_states = projection.media_read_states(
-        db,
-        viewer_id=viewer_id,
-        media_ids=visible_ids,
-    )
-
-    media_list: list[CollectionMedia] = []
-    for media_id in visible_ids:
-        row = row_by_media_id[media_id]
-        kind_value = _status_to_str(row["kind"])
-        try:
-            MediaKind(kind_value)
-        except ValueError as exc:
-            # justify-defect: media.kind is storage-owned and constrained to the
-            # closed MediaKind vocabulary.
-            raise AssertionError(f"unknown media.kind: {kind_value!r}") from exc
-        read_state = read_states.get(media_id)
-        if read_state is None:
-            # justify-defect: media_read_states returns one state for every
-            # trusted, visible media id supplied by this projection.
-            raise AssertionError(f"missing collection read state for media {media_id}")
-
-        transcript_state = (
-            _status_to_str(row["transcript_state"]) if row["transcript_state"] is not None else None
-        )
-        transcript_coverage = (
-            _status_to_str(row["transcript_coverage"])
-            if row["transcript_coverage"] is not None
-            else None
-        )
-        viewer_source, viewer_search = _row_recovery(
-            row, is_creator=bool(row["is_creator"]), is_operator=False
-        )
-        applicable_source, applicable_search = _row_recovery(
-            row, is_creator=True, is_operator=False
-        )
-        derived_capabilities = derive_capabilities(
-            kind=kind_value,
-            processing_status=_status_to_str(row["persisted_processing_status"]),
-            last_error_code=cast(str | None, row["last_error_code"]),
-            media_file_exists=bool(row["has_file"]),
-            # The broad CapabilitiesOut.can_play value is not exposed. Compact
-            # podcast playability is derived separately below.
-            external_playback_url_exists=False,
-            pdf_quote_text_ready=pdf_readiness.get(media_id, False),
-            transcript_state=transcript_state,
-            transcript_coverage=transcript_coverage,
-            can_delete=bool(row["can_delete"]),
-            is_creator=bool(row["is_creator"]),
-            source_refresh_available=bool(row["source_refresh_available"]),
-            source_recovery=viewer_source,
-            search_recovery=viewer_search,
-        )
-        applicable_capabilities = derive_capabilities(
-            kind=kind_value,
-            processing_status=_status_to_str(row["persisted_processing_status"]),
-            last_error_code=cast(str | None, row["last_error_code"]),
-            media_file_exists=bool(row["has_file"]),
-            external_playback_url_exists=False,
-            pdf_quote_text_ready=pdf_readiness.get(media_id, False),
-            transcript_state=transcript_state,
-            transcript_coverage=transcript_coverage,
-            can_delete=bool(row["can_delete"]),
-            is_creator=True,
-            source_refresh_available=bool(row["source_refresh_available"]),
-            source_recovery=applicable_source,
-            search_recovery=applicable_search,
-        )
-        playback_source = (
-            derive_playback_source(
-                kind=kind_value,
-                external_playback_url=cast(str | None, row["external_playback_url"]),
-                canonical_source_url=cast(str | None, row["canonical_source_url"]),
-            )
-            if kind_value == MediaKind.podcast_episode.value
-            else None
-        )
-        media_list.append(
-            CollectionMedia(
-                id=media_id,
-                kind=cast(
-                    "Literal['web_article', 'epub', 'pdf', 'podcast_episode', 'video']",
-                    kind_value,
-                ),
-                title=str(row["title"]),
-                canonical_source_url=cast(str | None, row["canonical_source_url"]),
-                offline_download_eligible=offline_download_eligible(
-                    kind=kind_value,
-                    title=str(row["title"]),
-                    external_playback_url=cast(str | None, row["external_playback_url"]),
-                ),
-                processing_status=cast(
-                    "MediaProcessingStatus",
-                    _status_to_str(row["processing_status"]),
-                ),
-                transcript_state=transcript_state,
-                transcript_coverage=transcript_coverage,
-                listening_state=_media_listening_state_from_row(row),
-                contributors=contributors_by_media.get(media_id, []),
-                author_mode="manual" if bool(row["authors_manually_managed"]) else "automatic",
-                original_published_date=presence_from_nullable(row["original_published_date"]),
-                read_state=read_state.state,
-                progress_fraction=read_state.progress_fraction,
-                progress_resettable=read_state.progress_resettable,
-                audio_playable=(
-                    kind_value == MediaKind.podcast_episode.value
-                    and playback_source is not None
-                    and bool(playback_source.stream_url)
-                ),
-                has_original_file=bool(row["has_file"]),
-                capabilities=CollectionMediaCapabilities(
-                    can_quote=derived_capabilities.can_quote,
-                    can_retry=derived_capabilities.can_retry,
-                    can_refresh_source=derived_capabilities.can_refresh_source,
-                    can_retry_metadata=derived_capabilities.can_retry_metadata,
-                    can_edit_authors=derived_capabilities.can_edit_authors,
-                    can_delete=derived_capabilities.can_delete,
-                    refresh_source_applicable=applicable_capabilities.can_refresh_source,
-                    retry_metadata_applicable=applicable_capabilities.can_retry_metadata,
-                    edit_authors_applicable=applicable_capabilities.can_edit_authors,
-                ),
-                recovery=_recovery_offer(viewer_source, viewer_search),
-                applicable_recovery=_recovery_offer(applicable_source, applicable_search),
-                created_at=cast(datetime, row["created_at"]),
-            )
-        )
-    return media_list
-
-
-def get_offline_download_spec_for_viewer(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    media_id: UUID,
-) -> OfflineDownloadSpecOut:
-    row = (
-        db.execute(
-            text(
-                f"""
-                WITH visible_media AS (
-                    {visible_media_ids_cte_sql()}
-                )
-                SELECT m.kind, m.title, m.external_playback_url
-                FROM media m
-                JOIN visible_media vm ON vm.media_id = m.id
-                WHERE m.id = :media_id
-                """
-            ),
-            {"viewer_id": viewer_id, "media_id": media_id},
-        )
-        .mappings()
-        .one_or_none()
-    )
-    if row is None:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    title = derive_offline_download_title(title=str(row["title"]))
-    return OfflineDownloadSpecOut(
-        media_id=media_id,
-        title=title,
-        source_url=derive_offline_download_source(
-            kind=_status_to_str(row["kind"]),
-            external_playback_url=cast(str | None, row["external_playback_url"]),
-        ),
-    )
-
-
-def get_media_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-) -> MediaOut:
-    """Get media by ID if readable by viewer.
-
-    Returns media row if readable by viewer, including derived capabilities.
-    Uses a single query that combines existence + visibility check.
-
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        media_id: The ID of the media to fetch.
-
-    Returns:
-        The media if found and viewer can read it.
-
-    Raises:
-        NotFoundError: If media does not exist or viewer cannot read it.
-    """
-    if not can_read_media(db, viewer_id, media_id):
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
-    rows = list_media_for_viewer_by_ids(db, viewer_id, [media_id])
-    if not rows:
-        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-    return rows[0]
-
-
-def list_media_for_viewer_by_ids(
-    db: Session,
-    viewer_id: UUID,
-    media_ids: list[UUID],
-) -> list[MediaOut]:
-    """Batch-hydrate viewer-visible media rows by ID, preserving input order."""
-    if not media_ids:
-        return []
-
-    ordered_media_ids = _dedupe_uuid_order(media_ids)
-
-    media_rows = (
-        db.execute(
-            text(
-                f"""
-            WITH visible_media AS (
-                {visible_media_ids_cte_sql()}
-            )
-            SELECT
-                {_media_select_projection_sql(include_listening_state=True)}
-            FROM media m
-            JOIN visible_media vm
-              ON vm.media_id = m.id
-            LEFT JOIN media_transcript_states mts
-              ON mts.media_id = m.id
-            LEFT JOIN content_index_states mcis
-              ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
-            LEFT JOIN podcast_episodes pe
-              ON pe.media_id = m.id
-            {_media_listening_state_join_sql(include_listening_state=True)}
-            WHERE m.id = ANY(:media_ids)
-            """
-            ),
-            {"viewer_id": viewer_id, "media_ids": ordered_media_ids},
-        )
-        .mappings()
-        .all()
-    )
-
-    if not media_rows:
-        return []
-
-    row_by_media_id: dict[UUID, RowMapping] = {}
-    pdf_media_ids: list[UUID] = []
-    for row in media_rows:
-        media_id = UUID(str(row["id"]))
-        row_by_media_id[media_id] = row
-        if row["kind"] == MediaKind.pdf.value:
-            pdf_media_ids.append(media_id)
-
-    pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
-    contributors_by_media = load_contributor_credits_for_media(db, list(row_by_media_id.keys()))
-    chapters_by_media = _load_podcast_episode_chapters_by_ids(db, list(row_by_media_id.keys()))
-    embed_summaries_by_media = document_embed_summaries_for_media(db, list(row_by_media_id.keys()))
-    progress_by_media_id = load_source_progress(db, tuple(row_by_media_id.keys()))
-
-    media_list: list[MediaOut] = []
-    for media_id in ordered_media_ids:
-        row = row_by_media_id.get(media_id)
-        if row is None:
-            continue
-        media = _media_out_from_row(
-            row=row,
-            contributors=contributors_by_media.get(media_id, []),
-            source_progress=_source_progress_presence(progress_by_media_id.get(media_id)),
-            chapters=chapters_by_media.get(media_id, []),
-            pdf_quote_ready=pdf_readiness.get(media_id, False),
-        )
-        media.document_embed_summary = embed_summaries_by_media.get(media_id)
-        media_list.append(media)
-    _apply_consumption_state(db, viewer_id, media_list)
-    return media_list
-
-
-def _load_podcast_episode_chapters_by_ids(
-    db: Session,
-    media_ids: list[UUID],
-) -> dict[UUID, list[PodcastEpisodeChapterOut]]:
-    chapters_by_media: dict[UUID, list[PodcastEpisodeChapterOut]] = {
-        media_id: [] for media_id in media_ids
-    }
-    if not media_ids:
-        return chapters_by_media
-
-    chapter_rows = db.execute(
-        text(
-            """
-            SELECT
-                media_id,
-                chapter_idx,
-                title,
-                t_start_ms,
-                t_end_ms,
-                url,
-                image_url
-            FROM podcast_episode_chapters
-            WHERE media_id = ANY(:ids)
-            ORDER BY media_id ASC, chapter_idx ASC
-            """
-        ),
-        {"ids": media_ids},
-    ).fetchall()
-    for chapter_row in chapter_rows:
-        chapter_media_id = UUID(str(chapter_row[0]))
-        chapters_by_media.setdefault(chapter_media_id, []).append(
-            PodcastEpisodeChapterOut(
-                chapter_idx=int(chapter_row[1]),
-                title=str(chapter_row[2]),
-                t_start_ms=int(chapter_row[3]),
-                t_end_ms=int(chapter_row[4]) if chapter_row[4] is not None else None,
-                url=str(chapter_row[5]) if chapter_row[5] is not None else None,
-                image_url=str(chapter_row[6]) if chapter_row[6] is not None else None,
-            )
-        )
-    return chapters_by_media
-
-
-def _media_listening_state_from_row(
-    row: RowMapping,
-) -> ListeningStateOut | None:
-    position_ms = row.get("listening_position_ms")
-    if position_ms is None:
-        return None
-
-    duration_ms = row.get("listening_duration_ms")
-    return ListeningStateOut(
-        position_ms=int(position_ms),
-        duration_ms=int(duration_ms) if duration_ms is not None else None,
-        is_completed=bool(row.get("listening_is_completed")),
-    )
-
-
 def _row_recovery(
-    row: RowMapping, *, is_creator: bool, is_operator: bool
+    row: RowMapping, *, is_creator: bool
 ) -> tuple[SourceRecoveryAnswer, SearchRecoveryAnswer]:
-    """Evaluate both owner policies for one projected media row."""
+    """Both owners' recovery answers for one projected media row."""
     latest = row["latest_source_attempt"]
     source: SourceRecoveryAnswer = None
     if latest is not None:
@@ -841,7 +419,7 @@ def _row_recovery(
                 job_id=None if latest["job_id"] is None else UUID(str(latest["job_id"])),
                 repairable=bool(row["source_repairable"]),
                 is_creator=is_creator,
-                is_operator=is_operator,
+                is_operator=False,
             )
         )
     search: SearchRecoveryAnswer = None
@@ -855,7 +433,7 @@ def _row_recovery(
                     else UUID(str(row["dead_reindex_job_id"]))
                 ),
                 is_creator=is_creator,
-                is_operator=is_operator,
+                is_operator=False,
             )
         )
     return source, search
@@ -872,94 +450,140 @@ def _recovery_offer(
     return absent()
 
 
-def _media_out_from_row(
-    *,
-    row: RowMapping,
-    contributors: list[ContributorCreditOut],
-    source_progress: Presence[SourceProgress],
-    chapters: list[PodcastEpisodeChapterOut] | None = None,
-    pdf_quote_ready: bool = False,
-) -> MediaOut:
-    processing_status = _media_processing_status(row["processing_status"])
-    persisted_processing_status = _status_to_str(row["persisted_processing_status"])
-    source_recovery_answer, search_recovery_answer = _row_recovery(
-        row, is_creator=bool(row.get("is_creator")), is_operator=False
-    )
-    retrieval_status = (
-        "suspended" if row["dead_reindex_job_id"] is not None else row["retrieval_status"]
-    )
-    capabilities = derive_capabilities(
-        kind=row["kind"],
-        processing_status=persisted_processing_status,
-        last_error_code=row["last_error_code"],
-        media_file_exists=bool(row["has_file"]),
-        external_playback_url_exists=row["external_playback_url"] is not None,
-        pdf_quote_text_ready=pdf_quote_ready,
-        transcript_state=row["transcript_state"],
-        transcript_coverage=row["transcript_coverage"],
-        retrieval_status=retrieval_status,
-        can_delete=bool(row.get("can_delete")),
-        is_creator=bool(row.get("is_creator")),
-        source_refresh_available=bool(row.get("source_refresh_available")),
-        source_recovery=source_recovery_answer,
-        search_recovery=search_recovery_answer,
-    )
-    playback_source = derive_playback_source(
-        kind=row["kind"],
-        external_playback_url=row["external_playback_url"],
-        canonical_source_url=row["canonical_source_url"],
-        provider=row["provider"],
-        provider_id=row["provider_id"],
-    )
-    return MediaOut(
-        id=row["id"],
-        kind=row["kind"],
-        title=row["title"],
-        canonical_source_url=row["canonical_source_url"],
-        processing_status=processing_status,
-        source_progress=source_progress,
-        transcript_state=row["transcript_state"],
-        transcript_coverage=row["transcript_coverage"],
-        transcript_origin=presence_from_nullable(row["transcript_origin"]),
-        retrieval_status=retrieval_status,
-        retrieval_status_reason=row["retrieval_status_reason"],
-        failure_stage=row["failure_stage"],
-        last_error_code=row["last_error_code"],
-        playback_source=playback_source,
-        listening_state=_media_listening_state_from_row(row),
-        chapters=chapters or [],
-        capabilities=capabilities,
-        contributors=contributors,
-        author_mode="manual" if row["authors_manually_managed"] else "automatic",
-        original_published_date=presence_from_nullable(row["original_published_date"]),
-        edition_published_date=presence_from_nullable(row["edition_published_date"]),
-        publisher=row["publisher"],
-        language=row["language"],
-        description=row["description"],
-        description_html=row["podcast_description_html"],
-        description_text=row["podcast_description_text"],
-        metadata_enriched_at=row["metadata_enriched_at"],
-        # This DTO field is always explicit. Contexts outside the viewer-scoped
-        # consumption projection start false; `_apply_consumption_state` then
-        # installs the canonical derived value where applicable.
-        progress_resettable=False,
-        # Overwritten by `_apply_consumption_state` for a qualifying podcast
-        # episode; every other media stays Absent.
-        playerDescriptor=absent(),
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
+def _listening_state(row: RowMapping) -> ListeningStateOut | None:
+    position_ms = row["listening_position_ms"]
+    if position_ms is None:
+        return None
+    duration_ms = row["listening_duration_ms"]
+    return ListeningStateOut(
+        position_ms=int(position_ms),
+        duration_ms=int(duration_ms) if duration_ms is not None else None,
+        is_completed=bool(row["listening_is_completed"]),
     )
 
 
-def _source_progress_presence(
-    progress: PublishedSourceProgress | None,
-) -> Presence[SourceProgress]:
-    """The in-flight source progress of one media, in the field's own parametrization.
+def list_collection_media_for_viewer_by_ids(
+    db: Session, *, viewer_id: UUID, media_ids: list[UUID]
+) -> list[CollectionMedia]:
+    """The exact media facts finite collection rows consume, in input order.
 
-    `present()` stamps the concrete variant (`Present[SourceStageProgress]`), and a
-    value in that shape serializes with a Pydantic field mismatch unless the model
-    declaring the field revalidates it. Building the declared `Present[SourceProgress]`
-    removes that dependence.
+    Deliberately narrower than ``MediaOut``: no descriptions, chapters, embeds or
+    retrieval metadata. Each row also carries the *applicable* capability — what a
+    creator would be offered — so a blocked action stays discoverable.
+    """
+    ordered_media_ids = _dedupe_uuid_order(media_ids)
+    if not ordered_media_ids:
+        return []
+    rows = (
+        db.execute(
+            text(_visible_query(_COLLECTION_ALIASES, "WHERE m.id = ANY(:media_ids)")),
+            {"viewer_id": viewer_id, "media_ids": ordered_media_ids},
+        )
+        .mappings()
+        .all()
+    )
+    row_by_media_id: dict[UUID, RowMapping] = {UUID(str(row["id"])): row for row in rows}
+    visible_ids = [media_id for media_id in ordered_media_ids if media_id in row_by_media_id]
+    if not visible_ids:
+        return []
+
+    pdf_ids = [
+        media_id
+        for media_id in visible_ids
+        if _status_to_str(row_by_media_id[media_id]["kind"]) == MediaKind.pdf.value
+    ]
+    pdf_readiness = batch_pdf_quote_text_ready(db, pdf_ids) if pdf_ids else {}
+    contributors_by_media = load_contributor_credits_for_media(db, visible_ids)
+    read_states = projection.media_read_states(db, viewer_id=viewer_id, media_ids=visible_ids)
+
+    collection: list[CollectionMedia] = []
+    for media_id in visible_ids:
+        row = row_by_media_id[media_id]
+        kind_value = _status_to_str(row["kind"])
+        is_creator = bool(row["is_creator"])
+        transcript_state = _nullable_str(row["transcript_state"])
+        transcript_coverage = _nullable_str(row["transcript_coverage"])
+        answers = [_row_recovery(row, is_creator=actor) for actor in (is_creator, True)]
+        # The broad can_play value is not exposed here; compact podcast
+        # playability is derived from the playback source below.
+        viewer_caps, applicable_caps = [
+            derive_capabilities(
+                kind=kind_value,
+                processing_status=_status_to_str(row["persisted_processing_status"]),
+                last_error_code=cast(str | None, row["last_error_code"]),
+                media_file_exists=bool(row["has_file"]),
+                external_playback_url_exists=False,
+                pdf_quote_text_ready=pdf_readiness.get(media_id, False),
+                transcript_state=transcript_state,
+                transcript_coverage=transcript_coverage,
+                can_delete=bool(row["can_delete"]),
+                is_creator=actor,
+                source_refresh_available=bool(row["source_refresh_available"]),
+                source_recovery=source,
+                search_recovery=search,
+            )
+            for actor, (source, search) in zip((is_creator, True), answers, strict=True)
+        ]
+        playback_source = (
+            derive_playback_source(
+                kind=kind_value,
+                external_playback_url=cast(str | None, row["external_playback_url"]),
+                canonical_source_url=cast(str | None, row["canonical_source_url"]),
+            )
+            if kind_value == MediaKind.podcast_episode.value
+            else None
+        )
+        collection.append(
+            CollectionMedia(
+                id=media_id,
+                kind=cast(
+                    "Literal['web_article', 'epub', 'pdf', 'podcast_episode', 'video']", kind_value
+                ),
+                title=str(row["title"]),
+                canonical_source_url=cast(str | None, row["canonical_source_url"]),
+                offline_download_eligible=offline_download_eligible(
+                    kind=kind_value,
+                    title=str(row["title"]),
+                    external_playback_url=cast(str | None, row["external_playback_url"]),
+                ),
+                processing_status=cast(
+                    "MediaProcessingStatus", _status_to_str(row["processing_status"])
+                ),
+                transcript_state=transcript_state,
+                transcript_coverage=transcript_coverage,
+                listening_state=_listening_state(row),
+                contributors=contributors_by_media.get(media_id, []),
+                author_mode="manual" if bool(row["authors_manually_managed"]) else "automatic",
+                original_published_date=presence_from_nullable(row["original_published_date"]),
+                read_state=read_states[media_id].state,
+                progress_fraction=read_states[media_id].progress_fraction,
+                progress_resettable=read_states[media_id].progress_resettable,
+                audio_playable=playback_source is not None and bool(playback_source.stream_url),
+                has_original_file=bool(row["has_file"]),
+                capabilities=CollectionMediaCapabilities(
+                    can_quote=viewer_caps.can_quote,
+                    can_retry=viewer_caps.can_retry,
+                    can_refresh_source=viewer_caps.can_refresh_source,
+                    can_retry_metadata=viewer_caps.can_retry_metadata,
+                    can_edit_authors=viewer_caps.can_edit_authors,
+                    can_delete=viewer_caps.can_delete,
+                    refresh_source_applicable=applicable_caps.can_refresh_source,
+                    retry_metadata_applicable=applicable_caps.can_retry_metadata,
+                    edit_authors_applicable=applicable_caps.can_edit_authors,
+                ),
+                recovery=_recovery_offer(*answers[0]),
+                applicable_recovery=_recovery_offer(*answers[1]),
+                created_at=cast(datetime, row["created_at"]),
+            )
+        )
+    return collection
+
+
+def _source_progress(progress: PublishedSourceProgress | None) -> Presence[SourceProgress]:
+    """In-flight source progress in the field's own parametrization.
+
+    ``present()`` would stamp the concrete variant, which serializes with a
+    Pydantic field mismatch against the declared union.
     """
     if progress is None:
         return absent()
@@ -975,164 +599,208 @@ def _source_progress_presence(
         )
     return Present[SourceProgress](
         value=SourceStageProgress(
-            stage=progress.stage,
-            run_count=progress.run_count,
-            updated_at=progress.updated_at,
+            stage=progress.stage, run_count=progress.run_count, updated_at=progress.updated_at
         )
     )
 
 
-def _apply_consumption_state(
-    db: Session,
-    viewer_id: UUID,
-    media_outs: list[MediaOut],
-) -> None:
-    """Populate per-viewer read-state + engagement recency onto MediaOuts, in place.
-
-    Read-state (`read_state`, `progress_fraction`, `progress_resettable`) is
-    derived by the consumption projection (`services.consumption`), which owns
-    the explicit override + listening-threshold + reader-engagement model.
-    `last_engaged_at` is a distinct recency concern read through the listening
-    owner (audio) and the reader engagement owner (documents).
-    """
-    if not media_outs:
-        return
-
-    media_ids = [media.id for media in media_outs]
-    states = projection.media_read_states(db, viewer_id=viewer_id, media_ids=media_ids)
-    for media in media_outs:
-        state = states.get(media.id)
-        if state is not None:
-            media.read_state = state.state
-            media.progress_fraction = state.progress_fraction
-            media.progress_resettable = state.progress_resettable
-
-    # Engagement recency: audio rows take their listening-state recency
-    # (consumption owner), documents their reader-engagement recency (also the
-    # consumption owner, spec §4.4).
-    audio_media_ids = [media.id for media in media_outs if media.listening_state is not None]
-    doc_media_ids = [media.id for media in media_outs if media.listening_state is None]
-
-    if audio_media_ids:
-        listening_engaged_at_by_id = projection.listening_recency(
-            db, viewer_id=viewer_id, media_ids=audio_media_ids
+def _load_chapters(
+    db: Session, media_ids: list[UUID]
+) -> dict[UUID, list[PodcastEpisodeChapterOut]]:
+    chapters: dict[UUID, list[PodcastEpisodeChapterOut]] = {}
+    for row in (
+        db.execute(
+            text("""
+                SELECT media_id, chapter_idx, title, t_start_ms, t_end_ms, url, image_url
+                FROM podcast_episode_chapters
+                WHERE media_id = ANY(:ids)
+                ORDER BY media_id ASC, chapter_idx ASC
+            """),
+            {"ids": media_ids},
         )
-        for media in media_outs:
-            if media.listening_state is not None:
-                media.last_engaged_at = listening_engaged_at_by_id.get(media.id)
-
-    if doc_media_ids:
-        doc_engaged_at_by_id = projection.reader_engagement_recency(
-            db, viewer_id=viewer_id, media_ids=doc_media_ids
+        .mappings()
+        .all()
+    ):
+        chapters.setdefault(UUID(str(row["media_id"])), []).append(
+            PodcastEpisodeChapterOut.model_validate(dict(row))
         )
-        for media in media_outs:
-            if media.listening_state is None:
-                media.last_engaged_at = doc_engaged_at_by_id.get(media.id)
+    return chapters
 
-    # Player descriptor (spec §6): server-derived FooterAudio descriptor for
-    # podcast-episode media, batched through the one projection owner to avoid
-    # N+1 across a page (spec §4 "derive exactly like Lectern items"). Every
-    # MediaOut already starts Absent (`_media_out_from_row`); only a qualifying
-    # episode (playable audio -> FooterAudio) gets overwritten to Present.
-    episode_media_ids = [
-        media.id for media in media_outs if media.kind == MediaKind.podcast_episode.value
+
+def _hydrate_media_out(
+    db: Session, *, viewer_id: UUID, rows: Sequence[RowMapping]
+) -> list[MediaOut]:
+    """Build one fully-populated ``MediaOut`` per row, batching every loader once."""
+    if not rows:
+        return []
+    media_ids = [UUID(str(row["id"])) for row in rows]
+    kinds = [_status_to_str(row["kind"]) for row in rows]
+    has_audio = [row["listening_position_ms"] is not None for row in rows]
+
+    def pick(flags: list[bool]) -> list[UUID]:
+        return [media_id for media_id, flag in zip(media_ids, flags, strict=True) if flag]
+
+    pdf_ids = pick([kind == MediaKind.pdf.value for kind in kinds])
+    episode_ids = pick([kind == MediaKind.podcast_episode.value for kind in kinds])
+    audio_ids = pick(has_audio)
+    document_ids = pick([not audio for audio in has_audio])
+
+    pdf_readiness = batch_pdf_quote_text_ready(db, pdf_ids) if pdf_ids else {}
+    contributors_by_media = load_contributor_credits_for_media(db, media_ids)
+    chapters_by_media = _load_chapters(db, media_ids)
+    embed_summaries = document_embed_summaries_for_media(db, media_ids)
+    progress_by_media = load_source_progress(db, tuple(media_ids))
+    read_states = projection.media_read_states(db, viewer_id=viewer_id, media_ids=media_ids)
+    # Recency: audio rows through the listening owner, documents through the
+    # reader-engagement owner; both are the consumption projection.
+    engaged_at: dict[UUID, datetime] = {}
+    if audio_ids:
+        engaged_at |= projection.listening_recency(db, viewer_id=viewer_id, media_ids=audio_ids)
+    if document_ids:
+        engaged_at |= projection.reader_engagement_recency(
+            db, viewer_id=viewer_id, media_ids=document_ids
+        )
+    descriptors = (
+        projection.player_descriptors(db, viewer_id=viewer_id, media_ids=episode_ids)
+        if episode_ids
+        else {}
+    )
+
+    media_list: list[MediaOut] = []
+    for media_id, row in zip(media_ids, rows, strict=True):
+        kind_value = _status_to_str(row["kind"])
+        source_answer, search_answer = _row_recovery(row, is_creator=bool(row["is_creator"]))
+        # A dead reindex job for the current revision displays as suspended.
+        retrieval_status = (
+            "suspended" if row["dead_reindex_job_id"] is not None else row["retrieval_status"]
+        )
+        read_state = read_states[media_id]
+        descriptor = descriptors.get(media_id)
+        media_list.append(
+            MediaOut(
+                id=media_id,
+                kind=kind_value,
+                title=str(row["title"]),
+                canonical_source_url=row["canonical_source_url"],
+                processing_status=cast(
+                    "MediaProcessingStatus", _status_to_str(row["processing_status"])
+                ),
+                source_progress=_source_progress(progress_by_media.get(media_id)),
+                transcript_state=_nullable_str(row["transcript_state"]),
+                transcript_coverage=_nullable_str(row["transcript_coverage"]),
+                transcript_origin=presence_from_nullable(row["transcript_origin"]),
+                retrieval_status=retrieval_status,
+                retrieval_status_reason=row["retrieval_status_reason"],
+                failure_stage=_nullable_str(row["failure_stage"]),
+                last_error_code=row["last_error_code"],
+                playback_source=derive_playback_source(
+                    kind=kind_value,
+                    external_playback_url=row["external_playback_url"],
+                    canonical_source_url=row["canonical_source_url"],
+                    provider=row["provider"],
+                    provider_id=row["provider_id"],
+                ),
+                listening_state=_listening_state(row),
+                chapters=chapters_by_media.get(media_id, []),
+                capabilities=derive_capabilities(
+                    kind=kind_value,
+                    processing_status=_status_to_str(row["persisted_processing_status"]),
+                    last_error_code=row["last_error_code"],
+                    media_file_exists=bool(row["has_file"]),
+                    external_playback_url_exists=row["external_playback_url"] is not None,
+                    pdf_quote_text_ready=pdf_readiness.get(media_id, False),
+                    transcript_state=_nullable_str(row["transcript_state"]),
+                    transcript_coverage=_nullable_str(row["transcript_coverage"]),
+                    retrieval_status=retrieval_status,
+                    can_delete=bool(row["can_delete"]),
+                    is_creator=bool(row["is_creator"]),
+                    source_refresh_available=bool(row["source_refresh_available"]),
+                    source_recovery=source_answer,
+                    search_recovery=search_answer,
+                ),
+                document_embed_summary=embed_summaries.get(media_id),
+                contributors=contributors_by_media.get(media_id, []),
+                author_mode="manual" if row["authors_manually_managed"] else "automatic",
+                original_published_date=presence_from_nullable(row["original_published_date"]),
+                edition_published_date=presence_from_nullable(row["edition_published_date"]),
+                publisher=row["publisher"],
+                language=row["language"],
+                description=row["description"],
+                description_html=row["podcast_description_html"],
+                description_text=row["podcast_description_text"],
+                metadata_enriched_at=row["metadata_enriched_at"],
+                read_state=read_state.state,
+                progress_fraction=read_state.progress_fraction,
+                progress_resettable=read_state.progress_resettable,
+                last_engaged_at=engaged_at.get(media_id),
+                playerDescriptor=(
+                    absent() if descriptor is None else Present[PlayerDescriptor](value=descriptor)
+                ),
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            )
+        )
+    return media_list
+
+
+def list_media_for_viewer_by_ids(
+    db: Session, viewer_id: UUID, media_ids: list[UUID]
+) -> list[MediaOut]:
+    """Batch-hydrate viewer-visible media by id, preserving input order."""
+    ordered_media_ids = _dedupe_uuid_order(media_ids)
+    if not ordered_media_ids:
+        return []
+    rows = (
+        db.execute(
+            text(_visible_query(_MEDIA_OUT_ALIASES, "WHERE m.id = ANY(:media_ids)")),
+            {"viewer_id": viewer_id, "media_ids": ordered_media_ids},
+        )
+        .mappings()
+        .all()
+    )
+    row_by_media_id = {UUID(str(row["id"])): row for row in rows}
+    ordered_rows = [
+        row_by_media_id[media_id] for media_id in ordered_media_ids if media_id in row_by_media_id
     ]
-    if episode_media_ids:
-        descriptors = projection.player_descriptors(
-            db, viewer_id=viewer_id, media_ids=episode_media_ids
-        )
-        for index, media in enumerate(media_outs):
-            descriptor = descriptors.get(media.id)
-            if descriptor is not None:
-                # Revalidate the complete DTO after installing its derived
-                # descriptor. A raw post-validation assignment can leave a
-                # Pydantic generic variant specialized under a different schema
-                # compilation order; that value then warns when MediaOut is
-                # nested inside LibraryEntryOut even though direct MediaOut
-                # serialization succeeds.
-                values = {
-                    field_name: getattr(media, field_name) for field_name in MediaOut.model_fields
-                }
-                values["player_descriptor"] = {
-                    "kind": "Present",
-                    "value": descriptor,
-                }
-                media_outs[index] = MediaOut.model_validate(values)
+    return _hydrate_media_out(db, viewer_id=viewer_id, rows=ordered_rows)
 
 
-def _encode_media_cursor(updated_at: datetime, media_id: UUID) -> str:
-    """Encode a keyset cursor for media listing pagination."""
-    payload = {
-        "updated_at": updated_at.isoformat(),
-        "id": str(media_id),
-    }
-    json_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    return base64.urlsafe_b64encode(json_bytes).decode("ascii").rstrip("=")
+def get_media_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> MediaOut:
+    """One media by id, 404-masking anything the viewer cannot read."""
+    rows = list_media_for_viewer_by_ids(db, viewer_id, [media_id])
+    if not rows:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    return rows[0]
 
 
-def _decode_media_cursor(cursor: str) -> tuple[datetime, UUID]:
-    """Decode a media listing keyset cursor."""
+def _encode_cursor(updated_at: datetime, media_id: UUID) -> str:
+    payload = json.dumps(
+        {"updated_at": updated_at.isoformat(), "id": str(media_id)}, separators=(",", ":")
+    )
+    return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
     try:
-        # Restore stripped base64 padding for urlsafe decoding.
-        if len(cursor) % 4:
-            cursor += "=" * (4 - len(cursor) % 4)
-        json_bytes = base64.urlsafe_b64decode(cursor)
-        payload = json.loads(json_bytes.decode("utf-8"))
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
         updated_at = datetime.fromisoformat(payload["updated_at"])
         if updated_at.tzinfo is None:
             updated_at = updated_at.replace(tzinfo=UTC)
-        media_id = UUID(payload["id"])
+        return updated_at, UUID(payload["id"])
     except (KeyError, ValueError) as exc:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from exc
-    return updated_at, media_id
 
 
-def _parse_kind_filter(kind: str | None) -> list[str] | None:
-    """Parse and validate comma-separated media kind filter."""
-    if not kind:
-        return None
-
-    parsed = sorted({token.strip() for token in kind.split(",") if token.strip()})
-    if not parsed:
-        return None
-
-    valid_kinds = {value.value for value in MediaKind}
-    invalid = [value for value in parsed if value not in valid_kinds]
+def _parse_kind_filter(kind: str | None) -> list[str]:
+    """Validate a comma-separated kind filter against the closed vocabulary."""
+    parsed = sorted({token.strip() for token in (kind or "").split(",") if token.strip()})
+    invalid = [value for value in parsed if value not in {member.value for member in MediaKind}]
     if invalid:
         raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Invalid media kind filter: {', '.join(invalid)}",
+            ApiErrorCode.E_INVALID_REQUEST, f"Invalid media kind filter: {', '.join(invalid)}"
         )
     return parsed
-
-
-def _status_to_str(value: object) -> str:
-    """Normalize SQL enum/text status values to a plain string."""
-    if isinstance(value, str):
-        return value
-    enum_value = getattr(value, "value", None)
-    if isinstance(enum_value, str):
-        return enum_value
-    return str(value)
-
-
-def _media_processing_status(value: object) -> MediaProcessingStatus:
-    """Narrow a storage-owned media processing status to its response contract."""
-    match _status_to_str(value):
-        case "pending":
-            return "pending"
-        case "extracting":
-            return "extracting"
-        case "ready_for_reading":
-            return "ready_for_reading"
-        case "failed":
-            return "failed"
-        case "suspended":
-            return "suspended"
-        case unknown:
-            # justify-defect: the SQL projection derives this field from the
-            # constrained media processing status plus the closed suspended state.
-            raise AssertionError(f"unknown media processing status: {unknown!r}")
 
 
 def list_visible_media(
@@ -1144,116 +812,90 @@ def list_visible_media(
     cursor: str | None = None,
     limit: int = 50,
 ) -> tuple[list[MediaOut], str | None]:
-    """List viewer-visible media across all provenance paths with keyset pagination."""
+    """Viewer-visible media newest-first, keyset-paginated on (updated_at, id)."""
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
-
-    limit = min(limit, 200)
-    limit_plus_one = limit + 1
-    parsed_kinds = _parse_kind_filter(kind)
-    normalized_search = search.strip() if search else None
-    if normalized_search == "":
-        normalized_search = None
+    limit = min(limit, _LIST_LIMIT_MAX)
 
     where_clauses = ["1=1"]
-    params: dict[str, object] = {"viewer_id": viewer_id, "limit": limit_plus_one}
-
+    params: dict[str, object] = {"viewer_id": viewer_id, "limit": limit + 1}
+    parsed_kinds = _parse_kind_filter(kind)
     if parsed_kinds:
-        placeholders: list[str] = []
-        for index, value in enumerate(parsed_kinds):
-            key = f"kind_{index}"
-            placeholders.append(f":{key}")
-            params[key] = value
-        where_clauses.append(f"m.kind IN ({', '.join(placeholders)})")
-
+        params.update({f"kind_{index}": value for index, value in enumerate(parsed_kinds)})
+        placeholders = ", ".join(f":kind_{index}" for index in range(len(parsed_kinds)))
+        where_clauses.append(f"m.kind IN ({placeholders})")
+    normalized_search = (search or "").strip()
     if normalized_search:
         where_clauses.append(r"m.title ILIKE :search_pattern ESCAPE '\'")
         params["search_pattern"] = f"%{escape_ilike_pattern(normalized_search)}%"
-
     if cursor:
-        cursor_updated_at, cursor_id = _decode_media_cursor(cursor)
+        params["cursor_updated_at"], params["cursor_id"] = _decode_cursor(cursor)
         where_clauses.append("(m.updated_at, m.id) < (:cursor_updated_at, :cursor_id)")
-        params["cursor_updated_at"] = cursor_updated_at
-        params["cursor_id"] = cursor_id
 
-    query = text(f"""
-        WITH visible_media AS (
-            {visible_media_ids_cte_sql()}
+    # Over-fetch by one to decide whether a next page exists.
+    rows = (
+        db.execute(
+            text(
+                _visible_query(
+                    _MEDIA_OUT_ALIASES,
+                    f"""
+                    WHERE {" AND ".join(where_clauses)}
+                    ORDER BY m.updated_at DESC, m.id DESC
+                    LIMIT :limit
+                    """,
+                )
+            ),
+            params,
         )
-        SELECT
-            {_media_select_projection_sql(include_listening_state=True)}
-        FROM media m
-        JOIN visible_media vm ON vm.media_id = m.id
-        LEFT JOIN media_transcript_states mts ON mts.media_id = m.id
-        LEFT JOIN content_index_states mcis ON mcis.owner_kind = 'media' AND mcis.owner_id = m.id
-        LEFT JOIN podcast_episodes pe ON pe.media_id = m.id
-        {_media_listening_state_join_sql(include_listening_state=True)}
-        WHERE {" AND ".join(where_clauses)}
-        ORDER BY m.updated_at DESC, m.id DESC
-        LIMIT :limit
-    """)
-    rows = db.execute(query, params).mappings().all()
-
+        .mappings()
+        .all()
+    )
     has_more = len(rows) > limit
-    page_rows = rows[:limit]
-
-    pdf_media_ids = [
-        UUID(str(row["id"])) for row in page_rows if row["kind"] == MediaKind.pdf.value
-    ]
-    pdf_readiness = batch_pdf_quote_text_ready(db, pdf_media_ids) if pdf_media_ids else {}
-
-    page_media_ids = [UUID(str(row["id"])) for row in page_rows]
-    contributors_by_media = load_contributor_credits_for_media(db, page_media_ids)
-    chapters_by_media = _load_podcast_episode_chapters_by_ids(db, page_media_ids)
-    embed_summaries_by_media = document_embed_summaries_for_media(db, page_media_ids)
-    progress_by_media_id = load_source_progress(db, tuple(page_media_ids))
-
-    media_list: list[MediaOut] = []
-    for row in page_rows:
-        media_id = UUID(str(row["id"]))
-        media = _media_out_from_row(
-            row=row,
-            contributors=contributors_by_media.get(media_id, []),
-            source_progress=_source_progress_presence(progress_by_media_id.get(media_id)),
-            chapters=chapters_by_media.get(media_id, []),
-            pdf_quote_ready=pdf_readiness.get(media_id, False),
-        )
-        media.document_embed_summary = embed_summaries_by_media.get(media_id)
-        media_list.append(media)
-
-    _apply_consumption_state(db, viewer_id, media_list)
-
-    next_cursor = None
-    if has_more and media_list:
-        last = media_list[-1]
-        next_cursor = _encode_media_cursor(last.updated_at, last.id)
-
+    media_list = _hydrate_media_out(db, viewer_id=viewer_id, rows=rows[:limit])
+    next_cursor = (
+        _encode_cursor(media_list[-1].updated_at, media_list[-1].id)
+        if has_more and media_list
+        else None
+    )
     return media_list, next_cursor
 
 
-def list_fragments_for_viewer(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-) -> list[FragmentOut]:
-    """List fragments for a media item if readable by viewer.
+def get_offline_download_spec_for_viewer(
+    db: Session, *, viewer_id: UUID, media_id: UUID
+) -> OfflineDownloadSpecOut:
+    """The bounded title plus progressive-audio source URL of a visible media."""
+    row = (
+        db.execute(
+            text(f"""
+                WITH visible_media AS ({visible_media_ids_cte_sql()})
+                SELECT m.kind, m.title, m.external_playback_url
+                FROM media m
+                JOIN visible_media vm ON vm.media_id = m.id
+                WHERE m.id = :media_id
+            """),
+            {"viewer_id": viewer_id, "media_id": media_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+    return OfflineDownloadSpecOut(
+        media_id=media_id,
+        title=derive_offline_download_title(title=str(row["title"])),
+        source_url=derive_offline_download_source(
+            kind=_status_to_str(row["kind"]),
+            external_playback_url=cast(str | None, row["external_playback_url"]),
+        ),
+    )
 
-    Returns ordered fragments if media is readable.
-    Uses the canonical visibility predicate.
 
-    Args:
-        db: Database session.
-        viewer_id: The ID of the viewer.
-        media_id: The ID of the media.
+def list_fragments_for_viewer(db: Session, viewer_id: UUID, media_id: UUID) -> list[FragmentOut]:
+    """Ordered fragments with their running word offset and resolved embeds.
 
-    Returns:
-        List of fragments ordered by idx ASC.
-
-    Raises:
-        NotFoundError: If media does not exist or viewer cannot read it.
+    404-masks unreadable media; a text media that is not ready is a 409-class
+    ``E_MEDIA_NOT_READY``.
     """
-    # Check readability using the canonical predicate
-    # This masks existence - both "not found" and "not readable" return 404
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
@@ -1275,57 +917,41 @@ def list_fragments_for_viewer(
         "podcast_episode",
         "video",
     } and not is_text_document_ready(
-        media_kind,
-        str(media_row[1]),
-        str(media_row[2]) if media_row[2] is not None else None,
-        str(media_row[3]) if media_row[3] is not None else None,
+        media_kind, str(media_row[1]), _nullable_str(media_row[2]), _nullable_str(media_row[3])
     ):
         raise ApiError(ApiErrorCode.E_MEDIA_NOT_READY, "Media is not ready for reading")
 
-    # Query 2: Fetch fragments ordered by idx ASC
-    result = db.execute(
-        text("""
-            SELECT
-                f.id,
-                f.media_id,
-                f.idx,
-                f.html_sanitized,
-                f.canonical_text,
-                f.canonical_text_word_count,
-                COALESCE(
-                    SUM(f.canonical_text_word_count) OVER (
-                        PARTITION BY f.media_id
-                        ORDER BY f.idx
-                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                    ),
-                    0
-                ) AS document_word_start,
-                f.t_start_ms,
-                f.t_end_ms,
-                f.speaker_label,
-                f.created_at
-            FROM fragments f
-            WHERE f.media_id = :media_id
-            ORDER BY f.t_start_ms ASC NULLS LAST, f.idx ASC
-        """),
-        {"media_id": media_id},
-    )
-
     fragments = [
-        FragmentOut(
-            id=row[0],
-            media_id=row[1],
-            idx=row[2],
-            html_sanitized=row[3],
-            canonical_text=row[4],
-            word_count=int(row[5]),
-            document_word_start=int(row[6]),
-            t_start_ms=row[7],
-            t_end_ms=row[8],
-            speaker_label=row[9],
-            created_at=row[10],
+        FragmentOut(**row)
+        for row in db.execute(
+            text("""
+                SELECT
+                    f.id,
+                    f.media_id,
+                    f.idx,
+                    f.html_sanitized,
+                    f.canonical_text,
+                    f.canonical_text_word_count AS word_count,
+                    COALESCE(
+                        SUM(f.canonical_text_word_count) OVER (
+                            PARTITION BY f.media_id
+                            ORDER BY f.idx
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                        ),
+                        0
+                    ) AS document_word_start,
+                    f.t_start_ms,
+                    f.t_end_ms,
+                    f.speaker_label,
+                    f.created_at
+                FROM fragments f
+                WHERE f.media_id = :media_id
+                ORDER BY f.t_start_ms ASC NULLS LAST, f.idx ASC
+            """),
+            {"media_id": media_id},
         )
-        for row in result.fetchall()
+        .mappings()
+        .all()
     ]
     embeds_by_fragment = list_document_embeds_for_fragments(
         db, viewer_id=viewer_id, fragment_ids=[fragment.id for fragment in fragments]
@@ -1338,29 +964,28 @@ def list_fragments_for_viewer(
 @dataclass(frozen=True)
 class MediaEventSnapshot:
     payload: dict[str, Any]
-    terminal: bool  # owns the former route-level _TERMINAL_STATUSES
+    terminal: bool
 
 
 def read_event_snapshot(db: Session, *, viewer_id: UUID, media_id: UUID) -> MediaEventSnapshot:
-    """State payload + terminal flag for the media-processing SSE.
+    """State payload plus terminal flag for the media-processing SSE.
 
-    Raises E_MEDIA_NOT_FOUND if the media is gone/unreadable (the SSE tail treats
-    that as a clean close).
+    Raises ``E_MEDIA_NOT_FOUND`` when the media is gone or unreadable; the SSE
+    tail treats that as a clean close.
     """
     media = get_media_for_viewer(db, viewer_id, media_id)
-    payload = {
-        "processing_status": media.processing_status,
-        "source_progress": media.source_progress.model_dump(mode="json"),
-        "last_error_code": media.last_error_code,
-        "failure_stage": media.failure_stage,
-        "retrieval_status": media.retrieval_status,
-        "retrieval_status_reason": media.retrieval_status_reason,
-        "capabilities": media.capabilities.model_dump(mode="json"),
-        "transcript_state": media.transcript_state,
-        "transcript_coverage": media.transcript_coverage,
-        "updated_at": media.updated_at.isoformat(),
-    }
     return MediaEventSnapshot(
-        payload=payload,
-        terminal=media.processing_status in ("ready_for_reading", "failed", "suspended"),
+        payload={
+            "processing_status": media.processing_status,
+            "source_progress": media.source_progress.model_dump(mode="json"),
+            "last_error_code": media.last_error_code,
+            "failure_stage": media.failure_stage,
+            "retrieval_status": media.retrieval_status,
+            "retrieval_status_reason": media.retrieval_status_reason,
+            "capabilities": media.capabilities.model_dump(mode="json"),
+            "transcript_state": media.transcript_state,
+            "transcript_coverage": media.transcript_coverage,
+            "updated_at": media.updated_at.isoformat(),
+        },
+        terminal=media.processing_status in _TERMINAL_PROCESSING_STATUSES,
     )

@@ -5,12 +5,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.auth.permissions import can_read_media
 from nexus.config import get_settings
-from nexus.db.models import MediaFile
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.logging import get_logger
 from nexus.storage.client import StorageError, get_storage_client
@@ -43,13 +42,11 @@ def get_media_file_source(db: Session, *, media_id: UUID) -> MediaFileSource | N
     """Load private persisted file facts without making an authorization decision."""
     row = (
         db.execute(
-            text(
-                """
+            text("""
                 SELECT storage_path, content_type, size_bytes
                 FROM media_file
                 WHERE media_id = :media_id
-                """
-            ),
+            """),
             {"media_id": media_id},
         )
         .mappings()
@@ -83,34 +80,21 @@ def parse_single_byte_range(raw: str, *, size_bytes: int) -> InclusiveByteRange:
     if suffix_length <= 0:
         raise ValueError("unsatisfiable byte range")
     bounded_length = min(suffix_length, size_bytes)
-    return InclusiveByteRange(
-        start=size_bytes - bounded_length,
-        end=size_bytes - 1,
-    )
+    return InclusiveByteRange(start=size_bytes - bounded_length, end=size_bytes - 1)
 
 
-def get_signed_download_url(
-    db: Session,
-    viewer_id: UUID,
-    media_id: UUID,
-) -> dict:
-    """Get a signed download URL for a media file visible to the viewer."""
+def get_signed_download_url(db: Session, viewer_id: UUID, media_id: UUID) -> dict:
+    """A signed download URL for a media file the viewer can read."""
     if not can_read_media(db, viewer_id, media_id):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
 
-    media_file = db.execute(select(MediaFile).where(MediaFile.media_id == media_id)).scalar()
-    if media_file is None:
-        raise NotFoundError(
-            ApiErrorCode.E_MEDIA_NOT_FOUND,
-            "No file available for this media",
-        )
+    source = get_media_file_source(db, media_id=media_id)
+    if source is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "No file available for this media")
 
-    settings = get_settings()
+    expiry_seconds = get_settings().signed_url_expiry_s
     try:
-        url = get_storage_client().sign_download(
-            media_file.storage_path,
-            expires_in=settings.signed_url_expiry_s,
-        )
+        url = get_storage_client().sign_download(source.storage_path, expires_in=expiry_seconds)
     except StorageError as exc:
         logger.error("Failed to sign download: %s", exc.message)
         raise ApiError(
@@ -119,7 +103,5 @@ def get_signed_download_url(
 
     return {
         "url": url,
-        "expires_at": (
-            datetime.now(UTC) + timedelta(seconds=settings.signed_url_expiry_s)
-        ).isoformat(),
+        "expires_at": (datetime.now(UTC) + timedelta(seconds=expiry_seconds)).isoformat(),
     }

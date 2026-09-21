@@ -86,22 +86,19 @@ Web Search product surface.
 
 ## Reader Apparatus
 
-Web article reader apparatus extraction is owned by the web article structure
-pipeline before sanitization strips semantic source attributes. The parser uses
-source-authored evidence such as DPUB-ARIA roles, JATS `xref @rid`, Distill
-custom citation tags, MediaWiki reference links, and Tufte sidenote structure.
-Tufte-style numbered sidenotes and unnumbered margin notes keep explicit
-`sidenote` / `margin_note` semantics, and standalone `span.marginnote` elements
-may surface as target-only source-reference facts in Document Map Evidence with
-no synthetic marker edge. They answer the Citations filter without collapsing
-into generated citations. The parser does not infer apparatus from bare superscripts or client-rendered DOM
-heuristics.
-The fixture manifest owns exact source support levels and expected counts.
+Web article reader apparatus extraction is owned by `html_apparatus.py`, called
+from the web article structure pipeline before sanitization strips semantic
+source attributes. One generic extractor walks numbered markers to their local
+targets: DPUB-ARIA `doc-noteref` / `doc-biblioref` roles, JATS `xref @rid` with
+`ref-type="fn"|"bibr"`, and `<sup><a href="#…">` links whose target carries a
+backlink. Declared semantics give `exact` confidence; link-graph evidence gives
+`strong`. Standalone `span.marginnote` elements surface as target-only
+`margin_note` source-reference facts in Document Map Evidence with no synthetic
+marker edge. They answer the Citations filter without collapsing into generated
+citations. The parser does not infer apparatus from bare superscripts or
+client-rendered DOM heuristics.
 
 HTML bibliography support is intentionally link-layer conservative. MediaWiki
-`sup.reference -> li#cite_note` note graphs are supported, and rendered
-`CITEREF...` works-cited entries linked from those note bodies are emitted as
-bibliography rows and citation edges. Distill fixtures emit cited `d-cite` /
-`dt-cite` targets and Distill footnotes; script-only bibliography records with
-no in-document marker are counted as out-of-scope absences and are not
-standalone apparatus rows.
+`sup.reference -> li#cite_note` note graphs are supported through the link-graph
+branch. Bibliography records with no in-document marker are out of scope and are
+not standalone apparatus rows.

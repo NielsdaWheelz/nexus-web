@@ -1,7 +1,8 @@
 """Canonical Reader Document Map aggregate schemas.
 
 Evidence is projected as typed facts grouped by exact reader locus.  Domain
-owner payloads never leak through this boundary.
+owner payloads never leak through this boundary.  Every field name here is
+decoded key-for-key by ``apps/web/src/lib/reader/documentMapContract.ts``.
 """
 
 from __future__ import annotations
@@ -97,29 +98,14 @@ class ReaderEvidenceNoteObjectOut(ReaderEvidenceObjectBaseOut):
     body_pm_json: dict[str, object]
 
 
-class ReaderEvidenceDossierObjectOut(ReaderEvidenceObjectBaseOut):
-    kind: Literal["Dossier"] = "Dossier"
+class ReaderEvidencePlainObjectOut(ReaderEvidenceObjectBaseOut):
+    """An object carrying no payload beyond the common four keys."""
 
-
-class ReaderEvidenceOracleObjectOut(ReaderEvidenceObjectBaseOut):
-    kind: Literal["Oracle"] = "Oracle"
-
-
-class ReaderEvidenceMediaObjectOut(ReaderEvidenceObjectBaseOut):
-    kind: Literal["Media"] = "Media"
-
-
-class ReaderEvidenceOtherObjectOut(ReaderEvidenceObjectBaseOut):
-    kind: Literal["Other"] = "Other"
+    kind: Literal["Dossier", "Oracle", "Media", "Other"]
 
 
 ReaderEvidenceObjectOut = Annotated[
-    ReaderEvidenceChatObjectOut
-    | ReaderEvidenceNoteObjectOut
-    | ReaderEvidenceDossierObjectOut
-    | ReaderEvidenceOracleObjectOut
-    | ReaderEvidenceMediaObjectOut
-    | ReaderEvidenceOtherObjectOut,
+    ReaderEvidenceChatObjectOut | ReaderEvidenceNoteObjectOut | ReaderEvidencePlainObjectOut,
     Field(discriminator="kind"),
 ]
 

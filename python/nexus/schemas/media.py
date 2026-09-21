@@ -1,8 +1,4 @@
-"""Media and Fragment Pydantic schemas.
-
-Contains response models for media and fragments endpoints.
-Schemas are the FastAPI response contracts for current media routes.
-"""
+"""Media, fragment, upload, reader-navigation and evidence wire models."""
 
 from datetime import datetime
 from typing import Annotated, Literal
@@ -16,53 +12,40 @@ from nexus.schemas.consumption import PlayerDescriptor
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import Presence
 from nexus.schemas.publication_dates import PublicationDate
-from nexus.schemas.upload_failures import (
-    UploadTransportFailure,
-    UploadVerificationFailureCode,
-)
+from nexus.schemas.upload_failures import UploadTransportFailure, UploadVerificationFailureCode
 from nexus.services.offline_download_source import (
     OFFLINE_DOWNLOAD_SOURCE_URL_MAX_LENGTH,
     OFFLINE_DOWNLOAD_TITLE_MAX_LENGTH,
 )
 from nexus.services.sealed_handles import UploadSessionHandle
 
-MediaProcessingStatus = Literal[
-    "pending",
-    "extracting",
-    "ready_for_reading",
-    "failed",
-    "suspended",
-]
 
-MediaSourceAttemptStatus = Literal[
-    "accepted",
-    "queued",
-    "running",
-    "succeeded",
-    "failed",
-]
+class _Strict(BaseModel):
+    """Base for every closed model on this wire: an unknown key is rejected."""
+
+<<<<<<< HEAD
+
+||||||| c407b35808
+MediaUnitStatus = Literal["building", "ready", "failed"]
+
+=======
+    model_config = ConfigDict(extra="forbid")
 
 
+_CAMEL_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+MediaProcessingStatus = Literal["pending", "extracting", "ready_for_reading", "failed", "suspended"]
+MediaSourceAttemptStatus = Literal["accepted", "queued", "running", "succeeded", "failed"]
+MediaUnitStatus = Literal["building", "ready", "failed"]
+>>>>>>> origin/main
 MediaReadState = Literal["unread", "in_progress", "finished"]
-
-
 MediaIntelligenceStatus = Literal[
-    "building",
-    "ready",
-    "stale",
-    "failed",
-    "suspended",
-    "not_available",
+    "building", "ready", "stale", "failed", "suspended", "not_available"
 ]
 
 
-class MediaIntelligenceOut(BaseModel):
-    """Response for GET /media/{media_handle}/intelligence: the Media Abstract.
-
-    The authorized, compact, current-only per-media intelligence projection
-    (spec §252/§826): a read-only view with no Generate control and no history.
-    ``summary_md`` / ``model_name`` are populated for current and stale summaries.
-    """
+class MediaIntelligenceOut(_Strict):
+    """The Media Abstract: a current-only, read-only intelligence projection."""
 
     media_id: UUID
     status: MediaIntelligenceStatus
@@ -70,16 +53,8 @@ class MediaIntelligenceOut(BaseModel):
     summary_md: str | None = None
     model_name: str | None = None
 
-    model_config = ConfigDict(extra="forbid")
-
 
 class CapabilitiesOut(BaseModel):
-    """Derived capabilities for a media item.
-
-    Determines what actions a viewer can perform on a media item.
-    Derived from media.kind, processing_status, last_error_code, and related data.
-    """
-
     can_read: bool
     can_highlight: bool
     can_quote: bool
@@ -97,8 +72,6 @@ class CapabilitiesOut(BaseModel):
 
 
 class PlaybackSourceOut(BaseModel):
-    """Typed playback source contract for externally hosted media."""
-
     kind: Literal["external_audio", "external_video"]
     stream_url: str
     source_url: str
@@ -112,25 +85,13 @@ class OfflineDownloadSpecOut(BaseModel):
     kind: Literal["ProgressiveAudio"] = "ProgressiveAudio"
     media_id: UUID
     title: str = Field(min_length=1, max_length=OFFLINE_DOWNLOAD_TITLE_MAX_LENGTH)
-    source_url: str = Field(
-        min_length=1,
-        max_length=OFFLINE_DOWNLOAD_SOURCE_URL_MAX_LENGTH,
-    )
+    source_url: str = Field(min_length=1, max_length=OFFLINE_DOWNLOAD_SOURCE_URL_MAX_LENGTH)
 
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-    )
+    model_config = _CAMEL_CONFIG
 
 
 DocumentEmbedAggregateStatus = Literal[
-    "unsupported",
-    "empty",
-    "resolving",
-    "ready",
-    "partial",
-    "failed",
+    "unsupported", "empty", "resolving", "ready", "partial", "failed"
 ]
 DocumentEmbedProvider = Literal[
     "youtube", "x", "substack", "vimeo", "spotify", "generic", "unknown"
@@ -236,16 +197,12 @@ class DocumentEmbedOut(BaseModel):
 
 
 class ListeningStateOut(BaseModel):
-    """Per-media listening state for the authenticated viewer."""
-
     position_ms: int = Field(ge=0)
     duration_ms: int | None = Field(default=None, ge=0)
     is_completed: bool = False
 
 
 class PodcastEpisodeChapterOut(BaseModel):
-    """Podcast episode chapter marker payload."""
-
     chapter_idx: int = Field(ge=0)
     title: str
     t_start_ms: int = Field(ge=0)
@@ -254,16 +211,14 @@ class PodcastEpisodeChapterOut(BaseModel):
     image_url: str | None = None
 
 
-class SourceStageProgress(BaseModel):
+class SourceStageProgress(_Strict):
     kind: Literal["Stage"] = "Stage"
     stage: Literal["Validate", "Extract", "Finalize"]
     run_count: int = Field(ge=0)
     updated_at: datetime
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class SourceCountedProgress(BaseModel):
+class SourceCountedProgress(_Strict):
     kind: Literal["Counted"] = "Counted"
     stage: Literal["Extract"] = "Extract"
     completed: int = Field(ge=0)
@@ -272,17 +227,18 @@ class SourceCountedProgress(BaseModel):
     run_count: int = Field(ge=0)
     updated_at: datetime
 
-    model_config = ConfigDict(extra="forbid")
 
-
-SourceProgress = Annotated[
-    SourceStageProgress | SourceCountedProgress,
-    Field(discriminator="kind"),
-]
+SourceProgress = Annotated[SourceStageProgress | SourceCountedProgress, Field(discriminator="kind")]
 
 
 class MediaOut(BaseModel):
-    """Response schema for media."""
+    """The media detail wire: snake_case throughout except ``playerDescriptor``.
+
+    ``read_state`` / ``progress_fraction`` / ``progress_resettable`` and
+    ``last_engaged_at`` are the viewer's derived consumption facts;
+    ``player_descriptor`` is Present only for a podcast episode with playable
+    audio. Routes serializing this model must dump ``by_alias=True``.
+    """
 
     id: UUID
     kind: str  # "web_article", "epub", "pdf", "podcast_episode", "video"
@@ -304,9 +260,6 @@ class MediaOut(BaseModel):
     capabilities: CapabilitiesOut
     document_embed_summary: DocumentEmbedSummaryOut | None = None
     contributors: list[ContributorCreditOut] = Field(default_factory=list)
-    # Snake wire (D-1): embedded media DTOs stay snake_case. "manual" mirrors
-    # media.authors_manually_managed; the five camel author endpoints expose the
-    # camel `authorMode` separately.
     author_mode: Literal["automatic", "manual"] = "automatic"
     original_published_date: Presence[PublicationDate]
     edition_published_date: Presence[PublicationDate]
@@ -316,26 +269,10 @@ class MediaOut(BaseModel):
     description_html: str | None = None
     description_text: str | None = None
     metadata_enriched_at: datetime | None = None
-    # Derived per-viewer read-state. The explicit consumption override wins;
-    # otherwise documents derive from retained reader engagement and podcast
-    # episodes from listening state. Populated post-hoc by the consumption
-    # projection (`services.consumption.projection.media_read_states`, applied in
-    # `services.media`) for viewer-scoped listings; absent (None) only on contexts
-    # that never derive it (e.g. SSE snapshots).
     read_state: MediaReadState | None = None
     progress_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
     progress_resettable: bool
     last_engaged_at: datetime | None = None
-    # New field (spec `lectern-player-lifecycle-hard-cutover.md` §6: "Lectern,
-    # podcast, and media DTOs reuse the same server-derived title/subtitle +
-    # FooterAudio descriptor"). Populated by `services.media._apply_consumption_state`
-    # via the one projection owner, `services.consumption.projection.player_descriptors`, which
-    # derives it exactly like a Lectern item. Present only when this media is a
-    # podcast episode whose derived activation is FooterAudio; Absent otherwise
-    # (including podcast episodes without playable audio, and every other kind).
-    # Unlike its snake-wire siblings (D-1 legacy), this field is new-cutover
-    # camelCase on the wire (`playerDescriptor`): routes serializing it must dump
-    # `by_alias=True`.
     player_descriptor: Presence[PlayerDescriptor] = Field(alias="playerDescriptor")
     created_at: datetime
     updated_at: datetime
@@ -343,17 +280,8 @@ class MediaOut(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
-# DELETE /media/{id} response: the tagged wire union (spec §3.1). Strict
-# camelCase, ``extra="forbid"``, PascalCase discriminator. ``populate_by_name``
-# lets the service construct with snake field names; routes serialize
-# ``by_alias=True``.
-_MEDIA_DELETE_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
-
-
 class MediaRemovedResult(BaseModel):
-    """A scoped/whole-workspace removal that left at least one lifetime reference."""
-
-    model_config = _MEDIA_DELETE_CONFIG
+    model_config = _CAMEL_CONFIG
 
     kind: Literal["Removed"] = "Removed"
     removed_from_library_ids: list[UUID]
@@ -362,9 +290,7 @@ class MediaRemovedResult(BaseModel):
 
 
 class MediaHiddenResult(BaseModel):
-    """A whole-workspace removal that recorded the viewer's hide marker."""
-
-    model_config = _MEDIA_DELETE_CONFIG
+    model_config = _CAMEL_CONFIG
 
     kind: Literal["Hidden"] = "Hidden"
     removed_from_library_ids: list[UUID]
@@ -373,25 +299,17 @@ class MediaHiddenResult(BaseModel):
 
 
 class MediaDeletingResult(BaseModel):
-    """The last lifetime reference was removed; teardown intent + job installed."""
-
-    model_config = _MEDIA_DELETE_CONFIG
+    model_config = _CAMEL_CONFIG
 
     kind: Literal["Deleting"] = "Deleting"
 
 
 MediaDeleteResult = Annotated[
-    MediaRemovedResult | MediaHiddenResult | MediaDeletingResult,
-    Field(discriminator="kind"),
+    MediaRemovedResult | MediaHiddenResult | MediaDeletingResult, Field(discriminator="kind")
 ]
 
 
 class FragmentOut(BaseModel):
-    """Response schema for fragment.
-
-    Contains the sanitized HTML and canonical text for a media fragment.
-    """
-
     id: UUID
     media_id: UUID
     idx: int
@@ -408,24 +326,8 @@ class FragmentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-# =============================================================================
-# Upload / Ingest Schemas
-# =============================================================================
-
-
-class CreateUploadSessionRequest(BaseModel):
-    kind: Literal["Pdf", "Epub"]
-    filename: str = Field(min_length=1, max_length=255)
-    content_type: str
-    size_bytes: int = Field(gt=0)
-    library_ids: list[UUID] = Field(default_factory=list)
-
-    model_config = ConfigDict(extra="forbid")
-
-
 def _canonical_uuid_text(value: str) -> str:
-    """Replay keys are text columns, so two spellings of one UUID would be two
-    different memo rows for one intent. Only the canonical spelling is a key."""
+    """Replay keys are text columns, so only the canonical spelling is a key."""
     try:
         parsed = UUID(value)
     except ValueError as exc:
@@ -438,28 +340,30 @@ def _canonical_uuid_text(value: str) -> str:
 ClientMutationUuidText = Annotated[str, AfterValidator(_canonical_uuid_text)]
 
 
-class RetryUploadSessionRequest(BaseModel):
+class CreateUploadSessionRequest(_Strict):
+    kind: Literal["Pdf", "Epub"]
+    filename: str = Field(min_length=1, max_length=255)
+    content_type: str
+    size_bytes: int = Field(gt=0)
+    library_ids: list[UUID] = Field(default_factory=list)
+
+
+class RetryUploadSessionRequest(_Strict):
     filename: str = Field(min_length=1, max_length=255)
     content_type: str
     size_bytes: int = Field(gt=0)
     client_mutation_id: ClientMutationUuidText
     expected_generation: int = Field(ge=1)
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ConfirmUploadSessionRequest(BaseModel):
+class ConfirmUploadSessionRequest(_Strict):
     generation: int = Field(ge=1)
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class _UploadTransportFailureBase(BaseModel):
+class _UploadTransportFailureBase(_Strict):
     generation: int = Field(ge=1)
     duration_ms: int = Field(ge=0)
     request_id: str = Field(min_length=1, max_length=255)
-
-    model_config = ConfigDict(extra="forbid")
 
 
 class UploadNetworkFailureRequest(_UploadTransportFailureBase):
@@ -494,7 +398,7 @@ class UploadRequiredHeaders(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
-class UploadRequired(BaseModel):
+class UploadRequired(_Strict):
     kind: Literal["UploadRequired"] = "UploadRequired"
     session_handle: UploadSessionHandle
     generation: int = Field(ge=1)
@@ -504,73 +408,55 @@ class UploadRequired(BaseModel):
     expires_at: datetime
     idempotency_outcome: Literal["Created", "Reused"]
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class Published(BaseModel):
+class Published(_Strict):
     kind: Literal["Published"] = "Published"
     session_handle: UploadSessionHandle
     media_id: UUID
     source_attempt_id: UUID
     idempotency_outcome: Literal["Created", "Reused"]
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class VerificationFailed(BaseModel):
+class VerificationFailed(_Strict):
     kind: Literal["VerificationFailed"] = "VerificationFailed"
     code: UploadVerificationFailureCode
     failed_at: datetime
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class TransportFailed(BaseModel):
+class TransportFailed(_Strict):
     kind: Literal["TransportFailed"] = "TransportFailed"
     reason: UploadTransportFailure
     failed_at: datetime
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class CapabilityExpired(BaseModel):
+class CapabilityExpired(_Strict):
     kind: Literal["CapabilityExpired"] = "CapabilityExpired"
     expired_at: datetime
 
-    model_config = ConfigDict(extra="forbid")
-
 
 UploadSessionFailure = Annotated[
-    VerificationFailed | TransportFailed | CapabilityExpired,
-    Field(discriminator="kind"),
+    VerificationFailed | TransportFailed | CapabilityExpired, Field(discriminator="kind")
 ]
 
 
-class UploadSessionCapabilities(BaseModel):
+class UploadSessionCapabilities(_Strict):
     can_retry_upload: bool
     can_remove: bool
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class NeedsAttention(BaseModel):
+class NeedsAttention(_Strict):
     kind: Literal["NeedsAttention"] = "NeedsAttention"
     session_handle: UploadSessionHandle
     failure: UploadSessionFailure
     capabilities: UploadSessionCapabilities
 
-    model_config = ConfigDict(extra="forbid")
-
 
 UploadSessionResponse = Annotated[
-    UploadRequired | Published | NeedsAttention,
-    Field(discriminator="kind"),
+    UploadRequired | Published | NeedsAttention, Field(discriminator="kind")
 ]
 
 
 class ArticleCaptureRequest(BaseModel):
-    """Request schema for browser-captured web articles."""
-
     url: str = Field(min_length=1, max_length=2048)
     content_html: str = Field(min_length=1)
     source_html: str = Field(min_length=1)
@@ -582,32 +468,24 @@ class ArticleCaptureRequest(BaseModel):
     library_ids: list[UUID] = Field(default_factory=list)
 
 
-class RetrySourceRequest(BaseModel):
-    """Body for POST /media/{id}/retry that admits a new source attempt."""
-
+class RetrySourceRequest(_Strict):
     from_stage: Literal["source"]
     client_mutation_id: ClientMutationUuidText
     expected_attempt_id: UUID
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class RetryMetadataRequest(BaseModel):
-    """Body for POST /media/{id}/retry that re-enriches metadata; its owner and
-    its (absent) idempotency contract are unchanged by the imports cutover."""
+class RetryMetadataRequest(_Strict):
+    """Re-enrich metadata; no idempotency ledger."""
 
     from_stage: Literal["metadata"]
 
-    model_config = ConfigDict(extra="forbid")
-
 
 RetryRequest = Annotated[
-    RetrySourceRequest | RetryMetadataRequest,
-    Field(discriminator="from_stage"),
+    RetrySourceRequest | RetryMetadataRequest, Field(discriminator="from_stage")
 ]
 
 
-class SourceRepairRequest(BaseModel):
+class SourceRepairRequest(_Strict):
     """Requeue the exact dead job of one nonterminal source attempt."""
 
     kind: Literal["Source"]
@@ -615,10 +493,8 @@ class SourceRepairRequest(BaseModel):
     expected_attempt_id: UUID
     expected_job_id: UUID
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class SearchRepairRequest(BaseModel):
+class SearchRepairRequest(_Strict):
     """Requeue the exact dead reindex job of one content-index revision."""
 
     kind: Literal["Search"]
@@ -626,67 +502,44 @@ class SearchRepairRequest(BaseModel):
     expected_revision: int = Field(ge=0)
     expected_job_id: UUID
 
-    model_config = ConfigDict(extra="forbid")
-
 
 MediaRepairRequest = Annotated[
-    SourceRepairRequest | SearchRepairRequest,
-    Field(discriminator="kind"),
+    SourceRepairRequest | SearchRepairRequest, Field(discriminator="kind")
 ]
 
 
-class SourceRetryAdmission(BaseModel):
-    """The immutable receipt of an admitted source retry: the new attempt and
-    the one job that will run it."""
-
+class SourceRetryAdmission(_Strict):
     kind: Literal["SourceRetry"] = "SourceRetry"
     media_id: UUID
     source_attempt_id: UUID
     job_id: UUID
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class SourceRepairAdmission(BaseModel):
+class SourceRepairAdmission(_Strict):
     kind: Literal["SourceRepair"] = "SourceRepair"
     media_id: UUID
     source_attempt_id: UUID
     job_id: UUID
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class SearchRepairAdmission(BaseModel):
+class SearchRepairAdmission(_Strict):
     kind: Literal["SearchRepair"] = "SearchRepair"
     media_id: UUID
     revision: int = Field(ge=0)
     job_id: UUID
 
-    model_config = ConfigDict(extra="forbid")
-
 
 TranscriptRequestReason = Literal[
-    "episode_open",
-    "search",
-    "highlight",
-    "quote",
-    "background_warming",
-    "operator_requeue",
+    "episode_open", "search", "highlight", "quote", "background_warming", "operator_requeue"
 ]
 
 
-class TranscriptRequestRequest(BaseModel):
-    """Request schema for POST /media/{id}/transcript/request."""
-
+class TranscriptRequestRequest(_Strict):
     reason: TranscriptRequestReason = "episode_open"
     dry_run: bool = False
 
-    model_config = ConfigDict(extra="forbid")
-
 
 class TranscriptRequestResponse(BaseModel):
-    """Response schema for transcript admission endpoint."""
-
     media_id: str
     processing_status: MediaProcessingStatus
     transcript_state: str
@@ -698,22 +551,7 @@ class TranscriptRequestResponse(BaseModel):
     request_enqueued: bool
 
 
-# =============================================================================
-# URL-Based Ingestion Schemas
-# =============================================================================
-
-
 class FromUrlRequest(BaseModel):
-    """Request schema for POST /media/from_url.
-
-    Creates media from URL with service-layer classification:
-    - supported YouTube variants -> canonical `video` identity (create-or-reuse)
-    - supported X/Twitter post URLs -> canonical same-author thread `web_article`
-    - PDF/EPUB URLs -> file-backed `pdf`/`epub` media
-    - other URLs -> provisional `web_article`
-    URL validation (length, scheme, host, etc.) happens in the service layer.
-    """
-
     url: str = Field(
         min_length=1,
         description="The URL to ingest. Must be an absolute http/https URL, including PDF, EPUB, article, or video URLs.",
@@ -722,11 +560,6 @@ class FromUrlRequest(BaseModel):
 
 
 class FromUrlResponse(BaseModel):
-    """Response schema for accepted source-ingest commands.
-
-    `idempotency_outcome` is the source-of-truth contract for create-vs-reuse.
-    """
-
     media_id: UUID
     source_attempt_id: UUID
     source_type: str
@@ -737,24 +570,16 @@ class FromUrlResponse(BaseModel):
 
 
 class MediaLibrariesRequest(BaseModel):
-    """Request schema for POST /media/{id}/libraries."""
-
     library_ids: list[UUID] = Field(default_factory=list)
 
 
-class MediaEvidenceTextQuoteOut(BaseModel):
-    """Text quote payload used by resolved evidence highlights."""
-
+class MediaEvidenceTextQuoteOut(_Strict):
     exact: str
     prefix: str
     suffix: str
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class MediaEvidenceWebHighlightOut(BaseModel):
-    """Resolved web article text highlight."""
-
+class MediaEvidenceWebHighlightOut(_Strict):
     kind: Literal["web_text"]
     evidence_span_id: UUID
     fragment_id: UUID
@@ -762,12 +587,8 @@ class MediaEvidenceWebHighlightOut(BaseModel):
     end_offset: int = Field(ge=0)
     text_quote: MediaEvidenceTextQuoteOut
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class MediaEvidenceEpubHighlightOut(BaseModel):
-    """Resolved EPUB text highlight."""
-
+class MediaEvidenceEpubHighlightOut(_Strict):
     kind: Literal["epub_text"]
     evidence_span_id: UUID
     fragment_id: UUID
@@ -775,12 +596,8 @@ class MediaEvidenceEpubHighlightOut(BaseModel):
     end_offset: int = Field(ge=0)
     text_quote: MediaEvidenceTextQuoteOut
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class MediaEvidencePdfQuadOut(BaseModel):
-    """PDF highlight quad in page coordinate space."""
-
+class MediaEvidencePdfQuadOut(_Strict):
     x1: FiniteFloat
     y1: FiniteFloat
     x2: FiniteFloat
@@ -790,12 +607,8 @@ class MediaEvidencePdfQuadOut(BaseModel):
     x4: FiniteFloat
     y4: FiniteFloat
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class MediaEvidencePdfGeometryOut(BaseModel):
-    """PDF geometry payload produced from stored evidence selector geometry."""
-
+class MediaEvidencePdfGeometryOut(_Strict):
     coordinate_space: Literal["pdf_points"]
     page_width: FiniteFloat = Field(gt=0)
     page_height: FiniteFloat = Field(gt=0)
@@ -804,12 +617,8 @@ class MediaEvidencePdfGeometryOut(BaseModel):
     projection: str | None = None
     quads: list[MediaEvidencePdfQuadOut]
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class MediaEvidencePdfHighlightOut(BaseModel):
-    """Resolved PDF text highlight."""
-
+class MediaEvidencePdfHighlightOut(_Strict):
     kind: Literal["pdf_text"]
     evidence_span_id: UUID
     page_number: int = Field(ge=1)
@@ -817,19 +626,13 @@ class MediaEvidencePdfHighlightOut(BaseModel):
     text_quote: MediaEvidenceTextQuoteOut
     geometry: MediaEvidencePdfGeometryOut | None = None
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class MediaEvidenceTranscriptHighlightOut(BaseModel):
-    """Resolved transcript text/time highlight."""
-
+class MediaEvidenceTranscriptHighlightOut(_Strict):
     kind: Literal["transcript_time_text"]
     evidence_span_id: UUID
     t_start_ms: int | None = Field(default=None, ge=0)
     t_end_ms: int | None = Field(default=None, ge=0)
     text_quote: MediaEvidenceTextQuoteOut
-
-    model_config = ConfigDict(extra="forbid")
 
 
 MediaEvidenceHighlightOut = Annotated[
@@ -841,67 +644,47 @@ MediaEvidenceHighlightOut = Annotated[
 ]
 
 
-class MediaEvidenceResolverOut(BaseModel):
-    """Backend-owned evidence resolver payload."""
-
+class MediaEvidenceResolverOut(_Strict):
     kind: Literal["web", "epub", "pdf", "transcript"]
     params: dict[str, str]
     status: Literal["resolved", "unresolved", "no_geometry"]
     highlight: MediaEvidenceHighlightOut | None
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class MediaEvidenceOut(BaseModel):
-    """Resolved media evidence response payload."""
-
+class MediaEvidenceOut(_Strict):
     evidence_span_id: UUID
     media_id: UUID
     span_text: str
     resolver: MediaEvidenceResolverOut
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class MediaEvidenceResponse(BaseModel):
-    """Success envelope for resolved media evidence."""
-
+class MediaEvidenceResponse(_Strict):
     data: MediaEvidenceOut
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ReaderNavigationFragmentOut(BaseModel):
+class ReaderNavigationFragmentOut(_Strict):
     """One unique canonical text unit in document order."""
 
     fragment_id: UUID
     fragment_idx: int = Field(ge=0, strict=True)
     char_count: int = Field(ge=0, strict=True)
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class NavigationTextPointOut(BaseModel):
+class NavigationTextPointOut(_Strict):
     """An exact canonical codepoint boundary within one source fragment."""
 
     fragment_id: UUID
     offset: int = Field(ge=0, strict=True)
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class NavigationTextRangeOut(BaseModel):
+class NavigationTextRangeOut(_Strict):
     """A semantic extent, potentially spanning several canonical fragments."""
 
     start: NavigationTextPointOut
     end: NavigationTextPointOut
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ReaderNavigationSectionOut(BaseModel):
-    """Canonical reader navigation section target."""
-
+class ReaderNavigationSectionOut(_Strict):
     section_id: str
     label: str
     parent_section_id: Presence[str]
@@ -910,33 +693,25 @@ class ReaderNavigationSectionOut(BaseModel):
     extent: Presence[NavigationTextRangeOut]
     source: Literal["Publisher", "Heading", "Both", "InferredNumberedEntry"]
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ReaderNavigationTocNodeOut(BaseModel):
-    """TOC node extended with canonical section target linkage."""
+class ReaderNavigationTocNodeOut(_Strict):
+    """A TOC node extended with its canonical section target linkage."""
 
     id: str
     label: str
     section_id: Presence[str]
     children: list["ReaderNavigationTocNodeOut"]
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class ReaderNavigationLocationOut(BaseModel):
-    """Non-TOC reader navigation target."""
+class ReaderNavigationLocationOut(_Strict):
+    """A non-TOC reader navigation target."""
 
     id: str
     label: str
     target: Presence[NavigationTextPointOut]
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class MediaNavigationOut(BaseModel):
-    """Unified media navigation payload for reader UI."""
-
+class MediaNavigationOut(_Strict):
     media_id: UUID
     kind: Literal["epub", "web_article"]
     generation: int = Field(ge=1, strict=True)
@@ -946,10 +721,8 @@ class MediaNavigationOut(BaseModel):
     landmarks: list[ReaderNavigationLocationOut]
     page_list: list[ReaderNavigationLocationOut]
 
-    model_config = ConfigDict(extra="forbid")
 
-
-class EpubFragmentOut(BaseModel):
+class EpubFragmentOut(_Strict):
     """One EPUB render unit, independent of the publication's outline."""
 
     fragment_id: UUID
@@ -962,5 +735,3 @@ class EpubFragmentOut(BaseModel):
     word_count: int = Field(ge=0, strict=True)
     document_word_start: int = Field(ge=0, strict=True)
     created_at: datetime
-
-    model_config = ConfigDict(extra="forbid")
