@@ -1,41 +1,31 @@
 /** Strict same-system transport contract for Resonance reading slates. */
 
 import { decodePresence, type Presence } from "@/lib/api/presence";
-import type { ProgressFraction } from "@/lib/consumption/activityFacts";
 import {
-  decodePublicationDate,
+  decodePublicationDateOnly,
   type PublicationDate,
 } from "@/lib/dates/publicationDate";
-import { assumeAppHref, type AppHref } from "@/lib/lectern/contract";
+import {
+  assumeAppHref,
+  decodeConsumption,
+  type AppHref,
+  type ConsumptionInfo,
+} from "@/lib/lectern/contract";
+import {
+  decodeReadingTimeEstimate,
+  type ReadingTimeEstimatePresence,
+} from "@/lib/media/readingTime";
 import { MEDIA_KINDS, type MediaKind } from "@/lib/media/kind";
 import { parseResourceRef } from "@/lib/resourceGraph/resourceRef";
 import type { ResourceActionSubject } from "@/lib/resources/resourceActionTarget";
 import { assumeCanonicalResourceRef } from "@/lib/sharing/targets";
-import {
-  expectExactRecord,
-  expectIsoInstant,
-  expectRecord,
-} from "@/lib/validation";
+import { expectExactRecord, expectRecord } from "@/lib/validation";
 
 const SLATE_LIMIT = 10;
-const RESONANCE_EDGE_ORIGINS = [
-  "user",
-  "citation",
-  "note_body",
-  "highlight_note",
-  "document_embed",
-  "synapse",
-] as const;
 
-export type ResonanceEdgeOrigin = (typeof RESONANCE_EDGE_ORIGINS)[number];
 export type ResourceRefUri = string & {
   readonly __resourceRefUri: unique symbol;
 };
-
-export interface SlateAnchor {
-  ref: ResourceRefUri;
-  label: string;
-}
 
 interface SlateTargetBase {
   ref: ResourceRefUri;
@@ -50,30 +40,11 @@ export type SlateTarget =
   | (SlateTargetBase & { kind: "Media"; mediaKind: MediaKind })
   | (SlateTargetBase & { kind: "Podcast" });
 
-export type SlateReason =
-  | {
-      kind: "Continue";
-      progress: Presence<ProgressFraction>;
-      lastEngagedAt: string;
-    }
-  | { kind: "AddedToNexus"; addedAt: string }
-  | { kind: "Published"; publishedOn: PublicationDate }
-  | { kind: "NewEpisode"; publishedAt: PublicationDate }
-  | {
-      kind: "Connected";
-      anchor: SlateAnchor;
-      edgeOrigin: ResonanceEdgeOrigin;
-    }
-  | {
-      kind: "SharedAuthor";
-      anchor: SlateAnchor;
-      authorName: string;
-    }
-  | { kind: "Similar"; anchor: SlateAnchor };
-
 export interface SlateItem {
   target: SlateTarget;
-  reason: SlateReason;
+  publicationDate: Presence<PublicationDate>;
+  consumption: Presence<ConsumptionInfo>;
+  readingTimeEstimate: ReadingTimeEstimatePresence;
 }
 
 export interface SlateSnapshot {
@@ -103,24 +74,14 @@ function asLiteral<T extends string>(
   return raw as T;
 }
 
-function asFraction(raw: unknown, context: string): number {
-  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0 || raw > 1) {
-    throw new Error(`Invalid ${context}: expected a finite number in 0..1`);
-  }
-  return raw;
-}
-
 function decodeResourceRefUri(
   raw: unknown,
   context: string,
-  expectedScheme?: "media" | "podcast",
+  expectedScheme: "media" | "podcast",
 ): ResourceRefUri {
   const value = asString(raw, context);
   const parsed = parseResourceRef(value);
-  if (
-    !parsed ||
-    (expectedScheme !== undefined && parsed.scheme !== expectedScheme)
-  ) {
+  if (!parsed || parsed.scheme !== expectedScheme) {
     throw new Error(`Invalid ${context}: expected a canonical ResourceRef URI`);
   }
   return value as ResourceRefUri;
@@ -128,14 +89,6 @@ function decodeResourceRefUri(
 
 function slateActionSubject(ref: ResourceRefUri): ResourceActionSubject {
   return { ref: assumeCanonicalResourceRef(ref) };
-}
-
-function decodeAnchor(raw: unknown): SlateAnchor {
-  const value = expectExactRecord(raw, ["ref", "label"], "SlateAnchorOut");
-  return {
-    ref: decodeResourceRefUri(value.ref, "SlateAnchorOut.ref"),
-    label: asString(value.label, "SlateAnchorOut.label"),
-  };
 }
 
 function decodeTarget(raw: unknown): SlateTarget {
@@ -206,106 +159,43 @@ function decodeTarget(raw: unknown): SlateTarget {
   };
 }
 
-function decodeReason(raw: unknown): SlateReason {
-  const value = expectRecord(raw, "SlateReasonOut");
-  const kind = asLiteral(
-    value.kind,
-    [
-      "Continue",
-      "AddedToNexus",
-      "Published",
-      "NewEpisode",
-      "Connected",
-      "SharedAuthor",
-      "Similar",
-    ] as const,
-    "SlateReasonOut.kind",
-  );
-  switch (kind) {
-    case "Continue":
-      expectExactRecord(
-        value,
-        ["kind", "progress", "lastEngagedAt"],
-        "SlateReasonOut.Continue",
-      );
-      return {
-        kind,
-        progress: decodePresence(value.progress, (progress) => ({
-          value: asFraction(progress, "SlateReasonOut.Continue.progress"),
-        })),
-        lastEngagedAt: expectIsoInstant(
-          value.lastEngagedAt,
-          "SlateReasonOut.Continue.lastEngagedAt",
-        ),
-      };
-    case "AddedToNexus":
-      expectExactRecord(value, ["kind", "addedAt"], "SlateReasonOut.AddedToNexus");
-      return {
-        kind,
-        addedAt: expectIsoInstant(
-          value.addedAt,
-          "SlateReasonOut.AddedToNexus.addedAt",
-        ),
-      };
-    case "Published":
-      expectExactRecord(value, ["kind", "publishedOn"], "SlateReasonOut.Published");
-      return {
-        kind,
-        publishedOn: decodePublicationDate(
-          value.publishedOn,
-          "SlateReasonOut.Published.publishedOn",
-        ),
-      };
-    case "NewEpisode":
-      expectExactRecord(value, ["kind", "publishedAt"], "SlateReasonOut.NewEpisode");
-      return {
-        kind,
-        publishedAt: decodePublicationDate(
-          value.publishedAt,
-          "SlateReasonOut.NewEpisode.publishedAt",
-        ),
-      };
-    case "Connected":
-      expectExactRecord(
-        value,
-        ["kind", "anchor", "edgeOrigin"],
-        "SlateReasonOut.Connected",
-      );
-      return {
-        kind,
-        anchor: decodeAnchor(value.anchor),
-        edgeOrigin: asLiteral(
-          value.edgeOrigin,
-          RESONANCE_EDGE_ORIGINS,
-          "SlateReasonOut.Connected.edgeOrigin",
-        ),
-      };
-    case "SharedAuthor":
-      expectExactRecord(
-        value,
-        ["kind", "anchor", "authorName"],
-        "SlateReasonOut.SharedAuthor",
-      );
-      return {
-        kind,
-        anchor: decodeAnchor(value.anchor),
-        authorName: asString(
-          value.authorName,
-          "SlateReasonOut.SharedAuthor.authorName",
-        ),
-      };
-    case "Similar":
-      expectExactRecord(value, ["kind", "anchor"], "SlateReasonOut.Similar");
-      return { kind, anchor: decodeAnchor(value.anchor) };
-  }
-}
-
 function decodeSlateItem(raw: unknown): SlateItem {
-  const value = expectExactRecord(raw, ["target", "reason"], "SlateItemOut");
-  return {
-    target: decodeTarget(value.target),
-    reason: decodeReason(value.reason),
-  };
+  const value = expectExactRecord(
+    raw,
+    ["target", "publicationDate", "consumption", "readingTimeEstimate"],
+    "SlateItemOut",
+  );
+  const target = decodeTarget(value.target);
+  const publicationDate = decodePresence(value.publicationDate, (date) =>
+    decodePublicationDateOnly(date, "SlateItemOut.publicationDate"),
+  );
+  const consumption = decodePresence(value.consumption, decodeConsumption);
+  const readingTimeEstimate = decodePresence(
+    value.readingTimeEstimate,
+    decodeReadingTimeEstimate,
+  );
+  if (target.kind === "Podcast") {
+    if (
+      publicationDate.kind !== "Absent" ||
+      consumption.kind !== "Absent" ||
+      readingTimeEstimate.kind !== "Absent"
+    ) {
+      throw new Error("Invalid SlateItemOut.Podcast: document facts must be absent");
+    }
+  } else {
+    if (consumption.kind !== "Present") {
+      throw new Error("Invalid SlateItemOut.Media: consumption must be present");
+    }
+    if (
+      readingTimeEstimate.kind === "Present" &&
+      target.mediaKind !== "web_article" &&
+      target.mediaKind !== "epub" &&
+      target.mediaKind !== "pdf"
+    ) {
+      throw new Error("Invalid SlateItemOut.Media: reading estimates require a document");
+    }
+  }
+  return { target, publicationDate, consumption, readingTimeEstimate };
 }
 
 export function decodeSlateSnapshot(raw: unknown): SlateSnapshot {
@@ -332,6 +222,30 @@ export function decodeSlateSnapshot(raw: unknown): SlateSnapshot {
 export function decodeSlateEnvelope(raw: unknown): SlateSnapshot {
   const value = expectExactRecord(raw, ["data"], "SlateEnvelope");
   return decodeSlateSnapshot(value.data);
+}
+
+export function decodeQuickReadsEnvelope(raw: unknown): SlateSnapshot {
+  const snapshot = decodeSlateEnvelope(raw);
+  if (snapshot.items.length > 5) {
+    throw new Error("Invalid quick reads: at most 5 items");
+  }
+  for (const item of snapshot.items) {
+    if (
+      item.target.kind !== "Media" ||
+      (item.target.mediaKind !== "web_article" &&
+        item.target.mediaKind !== "epub" &&
+        item.target.mediaKind !== "pdf") ||
+      item.consumption.kind !== "Present" ||
+      item.readingTimeEstimate.kind !== "Present" ||
+      item.readingTimeEstimate.value.remainingMinutes.kind !== "Present" ||
+      item.readingTimeEstimate.value.remainingMinutes.value.value <= 0
+    ) {
+      throw new Error(
+        "Invalid quick read: requires a document with consumption and a positive remaining estimate",
+      );
+    }
+  }
+  return snapshot;
 }
 
 export function slateTargetId(target: SlateTarget): string {

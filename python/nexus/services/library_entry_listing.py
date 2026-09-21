@@ -6,7 +6,6 @@ hydration into the wire DTOs. `library_entries` owns the writes; this module
 depends on it and never the other way round.
 """
 
-import math
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, Literal, cast
@@ -33,7 +32,6 @@ from nexus.schemas.library import (
     LibraryEntryPodcastSubscriptionOut,
     LibraryMediaListItemOut,
     LibraryPodcastListItemOut,
-    ReadingTimeEstimateOut,
 )
 from nexus.schemas.presence import Presence, absent, presence_from_nullable, present
 from nexus.services import library_governance as governance
@@ -50,15 +48,15 @@ from nexus.services.contributor_credits import (
 )
 from nexus.services.keyset_cursor import KeysetValueKind
 from nexus.services.library_entries import library_media_ids_cte_sql
-from nexus.services.media_document_metrics import load_media_word_counts
 from nexus.services.podcasts.playback_preferences import pause_shortening_mode_from_nullable
+from nexus.services.reading_time import load_reading_time_estimates, reading_time_rows_sql
 
-type EntrySort = Literal["canonical", "title", "creator", "published", "added"]
+type EntrySort = Literal["canonical", "title", "creator", "published", "added", "remaining"]
 type EntryProjection = Literal["all-items", "unfiled", "in-progress"]
 type EntryCompletion = Literal["all", "unfinished"]
 type EntryType = Literal["web_article", "epub", "pdf", "video", "podcast_episode", "podcast"]
 
-_FACTUAL_SORTS: tuple[EntrySort, ...] = ("title", "creator", "published", "added")
+_FACTUAL_SORTS: tuple[EntrySort, ...] = ("title", "creator", "published", "added", "remaining")
 _ENTRY_TYPES: tuple[EntryType, ...] = (
     "web_article",
     "epub",
@@ -165,6 +163,13 @@ def _plan(view: LibraryEntryView, *, is_default: bool) -> tuple[SortKey, ...]:
         return (SortKey("title_key", view.direction, KeysetValueKind.Text), *_IDENTITY)
     if view.sort == "added":
         return (SortKey("added_at", view.direction, KeysetValueKind.DateTime), *_IDENTITY)
+    if view.sort == "remaining":
+        return (
+            SortKey("remaining_missing", "asc", KeysetValueKind.Int),
+            SortKey("remaining_seconds", view.direction, KeysetValueKind.FloatOrNull),
+            SortKey("title_key", "asc", KeysetValueKind.Text),
+            *_IDENTITY,
+        )
     column = "creator_name" if view.sort == "creator" else "published_date"
     return (
         SortKey(f"{view.sort}_missing", "asc", KeysetValueKind.Int),
@@ -172,45 +177,6 @@ def _plan(view: LibraryEntryView, *, is_default: bool) -> tuple[SortKey, ...]:
         SortKey("title_key", "asc", KeysetValueKind.Text),
         *_IDENTITY,
     )
-
-
-_READING_WORDS_PER_MINUTE = 240
-
-
-def _display_reading_minutes(word_count: int, fraction: float) -> int:
-    """Half-up rounding to a 1-, 5- or 15-minute quantum as the estimate grows."""
-    raw_minutes = word_count * fraction / _READING_WORDS_PER_MINUTE
-    quantum = 1 if raw_minutes < 10 else (5 if raw_minutes < 60 else 15)
-    return max(1, quantum * math.floor(raw_minutes / quantum + 0.5))
-
-
-def _reading_time_estimates(
-    db: Session, media_by_id: dict[UUID, Any]
-) -> dict[UUID, ReadingTimeEstimateOut]:
-    """Total (and, for in-progress web/EPUB, remaining) reading time per media."""
-    eligible = [
-        media.id
-        for media in media_by_id.values()
-        if media.kind in ("web_article", "epub", "pdf") and media.capabilities.can_quote
-    ]
-    word_counts = load_media_word_counts(db, eligible) if eligible else {}
-    estimates: dict[UUID, ReadingTimeEstimateOut] = {}
-    for media_id in eligible:
-        word_count = word_counts[media_id]
-        if word_count == 0:
-            continue
-        media = media_by_id[media_id]
-        remaining: Presence[int] = absent()
-        if (
-            media.kind in ("web_article", "epub")
-            and media.read_state == "in_progress"
-            and media.progress_fraction is not None
-        ):
-            remaining = present(_display_reading_minutes(word_count, 1.0 - media.progress_fraction))
-        estimates[media_id] = ReadingTimeEstimateOut(
-            total_minutes=_display_reading_minutes(word_count, 1.0), remaining_minutes=remaining
-        )
-    return estimates
 
 
 def _podcast_rows(db: Session, *, viewer_id: UUID, podcast_ids: list[UUID]) -> dict[UUID, Any]:
@@ -318,7 +284,7 @@ def _hydrate_entry_rows(
             media_ids=[m.id for m in media_by_id.values() if m.listening_state is None],
         )
     )
-    reading_time = _reading_time_estimates(db, media_by_id)
+    reading_time = load_reading_time_estimates(db, viewer_id=viewer_id, media_ids=media_ids)
     podcast_rows = _podcast_rows(db, viewer_id=viewer_id, podcast_ids=podcast_ids)
     contributors = load_contributor_credits_for_podcasts(db, podcast_ids)
 
@@ -534,6 +500,7 @@ def _page_sql(view: LibraryEntryView, *, is_default: bool, keyset: str, order: s
     entry-type and projection predicates. The projection applies before
     completion, ordering, the keyset and limit+1."""
     needs_creator = view.sort == "creator"
+    needs_remaining = view.sort == "remaining"
     needs_engagement = view.projection == "in-progress" or view.completion == "unfinished"
     creator_name = "COALESCE(mc.primary_name, pc.primary_name)" if needs_creator else "NULL::text"
 
@@ -558,6 +525,11 @@ def _page_sql(view: LibraryEntryView, *, is_default: bool, keyset: str, order: s
         joins.append(
             f"LEFT JOIN ({projection.engagement_fact_rows_sql()}) eng"
             " ON eng.media_id = membership.media_id"
+        )
+    if needs_remaining:
+        joins.append(
+            f"LEFT JOIN ({reading_time_rows_sql()}) duration"
+            " ON duration.media_id = membership.media_id"
         )
 
     # In Progress matches the canonical 'InProgress' read_state; a NULL
@@ -604,7 +576,11 @@ def _page_sql(view: LibraryEntryView, *, is_default: bool, keyset: str, order: s
                 (
                     md.original_published_date IS NULL AND latest_episode.published_at IS NULL
                 )::int AS published_missing,
-                {"eng.read_state" if needs_engagement else "NULL::text"} AS read_state
+                {"eng.read_state" if needs_engagement else "NULL::text"} AS read_state,
+                {"duration.remaining_seconds" if needs_remaining else "NULL::float8"}
+                    AS remaining_seconds,
+                {"(duration.remaining_seconds IS NULL)::int" if needs_remaining else "1"}
+                    AS remaining_missing
             FROM membership
             {" ".join(joins)}
         )

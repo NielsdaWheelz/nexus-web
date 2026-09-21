@@ -34,10 +34,9 @@ created_at DESC, id DESC"`), the locked `ensure_entry` append, deletes and
   named Podcast placement/compaction, and unsubscribe placement teardown).
 - **`services/library_entry_listing.py`** owns the entry listing path:
   `parse_entries_query` and the view lenses (the factual Title/Creator/
-  Published/Added orders, each ascending or descending, the
+  Published/Added/Remaining orders, each ascending or descending, the
   all-items/unfiled/in-progress projections and the hide-finished completion
-  filter — see
-  [`cutovers/library-sorting-hard-cutover.md`](../cutovers/library-sorting-hard-cutover.md)),
+  filter),
   the sort-key plan and strict keyset cursor codec, `count_default_root_inventory`,
   `list_library_entries`, and hydration into the wire DTOs. It reads through
   `library_entries` and writes nothing; `library_entries` never imports it.
@@ -236,24 +235,38 @@ episodes immediately resurface with their consumption state intact.
   `409 E_MEDIA_LAST_REFERENCE`; it never hides or deletes the media resource.
   Whole-resource `DELETE /media/{id}` accepts no query string.
 
-## Reading-time projection
+## reading-time projection and ordering
 
-Reading time is owned by the Library list read model, not `MediaOut` and not an
-ingestion writer. Migration `0187` stores same-row word-count derivatives beside
-canonical fragment text and PDF plain text. `services/media_document_metrics.py`
-is the sole media-level aggregate owner: it sums stored integers for a bounded
-batch and never reads document text on a request. Shared PDF quote readiness
-likewise uses the stored positive word count instead of scanning `plain_text`.
+`services/reading_time.py` owns the shared duration projection for library rows
+and resonance slates. it composes the stored-count relation from
+`media_document_metrics.py`, document quote-readiness from `capabilities.py`, and
+viewer-scoped current-position facts from `consumption/reader_cursor.py`.
+requests aggregate stored integers, never document text. estimates cover
+quotable web articles, epubs and pdfs with positive canonical word counts.
 
-`services/library_entry_listing.py` applies the one product policy (240
-words/minute, coarse half-up 1/5/15-minute rounding) while hydrating entries. Only ready,
-quotable web articles, EPUBs, and text PDFs with a positive count receive a
-value. Every `LibraryEntryOut` has a required
-`readingTimeEstimate: Presence<ReadingTimeEstimateOut>`: total is always present
-inside a present estimate; remaining is present only for in-progress web/EPUB
-media with the consumption projection's monotonic whole-document progression.
-PDF is total-only. Nested `media` is the sole entry consumption owner; root entry
-read-state/progress fields do not exist.
+raw total seconds are `word_count / 4.0` (240 words/minute). missing or empty
+cursors have the full duration remaining. positioned web/epub cursors use their
+current whole-document progression; a missing progression or positioned pdf has
+unknown remaining time. consumption state and its high-water progress do not
+alter this calculation. moving backward increases remaining time; marking
+unread preserves the cursor.
+
+`schemas/reading_time.py` and `lib/media/readingTime.ts` own the shared estimate
+contract. every library entry carries `readingTimeEstimate: Presence`: a present
+estimate has positive total minutes and a presence-wrapped nonnegative remainder.
+display uses half-up 1/5/15-minute rounding, retaining exact zero. nested `media`
+continues to own consumption state and progress.
+
+`sort=remaining&direction=asc|desc` orders the full entry query by missing value
+last, raw remaining seconds in the requested direction, title, then existing
+target identity keys. it preserves other filters, includes finished items unless
+filtered, and never changes authored positions. cursor keys use finite
+`FloatOrNull` values and retain exact view/plan binding. cursor and content
+changes invalidate continuation through the existing collection revision.
+
+reading rows show known remaining minutes without a percentage; unknown time
+retains available progress. unread rows preserve remaining time and label a
+sole total estimate as total. audio formatting is unchanged.
 
 ## Presentation: Default is presented as All
 
@@ -302,10 +315,15 @@ items / show finished.
   same-process placement/consumption writer publishes its seam exactly once
   after each acknowledged write.
 - A mounted All pane reacts to every placement revision; a named/system pane
-  reacts when its id is affected or the scope is `Unknown`. A consumption
-  advance reconciles In Progress and unfinished views (an absent row may newly
-  qualify); an unfiltered All-items view keeps the immediate local media patch
-  and does not refetch for it.
+  reacts when its id is affected or the scope is `Unknown`. the existing
+  consumption store also owns `durationRevision`, advanced only by acknowledged
+  reader cursor saves and progress resets. an acknowledged teardown save still
+  publishes after its reader unmounts. every active view reconciles that
+  revision; restored views compare their captured revision on return. other
+  consumption advances reconcile only In progress, Unfinished, and Remaining
+  time views. ordinary views therefore retain loaded pagination during audio
+  heartbeats. reconciliation still replaces the first page when a relevant
+  revision changes; there is no second store or client-side duration calculation.
 - While requested and committed views differ, prior rows and row navigation
   remain available; continuation, reorder, and entry mutations do not. Reorder
   exists only for a complete, editable, non-default
@@ -343,10 +361,8 @@ composes public, policy-neutral read ports from `library_entries`, consumption,
 the resource graph, contributor credits, media/podcasts, and the semantic index;
 those modules retain their tables and mutations.
 
-- Library entry ordering is no longer Resonance's: it is the factual view
-  lenses owned by `library_entry_listing` (see
-  [`cutovers/library-sorting-hard-cutover.md`](../cutovers/library-sorting-hard-cutover.md)).
-  Resonance here retains only the Reading Slate.
+- library entry ordering belongs to `library_entry_listing`; resonance owns
+  suggestions, not ordering within the library.
 - `GET /libraries/{id}/slate` returns zero to ten deterministic suggestions
   outside complete destination placement. A library suggestion must have a
   factual graph, shared-author, or calibrated semantic relation to one of five
@@ -366,6 +382,11 @@ empty state, Gallery choice, or density. Add delegates to the existing
 media/podcast filing command. It does not synthesize a `LibraryEntry`; visible
 Slate survivors stay in order, at most one canonical replacement is appended,
 and the main entry projection reloads on the next pane activation.
+
+slate rows carry factual publication dates, consumption and shared reading
+estimates; graph/author/semantic evidence stays internal to ranking. relation
+explanations and inline related-item expansion are absent from collection rows;
+resource connections remain available inside the opened resource.
 
 ## Writable library destinations
 

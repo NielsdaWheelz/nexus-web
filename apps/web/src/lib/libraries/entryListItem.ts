@@ -26,8 +26,8 @@ import {
 } from "@/lib/player/pauseShortening";
 import {
   decodeLibraryReadingTimeEntry,
-  type ReadingTimeEstimatePresence,
 } from "@/lib/libraries/readingTime";
+import type { ReadingTimeEstimatePresence } from "@/lib/media/readingTime";
 import {
   expectArray,
   expectBoolean,

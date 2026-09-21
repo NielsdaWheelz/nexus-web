@@ -1,5 +1,15 @@
 import { apiFetch } from "@/lib/api/client";
-import { decodeSlateEnvelope, type SlateSnapshot } from "@/lib/resonance/contract";
+import {
+  decodeQuickReadsEnvelope,
+  decodeSlateEnvelope,
+  type SlateSnapshot,
+} from "@/lib/resonance/contract";
+
+export async function getQuickReads(signal?: AbortSignal): Promise<SlateSnapshot> {
+  return decodeQuickReadsEnvelope(
+    await apiFetch<unknown>("/api/lectern/quick-reads", { signal }),
+  );
+}
 
 export async function getLecternSlate(signal?: AbortSignal): Promise<SlateSnapshot> {
   return decodeSlateEnvelope(

@@ -29,7 +29,6 @@ export function presentConversation(
     activity: absent(),
     exceptionalStatus: absent(),
     localAvailability: absent(),
-    relatedMediaId: absent(),
     actionSubject: {
       ref: canonicalResourceRef({ scheme: "conversation", id: item.id }),
     },

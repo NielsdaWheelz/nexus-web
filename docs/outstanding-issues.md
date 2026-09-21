@@ -30,6 +30,9 @@ area · opened YYYY-MM-DD by <who> · P2
 
 ## Open
 
+- [open] library consumption · 2026-09-21 implementation review · ordinary library rows can retain stale finished/unread state after status-only commands: [ticket](tickets/library-status-only-consumption-stays-stale.md).
+- [open] collection docs · 2026-09-21 council · library and lectern contracts still point to deleted cutovers: [ticket](tickets/collection-contract-docs-reference-deleted-cutovers.md).
+
 ### [OPEN] OI-003 — Imports live re-read loses one tick after a failed re-key
 frontend · opened 2026-09-08 by Claude (imports cutover, Track D2) · P3
 A manual refresh or invalidation whose own summary read fails re-keys the page

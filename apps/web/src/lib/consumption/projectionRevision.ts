@@ -2,24 +2,30 @@
 
 import { useSyncExternalStore } from "react";
 
-// Process-local, monotonic consumption-projection revision. Every authoritative
-// consumption-state, durable reader-state, and accepted-heartbeat write publishes
-// here after install; the pane decides whether to refetch from its own committed
-// projection. See docs/cutovers/library-all-and-smart-views-hard-cutover.md
-// ("Mutation Composition"). No `mediaIds` field: no consumer reads it
-// (simplicity.md).
+// Process-local, monotonic consumption revisions. Every authoritative state,
+// cursor, and accepted-heartbeat write advances revision. Only durable reader
+// cursor writes/resets advance durationRevision: ordinary library views can
+// refresh their minute labels without replacing pagination on audio heartbeats.
+// Each consumer decides which facts affect its committed projection.
 
 export interface ConsumptionProjectionChange {
-  revision: number;
+  readonly revision: number;
+  readonly durationRevision: number;
 }
 
-const INITIAL: ConsumptionProjectionChange = { revision: 0 };
+const INITIAL: ConsumptionProjectionChange = { revision: 0, durationRevision: 0 };
 
 let current: ConsumptionProjectionChange = INITIAL;
 const listeners = new Set<() => void>();
 
-export function publishConsumptionProjectionChange(): void {
-  current = { revision: current.revision + 1 };
+export function publishConsumptionProjectionChange(options?: {
+  readonly durationChanged: boolean;
+}): void {
+  current = {
+    revision: current.revision + 1,
+    durationRevision:
+      current.durationRevision + (options?.durationChanged ? 1 : 0),
+  };
   for (const listener of listeners) listener();
 }
 

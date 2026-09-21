@@ -19,7 +19,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from nexus.db.models import MediaKind
-from nexus.schemas.resonance import ResonanceEdgeOrigin
 from nexus.services import highlights, library_entries, notes
 from nexus.services.consumption import projection
 from nexus.services.contributor_credits import visible_author_credit_rows_sql
@@ -44,7 +43,6 @@ from nexus.services.resonance._slate import (
     SharedAuthorEvidence,
 )
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.resolve import resolve_refs
 from nexus.services.semantic_chunks import media_neighbor_rows_sql
 
 SEMANTIC_CHUNK_CANDIDATE_MULTIPLIER = 20
@@ -83,13 +81,6 @@ def exact_day_date_sql(value_sql: str) -> str:
     """
 
 
-def semantic_chunk_candidate_limit(distinct_media_limit: int) -> int:
-    return max(
-        distinct_media_limit * SEMANTIC_CHUNK_CANDIDATE_MULTIPLIER,
-        SEMANTIC_CHUNK_CANDIDATE_MINIMUM,
-    )
-
-
 def capture_as_of(db: Session) -> datetime:
     """The request snapshot's single authoritative UTC instant."""
     return db.execute(text("SELECT now()")).scalar_one().astimezone(UTC)
@@ -121,28 +112,14 @@ def lectern_anchors(db: Session, *, viewer_id: UUID) -> tuple[Anchor, ...]:
         refs.append(ref)
         if len(refs) == SLATE_ANCHOR_LIMIT:
             break
-    return _resolve_anchors(db, viewer_id=viewer_id, refs=refs)
+    return tuple(Anchor(ref=ref, rank=rank) for rank, ref in enumerate(refs))
 
 
 def library_anchors(db: Session, *, viewer_id: UUID, library_id: UUID) -> tuple[Anchor, ...]:
     refs = library_entries.library_anchor_facts(
         db, viewer_id=viewer_id, library_id=library_id, limit=SLATE_ANCHOR_LIMIT
     )
-    return _resolve_anchors(db, viewer_id=viewer_id, refs=list(refs))
-
-
-def _resolve_anchors(
-    db: Session, *, viewer_id: UUID, refs: list[ResourceRef]
-) -> tuple[Anchor, ...]:
-    if not refs:
-        return ()
-    resolved = resolve_refs(
-        db, viewer_id=viewer_id, refs=refs, include_media_document_summary=False
-    )
-    return tuple(
-        Anchor(ref=ref, label=item.label, rank=rank)
-        for rank, (ref, item) in enumerate(zip(refs, resolved, strict=True))
-    )
+    return tuple(Anchor(ref=ref, rank=rank) for rank, ref in enumerate(refs))
 
 
 def acquire_slate_candidates(
@@ -157,9 +134,9 @@ def acquire_slate_candidates(
 ) -> list[CandidateEvidence]:
     """One bounded evidence union over the surface's eligible-target relation.
 
-    ``target_relation`` is checked-in SQL exposing one row per addable target.
+    ``target_relation`` is checked-in SQL exposing one row per eligible target.
     Lectern also takes the two non-relational lanes and, because a candidate
-    renders under exactly one reason, keeps their targets out of the relational
+    belongs to exactly one family, keeps their targets out of the relational
     lanes so those lanes spend their budget on relational candidates.
     """
     params: dict[str, object] = {
@@ -190,7 +167,6 @@ def acquire_slate_candidates(
         relations[ref.uri] = EdgeEvidence(
             anchor=anchor_by_rank[int(row["anchor_rank"])],
             rank=rank,
-            edge_origin=cast(ResonanceEdgeOrigin, str(row["edge_origin"])),
         )
 
     for rank, row in enumerate(
@@ -211,7 +187,6 @@ def acquire_slate_candidates(
                 anchor=anchor_by_rank[int(row["anchor_rank"])],
                 rank=rank,
                 author_id=UUID(str(row["first_author_id"])),
-                author_name=str(row["display_name"]),
             ),
         )
 
@@ -279,14 +254,7 @@ def _candidate(
         target_ref=ref,
         media_kind=MediaKind(str(media_kind)) if media_kind is not None else None,
         continuity=(
-            ContinuityEvidence(
-                progress=(
-                    float(row["progress_fraction"])
-                    if row["progress_fraction"] is not None
-                    else None
-                ),
-                last_engaged_at=engaged,
-            )
+            ContinuityEvidence(last_engaged_at=engaged)
             if row["read_state"] == "InProgress" and engaged is not None
             else None
         ),
@@ -613,10 +581,8 @@ def _shared_author_rows(
                        ) AS family_rank
                 FROM strongest_per_target
             )
-            SELECT ranked.*, names.display_name
+            SELECT ranked.*
             FROM ranked
-            JOIN (SELECT DISTINCT contributor_id, display_name FROM authors) names
-              ON names.contributor_id = ranked.first_author_id
             WHERE ranked.family_rank <= {SLATE_FAMILY_CANDIDATE_LIMIT}
             ORDER BY {strength}
         """),
@@ -674,7 +640,10 @@ def _semantic_rows(
                 "viewer_id": viewer_id,
                 "anchor_media_id": anchor.ref.id,
                 "embedding_dimensions": SEMANTIC_DIMENSIONS,
-                "candidate_limit": semantic_chunk_candidate_limit(SLATE_FAMILY_CANDIDATE_LIMIT),
+                "candidate_limit": max(
+                    SLATE_FAMILY_CANDIDATE_LIMIT * SEMANTIC_CHUNK_CANDIDATE_MULTIPLIER,
+                    SEMANTIC_CHUNK_CANDIDATE_MINIMUM,
+                ),
                 **params,
             },
         ).mappings()

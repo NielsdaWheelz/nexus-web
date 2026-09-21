@@ -1481,7 +1481,7 @@ the hide-finished completion filter for reads — no DML on
   Default media with no other current, non-system placement), or
   `In Progress` (canonical consumption `read_state = 'InProgress'`; podcast
   show rows never match, and the completion filter is unrepresentable with
-  it). Factual view lenses (Title/Creator/Published/Added, each ascending or
+  it). Factual view lenses (Title/Creator/Published/Added/Remaining, each ascending or
   descending), projections, and the hide-finished completion filter are
   URL-only: they are never persisted and never write
   `library_entries.position`. In the browser, two process-local monotonic
@@ -1489,26 +1489,33 @@ the hide-finished completion filter for reads — no DML on
   `lib/consumption/projectionRevision.ts` — are published by every definitive
   placement/consumption writer after each acknowledged write, and the Library
   pane refetches its exact requested view when a captured revision advances.
-- **Library reading-time is a list projection, not shared media state.**
-  `services/media_document_metrics.py` batch-aggregates only the STORED integer
-  source counts for ready, quotable web/EPUB/PDF media; `library_entries.py`
-  owns the 240-WPM and coarse-rounding policy. Each `LibraryEntryOut` carries a
-  required `Presence<ReadingTimeEstimateOut>`. Total is available for positive
-  counts; remaining is derived only for in-progress web/EPUB media from the
-  canonical consumption projection's monotonic whole-document progression.
-  PDF remains total-only, and shared PDF quote readiness uses the stored
-  positive word count rather than reading `plain_text`. Nested `media` owns read
-  state/progress; the entry does not duplicate them, and no Library list path
-  scans source text.
-- **Resonance is the one relevance owner.** `services/resonance/` composes
+- **reading duration has one shared read owner.** `services/reading_time.py`
+  composes stored integer counts from `media_document_metrics.py`, document
+  quote-readiness from `capabilities.py`, and current-position facts from
+  `consumption/reader_cursor.py`. quotable positive-count web/epub/pdf documents
+  receive total seconds at 240 words/minute. no/empty cursor means full remaining
+  duration; positioned web/epub uses current whole-document progression;
+  positioned pdf or unknown progression means unknown remainder. high-water
+  consumption progress and completion remain separate. one projection serves
+  library ordering and resonance eligibility; display alone uses coarse rounding
+  and retains exact zero. `schemas/reading_time.py` and `lib/media/readingTime.ts`
+  own the shared wire shape and decoder. requests never scan document text.
+- **remaining-time order belongs to library listing.** `sort=remaining` orders
+  raw `float8` seconds before pagination, unknowns last in either direction,
+  then title and target identity. finite `FloatOrNull` cursor keys retain exact
+  view/plan binding. existing cursor/content revision changes invalidate old
+  continuations. filters and authored positions retain their owners.
+- **resonance is the one relevance owner.** `services/resonance/` composes
   policy-neutral read ports from consumption, libraries, the resource graph,
-  contributors, and the semantic index. It owns Related ordering and the
-  on-demand Reading Slate projection; fact owners retain their tables and
-  mutations. Library entry ordering is not Resonance's — see
-  [`cutovers/library-sorting-hard-cutover.md`](cutovers/library-sorting-hard-cutover.md). `GET /libraries/{id}/slate`
+  contributors and the semantic index. it owns quick reads, at hand and library
+  suggestions; fact owners retain their tables and mutations. library entry
+  ordering belongs to `library_entry_listing`. `GET /libraries/{id}/slate`
   returns at most ten deterministic, destination-addable suggestions outside
-  complete membership. A successful Add preserves visible Slate survivors and
-  appends at most one novel result from a canonical refetch.
+  complete membership. successful add preserves visible survivors and appends
+  at most one novel result. slate payloads carry target, factual publication date,
+  consumption and shared reading estimate; relation reasons remain internal.
+  inline related discovery and `/media/{id}/related` are retired; the resource
+  graph and opened-resource connections remain.
 - **Library Dossier** is the Library binding of Universal Dossiers, not a
   Library-owned subsystem. The Library pane publishes Entries in primary
   content and capability-gated `Members | Connections | Dossier` in the shared
@@ -1734,8 +1741,13 @@ policy-neutral engagement and complete queue-membership reads to Resonance; it
 does not own a second public Recent product. `GET /lectern/slate` builds the
 on-demand **At hand** projection from Continuity, Arrival, and factual graph,
 author, and calibrated semantic evidence. It returns at most ten placeable
-media outside the complete queue and excludes `Finished` targets. Two bounded
-aggregate command ports — `POST /lectern/commands`
+media outside the complete queue and excludes `Finished` targets; a full queue
+suppresses it. `GET /lectern/quick-reads` independently returns at most five
+unfinished documents with `0 < remaining_seconds < 600`, including queued media
+and working at full capacity. readiness and raw duration filter the candidates
+before every acquisition cap. it reuses existing qualification/ranking without
+a fallback family, accepts no query parameters and performs no model calls.
+Two bounded aggregate command ports — `POST /lectern/commands`
 (`PlaceItems`/`RemoveItem`/`SetOrder`) and `POST /consumption/commands`
 (`EnsureMediaFinished`/`FinishLecternItem`/`SetUnread`/`UndoCompletion`/
 `SetBatchState`/`ResetProgress`/`SettleNaturalEnd`) — each
@@ -1781,7 +1793,14 @@ owned progress is still empty. The shared
 `ReadingSlateSection` consumes an optional Lectern first-paint seed and
 otherwise queries only while its pane is active. It delegates Add to the
 existing Lectern or library mutation owner and owns deterministic stable
-refill, not destination state.
+refill, not destination state. the lectern section order is queue, quick reads,
+then at hand. `QuickReadsSection` uses an independent client `useResource` read,
+refreshing on active mount, reactivation and consumption/placement revisions.
+it has no selection controls or dedicated add button; opening navigates without
+enqueueing. shared collection rows retain standard menus, factual dates and
+reading estimates without relation explanations or inline expansion. known
+remaining reading time replaces percentage; unread with only total time labels
+it total. zero is representable and audio formatting is unchanged.
 
 ### 8.9 Consumption Activity & Stats
 
@@ -1894,7 +1913,7 @@ registry, generic controller, Boolean AST, or client sorting of pageable rows.
 | Chats | chat title | Updated — newest | Updated — newest/oldest; Title — A–Z/Z–A | owner SQL before keyset |
 | Libraries | presented Library name | Created — oldest | Created — oldest/newest; Name — A–Z/Z–A | owner SQL before keyset |
 | Notes index | Page title | Updated — newest | Updated — newest/oldest; Title — A–Z/Z–A | owner SQL over the complete result |
-| Library entries | row title; contributor names | Recently added / Custom order | Title/Creator/Published/Added | owner SQL before keyset |
+| Library entries | row title; contributor names | Recently added / Custom order | Title/Creator/Published/Added/Remaining | owner SQL before keyset |
 | Podcast subscriptions | title; contributor names | Recent Episode | Recent Episode; Most Unplayed; Title — A–Z | owner SQL |
 | Podcast episodes | title; contributor names | Newest | Newest; Oldest; Shortest; Longest | owner SQL |
 | Page/Note direct items | direct item text | Authored order | none | local inspection Filter |
@@ -1903,7 +1922,7 @@ Exempt by design: Browse, Search and Preview are retrieval surfaces with
 body-owned query, facets, ranking and provider continuation; Page/Note direct
 items preserve authored order; and chat messages, TOCs, chapters, transcripts,
 sources, citations, trust trails, fork trees, navigation, menus, settings
-choices, destination pickers, and ranked Slate/Related lists retain semantic
+choices, destination pickers, and ranked slate/quick-read lists retain semantic
 owner order. Connections, Downloads, Library members/invites, choosers,
 overlays, Preview episodes and Stats tables are secondary lists and out of
 scope.
@@ -2043,7 +2062,7 @@ they open over Resume and never become panes.
   closing global/account surfaces does not strand or steal focus. Lectern is
   the brand and authenticated-home target.
   Pinning is intentionally absent; personalized retrieval lives in the Lectern
-  Reading Slate and Nexus ranking. See
+  quick reads, reading slate and Nexus ranking. See
   [`modules/app-navigation.md`](modules/app-navigation.md).
 - **First paint: stream, don't gate.** The `(authenticated)` layout runs only
   **local** work (`verifySession`, header-derived `loadRenderEnvironment`) above a

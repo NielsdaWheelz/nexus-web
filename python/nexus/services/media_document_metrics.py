@@ -15,34 +15,32 @@ class MediaSummaryMetrics:
     source_section_count: int | None
 
 
+def media_word_count_rows_sql() -> str:
+    """Stored canonical document counts; no text bodies are read or tokenized."""
+    return """
+        SELECT m.id AS media_id,
+               CASE
+                   WHEN m.kind IN ('web_article', 'epub') THEN COALESCE((
+                       SELECT SUM(f.canonical_text_word_count)
+                       FROM fragments f WHERE f.media_id = m.id
+                   ), 0)
+                   WHEN m.kind = 'pdf' THEN m.plain_text_word_count::bigint
+                   ELSE NULL
+               END AS word_count
+        FROM media m
+    """
+
+
 def load_media_word_counts(db: Session, media_ids: list[UUID]) -> dict[UUID, int]:
     """One entry per distinct input id, in input order; a vanished row counts 0."""
     distinct_ids = list(dict.fromkeys(media_ids))
     if not distinct_ids:
         return {}
     rows = db.execute(
-        text(
-            """
-            WITH fragment_counts AS MATERIALIZED (
-                SELECT media_id, canonical_text_word_count
-                FROM fragments
-                WHERE media_id = ANY(:media_ids)
-            )
-            SELECT m.id,
-                   CASE
-                       WHEN m.kind IN ('web_article', 'epub')
-                           THEN COALESCE(SUM(f.canonical_text_word_count), 0)
-                       WHEN m.kind = 'pdf' THEN m.plain_text_word_count::bigint
-                       ELSE NULL
-                   END AS word_count
-            FROM media m
-            LEFT JOIN fragment_counts f
-              ON f.media_id = m.id
-             AND m.kind IN ('web_article', 'epub')
-            WHERE m.id = ANY(:media_ids)
-            GROUP BY m.id, m.kind, m.plain_text_word_count
-            """
-        ),
+        text(f"""
+            SELECT media_id, word_count FROM ({media_word_count_rows_sql()}) counts
+            WHERE media_id = ANY(:media_ids)
+        """),
         {"media_ids": distinct_ids},
     ).all()
     counts = {UUID(str(row[0])): int(row[1] or 0) for row in rows}

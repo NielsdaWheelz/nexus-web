@@ -43,10 +43,26 @@ function minuteLabel(minutes: number): string {
 export function collectionActivityText(activity: CollectionActivity): ActivityText {
   switch (activity.kind) {
     case "Unread": {
+      if (
+        activity.modality === "Read" &&
+        activity.remainingMinutes.kind === "Present"
+      ) {
+        const minutes = activity.remainingMinutes.value.value;
+        return {
+          visible: `Unread · ≈${minutes} min left`,
+          accessible: `Unread, about ${minutes} ${minuteLabel(minutes)} left to read`,
+        };
+      }
       if (activity.totalMinutes.kind === "Absent") {
         return { visible: "Unread", accessible: "Unread" };
       }
       const minutes = activity.totalMinutes.value.value;
+      if (activity.modality === "Read") {
+        return {
+          visible: `Unread · ≈${minutes} min total`,
+          accessible: `Unread, about ${minutes} ${minuteLabel(minutes)} total to read`,
+        };
+      }
       return {
         visible: `Unread · ≈${minutes} min`,
         accessible: `Unread, about ${minutes} ${minuteLabel(minutes)} to ${consumptionVerb(activity.modality)}`,
@@ -61,6 +77,12 @@ export function collectionActivityText(activity: CollectionActivity): ActivityTe
         activity.remainingMinutes.kind === "Present"
           ? activity.remainingMinutes.value.value
           : null;
+      if (activity.modality === "Read" && minutes !== null) {
+        return {
+          visible: `≈${minutes} min left`,
+          accessible: `About ${minutes} ${minuteLabel(minutes)} left to read`,
+        };
+      }
       if (fraction !== null && minutes !== null) {
         return {
           visible: `${fraction}% · ≈${minutes} min left`,

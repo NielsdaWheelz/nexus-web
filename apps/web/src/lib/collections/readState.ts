@@ -4,6 +4,7 @@ import type {
   ConsumptionModality,
 } from "@/lib/collections/types";
 import type {
+  NonNegativeMinutes,
   PositiveMinutes,
   ProgressFraction,
 } from "@/lib/consumption/activityFacts";
@@ -19,7 +20,7 @@ export interface ReadStateFields {
 
 export interface ReadActivityTime {
   totalMinutes: Presence<PositiveMinutes>;
-  remainingMinutes: Presence<PositiveMinutes>;
+  remainingMinutes: Presence<NonNegativeMinutes>;
 }
 
 /**
@@ -38,6 +39,7 @@ export function readActivity(
         kind: "Unread",
         modality,
         totalMinutes: time.totalMinutes,
+        remainingMinutes: time.remainingMinutes,
       });
     case "in_progress": {
       const fraction = item.progressFraction;

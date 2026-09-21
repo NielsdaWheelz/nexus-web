@@ -14,7 +14,6 @@ from typing import Literal
 from uuid import UUID
 
 from nexus.db.models import MediaKind
-from nexus.schemas.resonance import ResonanceEdgeOrigin
 from nexus.services.resource_graph.refs import ResourceRef
 
 SLATE_LIMIT = 10
@@ -23,7 +22,7 @@ SLATE_FAMILY_CANDIDATE_LIMIT = 20
 CONTINUITY_MAX_IDLE_DAYS = 30
 ARRIVAL_WINDOW_DAYS = 14
 REDISCOVERY_MIN_AGE_DAYS = 90
-RESONANCE_EDGE_ORIGINS: tuple[ResonanceEdgeOrigin, ...] = (
+RESONANCE_EDGE_ORIGINS = (
     "user",
     "citation",
     "note_body",
@@ -47,13 +46,11 @@ _RELATION_PRIORITY = {"Connected": 0, "SharedAuthor": 1, "Similar": 2}
 @dataclass(frozen=True, slots=True)
 class Anchor:
     ref: ResourceRef
-    label: str
     rank: int
 
 
 @dataclass(frozen=True, slots=True)
 class ContinuityEvidence:
-    progress: float | None
     last_engaged_at: datetime
     kind: Literal["Continue"] = "Continue"
 
@@ -72,7 +69,6 @@ class ArrivalEvidence:
 class EdgeEvidence:
     anchor: Anchor
     rank: int
-    edge_origin: ResonanceEdgeOrigin
     kind: Literal["Connected"] = "Connected"
 
 
@@ -81,7 +77,6 @@ class SharedAuthorEvidence:
     anchor: Anchor
     rank: int
     author_id: UUID
-    author_name: str
     kind: Literal["SharedAuthor"] = "SharedAuthor"
 
 
@@ -107,8 +102,7 @@ class CandidateEvidence:
 
 @dataclass(frozen=True, slots=True)
 class RankedCandidate:
-    """One candidate placed in a family, with the one evidence value it renders
-    as its reason and the total order it sorts by inside that family."""
+    """One candidate's family, diversity evidence and within-family order."""
 
     evidence: CandidateEvidence
     family: Family
@@ -180,23 +174,25 @@ def rank_library_candidates(
     return ranked
 
 
-def compose_lectern(ranked: dict[Family, list[RankedCandidate]]) -> list[RankedCandidate]:
-    """Ten slots rotating through the four families, then backfill by priority."""
+def compose_lectern(
+    ranked: dict[Family, list[RankedCandidate]], *, limit: Literal[5, 10]
+) -> list[RankedCandidate]:
+    """Rotate through the four families, then backfill by priority."""
     rotation: tuple[Family, ...] = ("Continuity", "GraphThread", "Arrival", "Rediscovery")
-    schedule = (rotation * 3)[:SLATE_LIMIT]
+    schedule = (rotation * 3)[:limit]
     remaining = {family: list(rows) for family, rows in ranked.items()}
     selected: list[RankedCandidate] = []
     counts: Counter[tuple[str, object]] = Counter()
     for family in schedule:
         _take_one(remaining[family], selected=selected, counts=counts)
-        if len(selected) == SLATE_LIMIT:
+        if len(selected) == limit:
             return selected
-    while len(selected) < SLATE_LIMIT:
+    while len(selected) < limit:
         added = False
         for family in ("GraphThread", "Continuity", "Rediscovery", "Arrival"):
             if _take_one(remaining[family], selected=selected, counts=counts):
                 added = True
-                if len(selected) == SLATE_LIMIT:
+                if len(selected) == limit:
                     return selected
         if not added:
             break

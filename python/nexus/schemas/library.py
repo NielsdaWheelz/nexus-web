@@ -12,6 +12,7 @@ from nexus.schemas.consumption import PauseShorteningMode, PlaybackRate
 from nexus.schemas.contributors import ContributorCreditOut
 from nexus.schemas.presence import Presence
 from nexus.schemas.publication_dates import PublicationDate
+from nexus.schemas.reading_time import ReadingTimeEstimateOut
 from nexus.services.podcasts.types import PodcastSyncStatus
 from nexus.services.sealed_handles import LibraryInvitationHandle, UserHandle
 
@@ -19,9 +20,6 @@ LibraryRole = Literal["admin", "member"]
 LibraryInvitationStatusValue = Literal["pending", "accepted", "declined", "revoked"]
 LibraryGovernanceCursor = Annotated[str, Field(min_length=1)]
 LibraryEntryKind = Literal["media", "podcast"]
-
-_INT32_MAX = 2_147_483_647
-_PositiveInt32 = Annotated[int, Field(strict=True, ge=1, le=_INT32_MAX)]
 
 
 class _Camel(BaseModel):
@@ -262,11 +260,6 @@ class LibraryEntryMediaOut(_Snake):
     progress_resettable: bool
     last_engaged_at: datetime | None = None
     capabilities: LibraryEntryMediaCapabilitiesOut
-
-
-class ReadingTimeEstimateOut(_Camel):
-    total_minutes: _PositiveInt32
-    remaining_minutes: Presence[_PositiveInt32]
 
 
 class LibraryEntryPlacementOut(_Camel):

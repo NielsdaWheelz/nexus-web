@@ -6,9 +6,9 @@ The player module owns two related but distinct concerns: the **Lectern** (one
 ordered, mixed-media list of outstanding intentions) and **Now Playing** (one
 device-local audio session, not a second durable list). Podcast, video, reader,
 agent, and Nexus actions address the ordered list. The Resonance subsystem's
-read-only **At hand** Slate is adjacent to the Lectern but does not become
-another queue or acquire mutation ownership. The player is the consumer of
-podcast episodes (and YouTube videos) for playback; the
+read-only **Quick reads** and **At hand** projections are adjacent to the
+Lectern; neither becomes another queue or acquires mutation ownership. The
+player is the consumer of podcast episodes (and YouTube videos) for playback; the
 [Browse capability](../cutovers/browse-discovery-preview-acquisition-hard-cutover.md)
 owns external discovery and Preview, while the [podcast module](podcast.md)
 owns acquisition, sync/backfill, and explicit transcription.
@@ -100,13 +100,27 @@ split by storage and query concern:
   (catalog hydration only; canonical playback state comes from the player
   descriptor).
 
-`python/nexus/services/resonance/` owns the deterministic Reading Slate. It
-combines Consumption-owned Continuity with media- and podcast-owned Arrival
-facts plus policy-neutral graph, contributor, and calibrated semantic evidence,
-then returns at most ten placeable media outside the complete queue. `Finished`
-targets are excluded; finished resources may still serve as anchors. The request
-performs no model or provider call and uses one repeatable-read, read-only
-database snapshot.
+`python/nexus/services/resonance/` owns deterministic quick reads and reading
+slates. at hand combines continuity, arrival, graph, contributor and calibrated
+semantic evidence, returning at most ten unfinished placeable media outside the
+complete queue. a full queue suppresses at hand.
+
+`GET /lectern/quick-reads` accepts no query parameters and returns at most five
+unfinished documents with `0 < remaining_seconds < 600`. it includes queued
+media and works at full capacity. visibility, document quote-readiness and raw
+duration eligibility apply before every candidate cap; ranking and diversity
+reuse the existing lectern policy. there is no fallback family, so fewer than
+five may qualify even when other short works exist. both reads use one
+repeatable-read, read-only snapshot without model or provider calls.
+
+`services/reading_time.py` owns duration from stored canonical word counts and
+the current durable reader cursor; see
+[library duration](library.md#reading-time-projection-and-ordering).
+slate items carry target, factual publication date, canonical consumption and
+shared reading estimate. reasons and anchors remain internal ranking evidence.
+media dates use original publication; podcast episodes use their publication's
+utc calendar date. podcast containers have no publication, consumption or
+reading estimate on this contract.
 
 Media teardown (`docs/cutovers/lectern-player-lifecycle-hard-cutover.md` §3.1;
 see also [storage.md](storage.md)) composes one consumption call,
@@ -125,6 +139,7 @@ media/podcast DTOs, and the Lectern snapshot so activation derivation
 ```http
 GET  /lectern
 GET  /lectern/slate
+GET  /lectern/quick-reads
 POST /lectern/commands
 POST /consumption/commands
 GET  /media/{id}/listening-state
@@ -205,18 +220,28 @@ Lectern pane is the sole full-list editor).
   full row from the owning Podcast read; it does not leave the pre-reset action
   capability interactive while that read is pending.
 - `apps/web/src/app/(authenticated)/lectern/LecternPaneBody.tsx` renders the
-  canonical **On the lectern** collection followed by the shared **At hand**
-  Slate. The Slate consumes an optional server first-paint seed, otherwise
+  canonical **On the lectern** collection, **Quick reads**, then **At hand**.
+  At hand consumes an optional server first-paint seed, otherwise
   queries on first active mount and every inactive-to-active transition,
   delegates Add to `LecternProvider.placeItems`, and never owns a second
   mutation lane. After success it preserves the exact surviving rows and
   appends at most one novel canonical replacement. `LecternMutationNotice`
   remains the sole assertive owner and Retry surface for an unknown Lectern
   command outcome.
+- `components/collections/QuickReadsSection.tsx` is an independent client read
+  through `useResource`: first active mount, reactivation and active consumption
+  or placement revision changes refetch with existing abort/retry handling. it
+  uses the shared slate presenter and collection rows, distinguishes empty from
+  error, and has no dedicated add button or controls. opening navigates without
+  enqueueing; standard resource menus remain available. if refresh removes its
+  focused row, the active section receives orphaned focus; deliberate focus
+  moves and inactive panes are left alone.
 - `apps/web/src/lib/resonance/` and
   `components/collections/ReadingSlateSection.tsx` own strict Slate transport,
   presentation, the destination-keyed read/add/refill state machine, focus,
-  and quiet read recovery. They do not own queue state or write commands.
+  and quiet read recovery for at hand and library suggestions. they do not own
+  queue state or write commands. collection rows no longer expose relation
+  explanations or inline related expansion; opened-resource connections remain.
 - `apps/web/src/lib/player/` — the audio session: `playerSession.ts` (pure
   session/origin/history/resume state machine, zero React/I-O),
   `browserPlayerRuntime.ts` (the non-Android `<audio>` element, output-effects

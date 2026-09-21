@@ -41,7 +41,6 @@ export function presentSearchResult(vm: SearchResultRowViewModel): CollectionRow
     activity: absent(),
     exceptionalStatus: absent(),
     localAvailability: absent(),
-    relatedMediaId: absent(),
     actionSubject: vm.actionSubject,
     selected: false,
   };
