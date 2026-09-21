@@ -44,12 +44,7 @@ from nexus.services import run_kit
 from nexus.services.artifacts import engine as artifact_engine
 from nexus.services.chat_run_execution import chat_run_execution_phase
 from nexus.services.durable_step_journal import DurableExecutionPhase
-from nexus.services.podcasts import refresh as podcast_refresh_service
 from nexus.services.podcasts import subscriptions as podcast_subscription_service
-from nexus.services.sealed_handles import (
-    PodcastRefreshRunHandle,
-    unseal_podcast_refresh_run,
-)
 
 router = APIRouter(tags=["streaming"])
 logger = get_logger(__name__)
@@ -230,50 +225,6 @@ async def stream_media_events(
             request=request,
             listener=listener,
             read_snapshot=lambda: _read_media_snapshot(viewer_id, media_id),
-        ),
-        media_type="text/event-stream; charset=utf-8",
-        headers=_SSE_HEADERS,
-    )
-
-
-@router.get("/stream/podcast-refresh-runs/{refresh_run_handle}/events")
-async def stream_podcast_refresh_run_events(
-    request: Request,
-    refresh_run_handle: PodcastRefreshRunHandle,
-    viewer_id: Annotated[UUID, Depends(get_stream_viewer)],
-) -> StreamingResponse:
-    run_id = unseal_podcast_refresh_run(refresh_run_handle)
-
-    def assert_owner() -> None:
-        with get_session_factory()() as db:
-            podcast_refresh_service.assert_refresh_run_owner(
-                db,
-                viewer_id=viewer_id,
-                run_id=run_id,
-            )
-
-    def read_snapshot() -> tuple[dict[str, Any], bool]:
-        with get_session_factory()() as db:
-            snapshot = podcast_refresh_service.get_refresh_run_snapshot(
-                db,
-                viewer_id=viewer_id,
-                run_id=run_id,
-            )
-        return (
-            snapshot.model_dump(mode="json", by_alias=True),
-            snapshot.status != "Running",
-        )
-
-    await run_in_threadpool(assert_owner)
-    listener = await open_sse_listener(
-        podcast_refresh_service.PODCAST_REFRESH_NOTIFY_CHANNEL,
-        str(run_id),
-    )
-    return StreamingResponse(
-        tail_snapshot_stream(
-            request=request,
-            listener=listener,
-            read_snapshot=read_snapshot,
         ),
         media_type="text/event-stream; charset=utf-8",
         headers=_SSE_HEADERS,

@@ -1,4 +1,4 @@
-"""Fetch and parse RSS podcast transcript artifacts."""
+"""Fetch and parse one publisher transcript sidecar."""
 
 from __future__ import annotations
 
@@ -13,190 +13,127 @@ from nexus.services.url_normalize import validate_requested_url
 
 logger = get_logger(__name__)
 
-_TRANSCRIPT_TIMEOUT_SECONDS = 15.0
+_TIMEOUT_SECONDS = 15.0
 _MAX_TRANSCRIPT_BYTES = 5 * 1024 * 1024
-
-_VTT_CONTENT_TYPES = {"text/vtt"}
-_SRT_CONTENT_TYPES = {
-    "application/x-subrip",
-    "application/srt",
-    "text/srt",
-    "text/x-subrip",
+_ALLOWED_CONTENT_TYPES = {
+    "vtt": {"text/vtt", "text/plain"},
+    "srt": {"application/x-subrip", "application/srt", "text/srt", "text/x-subrip", "text/plain"},
+    "json": {"application/json", "text/json", "text/plain"},
 }
-_JSON_CONTENT_TYPES = {
-    "application/json",
-    "text/json",
+_REJECTED_CONTENT_TYPES = {"text/html", "application/xhtml+xml"}
+_OPAQUE_CONTENT_TYPES = {"application/octet-stream", "binary/octet-stream"}
+_SOURCE_TYPE_BY_SUFFIX = {
+    ".vtt": "vtt",
+    ".srt": "srt",
+    ".json": "json",
+    ".txt": "text",
+    ".text": "text",
 }
-_REJECTED_CONTENT_TYPES = {
-    "text/html",
-    "application/xhtml+xml",
-}
-
-_VTT_TIMING_RE = re.compile(r"^(?P<start>\S+)\s*-->\s*(?P<end>\S+)")
-_VTT_SPEAKER_RE = re.compile(r"<v(?:\.[^>\s]+)?(?:\s+([^>]+))?>", re.IGNORECASE)
-_VTT_SPEAKER_TAG_RE = re.compile(r"</?v(?:\.[^>\s]+)?(?:\s+[^>]*)?>", re.IGNORECASE)
-_SRT_TIMING_RE = re.compile(r"^(?P<start>[^-\s]+)\s*-->\s*(?P<end>[^-\s]+)")
-_HTML_TAG_RE = re.compile(r"<[^>]+>")
-_WHITESPACE_RE = re.compile(r"\s+")
+_VTT_TIMING = re.compile(r"^(?P<start>\S+)\s*-->\s*(?P<end>\S+)")
+_VTT_SPEAKER = re.compile(r"<v(?:\.[^>\s]+)?(?:\s+([^>]+))?>", re.IGNORECASE)
+_VTT_SPEAKER_TAG = re.compile(r"</?v(?:\.[^>\s]+)?(?:\s+[^>]*)?>", re.IGNORECASE)
+_SRT_TIMING = re.compile(r"^(?P<start>[^-\s]+)\s*-->\s*(?P<end>[^-\s]+)")
+_HTML_TAG = re.compile(r"<[^>]+>")
+_WHITESPACE = re.compile(r"\s+")
 
 
 def fetch_rss_transcript(url: str, *, episode_duration_ms: int | None) -> list[dict[str, Any]]:
-    """Fetch and parse one publisher transcript sidecar URL.
-
-    Returns no segments when the sidecar is unavailable or unparseable.
-    """
+    """Return the sidecar's segments, or none when it is unusable."""
     try:
         validate_requested_url(url)
     except InvalidRequestError:
         return []
-
-    source_type = _classify_source_type(url)
+    source_type = next(
+        (
+            value
+            for suffix, value in _SOURCE_TYPE_BY_SUFFIX.items()
+            if url.strip().lower().endswith(suffix)
+        ),
+        None,
+    )
     if source_type is None:
         return []
 
-    content, fetch_error = _fetch_transcript_text(url, source_type=source_type)
-    if content is None:
+    try:
+        result = safe_get(url, max_bytes=_MAX_TRANSCRIPT_BYTES, timeout_s=_TIMEOUT_SECONDS)
+    except ApiError as exc:
+        logger.warning("rss_transcript_fetch_failed", transcript_url=url, error=exc.message)
+        return []
+    if not _content_type_allowed(result.content_type, source_type=source_type):
         logger.warning(
             "rss_transcript_fetch_failed",
             transcript_url=url,
-            source_type=source_type,
-            error=fetch_error,
+            error=f"content_type_rejected:{result.content_type or 'unknown'}",
         )
         return []
 
-    if source_type == "vtt":
+    content = result.text
+    if not content.strip():
+        segments: list[dict[str, Any]] = []
+    elif source_type == "vtt":
         segments = parse_vtt_transcript(content)
     elif source_type == "srt":
         segments = parse_srt_transcript(content)
     elif source_type == "json":
         try:
-            payload = json.loads(content)
-        except ValueError as exc:
-            logger.warning(
-                "rss_transcript_parse_failed",
-                transcript_url=url,
-                source_type=source_type,
-                error=str(exc),
-            )
-            return []
-        segments = parse_json_transcript(payload)
+            segments = parse_json_transcript(json.loads(content))
+        except ValueError:
+            segments = []
     else:
         segments = parse_plain_text_transcript(content, episode_duration_ms=episode_duration_ms)
 
     if not segments:
-        logger.warning(
-            "rss_transcript_parse_failed",
-            transcript_url=url,
-            source_type=source_type,
-            error="no_segments",
-        )
-        return []
-
+        logger.warning("rss_transcript_parse_failed", transcript_url=url, source_type=source_type)
     return segments
 
 
-def _classify_source_type(url: str) -> str | None:
-    lowered_url = url.strip().lower()
-    if lowered_url.endswith(".vtt"):
-        return "vtt"
-    if lowered_url.endswith(".srt"):
-        return "srt"
-    if lowered_url.endswith(".json"):
-        return "json"
-    if lowered_url.endswith(".txt") or lowered_url.endswith(".text"):
-        return "text"
-    return None
-
-
-def _fetch_transcript_text(url: str, *, source_type: str) -> tuple[str | None, str | None]:
-    try:
-        result = safe_get(
-            url,
-            max_bytes=_MAX_TRANSCRIPT_BYTES,
-            timeout_s=_TRANSCRIPT_TIMEOUT_SECONDS,
-        )
-    except ApiError as exc:
-        return None, f"fetch_rejected:{exc.code.value}"
-
-    if not _is_allowed_content_type(result.content_type, source_type=source_type):
-        return None, f"content_type_rejected:{result.content_type or 'unknown'}"
-
-    if not result.text.strip():
-        return None, "empty_body"
-    return result.text, None
-
-
-def _is_allowed_content_type(content_type: str | None, *, source_type: str) -> bool:
-    if content_type is None:
-        return True
-    if content_type in {"application/octet-stream", "binary/octet-stream"}:
+def _content_type_allowed(content_type: str | None, *, source_type: str) -> bool:
+    if content_type is None or content_type in _OPAQUE_CONTENT_TYPES:
         return True
     if content_type in _REJECTED_CONTENT_TYPES:
         return False
-    if source_type == "vtt":
-        return content_type in _VTT_CONTENT_TYPES or content_type == "text/plain"
-    if source_type == "srt":
-        return content_type in _SRT_CONTENT_TYPES or content_type == "text/plain"
-    if source_type == "json":
-        return (
-            content_type in _JSON_CONTENT_TYPES
-            or content_type.endswith("+json")
-            or content_type == "text/plain"
-        )
-    return content_type.startswith("text/") and content_type not in _REJECTED_CONTENT_TYPES
+    if source_type == "json" and content_type.endswith("+json"):
+        return True
+    if source_type == "text":
+        return content_type.startswith("text/")
+    return content_type in _ALLOWED_CONTENT_TYPES[source_type]
 
 
 def parse_vtt_transcript(content: str) -> list[dict[str, Any]]:
-    normalized = str(content or "").replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
-    if not normalized.strip():
-        return []
-
-    lines = normalized.split("\n")
+    lines = _normalize_newlines(content).split("\n")
     segments: list[dict[str, Any]] = []
     line_idx = 0
     while line_idx < len(lines):
         line = lines[line_idx].strip()
-        if not line:
-            line_idx += 1
-            continue
-
-        upper_line = line.upper()
-        if upper_line == "WEBVTT":
-            line_idx += 1
-            continue
-        if upper_line.startswith("NOTE"):
-            line_idx += 1
-            while line_idx < len(lines) and lines[line_idx].strip():
-                line_idx += 1
-            continue
-        if upper_line in {"STYLE", "REGION"}:
-            line_idx += 1
-            while line_idx < len(lines) and lines[line_idx].strip():
-                line_idx += 1
-            continue
-
-        timing_line = line
-        if "-->" not in timing_line and line_idx + 1 < len(lines):
-            next_line = lines[line_idx + 1].strip()
-            if "-->" in next_line:
-                line_idx += 1
-                timing_line = next_line
-
-        if "-->" not in timing_line:
-            line_idx += 1
-            continue
-
-        t_start_ms, t_end_ms = _parse_vtt_timing_line(timing_line)
         line_idx += 1
+        if not line:
+            continue
+        if line.upper() == "WEBVTT":
+            continue
+        if line.upper().startswith("NOTE") or line.upper() in {"STYLE", "REGION"}:
+            while line_idx < len(lines) and lines[line_idx].strip():
+                line_idx += 1
+            continue
+        if "-->" not in line:
+            if line_idx >= len(lines) or "-->" not in lines[line_idx]:
+                continue
+            line = lines[line_idx].strip()
+            line_idx += 1
 
+        match = _VTT_TIMING.match(line)
         cue_lines: list[str] = []
         while line_idx < len(lines) and lines[line_idx].strip():
             cue_lines.append(lines[line_idx])
             line_idx += 1
-
+        if match is None:
+            continue
+        t_start_ms = _parse_timestamp_ms(match.group("start"))
+        t_end_ms = _parse_timestamp_ms(match.group("end"))
         if t_start_ms is None or t_end_ms is None or t_end_ms <= t_start_ms:
             continue
-        text_value, speaker_label = _extract_vtt_text_and_speaker(cue_lines)
+        raw_text = "\n".join(cue_lines).strip()
+        speaker_match = _VTT_SPEAKER.search(raw_text)
+        text_value = _plain_text(_VTT_SPEAKER_TAG.sub("", raw_text))
         if not text_value:
             continue
         segments.append(
@@ -204,64 +141,31 @@ def parse_vtt_transcript(content: str) -> list[dict[str, Any]]:
                 "text": text_value,
                 "t_start_ms": t_start_ms,
                 "t_end_ms": t_end_ms,
-                "speaker_label": speaker_label,
+                "speaker_label": (
+                    str(speaker_match.group(1) or "").strip() or None
+                    if speaker_match is not None
+                    else None
+                ),
             }
         )
-
     return segments
 
 
-def _parse_vtt_timing_line(line: str) -> tuple[int | None, int | None]:
-    match = _VTT_TIMING_RE.match(str(line or "").strip())
-    if match is None:
-        return None, None
-    t_start_ms = _parse_timestamp_ms(match.group("start"))
-    t_end_ms = _parse_timestamp_ms(match.group("end"))
-    return t_start_ms, t_end_ms
-
-
-def _extract_vtt_text_and_speaker(cue_lines: list[str]) -> tuple[str, str | None]:
-    raw_text = "\n".join(cue_lines).strip()
-    if not raw_text:
-        return "", None
-
-    speaker_label: str | None = None
-    speaker_match = _VTT_SPEAKER_RE.search(raw_text)
-    if speaker_match is not None:
-        speaker_candidate = str(speaker_match.group(1) or "").strip()
-        if speaker_candidate:
-            speaker_label = speaker_candidate
-
-    without_speaker_tags = _VTT_SPEAKER_TAG_RE.sub("", raw_text)
-    text_value = _strip_html_and_collapse(without_speaker_tags)
-    return text_value, speaker_label
-
-
 def parse_srt_transcript(content: str) -> list[dict[str, Any]]:
-    normalized = str(content or "").replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
-    if not normalized.strip():
-        return []
-
     segments: list[dict[str, Any]] = []
-    blocks = re.split(r"\n\s*\n", normalized)
-    for block in blocks:
-        raw_lines = [line.strip() for line in block.split("\n") if line.strip()]
-        if not raw_lines:
+    for block in re.split(r"\n\s*\n", _normalize_newlines(content)):
+        lines = [line.strip() for line in block.split("\n") if line.strip()]
+        if lines and lines[0].isdigit():
+            lines = lines[1:]
+        if not lines:
             continue
-
-        line_idx = 0
-        if raw_lines[0].isdigit():
-            line_idx = 1
-        if line_idx >= len(raw_lines):
+        match = _SRT_TIMING.match(lines[0])
+        if match is None:
             continue
-
-        t_start_ms, t_end_ms = _parse_srt_timing_line(raw_lines[line_idx])
-        if t_start_ms is None or t_end_ms is None or t_end_ms <= t_start_ms:
-            continue
-
-        text_lines = raw_lines[line_idx + 1 :]
-        text_value = _strip_html_and_collapse(" ".join(text_lines))
-        if not text_value:
+        t_start_ms = _parse_timestamp_ms(match.group("start"))
+        t_end_ms = _parse_timestamp_ms(match.group("end"))
+        text_value = _plain_text(" ".join(lines[1:]))
+        if t_start_ms is None or t_end_ms is None or t_end_ms <= t_start_ms or not text_value:
             continue
         segments.append(
             {
@@ -274,52 +178,35 @@ def parse_srt_transcript(content: str) -> list[dict[str, Any]]:
     return segments
 
 
-def _parse_srt_timing_line(line: str) -> tuple[int | None, int | None]:
-    match = _SRT_TIMING_RE.match(str(line or "").strip())
-    if match is None:
-        return None, None
-    t_start_ms = _parse_timestamp_ms(match.group("start"))
-    t_end_ms = _parse_timestamp_ms(match.group("end"))
-    return t_start_ms, t_end_ms
-
-
 def parse_json_transcript(payload: Any) -> list[dict[str, Any]]:
-    entries: list[Any]
     if isinstance(payload, dict):
-        raw_segments = payload.get("segments")
-        entries = raw_segments if isinstance(raw_segments, list) else []
-    elif isinstance(payload, list):
-        entries = payload
+        raw_entries = payload.get("segments")
     else:
+        raw_entries = payload
+    if not isinstance(raw_entries, list):
         return []
-
     segments: list[dict[str, Any]] = []
-    for entry in entries:
+    for entry in raw_entries:
         if not isinstance(entry, dict):
             continue
-        text_value = _strip_html_and_collapse(entry.get("text") or entry.get("transcript"))
-        if not text_value:
-            continue
-        t_start_ms = _coerce_json_time_to_ms(
+        text_value = _plain_text(entry.get("text") or entry.get("transcript"))
+        t_start_ms = _coerce_json_time_ms(
             entry.get("startTime") or entry.get("start_time") or entry.get("start")
         )
-        t_end_ms = _coerce_json_time_to_ms(
+        t_end_ms = _coerce_json_time_ms(
             entry.get("endTime") or entry.get("end_time") or entry.get("end")
         )
-        if t_start_ms is None or t_end_ms is None or t_end_ms <= t_start_ms:
+        if not text_value or t_start_ms is None or t_end_ms is None or t_end_ms <= t_start_ms:
             continue
         speaker_raw = (
             entry.get("speaker_label") or entry.get("speakerLabel") or entry.get("speaker")
         )
-        speaker_label = str(speaker_raw).strip() if speaker_raw is not None else None
-        if speaker_label == "":
-            speaker_label = None
         segments.append(
             {
                 "text": text_value,
                 "t_start_ms": t_start_ms,
                 "t_end_ms": t_end_ms,
-                "speaker_label": speaker_label,
+                "speaker_label": (str(speaker_raw).strip() or None) if speaker_raw else None,
             }
         )
     return segments
@@ -330,93 +217,59 @@ def parse_plain_text_transcript(
     *,
     episode_duration_ms: int | None = None,
 ) -> list[dict[str, Any]]:
-    normalized = str(content or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    if not normalized:
-        return []
-    without_tags = _HTML_TAG_RE.sub(" ", normalized)
     lines = [
-        _WHITESPACE_RE.sub(" ", line).strip()
-        for line in without_tags.split("\n")
-        if _WHITESPACE_RE.sub(" ", line).strip()
+        _WHITESPACE.sub(" ", line).strip()
+        for line in _HTML_TAG.sub(" ", _normalize_newlines(content).strip()).split("\n")
+        if _WHITESPACE.sub(" ", line).strip()
     ]
     if not lines:
         return []
-    t_end_ms = int(episode_duration_ms) if isinstance(episode_duration_ms, int) else 0
-    if t_end_ms < 0:
-        t_end_ms = 0
     return [
         {
             "text": "\n".join(lines),
             "t_start_ms": 0,
-            "t_end_ms": t_end_ms,
+            "t_end_ms": max(0, int(episode_duration_ms or 0)),
             "speaker_label": None,
         }
     ]
 
 
-def _coerce_json_time_to_ms(raw_value: Any) -> int | None:
+def _normalize_newlines(content: str) -> str:
+    return str(content or "").replace("\r\n", "\n").replace("\r", "\n").lstrip("﻿")
+
+
+def _plain_text(raw_value: Any) -> str:
+    return _WHITESPACE.sub(" ", _HTML_TAG.sub(" ", str(raw_value or ""))).strip()
+
+
+def _coerce_json_time_ms(raw_value: Any) -> int | None:
     if raw_value is None:
         return None
     if isinstance(raw_value, (int, float)):
-        if raw_value < 0:
-            return None
-        return int(round(float(raw_value) * 1000))
-
+        return None if raw_value < 0 else int(round(float(raw_value) * 1000))
     value = str(raw_value).strip()
-    if not value:
-        return None
     if ":" in value:
         return _parse_timestamp_ms(value)
     try:
-        as_seconds = float(value)
+        seconds = float(value)
     except ValueError:
         return None
-    if as_seconds < 0:
-        return None
-    return int(round(as_seconds * 1000))
+    return None if seconds < 0 else int(round(seconds * 1000))
 
 
 def _parse_timestamp_ms(raw_value: Any) -> int | None:
-    value = str(raw_value or "").strip()
-    if not value:
-        return None
-
-    parts = value.split(":")
+    """Parse `[HH:]MM:SS[.,mmm]`, rejecting out-of-range components."""
+    parts = str(raw_value or "").strip().split(":")
     if len(parts) not in {2, 3}:
         return None
-
-    seconds_part = parts[-1].replace(",", ".")
     try:
-        seconds_value = float(seconds_part)
+        seconds = float(parts[-1].replace(",", "."))
+        minutes = int(parts[-2])
+        hours = int(parts[0]) if len(parts) == 3 else 0
     except ValueError:
         return None
-    if seconds_value < 0 or seconds_value >= 60:
+    if not 0 <= seconds < 60 or minutes < 0 or hours < 0:
         return None
-
-    try:
-        minutes_value = int(parts[-2])
-    except ValueError:
+    if len(parts) == 3 and minutes >= 60:
         return None
-    if minutes_value < 0:
-        return None
-
-    hours_value = 0
-    if len(parts) == 3:
-        if minutes_value >= 60:
-            return None
-        try:
-            hours_value = int(parts[0])
-        except ValueError:
-            return None
-        if hours_value < 0:
-            return None
-
-    total_seconds = (hours_value * 3600) + (minutes_value * 60) + seconds_value
-    return int(round(total_seconds * 1000))
-
-
-def _strip_html_and_collapse(raw_value: Any) -> str:
-    text_value = str(raw_value or "")
-    text_value = _HTML_TAG_RE.sub(" ", text_value)
-    text_value = _WHITESPACE_RE.sub(" ", text_value)
-    return text_value.strip()
+    return int(round((hours * 3600 + minutes * 60 + seconds) * 1000))

@@ -1,4 +1,4 @@
-"""Worker job handler for exact-epoch Podcast subscription sync."""
+"""Worker job handler for one exact-epoch Podcast subscription sync."""
 
 from collections.abc import Mapping
 from dataclasses import asdict
@@ -17,27 +17,14 @@ def podcast_sync_subscription_job(
     payload: Mapping[str, Any],
     context: JobExecutionContext,
 ) -> dict:
-    logger.info(
-        "podcast_sync_task_started",
-        job_id=str(context.job_id),
-        attempt_no=context.attempt_no,
-        subscription_id=str(payload.get("subscription_id")),
-    )
-
-    session_factory = get_session_factory()
-    db = session_factory()
+    db = get_session_factory()()
     try:
-        result = asdict(
-            run_podcast_subscription_sync_now(
-                db,
-                payload=payload,
-                context=context,
-            )
-        )
+        result = asdict(run_podcast_subscription_sync_now(db, payload=payload, context=context))
         logger.info(
             "podcast_sync_task_completed",
             job_id=str(context.job_id),
             attempt_no=context.attempt_no,
+            subscription_id=str(payload.get("subscription_id")),
             result=result,
         )
         return result

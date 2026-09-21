@@ -1,4 +1,4 @@
-"""Canonical transcript request-reason type and durable decoder."""
+"""The canonical transcript request-reason vocabulary and its strict decoder."""
 
 from __future__ import annotations
 
@@ -18,9 +18,7 @@ _REASONS = frozenset(get_args(TranscriptRequestReason))
 
 
 def require_transcript_request_reason(value: object) -> TranscriptRequestReason:
-    """Decode one exact same-system request reason or defect."""
+    """Decode one same-system request reason; anything else is corruption."""
     if not isinstance(value, str) or value not in _REASONS:
-        # justify-defect: callers pass a validated request value or a durable
-        # same-system payload/ledger protected by the matching database checks.
         raise AssertionError(f"invalid transcript request reason {value!r}")
     return cast(TranscriptRequestReason, value)

@@ -44,13 +44,11 @@ def podcast_reindex_semantic_job(
     *,
     context: JobExecutionContext,
 ) -> dict[str, object]:
-    """Prepare a DB snapshot, embed outside a transaction, then publish exactly."""
-    media_uuid = UUID(media_id)
+    """Snapshot under a claim, embed outside any transaction, publish if unchanged."""
     session_factory = get_session_factory()
-
     snapshot = _prepare_snapshot(
         session_factory,
-        media_id=media_uuid,
+        media_id=UUID(media_id),
         request_reason=request_reason,
         context=context,
     )
@@ -61,17 +59,10 @@ def podcast_reindex_semantic_job(
         owner=IndexOwner("media", snapshot.media_id),
         source_kind="transcript",
         blocks=build_transcript_indexable_blocks(
-            media_id=snapshot.media_id,
-            transcript_segments=snapshot.segments,
+            media_id=snapshot.media_id, transcript_segments=snapshot.segments
         ),
     )
-    published = _publish_snapshot(
-        session_factory,
-        snapshot=snapshot,
-        plan=plan,
-        context=context,
-    )
-    if not published:
+    if not _publish_snapshot(session_factory, snapshot=snapshot, plan=plan, context=context):
         return {"status": "skipped", "reason": "obsolete"}
     return {"status": "completed", "chunk_count": len(plan.chunks)}
 
@@ -86,40 +77,17 @@ def _prepare_snapshot(
     db = session_factory()
     try:
 
-        def transaction() -> _TranscriptSnapshot | None:
-            media_exists = db.scalar(
-                text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
-                {"media_id": media_id},
-            )
-            if media_exists is None:
-                db.commit()
-                return None
-            state = db.execute(
-                text(
-                    """
-                    SELECT transcript_state, transcript_coverage
-                    FROM media_transcript_states
-                    WHERE media_id = :media_id
-                    FOR UPDATE
-                    """
-                ),
-                {"media_id": media_id},
-            ).fetchone()
-            _require_semantic_claim(db, media_id=media_id, context=context)
+        def attempt() -> _TranscriptSnapshot | None:
+            state = _lock_transcript_state(db, media_id=media_id, context=context)
             segments = _load_segments(db, media_id)
-            if (
-                state is None
-                or str(state[0]) not in {"ready", "partial"}
-                or str(state[1]) not in {"partial", "full"}
-                or not segments
-            ):
+            if state is None or not segments:
                 db.commit()
                 return None
             set_media_transcript_state(
                 db,
                 media_id=media_id,
-                transcript_state=str(state[0]),
-                transcript_coverage=str(state[1]),
+                transcript_state=state[0],
+                transcript_coverage=state[1],
                 semantic_status="pending",
                 last_request_reason=request_reason,
                 last_error_code=None,
@@ -128,15 +96,15 @@ def _prepare_snapshot(
             snapshot = _TranscriptSnapshot(
                 media_id=media_id,
                 request_reason=request_reason,
-                transcript_state=str(state[0]),
-                transcript_coverage=str(state[1]),
+                transcript_state=state[0],
+                transcript_coverage=state[1],
                 segments=tuple(segments),
                 fingerprint=_fingerprint(segments),
             )
             db.commit()
             return snapshot
 
-        return retry_serializable(db, "prepare_podcast_semantic_index", transaction)
+        return retry_serializable(db, "prepare_podcast_semantic_index", attempt)
     finally:
         db.close()
 
@@ -151,44 +119,17 @@ def _publish_snapshot(
     db = session_factory()
     try:
 
-        def transaction() -> bool:
-            media_exists = db.scalar(
-                text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
-                {"media_id": snapshot.media_id},
-            )
-            if media_exists is None:
-                db.commit()
-                return False
-            state = db.execute(
-                text(
-                    """
-                    SELECT transcript_state, transcript_coverage
-                    FROM media_transcript_states
-                    WHERE media_id = :media_id
-                    FOR UPDATE
-                    """
-                ),
-                {"media_id": snapshot.media_id},
-            ).fetchone()
-            _require_semantic_claim(
-                db,
-                media_id=snapshot.media_id,
-                context=context,
-            )
-            current_segments = _load_segments(db, snapshot.media_id)
+        def attempt() -> bool:
+            state = _lock_transcript_state(db, media_id=snapshot.media_id, context=context)
             if (
                 state is None
-                or str(state[0]) != snapshot.transcript_state
-                or str(state[1]) != snapshot.transcript_coverage
-                or _fingerprint(current_segments) != snapshot.fingerprint
+                or state[0] != snapshot.transcript_state
+                or state[1] != snapshot.transcript_coverage
+                or _fingerprint(_load_segments(db, snapshot.media_id)) != snapshot.fingerprint
             ):
                 db.commit()
                 return False
-            publish_content_index(
-                db,
-                plan=plan,
-                reason=snapshot.request_reason,
-            )
+            publish_content_index(db, plan=plan, reason=snapshot.request_reason)
             set_media_transcript_state(
                 db,
                 media_id=snapshot.media_id,
@@ -202,28 +143,47 @@ def _publish_snapshot(
             db.commit()
             return True
 
-        return retry_serializable(db, "publish_podcast_semantic_index", transaction)
+        return retry_serializable(db, "publish_podcast_semantic_index", attempt)
     finally:
         db.close()
 
 
-def _require_semantic_claim(
-    db: Session,
-    *,
-    media_id: UUID,
-    context: JobExecutionContext,
-) -> None:
-    job = lock_and_renew_running_job_claim(
-        db,
-        context=context,
-        lease_seconds=_LEASE_SECONDS,
-    )
+def _lock_transcript_state(
+    db: Session, *, media_id: UUID, context: JobExecutionContext
+) -> tuple[str, str] | None:
+    """Lock the media row and its state, and re-prove this worker's queue claim."""
+    if (
+        db.scalar(
+            text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"), {"media_id": media_id}
+        )
+        is None
+    ):
+        return None
+    state = db.execute(
+        text(
+            """
+            SELECT transcript_state, transcript_coverage
+            FROM media_transcript_states
+            WHERE media_id = :media_id
+            FOR UPDATE
+            """
+        ),
+        {"media_id": media_id},
+    ).fetchone()
+    job = lock_and_renew_running_job_claim(db, context=context, lease_seconds=_LEASE_SECONDS)
     if (
         job is None
         or job.kind != "podcast_reindex_semantic_job"
         or str(job.payload.get("media_id")) != str(media_id)
     ):
         raise RuntimeError("podcast semantic queue claim is no longer current")
+    if (
+        state is None
+        or str(state[0]) not in {"ready", "partial"}
+        or str(state[1]) not in {"partial", "full"}
+    ):
+        return None
+    return str(state[0]), str(state[1])
 
 
 def _load_segments(db: Session, media_id: UUID) -> list[TranscriptSegmentInput]:
@@ -253,19 +213,18 @@ def _load_segments(db: Session, media_id: UUID) -> list[TranscriptSegmentInput]:
 def _fingerprint(
     segments: list[TranscriptSegmentInput] | tuple[TranscriptSegmentInput, ...],
 ) -> str:
-    payload = [
-        {
-            "segment_idx": segment.segment_idx,
-            "canonical_text": segment.canonical_text,
-            "t_start_ms": segment.t_start_ms,
-            "t_end_ms": segment.t_end_ms,
-            "speaker_label": segment.speaker_label,
-        }
-        for segment in segments
-    ]
     return hashlib.sha256(
         json.dumps(
-            payload,
+            [
+                {
+                    "segment_idx": segment.segment_idx,
+                    "canonical_text": segment.canonical_text,
+                    "t_start_ms": segment.t_start_ms,
+                    "t_end_ms": segment.t_end_ms,
+                    "speaker_label": segment.speaker_label,
+                }
+                for segment in segments
+            ],
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,

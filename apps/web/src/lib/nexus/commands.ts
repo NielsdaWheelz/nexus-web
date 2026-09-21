@@ -89,7 +89,7 @@ export const NEXUS_COMMAND_REGISTRY = {
     id: "Nexus.Quick.Import",
     label: "Import",
     aliases: ["/i "],
-    keywords: ["add", "import", "url", "file", "opml"],
+    keywords: ["add", "import", "url", "file"],
     category: "Acquire",
     icon: Upload,
     activation: { kind: "Standard" },
