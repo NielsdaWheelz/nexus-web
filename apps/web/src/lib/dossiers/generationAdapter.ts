@@ -1,5 +1,5 @@
 // The transport adapter for the eight generic Dossier endpoints (A9), reached
-// through the BFF (`apps/web/src/app/api/artifacts/dossiers/**`, which
+// through the BFF (`apps/web/src/app/api/[...path]/route.ts`, which
 // `proxyToFastAPI`s the FastAPI routes). One place builds the request shapes:
 // the required `Idempotency-Key` header + `Presence`-encoded instruction body
 // for build creation and the shared generation-run opener for the build stream.

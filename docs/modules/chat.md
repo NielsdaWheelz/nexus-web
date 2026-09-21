@@ -332,8 +332,8 @@ variants, their valid origins, and the `chat_failure_projection`/
 
 `POST /messages/{assistant_message_id}/rerun` recovers an eligible failed or
 cancelled turn; `POST /messages/{assistant_message_id}/regenerate` produces a
-fresh alternative for an eligible completed answer. Each has its sole BFF route
-(`app/api/messages/[messageId]/{rerun,regenerate}/route.ts`) and both are
+fresh alternative for an eligible completed answer. Both reach FastAPI through
+the BFF's structured catch-all (`app/api/[...path]/route.ts`) and both are
 consolidated into one sibling-candidate constructor
 (`services/chat_run_candidates.py`) that each route calls with an explicit
 `rerun`/`regenerate` operation and separate eligibility guards. Each request

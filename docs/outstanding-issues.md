@@ -217,7 +217,6 @@ unexpected timeouts. See
 - [open] oi-138 · codex host runbook · 2026-09-16 retained pr #203 finding · p2 · boot-guard installation precedes the enrollment its storage check requires: [ticket](tickets/codex-host-runbook-boot-guard-order.md).
 - [open] oi-139 · codex host provisioning · 2026-09-16 retained pr #203 finding · p2 · encrypted-state formatting lacks a qualified memory bound and usable-keyslot check: [ticket](tickets/codex-state-luks-format-oom.md).
 
-- [open] oi-153 · web bff · 2026-09-17 slop sweep · p3 · 153 of 175 route files are the same proxy handler; one catch-all plus an explicit denylist replaces them: [ticket](tickets/bff-proxy-routes-are-153-identical-files.md).
 - [open] oi-161 · web panes · 2026-09-17 slop sweep · p3 · four pane bodies are oversized with no split that does not invent abstractions; re-measure after the dedupes land: [ticket](tickets/oversized-pane-bodies-have-no-obvious-split.md).
 - [open] pdf passage positioning · 2026-09-17 passage cleanup · p2 · actual viewport verification is blocked by standalone renderer bootstrap: [ticket](tickets/pdf-passage-positioning-needs-browser-verification.md).
 - [open] oi-167 · pdf highlights · 2026-09-17 typecheck cleanup · p2 · write-time matching combines cached text with current publication spans: [ticket](tickets/pdf-highlight-matching-mixes-publication-snapshots.md).

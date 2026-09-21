@@ -76,9 +76,7 @@ export async function proxyConsumptionRead(
     headers: request.headers,
     signal: request.signal,
   });
-  return privateNoStoreResponse(
-    await proxyToFastAPI(forwarded, backendPath),
-  );
+  return proxyToFastAPI(forwarded, backendPath);
 }
 
 export async function postActivity(request: Request): Promise<Response> {
@@ -108,9 +106,7 @@ export async function postActivity(request: Request): Promise<Response> {
     }),
     signal: request.signal,
   });
-  return privateNoStoreResponse(
-    await proxyToFastAPI(forwarded, "/consumption/activity"),
-  );
+  return proxyToFastAPI(forwarded, "/consumption/activity");
 }
 
 export async function postActivityExclusion(
@@ -128,7 +124,5 @@ export async function postActivityExclusion(
     body: JSON.stringify(decoded),
     signal: request.signal,
   });
-  return privateNoStoreResponse(
-    await proxyToFastAPI(forwarded, "/consumption/activity-exclusions"),
-  );
+  return proxyToFastAPI(forwarded, "/consumption/activity-exclusions");
 }
