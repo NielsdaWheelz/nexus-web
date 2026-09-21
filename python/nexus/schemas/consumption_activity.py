@@ -1,98 +1,67 @@
-"""Strict wire and service inputs for Consumption activity capture.
+"""Wire contracts for Consumption activity capture, exclusions, and statistics.
 
-The browser owns observation; this module owns only the bounded factual batch
-it may submit.  Private device identity is deliberately not part of this wire
-contract: the BFF injects it at the trusted service boundary.
+The browser and the Android shell own observation; this module owns the bounded
+factual batch they may submit and the key-exact statistics payload the Stats
+pane decodes. Private device identity never appears here: the BFF injects
+``deviceId`` at the trusted service boundary and only sealed handles go out.
 """
 
 from __future__ import annotations
 
-import re
 from datetime import date, datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
-from pydantic_core import core_schema
 
 from nexus.schemas.presence import Absent, Presence
 
-_IN_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=False, extra="forbid")
 _INT64_MAX = 9_223_372_036_854_775_807
 _MAX_ACTIVITY_SPAN_MS = 30_000
+
+
+class _In(BaseModel):
+    """Strict camelCase ingress: no snake aliases, no unknown keys."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=False, extra="forbid")
+
+
+class _Out(BaseModel):
+    """Strict camelCase egress: built with snake names, serialized by alias."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
 
 ActivityModality = Literal["Reading", "Listening", "Viewing"]
 ActivityDeviceClass = Literal["Desktop", "Mobile"]
 _NonNegativeInt64 = Annotated[int, Field(ge=0, le=_INT64_MAX)]
 _Progress = Annotated[float, Field(ge=0, le=1)]
 _DurationMs = Annotated[int, Field(gt=0, le=_MAX_ACTIVITY_SPAN_MS)]
-_COMPLETION_HANDLE_RE = re.compile(r"^ncc1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$")
-_DEVICE_HANDLE_RE = re.compile(r"^ncd1\.[A-Za-z0-9_-]{22}$")
-_EXCLUSION_HANDLE_RE = re.compile(r"^nce1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$")
+
+CompletionHandle = Annotated[str, Field(pattern=r"^ncc1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$")]
+DeviceHandle = Annotated[str, Field(pattern=r"^ncd1\.[A-Za-z0-9_-]{22}$")]
+ActivityExclusionHandle = Annotated[
+    str, Field(pattern=r"^nce1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$")
+]
 
 
-class CompletionHandle(str):
-    """The sealed outward identity of one first-completion fact."""
-
-    @classmethod
-    def _validate(cls, value: str) -> CompletionHandle:
-        if not _COMPLETION_HANDLE_RE.fullmatch(value):
-            raise ValueError("invalid completion handle")
-        return cls(value)
-
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls, _source_type: object, _handler: object
-    ) -> core_schema.CoreSchema:
-        return core_schema.no_info_after_validator_function(cls._validate, core_schema.str_schema())
+def _require_paired(label: str, first: object, second: object) -> None:
+    """Both halves of an optional measurement are present, or neither is."""
+    if isinstance(first, Absent) != isinstance(second, Absent):
+        raise ValueError(f"{label} must have the same presence")
 
 
-class DeviceHandle(str):
-    """A deterministic one-way outward pseudonym for one private device ID."""
-
-    @classmethod
-    def _validate(cls, value: str) -> DeviceHandle:
-        if not _DEVICE_HANDLE_RE.fullmatch(value):
-            raise ValueError("invalid device handle")
-        return cls(value)
-
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls, _source_type: object, _handler: object
-    ) -> core_schema.CoreSchema:
-        return core_schema.no_info_after_validator_function(cls._validate, core_schema.str_schema())
-
-
-class ActivityExclusionHandle(str):
-    """The sealed outward identity of one observed activity exclusion."""
-
-    @classmethod
-    def _validate(cls, value: str) -> ActivityExclusionHandle:
-        if not _EXCLUSION_HANDLE_RE.fullmatch(value):
-            raise ValueError("invalid activity exclusion handle")
-        return cls(value)
-
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls, _source_type: object, _handler: object
-    ) -> core_schema.CoreSchema:
-        return core_schema.no_info_after_validator_function(cls._validate, core_schema.str_schema())
-
-
-class _ActivitySpanIn(BaseModel):
-    model_config = _IN_CONFIG
-
+class _ActivitySpanIn(_In):
     capture_key: UUID
-    occurred_at: datetime
+    occurred_at: AwareDatetime
     duration_ms: _DurationMs
     progress_start: Presence[_Progress]
     progress_end: Presence[_Progress]
 
     @model_validator(mode="after")
-    def _require_paired_progress(self) -> _ActivitySpanIn:
-        if isinstance(self.progress_start, Absent) != isinstance(self.progress_end, Absent):
-            raise ValueError("progressStart and progressEnd must have the same presence")
+    def _paired_progress(self) -> _ActivitySpanIn:
+        _require_paired("progressStart and progressEnd", self.progress_start, self.progress_end)
         return self
 
 
@@ -101,9 +70,8 @@ class ReadingActivitySpanIn(_ActivitySpanIn):
     word_end: Presence[_NonNegativeInt64]
 
     @model_validator(mode="after")
-    def _require_paired_words(self) -> ReadingActivitySpanIn:
-        if isinstance(self.word_start, Absent) != isinstance(self.word_end, Absent):
-            raise ValueError("wordStart and wordEnd must have the same presence")
+    def _paired_words(self) -> ReadingActivitySpanIn:
+        _require_paired("wordStart and wordEnd", self.word_start, self.word_end)
         return self
 
 
@@ -112,41 +80,32 @@ class ListeningActivitySpanIn(_ActivitySpanIn):
     media_position_end_ms: Presence[_NonNegativeInt64]
 
     @model_validator(mode="after")
-    def _require_paired_media_positions(self) -> ListeningActivitySpanIn:
-        if isinstance(self.media_position_start_ms, Absent) != isinstance(
-            self.media_position_end_ms, Absent
-        ):
-            raise ValueError(
-                "mediaPositionStartMs and mediaPositionEndMs must have the same presence"
-            )
+    def _paired_media_positions(self) -> ListeningActivitySpanIn:
+        _require_paired(
+            "mediaPositionStartMs and mediaPositionEndMs",
+            self.media_position_start_ms,
+            self.media_position_end_ms,
+        )
         return self
 
 
-class ViewingActivitySpanIn(BaseModel):
-    model_config = _IN_CONFIG
-
+class ViewingActivitySpanIn(_In):
     capture_key: UUID
-    occurred_at: datetime
+    occurred_at: AwareDatetime
     duration_ms: _DurationMs
 
 
-class ReadingActivityBatchIn(BaseModel):
-    model_config = _IN_CONFIG
-
+class ReadingActivityBatchIn(_In):
     modality: Literal["Reading"]
     spans: list[ReadingActivitySpanIn] = Field(min_length=1, max_length=120)
 
 
-class ListeningActivityBatchIn(BaseModel):
-    model_config = _IN_CONFIG
-
+class ListeningActivityBatchIn(_In):
     modality: Literal["Listening"]
     spans: list[ListeningActivitySpanIn] = Field(min_length=1, max_length=120)
 
 
-class ViewingActivityBatchIn(BaseModel):
-    model_config = _IN_CONFIG
-
+class ViewingActivityBatchIn(_In):
     modality: Literal["Viewing"]
     spans: list[ViewingActivitySpanIn] = Field(min_length=1, max_length=120)
 
@@ -155,12 +114,15 @@ ActivityBatchIn = Annotated[
     ReadingActivityBatchIn | ListeningActivityBatchIn | ViewingActivityBatchIn,
     Field(discriminator="modality"),
 ]
+ActivitySpanIn = ReadingActivitySpanIn | ListeningActivitySpanIn | ViewingActivitySpanIn
 
 
-class ActivityRecordIn(BaseModel):
-    """Trusted backend activity record; the BFF alone injects ``deviceId``."""
+class ActivityRecordIn(_In):
+    """Trusted backend activity record; the BFF alone injects ``deviceId``.
 
-    model_config = _IN_CONFIG
+    ``clientMutationId`` is a wire no-op the shipped Android app still sends
+    (ticket oi-170); ``extra="forbid"`` means it must stay declared.
+    """
 
     client_mutation_id: UUID
     media_ref: str = Field(min_length=1, max_length=100)
@@ -169,28 +131,24 @@ class ActivityRecordIn(BaseModel):
     batch: ActivityBatchIn
 
     @model_validator(mode="after")
-    def _require_distinct_capture_keys(self) -> ActivityRecordIn:
+    def _distinct_capture_keys(self) -> ActivityRecordIn:
         capture_keys = [span.capture_key for span in self.batch.spans]
         if len(capture_keys) != len(set(capture_keys)):
             raise ValueError("captureKey must be unique within one activity batch")
         return self
 
 
-class ExcludeActivityIn(BaseModel):
-    model_config = _IN_CONFIG
-
+class ExcludeActivityIn(_In):
     kind: Literal["Exclude"]
     client_mutation_id: UUID
     media_ref: str = Field(min_length=1, max_length=100)
     modality: ActivityModality
     device_handle: DeviceHandle
-    started_at: datetime
-    ended_at: datetime
+    started_at: AwareDatetime
+    ended_at: AwareDatetime
 
 
-class RestoreActivityExclusionIn(BaseModel):
-    model_config = _IN_CONFIG
-
+class RestoreActivityExclusionIn(_In):
     kind: Literal["Restore"]
     client_mutation_id: UUID
     exclusion_handle: ActivityExclusionHandle
@@ -202,19 +160,17 @@ ActivityExclusionIn = Annotated[
 ]
 
 
-_OUT_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+class ActivityExclusionResultOut(_Out):
+    outcome: Literal["Excluded", "Restored"]
+    exclusion_handle: ActivityExclusionHandle
 
 
-class DeviceSummaryOut(BaseModel):
-    model_config = _OUT_CONFIG
-
+class DeviceSummaryOut(_Out):
     device_handle: DeviceHandle
     label: str
 
 
-class ActivitySessionOut(BaseModel):
-    model_config = _OUT_CONFIG
-
+class ActivitySessionOut(_Out):
     media_ref: str
     title: str
     modality: ActivityModality
@@ -230,16 +186,19 @@ class ActivitySessionOut(BaseModel):
     continues_after_range: bool
 
 
-class ActivitySessionPageOut(BaseModel):
-    model_config = _OUT_CONFIG
-
+class ActivitySessionPageOut(_Out):
     sessions: list[ActivitySessionOut]
     next_cursor: Presence[str]
 
 
-class ActivityMetricsOut(BaseModel):
-    model_config = _OUT_CONFIG
+class ActivitySessionsOut(_Out):
+    """The same session rows inside the Stats payload, keyed ``rows``."""
 
+    rows: list[ActivitySessionOut]
+    next_cursor: Presence[str]
+
+
+class ActivityMetricsOut(_Out):
     active_ms: int = Field(ge=0)
     forward_word_position: int = Field(ge=0)
     forward_media_position_ms: int = Field(ge=0)
@@ -264,16 +223,12 @@ class ActivityTimelineRowOut(ActivityMetricsOut):
     viewing_active_ms: int = Field(ge=0)
 
 
-class LocalDayOut(BaseModel):
-    model_config = _OUT_CONFIG
-
+class LocalDayOut(_Out):
     date: date
     active_ms: int = Field(ge=0)
 
 
-class LocalHourOut(BaseModel):
-    model_config = _OUT_CONFIG
-
+class LocalHourOut(_Out):
     hour: int = Field(ge=0, le=23)
     active_ms: int = Field(ge=0)
 
@@ -283,9 +238,7 @@ class MediaActivityOut(ActivityMetricsOut):
     title: str
 
 
-class MediaActivityBreakdownOut(BaseModel):
-    model_config = _OUT_CONFIG
-
+class MediaActivityBreakdownOut(_Out):
     rows: list[MediaActivityOut]
     other_active_ms: int = Field(ge=0)
 
@@ -296,17 +249,13 @@ class ContributorActivityOut(ActivityMetricsOut):
     roles: list[str]
 
 
-class ContributorActivityBreakdownOut(BaseModel):
-    model_config = _OUT_CONFIG
-
+class ContributorActivityBreakdownOut(_Out):
     rows: list[ContributorActivityOut]
     other_active_ms: int = Field(ge=0)
     non_additive: Literal[True] = True
 
 
-class DeviceActivityOut(BaseModel):
-    model_config = _OUT_CONFIG
-
+class DeviceActivityOut(_Out):
     device_handle: DeviceHandle
     label: str
     first_observed_at: datetime
@@ -316,47 +265,54 @@ class DeviceActivityOut(BaseModel):
     active_ms: int = Field(ge=0)
 
 
-class ActivitySessionsOut(BaseModel):
-    model_config = _OUT_CONFIG
+class ActiveExclusionOut(_Out):
+    exclusion_handle: ActivityExclusionHandle
+    media_ref: str
+    title: str
+    modality: ActivityModality
+    device: DeviceSummaryOut
+    started_at: datetime
+    ended_at: datetime
+    excluded_active_ms: int = Field(ge=0)
 
-    rows: list[ActivitySessionOut]
-    next_cursor: Presence[str]
 
-
-class ScopedSectionOut(BaseModel):
-    model_config = _OUT_CONFIG
-
+class ScopedSectionOut(_Out):
     applied_filters: list[str]
     inapplicable_filters: list[str]
 
 
-class CompletionDateOut(BaseModel):
-    model_config = _OUT_CONFIG
+class ActivityStatsSectionOut(ScopedSectionOut):
+    totals: ActivityTotalsOut
+    timeline: list[ActivityTimelineRowOut]
+    local_days: list[LocalDayOut]
+    local_hours: list[LocalHourOut]
+    media: MediaActivityBreakdownOut
+    contributors: ContributorActivityBreakdownOut
+    devices: list[DeviceActivityOut]
+    sessions: ActivitySessionsOut
+    longest_session: Presence[ActivitySessionOut]
+    active_exclusions: list[ActiveExclusionOut]
 
+
+class CompletionDateOut(_Out):
     date: date
     total: int = Field(ge=0)
 
 
-class CompletionTimelineRowOut(BaseModel):
-    model_config = _OUT_CONFIG
-
+class CompletionTimelineRowOut(_Out):
     start: datetime
     end: datetime
     local_label: str
     total: int = Field(ge=0)
 
 
-class MediaCompletionOut(BaseModel):
-    model_config = _OUT_CONFIG
-
+class MediaCompletionOut(_Out):
     media_ref: str
     title: str
     total: int = Field(ge=0)
 
 
-class ContributorCompletionOut(BaseModel):
-    model_config = _OUT_CONFIG
-
+class ContributorCompletionOut(_Out):
     contributor_handle: str
     display_name: str
     roles: list[str]
@@ -379,42 +335,7 @@ class RetainedArtifactsOut(ScopedSectionOut):
     neutral_links: int = Field(ge=0)
 
 
-class ActiveExclusionOut(BaseModel):
-    model_config = _OUT_CONFIG
-
-    exclusion_handle: ActivityExclusionHandle
-    media_ref: str
-    title: str
-    modality: ActivityModality
-    device: DeviceSummaryOut
-    started_at: datetime
-    ended_at: datetime
-    excluded_active_ms: int = Field(ge=0)
-
-
-class ActivityStatsSectionOut(ScopedSectionOut):
-    totals: ActivityTotalsOut
-    timeline: list[ActivityTimelineRowOut]
-    local_days: list[LocalDayOut]
-    local_hours: list[LocalHourOut]
-    media: MediaActivityBreakdownOut
-    contributors: ContributorActivityBreakdownOut
-    devices: list[DeviceActivityOut]
-    sessions: ActivitySessionsOut
-    longest_session: Presence[ActivitySessionOut]
-    active_exclusions: list[ActiveExclusionOut]
-
-
-class ActivityExclusionResultOut(BaseModel):
-    model_config = _OUT_CONFIG
-
-    outcome: Literal["Excluded", "Restored"]
-    exclusion_handle: ActivityExclusionHandle
-
-
-class ConsumptionStatsOut(BaseModel):
-    model_config = _OUT_CONFIG
-
+class ConsumptionStatsOut(_Out):
     activity: ActivityStatsSectionOut
     completion: CompletionStatsSectionOut
     retained_artifacts: RetainedArtifactsOut

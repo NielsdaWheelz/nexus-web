@@ -59,7 +59,7 @@ from nexus.schemas.resource_action_snapshots import (
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services import conversations, highlights, library_governance, reader_apparatus
 from nexus.services.artifacts import engine as artifact_engine
-from nexus.services.consumption import _lectern_store, _projection
+from nexus.services.consumption import _lectern_store, projection
 from nexus.services.media import (
     CollectionMedia,
     MediaRecoveryOffer,
@@ -346,7 +346,7 @@ class _ResolvedFacts:
         }
         return cls(
             media=media,
-            player_descriptors=_projection.player_descriptors(
+            player_descriptors=projection.player_descriptors(
                 db, viewer_id=viewer_id, media_ids=media_ids
             ),
             lectern_item_ids=_lectern_store.item_ids_for_media(

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import MediaKind
 from nexus.schemas.resonance import ResonanceEdgeOrigin
 from nexus.services import highlights, library_entries, notes
-from nexus.services.consumption import _projection
+from nexus.services.consumption import projection
 from nexus.services.contributor_credits import visible_author_credit_rows_sql
 from nexus.services.resonance._ranking import (
     ARRIVAL_WINDOW_DAYS,
@@ -338,7 +338,7 @@ def capture_as_of(db: Session) -> datetime:
 def lectern_anchors(db: Session, *, viewer_id: UUID) -> tuple[Anchor, ...]:
     """Select, normalize, resolve, and label the five canonical Lectern anchors."""
     gathered: list[tuple[datetime, int, ResourceRef]] = []
-    for fact in _projection.recent_engagement_anchor_facts(
+    for fact in projection.recent_engagement_anchor_facts(
         db, viewer_id=viewer_id, limit=SLATE_ANCHOR_LIMIT
     ):
         gathered.append((fact.activity_at, 0, ResourceRef(scheme="media", id=fact.media_id)))

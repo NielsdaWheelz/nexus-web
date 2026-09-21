@@ -53,7 +53,7 @@ from nexus.services.collection_revisions import (
     read_collection_revision,
     require_collection_revision,
 )
-from nexus.services.consumption import _projection
+from nexus.services.consumption import projection
 from nexus.services.contributor_credits import (
     load_contributor_credits_for_podcasts,
     primary_creator_rows_sql,
@@ -314,13 +314,13 @@ def _hydrate_entry_rows(
     document_media_ids = [
         media.id for media in media_by_id.values() if media.listening_state is None
     ]
-    last_engaged_at_by_media_id = _projection.listening_recency(
+    last_engaged_at_by_media_id = projection.listening_recency(
         db,
         viewer_id=viewer_id,
         media_ids=audio_media_ids,
     )
     last_engaged_at_by_media_id.update(
-        _projection.reader_engagement_recency(
+        projection.reader_engagement_recency(
             db,
             viewer_id=viewer_id,
             media_ids=document_media_ids,
@@ -371,7 +371,7 @@ def _hydrate_entry_rows(
                         pe.podcast_id,
                         COUNT(*) FILTER (
                             WHERE {
-                    _projection.episode_state_case_sql(
+                    projection.episode_state_case_sql(
                         listening_alias="pls", override_alias="co", episode_alias="pe"
                     )
                 } = 'unplayed'
@@ -379,7 +379,7 @@ def _hydrate_entry_rows(
                     FROM podcast_episodes pe
                     JOIN visible_media vm ON vm.media_id = pe.media_id
                     {
-                    _projection.episode_state_joins_sql(
+                    projection.episode_state_joins_sql(
                         user_param=":viewer_id",
                         media_expr="pe.media_id",
                         listening_alias="pls",
@@ -912,7 +912,7 @@ def _query_view_page(
         )
     if needs_eng:
         facts_joins.append(
-            f"LEFT JOIN ({_projection.engagement_fact_rows_sql()}) eng"
+            f"LEFT JOIN ({projection.engagement_fact_rows_sql()}) eng"
             " ON eng.media_id = membership.media_id"
         )
 

@@ -1,13 +1,10 @@
-"""Consumption/Lectern wire contracts (spec
-``lectern-player-lifecycle-hard-cutover.md`` §§4–5).
+"""Consumption/Lectern wire contracts.
 
-Every model here is strict camelCase: ``alias_generator=to_camel`` with
-``populate_by_name=False`` on request/command families (camel in only) and
-``populate_by_name=True`` on response families (constructed with snake field
-names by the projection, serialized ``by_alias=True`` by the routes). All models
-``extra="forbid"``; discriminator values are ``PascalCase``. Owned absence uses
-the repository-wide :mod:`nexus.schemas.presence` encoding — ``null``, omission,
-and alternate casing are rejected.
+Every model is strict camelCase. Command families are camel-in only; response
+families are built with snake field names by the projection and serialized
+``by_alias=True`` by the routes. All models ``extra="forbid"``; discriminator
+values are PascalCase. Owned absence uses :mod:`nexus.schemas.presence` — null,
+omission, and alternate casing are rejected.
 """
 
 from __future__ import annotations
@@ -23,58 +20,46 @@ from nexus.schemas.consumption_activity import CompletionHandle
 from nexus.schemas.presence import Presence
 from nexus.schemas.reader import ReaderCursorSnapshot
 
-# The signed 32-bit ceiling every non-negative integer wire field shares.
 _INT32_MAX = 2_147_483_647
 
-_IN_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=False, extra="forbid")
-_OUT_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+class _In(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=False, extra="forbid")
+
+
+class _Out(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
 
 ConsumptionStateValue = Literal["Unread", "InProgress", "Finished"]
 NextCapability = Literal["Stop", "FooterAudio", "Readable"]
 ConsumptionMediaKind = Literal["web_article", "epub", "pdf", "video", "podcast_episode"]
-_NonNegInt32 = Annotated[int, Field(ge=0, le=_INT32_MAX)]
-PlaybackRate = Annotated[float, Field(strict=True, ge=0.5, le=3)]
 PauseShorteningMode = Literal["Off", "Natural"]
+PlaybackRate = Annotated[float, Field(strict=True, ge=0.5, le=3)]
+_NonNegInt32 = Annotated[int, Field(ge=0, le=_INT32_MAX)]
 
 
-# ---------------------------------------------------------------------------
-# Read model: Lectern snapshot + items
-# ---------------------------------------------------------------------------
-
-
-class ChapterOut(BaseModel):
+class ChapterOut(_Out):
     """One playable chapter marker (title clamped to 300 in the projection)."""
-
-    model_config = _OUT_CONFIG
 
     title: str = Field(min_length=1, max_length=300)
     start_ms: _NonNegInt32
     end_ms: Presence[_NonNegInt32]
 
 
-class PodcastPlaybackPreference(BaseModel):
-    """The active subscription's owned playback-rate preference."""
-
-    model_config = _OUT_CONFIG
-
+class PodcastPlaybackPreference(_Out):
     podcast_id: UUID
     value: Presence[PlaybackRate]
 
 
-class PlaybackRateResolution(BaseModel):
-    """Immutable playback-rate policy resolved at a canonical source boundary."""
-
-    model_config = _OUT_CONFIG
-
+class PlaybackRateResolution(_Out):
     value: PlaybackRate
     source: Literal["Episode", "Podcast", "Product"]
     podcast_preference: Presence[PodcastPlaybackPreference]
 
 
-class FooterAudioActivation(BaseModel):
-    """The only footer-playable activation (spec §3.2 invariant 5)."""
-
-    model_config = _OUT_CONFIG
+class FooterAudioActivation(_Out):
+    """The only footer-playable activation."""
 
     kind: Literal["FooterAudio"] = "FooterAudio"
     stream_url: str
@@ -90,18 +75,14 @@ class FooterAudioActivation(BaseModel):
     chapters: list[ChapterOut] = Field(max_length=100)
 
 
-class ReadableActivation(BaseModel):
+class ReadableActivation(_Out):
     """Web article, EPUB, or PDF: opened in the reader, never footer-playable."""
-
-    model_config = _OUT_CONFIG
 
     kind: Literal["Readable"] = "Readable"
 
 
-class OpenPaneActivation(BaseModel):
+class OpenPaneActivation(_Out):
     """Video or a podcast without audio: opens a media pane, never ``<audio>``."""
-
-    model_config = _OUT_CONFIG
 
     kind: Literal["OpenPane"] = "OpenPane"
 
@@ -112,46 +93,30 @@ LecternActivation = Annotated[
 ]
 
 
-class ConsumptionOut(BaseModel):
-    """Per-item derived consumption state plus finite progress fraction."""
-
-    model_config = _OUT_CONFIG
-
+class ConsumptionOut(_Out):
     state: ConsumptionStateValue
     progress: Presence[Annotated[float, Field(ge=0, le=1)]]
     progress_resettable: bool
 
 
-class LecternItemOut(BaseModel):
-    """One On-Lectern item, canonical and replaced wholesale by leaves."""
-
-    model_config = _OUT_CONFIG
-
+class LecternItemOut(_Out):
     item_id: UUID
     media_id: UUID
     kind: ConsumptionMediaKind
     title: str
     subtitle: Presence[str]
     href: str
-    # When this row joined the Lectern. Ordering views sort by it, so it is a
-    # required stored fact and never a derived or defaulted value.
     added_at: AwareDatetime
     consumption: ConsumptionOut
     activation: LecternActivation
 
 
-class LecternSnapshot(BaseModel):
-    """The whole ordered Lectern for a viewer (visible rows only)."""
-
-    model_config = _OUT_CONFIG
-
+class LecternSnapshot(_Out):
     items: list[LecternItemOut] = Field(max_length=2000)
 
 
-class PlayerDescriptor(BaseModel):
+class PlayerDescriptor(_Out):
     """A footer-playable descriptor reused by every Play entry point."""
-
-    model_config = _OUT_CONFIG
 
     media_id: UUID
     title: str
@@ -159,47 +124,36 @@ class PlayerDescriptor(BaseModel):
     activation: FooterAudioActivation
 
 
-# ---------------------------------------------------------------------------
-# Lectern commands (POST /lectern/commands)
-# ---------------------------------------------------------------------------
-
-
-class FirstPlacement(BaseModel):
-    model_config = _IN_CONFIG
+class FirstPlacement(_In):
     kind: Literal["First"]
 
 
-class AfterPlacement(BaseModel):
-    model_config = _IN_CONFIG
+class AfterPlacement(_In):
     kind: Literal["After"]
     item_id: UUID
 
 
-class LastPlacement(BaseModel):
-    model_config = _IN_CONFIG
+class LastPlacement(_In):
     kind: Literal["Last"]
 
 
 Placement = Annotated[FirstPlacement | AfterPlacement | LastPlacement, Field(discriminator="kind")]
 
 
-class PlaceItemsCommand(BaseModel):
-    model_config = _IN_CONFIG
+class PlaceItemsCommand(_In):
     kind: Literal["PlaceItems"]
     client_mutation_id: UUID
     media_ids: list[UUID] = Field(min_length=1, max_length=200)
     placement: Placement
 
 
-class RemoveItemCommand(BaseModel):
-    model_config = _IN_CONFIG
+class RemoveItemCommand(_In):
     kind: Literal["RemoveItem"]
     client_mutation_id: UUID
     item_id: UUID
 
 
-class SetOrderCommand(BaseModel):
-    model_config = _IN_CONFIG
+class SetOrderCommand(_In):
     kind: Literal["SetOrder"]
     client_mutation_id: UUID
     item_ids: list[UUID] = Field(min_length=0, max_length=2000)
@@ -210,20 +164,17 @@ LecternCommand = Annotated[
 ]
 
 
-class PlacedOutcome(BaseModel):
-    model_config = _OUT_CONFIG
+class PlacedOutcome(_Out):
     kind: Literal["Placed"] = "Placed"
     item_ids: list[UUID]
 
 
-class RemovedOutcome(BaseModel):
-    model_config = _OUT_CONFIG
+class RemovedOutcome(_Out):
     kind: Literal["Removed"] = "Removed"
     item_id: UUID
 
 
-class OrderedOutcome(BaseModel):
-    model_config = _OUT_CONFIG
+class OrderedOutcome(_Out):
     kind: Literal["Ordered"] = "Ordered"
 
 
@@ -232,26 +183,18 @@ LecternOutcome = Annotated[
 ]
 
 
-class LecternResult(BaseModel):
-    model_config = _OUT_CONFIG
+class LecternResult(_Out):
     outcome: LecternOutcome
     lectern: LecternSnapshot
 
 
-# ---------------------------------------------------------------------------
-# Consumption commands (POST /consumption/commands)
-# ---------------------------------------------------------------------------
-
-
-class EnsureMediaFinishedCommand(BaseModel):
-    model_config = _IN_CONFIG
+class EnsureMediaFinishedCommand(_In):
     kind: Literal["EnsureMediaFinished"]
     client_mutation_id: UUID
     media_id: UUID
 
 
-class FinishLecternItemCommand(BaseModel):
-    model_config = _IN_CONFIG
+class FinishLecternItemCommand(_In):
     kind: Literal["FinishLecternItem"]
     client_mutation_id: UUID
     media_id: UUID
@@ -259,42 +202,36 @@ class FinishLecternItemCommand(BaseModel):
     next_capability: NextCapability
 
 
-class SetUnreadCommand(BaseModel):
-    model_config = _IN_CONFIG
+class SetUnreadCommand(_In):
     kind: Literal["SetUnread"]
     client_mutation_id: UUID
     media_id: UUID
 
 
-class ResetProgressCommand(BaseModel):
-    model_config = _IN_CONFIG
+class ResetProgressCommand(_In):
     kind: Literal["ResetProgress"]
     client_mutation_id: UUID
     media_id: UUID
 
 
-class UndoCompletionCommand(BaseModel):
-    model_config = _IN_CONFIG
+class UndoCompletionCommand(_In):
     kind: Literal["UndoCompletion"]
     client_mutation_id: UUID
     completion_handle: CompletionHandle
 
 
-class SetBatchStateCommand(BaseModel):
-    model_config = _IN_CONFIG
+class SetBatchStateCommand(_In):
     kind: Literal["SetBatchState"]
     client_mutation_id: UUID
     media_ids: list[UUID] = Field(min_length=1, max_length=1000)
     state: Literal["Finished", "Unread"]
 
 
-class DirectNaturalEndOrigin(BaseModel):
-    model_config = _IN_CONFIG
+class DirectNaturalEndOrigin(_In):
     kind: Literal["Direct"]
 
 
-class LecternNaturalEndOrigin(BaseModel):
-    model_config = _IN_CONFIG
+class LecternNaturalEndOrigin(_In):
     kind: Literal["Lectern"]
     item_id: UUID
 
@@ -305,8 +242,7 @@ NaturalEndOrigin = Annotated[
 ]
 
 
-class TerminalListeningIn(BaseModel):
-    model_config = _IN_CONFIG
+class TerminalListeningIn(_In):
     position_ms: _NonNegInt32
     duration_ms: Presence[_NonNegInt32]
     episode_playback_rate: Presence[PlaybackRate]
@@ -314,8 +250,7 @@ class TerminalListeningIn(BaseModel):
     expected_reset_epoch: _NonNegInt32
 
 
-class SettleNaturalEndCommand(BaseModel):
-    model_config = _IN_CONFIG
+class SettleNaturalEndCommand(_In):
     kind: Literal["SettleNaturalEnd"]
     client_mutation_id: UUID
     media_id: UUID
@@ -336,11 +271,30 @@ ConsumptionCommand = Annotated[
     Field(discriminator="kind"),
 ]
 
+ConsumptionOutcomeKind = Literal[
+    "StateOnly", "Completed", "CompletedWithoutAdvance", "Superseded", "TargetGone"
+]
 
-class ListeningStateOut(BaseModel):
+
+class ConsumptionStateOutcome(_Out):
+    """The five payload-free outcomes; each serializes as ``{"kind": ...}`` alone."""
+
+    kind: ConsumptionOutcomeKind
+
+
+class ConsumptionRemovedOutcome(_Out):
+    kind: Literal["Removed"] = "Removed"
+    item_id: UUID
+    next_item_id: Presence[UUID]
+
+
+ConsumptionOutcome = Annotated[
+    ConsumptionStateOutcome | ConsumptionRemovedOutcome, Field(discriminator="kind")
+]
+
+
+class ListeningStateOut(_Out):
     """Position/duration/episode rate plus heartbeat fencing tokens."""
-
-    model_config = _OUT_CONFIG
 
     position_ms: _NonNegInt32
     duration_ms: Presence[_NonNegInt32]
@@ -349,61 +303,15 @@ class ListeningStateOut(BaseModel):
     reset_epoch: _NonNegInt32
 
 
-class MediaProgressState(BaseModel):
+class MediaProgressState(_Out):
     """Canonical current-progress snapshot installed after a reset."""
-
-    model_config = _OUT_CONFIG
 
     media_id: UUID
     reader_cursor: ReaderCursorSnapshot
     listening_state: Presence[ListeningStateOut]
 
 
-class StateOnlyOutcome(BaseModel):
-    model_config = _OUT_CONFIG
-    kind: Literal["StateOnly"] = "StateOnly"
-
-
-class ConsumptionRemovedOutcome(BaseModel):
-    model_config = _OUT_CONFIG
-    kind: Literal["Removed"] = "Removed"
-    item_id: UUID
-    next_item_id: Presence[UUID]
-
-
-class CompletedOutcome(BaseModel):
-    model_config = _OUT_CONFIG
-    kind: Literal["Completed"] = "Completed"
-
-
-class CompletedWithoutAdvanceOutcome(BaseModel):
-    model_config = _OUT_CONFIG
-    kind: Literal["CompletedWithoutAdvance"] = "CompletedWithoutAdvance"
-
-
-class SupersededOutcome(BaseModel):
-    model_config = _OUT_CONFIG
-    kind: Literal["Superseded"] = "Superseded"
-
-
-class TargetGoneOutcome(BaseModel):
-    model_config = _OUT_CONFIG
-    kind: Literal["TargetGone"] = "TargetGone"
-
-
-ConsumptionOutcome = Annotated[
-    StateOnlyOutcome
-    | ConsumptionRemovedOutcome
-    | CompletedOutcome
-    | CompletedWithoutAdvanceOutcome
-    | SupersededOutcome
-    | TargetGoneOutcome,
-    Field(discriminator="kind"),
-]
-
-
-class ConsumptionResult(BaseModel):
-    model_config = _OUT_CONFIG
+class ConsumptionResult(_Out):
     outcome: ConsumptionOutcome
     lectern: LecternSnapshot
     next_item: Presence[LecternItemOut]
@@ -412,15 +320,8 @@ class ConsumptionResult(BaseModel):
     library_entries_collection_revision: CollectionRevision
 
 
-# ---------------------------------------------------------------------------
-# Listening heartbeat (GET/PUT /media/{id}/listening-state)
-# ---------------------------------------------------------------------------
-
-
-class ListeningHeartbeatIn(BaseModel):
-    """PUT body: all fields required, no completion field (spec §5.4)."""
-
-    model_config = _IN_CONFIG
+class ListeningHeartbeatIn(_In):
+    """PUT body for ``/media/{id}/listening-state``: every field required."""
 
     position_ms: _NonNegInt32
     duration_ms: Presence[_NonNegInt32]
@@ -431,18 +332,14 @@ class ListeningHeartbeatIn(BaseModel):
     heartbeat_sequence: _NonNegInt32
 
 
-class ListeningHeartbeatResult(BaseModel):
-    model_config = _OUT_CONFIG
-
+class ListeningHeartbeatResult(_Out):
     listening_state: ListeningStateOut
     heartbeat_generation: UUID
     heartbeat_sequence: _NonNegInt32
 
 
-class PreviewPositionIn(BaseModel):
+class PreviewPositionIn(_In):
     """One post-acquisition transfer from an ephemeral Preview audio session."""
-
-    model_config = _IN_CONFIG
 
     position_ms: _NonNegInt32
     duration_ms: Presence[_NonNegInt32]

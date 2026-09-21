@@ -43,16 +43,16 @@ split by storage and query concern:
   cursor CAS, engagement projection, and completion transition. Resonance reads
   the Lectern capacity predicate `lectern_has_capacity` here; the policy-neutral
   engagement, recent-anchor, and complete-membership relations it composes come
-  from `_projection` directly. One narrow in-transaction exception composes here
+  from `projection` directly. One narrow in-transaction exception composes here
   rather than going through a command: `delete_media_consumption_state_in_txn`
   (media teardown; only caller is `services/media_deletion.py`). The
   auto-subscription watermark step calls `_lectern_store.ensure_missing_in_txn`
   directly from the fenced finalization path in `services/podcasts/sync.py`.
 - `_lectern_store.py` — sole DML owner of `consumption_queue_items` (Lectern
   membership/order). Builds the canonical `LecternSnapshot`.
-- `_state_store.py` — sole DML owner of `consumption_overrides` (explicit
+- `state.py` — sole DML owner of `consumption_overrides` (explicit
   `Unread`/`Finished` state plus the completion-only revision that fences a
-  delayed natural-end receipt).
+  delayed natural-end receipt) and of `reader_engagement_states`.
 - `_listening_store.py` — sole DML owner of `podcast_listening_states`
   (position/duration/nullable established episode rate, completion flag, and
   the heartbeat fencing tokens `write_revision`/`reset_epoch`).
@@ -68,11 +68,11 @@ split by storage and query concern:
   positive, completion is false, and either position is positive or no reset
   has occurred. Pre-fencing, completed, and post-reset zero-position rows remain
   absent because their timestamp is ambiguous.
-- `_reader_cursor_store.py` — sole DML owner of `reader_media_state`: one
+- `reader_cursor.py` — sole DML owner of `reader_media_state`: one
   revision-fenced `Empty` or `Positioned` cursor per viewer/media. A persisted
   `Empty` tombstone fences stale pre-reset saves without exposing a null-clear
   reader-state API.
-- `_reader_engagement_store.py` — sole DML owner of `reader_engagement_states`:
+  `reader_engagement_states` holds
   one current-state row per (viewer, media) carrying `last_engaged_at`
   recency and, for non-PDF locators, a monotonic `max_total_progression`
   (`GREATEST(existing, new)` on every save). It is current resume/engagement
@@ -80,11 +80,11 @@ split by storage and query concern:
   `INSERT ... ON CONFLICT (user_id, media_id) DO UPDATE`, with no fencing
   token, committed atomically with the successful/idempotent cursor write (see
   [reader-implementation.md](reader-implementation.md)).
-- `_activity_store.py` — sole DML owner of `consumption_activity_spans` and
-  `consumption_completion_facts`; `_activity_stats.py` owns their factual
+- `activity_store.py` — sole DML owner of `consumption_activity_spans` and
+  `consumption_completion_facts`; `activity_stats.py` owns their factual
   aggregation and derived sessions. Neither changes the reader cursor or the
   listening heartbeat.
-- `_projection.py` — the combined explicit-override + reader-engagement read
+- `projection.py` — the combined explicit-override + reader-engagement read
   model (`Unread`/`InProgress`/`Finished` + progress fraction), plus batched
   `PlayerDescriptor`s for podcast-episode media. Both descriptor paths reuse
   `services/playback_source.derive_playback_source` and the one playback-rate
