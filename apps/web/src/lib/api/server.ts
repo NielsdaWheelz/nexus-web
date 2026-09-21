@@ -32,7 +32,8 @@ function readApiErrorBody(body: unknown): {
  * recovery; this server consumer never redirects or refreshes. It forwards
  * only an active session and reports every other cookie state as
  * `E_UNAUTHENTICATED`. Route handlers that own a response resolve refreshable
- * sessions inline before calling FastAPI.
+ * sessions inline before calling FastAPI. The deadline covers both response
+ * headers and body consumption.
  */
 export async function callFastAPI<T>(
   path: string,
@@ -57,13 +58,35 @@ export async function callFastAPI<T>(
     () => controller.abort(),
     options?.timeoutMs ?? FASTAPI_FETCH_TIMEOUT_MS,
   );
-  let response: Response;
   try {
-    response = await fetch(`${config.fastApiBaseUrl}${path}`, {
+    const response = await fetch(`${config.fastApiBaseUrl}${path}`, {
       headers,
       cache: "no-store",
       signal: controller.signal,
     });
+    if (response.status === 204 || response.status === 205) {
+      return undefined as T;
+    }
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new ApiError(
+        response.status,
+        "E_INVALID_RESPONSE",
+        "API returned a non-JSON response",
+      );
+    }
+    if (!response.ok) {
+      const err = readApiErrorBody(body);
+      throw new ApiError(
+        response.status,
+        err.code ?? "E_UNKNOWN",
+        err.message ?? `Request failed with status ${response.status}`,
+        err.requestId,
+      );
+    }
+    return body as T;
   } catch (error) {
     if (controller.signal.aborted) {
       throw new ApiError(
@@ -77,27 +100,4 @@ export async function callFastAPI<T>(
   } finally {
     clearTimeout(timeout);
   }
-  if (response.status === 204 || response.status === 205) {
-    return undefined as T;
-  }
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    throw new ApiError(
-      response.status,
-      "E_INVALID_RESPONSE",
-      "API returned a non-JSON response",
-    );
-  }
-  if (!response.ok) {
-    const err = readApiErrorBody(body);
-    throw new ApiError(
-      response.status,
-      err.code ?? "E_UNKNOWN",
-      err.message ?? `Request failed with status ${response.status}`,
-      err.requestId,
-    );
-  }
-  return body as T;
 }
