@@ -51,7 +51,7 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | vault (export/sync/watch CLI + pane) | 1.9k | 0–1k | deferred by owner 2026-09-21; keep and reauthor: keep at 1k or delete | open |
 | billing-settings (billing, entitlements, quota, 7 settings panes) | 4.4k | 2k | keep, reauthor | open |
 | auth-extension (auth, users, sessions, extension 2.8k of which 2.3k vendored Readability) | 4.9k | 2k | deferred by owner 2026-09-21; keep and reauthor extension; keep auth | open |
-| substrate: resource graph (refs, edges, citations) | 6.9k | 2k | reauthor | open |
+| substrate: resource graph (refs, edges, citations) | 5.2k | 2k | reauthor | first pass landed (size/resource-graph-py): 6.6k→4.9k, −25%; two blocks await the action-menu rewrite |
 | substrate: action menu (snapshot→planner→runtime→cache) | 11.4k | 1.5k | one catalog + one menu | open |
 | substrate: workspace/panes (store, host, memento, mobile chrome, pane find, route model) | 20.7k | 6k | reauthor | open |
 | substrate: api/auth/bff (proxy, sse, session; BFF routes already collapsed) | 14.5k | 4k | reauthor | open |
