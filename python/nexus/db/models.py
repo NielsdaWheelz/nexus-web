@@ -230,25 +230,6 @@ class DailyPageBinding(Base):
     )
 
 
-class DawnWrite(Base):
-    """Current-only machine-generated morning block for one user + local date."""
-
-    __tablename__ = "dawn_writes"
-
-    id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
-    )
-    user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
-    )
-    local_date: Mapped[date] = mapped_column(Date, nullable=False)
-    body_md: Mapped[str] = mapped_column(Text, nullable=False)
-    generated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("now()"), nullable=False
-    )
-    dismissed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-
-
 class NoteBlock(Base):
     """Body-only note resource."""
 

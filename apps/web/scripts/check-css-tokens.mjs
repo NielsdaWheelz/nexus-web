@@ -20,12 +20,16 @@ const allowedFiles = new Set([
 // The packaged APK shelf is its own CSS closure: it never loads a hosted
 // stylesheet at runtime, so every custom property its bundled CSS consumes
 // without an inline fallback must be declared inside that bundle (or installed
-// at runtime by an owner below). The committed bundle is kept current by
-// `scripts/build-offline-reading.mjs` and the Gradle staleness check.
+// at runtime by an owner below). The bundle is a build output: `./scripts/test`
+// runs `bun run build:offline-reading` before this check so it is always the
+// current one.
 const offlineBundleCssDir = join(
   webDir,
   "../android/app/src/main/assets/nexus-offline/assets",
 );
+if (!existsSync(offlineBundleCssDir)) {
+  throw new Error("Run `bun run build:offline-reading` before checking CSS tokens.");
+}
 
 // pdfjs-dist/web/pdf_viewer.css consumes variables that pdf.js's full
 // `viewer.css` declares for its own toolbar/sidebar/editor chrome. Nexus mounts

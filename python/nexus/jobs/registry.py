@@ -307,21 +307,6 @@ def _build_default_registry() -> dict[str, JobDefinition]:
             failed_result_statuses=("failed",),
             child_runtime="Llm",
         ),
-        "dawn_write_job": JobDefinition(
-            kind="dawn_write_job",
-            handler_path="nexus.jobs.registry:_run_dawn_write_sweep",
-            resource_class="Light",
-            max_attempts=1,
-            retry_delays_seconds=(0,),
-            lease_seconds=900,
-            periodic_interval_seconds=(
-                int(settings.dawn_write_schedule_seconds)
-                if settings.dawn_write_schedule_seconds > 0
-                else None
-            ),
-            periodic_checkpoint_keys=frozenset({"coordination", "dawn_write_worklist"}),
-            child_runtime="Llm",
-        ),
         "atlas_project_job": JobDefinition(
             kind="atlas_project_job",
             handler_path="nexus.jobs.registry:_run_atlas_project",
@@ -563,14 +548,6 @@ def _run_synapse_scan(
         reason=_require_job_text(payload, "reason", "synapse_scan"),
         context=context,
     )
-
-
-def _run_dawn_write_sweep(
-    *, payload: Mapping[str, Any], context: JobExecutionContext
-) -> Mapping[str, Any] | RescheduleRequested | None:
-    from nexus.tasks.dawn_write import dawn_write_sweep
-
-    return dawn_write_sweep(context=context)
 
 
 def _run_atlas_project(

@@ -83,9 +83,6 @@ In order:
 ## The pulse — governed by the Vespers heresy
 
 - Ambient tools die of resurfacing fatigue; never build the feed.
-- **Dawn Write**: one machine block (two short cited paragraphs, Machine Hand)
-  above the blank daily note; one-tap dismissible with memory.
-  → spec `cutovers/dawn-write-hard-cutover.md`
 - **Vespers**: a once-a-day, summoned-only composed reading of what settled
   since the last visit. No badges, no counts, ever.
 - **Stats** is the separate factual lane: observed time, sessions, progress,

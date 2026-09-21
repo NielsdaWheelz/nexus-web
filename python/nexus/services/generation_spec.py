@@ -38,7 +38,6 @@ type BackgroundOperationKey = Literal[
     "metadata_enrichment",
     "media_summary",
     "synapse",
-    "dawn_write",
     "oracle",
     "dossier_page",
     "dossier_note",

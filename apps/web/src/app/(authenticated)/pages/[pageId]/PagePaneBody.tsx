@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConnectionsSurface from "@/components/connections/ConnectionsSurface";
 import { useConnectionsComposerController } from "@/components/connections/connectionsComposerController";
 import ResourceSurfaceEditor from "@/components/resource-surface/ResourceSurfaceEditor";
-import DawnWriteBlock from "@/components/notes/DawnWriteBlock";
 import {
   FeedbackNotice,
   useFeedback,
@@ -16,11 +15,7 @@ import { usePanePrimaryChrome } from "@/components/workspace/PanePrimaryChrome";
 import { useResourceInspector } from "@/lib/dossiers/useResourceInspector";
 import { handleUnauthenticatedApiError } from "@/lib/auth/UnauthenticatedApiBoundary";
 import { consumePendingNoteFocus } from "@/lib/notes/pendingNoteFocus";
-import {
-  fetchDawnWrite,
-  fetchNotePage,
-  type DawnWrite,
-} from "@/lib/notes/api";
+import { fetchNotePage } from "@/lib/notes/api";
 import { present, type Presence } from "@/lib/api/presence";
 import type {
   DailyPageSummary,
@@ -114,16 +109,6 @@ function pageDeleteErrorMessage(error: unknown): FeedbackContent {
         title: "This page is no longer available",
         requestId: error.requestId,
       };
-    default:
-      throw error;
-  }
-}
-
-function isExpectedDawnWriteAbsence(error: unknown): boolean {
-  if (!isApiError(error) || isSameSystemApiDefect(error)) throw error;
-  switch (error.code) {
-    case "E_NETWORK":
-      return true;
     default:
       throw error;
   }
@@ -415,26 +400,6 @@ export default function PagePaneBody({
     },
     [sourceKey],
   );
-  const [dawnWrite, setDawnWrite] = useState<DawnWrite | null>(null);
-  useEffect(() => {
-    if (!dailyLocalDate) {
-      setDawnWrite(null);
-      return;
-    }
-    void fetchDawnWrite(dailyLocalDate)
-      .then(setDawnWrite)
-      .catch((error: unknown) => {
-        if (handleUnauthenticatedApiError(error)) return;
-        try {
-          // justify-ignore-error: Dawn Write is optional editorial context; a
-          // modeled network miss omits it without blocking the canonical page.
-          if (isExpectedDawnWriteAbsence(error)) setDawnWrite(null);
-        } catch (caughtDefect) {
-          setDefect({ error: caughtDefect });
-        }
-      });
-  }, [dailyLocalDate]);
-
   const chrome = (
     <PageChrome
       page={page}
@@ -466,7 +431,6 @@ export default function PagePaneBody({
   return (
     <>
       {chrome}
-      {dawnWrite ? <DawnWriteBlock write={dawnWrite} /> : null}
       {!ready && filterQuery.trim() ? (
         <p role="status">No matching item found so far.</p>
       ) : null}
