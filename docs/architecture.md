@@ -352,8 +352,10 @@ epoch and viewer before it can cross the stream.
 
 PostgreSQL is the single source of truth. The schema of record is the live
 database (`pg_dump --schema-only`) plus the **hand-written** Alembic migrations
-(`migrations/alembic/versions/NNNN_*.py`, ~125 of them, linear chain, no
-autogenerate). `python/nexus/db/models.py` holds only the ~90 classes the code
+(`migrations/alembic/versions/NNNN_*.py`, linear chain, no autogenerate).
+Revisions `0001`-`0236` are squashed into one baseline, `0236_baseline.py`,
+which replays the dumped schema and seed rows beside it; the chain continues
+from there. `python/nexus/db/models.py` holds only the ~90 classes the code
 queries through the ORM — it mirrors no constraints or indexes — and many live
 tables are reached only from raw SQL, among them **`background_jobs`**, defined
 in `python/nexus/jobs/`.
@@ -2200,7 +2202,8 @@ contracts live in `deploy/env/*` (real values untracked, `.example` tracked).
 Permanent R2 policy is applied via `deploy/cloudflare/*`.
 
 **Migrations** are hand-written Alembic files (`migrations/alembic/versions/`,
-linear `NNNN_*` numbering, no autogenerate). Dev: `make migrate`. The PR check
+linear `NNNN_*` numbering, no autogenerate), rooted at the squashed baseline
+`0236_baseline.py`. Dev: `make migrate`. The PR check
 requires one canonical Alembic head without starting a database. Production
 applies the candidate's baked head only inside the release, after the
 stopped-writer verified R2 backup and a revision-ancestry proof, and before the
@@ -2296,7 +2299,7 @@ The things most likely to bite you, distilled:
 | Reader behavior contract                                          | [`modules/reader-implementation.md`](modules/reader-implementation.md), [`modules/reader-design-rationale.md`](modules/reader-design-rationale.md)                                                     |
 | FastAPI bootstrap / middleware / lifecycle                        | `python/nexus/app.py`, `python/nexus/middleware/`, `python/nexus/auth/`                                                                                                                                |
 | DB layer / sessions / LISTEN-NOTIFY                               | `python/nexus/db/` (`engine.py`, `session.py`, `listen.py`)                                                                                                                                            |
-| The schema                                                        | `migrations/alembic/versions/` + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
+| The schema                                                        | `migrations/alembic/versions/0236_baseline_schema.sql` (the squashed baseline) + the revisions after it + the live database (`pg_dump --schema-only`); `python/nexus/db/models.py` is the ORM-mapped classes only                                                               |
 | Background jobs / worker                                          | `python/nexus/jobs/`, `python/nexus/tasks/`, `apps/worker/`                                                                                                                                            |
 | Generation backends                                               | `python/nexus/services/{generation_catalog,generation_policy,generation_service,generation_spec,generation_backend,provider_generation_backend,codex_generation_client,llm_execution,llm_ledger,tool_authority}.py`, `apps/codex_agent/`, [`modules/llms.md`](modules/llms.md) |
 | Media catalog and ingest owners                                   | `python/nexus/services/media.py`, `media_source_ingest.py`, `source_attempt_failures.py`, `media_fact_revisions.py`, `x_ingest.py`, `youtube_video_ingest.py`, `remote_file_ingest.py`, `remote_file_client.py`, `media_processing_state.py` |

@@ -23,7 +23,7 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | feature | now | target | call | status |
 |---|---:|---:|---|---|
 | GENERATED android bundle | 0 | 0 | untrack, build in gradle (step already exists) | done (size/bundle): untracked, built by gradle |
-| substrate: db schema (models 4.3k + 235 migrations 41.7k) | 46.0k | 5k | squash migrations to one baseline after 0231–0236 deploy | open |
+| substrate: db schema (models 4.3k + migrations) | 12.9k | 5k | squash migrations to one baseline after 0231–0236 deploy | migrations squashed to a 0236 baseline (size/squash), 8606 lines; models.py open |
 | deploy/release (release.py 8.1k + scripts) | 2.7k | 1k | linear deploy script keeping backup-before-migrate + first-attempt provenance | done (size/deploy): release.py 8,071→620, driven over ssh; compose/Caddyfile/cloud-init/env are the fixed remainder |
 | docs (rules subtree 3.9k, modules 5.8k, architecture 2.3k, chapbook 1.4k, tickets 2k) | 17.9k | 9k | keep rules/local-rules/runbook/tickets; demote uncited module docs | open |
 | reader (epub, pdf, web article, selection/highlights; MediaPaneBody 7.6k, PdfReader 3.6k) | 46.3k | 15k | reauthor: one reader shell, one find | open |
