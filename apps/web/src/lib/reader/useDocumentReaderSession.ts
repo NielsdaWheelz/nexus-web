@@ -174,11 +174,11 @@ export function useDocumentReaderSession({
   );
   const epubFragmentFetch = useResource<EpubFragmentContent>({
     cacheKey:
-      epubFragmentId !== null && epubSourceGeneration > 0
+      epubFragmentInitial === null &&
+      epubFragmentId !== null &&
+      (epubSourceGeneration > 0 || initial.status === "ready")
         ? epubFragmentCacheKey
-        : initial.status === "ready" && epubFragmentId !== null
-          ? epubFragmentCacheKey
-          : null,
+        : null,
     load: (signal) => {
       // justify-defect: an enabled fragment resource always has an exact identity.
       if (epubFragmentId === null) throw new Error("Enabled EPUB resource has no fragment identity");
