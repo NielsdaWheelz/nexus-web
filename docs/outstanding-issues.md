@@ -229,8 +229,8 @@ unexpected timeouts. See
 - [open] oi-178 · dossiers · 2026-09-21 reauthoring · p2 · a recheck raising DossierInputTooLarge escapes the terminal writers and leaves a build active with no terminal: [ticket](tickets/dossier-recheck-can-raise-past-the-terminal-writer.md).
 
 - [open] 2026-09-21 cleanup audit · chat runs synchronous database phases on the api event loop: [ticket](tickets/cleanup-chat-database-work-blocks-api-event-loop.md).
-- [open] 2026-09-21 cleanup audit · denied inspection permission incorrectly selects extension file capture: [ticket](tickets/cleanup-extension-document-permission-denial.md).
 - [open] 2026-09-21 cleanup audit · offline reading store retains unused construction modes: [ticket](tickets/cleanup-offline-reading-unused-construction-seams.md).
 - [open] pane find · 2026-09-21 reader cleanup · adapters echo request identities through redundant response contracts: [ticket](tickets/pane-find-response-echo-protocol.md).
 - [open] epub find · 2026-09-21 reader cleanup · private adapter retains unused transport injection: [ticket](tickets/epub-find-unused-transport-injection.md).
 - [open] highlight interaction · 2026-09-21 reader cleanup · hook keeps unused focus callbacks and hover metadata: [ticket](tickets/highlight-interaction-unused-api.md).
+- [open] 2026-09-21 extension review · article capture conflates extraction, transport and defects: [ticket](tickets/extension-article-capture-conflates-failures.md).
