@@ -335,7 +335,7 @@ cancelled turn; `POST /messages/{assistant_message_id}/regenerate` produces a
 fresh alternative for an eligible completed answer. Both reach FastAPI through
 the BFF's structured catch-all (`app/api/[...path]/route.ts`) and both are
 consolidated into one sibling-candidate constructor
-(`services/chat_run_candidates.py`) that each route calls with an explicit
+(`services/chat_runs.py`) that each route calls with an explicit
 `rerun`/`regenerate` operation and separate eligibility guards. Each request
 carries an exact selection, the current catalog-definition revision, and
 `tool_authority: ReadOnly`. The primary action reuses the source run's

@@ -1,4 +1,9 @@
-"""Durable chat-run API routes."""
+"""Durable chat-run API routes.
+
+Each read and cancel opens its own worker-thread session: a client disconnect
+cannot then close a session mid-transaction, and lock waits never hold the
+event loop.
+"""
 
 from typing import Annotated
 from uuid import UUID
@@ -17,7 +22,6 @@ from nexus.schemas.conversation import (
     ChatRunResponse,
 )
 from nexus.schemas.presence import Present
-from nexus.services import chat_run_candidates
 from nexus.services import chat_runs as chat_runs_service
 from nexus.services.generation_catalog import GenerationCatalogService
 from nexus.services.tool_runtime.catalog import ComposedToolRuntime
@@ -43,13 +47,12 @@ async def create_chat_run(
     catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict:
-    reader_selection = (
-        body.reader_selection.value if isinstance(body.reader_selection, Present) else None
-    )
     result = await chat_runs_service.create_chat_run(
         viewer_id=viewer.user_id,
         destination=body.destination,
-        reader_selection=reader_selection,
+        reader_selection=(
+            body.reader_selection.value if isinstance(body.reader_selection, Present) else None
+        ),
         content=body.content,
         catalog_definition_revision=body.catalog_definition_revision,
         selection=body.selection,
@@ -134,18 +137,19 @@ async def rerun_assistant_message(
     catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict:
-    result = await chat_run_candidates.repeat_assistant_response(
-        operation="rerun",
-        viewer_id=viewer.user_id,
-        assistant_message_id=assistant_message_id,
-        catalog_definition_revision=body.catalog_definition_revision,
-        selection=body.selection,
-        tool_authority=body.tool_authority,
-        idempotency_key=idempotency_key,
-        catalog=catalog,
-        tool_runtime=_tool_runtime(request),
+    return ok(
+        await chat_runs_service.repeat_assistant_response(
+            operation="rerun",
+            viewer_id=viewer.user_id,
+            assistant_message_id=assistant_message_id,
+            catalog_definition_revision=body.catalog_definition_revision,
+            selection=body.selection,
+            tool_authority=body.tool_authority,
+            idempotency_key=idempotency_key,
+            catalog=catalog,
+            tool_runtime=_tool_runtime(request),
+        )
     )
-    return ok(result)
 
 
 @router.post("/messages/{assistant_message_id}/regenerate", status_code=200)
@@ -157,15 +161,16 @@ async def regenerate_assistant_message(
     catalog: Annotated[GenerationCatalogService, Depends(get_generation_catalog_service)],
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> dict:
-    result = await chat_run_candidates.repeat_assistant_response(
-        operation="regenerate",
-        viewer_id=viewer.user_id,
-        assistant_message_id=assistant_message_id,
-        catalog_definition_revision=body.catalog_definition_revision,
-        selection=body.selection,
-        tool_authority=body.tool_authority,
-        idempotency_key=idempotency_key,
-        catalog=catalog,
-        tool_runtime=_tool_runtime(request),
+    return ok(
+        await chat_runs_service.repeat_assistant_response(
+            operation="regenerate",
+            viewer_id=viewer.user_id,
+            assistant_message_id=assistant_message_id,
+            catalog_definition_revision=body.catalog_definition_revision,
+            selection=body.selection,
+            tool_authority=body.tool_authority,
+            idempotency_key=idempotency_key,
+            catalog=catalog,
+            tool_runtime=_tool_runtime(request),
+        )
     )
-    return ok(result)

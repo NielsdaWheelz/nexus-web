@@ -1,13 +1,7 @@
-"""Conversation context-ref routes (spec §10.1).
+"""Conversation context-ref routes.
 
-Context refs are ``resource_edges`` rows sourced from the conversation. Admission
-semantics live in ``nexus.services.resource_graph.context``.
-
-Routes:
-- GET    /conversations/{conversation_id}/context-refs
-- DELETE /conversations/{conversation_id}/context-refs/{edge_id}
-
-(`GET /conversations?has_context_ref=` lives with the conversations routes.)
+Context refs are ``resource_edges`` rows sourced from the conversation;
+admission semantics live in ``nexus.services.resource_graph.context``.
 """
 
 from typing import Annotated
@@ -31,11 +25,8 @@ def list_context_refs(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """List a conversation's context refs, hydrated, first-attached order.
+    """List a conversation's context refs, hydrated, in first-attached order."""
 
-    Errors:
-        E_CONVERSATION_NOT_FOUND (404): conversation doesn't exist or viewer is not owner.
-    """
     rows = context_service.list_context_refs(
         db, viewer_id=viewer.user_id, conversation_id=conversation_id
     )
@@ -49,12 +40,6 @@ def remove_context_ref(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    """Remove a context ref from the conversation.
-
-    Errors:
-        E_CONVERSATION_NOT_FOUND (404): conversation doesn't exist or viewer is not owner.
-        E_NOT_FOUND (404): edge doesn't exist on this conversation.
-    """
     context_service.remove_context_ref(
         db, viewer_id=viewer.user_id, conversation_id=conversation_id, edge_id=edge_id
     )

@@ -12,9 +12,7 @@ from sqlalchemy.orm import Session
 
 from nexus.db.models import ChatRun
 from nexus.services.chat_run_event_store import ChatRunEventEmitter
-from nexus.services.chat_run_tools import (
-    upsert_attached_context_tool_call,
-)
+from nexus.services.chat_run_tools import upsert_attached_context_tool_call
 from nexus.services.resource_graph import cleanup as graph_cleanup
 from nexus.services.resource_graph.citations import (
     GeneratedMarkdownCitationMarker,
@@ -33,10 +31,7 @@ from nexus.services.resource_graph.refs import (
 )
 from nexus.services.resource_graph.schemas import CitationInput, CitationSnapshot
 from nexus.services.resource_items.capabilities import resource_citation_result_type
-from nexus.services.retrieval_citation import (
-    RetrievalCitation,
-    insert_retrieval_row,
-)
+from nexus.services.retrieval_citation import RetrievalCitation, insert_retrieval_row
 
 CitationPublicationWarningCode = Literal["CitationsUnavailable"]
 
@@ -75,10 +70,6 @@ class PublishedCitations:
     content_md: str
     citations: tuple[CanonicalCitation, ...]
 
-    @property
-    def citation_count(self) -> int:
-        return len(self.citations)
-
 
 @dataclass(frozen=True, slots=True)
 class DegradedCitations:
@@ -86,10 +77,6 @@ class DegradedCitations:
     content_md: str
     warning_code: CitationPublicationWarningCode
     detail: str
-
-    @property
-    def citation_count(self) -> int:
-        return 0
 
 
 CanonicalCitationResult = PublishedCitations | DegradedCitations
@@ -102,8 +89,7 @@ def number_tool_citation_candidates(
     start_ordinal: int,
 ) -> CitationCandidateNumbering:
     """Assign model-facing ordinals to selected citable rows; write no edges."""
-    # justify-service-invariant-check: the next turn-global ordinal crosses
-    # persisted retrieval rows and provider output, while its API type is int.
+
     if start_ordinal < 1:
         raise AssertionError(f"citation candidate ordinals must be positive; got {start_ordinal}")
     if tool_call_id is None:
@@ -132,8 +118,8 @@ def number_tool_citation_candidates(
         if candidate_ordinal is not None:
             next_ordinal += 1
         existing_ordinal = row["citation_candidate_ordinal"]
-        # justify-service-invariant-check: candidate immutability spans the
-        # persisted row and this numbering pass and cannot live in either type.
+        # A candidate ordinal is immutable once written: it is the [N] the model
+        # already saw, and this numbering pass can run again on replay.
         if existing_ordinal is not None and existing_ordinal != candidate_ordinal:
             raise AssertionError(
                 f"retrieval {row['id']} citation candidate ordinal changed "
@@ -148,10 +134,7 @@ def number_tool_citation_candidates(
                 WHERE id = :retrieval_id
                 """
             ),
-            {
-                "retrieval_id": row["id"],
-                "candidate_ordinal": candidate_ordinal,
-            },
+            {"retrieval_id": row["id"], "candidate_ordinal": candidate_ordinal},
         )
         numbered.append(
             NumberedCitationCandidate(
@@ -169,9 +152,9 @@ def canonicalize_chat_citations(
     candidates: Sequence[CitationCandidate],
 ) -> CanonicalCitationResult:
     """Accept generated candidate markers into canonical reader citation syntax."""
+
     candidate_ordinals = [candidate.candidate_ordinal for candidate in candidates]
-    # justify-service-invariant-check: density and uniqueness are properties of
-    # the complete persisted candidate set, not one CitationCandidate value.
+    # Density and uniqueness are properties of the complete candidate set.
     if sorted(candidate_ordinals) != list(range(1, len(candidate_ordinals) + 1)):
         raise AssertionError(
             f"chat citation candidate ordinals must be dense and unique; got {candidate_ordinals}"
@@ -198,22 +181,12 @@ def canonicalize_chat_citations(
 
     final_ordinal_by_candidate: dict[int, int] = {}
     for marker in markers:
-        final_ordinal_by_candidate.setdefault(
-            marker.ordinal,
-            len(final_ordinal_by_candidate) + 1,
-        )
+        final_ordinal_by_candidate.setdefault(marker.ordinal, len(final_ordinal_by_candidate) + 1)
     return PublishedCitations(
         kind="Published",
-        content_md=_rewrite_markers(
-            generated_markdown,
-            markers,
-            final_ordinal_by_candidate,
-        ),
+        content_md=_rewrite_markers(generated_markdown, markers, final_ordinal_by_candidate),
         citations=tuple(
-            CanonicalCitation(
-                candidate_ordinal=candidate_ordinal,
-                final_ordinal=final_ordinal,
-            )
+            CanonicalCitation(candidate_ordinal=candidate_ordinal, final_ordinal=final_ordinal)
             for candidate_ordinal, final_ordinal in final_ordinal_by_candidate.items()
         ),
     )
@@ -236,25 +209,16 @@ def _rewrite_markers(
 
 
 def _citation_target_ref(row: Mapping[str, Any]) -> ResourceRef | None:
-    """Return the search-owned citable target stored on a retrieval row."""
-    # justify-service-invariant-check: result_ref is validated on write but is
-    # read back from mutable JSONB and must still satisfy that stored contract.
+    """The search-owned citable target stored on a retrieval row."""
+
     result_ref = row["result_ref"]
-    if not isinstance(result_ref, Mapping):
-        raise AssertionError("message_retrievals.result_ref must be an object")
-    raw_target = result_ref.get("citation_target")
+    raw_target = result_ref.get("citation_target") if isinstance(result_ref, Mapping) else None
     if raw_target is None:
         return None
-    if not isinstance(raw_target, str):
-        raise AssertionError("message_retrievals.result_ref.citation_target must be a string")
-    target = parse_resource_ref(raw_target)
-    if isinstance(target, ResourceRefParseFailure):
+    target = parse_resource_ref(str(raw_target))
+    if isinstance(target, ResourceRefParseFailure) or resource_citation_result_type(target) is None:
         raise AssertionError(
-            f"message_retrievals.result_ref.citation_target is invalid: {raw_target!r}"
-        )
-    if resource_citation_result_type(target) is None:
-        raise AssertionError(
-            f"message_retrievals.result_ref.citation_target is not citable: {raw_target}"
+            f"message_retrievals.result_ref.citation_target is not citable: {raw_target!r}"
         )
     return target
 
@@ -265,6 +229,7 @@ def persist_attached_citations(
     citations: tuple[RetrievalCitation, ...],
 ) -> CitationCandidateNumbering:
     """Persist attached evidence candidates and return the next turn ordinal."""
+
     if not citations:
         return CitationCandidateNumbering(rows=(), next_ordinal=1)
 
@@ -281,11 +246,7 @@ def persist_attached_citations(
             included_in_prompt=True,
         )
     prune_tool_call_retrievals(db, tool_call_id=tool_call_id, min_ordinal=len(citations))
-    return number_tool_citation_candidates(
-        db,
-        tool_call_id=tool_call_id,
-        start_ordinal=1,
-    )
+    return number_tool_citation_candidates(db, tool_call_id=tool_call_id, start_ordinal=1)
 
 
 def prune_tool_call_retrievals(
@@ -294,7 +255,8 @@ def prune_tool_call_retrievals(
     tool_call_id: UUID,
     min_ordinal: int | None = None,
 ) -> None:
-    """Delete pre-publication retrieval telemetry and orphaned web snapshots."""
+    """Delete pre-publication retrieval rows and their orphaned web snapshots."""
+
     ordinal_clause = "" if min_ordinal is None else " AND ordinal >= :min_ordinal"
     params: dict[str, Any] = {"tool_call_id": tool_call_id}
     if min_ordinal is not None:
@@ -329,6 +291,7 @@ def publish_chat_citations(
     emitter: ChatRunEventEmitter,
 ) -> CanonicalCitationResult:
     """Publish final edges, back-pointers, context refs, and events; do not commit."""
+
     rows = (
         db.execute(
             text(
@@ -367,6 +330,7 @@ def publish_chat_citations(
     )
     result = canonicalize_chat_citations(generated_markdown, candidates)
     message_ref = ResourceRef(scheme="message", id=run.assistant_message_id)
+    candidate_by_ordinal = {candidate.candidate_ordinal: candidate for candidate in candidates}
 
     db.execute(
         text(
@@ -380,69 +344,41 @@ def publish_chat_citations(
         ),
         {"assistant_message_id": run.assistant_message_id},
     )
-    candidate_by_ordinal = {candidate.candidate_ordinal: candidate for candidate in candidates}
-    citation_inputs = (
-        [
-            CitationInput(
-                target=candidate_by_ordinal[citation.candidate_ordinal].target,
-                ordinal=citation.final_ordinal,
-                kind="context",
-                snapshot=candidate_by_ordinal[citation.candidate_ordinal].snapshot,
-            )
-            for citation in result.citations
-        ]
-        if result.kind == "Published"
-        else []
-    )
     edges = replace_citations_for_output(
         db,
         viewer_id=run.owner_user_id,
         source=message_ref,
-        citations=citation_inputs,
+        citations=(
+            [
+                CitationInput(
+                    target=candidate_by_ordinal[citation.candidate_ordinal].target,
+                    ordinal=citation.final_ordinal,
+                    kind="context",
+                    snapshot=candidate_by_ordinal[citation.candidate_ordinal].snapshot,
+                )
+                for citation in result.citations
+            ]
+            if isinstance(result, PublishedCitations)
+            else []
+        ),
     )
-    if result.kind == "Degraded":
-        return result
-    if not edges:
+    if isinstance(result, DegradedCitations) or not edges:
         return result
 
-    # justify-service-invariant-check: graph replacement and canonicalization
-    # have separate owners whose complete output counts must agree here.
-    if len(edges) != len(result.citations):
-        raise AssertionError(
-            f"chat citation edge count mismatch: {len(edges)} != {len(result.citations)}"
-        )
-    edge_id_by_ordinal = {}
+    edge_id_by_ordinal: dict[int, UUID] = {}
     for citation, edge in zip(result.citations, edges, strict=True):
-        updated_retrieval_id = db.execute(
-            text(
-                "UPDATE message_retrievals SET cited_edge_id = :edge_id "
-                "WHERE id = :retrieval_id RETURNING id"
-            ),
+        db.execute(
+            text("UPDATE message_retrievals SET cited_edge_id = :edge_id WHERE id = :retrieval_id"),
             {
                 "edge_id": edge.id,
                 "retrieval_id": candidate_by_ordinal[citation.candidate_ordinal].retrieval_id,
             },
-        ).scalar_one_or_none()
-        # justify-service-invariant-check: the retrieval row was locked into
-        # the candidate set earlier in this same publication transaction.
-        if updated_retrieval_id != candidate_by_ordinal[citation.candidate_ordinal].retrieval_id:
-            raise AssertionError(
-                f"citation retrieval {citation.candidate_ordinal} disappeared during publication"
-            )
+        )
         edge_id_by_ordinal[citation.final_ordinal] = edge.id
 
-    citation_outs = build_citation_outs(
-        db,
-        viewer_id=run.owner_user_id,
-        source=message_ref,
-    )
-    # justify-service-invariant-check: the graph read model must project every
-    # edge written by this transaction exactly once.
-    if len(citation_outs) != len(edges):
-        raise AssertionError(
-            f"citation read model count mismatch for message {run.assistant_message_id}"
-        )
-    emitter.citation_index(
+    citation_outs = build_citation_outs(db, viewer_id=run.owner_user_id, source=message_ref)
+    emitter.batch(
+        "citation_index",
         {
             "assistant_message_id": str(run.assistant_message_id),
             "citations": [
@@ -452,7 +388,7 @@ def publish_chat_citations(
                 }
                 for citation in citation_outs
             ],
-        }
+        },
     )
     for edge in edges:
         if edge.target.scheme == "external_snapshot":
@@ -470,7 +406,8 @@ def publish_chat_citations(
             target=edge.target,
             origin="citation",
         )
-        emitter.context_ref_added(
+        emitter.batch(
+            "context_ref_added",
             {
                 "id": str(context_ref.edge_id),
                 "conversation_id": str(context_ref.conversation_id),
@@ -481,15 +418,14 @@ def publish_chat_citations(
                 "missing": context_ref.resolved.missing,
                 "created_at": context_ref.created_at,
                 "citation_edge_id": str(edge.id),
-            }
+            },
         )
     return result
 
 
 def _required_citation_target(row: Mapping[str, Any]) -> ResourceRef:
     target = _citation_target_ref(row)
-    # justify-service-invariant-check: only citable retrievals receive a
-    # candidate ordinal, a cross-column invariant of the persisted row.
+    # Only citable retrievals ever receive a candidate ordinal.
     if target is None:
         raise AssertionError(f"numbered retrieval {row['id']} has no citable target")
     return target

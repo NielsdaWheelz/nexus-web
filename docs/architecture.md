@@ -1330,7 +1330,7 @@ The AI chat: durable, branchable, streamed, RAG-grounded. Backend:
   tool plan → append route-neutral events → finalize. The client merely
   tails `chat_run_events` over SSE and reconciles through bounded repeatable-read
   `GET /chat-runs/{id}` snapshots.
-- **Context assembly** (`context_assembler.py`, `prompt_budget.py`): a
+- **Context assembly** (`context_assembler.py`): a
   context-admitted, lane-ordered plan (system → scope → attached context → retrieved
   evidence → web evidence → history → current user). The prompt plan stores
   token counts, lane metadata, and text-free block manifests, but no prompt hashes
