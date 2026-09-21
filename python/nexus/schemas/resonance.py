@@ -1,7 +1,9 @@
-"""Strict wire contracts for deterministic Resonance reading slates."""
+"""Strict camelCase wire contracts for the deterministic Resonance slates.
 
-from __future__ import annotations
+Every variant is key-exact against ``apps/web/src/lib/resonance/contract.ts``.
+"""
 
+from collections.abc import Callable
 from datetime import date
 from typing import Annotated, Literal
 
@@ -17,34 +19,20 @@ from nexus.services.resource_graph.refs import (
 )
 
 ResonanceEdgeOrigin = Literal[
-    "user",
-    "citation",
-    "note_body",
-    "highlight_note",
-    "document_embed",
-    "synapse",
+    "user", "citation", "note_body", "highlight_note", "document_embed", "synapse"
 ]
 
 
-def _resource_ref_uri_for_scheme(value: str, expected_scheme: ResourceScheme | None) -> str:
-    parsed = parse_resource_ref(value)
-    if isinstance(parsed, ResourceRefParseFailure):
-        raise ValueError("ref must be a canonical ResourceRef")
-    if expected_scheme is not None and parsed.scheme != expected_scheme:
-        raise ValueError(f"ref must use the {expected_scheme} scheme")
-    return value
+def _ref_uri_validator(expected: ResourceScheme | None) -> Callable[[str], str]:
+    def validate(value: str) -> str:
+        parsed = parse_resource_ref(value)
+        if isinstance(parsed, ResourceRefParseFailure):
+            raise ValueError("ref must be a canonical ResourceRef")
+        if expected is not None and parsed.scheme != expected:
+            raise ValueError(f"ref must use the {expected} scheme")
+        return value
 
-
-def _resource_ref_uri(value: str) -> str:
-    return _resource_ref_uri_for_scheme(value, None)
-
-
-def _media_resource_ref_uri(value: str) -> str:
-    return _resource_ref_uri_for_scheme(value, "media")
-
-
-def _podcast_resource_ref_uri(value: str) -> str:
-    return _resource_ref_uri_for_scheme(value, "podcast")
+    return validate
 
 
 def _internal_href(value: str) -> str:
@@ -53,22 +41,15 @@ def _internal_href(value: str) -> str:
     return value
 
 
-ResourceRefUri = Annotated[str, AfterValidator(_resource_ref_uri)]
-MediaResourceRefUri = Annotated[str, AfterValidator(_media_resource_ref_uri)]
-PodcastResourceRefUri = Annotated[str, AfterValidator(_podcast_resource_ref_uri)]
+ResourceRefUri = Annotated[str, AfterValidator(_ref_uri_validator(None))]
+MediaResourceRefUri = Annotated[str, AfterValidator(_ref_uri_validator("media"))]
+PodcastResourceRefUri = Annotated[str, AfterValidator(_ref_uri_validator("podcast"))]
 InternalHref = Annotated[str, AfterValidator(_internal_href)]
-FiniteProgress = Annotated[
-    float,
-    Field(strict=True, ge=0.0, le=1.0, allow_inf_nan=False),
-]
+FiniteProgress = Annotated[float, Field(strict=True, ge=0.0, le=1.0, allow_inf_nan=False)]
 
 
 class ResonanceModel(BaseModel):
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-    )
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
 
 class MediaSlateTargetOut(ResonanceModel):
