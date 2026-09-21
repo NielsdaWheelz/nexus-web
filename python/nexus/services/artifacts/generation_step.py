@@ -70,8 +70,8 @@ from nexus.services.structured_synthesis import (
     decode_structured_synthesis,
     outcome_failure_facts,
 )
-from nexus.services.tool_authority import compose_deferred_generation_tool_executor
-from nexus.services.tool_runtime.composition import freeze_tool_plan_snapshot
+from nexus.services.tool_authority import DeferredGenerationToolExecutor
+from nexus.services.tool_runtime.catalog import freeze_tool_plan_snapshot
 
 if TYPE_CHECKING:
     from nexus.services.agent_tools_mcp import CodexGenerationToolBinding
@@ -235,13 +235,13 @@ class ArtifactGenerationStep:
         binding: CodexGenerationToolBinding | None = None
 
         def bind_codex(spec: GenerationSpec) -> CodexAdmissionBinder:
-            from nexus.services.agent_tools_mcp import compose_codex_generation_tool_binding
+            from nexus.services.agent_tools_mcp import CodexGenerationToolBinding
 
             nonlocal binding
             operation = runtime.llm_runtime.admission.model_tool_operation(spec)
             if operation is None or projection is None:
                 raise AssertionError("tool-bearing Dossier lost its frozen operation")
-            binding = compose_codex_generation_tool_binding(
+            binding = CodexGenerationToolBinding(
                 session_factory=session_factory,
                 user_id=requester_user_id,
                 owner=self.owner,
@@ -250,7 +250,6 @@ class ArtifactGenerationStep:
                 operation=operation,
                 spec=spec,
                 intent=self.intent,
-                settings=runtime.settings,
                 projection=projection,
             )
             return binding.bind_admission
@@ -259,7 +258,7 @@ class ArtifactGenerationStep:
             operation = runtime.llm_runtime.admission.model_tool_operation(spec)
             if operation is None or projection is None:
                 raise AssertionError("tool-bearing Dossier lost its frozen operation")
-            return compose_deferred_generation_tool_executor(
+            return DeferredGenerationToolExecutor(
                 session_factory=session_factory,
                 user_id=requester_user_id,
                 owner=self.owner,
@@ -436,8 +435,6 @@ class ArtifactGenerationStep:
     ) -> None:
         if state.generation_id != self.generation_id:
             raise AssertionError(f"{self.path} generation identity changed")
-        if isinstance(state.tool_execution, Present):
-            raise AssertionError(f"{self.path} generation contains host-tool metadata")
         raw = self._raw_admission(runtime)
         if not isinstance(raw, dict) or set(raw) != {"spec", "intent"}:
             raise AssertionError("Dossier generation lost its frozen admission")

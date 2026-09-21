@@ -58,7 +58,7 @@ from nexus.services.generation_spec import (
     TextOutputSnapshot,
     generation_fact_digest,
 )
-from nexus.services.tool_runtime.composition import (
+from nexus.services.tool_runtime.catalog import (
     ComposedToolRuntime,
     FrozenToolOperation,
     freeze_tool_plan_snapshot,

@@ -75,9 +75,9 @@ from nexus.runtime_health import get_runtime_identity
 from nexus.services.bootstrap import ensure_user_and_default_library
 from nexus.services.generation_catalog import build_generation_catalog_service
 from nexus.services.generation_policy import validate_policy
-from nexus.services.tool_runtime.composition import (
+from nexus.services.tool_runtime.catalog import (
     compose_configured_web_search_provider,
-    compose_product_tool_runtime,
+    compose_tool_runtime,
 )
 
 logger = get_logger(__name__)
@@ -167,7 +167,7 @@ async def lifespan(app: FastAPI):
         app.state.httpx_client,
         settings=settings,
     )
-    app.state.tool_runtime = compose_product_tool_runtime(app.state.web_search_provider)
+    app.state.tool_runtime = compose_tool_runtime(app.state.web_search_provider)
 
     logger.info(
         "app_lifespan_started",

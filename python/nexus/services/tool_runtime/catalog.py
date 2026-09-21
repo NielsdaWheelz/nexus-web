@@ -1,4 +1,4 @@
-"""Closed catalogue and operation-plan composition for Nexus tools."""
+"""Closed catalogue, frozen operations, and transport lowering for Nexus tools."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import httpx
 from llm_tools import (
     WEB_READ_SPEC,
     WEB_SEARCH_SPEC,
-    Available,
     BraveSearchProvider,
     FrozenCapabilityProfile,
     FrozenToolPlan,
@@ -23,16 +22,13 @@ from llm_tools import (
     ToolCatalog,
     ToolEffect,
     ToolFamily,
-    ToolSpec,
     Unavailable,
     WebSearchProvider,
     bind_brave_web_search,
     bind_web_read,
     web_family,
 )
-from provider_runtime.agent_runtime import (
-    CredentialRef,
-)
+from provider_runtime.agent_runtime import CredentialRef
 from provider_runtime.agent_runtime.tool_projection import (
     McpToolPublication,
     PublishedMcpTools,
@@ -47,10 +43,7 @@ from nexus.services.tool_runtime.declarations import (
     NEXUS_TOOL_DECLARATIONS,
     PresentedToolDeclaration,
 )
-from nexus.services.tool_runtime.profiles import (
-    TOOL_PLAN_DEFINITIONS,
-    ToolPlanDefinition,
-)
+from nexus.services.tool_runtime.plans import TOOL_PLAN_DEFINITIONS, ToolPlanDefinition
 from nexus.services.tool_runtime.snapshots import (
     FrozenRunLimitsSnapshot,
     FrozenToolExposureSnapshot,
@@ -76,63 +69,73 @@ class ComposedToolRuntime:
     operations: Mapping[str, FrozenToolOperation]
 
 
+WEB_SEARCH_MAX_RESULTS: Final[int] = 6
+WEB_SEARCH_SELECTED_RESULTS: Final[int] = 5
+WEB_SEARCH_CONTEXT_CHARS: Final[int] = 12_000
 _WEB_SEARCH_POLICY_INPUTS: Final[Mapping[str, object]] = MappingProxyType(
     {
-        "context_chars": 12_000,
+        "context_chars": WEB_SEARCH_CONTEXT_CHARS,
         "locale": "US/en",
-        "max_results": 6,
+        "max_results": WEB_SEARCH_MAX_RESULTS,
         "safe_search": "moderate",
-        "selected_results": 5,
+        "selected_results": WEB_SEARCH_SELECTED_RESULTS,
     }
 )
 
 
-def _validate_binding_metadata(
-    web_search_binding: ToolBinding[Any, Any, Any],
-    web_read_binding: ToolBinding[Any, Any, Any],
-    nexus_bindings: tuple[ToolBinding[Any, Any, Any], ...],
-) -> None:
-    if web_search_binding.spec is not WEB_SEARCH_SPEC:
-        raise ValueError("web.search binding must own the imported declaration")
-    if web_search_binding.replay_policy is not ReplayPolicy.BilledOnce:
-        raise ValueError("web.search must remain BilledOnce")
-    if web_read_binding.spec is not WEB_READ_SPEC:
-        raise ValueError("web.read binding must own the imported declaration")
-    if web_read_binding.replay_policy is not ReplayPolicy.ReDispatchable:
-        raise ValueError("web.read must remain ReDispatchable")
-    for binding in nexus_bindings:
-        if (
-            binding.spec.effect is ToolEffect.Write
-            and binding.replay_policy is not ReplayPolicy.ReDispatchable
-        ):
-            raise ValueError(f"Nexus write lacks replay metadata: {binding.spec.id!s}")
-        if binding.replay_policy is not ReplayPolicy.ReDispatchable:
-            raise ValueError(f"Nexus binding must be ReDispatchable: {binding.spec.id!s}")
-
-
-def _require_nexus_execution(
-    nexus_bindings: tuple[ToolBinding[Any, Any, Any], ...],
+def compose_tool_runtime(
+    web_search_provider: WebSearchProvider | None,
     *,
-    available: bool,
-) -> None:
-    label = "available" if available else "unavailable"
-    for binding in nexus_bindings:
-        if available and not isinstance(binding.execute, Available):
-            raise ValueError(f"Nexus binding must be {label}: {binding.spec.id!s}")
-        if not available and not isinstance(binding.execute, Unavailable):
-            raise ValueError(f"Nexus binding must be {label}: {binding.spec.id!s}")
-
-
-def _compose_tool_runtime(
-    web_search_binding: ToolBinding[Any, Any, Any],
-    *,
-    web_read_binding: ToolBinding[Any, Any, Any],
-    nexus_bindings: tuple[ToolBinding[Any, Any, Any], ...],
+    dispatches: bool = True,
 ) -> ComposedToolRuntime:
-    _validate_binding_metadata(web_search_binding, web_read_binding, nexus_bindings)
+    """Compose the one process-owned runtime.
+
+    ``dispatches`` is False in a process that only projects plan metadata (the
+    Codex host route); every binding revision, and therefore every frozen plan
+    revision, is identical either way.
+    """
+
+    from nexus.services.tool_runtime.bindings import compose_nexus_bindings, nexus_tool_bindings
+
+    portable = ToolCatalog.compose((web_family(),))
+    search_source = (
+        portable.binding(WEB_SEARCH_SPEC.id)
+        if web_search_provider is None
+        else bind_brave_web_search(web_search_provider, max_results=WEB_SEARCH_MAX_RESULTS)
+    )
+    read_source = (
+        bind_web_read(SafeWebReader()) if dispatches else portable.binding(WEB_READ_SPEC.id)
+    )
+    # These four facts come from the pinned llm_tools revision and nothing else
+    # in Nexus would notice a flip; invariant 3 depends on both replay policies.
+    if search_source.spec is not WEB_SEARCH_SPEC or read_source.spec is not WEB_READ_SPEC:
+        raise ValueError("web bindings must own the imported declarations")
+    if search_source.replay_policy is not ReplayPolicy.BilledOnce:
+        raise ValueError("web.search must remain BilledOnce")
+    if read_source.replay_policy is not ReplayPolicy.ReDispatchable:
+        raise ValueError("web.read must remain ReDispatchable")
+
+    web_search_binding: ToolBinding[Any, Any, Any] = ToolBinding(
+        spec=WEB_SEARCH_SPEC,
+        execute=search_source.execute,
+        replay_policy=ReplayPolicy.BilledOnce,
+        implementation_revision=search_source.implementation_revision,
+        policy_epoch=search_source.policy_epoch,
+        policy_inputs={**search_source.policy_inputs, **_WEB_SEARCH_POLICY_INPUTS},
+    )
+    nexus_bindings = (
+        nexus_tool_bindings()
+        if dispatches
+        else compose_nexus_bindings(
+            {
+                entry.spec.id: Unavailable("Projection processes dispatch Nexus tools through MCP")
+                for entry in NEXUS_TOOL_DECLARATIONS
+            }
+        )
+    )
     catalog = ToolCatalog.compose(
         (
-            web_family(search=web_search_binding, read=web_read_binding),
+            web_family(search=web_search_binding, read=read_source),
             ToolFamily(
                 namespace="nexus",
                 declarations=tuple(entry.spec for entry in NEXUS_TOOL_DECLARATIONS),
@@ -140,8 +143,7 @@ def _compose_tool_runtime(
             ),
         )
     )
-
-    operations_by_id: dict[str, FrozenToolOperation] = {}
+    operations: dict[str, FrozenToolOperation] = {}
     for definition in TOOL_PLAN_DEFINITIONS:
         profile = definition.profile.freeze(catalog)
         operation = FrozenToolOperation(
@@ -149,41 +151,30 @@ def _compose_tool_runtime(
             profile=profile,
             plan=definition.plan.freeze(catalog, profile),
         )
-        _validate_frozen_operation(operation)
-        if definition.plan_id in operations_by_id:
-            raise ValueError(f"duplicate tool plan id: {definition.plan_id}")
-        operations_by_id[definition.plan_id] = operation
-    operations = MappingProxyType(operations_by_id)
-    return ComposedToolRuntime(catalog=catalog, operations=operations)
+        if operation.plan.profile is not profile:
+            raise ValueError("frozen tool plan and profile do not share one value")
+        if tuple(grant.id for grant in profile.ordered_grants) != tuple(
+            grant.id for grant in definition.profile.grants
+        ):
+            raise ValueError("frozen tool grant order differs from its authority definition")
+        operations[definition.plan_id] = operation
+    return ComposedToolRuntime(catalog=catalog, operations=MappingProxyType(operations))
 
 
-def _validate_frozen_operation(operation: FrozenToolOperation) -> None:
-    definition = operation.definition
-    profile = operation.profile
-    plan = operation.plan
-    if plan.profile is not profile:
-        raise ValueError("frozen tool plan and profile do not share one value")
-    expected_ids = tuple(grant.id for grant in definition.profile.grants)
-    if tuple(grant.id for grant in profile.ordered_grants) != expected_ids:
-        raise ValueError("frozen tool grant order differs from its authority definition")
-    write_count = sum(
-        plan.catalog_view.spec(tool_id).effect is ToolEffect.Write for tool_id in expected_ids
-    )
-    if write_count == 0 and definition.max_live_writes is not None:
-        raise ValueError("read-only frozen tool plan carries a write-effect bound")
-    if write_count > 0 and definition.max_live_writes is None:
-        raise ValueError("write-capable frozen tool plan lacks its effect bound")
+def compose_configured_web_search_provider(
+    client: httpx.AsyncClient,
+    *,
+    settings: Settings,
+) -> WebSearchProvider | None:
+    """Bind the sole configured Brave dependency shared by every process."""
 
-
-def operation_tool_specs(
-    operation: FrozenToolOperation | None,
-) -> tuple[ToolSpec[Any, Any, Any], ...]:
-    """Project exact ordered declarations from one frozen authority."""
-
-    if operation is None:
-        return ()
-    return tuple(
-        operation.plan.catalog_view.spec(grant.id) for grant in operation.profile.ordered_grants
+    if settings.brave_search_api_key is None:
+        return None
+    return BraveSearchProvider(
+        client,
+        api_key=settings.brave_search_api_key,
+        base_url=settings.brave_search_base_url,
+        timeout_seconds=settings.brave_search_timeout_seconds,
     )
 
 
@@ -192,12 +183,14 @@ def operation_presented_declarations(
 ) -> tuple[PresentedToolDeclaration, ...]:
     """Join plan-owned membership to its canonical presentation metadata."""
 
+    if operation is None:
+        return ()
     declarations: list[PresentedToolDeclaration] = []
-    for spec in operation_tool_specs(operation):
-        try:
-            entry = CHAT_TOOL_DECLARATIONS_BY_ID[spec.id]
-        except KeyError as exc:
-            raise ValueError(f"frozen tool lacks presentation metadata: {spec.id!s}") from exc
+    for grant in operation.profile.ordered_grants:
+        spec = operation.plan.catalog_view.spec(grant.id)
+        entry = CHAT_TOOL_DECLARATIONS_BY_ID.get(str(spec.id))
+        if entry is None:
+            raise ValueError(f"frozen tool lacks presentation metadata: {spec.id!s}")
         if entry.spec is not spec:
             raise ValueError(f"frozen tool declaration identity drifted: {spec.id!s}")
         declarations.append(entry)
@@ -258,84 +251,6 @@ def project_codex_model_tools(
     )
 
 
-def compose_product_tool_runtime(
-    web_search_provider: WebSearchProvider | None,
-) -> ComposedToolRuntime:
-    """Compose one process-owned runtime with stable configured/keyless authority."""
-
-    from nexus.services.tool_runtime.bindings import NEXUS_TOOL_BINDINGS
-
-    if web_search_provider is None:
-        portable = ToolCatalog.compose((web_family(),)).binding(WEB_SEARCH_SPEC.id)
-        web_search_binding: ToolBinding[Any, Any, Any] = ToolBinding(
-            spec=WEB_SEARCH_SPEC,
-            execute=Unavailable("Brave credential is absent"),
-            replay_policy=ReplayPolicy.BilledOnce,
-            implementation_revision=portable.implementation_revision,
-            policy_epoch=portable.policy_epoch,
-            policy_inputs={**portable.policy_inputs, **_WEB_SEARCH_POLICY_INPUTS},
-        )
-    else:
-        portable = bind_brave_web_search(web_search_provider, max_results=6)
-        web_search_binding = ToolBinding(
-            spec=portable.spec,
-            execute=portable.execute,
-            replay_policy=portable.replay_policy,
-            implementation_revision=portable.implementation_revision,
-            policy_epoch=portable.policy_epoch,
-            policy_inputs={**portable.policy_inputs, **_WEB_SEARCH_POLICY_INPUTS},
-        )
-    _require_nexus_execution(NEXUS_TOOL_BINDINGS, available=True)
-    return _compose_tool_runtime(
-        web_search_binding,
-        web_read_binding=bind_web_read(SafeWebReader()),
-        nexus_bindings=NEXUS_TOOL_BINDINGS,
-    )
-
-
-def compose_projection_tool_runtime() -> ComposedToolRuntime:
-    """Compose exact plan metadata for a process that never dispatches tools."""
-
-    from nexus.services.tool_runtime.binding_contract import compose_nexus_bindings
-
-    portable = ToolCatalog.compose((web_family(),)).binding(WEB_SEARCH_SPEC.id)
-    web_search_binding: ToolBinding[Any, Any, Any] = ToolBinding(
-        spec=WEB_SEARCH_SPEC,
-        execute=Unavailable("Projection processes do not dispatch web.search"),
-        replay_policy=ReplayPolicy.BilledOnce,
-        implementation_revision=portable.implementation_revision,
-        policy_epoch=portable.policy_epoch,
-        policy_inputs={**portable.policy_inputs, **_WEB_SEARCH_POLICY_INPUTS},
-    )
-    unavailable = Unavailable("Projection processes dispatch Nexus tools through MCP")
-    nexus_bindings = compose_nexus_bindings(
-        {entry.spec.id: unavailable for entry in NEXUS_TOOL_DECLARATIONS}
-    )
-    _require_nexus_execution(nexus_bindings, available=False)
-    return _compose_tool_runtime(
-        web_search_binding,
-        web_read_binding=ToolCatalog.compose((web_family(),)).binding(WEB_READ_SPEC.id),
-        nexus_bindings=nexus_bindings,
-    )
-
-
-def compose_configured_web_search_provider(
-    client: httpx.AsyncClient,
-    *,
-    settings: Settings,
-) -> WebSearchProvider | None:
-    """Bind the sole configured Brave dependency shared by every process."""
-
-    if settings.brave_search_api_key is None:
-        return None
-    return BraveSearchProvider(
-        client,
-        api_key=settings.brave_search_api_key,
-        base_url=settings.brave_search_base_url,
-        timeout_seconds=settings.brave_search_timeout_seconds,
-    )
-
-
 def freeze_tool_plan_snapshot(operation: FrozenToolOperation) -> FrozenToolPlanSnapshot:
     """Encode the exact immutable semantic authority used by one tool run."""
 
@@ -363,14 +278,13 @@ def freeze_tool_plan_snapshot(operation: FrozenToolOperation) -> FrozenToolPlanS
                 tool_contract_revision=grant.tool_contract_revision,
             )
         )
-    profile_id = str(profile.id)
     return FrozenToolPlanSnapshot(
         exposure=exposure,
         grants=tuple(grants),
         max_live_writes=operation.definition.max_live_writes,
         plan_id=operation.definition.plan_id,
         plan_revision=operation.plan.plan_revision,
-        profile_id=profile_id,
+        profile_id=str(profile.id),
         profile_revision=profile.profile_revision,
         run_limits=FrozenRunLimitsSnapshot.model_validate(profile.run_limits.json()),
     )
@@ -397,19 +311,31 @@ def validate_tool_plan_snapshot(
     return decoded
 
 
+def write_tool_ids() -> tuple[str, ...]:
+    """The canonical ids of every additive-write Nexus tool."""
+
+    return tuple(
+        str(entry.spec.id)
+        for entry in NEXUS_TOOL_DECLARATIONS
+        if entry.spec.effect is ToolEffect.Write
+    )
+
+
 __all__ = [
+    "WEB_SEARCH_CONTEXT_CHARS",
+    "WEB_SEARCH_MAX_RESULTS",
+    "WEB_SEARCH_SELECTED_RESULTS",
     "ComposedToolRuntime",
-    "FrozenToolPlanSnapshot",
     "FrozenToolOperation",
+    "FrozenToolPlanSnapshot",
     "compose_configured_web_search_provider",
     "compose_provider_model_tools",
-    "compose_product_tool_runtime",
-    "compose_projection_tool_runtime",
+    "compose_tool_runtime",
     "encode_tool_plan_snapshot",
     "freeze_tool_plan_snapshot",
     "operation_presented_declarations",
-    "operation_tool_specs",
     "project_codex_model_tools",
     "project_provider_model_tools",
     "validate_tool_plan_snapshot",
+    "write_tool_ids",
 ]

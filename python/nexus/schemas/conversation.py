@@ -317,11 +317,19 @@ class ToolProjectionOut(BaseModel):
         if self.error_type is not None and self.error_type not in contract["error_types"]:
             raise ValueError("unknown tool projection error type")
 
-        projection = self.model_dump(mode="python")
-        shape = contract["record_shapes"][self.record_kind]
-        if any(projection[field] is None for field in shape["non_null_fields"]):
+        if self.record_kind == "attached_context":
+            if (
+                self.canonical_tool_id is not None
+                or self.provider_wire_name is not None
+                or self.effect is not None
+                or self.error_type is not None
+            ):
+                raise ValueError("tool projection populated a forbidden tagged field")
+        elif self.canonical_tool_id is None or self.effect is None:
             raise ValueError("tool projection is missing a required tagged field")
-        if any(projection[field] is not None for field in shape["null_fields"]):
+        elif self.record_kind == "historical_execution" and (
+            self.provider_wire_name is not None or self.error_type is not None
+        ):
             raise ValueError("tool projection populated a forbidden tagged field")
 
         if self.record_kind in {"current_execution", "historical_execution"}:

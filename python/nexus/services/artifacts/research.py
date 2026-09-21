@@ -3,19 +3,30 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from llm_tools import (
+    ExecutionContext,
     HostTable,
+    InvocationPosition,
     ParsedJson,
     PositionConflictDefect,
+    PositionState,
     Principal,
+    ReplayPolicy,
+    Reservation,
+    RunLimits,
     Scope,
+    Settlement,
     ToolExecutor,
     ToolId,
+    ToolResult,
+    canonical_json_bytes,
 )
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session, sessionmaker
@@ -24,7 +35,11 @@ from nexus.db.async_session import open_async_session
 from nexus.jobs.queue import JobRow
 from nexus.logging import get_logger
 from nexus.schemas.presence import Present, absent, present
-from nexus.services.agent_tools.web_page_read import (
+from nexus.services.artifacts.coordination import DossierBuildRuntime, ResearchLeaseLost
+from nexus.services.artifacts.dossier_types import WebResearchNotConfigured
+from nexus.services.artifacts.idea_seeds import list_idea_seed_highlight_ids
+from nexus.services.artifacts.subject_policy import ResolvedIdeaSubject
+from nexus.services.artifacts.web_page_read import (
     PageAcceptResult,
     PageReadReceipt,
     PageReadyResult,
@@ -36,10 +51,6 @@ from nexus.services.agent_tools.web_page_read import (
     observe_web_page,
     read_web_page,
 )
-from nexus.services.artifacts.coordination import DossierBuildRuntime, ResearchLeaseLost
-from nexus.services.artifacts.dossier_types import WebResearchNotConfigured
-from nexus.services.artifacts.idea_seeds import list_idea_seed_highlight_ids
-from nexus.services.artifacts.subject_policy import ResolvedIdeaSubject
 from nexus.services.durable_step_journal import (
     Completed,
     Prepared,
@@ -60,11 +71,10 @@ from nexus.services.resource_graph.schemas import CitationSnapshot
 from nexus.services.resource_items.capabilities import resource_read_policy
 from nexus.services.search.query import SearchKind, SearchQuery
 from nexus.services.search.service import search_scopes_async
-from nexus.services.tool_runtime.composition import (
+from nexus.services.tool_runtime.catalog import (
     encode_tool_plan_snapshot,
     validate_tool_plan_snapshot,
 )
-from nexus.services.tool_runtime.execution import open_durable_execution_context
 
 if TYPE_CHECKING:
     from nexus.services.artifacts.bindings._shared import Candidate
@@ -425,27 +435,22 @@ async def _redispatchable_step[T: BaseModel](
             request_fingerprint=present(request_fingerprint),
             terminal_result=absent(),
         )
-        if not runtime.checkpoint_step(db, path=path, state=state):
-            db.rollback()
-            raise ResearchLeaseLost
-        db.commit()
+        _checkpoint(db, runtime=runtime, path=path, state=state)
 
     uncertain = state.model_copy(update={"dispatch_phase": Uncertain})
-    if not runtime.checkpoint_step(db, path=path, state=uncertain):
-        db.rollback()
-        raise ResearchLeaseLost
-    db.commit()
+    _checkpoint(db, runtime=runtime, path=path, state=uncertain)
     result = await dispatch()
-    completed = uncertain.model_copy(
-        update={
-            "dispatch_phase": Completed,
-            "terminal_result": present(encode_step_result(result)),
-        }
+    _checkpoint(
+        db,
+        runtime=runtime,
+        path=path,
+        state=uncertain.model_copy(
+            update={
+                "dispatch_phase": Completed,
+                "terminal_result": present(encode_step_result(result)),
+            }
+        ),
     )
-    if not runtime.checkpoint_step(db, path=path, state=completed):
-        db.rollback()
-        raise ResearchLeaseLost
-    db.commit()
     return result
 
 
@@ -513,10 +518,64 @@ def _ensure_research_tool_plan(
         request_fingerprint=present(operation.plan.plan_revision),
         terminal_result=present(snapshot),
     )
-    if not runtime.checkpoint_step(db, path=_TOOL_PLAN_STEP_PATH, state=completed):
-        db.rollback()
-        raise ResearchLeaseLost
-    db.commit()
+    _checkpoint(db, runtime=runtime, path=_TOOL_PLAN_STEP_PATH, state=completed)
+
+
+@dataclass(slots=True)
+class _ResearchBudget:
+    """The run budget for one fixed research step; the plan caps calls at three."""
+
+    limits: RunLimits
+    remaining_elapsed_seconds: float
+
+    async def reserve(self, position: InvocationPosition, reservation: Reservation) -> bool:
+        del position, reservation
+        return True
+
+    async def settle(self, position: InvocationPosition, settlement: Settlement) -> None:
+        del position, settlement
+
+
+class _ResearchPositionRecorder:
+    """In-process recorder for one fixed BilledOnce step.
+
+    The step journal owns durability: ``_web_search_tool_step`` checkpoints
+    Prepared -> Uncertain -> Completed around this recorder, so the recorder
+    only satisfies the portable executor's phase protocol and reports whether
+    the dispatch outcome stayed uncertain.
+    """
+
+    def __init__(self, *, position: InvocationPosition, budgets: _ResearchBudget) -> None:
+        self.position = position
+        self.budgets = budgets
+        self.uncertain_outcome = False
+
+    @property
+    def durable(self) -> bool:
+        return True
+
+    async def occupy(self, **kwargs: Any) -> PositionState:
+        del kwargs
+        return PositionState(terminal_result=None, uncertain=False, actual_attempts=0)
+
+    async def reserve(self, **kwargs: Any) -> bool:
+        del kwargs
+        return True
+
+    async def dispatch_started(self, **kwargs: Any) -> PositionState:
+        del kwargs
+        return PositionState(terminal_result=None, uncertain=False, actual_attempts=0)
+
+    async def dispatch_abandoned(self, **kwargs: Any) -> None:
+        raise AssertionError("Idea research never re-admits an abandoned dispatch")
+
+    async def uncertain(self, *, position: InvocationPosition) -> None:
+        del position
+        self.uncertain_outcome = True
+
+    async def terminalize_and_settle(self, *, result: ToolResult, **kwargs: Any) -> ToolResult:
+        del kwargs
+        return result
 
 
 async def _web_search_tool_step(
@@ -528,58 +587,125 @@ async def _web_search_tool_step(
     query: str,
     request_fingerprint: str,
 ) -> WebSearchResult:
-    operation = runtime.research_tool_operation
-    db.commit()
-    async with open_durable_execution_context(
-        session_factory=sessionmaker(bind=db.get_bind(), expire_on_commit=False),
-        operation=operation,
-        operation_id=runtime.build_id,
-        claimed_job=runtime.job,
-        job_context=runtime.execution_context,
-        durable_step_path=path,
-        tool_id=_WEB_SEARCH_TOOL_ID,
-        principal=principal,
-        scope=Scope("idea_dossier_research"),
-        effect_id=None,
-        cancellation=_DossierToolCancellation(),
-        telemetry=_DossierToolTelemetry(),
-    ) as context:
-        try:
-            result = await ToolExecutor.execute(
-                operation.plan.catalog_view.binding(_WEB_SEARCH_TOOL_ID),
-                ParsedJson({"query": query, "freshness_days": None}),
-                context,
-            )
-        except PositionConflictDefect as exc:
-            # With the exact frozen plan already validated, a conflict at this fixed
-            # position means the Idea-derived query changed after durable occupation.
-            raise ResearchInputsChanged from exc
+    """Run one public Web search once; an uncertain outcome is never redispatched."""
 
-    runtime.refresh_job(db)
-    if result.get("type") != "Success":
-        error = result.get("error")
+    operation = runtime.research_tool_operation
+    binding = operation.plan.catalog_view.binding(_WEB_SEARCH_TOOL_ID)
+    if binding.replay_policy is not ReplayPolicy.BilledOnce:
+        raise AssertionError("Idea research Web search must remain BilledOnce")
+    db.commit()
+    generation_id = stable_generation_id(runtime.build_id, path)
+    state = runtime.read_step(path)
+    if state is not None:
+        if state.generation_id != generation_id or (
+            not isinstance(state.request_fingerprint, Present)
+            or state.request_fingerprint.value != request_fingerprint
+        ):
+            raise ResearchInputsChanged
+        if state.dispatch_phase is Completed:
+            if not isinstance(state.terminal_result, Present):
+                raise AssertionError(f"Completed Dossier step {path!r} has no result")
+            return _web_search_items(state.terminal_result.value, runtime, request_fingerprint)
+        if state.dispatch_phase is Uncertain:
+            # docs/modules/jobs.md:309 — a billed public-Web search is never
+            # automatically redispatched.
+            raise ResearchInputsChanged
+    else:
+        state = StepReplayState(
+            generation_id=generation_id,
+            dispatch_phase=Prepared,
+            request_fingerprint=present(request_fingerprint),
+            terminal_result=absent(),
+        )
+        _checkpoint(db, runtime=runtime, path=path, state=state)
+    _checkpoint(
+        db,
+        runtime=runtime,
+        path=path,
+        state=state.model_copy(update={"dispatch_phase": Uncertain}),
+    )
+
+    limits = operation.profile.run_limits
+    started_at = runtime.job.started_at or runtime.job.created_at
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=UTC)
+    elapsed = (datetime.now(UTC) - started_at).total_seconds()
+    recorder = _ResearchPositionRecorder(
+        position=InvocationPosition(path),
+        budgets=_ResearchBudget(
+            limits=limits,
+            remaining_elapsed_seconds=max(0.0, float(limits.max_elapsed_seconds) - elapsed),
+        ),
+    )
+    try:
+        result = await ToolExecutor.execute(
+            binding,
+            ParsedJson({"query": query, "freshness_days": None}),
+            ExecutionContext(
+                plan=operation.plan,
+                grant=operation.plan.grant(_WEB_SEARCH_TOOL_ID),
+                catalog_view=operation.plan.catalog_view,
+                position=recorder.position,
+                recorder=recorder,
+                effect_id=None,
+                budgets=recorder.budgets,
+                principal=principal,
+                scope=Scope("idea_dossier_research"),
+                cancellation=_DossierToolCancellation(),
+                telemetry=_DossierToolTelemetry(),
+            ),
+        )
+    except PositionConflictDefect as exc:
+        # With the exact frozen plan already validated, a conflict at this fixed
+        # position means the Idea-derived query changed after durable occupation.
+        raise ResearchInputsChanged from exc
+    if recorder.uncertain_outcome:
+        raise ResearchInputsChanged
+
+    terminal = canonical_json_bytes(result).decode("utf-8")
+    _checkpoint(
+        db,
+        runtime=runtime,
+        path=path,
+        state=StepReplayState(
+            generation_id=generation_id,
+            dispatch_phase=Completed,
+            request_fingerprint=present(request_fingerprint),
+            terminal_result=present(terminal),
+        ),
+    )
+    return _web_search_items(terminal, runtime, request_fingerprint)
+
+
+def _web_search_items(
+    terminal: str,
+    runtime: DossierBuildRuntime,
+    request_fingerprint: str,
+) -> WebSearchResult:
+    decoded = json.loads(terminal)
+    if decoded.get("type") != "Success":
+        error = decoded.get("error")
         error_type = error.get("type") if isinstance(error, dict) else None
         if error_type == "ToolUnavailable":
             raise WebResearchNotConfigured()
         raise RuntimeError(f"Dossier Web search failed: {error_type or 'InvalidToolResult'}")
-
-    state = runtime.read_step(path)
-    if (
-        state is None
-        or state.generation_id != stable_generation_id(runtime.build_id, path)
-        or state.dispatch_phase is not Completed
-        or not isinstance(state.terminal_result, Present)
-    ):
-        raise AssertionError("Dossier Web search did not persist one completed tool result")
     return WebSearchResult(
         query_fingerprint=request_fingerprint,
-        items=list(
-            dossier_web_search_items_from_tool_result(
-                state.terminal_result.value,
-                build_id=runtime.build_id,
-            )
-        ),
+        items=list(dossier_web_search_items_from_tool_result(terminal, build_id=runtime.build_id)),
     )
+
+
+def _checkpoint(
+    db: Session,
+    *,
+    runtime: DossierBuildRuntime,
+    path: str,
+    state: StepReplayState,
+) -> None:
+    if not runtime.checkpoint_step(db, path=path, state=state):
+        db.rollback()
+        raise ResearchLeaseLost
+    db.commit()
 
 
 async def _read_nexus_receipt(
@@ -676,10 +802,7 @@ def _observe_page_step(
         request_fingerprint=present(fingerprint),
         terminal_result=present(encode_step_result(observed)),
     )
-    if not runtime.checkpoint_step(db, path=path, state=completed):
-        db.rollback()
-        raise ResearchLeaseLost
-    db.commit()
+    _checkpoint(db, runtime=runtime, path=path, state=completed)
     return observed
 
 

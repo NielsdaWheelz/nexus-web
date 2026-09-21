@@ -12,7 +12,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, defer, sessionmaker
 
 from nexus.auth.permissions import can_read_media
-from nexus.config import get_settings
 from nexus.db.models import ContentIndexState, FailureStage, Media, ProcessingStatus
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
@@ -27,10 +26,7 @@ from nexus.jobs.queue import (
 )
 from nexus.logging import get_logger
 from nexus.schemas.presence import Presence, Present, absent, present
-from nexus.services.agent_tools_mcp import (
-    CodexGenerationToolBinding,
-    compose_codex_generation_tool_binding,
-)
+from nexus.services.agent_tools_mcp import CodexGenerationToolBinding
 from nexus.services.codex_generation_contract import (
     GenerationTerminal,
     normalized_failure,
@@ -96,7 +92,7 @@ from nexus.services.reader_publication import (
     lock_publication_generation,
     read_publication_generation,
 )
-from nexus.services.tool_authority import compose_deferred_generation_tool_executor
+from nexus.services.tool_authority import DeferredGenerationToolExecutor
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
 logger = get_logger(__name__)
@@ -433,7 +429,7 @@ def enrich_metadata(
             operation = runtime.admission.model_tool_operation(spec)
             if operation is None:
                 raise AssertionError("metadata lost its frozen tool operation")
-            binding = compose_codex_generation_tool_binding(
+            binding = CodexGenerationToolBinding(
                 session_factory=factory,
                 user_id=requester_user_id,
                 owner=owner,
@@ -442,7 +438,6 @@ def enrich_metadata(
                 operation=operation,
                 spec=spec,
                 intent=intent,
-                settings=get_settings(),
             )
             return binding.bind_admission
 
@@ -450,7 +445,7 @@ def enrich_metadata(
             operation = runtime.admission.model_tool_operation(spec)
             if operation is None:
                 raise AssertionError("metadata lost its frozen tool operation")
-            return compose_deferred_generation_tool_executor(
+            return DeferredGenerationToolExecutor(
                 session_factory=factory,
                 user_id=requester_user_id,
                 owner=owner,
