@@ -44,31 +44,23 @@ copy the s3 secret access key, not the separate cloudflare api token value.
 
 ## Publication
 
-For a never-published source SHA, the VPS publisher validates and canonicalizes
-the three VPS inputs, writes `/etc/nexus/config/<sha256>.env`, then atomically
-moves `/etc/nexus/current.env`:
-
 ```bash
-./deploy/hetzner/sync-env.sh <never-published-source-sha>
+./deploy/hetzner/sync-env.sh
 ```
 
-This is prepare-only. It does not restart a service. The application release
-captures the exact path and digest in its attempt and immutable release record.
-It is never invoked implicitly by the application release.
+One command publishes both host inputs. It concatenates the three VPS files
+into the application config, validates shape, required keys, digest-pinned
+`POSTGRES_IMAGE`/`CADDY_IMAGE` and a Compose-local `DATABASE_URL`, then writes
+`/etc/nexus/config/<sha256>.env` and repoints `/etc/nexus/current.env` with an
+atomic rename. It publishes `env-prod-backup` the same way to
+`/etc/nexus/backup-config/<sha256>.env` and `/etc/nexus/backup.env`, and refuses
+any `R2_BACKUP_*` key found in the application config.
 
-publish backup credentials separately for a never-published source sha:
-
-```bash
-NEXUS_BACKUP_ENV=/absolute/path/to/env-prod-backup \
-  ./deploy/hetzner/sync-backup-env.sh <never-published-source-sha>
-```
-
-the backup publisher writes `/etc/nexus/backup-config/<sha256>.env` and moves
-`/etc/nexus/backup.env` under the same release lock. the attempt captures its
-exact config path and digest before stopping writers. replay uses that snapshot
-even if a later release publishes another backup destination. preserve published
-credentials until no replay needs them; credential rotation requires a fresh
-source sha and explicit publication.
+Publication is prepare-only: nothing restarts, and the next release picks up
+whatever the pointers name. It is never invoked implicitly by a release, and it
+is not tied to a source SHA — content addressing, not release state, is what
+makes a published config identifiable. Keep a superseded config file in place
+until you are sure no rollback wants it.
 
 Vercel config is a separate provider snapshot:
 
@@ -77,13 +69,10 @@ Vercel config is a separate provider snapshot:
 ```
 
 For a config-bearing release, publish Vercel config before the SHA triggers its
-staged build; publish VPS config after that SHA is exact `origin/main` and before
-application release. Keep the sequence serialized. A code-only release may reuse
-the current content-addressed VPS config and existing Vercel snapshot. Any config
-change requires a new source SHA; one SHA may become current only once.
+staged build, and VPS config before the release. Keep the sequence serialized.
 
-none of these publishers is a release entrypoint. the sole application release and
-resume command is `deploy/hetzner/deploy.sh <source-sha>`.
+Neither publisher is a release entrypoint. The sole application release command
+is `deploy/hetzner/deploy.sh <source-sha>`.
 
 ## Boundary rules
 
@@ -128,8 +117,9 @@ maintenance worker.
 
 Before a config-bearing release, prove:
 
-- `deploy/supabase/verify-auth-config.sh` accepts hosted Auth settings;
-- Supabase's dashboard-only current-password requirement is disabled;
+- hosted Supabase Auth settings are current: refresh-token rotation on, a
+  ten-second reuse interval, and the dashboard-only current-password
+  requirement disabled (the release no longer checks this);
 - R2 bucket policy, browser upload CORS, lifecycle, and scoped credentials are
   current;
 - the backup bucket has neither an enabled `r2.dev` endpoint nor a public custom

@@ -13,6 +13,8 @@ concurrency:
 jobs:
   publish:
     name: publish immutable backend candidate
+    # First-attempt provenance: a rerun of this workflow publishes nothing, so
+    # the only images a release can deploy are the ones attempt 1 built.
     if: github.run_attempt == 1
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 45
@@ -31,20 +33,20 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
-          clean: false
+          clean: true
 
       - name: prove source identity
         shell: bash
+        env:
+          WORKSPACE: ${{ runner.temp }}/nexus-backend-release-${{ github.sha }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$GITHUB_REF" = refs/heads/main
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-
-      - name: prepare bundle workspace
-        id: release_workspace
-        shell: bash
-        run: deploy/hetzner/backend-publisher-workspace.sh prepare
+          rm -rf -- "$WORKSPACE"
+          mkdir -p -- "$WORKSPACE"
+          chmod 700 -- "$WORKSPACE"
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
@@ -80,24 +82,22 @@ jobs:
           provenance: mode=max
           sbom: true
 
-      - name: build immutable bundle
+      - name: write the candidate manifest
         shell: bash
         env:
+          WORKSPACE: ${{ runner.temp }}/nexus-backend-release-${{ github.sha }}
           API_IMAGE: ${{ format('{0}@{1}', env.API_REPOSITORY, steps.api.outputs.digest) }}
           WORKER_IMAGE: ${{ format('{0}@{1}', env.WORKER_REPOSITORY, steps.worker.outputs.digest) }}
-          RELEASE_WORKSPACE: ${{ steps.release_workspace.outputs.path }}
         run: |
           set -euo pipefail
-          deploy/hetzner/backend-publisher-workspace.sh require "$RELEASE_WORKSPACE"
-          bundle="$RELEASE_WORKSPACE/bundle"
-          api_identity="$RELEASE_WORKSPACE/api-runtime-identity.json"
-          worker_identity="$RELEASE_WORKSPACE/worker-runtime-identity.json"
-
-          mkdir -m 700 -- "$bundle"
+          api_identity="$WORKSPACE/api-runtime-identity.json"
+          worker_identity="$WORKSPACE/worker-runtime-identity.json"
           docker pull "$API_IMAGE"
           docker pull "$WORKER_IMAGE"
-          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$API_IMAGE")" = "$SOURCE_SHA"
-          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$WORKER_IMAGE")" = "$SOURCE_SHA"
+          for image in "$API_IMAGE" "$WORKER_IMAGE"; do
+            revision='{{ index .Config.Labels "org.opencontainers.image.revision" }}'
+            test "$(docker image inspect --format "$revision" "$image")" = "$SOURCE_SHA"
+          done
           docker run --rm --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --env PYTHONDONTWRITEBYTECODE=1 \
             --entrypoint python "$API_IMAGE" \
@@ -108,6 +108,7 @@ jobs:
             -m nexus.release_artifact print-runtime-identity >"$worker_identity"
           cmp "$api_identity" "$worker_identity"
 
+          mkdir -p -- "$WORKSPACE/bundle"
           PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=python \
             python3 -B -m nexus.release_artifact write-candidate-manifest \
             --source-sha "$SOURCE_SHA" \
@@ -115,54 +116,40 @@ jobs:
             --worker-image "$WORKER_IMAGE" \
             --api-runtime-identity "$api_identity" \
             --worker-runtime-identity "$worker_identity" \
-            --output "$bundle/candidate-manifest.json"
-          install -Dm0555 deploy/hetzner/release.py "$bundle/release.py"
-          install -Dm0444 python/nexus/__init__.py "$bundle/python/nexus/__init__.py"
-          install -Dm0444 python/nexus/release_artifact.py \
-            "$bundle/python/nexus/release_artifact.py"
-          install -Dm0444 contracts/android-player-protocol.json \
-            "$bundle/contracts/android-player-protocol.json"
-          install -Dm0444 deploy/hetzner/docker-compose.yml "$bundle/docker-compose.yml"
-          install -Dm0444 deploy/hetzner/Caddyfile "$bundle/Caddyfile"
-          install -Dm0444 deploy/hetzner/nexus-codex-agent-host.apparmor \
-            "$bundle/nexus-codex-agent-host.apparmor"
+            --output "$WORKSPACE/bundle/candidate-manifest.json"
 
       - name: prove public digest access
         shell: bash
         env:
+          WORKSPACE: ${{ runner.temp }}/nexus-backend-release-${{ github.sha }}
           API_IMAGE: ${{ format('{0}@{1}', env.API_REPOSITORY, steps.api.outputs.digest) }}
           WORKER_IMAGE: ${{ format('{0}@{1}', env.WORKER_REPOSITORY, steps.worker.outputs.digest) }}
-          RELEASE_WORKSPACE: ${{ steps.release_workspace.outputs.path }}
         run: |
           set -euo pipefail
-          deploy/hetzner/backend-publisher-workspace.sh require "$RELEASE_WORKSPACE"
           docker logout ghcr.io
-          anonymous_config="$RELEASE_WORKSPACE/anonymous-docker-config"
-          mkdir -m 700 -- "$anonymous_config"
+          anonymous_config="$WORKSPACE/anonymous-docker-config"
+          mkdir -p -- "$anonymous_config"
+          chmod 700 -- "$anonymous_config"
           DOCKER_CONFIG="$anonymous_config" docker manifest inspect "$API_IMAGE" >/dev/null
           DOCKER_CONFIG="$anonymous_config" docker manifest inspect "$WORKER_IMAGE" >/dev/null
 
-      - name: upload immutable bundle
+      - name: upload the candidate manifest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nexus-backend-release-${{ github.sha }}
-          path: ${{ steps.release_workspace.outputs.path }}/bundle/
+          path: ${{ runner.temp }}/nexus-backend-release-${{ github.sha }}/bundle/
           if-no-files-found: error
           retention-days: 90
 
-      - name: remove pulled images
-        if: ${{ always() && steps.api.outputs.digest != '' && steps.worker.outputs.digest != '' }}
+      - name: remove the pulled images and workspace
+        if: ${{ always() }}
         shell: bash
         env:
+          WORKSPACE: ${{ runner.temp }}/nexus-backend-release-${{ github.sha }}
           API_IMAGE: ${{ format('{0}@{1}', env.API_REPOSITORY, steps.api.outputs.digest) }}
           WORKER_IMAGE: ${{ format('{0}@{1}', env.WORKER_REPOSITORY, steps.worker.outputs.digest) }}
         run: |
           set -euo pipefail
-          docker image rm "$API_IMAGE" "$WORKER_IMAGE"
-
-      - name: remove bundle workspace
-        if: ${{ always() && steps.release_workspace.outputs.path != '' }}
-        shell: bash
-        env:
-          RELEASE_WORKSPACE: ${{ steps.release_workspace.outputs.path }}
-        run: deploy/hetzner/backend-publisher-workspace.sh cleanup "$RELEASE_WORKSPACE"
+          rm -rf -- "$WORKSPACE"
+          if [ -n "${{ steps.api.outputs.digest }}" ]; then docker image rm "$API_IMAGE"; fi
+          if [ -n "${{ steps.worker.outputs.digest }}" ]; then docker image rm "$WORKER_IMAGE"; fi

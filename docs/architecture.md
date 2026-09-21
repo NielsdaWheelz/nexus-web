@@ -161,10 +161,11 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
   schema, and expected Oracle manifest. The host pulls those digests; it never
   builds application images.
 - `deploy/hetzner/deploy.sh <source-sha>` is the sole application release
-  and resume entrypoint. It captures the exact current content-addressed VPS
-  config path and digest, activates only API/workers, proves them, promotes the
-  exact staged Vercel deployment, then publishes one immutable release record
-  and current pointer. Postgres and Caddy retain identity.
+  entrypoint. It runs `deploy/hetzner/release.py`, one linear idempotent pass
+  (preflight, declared host inputs, images, verified R2 backup, migration,
+  `up --wait`, Caddy reload, health, Codex isolation assertions, `current`
+  pointer), then promotes the exact staged Vercel deployment. There is no
+  attempt state and no resume mode: rerun the same command.
 - VPS and Vercel config publication are explicit prepare-only operations, never
   implicit release steps. Oracle reconcile is a separate current-release
   operation; application release never reads or mutates Oracle.
@@ -178,7 +179,7 @@ Key topology facts (details: [`deployment.md`](../deployment.md),
   POSTs before app code; `apps/web/src/lib/auth/callback-origin.ts` resolves one
   safe app origin from request metadata; `apps/web/src/lib/auth/redirects.ts`
   builds `/auth/callback` URLs; hosted Supabase Auth must have exact callback
-  redirect URLs verified by `deploy/supabase/verify-auth-config.sh`.
+  redirect URLs, reviewed in the Supabase dashboard when auth settings change.
 - Direct Vercel custom-domain frontend deploys leave
   `SERVER_ACTION_ALLOWED_ORIGINS` empty. A host-rewriting frontend proxy must set
   a minimal Next.js domain-pattern list and matching trusted-proxy auth origins.
@@ -2188,26 +2189,22 @@ verification has one separate entrypoint, `./scripts/test`.
 - **Build**: `make build` (Next.js), `make build-android[-release]`.
 
 **Deploy** ([`deployment.md`](../deployment.md), sole runbook): each exact
-`main` push triggers one backend publisher. It builds API/worker targets once,
-publishes their GHCR digests and strict manifest, and supplies the immutable host
-bundle. Vercel builds the exact SHA as an unaliased production-target candidate.
-`deploy/hetzner/deploy.sh <source-sha>` validates both lineages, captures current
-content-addressed VPS config by exact path and digest, stops app writers,
-verifies a migration backup when needed, upgrades the linear Alembic head,
-activates only app services by digest, proves the complete backend vector,
-promotes only the bound frontend deployment, then atomically publishes the
-immutable release record/current pointer. Durable phases make the same command
-the sole resume path. Config publication and Oracle reconcile are separate
-explicit operations. Env contracts live in `deploy/env/*` (real values
-untracked, `.example` tracked). Permanent R2 policy is applied via
-`deploy/cloudflare/*`; Supabase hosted Auth state is verified through
-`deploy/supabase/verify-auth-config.sh`.
+`main` push triggers one backend publisher, and only on `run_attempt == 1`. It
+builds API/worker targets once and publishes their GHCR digests in one strict
+candidate manifest. Vercel builds the exact SHA as an unaliased
+production-target candidate. `deploy/hetzner/deploy.sh <source-sha>` resolves
+that manifest from the first CI run, converges the backend in one linear
+idempotent pass, then promotes the bound frontend deployment. Config
+publication and Oracle reconcile are separate explicit operations. Env
+contracts live in `deploy/env/*` (real values untracked, `.example` tracked).
+Permanent R2 policy is applied via `deploy/cloudflare/*`.
 
 **Migrations** are hand-written Alembic files (`migrations/alembic/versions/`,
 linear `NNNN_*` numbering, no autogenerate). Dev: `make migrate`. The PR check
 requires one canonical Alembic head without starting a database. Production
-applies the candidate's baked head only inside the release controller, after
-stopped-writer backup proof and before app activation.
+applies the candidate's baked head only inside the release, after the
+stopped-writer verified R2 backup and a revision-ancestry proof, and before the
+services start on the new digests.
 
 **Environment**: `.env.example` is the source of truth for every variable
 ([`rules/codebase.md`](rules/codebase.md)); `make setup` generates local
