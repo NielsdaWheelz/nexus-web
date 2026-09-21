@@ -12,8 +12,12 @@ from nexus.auth.permissions import can_read_media
 from nexus.db.models import Media, MediaKind
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.services.capabilities import is_document_status_ready
-from nexus.storage.client import StorageClient, StorageError, get_storage_client
-from nexus.storage.read import read_object_checked
+from nexus.storage.client import (
+    StorageClient,
+    StorageError,
+    get_storage_client,
+    read_object_checked,
+)
 
 _ASSET_KEY_RE = re.compile(r"^[a-zA-Z0-9_./-]+$")
 _EPUB_ASSET_CONTENT_TYPES = frozenset(
