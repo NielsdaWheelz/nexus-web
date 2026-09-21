@@ -1,47 +1,27 @@
-"""SSRF-safe image fetch + validation core (URL/DNS/redirect/decode), shared by proxy and ingestion."""
+"""SSRF-safe image fetch and decode, shared by the image proxy and plate ingestion."""
+
+from __future__ import annotations
 
 import io
-import socket
 import warnings
 from contextlib import closing
 from dataclasses import dataclass
-from ipaddress import ip_address
-from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 from PIL import Image
 
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.logging import get_logger
-from nexus.services.net.egress_policy import (
-    HOSTNAME_DENYLIST_EXACT,
-    HOSTNAME_DENYLIST_SUFFIXES,
-    is_private_ip,
-)
+from nexus.services.net.safe_fetch import SafeFetchFailed, safe_stream
 
 logger = get_logger(__name__)
 
-# =============================================================================
-# Configuration Constants
-# =============================================================================
-
-# Max bytes for image (10 MB)
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
-
-# Max decoded dimensions
 MAX_IMAGE_DIMENSION = 4096
-
-# HTTP timeout (seconds)
 HTTP_TIMEOUT = 10.0
 
-# Allowed schemes
-ALLOWED_SCHEMES = frozenset({"http", "https"})
-
-# Allowed ports
-ALLOWED_PORTS = frozenset({80, 443, None})  # None = default port for scheme
-
-# Content-Type immediate rejection list (clearly non-image)
-REJECTED_CONTENT_TYPES = frozenset(
+_ALLOWED_PORTS = frozenset({80, 443})
+_REJECTED_CONTENT_TYPES = frozenset(
     {
         "text/html",
         "text/plain",
@@ -51,390 +31,23 @@ REJECTED_CONTENT_TYPES = frozenset(
         "image/svg+xml",
     }
 )
-
-# Magic byte patterns to reject (defense in depth)
-REJECTED_MAGIC_PREFIXES = (
-    b"<svg",
-    b"<?xml",
-    b"<html",
-    b"<script",
-    b"<!doctype",
-)
-
-# Redirect status codes
-REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
-
-# User-Agent for outbound requests
-USER_AGENT = "NexusImageProxy/1.0"
-
-
-# =============================================================================
-# URL Validation
-# =============================================================================
-
-
-def normalize_image_url(url: str) -> str:
-    """Normalize URL for cache key and validation.
-
-    - Lowercase scheme and host
-    - Remove default ports (80 for http, 443 for https)
-    - Strip fragment
-    - Preserve query
-
-    Args:
-        url: The URL to normalize.
-
-    Returns:
-        Normalized URL string.
-    """
-    parsed = urlparse(url)
-    scheme = parsed.scheme.lower()
-    host = (parsed.hostname or "").lower()
-
-    # Remove default ports
-    port = parsed.port
-    if port == 80 and scheme == "http":
-        port = None
-    if port == 443 and scheme == "https":
-        port = None
-
-    # Build netloc
-    if port is not None:
-        netloc = f"{host}:{port}"
-    else:
-        netloc = host
-
-    # Reconstruct without fragment
-    return urlunparse((scheme, netloc, parsed.path, parsed.params, parsed.query, ""))
-
-
-def validate_url(url: str) -> tuple[str, str, int | None]:
-    """Validate URL for SSRF protection.
-
-    Checks:
-    - Scheme is http or https
-    - No userinfo (user:pass@host)
-    - Port is 80, 443, or default
-    - Host is present
-
-    Args:
-        url: The URL to validate.
-
-    Returns:
-        Tuple of (normalized_url, hostname, port)
-
-    Raises:
-        ApiError: If URL is invalid or violates SSRF rules.
-    """
-    parsed = urlparse(url)
-
-    # Check scheme
-    scheme = parsed.scheme.lower()
-    if scheme not in ALLOWED_SCHEMES:
-        raise ApiError(
-            ApiErrorCode.E_SSRF_BLOCKED,
-            f"URL scheme must be http or https, got: {scheme}",
-        )
-
-    # Check for userinfo (user:pass@host)
-    if parsed.username is not None or parsed.password is not None or "@" in (parsed.netloc or ""):
-        raise ApiError(ApiErrorCode.E_SSRF_BLOCKED, "URL must not contain credentials")
-
-    # Check host
-    hostname = parsed.hostname
-    if not hostname:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "URL must have a host")
-
-    # Check port
-    port = parsed.port
-    if port is not None and port not in ALLOWED_PORTS:
-        raise ApiError(
-            ApiErrorCode.E_SSRF_BLOCKED,
-            f"URL port must be 80 or 443, got: {port}",
-        )
-
-    normalized = normalize_image_url(url)
-    return normalized, hostname, port
-
-
-def check_hostname_denylist(hostname: str) -> None:
-    """Check hostname against denylist (pre-DNS).
-
-    Args:
-        hostname: The hostname to check.
-
-    Raises:
-        ApiError: If hostname is in denylist.
-    """
-    hostname_lower = hostname.lower()
-
-    if hostname_lower in HOSTNAME_DENYLIST_EXACT:
-        raise ApiError(ApiErrorCode.E_SSRF_BLOCKED, "Request blocked for security reasons")
-
-    for suffix in HOSTNAME_DENYLIST_SUFFIXES:
-        if hostname_lower.endswith(suffix):
-            raise ApiError(ApiErrorCode.E_SSRF_BLOCKED, "Request blocked for security reasons")
-
-
-# =============================================================================
-# DNS Resolution and IP Validation
-# =============================================================================
-
-
-def validate_dns_resolution(hostname: str) -> None:
-    """Resolve hostname and validate all IPs are public.
-
-    Args:
-        hostname: The hostname to resolve.
-
-    Raises:
-        ApiError: If resolution fails or any IP is private.
-    """
-    try:
-        # Resolve all addresses (IPv4 and IPv6)
-        results = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-    except socket.gaierror as e:
-        logger.warning("DNS resolution failed for %s: %s", hostname, e)
-        raise ApiError(
-            ApiErrorCode.E_IMAGE_FETCH_FAILED,
-            "Failed to resolve hostname",
-        ) from e
-
-    if not results:
-        raise ApiError(ApiErrorCode.E_IMAGE_FETCH_FAILED, "Failed to resolve hostname")
-
-    # Check all resolved IPs
-    for _family, _, _, _, sockaddr in results:
-        ip_str = sockaddr[0]
-        try:
-            ip = ip_address(ip_str)
-        except ValueError:
-            continue
-
-        if is_private_ip(ip):
-            logger.warning("SSRF blocked: %s resolved to private IP %s", hostname, ip_str)
-            raise ApiError(ApiErrorCode.E_SSRF_BLOCKED, "Request blocked for security reasons")
-
-
-# =============================================================================
-# Content Validation
-# =============================================================================
-
-
-def validate_content_type(content_type: str | None) -> bool:
-    """Check if Content-Type should be immediately rejected.
-
-    Returns True if we should proceed (acceptable or missing).
-    Returns False (raises) if clearly non-image.
-    """
-    if not content_type:
-        return True  # Missing is OK, we'll sniff
-
-    ct_lower = content_type.lower().split(";")[0].strip()
-
-    if ct_lower in REJECTED_CONTENT_TYPES:
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, f"Invalid content type: {ct_lower}")
-
-    return True
-
-
-def sniff_magic_bytes(data: bytes) -> None:
-    """Check first bytes for obviously non-image content.
-
-    Defense in depth against SVG/XML disguised with wrong Content-Type.
-    """
-    if len(data) < 10:
-        return
-
-    # Strip leading whitespace
-    stripped = data[:512].lstrip(b" \t\n\r")
-    stripped_lower = stripped.lower()
-
-    for prefix in REJECTED_MAGIC_PREFIXES:
-        if stripped_lower.startswith(prefix):
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Content is not a valid image")
-
-
-def validate_and_decode_image(
-    data: bytes, upstream_content_type: str | None
-) -> tuple[str, int, int]:
-    """Validate image with Pillow and return content type plus decoded dimensions.
-
-    Args:
-        data: Image bytes.
-        upstream_content_type: Content-Type from upstream (may be unreliable).
-
-    Returns:
-        Tuple of (content_type, width, height): the valid image/* content type to
-        use in the response and the decoded pixel dimensions.
-
-    Raises:
-        ApiError: If image is invalid, too large, or a decompression bomb.
-    """
-    # Set Pillow's decompression bomb limit
-    Image.MAX_IMAGE_PIXELS = MAX_IMAGE_DIMENSION * MAX_IMAGE_DIMENSION
-
-    # Treat decompression bomb warnings as errors
-    warnings.filterwarnings("error", category=Image.DecompressionBombWarning)
-
-    try:
-        # Capture metadata before verify invalidates the decoder. Reopening can
-        # briefly retain two native decoders for the same image.
-        with io.BytesIO(data) as body, closing(Image.open(body)) as img:
-            width, height = img.size
-            img_format = (img.format or "").lower()
-            img.verify()
-
-        if width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
-            raise ApiError(
-                ApiErrorCode.E_IMAGE_TOO_LARGE,
-                f"Image dimensions exceed limit: {width}x{height}",
-            )
-
-    except Image.DecompressionBombWarning as e:
-        raise ApiError(ApiErrorCode.E_IMAGE_TOO_LARGE, "Image exceeds dimension limits") from e
-    except Image.DecompressionBombError as e:
-        raise ApiError(ApiErrorCode.E_IMAGE_TOO_LARGE, "Image exceeds dimension limits") from e
-    except ApiError:
-        raise
-    except (OSError, SyntaxError) as e:
-        logger.warning("Image decode failed: %s", e)
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Content is not a valid image") from e
-
-    # Determine content type
-    # If upstream sent valid image/* (not svg), use it
-    if upstream_content_type:
-        ct_lower = upstream_content_type.lower().split(";")[0].strip()
-        if ct_lower.startswith("image/") and ct_lower != "image/svg+xml":
-            return ct_lower, width, height
-
-    # Otherwise derive from Pillow format
-    format_to_mime = {
-        "png": "image/png",
-        "jpeg": "image/jpeg",
-        "jpg": "image/jpeg",
-        "gif": "image/gif",
-        "webp": "image/webp",
-        "bmp": "image/bmp",
-        "ico": "image/x-icon",
-    }
-    return format_to_mime.get(img_format, "application/octet-stream"), width, height
-
-
-# =============================================================================
-# HTTP Fetching
-# =============================================================================
-
-
-_IMAGE_SSL_CONTEXT = httpx.create_ssl_context(trust_env=False)
-
-
-def create_http_client() -> httpx.Client:
-    """Create an httpx client with security settings."""
-    return httpx.Client(
-        # Reuse the trust store; per-image clients still isolate cookies and sockets.
-        verify=_IMAGE_SSL_CONTEXT,
-        timeout=HTTP_TIMEOUT,
-        follow_redirects=False,  # We handle redirects manually
-        trust_env=False,  # CRITICAL: ignore env proxies
-    )
-
-
-def fetch_with_redirect(
-    url: str,
-    hostname: str,
-    client: httpx.Client,
-) -> tuple[bytes, str | None]:
-    """Fetch URL with up to 1 redirect, validating each hop.
-
-    Args:
-        url: The URL to fetch.
-        hostname: The validated hostname.
-        client: HTTP client to use.
-
-    Returns:
-        Tuple of (bytes, content_type)
-
-    Raises:
-        ApiError: On fetch failure or redirect violation.
-    """
-    try:
-        for hop in range(2):
-            with client.stream(
-                "GET",
-                url,
-                headers={
-                    "User-Agent": USER_AGENT,
-                    "Accept": "image/*,*/*;q=0.8",
-                    "Accept-Encoding": "identity",
-                },
-                follow_redirects=False,
-            ) as response:
-                if response.status_code in REDIRECT_STATUS_CODES:
-                    if hop == 1:
-                        raise ApiError(
-                            ApiErrorCode.E_IMAGE_FETCH_FAILED,
-                            "Too many redirects (max 1 allowed)",
-                        )
-                    location = response.headers.get("location")
-                    if not location:
-                        raise ApiError(
-                            ApiErrorCode.E_IMAGE_FETCH_FAILED,
-                            "Redirect without Location header",
-                        )
-                    redirect_url = urljoin(url, location)
-                    _, redirect_hostname, _ = validate_url(redirect_url)
-                    check_hostname_denylist(redirect_hostname)
-                    validate_dns_resolution(redirect_hostname)
-                    url = redirect_url
-                    continue
-
-                if response.status_code >= 400:
-                    raise ApiError(
-                        ApiErrorCode.E_IMAGE_FETCH_FAILED,
-                        f"Upstream returned status {response.status_code}",
-                    )
-
-                content_type = response.headers.get("content-type")
-                validate_content_type(content_type)
-                # HTTP decompression can allocate beyond the image byte limit
-                # before yielding a chunk. Accept only the requested identity body.
-                if response.headers.get("content-encoding", "").strip().lower() not in {
-                    "",
-                    "identity",
-                }:
-                    raise ApiError(
-                        ApiErrorCode.E_INVALID_REQUEST,
-                        "Image content encoding must be identity",
-                    )
-                data = bytearray()
-                for chunk in response.iter_raw(chunk_size=64 * 1024):
-                    if len(data) + len(chunk) > MAX_IMAGE_BYTES:
-                        raise ApiError(
-                            ApiErrorCode.E_IMAGE_TOO_LARGE,
-                            f"Image exceeds maximum size of {MAX_IMAGE_BYTES // (1024 * 1024)} MB",
-                        )
-                    data.extend(chunk)
-                return bytes(data), content_type
-
-        raise AssertionError("image redirect loop ended without a response")
-
-    except httpx.TimeoutException as e:
-        raise ApiError(ApiErrorCode.E_INGEST_TIMEOUT, "Image fetch timed out") from e
-    except httpx.RequestError as e:
-        raise ApiError(ApiErrorCode.E_IMAGE_FETCH_FAILED, f"Failed to fetch image: {e}") from e
-    except ApiError:
-        raise
-    except httpx.HTTPError as e:
-        raise ApiError(ApiErrorCode.E_IMAGE_FETCH_FAILED, f"Failed to fetch image: {e}") from e
-
-
-# =============================================================================
-# Validated Fetch Orchestrator
-# =============================================================================
-
-
-@dataclass(frozen=True)
+_REJECTED_MAGIC_PREFIXES = (b"<svg", b"<?xml", b"<html", b"<script", b"<!doctype")
+_FORMAT_CONTENT_TYPES = {
+    "png": "image/png",
+    "jpeg": "image/jpeg",
+    "jpg": "image/jpeg",
+    "gif": "image/gif",
+    "webp": "image/webp",
+    "bmp": "image/bmp",
+    "ico": "image/x-icon",
+}
+_SSL_CONTEXT = httpx.create_ssl_context(trust_env=False)
+
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_DIMENSION * MAX_IMAGE_DIMENSION
+warnings.filterwarnings("error", category=Image.DecompressionBombWarning)
+
+
+@dataclass(frozen=True, slots=True)
 class ValidatedImage:
     data: bytes
     content_type: str
@@ -442,17 +55,93 @@ class ValidatedImage:
     height: int
 
 
-def fetch_validated_image(url: str, client: httpx.Client) -> ValidatedImage:
-    """Validate a URL (SSRF), fetch with bounded redirects, and decode + size/magic checks."""
-    _, hostname, _ = validate_url(url)
-    check_hostname_denylist(hostname)
-    validate_dns_resolution(hostname)
-    data, upstream_content_type = fetch_with_redirect(url, hostname, client)
-    sniff_magic_bytes(data)
-    content_type, width, height = validate_and_decode_image(data, upstream_content_type)
-    return ValidatedImage(
-        data=data,
-        content_type=content_type,
-        width=width,
-        height=height,
+def create_http_client() -> httpx.Client:
+    """One image-fetch client: shared trust store, no environment proxies."""
+    return httpx.Client(
+        verify=_SSL_CONTEXT,
+        timeout=HTTP_TIMEOUT,
+        follow_redirects=False,
+        trust_env=False,
     )
+
+
+def fetch_validated_image(url: str, client: httpx.Client) -> ValidatedImage:
+    """Fetch one external image behind the SSRF boundary and decode it.
+
+    The port allowlist is part of the per-hop policy, so a redirect can no more
+    reach an unusual port than the requested URL can.
+    """
+    body = bytearray()
+    try:
+        headers = safe_stream(
+            url,
+            max_bytes=MAX_IMAGE_BYTES,
+            timeout_s=HTTP_TIMEOUT,
+            sink=body.extend,
+            accept="image/*,*/*;q=0.8",
+            max_redirects=1,
+            identity_encoding=True,
+            allowed_ports=_ALLOWED_PORTS,
+            client=client,
+        )
+    except SafeFetchFailed as exc:
+        raise _image_error(exc) from exc
+    if headers.content_type in _REJECTED_CONTENT_TYPES:
+        raise ApiError(
+            ApiErrorCode.E_INVALID_REQUEST, f"Invalid content type: {headers.content_type}"
+        )
+    data = bytes(body)
+    _reject_markup(data)
+    content_type, width, height = _decode_image(data, headers.content_type)
+    return ValidatedImage(data=data, content_type=content_type, width=width, height=height)
+
+
+def _reject_markup(data: bytes) -> None:
+    """Defense in depth against SVG/XML/HTML served with an image content type."""
+    if len(data) < 10:
+        return
+    stripped = data[:512].lstrip(b" \t\n\r").lower()
+    if stripped.startswith(_REJECTED_MAGIC_PREFIXES):
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Content is not a valid image")
+
+
+def _decode_image(data: bytes, upstream_content_type: str) -> tuple[str, int, int]:
+    """Decode with Pillow under the dimension and decompression-bomb limits."""
+    try:
+        # Read metadata before verify() invalidates the decoder; reopening would
+        # briefly hold two native decoders for the same image.
+        with io.BytesIO(data) as body, closing(Image.open(body)) as img:
+            width, height = img.size
+            img_format = (img.format or "").lower()
+            img.verify()
+        if width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
+            raise ApiError(
+                ApiErrorCode.E_IMAGE_TOO_LARGE,
+                f"Image dimensions exceed limit: {width}x{height}",
+            )
+    except (Image.DecompressionBombWarning, Image.DecompressionBombError) as exc:
+        raise ApiError(ApiErrorCode.E_IMAGE_TOO_LARGE, "Image exceeds dimension limits") from exc
+    except ApiError:
+        raise
+    except (OSError, SyntaxError) as exc:
+        logger.warning("image_decode_failed", error=str(exc))
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Content is not a valid image") from exc
+
+    if upstream_content_type.startswith("image/") and upstream_content_type != "image/svg+xml":
+        return upstream_content_type, width, height
+    return _FORMAT_CONTENT_TYPES.get(img_format, "application/octet-stream"), width, height
+
+
+def _image_error(exc: SafeFetchFailed) -> ApiError:
+    if exc.reason == "Blocked":
+        return ApiError(ApiErrorCode.E_SSRF_BLOCKED, "Request blocked for security reasons")
+    if exc.reason == "TooLarge":
+        return ApiError(
+            ApiErrorCode.E_IMAGE_TOO_LARGE,
+            f"Image exceeds maximum size of {MAX_IMAGE_BYTES // (1024 * 1024)} MB",
+        )
+    if exc.reason == "Timeout":
+        return ApiError(ApiErrorCode.E_INGEST_TIMEOUT, "Image fetch timed out")
+    if exc.reason == "Encoding":
+        return ApiError(ApiErrorCode.E_INVALID_REQUEST, "Image content encoding must be identity")
+    return ApiError(ApiErrorCode.E_IMAGE_FETCH_FAILED, f"Failed to fetch image: {exc.message}")
