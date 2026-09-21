@@ -1,7 +1,7 @@
 """Drop the write-only tool-position self-comparison digests.
 
-Revision ID: 0237
-Revises: 0236
+Revision ID: 0238
+Revises: 0237
 Create Date: 2026-09-21
 """
 
@@ -9,8 +9,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0237"
-down_revision: str | Sequence[str] | None = "0236"
+revision: str = "0238"
+down_revision: str | Sequence[str] | None = "0237"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -21,4 +21,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise NotImplementedError("0237 is forward-only")
+    raise NotImplementedError("0238 is forward-only")
