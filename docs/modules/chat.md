@@ -470,9 +470,9 @@ is the sole snapshot owner (build, encode/decode, revision, quote-subfield
 projection, and prompt-render input); the snapshot shape is
 `key{media_id, highlight_id}`, `source_label`, `exact`, `prefix`, `suffix`, and
 `locator: MediaRetrievalLocator`. Reader-selection identity no longer lives on
-`chat_run_turn_contexts` — migration `0189_reader_highlight_quote_chat` adds the
-snapshot column and drops that table's two reader-selection columns, leaving it
-subject/audit identity only.
+`chat_run_turn_contexts`: the `messages` snapshot column carries it and that
+table's two reader-selection columns are gone, leaving it subject/audit
+identity only.
 
 The request sends `reader_selection: Present<{ key: ReaderSelectionKey;
 revision }>` only. The server derives the `highlight:<id>` subject and its
