@@ -1,8 +1,9 @@
 """Owner-neutral replay state for queue-backed durable operation steps.
 
-The queue payload is the storage adapter for this small state machine. This
-module owns its strict state, codec, stable identity, lease-fenced checkpoint,
-and execution-phase projection. It runs no domain step.
+The queue payload is the storage adapter for this small state machine: it owns
+the strict per-step record, its codec, its replay-stable identity, the
+lease-fenced checkpoint write and the advisory phase projection. It runs no
+domain step.
 """
 
 from __future__ import annotations
@@ -38,13 +39,6 @@ class DispatchPhase(StrEnum):
 Prepared: Final = DispatchPhase.Prepared
 Uncertain: Final = DispatchPhase.Uncertain
 Completed: Final = DispatchPhase.Completed
-
-
-class ReplayPolicy(StrEnum):
-    """Whether an interrupted uncertain step may safely dispatch again."""
-
-    BilledOnce = "BilledOnce"
-    ReDispatchable = "ReDispatchable"
 
 
 class DurableExecutionPhase(StrEnum):
@@ -85,7 +79,7 @@ _COORDINATION_KEY: Final = "coordination"
 
 
 def stable_generation_id(operation_id: UUID, step_path: str) -> UUID:
-    """Return the replay-stable UUID for one operation step."""
+    """The replay-stable UUID for one operation step; never change this derivation."""
     return uuid5(_GENERATION_NAMESPACE, f"{operation_id}:{step_path}")
 
 
@@ -103,10 +97,7 @@ def decode_step_states(payload: dict[str, object]) -> dict[str, StepReplayState]
 
 
 def payload_with_step_state(
-    payload: dict[str, object],
-    *,
-    step_path: str,
-    state: StepReplayState,
+    payload: dict[str, object], *, step_path: str, state: StepReplayState
 ) -> dict[str, object]:
     """Return one owner payload with an exact updated coordination record."""
     if not step_path or step_path.startswith("/") or step_path.endswith("/"):
@@ -115,8 +106,7 @@ def payload_with_step_state(
     if not isinstance(raw, dict):
         raise AssertionError("Durable step journal payload must be an object")
     coordination: dict[str, object] = {str(path): record for path, record in raw.items()}
-    validated = StepReplayState.model_validate(state.model_dump(mode="python"))
-    coordination[step_path] = validated.model_dump(mode="json")
+    coordination[step_path] = state.model_dump(mode="json")
     return {**payload, _COORDINATION_KEY: coordination}
 
 
@@ -136,12 +126,7 @@ def decode_step_result[T: BaseModel](raw: str, schema: type[T]) -> T:
 
 
 def checkpoint_step_state(
-    db: Session,
-    *,
-    ctx: JobExecutionContext,
-    job: JobRow,
-    step_path: str,
-    state: StepReplayState,
+    db: Session, *, ctx: JobExecutionContext, job: JobRow, step_path: str, state: StepReplayState
 ) -> bool:
     """Lease-fenced durable write of one step record into the job payload."""
     return update_running_job_payload(
@@ -149,49 +134,30 @@ def checkpoint_step_state(
         job_id=ctx.job_id,
         worker_id=ctx.worker_id,
         attempt_no=ctx.attempt_no,
-        payload=payload_with_step_state(
-            job.payload,
-            step_path=step_path,
-            state=state,
-        ),
+        payload=payload_with_step_state(job.payload, step_path=step_path, state=state),
     )
 
 
 def project_execution_phase(
-    *,
-    job_status: str,
-    attempts: int,
-    error_code: str | None,
+    *, job_status: str, attempts: int, error_code: str | None
 ) -> DurableExecutionPhase:
-    """Strictly project one non-succeeded queue job into advisory liveness.
+    """Project one non-succeeded queue job into advisory liveness.
 
-    Product owners classify a missing or succeeded job against their own domain
-    row before calling this shared projection.
+    Owners classify a missing or succeeded job against their own domain row
+    before calling this shared projection.
     """
-    if attempts < 0:
-        raise AssertionError(f"durable job {job_status!r} has negative attempts {attempts}")
-    has_failure_history = error_code is not None
+    recovering = error_code is not None
     if job_status == PENDING:
-        return (
-            DurableExecutionPhase.Recovering
-            if has_failure_history
-            else DurableExecutionPhase.Queued
-        )
+        return DurableExecutionPhase.Recovering if recovering else DurableExecutionPhase.Queued
     if job_status == RUNNING:
-        if attempts < 1:
-            raise AssertionError("running durable job has no claimed attempt")
         return (
             DurableExecutionPhase.Running
-            if attempts == 1 and not has_failure_history
+            if attempts == 1 and not recovering
             else DurableExecutionPhase.Recovering
         )
     if job_status == FAILED:
-        if attempts < 1:
-            raise AssertionError("failed durable job has no completed attempt")
         return DurableExecutionPhase.Recovering
     if job_status == DEAD:
-        if attempts < 1:
-            raise AssertionError("dead durable job has no completed attempt")
         return DurableExecutionPhase.Suspended
     if job_status == SUCCEEDED:
         raise AssertionError("succeeded durable job has no active execution phase")
