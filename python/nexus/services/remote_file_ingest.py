@@ -1,5 +1,7 @@
 """Remote file URL classification for durable source ingest."""
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass
 from typing import Literal
@@ -22,25 +24,24 @@ _EPUB_SUFFIXES = (
 RemoteFileKind = Literal["pdf", "epub"]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ArxivPdfSource:
     arxiv_id: str
     source_url: str
 
 
 def remote_file_kind_from_url(url: str) -> RemoteFileKind | None:
-    parsed = urlparse(url)
-    path = unquote(parsed.path).lower()
+    """Classify a URL as a downloadable PDF or EPUB by its path, else ``None``."""
+    path = unquote(urlparse(url).path).lower()
     if path.endswith(".pdf"):
         return "pdf"
     if path.endswith(_EPUB_SUFFIXES):
         return "epub"
-    if arxiv_pdf_source_from_url(url) is not None:
-        return "pdf"
-    return None
+    return "pdf" if arxiv_pdf_source_from_url(url) is not None else None
 
 
 def arxiv_pdf_source_from_url(url: str) -> ArxivPdfSource | None:
+    """Map an arxiv ``/pdf/<id>`` URL to its e-print source package URL."""
     parsed = urlparse(url)
     if (parsed.hostname or "").lower() not in _ARXIV_PDF_HOSTS:
         return None
@@ -48,7 +49,4 @@ def arxiv_pdf_source_from_url(url: str) -> ArxivPdfSource | None:
     if match is None:
         return None
     arxiv_id = match.group("arxiv_id")
-    return ArxivPdfSource(
-        arxiv_id=arxiv_id,
-        source_url=f"https://arxiv.org/e-print/{arxiv_id}",
-    )
+    return ArxivPdfSource(arxiv_id=arxiv_id, source_url=f"https://arxiv.org/e-print/{arxiv_id}")

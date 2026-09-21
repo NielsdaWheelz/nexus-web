@@ -1,8 +1,8 @@
 """The history stage and counted progress of one source attempt.
 
-A leaf over the durable source-type contract and the history vocabulary: the
-queue seam (`jobs/history_projections.py`) records these facts inside the
-worker's queue transition, so this owner must not reach the ORM or the queue.
+A leaf over the source-type contract and the history vocabulary: the queue seam
+(``jobs/history_projections.py``) records these facts inside the worker's queue
+transition, so this owner reaches neither the ORM nor the queue.
 """
 
 from __future__ import annotations
@@ -16,28 +16,18 @@ COUNTED_PROGRESS_SOURCE_TYPES: frozenset[str] = (
 )
 """The source types whose adapter records Validate/Extract/Finalize progress.
 
-Only the PDF/EPUB file adapters call ``record_source_extraction_progress`` and
-``record_source_finalizing``; every other source is one opaque processing step.
+Only the PDF/EPUB file adapters record counted progress; every other source is
+one opaque processing step.
 """
+
+_STAGES: dict[str, Stage] = {"Validate": "Validate", "Extract": "Extract", "Finalize": "Finalize"}
 
 
 def source_history_stage(*, source_type: str, processing_stage: str | None) -> Stage:
-    """The history stage of one source attempt (contract D12)."""
+    """The history stage one source attempt is currently in."""
     if source_type not in COUNTED_PROGRESS_SOURCE_TYPES:
         return "SourceProcessing"
-    match processing_stage:
-        case None | "Validate":
-            return "Validate"
-        case "Extract":
-            return "Extract"
-        case "Finalize":
-            return "Finalize"
-        case _:
-            # justify-defect: reset_source_progress and the two record_* writers
-            # are the only producers of this column and write these three values.
-            raise AssertionError(
-                f"source attempt has an unknown processing stage {processing_stage!r}"
-            )
+    return _STAGES.get(processing_stage or "Validate", "Validate")
 
 
 def source_failure_progress(
@@ -47,8 +37,7 @@ def source_failure_progress(
     progress_total: int | None,
     progress_unit: str | None,
 ) -> Presence[SourceFailureProgress]:
-    """The counted progress a failure happened at, Present only when the run had
-    recorded a counted Extract snapshot."""
+    """The counted progress a failure happened at, present only during Extract."""
     if processing_stage != "Extract" or progress_total is None:
         return absent()
     return present(

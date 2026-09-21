@@ -1,4 +1,4 @@
-"""Durable media source-attempt type contract."""
+"""The durable source-type contract: mirrors ``ck_media_source_attempts_source_type``."""
 
 from __future__ import annotations
 
@@ -17,24 +17,11 @@ BROWSER_EPUB_CAPTURE = "browser_epub_capture"
 PODCAST_EPISODE_TRANSCRIPT = "podcast_episode_transcript"
 EMAIL_MESSAGE = "email_message"
 
-TRANSCRIPT_SOURCE_TYPES = frozenset(
-    {
-        PODCAST_EPISODE_TRANSCRIPT,
-        YOUTUBE_VIDEO,
-        VIDEO_TRANSCRIPT,
-    }
-)
+TRANSCRIPT_SOURCE_TYPES = frozenset({PODCAST_EPISODE_TRANSCRIPT, YOUTUBE_VIDEO, VIDEO_TRANSCRIPT})
 REMOTE_FILE_SOURCE_TYPES = frozenset({REMOTE_PDF_URL, REMOTE_EPUB_URL})
 LOCAL_FILE_SOURCE_TYPES = frozenset(
-    {
-        UPLOADED_PDF_FILE,
-        UPLOADED_EPUB_FILE,
-        BROWSER_PDF_CAPTURE,
-        BROWSER_EPUB_CAPTURE,
-    }
+    {UPLOADED_PDF_FILE, UPLOADED_EPUB_FILE, BROWSER_PDF_CAPTURE, BROWSER_EPUB_CAPTURE}
 )
-# Non-reacquirable artifacts: the derived HTML stored in R2 is the only copy.
-# Retrying with a new source requires the caller to provide fresh content.
 NON_REACQUIRABLE_ARTIFACT_SOURCE_TYPES = frozenset(
     {
         UPLOADED_PDF_FILE,
@@ -45,3 +32,4 @@ NON_REACQUIRABLE_ARTIFACT_SOURCE_TYPES = frozenset(
         EMAIL_MESSAGE,
     }
 )
+"""Sources whose bytes exist only as the stored artifact: nothing to re-fetch."""

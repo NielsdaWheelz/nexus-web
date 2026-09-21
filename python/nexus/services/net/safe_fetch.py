@@ -1,41 +1,64 @@
-"""The single SSRF-safe egress for feed-controlled URLs.
+"""The one SSRF-safe streaming GET for untrusted URLs.
 
-RSS feed pages, Podcasting 2.0 chapter JSON, and transcript sidecars are all fetched
-from arbitrary feed-controlled URLs, so SSRF defense belongs here, once, not at each
-call site. `safe_get` enforces:
+Feed pages, chapter JSON, transcript sidecars, remote PDF/EPUB downloads and
+proxied images all leave the process through ``safe_stream``. Every hop re-runs
+the public-URL policy and re-resolves DNS, rejecting any loopback, private,
+link-local or reserved address; redirects are bounded and the body is streamed
+into the caller's sink under a hard byte cap, so nothing is buffered past it.
 
-- an https/http scheme allow-list with no userinfo (via `validate_requested_url`);
-- DNS resolution with loopback/private/link-local/metadata-IP rejection, re-checked on
-  every redirect hop (via `image_validation.validate_dns_resolution`);
-- at most `_MAX_REDIRECTS` redirects, each re-validated;
-- a STREAMED body read that aborts the moment it passes `max_bytes` (the existing image
-  and transcript fetchers buffer then check — this caps DoS before buffering).
-
-First-party provider APIs (Podcast Index) are NOT fetched through here — they are trusted
-and use `net/http_retry.py`. Residual hardening not yet implemented: pin-to-resolved-IP
-(a custom httpx transport closing the DNS-rebinding TOCTOU between the resolution check
-and httpx's own connect-time resolution); deferred to avoid risking the HTTPS feed path
-without dedicated tests.
+Failures surface as one transport-neutral ``SafeFetchFailed`` that each caller
+maps into its own error vocabulary; ``safe_get`` is the source-ingest mapping.
 """
 
 from __future__ import annotations
 
+import socket
+from collections.abc import Callable
 from dataclasses import dataclass
+from ipaddress import ip_address
+from typing import Literal
 from urllib.parse import urljoin, urlparse
 
 import httpx
 
 from nexus.config import get_settings
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
-from nexus.services.image_validation import validate_dns_resolution
+from nexus.services.net.egress_policy import is_private_ip
 from nexus.services.url_normalize import validate_requested_url
 
-_MAX_REDIRECTS = 3
+_REDIRECT_STATUS = frozenset({301, 302, 303, 307, 308})
+_CHUNK_BYTES = 64 * 1024
 _USER_AGENT = "nexus-podcast-client/1.0"
-_REDIRECT_STATUS = {301, 302, 303, 307, 308}
+
+type SafeFetchReason = Literal[
+    "Blocked", "NotFound", "Status", "Timeout", "Network", "TooLarge", "Encoding"
+]
 
 
-@dataclass(frozen=True)
+class SafeFetchFailed(Exception):
+    """One transport-neutral egress failure."""
+
+    def __init__(self, reason: SafeFetchReason, message: str) -> None:
+        super().__init__(message)
+        self.reason: SafeFetchReason = reason
+        self.message = message
+
+
+class SafeFetchNotFound(ApiError):
+    """The public target is explicitly gone (HTTP 404/410)."""
+
+    def __init__(self) -> None:
+        super().__init__(ApiErrorCode.E_SOURCE_FETCH_FAILED, "Upstream target no longer exists")
+
+
+@dataclass(frozen=True, slots=True)
+class SafeStreamHeaders:
+    final_url: str
+    content_type: str
+    encoding: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class SafeFetchResult:
     final_url: str
     content_type: str
@@ -43,80 +66,140 @@ class SafeFetchResult:
     text: str
 
 
-class SafeFetchNotFound(ApiError):
-    """The public target is explicitly gone (HTTP 404/410)."""
-
-    def __init__(self) -> None:
-        super().__init__(
-            ApiErrorCode.E_SOURCE_FETCH_FAILED,
-            "Upstream target no longer exists",
-        )
-
-
-def _reject_unless_public(url: str) -> None:
+def require_public_target(url: str, allowed_ports: frozenset[int] | None = None) -> None:
+    """Run the pre-DNS policy and re-resolve the host, rejecting private addresses."""
     try:
         validate_requested_url(url)
+        port = urlparse(url).port
     except InvalidRequestError as exc:
-        raise ApiError(ApiErrorCode.E_SSRF_BLOCKED, exc.message) from exc
-    validate_dns_resolution(urlparse(url).hostname or "")
+        raise SafeFetchFailed("Blocked", exc.message) from exc
+    except ValueError as exc:
+        raise SafeFetchFailed("Blocked", "URL has an invalid port") from exc
+    if allowed_ports is not None and port is not None and port not in allowed_ports:
+        raise SafeFetchFailed("Blocked", f"URL port is not allowed: {port}")
+    hostname = urlparse(url).hostname or ""
+    try:
+        resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise SafeFetchFailed("Network", "Failed to resolve hostname") from exc
+    if not resolved:
+        raise SafeFetchFailed("Network", "Failed to resolve hostname")
+    for *_address, sockaddr in resolved:
+        try:
+            ip = ip_address(str(sockaddr[0]))
+        except ValueError:
+            continue
+        if is_private_ip(ip):
+            raise SafeFetchFailed("Blocked", "Request blocked for security reasons")
 
 
-def safe_get(
+def safe_stream(
     url: str,
     *,
     max_bytes: int,
     timeout_s: float,
-) -> SafeFetchResult:
-    """Fetch a feed-controlled URL or raise a typed E_SSRF_BLOCKED / E_SOURCE_* error."""
-    current_url = url
-    with httpx.Client(
-        timeout=timeout_s,
-        trust_env=False,
-        follow_redirects=False,
-        proxy=get_settings().outbound_http_proxy_url,
-    ) as client:
-        for _ in range(_MAX_REDIRECTS + 1):
-            _reject_unless_public(current_url)
+    sink: Callable[[bytes], None],
+    accept: str = "*/*",
+    max_redirects: int = 3,
+    identity_encoding: bool = False,
+    allowed_ports: frozenset[int] | None = None,
+    client: httpx.Client | None = None,
+    proxy: str | None = None,
+) -> SafeStreamHeaders:
+    """Stream one bounded response body into ``sink``, revalidating every hop."""
+    headers = {"User-Agent": _USER_AGENT, "Accept": accept}
+    if identity_encoding:
+        # HTTP decompression can allocate past the byte cap before the first
+        # chunk is yielded, so the image lane accepts only an identity body.
+        headers["Accept-Encoding"] = "identity"
+    http = client or httpx.Client(
+        timeout=timeout_s, trust_env=False, follow_redirects=False, proxy=proxy
+    )
+    try:
+        current_url = url
+        for _hop in range(max_redirects + 1):
+            require_public_target(current_url, allowed_ports)
             try:
-                with client.stream(
-                    "GET", current_url, headers={"User-Agent": _USER_AGENT}
+                with http.stream(
+                    "GET", current_url, headers=headers, timeout=timeout_s, follow_redirects=False
                 ) as response:
                     if response.status_code in _REDIRECT_STATUS:
                         location = response.headers.get("location")
                         if not location:
-                            raise ApiError(
-                                ApiErrorCode.E_SOURCE_FETCH_FAILED,
-                                "Redirect without a Location header",
-                            )
+                            raise SafeFetchFailed("Status", "Redirect without a Location header")
                         current_url = urljoin(str(response.url), location)
                         continue
                     if response.status_code in {404, 410}:
-                        raise SafeFetchNotFound
+                        raise SafeFetchFailed("NotFound", "Upstream target no longer exists")
                     if response.status_code >= 400:
-                        raise ApiError(
-                            ApiErrorCode.E_SOURCE_FETCH_FAILED,
-                            f"Upstream returned status {response.status_code}",
+                        raise SafeFetchFailed(
+                            "Status", f"Upstream returned status {response.status_code}"
                         )
-                    content_type = (
-                        (response.headers.get("content-type") or "").split(";")[0].strip().lower()
+                    if identity_encoding and (
+                        response.headers.get("content-encoding") or ""
+                    ).strip().lower() not in {"", "identity"}:
+                        raise SafeFetchFailed(
+                            "Encoding", "Response content encoding must be identity"
+                        )
+                    chunks = (
+                        response.iter_raw(chunk_size=_CHUNK_BYTES)
+                        if identity_encoding
+                        else response.iter_bytes(chunk_size=_CHUNK_BYTES)
                     )
-                    body = bytearray()
-                    for chunk in response.iter_bytes():
-                        body.extend(chunk)
-                        if len(body) > max_bytes:
-                            raise ApiError(
-                                ApiErrorCode.E_SOURCE_TOO_LARGE,
-                                f"Response exceeded {max_bytes} bytes",
+                    received = 0
+                    for chunk in chunks:
+                        received += len(chunk)
+                        if received > max_bytes:
+                            raise SafeFetchFailed(
+                                "TooLarge", f"Response exceeded {max_bytes} bytes"
                             )
-                    raw = bytes(body)
-                    return SafeFetchResult(
+                        sink(chunk)
+                    return SafeStreamHeaders(
                         final_url=str(response.url),
-                        content_type=content_type,
-                        content=raw,
-                        text=raw.decode(response.encoding or "utf-8", errors="replace"),
+                        content_type=(response.headers.get("content-type") or "")
+                        .split(";")[0]
+                        .strip()
+                        .lower(),
+                        encoding=response.encoding,
                     )
             except httpx.TimeoutException as exc:
-                raise ApiError(ApiErrorCode.E_SOURCE_FETCH_FAILED, "Fetch timed out") from exc
+                raise SafeFetchFailed("Timeout", "Fetch timed out") from exc
             except httpx.HTTPError as exc:
-                raise ApiError(ApiErrorCode.E_SOURCE_FETCH_FAILED, f"Fetch failed: {exc}") from exc
-    raise ApiError(ApiErrorCode.E_SOURCE_FETCH_FAILED, "Too many redirects")
+                raise SafeFetchFailed("Network", f"Fetch failed: {exc}") from exc
+        raise SafeFetchFailed("Status", "Too many redirects")
+    finally:
+        if client is None:
+            http.close()
+
+
+def source_fetch_error(exc: SafeFetchFailed) -> ApiError:
+    """Map one egress failure into the source-ingest error vocabulary."""
+    if exc.reason == "NotFound":
+        return SafeFetchNotFound()
+    if exc.reason == "Blocked":
+        return ApiError(ApiErrorCode.E_SSRF_BLOCKED, exc.message)
+    if exc.reason == "TooLarge":
+        return ApiError(ApiErrorCode.E_SOURCE_TOO_LARGE, exc.message)
+    return ApiError(ApiErrorCode.E_SOURCE_FETCH_FAILED, exc.message)
+
+
+def safe_get(url: str, *, max_bytes: int, timeout_s: float) -> SafeFetchResult:
+    """Fetch a feed-controlled URL into memory, or raise a typed source error."""
+    body = bytearray()
+    try:
+        headers = safe_stream(
+            url,
+            max_bytes=max_bytes,
+            timeout_s=timeout_s,
+            sink=body.extend,
+            proxy=get_settings().outbound_http_proxy_url,
+        )
+    except SafeFetchFailed as exc:
+        raise source_fetch_error(exc) from exc
+    content = bytes(body)
+    return SafeFetchResult(
+        final_url=headers.final_url,
+        content_type=headers.content_type,
+        content=content,
+        text=content.decode(headers.encoding or "utf-8", errors="replace"),
+    )

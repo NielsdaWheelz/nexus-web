@@ -1,7 +1,6 @@
-"""Pre-DNS hostname denylist and private-IP predicate for outbound egress.
+"""Pre-DNS hostname denylist and the private-address predicate for egress.
 
-Dependency-free so URL validation and image fetching can both share the policy
-without either pulling in the other's transport stack.
+Dependency-free so the URL policy and the fetch transport can both share it.
 """
 
 from __future__ import annotations
@@ -13,26 +12,9 @@ HOSTNAME_DENYLIST_SUFFIXES = (".local", ".internal", ".lan", ".home")
 
 
 def is_private_ip(ip: IPv4Address | IPv6Address) -> bool:
-    """Check if IP address is private/reserved.
+    """Reject loopback, private, reserved, and link-local addresses.
 
-    Blocks:
-    - Loopback (127.0.0.0/8, ::1)
-    - Private (10/8, 172.16/12, 192.168/16)
-    - Link-local (169.254/16, fe80::/10)
-    - Metadata endpoint (169.254.169.254)
+    Link-local covers 169.254.0.0/16 and therefore the 169.254.169.254 cloud
+    metadata endpoint, which is the address this predicate exists for.
     """
-    # Use stdlib methods where available
-    if ip.is_loopback:
-        return True
-    if ip.is_private:
-        return True
-    if ip.is_link_local:
-        return True
-    if ip.is_reserved:
-        return True
-
-    # Explicit check for metadata endpoint
-    if isinstance(ip, IPv4Address) and str(ip) == "169.254.169.254":
-        return True
-
-    return False
+    return ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved
