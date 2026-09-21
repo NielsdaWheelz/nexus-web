@@ -1,7 +1,8 @@
-"""Public deterministic contextual queries for Resonance.
+"""Resonance's three deterministic contextual reads.
 
-This module composes policy-neutral owner ports. It performs no writes, model
-calls, provider calls, or direct reads of sibling-owned storage.
+Read-only: no model call, no provider call, no job, no persisted
+recommendation state. Each read composes policy-neutral relations owned by
+other modules and hydrates through their compact target ports.
 """
 
 from __future__ import annotations
@@ -38,26 +39,13 @@ from nexus.services.podcasts.subscriptions_query import (
     active_subscription_rows_sql,
     hydrate_compact_podcast_targets,
 )
-from nexus.services.resonance import _evidence
-from nexus.services.resonance._evidence import (
-    AddedToNexusEvidence,
+from nexus.services.resonance import _evidence, _slate
+from nexus.services.resonance._slate import (
+    ContinuityEvidence,
     EdgeEvidence,
-    NewEpisodeEvidence,
-    PublishedEvidence,
+    RankedCandidate,
     SemanticEvidence,
     SharedAuthorEvidence,
-)
-from nexus.services.resonance._ranking import (
-    RelatedHit,
-    rank_related,
-    semantic_chunk_candidate_limit,
-)
-from nexus.services.resonance._reading_slate import (
-    RankedCandidate,
-    compose_lectern,
-    compose_library,
-    rank_lectern_candidates,
-    rank_library_candidates,
 )
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import resolve_refs
@@ -67,36 +55,32 @@ from nexus.services.semantic_chunks import media_neighbor_rows_sql, transcript_e
 
 
 def related_media(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    media_id: UUID,
-    limit: int = 8,
+    db: Session, *, viewer_id: UUID, media_id: UUID, limit: int = 8
 ) -> list[ConnectionEndpoint]:
-    """Preserve Related's semantic/shared-author policy under Resonance ownership."""
+    """A media's peers: nearest semantic neighbours first, then shared authors."""
     media_service.get_media_for_viewer(db, viewer_id, media_id)
     if limit < 1:
         return []
-    visible_relation = f"""
-        SELECT media_id, 'Related'::text AS candidate_partition
-        FROM ({visible_media_ids_cte_sql()}) visible_media
-    """
-    candidate_limit = semantic_chunk_candidate_limit(limit)
+    candidate_limit = _evidence.semantic_chunk_candidate_limit(limit)
+    params = {
+        "viewer_id": viewer_id,
+        "anchor_media_id": media_id,
+        "embedding_dimensions": transcript_embedding_dimensions(),
+        "candidate_limit": candidate_limit,
+    }
     semantic_rows = db.execute(
-        text(media_neighbor_rows_sql(visible_relation)),
-        {
-            "viewer_id": viewer_id,
-            "anchor_media_id": media_id,
-            "embedding_dimensions": transcript_embedding_dimensions(),
-            "candidate_limit": candidate_limit,
-        },
+        text(
+            media_neighbor_rows_sql(f"""
+                SELECT media_id, 'Related'::text AS candidate_partition
+                FROM ({visible_media_ids_cte_sql()}) visible_media
+            """)
+        ),
+        params,
     ).mappings()
-    by_id: dict[UUID, RelatedHit] = {
-        UUID(str(row["peer_media_id"])): RelatedHit(
-            media_id=UUID(str(row["peer_media_id"])),
-            best_distance=float(row["distance"]),
-            shared_author_count=0,
-        )
+    # (semantic rank, nearest distance, -shared authors, id): a semantic peer
+    # outranks every shared-author-only peer.
+    ordering: dict[UUID, tuple[int, float, int, str]] = {
+        UUID(str(row["peer_media_id"])): (0, float(row["distance"]), 0, str(row["peer_media_id"]))
         for row in semantic_rows
     }
     author_rows = db.execute(
@@ -115,34 +99,26 @@ def related_media(
             ORDER BY shared_author_count DESC, peer.media_id ASC
             LIMIT :candidate_limit
         """),
-        {
-            "viewer_id": viewer_id,
-            "anchor_media_id": media_id,
-            "candidate_limit": candidate_limit,
-        },
+        params,
     ).mappings()
     for row in author_rows:
         peer_id = UUID(str(row["peer_media_id"]))
-        existing = by_id.get(peer_id)
-        by_id[peer_id] = RelatedHit(
-            media_id=peer_id,
-            best_distance=existing.best_distance if existing is not None else None,
-            shared_author_count=int(row["shared_author_count"]),
-        )
-    ordered = rank_related(list(by_id.values()), limit=limit)
-    refs = [ResourceRef(scheme="media", id=hit.media_id) for hit in ordered]
+        if peer_id not in ordering:
+            ordering[peer_id] = (1, 0.0, -int(row["shared_author_count"]), str(peer_id))
+    refs = [
+        ResourceRef(scheme="media", id=peer_id)
+        for peer_id in sorted(ordering, key=lambda peer_id: ordering[peer_id])[:limit]
+    ]
     resolved = resolve_refs(
-        db,
-        viewer_id=viewer_id,
-        refs=refs,
-        include_media_document_summary=False,
+        db, viewer_id=viewer_id, refs=refs, include_media_document_summary=False
     )
-    missing_ref_uris = {ref.uri for ref, item in zip(refs, resolved, strict=True) if item.missing}
     activations = resource_activations_for_refs(
         db,
         viewer_id=viewer_id,
         refs=refs,
-        missing_ref_uris=missing_ref_uris,
+        missing_ref_uris={
+            ref.uri for ref, item in zip(refs, resolved, strict=True) if item.missing
+        },
     )
     return [
         ConnectionEndpoint(
@@ -158,29 +134,28 @@ def related_media(
 
 
 def build_lectern_slate(db: Session, *, viewer_id: UUID) -> SlateOut:
+    """Up to ten next reads, empty while the Lectern queue is at capacity."""
     if not consumption_service.lectern_has_capacity(db, viewer_id=viewer_id):
         return SlateOut(items=[])
     as_of = _evidence.capture_as_of(db)
-    anchors = _evidence.lectern_anchors(db, viewer_id=viewer_id)
-    eligible_media = _eligible_media_relation(
-        projection.lectern_membership_rows_sql(),
-        extra_predicate="AND COALESCE(engagement.read_state, 'Unread') <> 'Finished'",
-    )
     candidates = _evidence.acquire_slate_candidates(
         db,
         viewer_id=viewer_id,
         as_of=as_of,
-        anchors=anchors,
-        eligible_media_relation=eligible_media,
-        eligible_target_relation=_media_target_relation(eligible_media),
+        anchors=_evidence.lectern_anchors(db, viewer_id=viewer_id),
+        target_relation=_media_target_relation(
+            projection.lectern_membership_rows_sql(),
+            extra_predicate="AND COALESCE(engagement.read_state, 'Unread') <> 'Finished'",
+        ),
         relation_params={},
-        include_nonrelational=True,
+        surface="lectern",
     )
-    selected = compose_lectern(rank_lectern_candidates(candidates, as_of=as_of))
+    selected = _slate.compose_lectern(_slate.rank_lectern_candidates(candidates, as_of=as_of))
     return _hydrate_slate(db, viewer_id=viewer_id, selected=selected)
 
 
 def build_library_slate(db: Session, *, viewer_id: UUID, library_id: UUID) -> SlateOut:
+    """Up to ten relational suggestions for one admin-owned, non-system library."""
     context = library_governance.lock_library_for_member(db, viewer_id, library_id, lock=False)
     if context.system_key is not None or context.role != "admin":
         return SlateOut(items=[])
@@ -188,32 +163,27 @@ def build_library_slate(db: Session, *, viewer_id: UUID, library_id: UUID) -> Sl
     anchors = _evidence.library_anchors(db, viewer_id=viewer_id, library_id=library_id)
     if not anchors:
         return SlateOut(items=[])
-    eligible_media = _eligible_media_relation(library_entries.destination_membership_rows_sql())
-    eligible_targets = (
-        _media_target_relation(eligible_media)
-        if context.is_default
-        else _library_target_relation(eligible_media)
-    )
+    media_targets = _media_target_relation(library_entries.destination_membership_rows_sql())
     candidates = _evidence.acquire_slate_candidates(
         db,
         viewer_id=viewer_id,
         as_of=as_of,
         anchors=anchors,
-        eligible_media_relation=eligible_media,
-        eligible_target_relation=eligible_targets,
+        target_relation=(
+            media_targets if context.is_default else _library_target_relation(media_targets)
+        ),
         relation_params={"library_id": library_id},
-        include_nonrelational=False,
+        surface="library",
     )
-    selected = compose_library(rank_library_candidates(candidates, as_of=as_of))
+    selected = _slate.compose_library(_slate.rank_library_candidates(candidates, as_of=as_of))
     return _hydrate_slate(db, viewer_id=viewer_id, selected=selected)
 
 
-def _eligible_media_relation(membership_rows_sql: str, *, extra_predicate: str = "") -> str:
-    """Visible media not already held by the slate's membership relation, with engagement.
+def _media_target_relation(membership_rows_sql: str, *, extra_predicate: str = "") -> str:
+    """Visible media the surface does not already hold, with its dating facts.
 
-    ``membership_rows_sql`` is the surface's own held-media relation (Lectern queue or
-    library entries); ``extra_predicate`` appends the surface's own eligibility filter.
-    Both are fixed internal SQL literals, never user input.
+    ``membership_rows_sql`` is the surface's own held-media relation and
+    ``extra_predicate`` its own eligibility filter; both are checked-in SQL.
     """
     return f"""
         WITH candidates AS ({media_service.media_candidate_rows_sql()}),
@@ -222,7 +192,8 @@ def _eligible_media_relation(membership_rows_sql: str, *, extra_predicate: str =
         engagement AS ({projection.engagement_fact_rows_sql()}),
         episodes AS ({episode_publication_rows_sql()})
         SELECT
-            candidates.media_id,
+            'media'::text AS target_scheme,
+            candidates.media_id AS target_id,
             candidates.media_kind,
             candidates.created_at,
             candidates.original_published_date,
@@ -244,30 +215,20 @@ def _eligible_media_relation(membership_rows_sql: str, *, extra_predicate: str =
     """
 
 
-def _media_target_relation(eligible_media_relation: str) -> str:
-    return f"""
-        SELECT
-            'media'::text AS target_scheme,
-            media_id AS target_id,
-            media_kind,
-            created_at,
-            original_published_date,
-            read_state,
-            progress_fraction,
-            last_engaged_at,
-            published_at
-        FROM ({eligible_media_relation}) eligible_media
+def _library_target_relation(media_targets: str) -> str:
+    """The media arm plus the subscribed podcasts a non-default library can hold.
+
+    A podcast has no dating facts of its own: its arrival and engagement are
+    aggregated from the visible episodes of that podcast.
     """
-
-
-def _library_target_relation(eligible_media_relation: str) -> str:
     return f"""
-        WITH media_targets AS ({_media_target_relation(eligible_media_relation)}),
+        WITH media_targets AS ({media_targets}),
         visible_media AS ({visible_media_ids_cte_sql()}),
         visible_podcasts AS ({visible_podcast_ids_cte_sql()}),
         subscriptions AS ({active_subscription_rows_sql()}),
         membership AS ({library_entries.destination_membership_rows_sql()}),
         episode_publications AS ({episode_publication_rows_sql()}),
+        engagement AS ({projection.engagement_fact_rows_sql()}),
         podcast_publications AS (
             SELECT
                 episode_publications.podcast_id,
@@ -278,7 +239,6 @@ def _library_target_relation(eligible_media_relation: str) -> str:
             WHERE episode_publications.published_at <= :as_of
             GROUP BY episode_publications.podcast_id
         ),
-        engagement AS ({projection.engagement_fact_rows_sql()}),
         podcast_engagement AS (
             SELECT
                 episode_publications.podcast_id,
@@ -312,92 +272,69 @@ def _library_target_relation(eligible_media_relation: str) -> str:
     """
 
 
-def _hydrate_slate(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    selected: list[RankedCandidate],
-) -> SlateOut:
-    media_ids = [row.target_ref.id for row in selected if row.target_ref.scheme == "media"]
-    podcast_ids = [row.target_ref.id for row in selected if row.target_ref.scheme == "podcast"]
+def _hydrate_slate(db: Session, *, viewer_id: UUID, selected: list[RankedCandidate]) -> SlateOut:
     media_targets = media_service.hydrate_compact_media_targets(
-        db, viewer_id=viewer_id, media_ids=media_ids
+        db,
+        viewer_id=viewer_id,
+        media_ids=[row.target_ref.id for row in selected if row.target_ref.scheme == "media"],
     )
     podcast_targets = hydrate_compact_podcast_targets(
-        db, viewer_id=viewer_id, podcast_ids=podcast_ids
+        db,
+        viewer_id=viewer_id,
+        podcast_ids=[row.target_ref.id for row in selected if row.target_ref.scheme == "podcast"],
     )
-    if len(media_targets) != len(media_ids) or set(media_targets) != set(media_ids):
-        # justify-defect: every selected media target was eligible and visible in this
-        # repeatable-read snapshot, so compact hydration must preserve the exact set.
-        raise AssertionError(
-            f"Media Slate hydration drifted: expected {media_ids}, got {list(media_targets)}"
-        )
-    if len(podcast_targets) != len(podcast_ids) or set(podcast_targets) != set(podcast_ids):
-        # justify-defect: every selected podcast target was eligible and visible in this
-        # repeatable-read snapshot, so compact hydration must preserve the exact set.
-        raise AssertionError(
-            f"Podcast Slate hydration drifted: expected {podcast_ids}, got {list(podcast_targets)}"
-        )
     items: list[SlateItemOut] = []
     for ranked in selected:
         ref = ranked.target_ref
+        target_out: MediaSlateTargetOut | PodcastSlateTargetOut
         if ref.scheme == "media":
-            target = media_targets[ref.id]
+            media = media_targets[ref.id]
             target_out = MediaSlateTargetOut(
                 ref=ref.uri,
-                media_kind=target.media_kind,
-                title=target.title,
-                subtitle=target.subtitle,
-                image_url=target.image_url,
-                href=target.href,
-            )
-        elif ref.scheme == "podcast":
-            target = podcast_targets[ref.id]
-            target_out = PodcastSlateTargetOut(
-                ref=ref.uri,
-                title=target.title,
-                subtitle=target.subtitle,
-                image_url=target.image_url,
-                href=target.href,
+                media_kind=media.media_kind,
+                title=media.title,
+                subtitle=media.subtitle,
+                image_url=media.image_url,
+                href=media.href,
             )
         else:
-            # justify-defect: acquisition emits only destination-addable targets.
-            raise AssertionError(f"non-addable Slate target: {ref.uri}")
+            podcast = podcast_targets[ref.id]
+            target_out = PodcastSlateTargetOut(
+                ref=ref.uri,
+                title=podcast.title,
+                subtitle=podcast.subtitle,
+                image_url=podcast.image_url,
+                href=podcast.href,
+            )
         items.append(SlateItemOut(target=target_out, reason=_reason_out(ranked)))
     return SlateOut(items=items)
 
 
 def _reason_out(ranked: RankedCandidate) -> SlateReasonOut:
-    evidence = ranked.evidence
-    if ranked.family == "Continuity":
-        continuity = evidence.continuity
-        if continuity is None:
-            raise AssertionError("Continuity item has no evidence")
-        return ContinueSlateReasonOut(
-            progress=(
-                present(continuity.progress) if continuity.progress is not None else absent()
-            ),
-            last_engaged_at=continuity.last_engaged_at,
-        )
     reason = ranked.reason
-    if isinstance(reason, AddedToNexusEvidence):
-        return AddedToNexusSlateReasonOut(added_at=reason.added_at)
-    if isinstance(reason, PublishedEvidence):
-        return PublishedSlateReasonOut(published_on=reason.published_on)
-    if isinstance(reason, NewEpisodeEvidence):
-        return NewEpisodeSlateReasonOut(published_at=reason.published_at)
     if isinstance(reason, EdgeEvidence):
         return ConnectedSlateReasonOut(
             anchor=_anchor_out(reason.anchor), edge_origin=reason.edge_origin
         )
     if isinstance(reason, SharedAuthorEvidence):
         return SharedAuthorSlateReasonOut(
-            anchor=_anchor_out(reason.anchor), author_name=reason.authors[0].display_name
+            anchor=_anchor_out(reason.anchor), author_name=reason.author_name
         )
     if isinstance(reason, SemanticEvidence):
         return SimilarSlateReasonOut(anchor=_anchor_out(reason.anchor))
-    raise AssertionError(f"Slate item has no renderable reason: {ranked.target_ref.uri}")
+    if isinstance(reason, ContinuityEvidence):
+        return ContinueSlateReasonOut(
+            progress=present(reason.progress) if reason.progress is not None else absent(),
+            last_engaged_at=reason.last_engaged_at,
+        )
+    # An arrival with no exact instant is a publication date, which is a day.
+    instant = reason.occurred_at
+    if reason.kind == "AddedToNexus" and instant is not None:
+        return AddedToNexusSlateReasonOut(added_at=instant)
+    if reason.kind == "NewEpisode" and instant is not None:
+        return NewEpisodeSlateReasonOut(published_at=instant)
+    return PublishedSlateReasonOut(published_on=reason.occurred_on)
 
 
-def _anchor_out(anchor: _evidence.Anchor) -> SlateAnchorOut:
+def _anchor_out(anchor: _slate.Anchor) -> SlateAnchorOut:
     return SlateAnchorOut(ref=anchor.ref.uri, label=anchor.label)

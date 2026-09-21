@@ -1,11 +1,17 @@
-"""Owned evidence records and bounded database acquisition for Resonance."""
+"""Anchor selection and the bounded acquisition SQL behind one Slate read.
+
+Every lane joins a viewer-visibility relation owned by another module, is
+capped at ``SLATE_FAMILY_CANDIDATE_LIMIT`` per contextual family, and measures
+every window against the caller's single ``as_of`` instant. Each relational
+lane emits its rows in strength order, and that position becomes the evidence
+value's ``rank``: the one place any of these orders is decided.
+"""
 
 from __future__ import annotations
 
-import re
-from collections import defaultdict
-from dataclasses import dataclass
-from datetime import UTC, date, datetime
+import json
+import math
+from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID
 
@@ -17,326 +23,80 @@ from nexus.schemas.resonance import ResonanceEdgeOrigin
 from nexus.services import highlights, library_entries, notes
 from nexus.services.consumption import projection
 from nexus.services.contributor_credits import visible_author_credit_rows_sql
-from nexus.services.resonance._ranking import (
+from nexus.services.resonance._slate import (
     ARRIVAL_WINDOW_DAYS,
     CONTINUITY_MAX_IDLE_DAYS,
     REDISCOVERY_MIN_AGE_DAYS,
     RESONANCE_EDGE_ORIGINS,
+    SEMANTIC_DIMENSIONS,
+    SEMANTIC_MIN_SIMILARITY,
+    SEMANTIC_MODEL,
+    SEMANTIC_PROVIDER,
     SLATE_ANCHOR_LIMIT,
     SLATE_FAMILY_CANDIDATE_LIMIT,
-    SLATE_SEMANTIC_CALIBRATION,
-    exact_day_date_sql,
-    semantic_chunk_candidate_limit,
-    slate_semantic_qualifies,
+    Anchor,
+    ArrivalEvidence,
+    CandidateEvidence,
+    ContinuityEvidence,
+    EdgeEvidence,
+    RelationEvidence,
+    SemanticEvidence,
+    SharedAuthorEvidence,
 )
 from nexus.services.resource_graph.refs import ResourceRef
 from nexus.services.resource_graph.resolve import resolve_refs
-from nexus.services.resource_graph.schemas import EdgeKind
 from nexus.services.semantic_chunks import media_neighbor_rows_sql
 
-_DAY_PRECISION_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+SEMANTIC_CHUNK_CANDIDATE_MULTIPLIER = 20
+SEMANTIC_CHUNK_CANDIDATE_MINIMUM = 100
 
 
-def _edge_fact_rows_sql() -> str:
-    """Viewer-owned edge facts for a caller-supplied origin allowlist.
-
-    Binds ``:viewer_id`` and ``:edge_origins``. Columns are ``edge_id``,
-    ``edge_kind``, ``edge_origin``, ``source_scheme``, ``source_id``,
-    ``target_scheme``, ``target_id``, and ``created_at``.
-    """
-    return """
-        SELECT
-            e.id AS edge_id,
-            e.kind AS edge_kind,
-            e.origin AS edge_origin,
-            e.source_scheme,
-            e.source_id,
-            e.target_scheme,
-            e.target_id,
-            e.created_at
-        FROM resource_edges e
-        WHERE e.user_id = :viewer_id
-          AND e.origin = ANY(:edge_origins)
-    """
-
-
-def _resource_owner_rows_sql(endpoint_relation: str) -> str:
-    """Normalize one checked-in, bounded resource-endpoint relation one hop.
-
-    ``endpoint_relation`` must expose ``resource_scheme`` and ``resource_id``;
-    it is checked-in SQL assembled by a service, never request text. Returned
-    columns are ``resource_scheme``, ``resource_id``, ``owner_scheme``, and
-    ``owner_id``. Direct media, podcast, Page, and NoteBlock identities are
-    preserved. Media-owned fragments, highlights, evidence spans, content
-    chunks, and reader-apparatus items map to their canonical media; note-owned
-    spans/chunks map to their exact NoteBlock.
-
-    Requiring the endpoint relation makes the bounded-work contract structural:
-    every storage branch starts from the distinct supplied endpoints, so a
-    multiply referenced owner CTE cannot materialize the complete resource
-    corpus before filtering.
+# The one reading of ``media.original_published_date`` as a real calendar day.
+def exact_day_date_sql(value_sql: str) -> str:
+    """A total PostgreSQL expression: the column as a date, or NULL."""
+    year = f"substring({value_sql} from 1 for 4)::integer"
+    month = f"substring({value_sql} from 6 for 2)::integer"
+    day = f"substring({value_sql} from 9 for 2)::integer"
+    last_day = f"""
+        CASE
+            WHEN {month} = 2 THEN
+                CASE
+                    WHEN {year} % 400 = 0
+                      OR ({year} % 4 = 0 AND {year} % 100 <> 0)
+                    THEN 29
+                    ELSE 28
+                END
+            WHEN {month} IN (4, 6, 9, 11) THEN 30
+            ELSE 31
+        END
     """
     return f"""
-        WITH owner_endpoints AS (
-            SELECT DISTINCT resource_scheme, resource_id
-            FROM ({endpoint_relation}) supplied_endpoints
-            WHERE resource_scheme IS NOT NULL
-              AND resource_id IS NOT NULL
-        )
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            'media'::text AS owner_scheme,
-            m.id AS owner_id
-        FROM owner_endpoints endpoint
-        JOIN media m
-          ON endpoint.resource_scheme = 'media'
-         AND m.id = endpoint.resource_id
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            'podcast'::text AS owner_scheme,
-            p.id AS owner_id
-        FROM owner_endpoints endpoint
-        JOIN podcasts p
-          ON endpoint.resource_scheme = 'podcast'
-         AND p.id = endpoint.resource_id
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            'page'::text AS owner_scheme,
-            p.id AS owner_id
-        FROM owner_endpoints endpoint
-        JOIN pages p
-          ON endpoint.resource_scheme = 'page'
-         AND p.id = endpoint.resource_id
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            'note_block'::text AS owner_scheme,
-            nb.id AS owner_id
-        FROM owner_endpoints endpoint
-        JOIN note_blocks nb
-          ON endpoint.resource_scheme = 'note_block'
-         AND nb.id = endpoint.resource_id
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            'media'::text AS owner_scheme,
-            f.media_id AS owner_id
-        FROM owner_endpoints endpoint
-        JOIN fragments f
-          ON endpoint.resource_scheme = 'fragment'
-         AND f.id = endpoint.resource_id
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            'media'::text AS owner_scheme,
-            h.anchor_media_id AS owner_id
-        FROM owner_endpoints endpoint
-        JOIN highlights h
-          ON endpoint.resource_scheme = 'highlight'
-         AND h.id = endpoint.resource_id
-        WHERE h.anchor_media_id IS NOT NULL
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            es.owner_kind AS owner_scheme,
-            es.owner_id
-        FROM owner_endpoints endpoint
-        JOIN evidence_spans es
-          ON endpoint.resource_scheme = 'evidence_span'
-         AND es.id = endpoint.resource_id
-        WHERE es.owner_kind IN ('media', 'note_block')
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            cc.owner_kind AS owner_scheme,
-            cc.owner_id
-        FROM owner_endpoints endpoint
-        JOIN content_chunks cc
-          ON endpoint.resource_scheme = 'content_chunk'
-         AND cc.id = endpoint.resource_id
-        WHERE cc.owner_kind IN ('media', 'note_block')
-
-        UNION ALL
-
-        SELECT
-            endpoint.resource_scheme,
-            endpoint.resource_id,
-            'media'::text AS owner_scheme,
-            rai.media_id AS owner_id
-        FROM owner_endpoints endpoint
-        JOIN reader_apparatus_items rai
-          ON endpoint.resource_scheme = 'reader_apparatus_item'
-         AND rai.id = endpoint.resource_id
+        CASE
+            WHEN {value_sql} ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$' THEN
+                CASE
+                    WHEN {year} BETWEEN 1 AND 9999
+                     AND {month} BETWEEN 1 AND 12
+                     AND {day} BETWEEN 1 AND ({last_day})
+                    THEN make_date({year}, {month}, {day})
+                END
+        END
     """
 
 
-@dataclass(frozen=True, slots=True)
-class Anchor:
-    ref: ResourceRef
-    label: str
-    rank: int
-
-
-@dataclass(frozen=True, slots=True)
-class ContinuityEvidence:
-    progress: float | None
-    last_engaged_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class AddedToNexusEvidence:
-    kind: Literal["AddedToNexus"]
-    added_at: datetime
-
-    @property
-    def occurred_on(self) -> date:
-        return self.added_at.astimezone(UTC).date()
-
-    @property
-    def occurred_at(self) -> datetime:
-        return self.added_at
-
-
-@dataclass(frozen=True, slots=True)
-class PublishedEvidence:
-    kind: Literal["Published"]
-    published_on: date
-
-    @property
-    def occurred_on(self) -> date:
-        return self.published_on
-
-    @property
-    def occurred_at(self) -> None:
-        return None
-
-
-@dataclass(frozen=True, slots=True)
-class NewEpisodeEvidence:
-    kind: Literal["NewEpisode"]
-    published_at: datetime
-
-    @property
-    def occurred_on(self) -> date:
-        return self.published_at.astimezone(UTC).date()
-
-    @property
-    def occurred_at(self) -> datetime:
-        return self.published_at
-
-
-type ArrivalEvidence = AddedToNexusEvidence | PublishedEvidence | NewEpisodeEvidence
-
-
-@dataclass(frozen=True, slots=True)
-class EdgeEvidence:
-    anchor: Anchor
-    edge_id: UUID
-    edge_kind: EdgeKind
-    edge_origin: ResonanceEdgeOrigin
-    created_at: datetime
-
-
-@dataclass(frozen=True, slots=True, order=True)
-class Author:
-    id: UUID
-    display_name: str
-
-
-@dataclass(frozen=True, slots=True)
-class SharedAuthorEvidence:
-    anchor: Anchor
-    authors: tuple[Author, ...]
-
-    def __post_init__(self) -> None:
-        if not self.authors:
-            # justify-defect: the type represents qualified SharedAuthor evidence.
-            raise AssertionError("SharedAuthor evidence requires at least one author")
-        by_id: dict[UUID, Author] = {}
-        for author in self.authors:
-            existing = by_id.setdefault(author.id, author)
-            if existing.display_name != author.display_name:
-                # justify-defect: one canonical contributor id has one canonical
-                # display name inside a repeatable-read snapshot.
-                raise AssertionError(f"conflicting author names for {author.id}")
-        object.__setattr__(
-            self,
-            "authors",
-            tuple(sorted(by_id.values(), key=lambda author: str(author.id))),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SemanticEvidence:
-    anchor: Anchor
-    similarity: float
-
-
-@dataclass(frozen=True, slots=True)
-class CandidateEvidence:
-    target_ref: ResourceRef
-    media_kind: MediaKind | None
-    continuity: ContinuityEvidence | None
-    arrivals: tuple[ArrivalEvidence, ...]
-    edges: tuple[EdgeEvidence, ...]
-    shared_authors: tuple[SharedAuthorEvidence, ...]
-    semantics: tuple[SemanticEvidence, ...]
-    last_engaged_at: datetime | None
-    latest_exact_arrival_at: datetime | None
-    latest_exact_activity_at: datetime | None
-
-
-type RelationEvidence = EdgeEvidence | SharedAuthorEvidence | SemanticEvidence
-
-
-@dataclass(frozen=True, slots=True)
-class _SemanticRow:
-    peer_media_id: UUID
-    anchor_rank: int
-    similarity: float
-    partition: Literal["GraphThread", "Rediscovery"]
-    last_engaged_at: datetime | None
-    latest_exact_arrival_at: datetime | None
+def semantic_chunk_candidate_limit(distinct_media_limit: int) -> int:
+    return max(
+        distinct_media_limit * SEMANTIC_CHUNK_CANDIDATE_MULTIPLIER,
+        SEMANTIC_CHUNK_CANDIDATE_MINIMUM,
+    )
 
 
 def capture_as_of(db: Session) -> datetime:
-    """Capture the request snapshot's single authoritative UTC instant."""
-    value = db.execute(text("SELECT now()")).scalar_one()
-    if not isinstance(value, datetime):
-        # justify-defect: PostgreSQL now() is a timestamptz in this schema.
-        raise AssertionError("database now() did not return an instant")
-    if value.tzinfo is None:
-        # justify-defect: PostgreSQL timestamptz values are timezone-aware.
-        raise AssertionError("database now() returned a naive instant")
-    return value.astimezone(UTC)
+    """The request snapshot's single authoritative UTC instant."""
+    return db.execute(text("SELECT now()")).scalar_one().astimezone(UTC)
 
 
 def lectern_anchors(db: Session, *, viewer_id: UUID) -> tuple[Anchor, ...]:
-    """Select, normalize, resolve, and label the five canonical Lectern anchors."""
+    """The five newest objects the viewer touched, engagement before notes."""
     gathered: list[tuple[datetime, int, ResourceRef]] = []
     for fact in projection.recent_engagement_anchor_facts(
         db, viewer_id=viewer_id, limit=SLATE_ANCHOR_LIMIT
@@ -346,9 +106,11 @@ def lectern_anchors(db: Session, *, viewer_id: UUID) -> tuple[Anchor, ...]:
         db, viewer_id=viewer_id, limit=SLATE_ANCHOR_LIMIT
     ):
         gathered.append((fact.activity_at, 1, ResourceRef(scheme="media", id=fact.media_id)))
-    for fact in notes.recent_note_anchor_facts(db, viewer_id=viewer_id, limit=SLATE_ANCHOR_LIMIT):
-        source_priority = 2 if fact.ref.scheme == "note_block" else 3
-        gathered.append((fact.activity_at, source_priority, fact.ref))
+    for note_fact in notes.recent_note_anchor_facts(
+        db, viewer_id=viewer_id, limit=SLATE_ANCHOR_LIMIT
+    ):
+        source_priority = 2 if note_fact.ref.scheme == "note_block" else 3
+        gathered.append((note_fact.activity_at, source_priority, note_fact.ref))
     gathered.sort(key=lambda row: (-row[0].timestamp(), row[1], row[2].uri))
     refs: list[ResourceRef] = []
     seen: set[str] = set()
@@ -359,38 +121,28 @@ def lectern_anchors(db: Session, *, viewer_id: UUID) -> tuple[Anchor, ...]:
         refs.append(ref)
         if len(refs) == SLATE_ANCHOR_LIMIT:
             break
-    return _resolved_anchors(db, viewer_id=viewer_id, refs=refs)
+    return _resolve_anchors(db, viewer_id=viewer_id, refs=refs)
 
 
 def library_anchors(db: Session, *, viewer_id: UUID, library_id: UUID) -> tuple[Anchor, ...]:
     refs = library_entries.library_anchor_facts(
-        db,
-        viewer_id=viewer_id,
-        library_id=library_id,
-        limit=SLATE_ANCHOR_LIMIT,
+        db, viewer_id=viewer_id, library_id=library_id, limit=SLATE_ANCHOR_LIMIT
     )
-    return _resolved_anchors(db, viewer_id=viewer_id, refs=list(refs))
+    return _resolve_anchors(db, viewer_id=viewer_id, refs=list(refs))
 
 
-def _resolved_anchors(
+def _resolve_anchors(
     db: Session, *, viewer_id: UUID, refs: list[ResourceRef]
 ) -> tuple[Anchor, ...]:
     if not refs:
         return ()
     resolved = resolve_refs(
-        db,
-        viewer_id=viewer_id,
-        refs=refs,
-        include_media_document_summary=False,
+        db, viewer_id=viewer_id, refs=refs, include_media_document_summary=False
     )
-    anchors: list[Anchor] = []
-    for ref, item in zip(refs, resolved, strict=True):
-        if item.missing:
-            # justify-defect: every anchor owner already proved this ref readable in
-            # the same repeatable-read snapshot before asking the resolver to label it.
-            raise AssertionError(f"Readable Slate anchor did not resolve: {ref.uri}")
-        anchors.append(Anchor(ref=ref, label=item.label, rank=len(anchors)))
-    return tuple(anchors)
+    return tuple(
+        Anchor(ref=ref, label=item.label, rank=rank)
+        for rank, (ref, item) in enumerate(zip(refs, resolved, strict=True))
+    )
 
 
 def acquire_slate_candidates(
@@ -399,13 +151,18 @@ def acquire_slate_candidates(
     viewer_id: UUID,
     as_of: datetime,
     anchors: tuple[Anchor, ...],
-    eligible_media_relation: str,
-    eligible_target_relation: str,
+    target_relation: str,
     relation_params: dict[str, object],
-    include_nonrelational: bool,
+    surface: Literal["lectern", "library"],
 ) -> list[CandidateEvidence]:
-    """Acquire one bounded, normalized evidence union over checked-in owner ports."""
-    params = {
+    """One bounded evidence union over the surface's eligible-target relation.
+
+    ``target_relation`` is checked-in SQL exposing one row per addable target.
+    Lectern also takes the two non-relational lanes and, because a candidate
+    renders under exactly one reason, keeps their targets out of the relational
+    lanes so those lanes spend their budget on relational candidates.
+    """
+    params: dict[str, object] = {
         "viewer_id": viewer_id,
         "as_of": as_of,
         "continuity_days": CONTINUITY_MAX_IDLE_DAYS,
@@ -414,212 +171,114 @@ def acquire_slate_candidates(
         "rediscovery_days": REDISCOVERY_MIN_AGE_DAYS,
         **relation_params,
     }
+    lectern = surface == "lectern"
     candidate_refs: dict[str, ResourceRef] = {}
-
-    if include_nonrelational:
-        rows = db.execute(
-            text(f"""
-                WITH eligible_media AS ({eligible_media_relation})
-                SELECT 'continuity' AS lane, media_id
-                FROM eligible_media
-                WHERE read_state = 'InProgress'
-                  AND last_engaged_at BETWEEN
-                      :as_of - :continuity_days * interval '1 day' AND :as_of
-                ORDER BY last_engaged_at DESC, media_id ASC
-                LIMIT {SLATE_FAMILY_CANDIDATE_LIMIT}
-            """),
-            params,
-        ).mappings()
-        for row in rows:
-            ref = ResourceRef(scheme="media", id=UUID(str(row["media_id"])))
+    if lectern:
+        for media_id in _nonrelational_media_ids(db, target_relation, params=params):
+            ref = ResourceRef(scheme="media", id=media_id)
             candidate_refs.setdefault(ref.uri, ref)
 
-        rows = db.execute(
-            text(f"""
-                WITH eligible_media AS ({eligible_media_relation}),
-                normalized AS (
-                    SELECT
-                        eligible_media.*,
-                        ({exact_day_date_sql("original_published_date")}) AS published_on
-                    FROM eligible_media
-                ),
-                qualifying AS (
-                    SELECT
-                        normalized.*,
-                        CASE WHEN created_at BETWEEN
-                                :as_of - :arrival_days * interval '1 day' AND :as_of
-                            THEN (created_at AT TIME ZONE 'UTC')::date END
-                            AS added_on,
-                        CASE WHEN published_at BETWEEN
-                                :as_of - :arrival_days * interval '1 day' AND :as_of
-                            THEN (published_at AT TIME ZONE 'UTC')::date END
-                            AS episode_on,
-                        CASE
-                            WHEN published_on BETWEEN
-                                (:as_of AT TIME ZONE 'UTC')::date - :arrival_calendar_days
-                                AND (:as_of AT TIME ZONE 'UTC')::date
-                            THEN published_on
-                        END AS media_published_on
-                    FROM normalized
-                ),
-                dated AS (
-                    SELECT
-                        qualifying.*,
-                        GREATEST(added_on, episode_on, media_published_on)
-                            AS newest_arrival_on
-                    FROM qualifying
-                    WHERE added_on IS NOT NULL
-                       OR episode_on IS NOT NULL
-                       OR media_published_on IS NOT NULL
-                ),
-                ranked AS (
-                    SELECT
-                        dated.*,
-                        GREATEST(
-                            CASE WHEN added_on = newest_arrival_on THEN created_at END,
-                            CASE WHEN episode_on = newest_arrival_on THEN published_at END
-                        ) AS newest_exact_at
-                    FROM dated
-                )
-                SELECT media_id
-                FROM ranked
-                WHERE NOT COALESCE(
-                    read_state = 'InProgress'
-                    AND last_engaged_at BETWEEN
-                        :as_of - :continuity_days * interval '1 day' AND :as_of,
-                    false
-                )
-                ORDER BY
-                    newest_arrival_on DESC,
-                    CASE
-                        WHEN episode_on IS NOT NULL THEN 0
-                        WHEN media_published_on IS NOT NULL THEN 1
-                        ELSE 2
-                    END,
-                    newest_exact_at DESC NULLS LAST,
-                    media_id ASC
-                LIMIT {SLATE_FAMILY_CANDIDATE_LIMIT}
-            """),
-            params,
-        ).mappings()
-        for row in rows:
-            ref = ResourceRef(scheme="media", id=UUID(str(row["media_id"])))
-            candidate_refs.setdefault(ref.uri, ref)
+    relational = _relational_target_relation(target_relation, exclude_nonrelational=lectern)
+    anchor_by_rank = {anchor.rank: anchor for anchor in anchors}
+    relations: dict[str, RelationEvidence] = {}
 
-    relational_targets = _relational_target_relation(
-        eligible_target_relation,
-        exclude_nonrelational=include_nonrelational,
-    )
-    edge_rows = _edge_rows(
-        db,
-        viewer_id=viewer_id,
-        anchors=anchors,
-        eligible_target_relation=relational_targets,
-        params=params,
-    )
-    for row in edge_rows:
+    for rank, row in enumerate(
+        _edge_rows(db, viewer_id=viewer_id, anchors=anchors, relation=relational, params=params)
+    ):
         ref = _target_ref(row)
         candidate_refs.setdefault(ref.uri, ref)
+        relations[ref.uri] = EdgeEvidence(
+            anchor=anchor_by_rank[int(row["anchor_rank"])],
+            rank=rank,
+            edge_origin=cast(ResonanceEdgeOrigin, str(row["edge_origin"])),
+        )
 
-    author_rows = _shared_author_rows(
-        db,
-        viewer_id=viewer_id,
-        anchors=anchors,
-        eligible_target_relation=relational_targets,
-        params=params,
-        use_library_secondary=not include_nonrelational,
-    )
-    for row in author_rows:
+    for rank, row in enumerate(
+        _shared_author_rows(
+            db,
+            viewer_id=viewer_id,
+            anchors=anchors,
+            relation=relational,
+            params=params,
+            library_secondary=not lectern,
+        )
+    ):
         ref = _target_ref(row)
         candidate_refs.setdefault(ref.uri, ref)
+        relations.setdefault(
+            ref.uri,
+            SharedAuthorEvidence(
+                anchor=anchor_by_rank[int(row["anchor_rank"])],
+                rank=rank,
+                author_id=UUID(str(row["first_author_id"])),
+                author_name=str(row["display_name"]),
+            ),
+        )
 
-    semantic_rows = _semantic_rows(
-        db,
-        viewer_id=viewer_id,
-        anchors=anchors,
-        eligible_media_relation=f"""
-            SELECT
-                target_id AS media_id,
-                slate_family AS candidate_partition,
-                last_engaged_at,
-                latest_exact_arrival_at
-            FROM ({relational_targets}) relational_targets
-            WHERE target_scheme = 'media'
-        """,
-        params=params,
-        use_library_secondary=not include_nonrelational,
-    )
-    for row in semantic_rows:
-        ref = ResourceRef(scheme="media", id=row.peer_media_id)
+    for rank, row in enumerate(
+        _semantic_rows(
+            db,
+            viewer_id=viewer_id,
+            anchors=anchors,
+            relation=relational,
+            params=params,
+            library_secondary=not lectern,
+        )
+    ):
+        ref = ResourceRef(scheme="media", id=UUID(str(row["peer_media_id"])))
         candidate_refs.setdefault(ref.uri, ref)
+        relations.setdefault(
+            ref.uri,
+            SemanticEvidence(anchor=anchor_by_rank[int(row["anchor_rank"])], rank=rank),
+        )
 
-    # Two direct lanes and two family partitions from each of the three
-    # relational sources contribute at most twenty unique targets apiece.
     refs = list(candidate_refs.values())
-    if len(refs) > 8 * SLATE_FAMILY_CANDIDATE_LIMIT:
-        # justify-defect: the eight fixed acquisition lanes above are each capped.
-        raise AssertionError("Slate raw evidence union exceeded its fixed bound")
     if not refs:
         return []
-    facts = _target_fact_rows(
-        db,
-        viewer_id=viewer_id,
-        refs=refs,
-        eligible_target_relation=eligible_target_relation,
-        params=params,
-    )
-    fact_uris = [_target_ref(row).uri for row in facts]
-    requested_uris = [ref.uri for ref in refs]
-    if len(fact_uris) != len(requested_uris) or set(fact_uris) != set(requested_uris):
-        # justify-defect: every bounded candidate came from this closed eligible-target
-        # relation in the same repeatable-read snapshot, which yields one row per ref.
-        raise AssertionError(
-            f"Slate target facts drifted: expected {requested_uris}, got {fact_uris}"
+    facts = {
+        _target_ref(row).uri: row
+        for row in _target_fact_rows(
+            db, viewer_id=viewer_id, refs=refs, relation=target_relation, params=params
         )
-    by_uri = {_target_ref(row).uri: row for row in facts}
-    anchor_by_rank = {anchor.rank: anchor for anchor in anchors}
-    edges_by_uri: dict[str, list[EdgeEvidence]] = defaultdict(list)
-    for row in edge_rows:
-        ref = _target_ref(row)
-        edges_by_uri[ref.uri].append(
-            EdgeEvidence(
-                anchor=anchor_by_rank[int(row["anchor_rank"])],
-                edge_id=UUID(str(row["edge_id"])),
-                edge_kind=cast(EdgeKind, str(row["edge_kind"])),
-                edge_origin=cast(ResonanceEdgeOrigin, str(row["edge_origin"])),
-                created_at=row["created_at"],
-            )
-        )
-    authors_by_uri: dict[str, list[SharedAuthorEvidence]] = defaultdict(list)
-    grouped_authors: dict[tuple[str, int], list[Author]] = defaultdict(list)
-    for row in author_rows:
-        ref = _target_ref(row)
-        grouped_authors[(ref.uri, int(row["anchor_rank"]))].append(
-            Author(
-                id=UUID(str(row["contributor_id"])),
-                display_name=str(row["display_name"]),
-            )
-        )
-    for (uri, rank), authors in grouped_authors.items():
-        authors_by_uri[uri].append(
-            SharedAuthorEvidence(anchor=anchor_by_rank[rank], authors=tuple(authors))
-        )
-    semantic_by_uri: dict[str, list[SemanticEvidence]] = defaultdict(list)
-    for row in semantic_rows:
-        ref = ResourceRef(scheme="media", id=row.peer_media_id)
-        semantic_by_uri[ref.uri].append(
-            SemanticEvidence(
-                anchor=anchor_by_rank[row.anchor_rank],
-                similarity=row.similarity,
-            )
-        )
+    }
+    return [_candidate(ref, facts[ref.uri], relations.get(ref.uri), as_of=as_of) for ref in refs]
 
-    candidates: list[CandidateEvidence] = []
-    for ref in refs:
-        row = by_uri[ref.uri]
-        read_state = str(row["read_state"]) if row["read_state"] is not None else None
-        engaged = row["last_engaged_at"]
-        continuity = (
+
+def _candidate(
+    ref: ResourceRef, row: Any, relation: RelationEvidence | None, *, as_of: datetime
+) -> CandidateEvidence:
+    engaged = row["last_engaged_at"]
+    created_at = row["created_at"]
+    published_at = row["published_at"]
+    arrivals: list[ArrivalEvidence] = []
+    if created_at is not None:
+        arrivals.append(
+            ArrivalEvidence(
+                kind="AddedToNexus",
+                occurred_on=created_at.astimezone(UTC).date(),
+                occurred_at=created_at,
+            )
+        )
+    if row["published_on"] is not None:
+        arrivals.append(
+            ArrivalEvidence(kind="Published", occurred_on=row["published_on"], occurred_at=None)
+        )
+    if published_at is not None:
+        arrivals.append(
+            ArrivalEvidence(
+                kind="NewEpisode",
+                occurred_on=published_at.astimezone(UTC).date(),
+                occurred_at=published_at,
+            )
+        )
+    exact_activity = [
+        fact for fact in (created_at, published_at, engaged) if fact is not None and fact <= as_of
+    ]
+    media_kind = row["media_kind"]
+    return CandidateEvidence(
+        target_ref=ref,
+        media_kind=MediaKind(str(media_kind)) if media_kind is not None else None,
+        continuity=(
             ContinuityEvidence(
                 progress=(
                     float(row["progress_fraction"])
@@ -628,124 +287,157 @@ def acquire_slate_candidates(
                 ),
                 last_engaged_at=engaged,
             )
-            if read_state == "InProgress" and engaged is not None
+            if row["read_state"] == "InProgress" and engaged is not None
             else None
-        )
-        arrivals: list[ArrivalEvidence] = []
-        created_at = row["created_at"]
-        if created_at is not None:
-            arrivals.append(AddedToNexusEvidence(kind="AddedToNexus", added_at=created_at))
-        published_on = _day_precision_published_on(row["original_published_date"])
-        if published_on is not None:
-            arrivals.append(PublishedEvidence(kind="Published", published_on=published_on))
-        published_at = row["published_at"]
-        if published_at is not None:
-            arrivals.append(NewEpisodeEvidence(kind="NewEpisode", published_at=published_at))
-        exact_arrivals = [
-            fact for fact in (created_at, published_at) if fact is not None and fact <= as_of
-        ]
-        exact_activity = [
-            fact
-            for fact in (created_at, published_at, engaged)
-            if fact is not None and fact <= as_of
-        ]
-        media_kind_raw = row["media_kind"]
-        candidates.append(
-            CandidateEvidence(
-                target_ref=ref,
-                media_kind=(MediaKind(str(media_kind_raw)) if media_kind_raw is not None else None),
-                continuity=continuity,
-                arrivals=tuple(arrivals),
-                edges=tuple(edges_by_uri[ref.uri]),
-                shared_authors=tuple(authors_by_uri[ref.uri]),
-                semantics=tuple(semantic_by_uri[ref.uri]),
-                last_engaged_at=engaged,
-                latest_exact_arrival_at=(max(exact_arrivals) if exact_arrivals else None),
-                latest_exact_activity_at=(max(exact_activity) if exact_activity else None),
-            )
-        )
-    return candidates
+        ),
+        arrivals=tuple(arrivals),
+        relation=relation,
+        latest_exact_activity_at=max(exact_activity) if exact_activity else None,
+    )
 
 
-def _relational_target_relation(
-    eligible_target_relation: str, *, exclude_nonrelational: bool
-) -> str:
-    latest_exact_arrival = """
-        GREATEST(
-            CASE WHEN created_at <= :as_of THEN created_at END,
-            CASE WHEN published_at <= :as_of THEN published_at END
-        )
+# The windows every lane measures against the caller's single :as_of instant.
+_CONTINUITY_WINDOW = (
+    "read_state = 'InProgress' AND last_engaged_at"
+    " BETWEEN :as_of - :continuity_days * interval '1 day' AND :as_of"
+)
+_PUBLISHED_ON_WINDOW = (
+    "published_on BETWEEN (:as_of AT TIME ZONE 'UTC')::date - :arrival_calendar_days"
+    " AND (:as_of AT TIME ZONE 'UTC')::date"
+)
+
+
+def _arrival_window(column: str) -> str:
+    return f"{column} BETWEEN :as_of - :arrival_days * interval '1 day' AND :as_of"
+
+
+def _exact_instant(column: str) -> str:
+    return f"CASE WHEN {column} <= :as_of THEN {column} END"
+
+
+def _nonrelational_media_ids(
+    db: Session, target_relation: str, *, params: dict[str, object]
+) -> list[UUID]:
+    """Lectern's two direct lanes: what is in progress, and what just arrived."""
+    media_targets = f"""
+        SELECT
+            target_id AS media_id, created_at, original_published_date,
+            read_state, last_engaged_at, published_at
+        FROM ({target_relation}) targets
+        WHERE target_scheme = 'media'
     """
-    latest_exact_activity = """
-        GREATEST(
-            CASE WHEN created_at <= :as_of THEN created_at END,
-            CASE WHEN published_at <= :as_of THEN published_at END,
-            CASE WHEN last_engaged_at <= :as_of THEN last_engaged_at END
-        )
-    """
-    nonrelational_exclusion = ""
-    normalized_published_on = "NULL::date"
-    if exclude_nonrelational:
-        normalized_published_on = exact_day_date_sql("original_published_date")
-        nonrelational_exclusion = """
-            AND NOT COALESCE(
-                read_state = 'InProgress'
-                AND last_engaged_at BETWEEN
-                    :as_of - :continuity_days * interval '1 day' AND :as_of,
-                false
+    continuity = db.execute(
+        text(f"""
+            WITH eligible_media AS ({media_targets})
+            SELECT media_id
+            FROM eligible_media
+            WHERE {_CONTINUITY_WINDOW}
+            ORDER BY last_engaged_at DESC, media_id ASC
+            LIMIT {SLATE_FAMILY_CANDIDATE_LIMIT}
+        """),
+        params,
+    ).mappings()
+    arrival = db.execute(
+        text(f"""
+            WITH eligible_media AS ({media_targets}),
+            dated AS (
+                SELECT
+                    eligible_media.*,
+                    CASE WHEN {_arrival_window("created_at")}
+                        THEN (created_at AT TIME ZONE 'UTC')::date END AS added_on,
+                    CASE WHEN {_arrival_window("published_at")}
+                        THEN (published_at AT TIME ZONE 'UTC')::date END AS episode_on,
+                    CASE WHEN {_PUBLISHED_ON_WINDOW} THEN published_on END AS media_published_on
+                FROM (
+                    SELECT
+                        eligible_media.*,
+                        ({exact_day_date_sql("original_published_date")}) AS published_on
+                    FROM eligible_media
+                ) eligible_media
+            ),
+            arrived AS (
+                SELECT dated.*, GREATEST(added_on, episode_on, media_published_on) AS arrived_on
+                FROM dated
+                WHERE added_on IS NOT NULL
+                   OR episode_on IS NOT NULL
+                   OR media_published_on IS NOT NULL
             )
+            SELECT media_id
+            FROM arrived
+            WHERE NOT COALESCE({_CONTINUITY_WINDOW}, false)
+            ORDER BY
+                arrived_on DESC,
+                CASE
+                    WHEN episode_on IS NOT NULL THEN 0
+                    WHEN media_published_on IS NOT NULL THEN 1
+                    ELSE 2
+                END,
+                GREATEST(
+                    CASE WHEN added_on = arrived_on THEN created_at END,
+                    CASE WHEN episode_on = arrived_on THEN published_at END
+                ) DESC NULLS LAST,
+                media_id ASC
+            LIMIT {SLATE_FAMILY_CANDIDATE_LIMIT}
+        """),
+        params,
+    ).mappings()
+    return [UUID(str(row["media_id"])) for row in (*continuity, *arrival)]
+
+
+def _relational_target_relation(target_relation: str, *, exclude_nonrelational: bool) -> str:
+    """Eligible targets plus their contextual family and exact arrival instant.
+
+    ``exclude_nonrelational`` drops the targets Lectern renders under
+    continuity or arrival instead, so the relational lanes spend their whole
+    budget on relational candidates.
+    """
+    exclusion = (
+        f"""
+            AND NOT COALESCE({_CONTINUITY_WINDOW}, false)
             AND NOT (
-                COALESCE(
-                    created_at BETWEEN
-                        :as_of - :arrival_days * interval '1 day' AND :as_of,
-                    false
-                )
-                OR COALESCE(
-                    published_at BETWEEN
-                        :as_of - :arrival_days * interval '1 day' AND :as_of,
-                    false
-                )
-                OR COALESCE(
-                    published_on BETWEEN
-                        (:as_of AT TIME ZONE 'UTC')::date - :arrival_calendar_days
-                        AND (:as_of AT TIME ZONE 'UTC')::date,
-                    false
-                )
+                COALESCE({_arrival_window("created_at")}, false)
+                OR COALESCE({_arrival_window("published_at")}, false)
+                OR COALESCE({_PUBLISHED_ON_WINDOW}, false)
             )
         """
+        if exclude_nonrelational
+        else ""
+    )
     return f"""
-        WITH eligible_targets AS ({eligible_target_relation}),
-        normalized AS (
+        WITH normalized AS (
             SELECT
                 eligible_targets.*,
-                ({normalized_published_on}) AS published_on
-            FROM eligible_targets
+                ({exact_day_date_sql("original_published_date")}) AS published_on
+            FROM ({target_relation}) eligible_targets
         )
         SELECT
             normalized.*,
-            ({latest_exact_arrival}) AS latest_exact_arrival_at,
+            GREATEST({_exact_instant("created_at")}, {_exact_instant("published_at")})
+                AS latest_exact_arrival_at,
             CASE
-                WHEN ({latest_exact_activity}) <=
-                    :as_of - :rediscovery_days * interval '1 day'
+                WHEN GREATEST(
+                    {_exact_instant("created_at")},
+                    {_exact_instant("published_at")},
+                    {_exact_instant("last_engaged_at")}
+                ) <= :as_of - :rediscovery_days * interval '1 day'
                 THEN 'Rediscovery'
                 ELSE 'GraphThread'
             END AS slate_family
         FROM normalized
         WHERE true
-        {nonrelational_exclusion}
+        {exclusion}
     """
 
 
-def _anchors_json(anchors: tuple[Anchor, ...]) -> str:
-    import json
-
-    return json.dumps(
-        [
-            {"scheme": anchor.ref.scheme, "id": str(anchor.ref.id), "rank": anchor.rank}
-            for anchor in anchors
-        ],
-        separators=(",", ":"),
-    )
+_EDGE_STRENGTH_ORDER = """
+    array_position(CAST(:edge_origins AS text[]), edge_origin),
+    created_at DESC,
+    CASE edge_kind WHEN 'context' THEN 0 WHEN 'supports' THEN 1 ELSE 2 END,
+    edge_id ASC,
+    anchor_rank ASC,
+    target_scheme ASC,
+    target_id ASC
+"""
 
 
 def _edge_rows(
@@ -753,14 +445,17 @@ def _edge_rows(
     *,
     viewer_id: UUID,
     anchors: tuple[Anchor, ...],
-    eligible_target_relation: str,
+    relation: str,
     params: dict[str, object],
 ) -> list[Any]:
+    """One row per eligible target reachable from an anchor by one graph edge.
+
+    Both endpoints are normalized to their owning object, so a highlight or a
+    passage of a work connects that work. Strength ends in a unique edge id,
+    so one cap serves both surfaces.
+    """
     if not anchors:
         return []
-    # Edge strength ends in a globally unique edge id. Distinct targets therefore
-    # cannot tie far enough for Library's engagement/arrival secondary keys to
-    # reorder them, so this shared cap also preserves Lectern's relational order.
     rows = db.execute(
         text(f"""
             WITH anchors AS (
@@ -768,70 +463,45 @@ def _edge_rows(
                 FROM jsonb_to_recordset(CAST(:anchors AS jsonb))
                     AS x(scheme text, id uuid, rank integer)
             ),
-            edges AS ({_edge_fact_rows_sql()}),
+            edges AS (
+                SELECT e.id AS edge_id, e.kind AS edge_kind, e.origin AS edge_origin,
+                       e.source_scheme, e.source_id, e.target_scheme, e.target_id, e.created_at
+                FROM resource_edges e
+                WHERE e.user_id = :viewer_id AND e.origin = ANY(:edge_origins)
+            ),
             edge_endpoints AS (
                 SELECT source_scheme AS scheme, source_id AS id FROM edges
                 UNION
                 SELECT target_scheme, target_id FROM edges
             ),
-            owners AS (
-                {
-            _resource_owner_rows_sql('''
-                    SELECT scheme AS resource_scheme, id AS resource_id
-                    FROM edge_endpoints
-                ''')
-        }
-            ),
-            eligible_targets AS ({eligible_target_relation}),
+            owners AS ({_resource_owner_rows_sql()}),
+            eligible_targets AS ({relation}),
             incident AS (
-                SELECT
-                    so.owner_scheme AS anchor_scheme,
-                    so.owner_id AS anchor_id,
-                    target.owner_scheme AS target_scheme,
-                    target.owner_id AS target_id,
-                    edges.edge_id,
-                    edges.edge_kind,
-                    edges.edge_origin,
-                    edges.created_at
+                SELECT pair.anchor_scheme, pair.anchor_id, pair.target_scheme, pair.target_id,
+                       edges.edge_id, edges.edge_kind, edges.edge_origin, edges.created_at
                 FROM edges
-                JOIN owners so
-                  ON so.resource_scheme = edges.source_scheme
-                 AND so.resource_id = edges.source_id
-                JOIN owners target
-                  ON target.resource_scheme = edges.target_scheme
-                 AND target.resource_id = edges.target_id
-                UNION ALL
-                SELECT
-                    target.owner_scheme,
-                    target.owner_id,
-                    so.owner_scheme,
-                    so.owner_id,
-                    edges.edge_id,
-                    edges.edge_kind,
-                    edges.edge_origin,
-                    edges.created_at
-                FROM edges
-                JOIN owners so
-                  ON so.resource_scheme = edges.source_scheme
-                 AND so.resource_id = edges.source_id
-                JOIN owners target
-                  ON target.resource_scheme = edges.target_scheme
-                 AND target.resource_id = edges.target_id
-            )
-            , qualified AS (
-                SELECT
-                    incident.target_scheme,
-                    incident.target_id,
-                    eligible.slate_family,
-                    anchors.rank AS anchor_rank,
-                    incident.edge_id,
-                    incident.edge_kind,
-                    incident.edge_origin,
-                    incident.created_at
+                JOIN owners source_owner
+                  ON source_owner.resource_scheme = edges.source_scheme
+                 AND source_owner.resource_id = edges.source_id
+                JOIN owners target_owner
+                  ON target_owner.resource_scheme = edges.target_scheme
+                 AND target_owner.resource_id = edges.target_id
+                -- One edge is incident both ways: either owner can be the anchor.
+                CROSS JOIN LATERAL (
+                    VALUES
+                        (source_owner.owner_scheme, source_owner.owner_id,
+                         target_owner.owner_scheme, target_owner.owner_id),
+                        (target_owner.owner_scheme, target_owner.owner_id,
+                         source_owner.owner_scheme, source_owner.owner_id)
+                ) AS pair(anchor_scheme, anchor_id, target_scheme, target_id)
+            ),
+            qualified AS (
+                SELECT incident.target_scheme, incident.target_id, eligible.slate_family,
+                       anchors.rank AS anchor_rank, incident.edge_id, incident.edge_kind,
+                       incident.edge_origin, incident.created_at
                 FROM incident
                 JOIN anchors
-                  ON anchors.scheme = incident.anchor_scheme
-                 AND anchors.id = incident.anchor_id
+                  ON anchors.scheme = incident.anchor_scheme AND anchors.id = incident.anchor_id
                 JOIN eligible_targets eligible
                   ON eligible.target_scheme = incident.target_scheme
                  AND eligible.target_id = incident.target_id
@@ -841,52 +511,17 @@ def _edge_rows(
             strongest_per_target AS (
                 SELECT DISTINCT ON (target_scheme, target_id) *
                 FROM qualified
-                ORDER BY
-                    target_scheme,
-                    target_id,
-                    array_position(CAST(:edge_origins AS text[]), edge_origin),
-                    created_at DESC,
-                    CASE edge_kind
-                        WHEN 'context' THEN 0 WHEN 'supports' THEN 1 ELSE 2
-                    END,
-                    edge_id ASC,
-                    anchor_rank ASC
-            ),
-            ranked AS (
-                SELECT
-                    strongest_per_target.*,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY slate_family
-                        ORDER BY
-                            array_position(
-                                CAST(:edge_origins AS text[]), edge_origin
-                            ),
-                            created_at DESC,
-                            CASE edge_kind
-                                WHEN 'context' THEN 0
-                                WHEN 'supports' THEN 1
-                                ELSE 2
-                            END,
-                            edge_id ASC,
-                            anchor_rank ASC,
-                            target_scheme ASC,
-                            target_id ASC
-                    ) AS family_rank
-                FROM strongest_per_target
+                ORDER BY target_scheme, target_id, {_EDGE_STRENGTH_ORDER}
             )
-            SELECT * FROM ranked
+            SELECT * FROM (
+                SELECT strongest_per_target.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY slate_family ORDER BY {_EDGE_STRENGTH_ORDER}
+                       ) AS family_rank
+                FROM strongest_per_target
+            ) ranked
             WHERE family_rank <= {SLATE_FAMILY_CANDIDATE_LIMIT}
-            ORDER BY
-                slate_family ASC,
-                array_position(CAST(:edge_origins AS text[]), edge_origin),
-                created_at DESC,
-                CASE edge_kind
-                    WHEN 'context' THEN 0 WHEN 'supports' THEN 1 ELSE 2
-                END,
-                edge_id ASC,
-                anchor_rank ASC,
-                target_scheme ASC,
-                target_id ASC
+            ORDER BY {_EDGE_STRENGTH_ORDER}
         """),
         {
             "viewer_id": viewer_id,
@@ -903,26 +538,29 @@ def _shared_author_rows(
     *,
     viewer_id: UUID,
     anchors: tuple[Anchor, ...],
-    eligible_target_relation: str,
+    relation: str,
     params: dict[str, object],
-    use_library_secondary: bool,
+    library_secondary: bool,
 ) -> list[Any]:
+    """One row per eligible target sharing an author with an anchor.
+
+    Strength is the shared-author count; Library breaks its ties by engagement
+    and arrival recency, which Lectern instead reaches through its families.
+    """
     author_anchors = tuple(
         anchor for anchor in anchors if anchor.ref.scheme in ("media", "podcast")
     )
     if not author_anchors:
         return []
-    library_secondary_order = ""
-    library_secondary_output_order = ""
-    if use_library_secondary:
-        library_secondary_order = """
-            last_engaged_at DESC NULLS LAST,
-            latest_exact_arrival_at DESC NULLS LAST,
-        """
-        library_secondary_output_order = """
-            ranked_pairs.last_engaged_at DESC NULLS LAST,
-            ranked_pairs.latest_exact_arrival_at DESC NULLS LAST,
-        """
+    secondary = (
+        "last_engaged_at DESC NULLS LAST, latest_exact_arrival_at DESC NULLS LAST,"
+        if library_secondary
+        else ""
+    )
+    strength = f"""
+        author_count DESC, first_author_id ASC, {secondary}
+        anchor_rank ASC, target_scheme ASC, target_id ASC
+    """
     rows = db.execute(
         text(f"""
             WITH anchors AS (
@@ -931,17 +569,12 @@ def _shared_author_rows(
                     AS x(scheme text, id uuid, rank integer)
             ),
             authors AS ({visible_author_credit_rows_sql()}),
-            eligible_targets AS ({eligible_target_relation}),
+            eligible_targets AS ({relation}),
             pairs AS (
                 SELECT DISTINCT
-                    eligible.target_scheme,
-                    eligible.target_id,
-                    eligible.slate_family,
-                    anchors.rank AS anchor_rank,
-                    eligible.last_engaged_at,
-                    eligible.latest_exact_arrival_at,
-                    target_author.contributor_id,
-                    target_author.display_name
+                    eligible.target_scheme, eligible.target_id, eligible.slate_family,
+                    anchors.rank AS anchor_rank, eligible.last_engaged_at,
+                    eligible.latest_exact_arrival_at, target_author.contributor_id
                 FROM anchors
                 JOIN authors anchor_author ON (
                     (anchors.scheme = 'media' AND anchor_author.media_id = anchors.id)
@@ -960,62 +593,32 @@ def _shared_author_rows(
             ),
             pair_strength AS (
                 SELECT
-                    target_scheme,
-                    target_id,
-                    slate_family,
-                    anchor_rank,
-                    last_engaged_at,
-                    latest_exact_arrival_at,
-                    COUNT(*) AS author_count,
-                    (ARRAY_AGG(contributor_id ORDER BY contributor_id ASC))[1]
-                        AS first_author_id
+                    target_scheme, target_id, slate_family, anchor_rank,
+                    last_engaged_at, latest_exact_arrival_at, COUNT(*) AS author_count,
+                    (ARRAY_AGG(contributor_id ORDER BY contributor_id ASC))[1] AS first_author_id
                 FROM pairs
                 GROUP BY
-                    target_scheme,
-                    target_id,
-                    slate_family,
-                    anchor_rank,
-                    last_engaged_at,
-                    latest_exact_arrival_at
+                    target_scheme, target_id, slate_family, anchor_rank,
+                    last_engaged_at, latest_exact_arrival_at
             ),
             strongest_per_target AS (
                 SELECT DISTINCT ON (target_scheme, target_id) *
                 FROM pair_strength
-                ORDER BY
-                    target_scheme,
-                    target_id,
-                    author_count DESC,
-                    first_author_id ASC,
-                    anchor_rank ASC
+                ORDER BY target_scheme, target_id, {strength}
             ),
-            ranked_pairs AS (
-                SELECT
-                    strongest_per_target.*,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY slate_family
-                        ORDER BY
-                            author_count DESC,
-                            first_author_id ASC,
-                            {library_secondary_order}
-                            anchor_rank ASC,
-                            target_scheme ASC,
-                            target_id ASC
-                    ) AS family_rank
+            ranked AS (
+                SELECT strongest_per_target.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY slate_family ORDER BY {strength}
+                       ) AS family_rank
                 FROM strongest_per_target
             )
-            SELECT pairs.*
-            FROM ranked_pairs
-            JOIN pairs USING (target_scheme, target_id, slate_family, anchor_rank)
-            WHERE ranked_pairs.family_rank <= {SLATE_FAMILY_CANDIDATE_LIMIT}
-            ORDER BY
-                ranked_pairs.slate_family ASC,
-                ranked_pairs.author_count DESC,
-                ranked_pairs.first_author_id ASC,
-                {library_secondary_output_order}
-                ranked_pairs.anchor_rank ASC,
-                ranked_pairs.target_scheme ASC,
-                ranked_pairs.target_id ASC,
-                pairs.contributor_id ASC
+            SELECT ranked.*, names.display_name
+            FROM ranked
+            JOIN (SELECT DISTINCT contributor_id, display_name FROM authors) names
+              ON names.contributor_id = ranked.first_author_id
+            WHERE ranked.family_rank <= {SLATE_FAMILY_CANDIDATE_LIMIT}
+            ORDER BY {strength}
         """),
         {"viewer_id": viewer_id, "anchors": _anchors_json(author_anchors), **params},
     ).mappings()
@@ -1027,26 +630,37 @@ def _semantic_rows(
     *,
     viewer_id: UUID,
     anchors: tuple[Anchor, ...],
-    eligible_media_relation: str,
+    relation: str,
     params: dict[str, object],
-    use_library_secondary: bool,
-) -> list[_SemanticRow]:
-    calibration = SLATE_SEMANTIC_CALIBRATION
-    results: list[_SemanticRow] = []
+    library_secondary: bool,
+) -> list[dict[str, Any]]:
+    """Calibrated nearest media neighbours of each media anchor, best first.
+
+    A row qualifies only under the checked-in embedding identity: a
+    re-embedding under another model drops out rather than ranking.
+    """
+    eligible_context = f"""
+        SELECT
+            target_id AS media_id,
+            slate_family AS candidate_partition,
+            last_engaged_at,
+            latest_exact_arrival_at
+        FROM ({relation}) relational_targets
+        WHERE target_scheme = 'media'
+    """
+    qualified: list[dict[str, Any]] = []
     for anchor in anchors:
         if anchor.ref.scheme != "media":
             continue
         rows = db.execute(
             text(f"""
-                WITH eligible_context AS ({eligible_media_relation}),
-                neighbors AS (
-                    {
+                WITH eligible_context AS ({eligible_context}),
+                neighbors AS ({
                 media_neighbor_rows_sql('''
-                        SELECT media_id, candidate_partition
-                        FROM eligible_context
-                    ''')
-            }
-                )
+                    SELECT media_id, candidate_partition
+                    FROM eligible_context
+                ''')
+            })
                 SELECT
                     neighbors.*,
                     eligible_context.last_engaged_at,
@@ -1059,71 +673,56 @@ def _semantic_rows(
             {
                 "viewer_id": viewer_id,
                 "anchor_media_id": anchor.ref.id,
-                "embedding_dimensions": calibration.dimensions,
+                "embedding_dimensions": SEMANTIC_DIMENSIONS,
                 "candidate_limit": semantic_chunk_candidate_limit(SLATE_FAMILY_CANDIDATE_LIMIT),
                 **params,
             },
         ).mappings()
         for row in rows:
-            partition_raw = str(row["candidate_partition"])
-            if partition_raw not in ("GraphThread", "Rediscovery"):
-                # justify-defect: Resonance supplies the closed contextual relation.
-                raise AssertionError(f"unexpected semantic partition: {partition_raw!r}")
             similarity = 1.0 - float(row["distance"])
-            if slate_semantic_qualifies(
-                provider=str(row["embedding_provider"]),
-                model=str(row["embedding_model"]),
-                dimensions=int(row["embedding_dimensions"]),
-                similarity=similarity,
+            if (
+                str(row["embedding_provider"]) == SEMANTIC_PROVIDER
+                and str(row["embedding_model"]) == SEMANTIC_MODEL
+                and int(row["embedding_dimensions"]) == SEMANTIC_DIMENSIONS
+                and math.isfinite(similarity)
+                and similarity >= SEMANTIC_MIN_SIMILARITY
             ):
-                results.append(
-                    _SemanticRow(
-                        peer_media_id=UUID(str(row["peer_media_id"])),
-                        anchor_rank=anchor.rank,
-                        similarity=similarity,
-                        partition=cast(Literal["GraphThread", "Rediscovery"], partition_raw),
-                        last_engaged_at=row["last_engaged_at"],
-                        latest_exact_arrival_at=row["latest_exact_arrival_at"],
-                    )
+                qualified.append(
+                    {
+                        "peer_media_id": row["peer_media_id"],
+                        "anchor_rank": anchor.rank,
+                        "similarity": similarity,
+                        "partition": str(row["candidate_partition"]),
+                        "last_engaged_at": row["last_engaged_at"],
+                        "latest_exact_arrival_at": row["latest_exact_arrival_at"],
+                    }
                 )
 
-    def sort_key(row: _SemanticRow) -> tuple[object, ...]:
-        library_secondary: tuple[object, ...] = ()
-        if use_library_secondary:
-            library_secondary = (
-                (
-                    -row.last_engaged_at.timestamp()
-                    if row.last_engaged_at is not None
-                    else float("inf")
-                ),
-                (
-                    -row.latest_exact_arrival_at.timestamp()
-                    if row.latest_exact_arrival_at is not None
-                    else float("inf")
-                ),
+    def strength(row: dict[str, Any]) -> tuple[object, ...]:
+        secondary: tuple[object, ...] = ()
+        if library_secondary:
+            secondary = (
+                _descending_instant(row["last_engaged_at"]),
+                _descending_instant(row["latest_exact_arrival_at"]),
             )
-        return (
-            0 if row.partition == "GraphThread" else 1,
-            -row.similarity,
-            *library_secondary,
-            row.anchor_rank,
-            str(row.peer_media_id),
-        )
+        return (-row["similarity"], *secondary, row["anchor_rank"], str(row["peer_media_id"]))
 
-    results.sort(key=sort_key)
-    unique: list[_SemanticRow] = []
-    seen: set[str] = set()
+    qualified.sort(key=strength)
+    ranked: list[dict[str, Any]] = []
+    seen: set[UUID] = set()
     family_counts = {"GraphThread": 0, "Rediscovery": 0}
-    for row in results:
-        peer_uri = f"media:{row.peer_media_id}"
-        if peer_uri in seen:
+    for row in qualified:
+        peer_id = UUID(str(row["peer_media_id"]))
+        if peer_id in seen or family_counts[row["partition"]] == SLATE_FAMILY_CANDIDATE_LIMIT:
             continue
-        if family_counts[row.partition] == SLATE_FAMILY_CANDIDATE_LIMIT:
-            continue
-        seen.add(peer_uri)
-        unique.append(row)
-        family_counts[row.partition] += 1
-    return unique
+        seen.add(peer_id)
+        family_counts[row["partition"]] += 1
+        ranked.append(row)
+    return ranked
+
+
+def _descending_instant(value: datetime | None) -> float:
+    return -value.timestamp() if value is not None else float("inf")
 
 
 def _target_fact_rows(
@@ -1131,9 +730,10 @@ def _target_fact_rows(
     *,
     viewer_id: UUID,
     refs: list[ResourceRef],
-    eligible_target_relation: str,
+    relation: str,
     params: dict[str, object],
 ) -> list[Any]:
+    """Display and dating facts for the acquired targets, one row per ref."""
     rows = db.execute(
         text(f"""
             WITH requested AS (
@@ -1141,8 +741,10 @@ def _target_fact_rows(
                 FROM jsonb_to_recordset(CAST(:targets AS jsonb))
                     AS x(scheme text, id uuid)
             ),
-            eligible_targets AS ({eligible_target_relation})
-            SELECT eligible_targets.*
+            eligible_targets AS ({relation})
+            SELECT
+                eligible_targets.*,
+                ({exact_day_date_sql("original_published_date")}) AS published_on
             FROM eligible_targets
             JOIN requested
               ON requested.scheme = eligible_targets.target_scheme
@@ -1150,33 +752,111 @@ def _target_fact_rows(
         """),
         {
             "viewer_id": viewer_id,
-            "targets": _refs_json(refs),
+            "targets": json.dumps(
+                [{"scheme": ref.scheme, "id": str(ref.id)} for ref in refs],
+                separators=(",", ":"),
+            ),
             **params,
         },
     ).mappings()
     return list(rows)
 
 
-def _target_ref(row: Any) -> ResourceRef:
-    return ResourceRef(
-        scheme=cast(Any, str(row["target_scheme"])),
-        id=UUID(str(row["target_id"])),
-    )
+def _resource_owner_rows_sql() -> str:
+    """Normalize every edge endpoint one hop to the object that owns it.
+
+    Reads ``edge_endpoints(scheme, id)``; returns ``resource_scheme``,
+    ``resource_id``, ``owner_scheme``, ``owner_id``. Media, podcasts, Pages and
+    NoteBlocks own themselves; fragments, highlights, spans, chunks and
+    apparatus items resolve to their media or their exact NoteBlock. Starting
+    from the distinct supplied endpoints keeps the work bounded by the edges.
+    """
+    return """
+        WITH owner_endpoints AS (
+            SELECT DISTINCT scheme AS resource_scheme, id AS resource_id
+            FROM edge_endpoints
+            WHERE scheme IS NOT NULL AND id IS NOT NULL
+        )
+        SELECT endpoint.resource_scheme, endpoint.resource_id,
+               'media'::text AS owner_scheme, m.id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN media m ON endpoint.resource_scheme = 'media' AND m.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT endpoint.resource_scheme, endpoint.resource_id,
+               'podcast'::text AS owner_scheme, p.id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN podcasts p ON endpoint.resource_scheme = 'podcast' AND p.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT endpoint.resource_scheme, endpoint.resource_id,
+               'page'::text AS owner_scheme, p.id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN pages p ON endpoint.resource_scheme = 'page' AND p.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT endpoint.resource_scheme, endpoint.resource_id,
+               'note_block'::text AS owner_scheme, nb.id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN note_blocks nb
+          ON endpoint.resource_scheme = 'note_block' AND nb.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT endpoint.resource_scheme, endpoint.resource_id,
+               'media'::text AS owner_scheme, f.media_id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN fragments f ON endpoint.resource_scheme = 'fragment' AND f.id = endpoint.resource_id
+
+        UNION ALL
+
+        SELECT endpoint.resource_scheme, endpoint.resource_id,
+               'media'::text AS owner_scheme, h.anchor_media_id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN highlights h
+          ON endpoint.resource_scheme = 'highlight' AND h.id = endpoint.resource_id
+        WHERE h.anchor_media_id IS NOT NULL
+
+        UNION ALL
+
+        SELECT endpoint.resource_scheme, endpoint.resource_id,
+               es.owner_kind AS owner_scheme, es.owner_id
+        FROM owner_endpoints endpoint
+        JOIN evidence_spans es
+          ON endpoint.resource_scheme = 'evidence_span' AND es.id = endpoint.resource_id
+        WHERE es.owner_kind IN ('media', 'note_block')
+
+        UNION ALL
+
+        SELECT endpoint.resource_scheme, endpoint.resource_id,
+               cc.owner_kind AS owner_scheme, cc.owner_id
+        FROM owner_endpoints endpoint
+        JOIN content_chunks cc
+          ON endpoint.resource_scheme = 'content_chunk' AND cc.id = endpoint.resource_id
+        WHERE cc.owner_kind IN ('media', 'note_block')
+
+        UNION ALL
+
+        SELECT endpoint.resource_scheme, endpoint.resource_id,
+               'media'::text AS owner_scheme, rai.media_id AS owner_id
+        FROM owner_endpoints endpoint
+        JOIN reader_apparatus_items rai
+          ON endpoint.resource_scheme = 'reader_apparatus_item' AND rai.id = endpoint.resource_id
+    """
 
 
-def _refs_json(refs: list[ResourceRef]) -> str:
-    import json
-
+def _anchors_json(anchors: tuple[Anchor, ...]) -> str:
     return json.dumps(
-        [{"scheme": ref.scheme, "id": str(ref.id)} for ref in refs],
+        [
+            {"scheme": anchor.ref.scheme, "id": str(anchor.ref.id), "rank": anchor.rank}
+            for anchor in anchors
+        ],
         separators=(",", ":"),
     )
 
 
-def _day_precision_published_on(value: object) -> date | None:
-    if not isinstance(value, str) or _DAY_PRECISION_DATE_RE.fullmatch(value) is None:
-        return None
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        return None
+def _target_ref(row: Any) -> ResourceRef:
+    return ResourceRef(scheme=cast(Any, str(row["target_scheme"])), id=UUID(str(row["target_id"])))

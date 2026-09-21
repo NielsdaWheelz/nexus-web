@@ -1,4 +1,4 @@
-"""Worker job handler for one synapse resonance scan."""
+"""Worker job handler for one synapse scan."""
 
 from __future__ import annotations
 
@@ -36,10 +36,7 @@ def synapse_scan(
         if isinstance(result, RescheduleRequested):
             return result
         # "trigger", not "reason": the worker failure protocol reads
-        # result["reason"] as the error message for failed statuses. `status`
-        # 'failed' is retryable pre-dispatch admission; a durable Completed
-        # generation is always 'terminal_failed' and never redispatched. Both
-        # persist `error_code` in the job result_payload for correlation.
+        # result["reason"] as the error message for a failed status.
         return {
             "status": result.status,
             "error_code": result.error_code,
@@ -47,6 +44,4 @@ def synapse_scan(
             "trigger": reason,
         }
 
-    # There is no head row to fail. The queue's retry ladder owns unexpected
-    # exceptions, and prior edges stay intact (D6).
     return run_llm_task(_SPEC, _handler)
