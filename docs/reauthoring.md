@@ -46,7 +46,7 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | library-sharing (memberships, invitations, governance) | 5.0k | 2k | keep, reauthor | open |
 | resource-sharing (grants, public /s reader, share overlay) | 7.2k | 2.5k | keep grants + link; /s reader reuses the reader | open |
 | notes-pages (daily pages, two body editors, highlights service) | 12.2k | 4k | one editor | open |
-| authors (contributors, credits, taxonomy, author pane) | 7.3k | 2k | reauthor | open |
+| authors (contributors, credits, taxonomy, author pane) | 6.0k | 2k | reauthor | python first pass landed (size/contributors-py): 3.2k→2.0k, −39%; web 4.0k open |
 | offline-android (delivery, packages, downloads, two kotlin stores) | 17.6k | 8k | one store | open |
 | vault (export/sync/watch CLI + pane) | 1.9k | 0–1k | deferred by owner 2026-09-21; keep and reauthor: keep at 1k or delete | open |
 | billing-settings (billing, entitlements, quota, 7 settings panes) | 4.4k | 2k | keep, reauthor | open |
