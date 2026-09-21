@@ -235,8 +235,6 @@ unexpected timeouts. See
 - [open] 2026-09-21 chat-database repair · chat worker runs synchronous database work on its execution loop: [ticket](tickets/chat-worker-database-work-runs-on-its-execution-loop.md).
 - [open] 2026-09-21 chat-database repair · request session release runs on the api event loop: [ticket](tickets/request-db-session-release-runs-on-event-loop.md).
 - [open] 2026-09-21 cleanup audit · offline reading store retains unused construction modes: [ticket](tickets/cleanup-offline-reading-unused-construction-seams.md).
-- [open] pane find · 2026-09-21 reader cleanup · adapters echo request identities through redundant response contracts: [ticket](tickets/pane-find-response-echo-protocol.md).
-- [open] epub find · 2026-09-21 reader cleanup · private adapter retains unused transport injection: [ticket](tickets/epub-find-unused-transport-injection.md).
 - [open] highlight interaction · 2026-09-21 reader cleanup · hook keeps unused focus callbacks and hover metadata: [ticket](tickets/highlight-interaction-unused-api.md).
 - [open] 2026-09-21 extension review · article capture conflates extraction, transport and defects: [ticket](tickets/extension-article-capture-conflates-failures.md).
 - [open] 2026-09-21 auth audit · cookie settlement polls callbacks already awaited by the sdk: [ticket](tickets/auth-cookie-settlement-polls-an-awaited-sdk-callback.md).
