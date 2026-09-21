@@ -119,10 +119,6 @@ function documentKindFromContentType(contentType) {
   return null;
 }
 
-function isDocumentUrl(url) {
-  return documentKindFromUrl(url) !== null;
-}
-
 function isYouTubeUrl(url) {
   const host = new URL(url).hostname.toLowerCase();
   return host === "youtu.be" || host.endsWith(".youtube.com") || host === "youtube.com";
@@ -210,12 +206,7 @@ async function captureUrl(baseUrl, extensionToken, tab) {
   });
 }
 
-async function captureFile(baseUrl, extensionToken, tab, fallbackKind) {
-  const granted = await requestOriginPermission(tab.url);
-  if (!granted) {
-    throw new Error("Permission is required to read this file");
-  }
-
+async function captureFile(baseUrl, extensionToken, tab, documentKind) {
   const source = await fetch(tab.url, { credentials: "include" });
   if (!source.ok) {
     throw new Error(`File download failed with status ${source.status}`);
@@ -223,7 +214,7 @@ async function captureFile(baseUrl, extensionToken, tab, fallbackKind) {
 
   const responseContentType = source.headers.get("content-type") || "";
   const responseKind = documentKindFromContentType(responseContentType);
-  const kind = responseKind || documentKindFromUrl(tab.url) || fallbackKind || "pdf";
+  const kind = responseKind || documentKind;
   const contentType =
     responseKind !== null
       ? responseContentType
@@ -242,25 +233,6 @@ async function captureFile(baseUrl, extensionToken, tab, fallbackKind) {
   });
 }
 
-async function tabLooksLikeDocument(tab) {
-  const urlKind = documentKindFromUrl(tab.url);
-  if (urlKind !== null) {
-    return urlKind;
-  }
-
-  const granted = await requestOriginPermission(tab.url);
-  if (!granted) {
-    return false;
-  }
-
-  try {
-    const response = await fetch(tab.url, { method: "HEAD", credentials: "include" });
-    return documentKindFromContentType(response.headers.get("content-type") || "");
-  } catch {
-    return null;
-  }
-}
-
 async function captureArticle(baseUrl, extensionToken, tab) {
   await executeScript({ target: { tabId: tab.id }, files: ["vendor/Readability.js"] });
   await executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
@@ -276,35 +248,46 @@ async function captureArticle(baseUrl, extensionToken, tab) {
   });
 }
 
+async function captureTab(baseUrl, extensionToken, tab) {
+  if (isYouTubeUrl(tab.url)) {
+    return captureUrl(baseUrl, extensionToken, tab);
+  }
+  let documentKind = documentKindFromUrl(tab.url);
+  if (documentKind !== null) {
+    if (!await requestOriginPermission(tab.url)) {
+      throw new Error("Permission is required to read this file");
+    }
+  } else {
+    try {
+      return await captureArticle(baseUrl, extensionToken, tab);
+    } catch (error) {
+      if (error instanceof CaptureApiError) {
+        throw error;
+      }
+    }
+    if (!await requestOriginPermission(tab.url)) {
+      return captureUrl(baseUrl, extensionToken, tab);
+    }
+    try {
+      const response = await fetch(tab.url, { method: "HEAD", credentials: "include" });
+      documentKind = documentKindFromContentType(response.headers.get("content-type") || "");
+    } catch {
+      // A failed document inspection leaves ordinary URL capture available.
+    }
+  }
+  return documentKind === null
+    ? captureUrl(baseUrl, extensionToken, tab)
+    : captureFile(baseUrl, extensionToken, tab, documentKind);
+}
+
 async function captureCurrentTab() {
   const { baseUrl, extensionToken } = await storageGet(["baseUrl", "extensionToken"]);
   if (!baseUrl || !extensionToken) {
     throw new Error("Connect to Nexus first");
   }
-
   const tab = await activeTab();
   setStatus("Capturing...");
-
-  let captureData;
-  if (isYouTubeUrl(tab.url)) {
-    captureData = await captureUrl(baseUrl, extensionToken, tab);
-  } else if (isDocumentUrl(tab.url)) {
-    captureData = await captureFile(baseUrl, extensionToken, tab);
-  } else {
-    try {
-      captureData = await captureArticle(baseUrl, extensionToken, tab);
-    } catch (error) {
-      if (error instanceof CaptureApiError) {
-        throw error;
-      }
-      const documentKind = await tabLooksLikeDocument(tab);
-      if (documentKind !== null) {
-        captureData = await captureFile(baseUrl, extensionToken, tab, documentKind);
-      } else {
-        captureData = await captureUrl(baseUrl, extensionToken, tab);
-      }
-    }
-  }
+  const captureData = await captureTab(baseUrl, extensionToken, tab);
 
   setStatus(captureStatusMessage(baseUrl, captureData));
 }
