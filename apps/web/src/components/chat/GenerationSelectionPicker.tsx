@@ -69,7 +69,6 @@ function modelCandidateKey(
 }
 
 function modelReadinessLabel(model: GenerationModelRow): string {
-  if (model.lifecycle === "Retired") return "Retired";
   if (model.readiness.kind !== "Ready") return "Unavailable";
   return model.reasoning.some(
     (reasoning) => reasoning.chat_state.kind === "Selectable",
@@ -111,14 +110,6 @@ function modelSearchStatus(
 }
 
 function modelUnavailableExplanation(model: GenerationModelRow): string | null {
-  if (model.lifecycle === "Retired") {
-    const retired = model.reasoning.find(
-      (reasoning) => reasoning.chat_state.kind === "Retired",
-    );
-    return retired === undefined
-      ? "This model is retired."
-      : selectionStateExplanation(retired.chat_state);
-  }
   if (model.readiness.kind !== "Ready") return model.readiness.explanation;
   if (
     model.reasoning.some(
@@ -428,32 +419,6 @@ export default function GenerationSelectionPicker({
     [confirmSelection, pendingBlocker, pendingSelectable],
   );
 
-  const switchToUpgrade = useCallback(() => {
-    if (
-      pendingModel === null ||
-      pendingModel.model.upgrade_selection.kind !== "Present"
-    ) {
-      return;
-    }
-    const upgrade = findGenerationCandidate(
-      catalog,
-      pendingModel.model.upgrade_selection.value,
-    );
-    if (upgrade === null) {
-      setStatus("The advertised upgrade is not in the current catalog.");
-      return;
-    }
-    const key = modelCandidateKey(upgrade.route, upgrade.model);
-    setQuery("");
-    setActiveModelKey(key);
-    setPendingModelKey(key);
-    setActiveReasoningKey(upgrade.reasoning.key);
-    setPendingReasoningKey(upgrade.reasoning.key);
-    setStatus(
-      `${upgrade.model.label}, ${upgrade.reasoning.label} preselected. Confirm to use it.`,
-    );
-  }, [catalog, pendingModel]);
-
   const moveActiveModel = useCallback(
     (movement: "Next" | "Previous" | "First" | "Last") => {
       if (filteredCandidates.length === 0) return;
@@ -666,7 +631,7 @@ export default function GenerationSelectionPicker({
                           id={`${id}-model-${modelIndex}`}
                           key={candidate.key}
                           role="option"
-                          aria-label={`${candidate.model.label}, ${candidate.model.lifecycle}, ${readiness}`}
+                          aria-label={`${candidate.model.label}, ${readiness}`}
                           aria-selected={selected}
                           aria-disabled={unavailable ? "true" : undefined}
                           aria-describedby={unavailable ? explanationId : undefined}
@@ -681,7 +646,7 @@ export default function GenerationSelectionPicker({
                           </span>
                           <span className={styles.modelState}>
                             {selected ? <Check size={14} aria-hidden="true" /> : null}
-                            {candidate.model.lifecycle} · {readiness}
+                            {readiness}
                           </span>
                           {unavailable ? (
                             <span id={explanationId} className="sr-only">
@@ -784,25 +749,11 @@ export default function GenerationSelectionPicker({
                   <div><dt>Source output</dt><dd>{capacityLabel(pendingModel.model.source_max_output_tokens, (number) => formatDisplayNumber(number, display))}</dd></div>
                   <div><dt>Effective context budget</dt><dd>{formatDisplayNumber(pendingModel.model.effective_chat_context_budget_tokens, display)} tokens</dd></div>
                   <div><dt>Effective output budget</dt><dd>{formatDisplayNumber(pendingModel.model.effective_chat_output_budget_tokens, display)} tokens</dd></div>
-                  <div><dt>Lifecycle</dt><dd>{pendingModel.model.lifecycle}{pendingModel.model.retires_at.kind === "Present" ? ` · retires ${pendingModel.model.retires_at.value}` : ""}</dd></div>
                   <div><dt>Readiness</dt><dd>{pendingReasoning === null ? modelReadinessLabel(pendingModel.model) : selectionStateExplanation(pendingReasoning.chat_state)}</dd></div>
                   <div><dt>Last checked</dt><dd>{pendingModel.model.readiness.last_checked}</dd></div>
                   <div><dt>Recovery</dt><dd>{readinessAction(pendingModel.model.readiness) ?? (pendingReasoning?.chat_state.kind === "OperatorActionRequired" || pendingReasoning?.chat_state.kind === "TemporarilyUnavailable" ? pendingReasoning.chat_state.action : "No action required")}</dd></div>
                   <div><dt>Write authority</dt><dd>{writeAuthority === "AdditiveWrites" ? "Allowed for this reply" : "Read-only"}</dd></div>
                 </dl>
-                {pendingModel.model.upgrade_selection.kind === "Present" ? (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={switchToUpgrade}
-                  >
-                    Switch to{" "}
-                    {pendingModel.model.upgrade_selection.value.route ===
-                    "CodexPersonal"
-                      ? pendingModel.model.upgrade_selection.value.model
-                      : pendingModel.model.upgrade_selection.value.model_ref}
-                  </Button>
-                ) : null}
               </section>
             </>
           )}

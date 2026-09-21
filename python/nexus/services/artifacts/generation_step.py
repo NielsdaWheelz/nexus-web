@@ -34,14 +34,16 @@ from nexus.services.artifacts.model_tools import (
     DossierToolExecutionProjection,
     dossier_candidates_from_ledger,
 )
-from nexus.services.generation_admission import FrozenHostEvidence
-from nexus.services.generation_backend import BackendToolExecutor, CodexAdmissionBinder
-from nexus.services.generation_events import BackendTerminal
-from nexus.services.generation_intent import GenerationIntent
+from nexus.services.generation_backend import (
+    BackendTerminal,
+    BackendToolExecutor,
+    CodexAdmissionBinder,
+)
 from nexus.services.generation_spec import (
     BackgroundOperationKey,
     FrozenHostToolPlanSnapshot,
     FrozenToolScope,
+    GenerationIntent,
     GenerationSpec,
     ImmutablePromptPayloadRef,
     JsonValue,
@@ -268,6 +270,7 @@ class ArtifactGenerationStep:
                 projection=projection,
             )
 
+        host_plan, host_evidence_revision = self._host_evidence(runtime)
         request = await admit_job_generation(
             owner=self.owner,
             generation_id=self.generation_id,
@@ -279,7 +282,8 @@ class ArtifactGenerationStep:
             session_factory=session_factory,
             runtime=runtime.llm_runtime,
             scope=scope,
-            host=self._host_evidence(runtime),
+            host_plan=host_plan,
+            host_evidence_revision=host_evidence_revision,
             bind_admission_factory=bind_codex if scope is not None else None,
             tool_executor_factory=provider_executor if scope is not None else None,
         )
@@ -403,18 +407,20 @@ class ArtifactGenerationStep:
             assert_resource_ref(value)
         return FrozenToolScope(admitted_refs=canonical, predicates=())
 
-    def _host_evidence(self, runtime: DossierBuildRuntime) -> FrozenHostEvidence | None:
+    def _host_evidence(
+        self, runtime: DossierBuildRuntime
+    ) -> tuple[FrozenHostToolPlanSnapshot, str] | tuple[None, None]:
         if self.operation != "dossier_idea":
-            return None
+            return None, None
         operation = runtime.research_tool_operation
         snapshot = freeze_tool_plan_snapshot(operation)
-        return FrozenHostEvidence(
-            plan=FrozenHostToolPlanSnapshot(
+        return (
+            FrozenHostToolPlanSnapshot(
                 plan_id=operation.definition.plan_id,
                 authority_revision=operation.definition.authority_revision,
                 facts=cast(dict[str, JsonValue], snapshot.model_dump(mode="json")),
             ),
-            evidence_revision=generation_fact_digest(
+            generation_fact_digest(
                 self.binding.input_manifest(self.collected).model_dump(mode="json")
             ),
         )

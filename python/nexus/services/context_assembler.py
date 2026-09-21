@@ -38,8 +38,12 @@ from nexus.services.chat_reader_selection import (
     render_subject_metadata_block,
 )
 from nexus.services.chat_run_tools import decode_persisted_tool_record
-from nexus.services.generation_intent import GenerationIntent, TextOutput
-from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
+from nexus.services.generation_spec import (
+    GenerationIntent,
+    ImmutablePromptPayloadRef,
+    TextOutput,
+    generation_fact_digest,
+)
 from nexus.services.prompt_budget import (
     BudgetItem,
     BudgetSelection,

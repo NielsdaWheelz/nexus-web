@@ -7,7 +7,6 @@ import importlib.metadata
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 import httpx
@@ -27,19 +26,13 @@ from nexus.services.codex_generation_contract import (
     GenerationTerminal,
     GenerationToolUse,
     capacity_rejection_bytes,
-    codex_model_catalog_from_wire,
     generation_admission_request,
     generation_command_draft,
-    generation_draft_fingerprint,
 )
-
-if TYPE_CHECKING:
-    from provider_runtime.agent_runtime import AgentModelCatalog
 
 _HOST_AUTHORITY = "http://nexus-codex"
 _MAX_HEALTH_BYTES = 4 * 1024
 _MAX_REJECTION_BYTES = 256
-_MAX_ADMISSION_RESPONSE_BYTES = MAX_ADMISSION_BODY_BYTES
 _HEALTH_DEADLINE_SECONDS = 5.0
 _CONTROL_DEADLINE_SECONDS = 5.0
 _CATALOG_DEADLINE_SECONDS = 120.0
@@ -48,23 +41,11 @@ _RUNTIME_VERSION = importlib.metadata.version("openai-codex-cli-bin")
 
 
 class CodexGenerationClientError(RuntimeError):
-    """Base for private generation transport failures."""
-
-
-class CodexGenerationUnavailable(CodexGenerationClientError):
-    """The host was unavailable before accepting a generation."""
+    """The private generation transport failed or was lost."""
 
 
 class CodexGenerationCapacityUnavailable(CodexGenerationClientError):
     """The host safely refused a generation before acceptance for capacity."""
-
-
-class CodexGenerationTransportAmbiguous(CodexGenerationClientError):
-    """The response stream was lost after generation acceptance."""
-
-
-class CodexGenerationRequestRejected(CodexGenerationClientError):
-    """The private host rejected a request without accepting a generation."""
 
 
 class CodexGenerationProtocolDefect(AssertionError):
@@ -75,86 +56,34 @@ class CodexGenerationClient:
     def __init__(self, socket_path: Path) -> None:
         self._socket_path = socket_path
 
-    async def model_catalog(self) -> AgentModelCatalog:
+    async def model_catalog(self) -> CodexModelCatalog:
         """Read the authenticated account catalog through the confined host only."""
 
-        transport = httpx.AsyncHTTPTransport(uds=str(self._socket_path))
+        payload = await self._read_json(
+            "/v2/model-catalog",
+            deadline=_CATALOG_DEADLINE_SECONDS,
+            maximum=MAX_MODEL_CATALOG_BODY_BYTES,
+            label="Codex catalog",
+        )
         try:
-            async with asyncio.timeout(_CATALOG_DEADLINE_SECONDS):
-                async with httpx.AsyncClient(transport=transport, timeout=None) as client:
-                    async with client.stream(
-                        "GET",
-                        f"{_HOST_AUTHORITY}/v2/model-catalog",
-                        headers={"accept": "application/json"},
-                    ) as response:
-                        if response.status_code != 200:
-                            if await _is_capacity_rejection(response):
-                                raise CodexGenerationCapacityUnavailable(
-                                    "Codex catalog capacity is unavailable"
-                                )
-                            if response.status_code == 503:
-                                raise CodexGenerationUnavailable(
-                                    "authenticated Codex catalog is unavailable"
-                                )
-                            raise CodexGenerationRequestRejected(
-                                f"Codex catalog returned HTTP {response.status_code}"
-                            )
-                        if _content_type(response) != "application/json":
-                            raise CodexGenerationProtocolDefect(
-                                "Codex catalog content type drifted"
-                            )
-                        payload = await _read_bounded(
-                            response,
-                            MAX_MODEL_CATALOG_BODY_BYTES,
-                        )
-        except (CodexGenerationClientError, CodexGenerationProtocolDefect):
-            raise
-        except TimeoutError as error:
-            raise CodexGenerationUnavailable("Codex catalog deadline expired") from error
-        except httpx.HTTPError as error:
-            raise CodexGenerationUnavailable("Codex catalog host is unavailable") from error
-        try:
-            wire = CodexModelCatalog.model_validate_json(payload)
+            return CodexModelCatalog.model_validate_json(payload)
         except ValidationError as error:
             raise CodexGenerationProtocolDefect("Codex catalog response is invalid") from error
-        return codex_model_catalog_from_wire(wire)
 
     async def health(self) -> GenerationHealth:
-        transport = httpx.AsyncHTTPTransport(uds=str(self._socket_path))
-        try:
-            async with asyncio.timeout(_HEALTH_DEADLINE_SECONDS):
-                async with httpx.AsyncClient(transport=transport, timeout=None) as client:
-                    async with client.stream(
-                        "GET",
-                        f"{_HOST_AUTHORITY}/health",
-                        headers={"accept": "application/json"},
-                    ) as response:
-                        if response.status_code != 200:
-                            raise CodexGenerationRequestRejected(
-                                f"Codex generation health returned HTTP {response.status_code}"
-                            )
-                        if _content_type(response) != "application/json":
-                            raise CodexGenerationProtocolDefect(
-                                "Codex generation health content type drifted"
-                            )
-                        payload = await _read_bounded(response, _MAX_HEALTH_BYTES)
-        except (CodexGenerationClientError, CodexGenerationProtocolDefect):
-            raise
-        except TimeoutError as error:
-            raise CodexGenerationUnavailable("Codex generation health deadline expired") from error
-        except httpx.HTTPError as error:
-            raise CodexGenerationUnavailable("Codex generation host is unavailable") from error
+        payload = await self._read_json(
+            "/health",
+            deadline=_HEALTH_DEADLINE_SECONDS,
+            maximum=_MAX_HEALTH_BYTES,
+            label="Codex generation health",
+        )
         try:
             observed = GenerationHealth.model_validate_json(payload)
         except ValidationError as error:
             raise CodexGenerationProtocolDefect(
                 "Codex generation health identity is invalid"
             ) from error
-        expected = GenerationHealth(
-            sdk_version=_SDK_VERSION,
-            runtime_version=_RUNTIME_VERSION,
-        )
-        if observed != expected:
+        if observed != GenerationHealth(sdk_version=_SDK_VERSION, runtime_version=_RUNTIME_VERSION):
             raise CodexGenerationProtocolDefect("Codex generation health runtime identity drifted")
         return observed
 
@@ -172,18 +101,13 @@ class CodexGenerationClient:
             async with asyncio.timeout(float(draft.spec.bounds.transport_deadline_seconds)):
                 async with httpx.AsyncClient(transport=transport, timeout=None) as client:
                     # The reservation POST is not idempotently observable if its
-                    # response is lost. Only its exact capacity rejection proves
-                    # that the host accepted nothing; every successful admission is
-                    # bound durably before the SDK/model dispatch, tools or not.
+                    # response is lost; only its exact capacity rejection proves
+                    # the host accepted nothing. Every admission is bound durably
+                    # before SDK dispatch.
                     admission = await self._admit(client, draft)
                     try:
-                        dispatched_command = await bind_admission(admission)
-                        if generation_command_draft(dispatched_command) != draft or (
-                            generation_draft_fingerprint(
-                                generation_command_draft(dispatched_command)
-                            )
-                            != generation_draft_fingerprint(draft)
-                        ):
+                        command = await bind_admission(admission)
+                        if generation_command_draft(command) != draft:
                             raise CodexGenerationProtocolDefect(
                                 "admission-bound generation command changed durable identity"
                             )
@@ -198,36 +122,66 @@ class CodexGenerationClient:
                             "content-type": "application/json",
                             "nexus-generation-admission": str(admission.admission_id),
                         },
-                        content=_wire_command(dispatched_command),
+                        content=_wire_command(command),
                     ) as response:
                         if response.status_code != 200:
-                            raise CodexGenerationTransportAmbiguous(
+                            raise CodexGenerationClientError(
                                 "Codex generation command was rejected after admission"
                             )
                         if _content_type(response) != "application/x-ndjson":
                             raise CodexGenerationProtocolDefect(
                                 "Codex generation stream content type drifted"
                             )
-                        async for frame in _validated_frames(response, dispatched_command):
-                            yield frame
-        except (
-            CodexGenerationClientError,
-            CodexGenerationProtocolDefect,
-        ):
+                        validator = _FrameStreamValidator(command)
+                        async for chunk in response.aiter_bytes():
+                            for frame in validator.feed(chunk):
+                                yield frame
+                        yield validator.finish()
+        except (CodexGenerationClientError, CodexGenerationProtocolDefect):
             raise
         except TimeoutError as error:
-            raise CodexGenerationTransportAmbiguous(
+            raise CodexGenerationClientError(
                 "Codex generation deadline expired after acceptance"
             ) from error
         except httpx.HTTPError as error:
-            raise CodexGenerationTransportAmbiguous(
+            raise CodexGenerationClientError(
                 "Codex generation transport was lost after acceptance"
             ) from error
 
+    async def cancel(self, request_id: UUID) -> None:
+        await self._control(request_id, "cancel")
+
+    async def policy_violation(self, request_id: UUID) -> None:
+        await self._control(request_id, "policy-violation")
+
+    async def _read_json(self, path: str, *, deadline: float, maximum: int, label: str) -> bytes:
+        transport = httpx.AsyncHTTPTransport(uds=str(self._socket_path))
+        try:
+            async with asyncio.timeout(deadline):
+                async with httpx.AsyncClient(transport=transport, timeout=None) as client:
+                    async with client.stream(
+                        "GET", f"{_HOST_AUTHORITY}{path}", headers={"accept": "application/json"}
+                    ) as response:
+                        if response.status_code != 200:
+                            if await _is_capacity_rejection(response):
+                                raise CodexGenerationCapacityUnavailable(
+                                    f"{label} capacity is unavailable"
+                                )
+                            raise CodexGenerationClientError(
+                                f"{label} returned HTTP {response.status_code}"
+                            )
+                        if _content_type(response) != "application/json":
+                            raise CodexGenerationProtocolDefect(f"{label} content type drifted")
+                        return await _read_bounded(response, maximum)
+        except (CodexGenerationClientError, CodexGenerationProtocolDefect):
+            raise
+        except TimeoutError as error:
+            raise CodexGenerationClientError(f"{label} deadline expired") from error
+        except httpx.HTTPError as error:
+            raise CodexGenerationClientError(f"{label} host is unavailable") from error
+
     async def _admit(
-        self,
-        client: httpx.AsyncClient,
-        draft: GenerationCommandDraft,
+        self, client: httpx.AsyncClient, draft: GenerationCommandDraft
     ) -> GenerationAdmission:
         request = generation_admission_request(draft)
         async with client.stream(
@@ -241,14 +195,14 @@ class CodexGenerationClient:
                     raise CodexGenerationCapacityUnavailable(
                         "Codex generation capacity is unavailable before acceptance"
                     )
-                raise CodexGenerationRequestRejected(
+                raise CodexGenerationClientError(
                     f"Codex generation admission returned HTTP {response.status_code}"
                 )
             if _content_type(response) != "application/json":
                 raise CodexGenerationProtocolDefect(
                     "Codex generation admission content type drifted"
                 )
-            payload = await _read_bounded(response, _MAX_ADMISSION_RESPONSE_BYTES)
+            payload = await _read_bounded(response, MAX_ADMISSION_BODY_BYTES)
         try:
             admission = GenerationAdmission.model_validate_json(payload)
         except ValidationError as error:
@@ -265,15 +219,10 @@ class CodexGenerationClient:
             )
         return admission
 
-    async def _cancel_reserved_admission(
-        self,
-        client: httpx.AsyncClient,
-        request_id: UUID,
-    ) -> None:
+    async def _cancel_reserved_admission(self, client: httpx.AsyncClient, request_id: UUID) -> None:
         try:
             response = await client.post(
-                f"{_HOST_AUTHORITY}/v2/generations/{request_id}/cancel",
-                content=b"",
+                f"{_HOST_AUTHORITY}/v2/generations/{request_id}/cancel", content=b""
             )
         except httpx.HTTPError:
             return
@@ -282,50 +231,32 @@ class CodexGenerationClient:
                 "Codex generation admission cancellation was not acknowledged"
             )
 
-    async def cancel(self, request_id: UUID) -> None:
-        await self._control(request_id, "cancel")
-
-    async def policy_violation(self, request_id: UUID) -> None:
-        await self._control(request_id, "policy-violation")
-
     async def _control(self, request_id: UUID, action: str) -> None:
         transport = httpx.AsyncHTTPTransport(uds=str(self._socket_path))
         try:
             async with asyncio.timeout(_CONTROL_DEADLINE_SECONDS):
                 async with httpx.AsyncClient(transport=transport, timeout=None) as client:
                     response = await client.post(
-                        f"{_HOST_AUTHORITY}/v2/generations/{request_id}/{action}",
-                        content=b"",
+                        f"{_HOST_AUTHORITY}/v2/generations/{request_id}/{action}", content=b""
                     )
         except TimeoutError as error:
-            raise CodexGenerationUnavailable(
+            raise CodexGenerationClientError(
                 f"Codex generation {action} deadline expired"
             ) from error
         except httpx.HTTPError as error:
-            raise CodexGenerationUnavailable(
+            raise CodexGenerationClientError(
                 f"Codex generation {action} endpoint is unavailable"
             ) from error
         if response.status_code != 204 or response.content:
-            raise CodexGenerationRequestRejected(
+            raise CodexGenerationClientError(
                 f"Codex generation {action} returned HTTP {response.status_code}"
             )
 
 
-async def _validated_frames(
-    response: httpx.Response,
-    command: GenerationCommand | GenerationCommandDraft,
-) -> AsyncGenerator[GenerationFrame]:
-    validator = _GenerationFrameStreamValidator(command)
-    async for chunk in response.aiter_bytes():
-        for frame in validator.feed(chunk):
-            yield frame
-    yield validator.finish()
+class _FrameStreamValidator:
+    """Validate NDJSON frames: contiguous sequence, one terminal, byte bounds."""
 
-
-class _GenerationFrameStreamValidator:
-    """One raw-byte validator shared by live transport and operator evidence."""
-
-    def __init__(self, command: GenerationCommand | GenerationCommandDraft) -> None:
+    def __init__(self, command: GenerationCommand) -> None:
         self._command = command
         self._stream = command.spec.bounds.stream
         self._expected_sequence = 0
@@ -335,7 +266,7 @@ class _GenerationFrameStreamValidator:
         self._forbidden_tool_event_seen = False
         plan = command.spec.model_tool_plan_snapshot
         self._allowed_model_tools = (
-            {grant.id for grant in plan.value.grants} if isinstance(plan, Present) else set()
+            {grant.id for grant in plan.value.grants} if isinstance(plan, Present) else set[str]()
         )
 
     def feed(self, chunk: bytes) -> tuple[GenerationFrame, ...]:
@@ -357,11 +288,13 @@ class _GenerationFrameStreamValidator:
                 raise CodexGenerationProtocolDefect(
                     "Codex generation frame exceeded its byte bound"
                 )
-            frame = _parse_frame(raw)
             if self._terminal is not None:
                 raise CodexGenerationProtocolDefect(
                     "Codex generation emitted a frame after terminal"
                 )
+            frame = _parse_frame(raw)
+            if frame.request_id != self._command.request_id:
+                raise CodexGenerationProtocolDefect("Codex generation frame request_id mismatched")
             if frame.sequence != self._expected_sequence:
                 raise CodexGenerationProtocolDefect(
                     "Codex generation frame sequence was not contiguous"
@@ -371,17 +304,11 @@ class _GenerationFrameStreamValidator:
                 raise CodexGenerationProtocolDefect(
                     "Codex generation stream exceeded its frame bound"
                 )
-
             event = frame.event
             if isinstance(event, GenerationTerminal):
+                self._validate_terminal(event)
                 self._terminal = frame
-                validate_generation_terminal_frame(
-                    frame,
-                    self._command,
-                    forbidden_tool_event_seen=self._forbidden_tool_event_seen,
-                )
                 continue
-            _validate_generation_frame_request(frame, self._command)
             if isinstance(event, GenerationToolUse):
                 if event.name not in self._allowed_model_tools:
                     self._forbidden_tool_event_seen = True
@@ -400,43 +327,24 @@ class _GenerationFrameStreamValidator:
                 raise CodexGenerationProtocolDefect(
                     "Codex generation observed a forbidden tool event without terminal"
                 )
-            raise CodexGenerationTransportAmbiguous(
+            raise CodexGenerationClientError(
                 "Codex generation stream closed after acceptance without terminal"
             )
         return self._terminal
 
-
-def validate_generation_terminal_frame(
-    frame: GenerationFrame,
-    command: GenerationCommand | GenerationCommandDraft,
-    *,
-    forbidden_tool_event_seen: bool = False,
-) -> GenerationTerminal:
-    """Validate the terminal facts shared by live streaming and operator repair."""
-
-    _validate_generation_frame_request(frame, command)
-    terminal = frame.event
-    if not isinstance(terminal, GenerationTerminal):
-        raise CodexGenerationProtocolDefect("Codex generation attachment is not terminal")
-    if terminal.sdk_version != _SDK_VERSION or terminal.runtime_version != _RUNTIME_VERSION:
-        raise CodexGenerationProtocolDefect("Codex generation terminal runtime identity drifted")
-    if forbidden_tool_event_seen and (
-        terminal.status != "failed"
-        or terminal.failure is None
-        or terminal.failure.kind != "policy_violation"
-    ):
-        raise CodexGenerationProtocolDefect(
-            "Codex generation observed a forbidden tool event without policy failure"
-        )
-    return terminal
-
-
-def _validate_generation_frame_request(
-    frame: GenerationFrame,
-    command: GenerationCommand | GenerationCommandDraft,
-) -> None:
-    if frame.request_id != command.request_id:
-        raise CodexGenerationProtocolDefect("Codex generation frame request_id mismatched")
+    def _validate_terminal(self, terminal: GenerationTerminal) -> None:
+        if terminal.sdk_version != _SDK_VERSION or terminal.runtime_version != _RUNTIME_VERSION:
+            raise CodexGenerationProtocolDefect(
+                "Codex generation terminal runtime identity drifted"
+            )
+        if self._forbidden_tool_event_seen and (
+            terminal.status != "failed"
+            or terminal.failure is None
+            or terminal.failure.kind != "policy_violation"
+        ):
+            raise CodexGenerationProtocolDefect(
+                "Codex generation observed a forbidden tool event without policy failure"
+            )
 
 
 def _parse_frame(raw: bytes) -> GenerationFrame:
@@ -449,29 +357,22 @@ def _parse_frame(raw: bytes) -> GenerationFrame:
 
 
 def _wire_command(command: GenerationCommand) -> bytes:
-    # ``None`` is a required semantic value inside frozen snapshots (for
-    # example, a read-only plan's ``max_live_writes``). Exclude only the
-    # sensitive top-level grant, whose token is deliberately non-serializing,
-    # and then project that bearer explicitly below.
+    # ``None`` is a required semantic value inside frozen snapshots (a read-only
+    # plan's ``max_live_writes``), so exclude only the non-serializing grant and
+    # project its bearer explicitly.
     payload = command.model_dump(mode="json", exclude={"tool_grant"})
     if command.tool_grant is not None:
         payload["tool_grant"] = {
             "kind": "Bearer",
             "token": command.tool_grant.token.get_secret_value(),
         }
-    return json.dumps(
-        payload,
-        ensure_ascii=True,
-        allow_nan=False,
-        separators=(",", ":"),
-    ).encode()
+    return json.dumps(payload, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode()
 
 
 async def _is_capacity_rejection(response: httpx.Response) -> bool:
     if response.status_code != 503 or response.headers.get("content-type") != "application/json":
         return False
-    payload = await _read_bounded(response, _MAX_REJECTION_BYTES)
-    return payload == capacity_rejection_bytes()
+    return await _read_bounded(response, _MAX_REJECTION_BYTES) == capacity_rejection_bytes()
 
 
 async def _read_bounded(response: httpx.Response, maximum: int) -> bytes:
@@ -485,15 +386,3 @@ async def _read_bounded(response: httpx.Response, maximum: int) -> bytes:
 
 def _content_type(response: httpx.Response) -> str:
     return response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-
-
-__all__ = [
-    "CodexGenerationCapacityUnavailable",
-    "CodexGenerationClient",
-    "CodexGenerationClientError",
-    "CodexGenerationProtocolDefect",
-    "CodexGenerationRequestRejected",
-    "CodexGenerationTransportAmbiguous",
-    "CodexGenerationUnavailable",
-    "validate_generation_terminal_frame",
-]

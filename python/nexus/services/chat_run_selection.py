@@ -18,8 +18,11 @@ from nexus.services.generation_catalog import (
     GenerationCatalogSnapshot,
     ResolvedCatalogPair,
 )
-from nexus.services.generation_history import read_generation_history
-from nexus.services.generation_spec import GenerationSpec, decode_generation_spec_document
+from nexus.services.generation_spec import (
+    GenerationSpec,
+    decode_generation_spec_document,
+    read_generation_history,
+)
 
 
 def chat_generation_spec(run: ChatRun) -> GenerationSpec:

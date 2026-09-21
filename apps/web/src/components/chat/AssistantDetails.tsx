@@ -25,12 +25,6 @@ function selectionRecovery(state: GenerationSelectionState): string {
     case "OperatorActionRequired":
     case "TemporarilyUnavailable":
       return state.action;
-    case "CapacityPaused":
-      return `Wait for the next check at ${state.next_check_at}`;
-    case "Retired":
-      return state.upgrade_target.kind === "Present"
-        ? "Choose the advertised upgrade for a new run"
-        : "Choose another available model for a new run";
   }
 }
 

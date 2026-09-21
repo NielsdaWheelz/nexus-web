@@ -60,8 +60,7 @@ if TYPE_CHECKING:
         GenerationAdmission,
         GenerationCommand,
     )
-    from nexus.services.generation_intent import GenerationIntent
-    from nexus.services.generation_spec import GenerationSpec
+    from nexus.services.generation_spec import GenerationIntent, GenerationSpec
     from nexus.services.llm_ledger import LlmCallOwner
     from nexus.services.tool_authority import ToolExecutionProjection
     from nexus.services.tool_runtime.catalog import FrozenToolOperation
@@ -400,7 +399,7 @@ class CodexGenerationToolBinding:
             GenerationCommandDraft,
             generation_command_from_draft,
         )
-        from nexus.services.generation_intent import BearerToolGrant
+        from nexus.services.generation_spec import BearerToolGrant
 
         async with self._bind_lock:
             if self._closed:

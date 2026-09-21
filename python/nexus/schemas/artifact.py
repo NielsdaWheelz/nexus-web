@@ -35,7 +35,7 @@ from nexus.services.artifacts.dossier_types import (
 )
 from nexus.services.artifacts.manifests import InputManifestV1, MediaDisposition
 from nexus.services.durable_step_journal import DurableExecutionPhase
-from nexus.services.generation_selection import GenerationSelectionSpec
+from nexus.services.generation_spec import GenerationSelectionSpec
 
 
 class ArtifactSchemaModel(BaseModel):
