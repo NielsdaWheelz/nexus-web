@@ -1,4 +1,4 @@
-"""Canonical locator normalization, ordering, and overview-position semantics."""
+"""Locator grammar: normalization, document order, and overview fractions."""
 
 from __future__ import annotations
 
@@ -22,14 +22,49 @@ from nexus.schemas.reader import (
 _TEXT_MEDIA_KINDS = frozenset({"web_article", "epub", "video", "podcast_episode"})
 
 
-def locator_json(
-    locator: BaseModel | Mapping[str, Any] | None,
-) -> dict[str, object] | None:
+def locator_json(locator: BaseModel | Mapping[str, Any] | None) -> dict[str, object] | None:
     if locator is None:
         return None
     if isinstance(locator, BaseModel):
         return cast(dict[str, object], locator.model_dump(mode="json"))
     return dict(locator)
+
+
+def locator_page(locator: Mapping[str, object]) -> int | None:
+    value = locator.get("page_number")
+    return value if isinstance(value, int) else None
+
+
+def locator_fragment(locator: Mapping[str, object]) -> UUID | None:
+    value = locator.get("fragment_id")
+    if isinstance(value, UUID):
+        return value
+    if isinstance(value, str):
+        try:
+            return UUID(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _quad_span(locator: Mapping[str, object]) -> tuple[float, float, float] | None:
+    """``(top, left, bottom)`` over every quad corner, or ``None`` if malformed."""
+    quads = locator.get("quads")
+    if not isinstance(quads, list) or not quads:
+        return None
+    xs: list[float] = []
+    ys: list[float] = []
+    for quad in quads:
+        if not isinstance(quad, dict):
+            return None
+        for corner in range(1, 5):
+            x = quad.get(f"x{corner}")
+            y = quad.get(f"y{corner}")
+            if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+                return None
+            xs.append(float(x))
+            ys.append(float(y))
+    return (min(ys), min(xs), max(ys))
 
 
 def locator_fraction(
@@ -40,25 +75,19 @@ def locator_fraction(
     pdf_page_heights: dict[int, float],
 ) -> float | None:
     """Map a current locator to a normalized document-overview position."""
-
     if not locator:
         return None
     page = locator_page(locator)
     if page is not None and page_count and page_count > 0:
-        if locator.get("type") == "pdf_page":
-            return (page - 1) / page_count if page <= page_count else None
-        origin = _pdf_quad_origin(locator)
-        page_height = pdf_page_heights.get(page)
-        if (
-            origin is None
-            or page_height is None
-            or page_height <= 0
-            or page > page_count
-            or not 0 <= origin[0] <= page_height
-        ):
+        if page > page_count:
             return None
-        within_page = origin[0] / page_height
-        return ((page - 1) + within_page) / page_count
+        if locator.get("type") == "pdf_page":
+            return (page - 1) / page_count
+        span = _quad_span(locator)
+        height = pdf_page_heights.get(page)
+        if span is None or height is None or height <= 0 or not 0 <= span[0] <= height:
+            return None
+        return ((page - 1) + span[0] / height) / page_count
     fragment_id = locator_fragment(locator)
     if fragment_id is None:
         return None
@@ -92,45 +121,27 @@ def locator_end_fraction(
             pdf_page_heights,
         )
     page = locator_page(locator)
-    quads = locator.get("quads")
-    if (
-        page is None
-        or not page_count
-        or page > page_count
-        or not isinstance(quads, list)
-        or not quads
-    ):
+    span = _quad_span(locator)
+    if page is None or not page_count or page > page_count or span is None:
         return None
     height = pdf_page_heights.get(page)
-    if height is None or height <= 0:
+    if height is None or height <= 0 or span[0] < 0 or span[2] > height:
         return None
-    bottoms: list[float] = []
-    for quad in quads:
-        if not isinstance(quad, dict):
-            return None
-        for index in range(1, 5):
-            y = quad.get(f"y{index}")
-            if not isinstance(y, (int, float)) or not 0 <= y <= height:
-                return None
-            bottoms.append(float(y))
-    return ((page - 1) + max(bottoms) / height) / page_count
+    return ((page - 1) + span[2] / height) / page_count
 
 
 def order_key_from_locator(
-    locator: dict[str, object] | None,
-    fragment_indexes: Mapping[str, int],
+    locator: dict[str, object] | None, fragment_indexes: Mapping[str, int]
 ) -> str | None:
-    """Return one sortable document-order key across supported locator families."""
-
+    """One sortable document-order key across the supported locator families."""
     if not locator:
         return None
     page = locator_page(locator)
     if page is not None:
-        origin = _pdf_quad_origin(locator)
-        if origin is None:
+        span = _quad_span(locator)
+        if span is None:
             return f"pdf:{page:08d}"
-        top, left = origin
-        return f"pdf:{page:08d}:{top:012.4f}:{left:012.4f}"
+        return f"pdf:{page:08d}:{span[0]:012.4f}:{span[1]:012.4f}"
     fragment_id = locator_fragment(locator)
     start = locator.get("start_offset")
     if fragment_id is not None:
@@ -150,8 +161,7 @@ def locator_is_current_for_media(
     fragment_indexes: Mapping[str, int],
     page_count: int | None,
 ) -> bool:
-    """Return whether a media locator still targets the open document revision."""
-
+    """Whether a media locator still targets the open document revision."""
     if str(locator.get("media_id")) != str(media_id):
         return False
     match locator.get("type"):
@@ -168,41 +178,21 @@ def locator_is_current_for_media(
 
 
 def highlight_locator(
-    raw: dict[str, object],
-    *,
-    media_kind: str,
-    exact: str,
-    prefix: str,
-    suffix: str,
+    raw: dict[str, object], *, media_kind: str, exact: str, prefix: str, suffix: str
 ) -> dict[str, object]:
-    """Normalize the highlight owner's anchor into RetrievalLocator grammar."""
-
+    """Normalize a highlight owner's anchor into RetrievalLocator grammar."""
     locator = dict(raw)
-    if locator.get("type") in {
-        "fragment_offsets",
-        "web_text_offsets",
-        "epub_fragment_offsets",
-    }:
+    selector = {"exact": exact, "prefix": prefix, "suffix": suffix}
+    if locator.get("type") in {"fragment_offsets", "web_text_offsets", "epub_fragment_offsets"}:
         if locator["type"] == "fragment_offsets":
             locator["type"] = (
                 "epub_fragment_offsets" if media_kind == "epub" else "web_text_offsets"
             )
         locator["media_kind"] = media_kind
-        locator["text_quote_selector"] = {
-            "exact": exact,
-            "prefix": prefix,
-            "suffix": suffix,
-        }
-        return locator
-    if locator.get("type") == "pdf_page_geometry":
-        locator["exact"] = exact
-        locator["prefix"] = prefix
-        locator["suffix"] = suffix
-        locator["text_quote_selector"] = {
-            "exact": exact,
-            "prefix": prefix,
-            "suffix": suffix,
-        }
+        locator["text_quote_selector"] = selector
+    elif locator.get("type") == "pdf_page_geometry":
+        locator |= selector
+        locator["text_quote_selector"] = selector
     return locator
 
 
@@ -223,12 +213,7 @@ def resolved_highlight_reader_target(
     page_height: float | None = None,
     pdf_quads: Sequence[Mapping[str, object]] | None = None,
 ) -> ResolvedHighlightReaderTarget | None:
-    """Map current owner facts to the one closed highlight reader target.
-
-    This is the canonical format-total target mapper. The locator resolver owns
-    loading current source rows; this owner validates their reader semantics and
-    emits no partial or guessed target.
-    """
+    """Map current owner facts to the one closed highlight reader target, or nothing."""
     try:
         if anchor_kind == "fragment_offsets":
             if (
@@ -245,33 +230,23 @@ def resolved_highlight_reader_target(
                 return None
             if media_kind == "web_article":
                 return WebTextOffsetsTargetOut(
-                    fragment_id=fragment_id,
-                    start_offset=start_offset,
-                    end_offset=end_offset,
+                    fragment_id=fragment_id, start_offset=start_offset, end_offset=end_offset
                 )
             if media_kind == "epub":
                 return EpubTextOffsetsTargetOut(
-                    fragment_id=fragment_id,
-                    start_offset=start_offset,
-                    end_offset=end_offset,
+                    fragment_id=fragment_id, start_offset=start_offset, end_offset=end_offset
                 )
             time_range = absent()
             if t_start_ms is not None or t_end_ms is not None:
                 if t_start_ms is None or t_end_ms is None:
                     return None
-                time_range = present(
-                    ReaderTimeRange(
-                        start_ms=t_start_ms,
-                        end_ms=t_end_ms,
-                    )
-                )
+                time_range = present(ReaderTimeRange(start_ms=t_start_ms, end_ms=t_end_ms))
             return TranscriptTextOffsetsTargetOut(
                 fragment_id=fragment_id,
                 start_offset=start_offset,
                 end_offset=end_offset,
                 time_range=time_range,
             )
-
         if (
             anchor_kind != "pdf_page_geometry"
             or media_kind != "pdf"
@@ -287,54 +262,12 @@ def resolved_highlight_reader_target(
             or not 1 <= len(pdf_quads) <= 512
         ):
             return None
-        quads: list[HighlightTargetPdfQuadOut] = []
-        for raw in pdf_quads:
-            quad = HighlightTargetPdfQuadOut.model_validate(raw)
+        quads = [HighlightTargetPdfQuadOut.model_validate(raw) for raw in pdf_quads]
+        for quad in quads:
             if not all(
                 0 <= x <= page_width for x in (quad.x1, quad.x2, quad.x3, quad.x4)
             ) or not all(0 <= y <= page_height for y in (quad.y1, quad.y2, quad.y3, quad.y4)):
                 return None
-            quads.append(quad)
         return PdfPageGeometryTargetOut(page_number=page_number, quads=quads)
     except (KeyError, TypeError, ValueError, ValidationError):
         return None
-
-
-def locator_page(locator: Mapping[str, object]) -> int | None:
-    value = locator.get("page_number")
-    return value if isinstance(value, int) else None
-
-
-def locator_fragment(locator: Mapping[str, object]) -> UUID | None:
-    value = locator.get("fragment_id")
-    if isinstance(value, UUID):
-        return value
-    if isinstance(value, str):
-        try:
-            return UUID(value)
-        except ValueError:
-            return None
-    return None
-
-
-def _pdf_quad_origin(locator: Mapping[str, object]) -> tuple[float, float] | None:
-    quads = locator.get("quads")
-    if not isinstance(quads, list) or not quads:
-        return None
-    tops: list[float] = []
-    lefts: list[float] = []
-    for quad in quads:
-        if not isinstance(quad, dict):
-            return None
-        y_values: list[float] = []
-        x_values: list[float] = []
-        for index in range(1, 5):
-            y = quad.get(f"y{index}")
-            x = quad.get(f"x{index}")
-            if not isinstance(y, (int, float)) or not isinstance(x, (int, float)):
-                return None
-            y_values.append(float(y))
-            x_values.append(float(x))
-        tops.append(min(y_values))
-        lefts.append(min(x_values))
-    return (min(tops), min(lefts))

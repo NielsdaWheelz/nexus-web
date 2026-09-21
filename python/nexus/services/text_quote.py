@@ -1,10 +1,7 @@
-"""Server-side quote resolution: {exact, prefix?, suffix?} -> (fragment, offsets).
+"""Server-side quote anchoring: {exact, prefix?, suffix?} -> (fragment, offsets).
 
-The read-only sibling of ``chat_quote`` (which only renders). The house agent,
-holding a passage's *text*, has no browser DOM to compute offsets from; this
-module anchors that text against ``fragments.canonical_text`` — the same source
-of truth ``highlights.create_highlight_for_fragment`` derives its
-exact/prefix/suffix from.
+Quote identity is normalized (NFC, whitespace runs to one space, trimmed ends) and
+matching is unique-or-nothing: more than one hit is ``ambiguous``, never the first.
 """
 
 from __future__ import annotations
@@ -30,60 +27,12 @@ class QuoteStatus(str, Enum):
     empty_exact = "empty_exact"
 
 
-def _find_all_occurrences(text: str, needle: str) -> list[int]:
-    """All codepoint-offset occurrences of ``needle`` in ``text`` (literal)."""
-    positions: list[int] = []
-    start = 0
-    while True:
-        idx = text.find(needle, start)
-        if idx == -1:
-            break
-        positions.append(idx)
-        start = idx + 1
-    return positions
-
-
-# ---------------------------------------------------------------------------
-# Normalized-space matching for passage anchors
-# (universal-link-authoring-hard-cutover.md, Passage Anchor). Quote identity is
-# normalized (NFC, whitespace runs -> one space, trimmed ends); these helpers
-# match that identity against current owner text and map hits back to raw
-# codepoint offsets.
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class NormalizedText:
-    """Whitespace-collapsed NFC text with compact source boundaries.
-
-    Normalized character ``i`` spans ``[boundaries[i], boundaries[i + 1])``
-    in the NFC source. A collapsed whitespace run maps to one U+0020.
-    These codepoint offsets address stored text directly when it is NFC.
-    """
+    """Normalized character ``i`` spans ``[boundaries[i], boundaries[i + 1])`` in the NFC source."""
 
     text: str
     boundaries: array[int]
-
-
-def normalize_for_match(text: str) -> NormalizedText:
-    nfc = unicodedata.normalize("NFC", text)
-    chars: list[str] = []
-    boundaries = array("Q", [0])
-    i = 0
-    length = len(nfc)
-    while i < length:
-        if nfc[i].isspace():
-            j = i
-            while j < length and nfc[j].isspace():
-                j += 1
-            chars.append(" ")
-            boundaries.append(j)
-            i = j
-        else:
-            chars.append(nfc[i])
-            boundaries.append(i + 1)
-            i += 1
-    return NormalizedText(text="".join(chars), boundaries=boundaries)
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,41 +43,12 @@ class QuoteCandidate:
     normalized_end: int
 
 
-def find_quote_candidates(
-    normalized: NormalizedText,
-    *,
-    exact: str,
-    prefix: str,
-    suffix: str,
-) -> list[QuoteCandidate]:
-    """Occurrences of a normalized quote, narrowed by normalized context.
-
-    ``exact``/``prefix``/``suffix`` must already be normalized (trimmed), so the
-    context comparison tolerates the single collapsed space at each seam.
-    """
-    candidates: list[QuoteCandidate] = []
-    for start in _find_all_occurrences(normalized.text, exact):
-        end = start + len(exact)
-        if prefix and not normalized.text[:start].rstrip().endswith(prefix):
-            continue
-        if suffix and not normalized.text[end:].lstrip().startswith(suffix):
-            continue
-        candidates.append(
-            QuoteCandidate(
-                raw_start=normalized.boundaries[start],
-                raw_end=normalized.boundaries[end],
-                normalized_start=start,
-                normalized_end=end,
-            )
-        )
-    return candidates
-
-
-def context_window(normalized: NormalizedText, *, start: int, end: int) -> tuple[str, str]:
-    """Nearest 64 normalized scalars each side, trimmed (shorter at boundaries)."""
-    prefix = normalized.text[max(0, start - PREFIX_SUFFIX_WINDOW) : start].strip()
-    suffix = normalized.text[end : end + PREFIX_SUFFIX_WINDOW].strip()
-    return prefix, suffix
+@dataclass(frozen=True, slots=True)
+class NormalizedOwnerSource:
+    fragment_id: UUID | None
+    t_start_ms: int | None
+    t_end_ms: int | None
+    normalized: NormalizedText
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,34 +63,60 @@ class OwnerQuoteMatch:
     t_end_ms: int | None
 
 
-_NO_OWNER_MATCH = OwnerQuoteMatch(QuoteStatus.no_match, None, None, None, "", "", None, None)
+# Request-scoped memo of one media's normalized fragments, keyed by media_id.
+MediaSourceCache = dict[UUID, list[NormalizedOwnerSource]]
+
+_NO_MATCH = OwnerQuoteMatch(QuoteStatus.no_match, None, None, None, "", "", None, None)
+_EMPTY_EXACT = OwnerQuoteMatch(QuoteStatus.empty_exact, None, None, None, "", "", None, None)
 
 
-@dataclass(frozen=True, slots=True)
-class NormalizedOwnerSource:
-    """One owner text unit, fetched and normalized once, matchable many times."""
+def normalize_for_match(text: str) -> NormalizedText:
+    nfc = unicodedata.normalize("NFC", text)
+    chars: list[str] = []
+    boundaries = array("Q", [0])
+    i = 0
+    while i < len(nfc):
+        j = i + 1
+        if nfc[i].isspace():
+            while j < len(nfc) and nfc[j].isspace():
+                j += 1
+            chars.append(" ")
+        else:
+            chars.append(nfc[i])
+        boundaries.append(j)
+        i = j
+    return NormalizedText(text="".join(chars), boundaries=boundaries)
 
-    fragment_id: UUID | None
-    t_start_ms: int | None
-    t_end_ms: int | None
-    normalized: NormalizedText
+
+def find_quote_candidates(
+    normalized: NormalizedText, *, exact: str, prefix: str, suffix: str
+) -> list[QuoteCandidate]:
+    """Occurrences of an already-normalized quote, narrowed by normalized context."""
+    candidates: list[QuoteCandidate] = []
+    start = normalized.text.find(exact)
+    while start != -1:
+        end = start + len(exact)
+        if (not prefix or normalized.text[:start].rstrip().endswith(prefix)) and (
+            not suffix or normalized.text[end:].lstrip().startswith(suffix)
+        ):
+            candidates.append(
+                QuoteCandidate(normalized.boundaries[start], normalized.boundaries[end], start, end)
+            )
+        start = normalized.text.find(exact, start + 1)
+    return candidates
 
 
-# Request-scoped memo of one media's normalized fragment sources, keyed by
-# media_id. A read that resolves many quotes against the same owner threads one
-# of these so the O(fragments) fetch+normalize happens once, not per quote.
-MediaSourceCache = dict[UUID, list["NormalizedOwnerSource"]]
+def context_window(normalized: NormalizedText, *, start: int, end: int) -> tuple[str, str]:
+    """Nearest 64 normalized scalars each side, trimmed (shorter at boundaries)."""
+    prefix = normalized.text[max(0, start - PREFIX_SUFFIX_WINDOW) : start].strip()
+    suffix = normalized.text[end : end + PREFIX_SUFFIX_WINDOW].strip()
+    return prefix, suffix
 
 
 def load_normalized_media_sources(
     db: Session, *, media_id: UUID, cache: MediaSourceCache | None = None
 ) -> list[NormalizedOwnerSource]:
-    """Fetch and normalize a media's fragments once for repeated quote matching.
-
-    When ``cache`` is supplied the fetch+normalize is memoized by ``media_id``,
-    so a caller resolving many quotes against the same owner (e.g. a reader
-    connections page of same-media passage anchors) reloads the document once.
-    """
+    """Fetch and normalize one media's fragments once, memoized by ``cache``."""
     if cache is not None and media_id in cache:
         return cache[media_id]
     rows = db.execute(
@@ -187,33 +133,22 @@ def load_normalized_media_sources(
 
 
 def match_quote_in_sources(
-    sources: list[NormalizedOwnerSource],
-    *,
-    exact: str,
-    prefix: str = "",
-    suffix: str = "",
+    sources: list[NormalizedOwnerSource], *, exact: str, prefix: str = "", suffix: str = ""
 ) -> OwnerQuoteMatch:
-    """Match one normalized quote against pre-normalized owner sources.
-
-    The pure-matching half of ``resolve_owner_quote``: callers resolving many
-    quotes against the same owner (highlight cache repair) load the sources once
-    and call this per quote instead of re-fetching the whole document each time.
-    """
+    """Match one normalized quote against pre-normalized owner sources."""
     if not exact:
-        return OwnerQuoteMatch(QuoteStatus.empty_exact, None, None, None, "", "", None, None)
-
-    hits: list[tuple[NormalizedOwnerSource, QuoteCandidate]] = []
-    for source in sources:
+        return _EMPTY_EXACT
+    hits = [
+        (source, candidate)
+        for source in sources
         for candidate in find_quote_candidates(
             source.normalized, exact=exact, prefix=prefix, suffix=suffix
-        ):
-            hits.append((source, candidate))
-
+        )
+    ]
     if len(hits) > 1:
         return OwnerQuoteMatch(QuoteStatus.ambiguous, None, None, None, "", "", None, None)
     if not hits:
-        return _NO_OWNER_MATCH
-
+        return _NO_MATCH
     source, candidate = hits[0]
     context_prefix, context_suffix = context_window(
         source.normalized, start=candidate.normalized_start, end=candidate.normalized_end
@@ -230,17 +165,45 @@ def match_quote_in_sources(
     )
 
 
+def resolve_owner_quote(
+    db: Session,
+    *,
+    owner_scheme: str,
+    owner_id: UUID,
+    exact: str,
+    prefix: str = "",
+    suffix: str = "",
+    sources_cache: MediaSourceCache | None = None,
+) -> OwnerQuoteMatch:
+    """Resolve a normalized quote within one owner's current text (media or note block)."""
+    if not exact:
+        return _EMPTY_EXACT
+    if owner_scheme == "note_block":
+        body_text = db.execute(
+            select(NoteBlock.body_text).where(NoteBlock.id == owner_id)
+        ).scalar_one_or_none()
+        if body_text is None:
+            return _NO_MATCH
+        sources = [NormalizedOwnerSource(None, None, None, normalize_for_match(body_text))]
+        match = match_quote_in_sources(sources, exact=exact, prefix=prefix, suffix=suffix)
+        return _project_note_match(body_text, match, exact=exact)
+    sources = load_normalized_media_sources(db, media_id=owner_id, cache=sources_cache)
+    return match_quote_in_sources(sources, exact=exact, prefix=prefix, suffix=suffix)
+
+
 def _project_note_match(text: str, match: OwnerQuoteMatch, *, exact: str) -> OwnerQuoteMatch:
-    """Map a normalized note hit to the same contiguous stored-text occurrence."""
+    """Map a normalized note hit onto the same contiguous interval of the stored text.
+
+    Equal NFD components keep their occurrence order through NFC, so counting the
+    selected interval's components and their predecessors locates it without building
+    a per-character source map. An interval that cannot be represented contiguously is
+    refused rather than widened or moved to another occurrence.
+    """
     if match.raw_start is None or match.raw_end is None:
         return match
     nfc = unicodedata.normalize("NFC", text)
     if nfc == text:
         return match
-
-    # Equal NFD components retain occurrence order through NFC. Count only the
-    # selected interval's components and their preceding occurrences, rather
-    # than building per-character source maps for the entire note.
     remaining = Counter(unicodedata.normalize("NFD", nfc[match.raw_start : match.raw_end]))
     preceding = Counter(
         component
@@ -256,45 +219,6 @@ def _project_note_match(text: str, match: OwnerQuoteMatch, *, exact: str) -> Own
                 remaining[component] -= 1
                 start = min(start, index)
                 end = index + 1
-
-    # Reordering or expansion can make a partial hit impossible to represent
-    # as one raw interval. Do not include unrelated text or substitute another
-    # occurrence of an indistinguishable component to manufacture a match.
     if normalize_for_match(text[start:end]).text.strip() != exact:
-        return _NO_OWNER_MATCH
+        return _NO_MATCH
     return replace(match, raw_start=start, raw_end=end)
-
-
-def resolve_owner_quote(
-    db: Session,
-    *,
-    owner_scheme: str,
-    owner_id: UUID,
-    exact: str,
-    prefix: str = "",
-    suffix: str = "",
-    sources_cache: MediaSourceCache | None = None,
-) -> OwnerQuoteMatch:
-    """Resolve a normalized quote within one owner's current text.
-
-    Owners are ``media`` (fragment canonical_text; web/EPUB/transcript) or
-    ``note_block`` (body_text). Unique hits carry raw codepoint offsets into the
-    matched text plus the recomputed 64-scalar normalized context. Visibility is
-    the caller's concern. ``sources_cache`` memoizes the media fetch+normalize
-    across quotes that share one owner.
-    """
-    if not exact:
-        return OwnerQuoteMatch(QuoteStatus.empty_exact, None, None, None, "", "", None, None)
-
-    if owner_scheme == "note_block":
-        body_text = db.execute(
-            select(NoteBlock.body_text).where(NoteBlock.id == owner_id)
-        ).scalar_one_or_none()
-        if body_text is None:
-            return _NO_OWNER_MATCH
-        sources = [NormalizedOwnerSource(None, None, None, normalize_for_match(body_text))]
-        match = match_quote_in_sources(sources, exact=exact, prefix=prefix, suffix=suffix)
-        return _project_note_match(body_text, match, exact=exact)
-
-    sources = load_normalized_media_sources(db, media_id=owner_id, cache=sources_cache)
-    return match_quote_in_sources(sources, exact=exact, prefix=prefix, suffix=suffix)
