@@ -135,30 +135,8 @@ def remove_media_saved_in_nexus(media_id: UUID, viewer: ViewerDep, db: DbDep) ->
 
 
 @router.delete("/media/{media_id}/libraries/{library_id}")
-<<<<<<< HEAD
 def remove_media_library(media_id: UUID, library_id: UUID, viewer: ViewerDep, db: DbDep) -> dict:
-    result = library_entries.ensure_media_absent_from_library_for_viewer(
-        db, viewer.user_id, media_id, library_id
-    )
-||||||| 65e2ca2eaf
-def remove_media_library(
-    media_id: UUID,
-    library_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    result = library_entries.ensure_media_absent_from_library_for_viewer(
-        db, viewer.user_id, media_id, library_id
-    )
-=======
-def remove_media_library(
-    media_id: UUID,
-    library_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
     result = library_entries.remove_media_from_library(db, viewer.user_id, media_id, library_id)
->>>>>>> origin/main
     return ok(result, by_alias=True)
 
 
