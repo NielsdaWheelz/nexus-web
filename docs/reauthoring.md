@@ -34,7 +34,7 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | media-core | 5.7k | 3k | reauthor | open |
 | chat (runs, conversations, forks, composer, tails) | 29.6k | 10k | reauthor; 17 chat_run_* files → 3 | open |
 | chat-tools (runtime, authority, MCP, six tools) | 5.8k | 2.5k | reauthor: six tools + one dispatcher | first pass landed (size/chat-tools) at 5.8k, −32%; remaining levers: MCP transport 0.9k, HostTable research plan 0.5k, ledger density |
-| generation (catalog, ledger, codex + 7 provider APIs, picker) | 13.5k | 3k | codex + 1–2 providers; drop model lifecycle | open |
+| generation (catalog, ledger, codex + 7 provider APIs, picker) | 10.2k | 3k | codex + 1–2 providers; drop model lifecycle | python first pass landed (size/generation-py): 10.9k→7.6k, −30%; model lifecycle deleted; picker web 2.6k open |
 | dossiers (engine 3.4k, ten subject bindings, web document runtime) | 18.7k | 5k | reauthor: one engine, one binding table | open |
 | oracle-atlas (oracle, plates, concordance, corpus ops, atlas, manifests, deploy plate train) | 12.6k | 0–4k | deferred by owner 2026-09-21; keep and reauthor: delete, or keep at 4k | open |
 | synapse-connections (resonance, synapse, dawn write, connections surface, reading slate) | 7.8k | 2k | keep synapse + connections; DELETE dawn write (decided 2026-09-21); reading slate deferred | dawn write deleted (size/dawn); rest open |
