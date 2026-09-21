@@ -78,10 +78,8 @@ from nexus.services.capabilities import (
     is_same_source_terminal_error,
 )
 from nexus.services.contributor_taxonomy import ContributorObservationBatch, NotObserved
-from nexus.services.contributors import (
-    MediaTarget,
-    apply_observed_role_slices_in_current_transaction,
-)
+from nexus.services.contributor_writes import MediaTarget
+from nexus.services.contributors import apply_observed_role_slices_in_current_transaction
 from nexus.services.file_ingest_validation import (
     has_valid_file_signature,
     validate_file_ingest_request,

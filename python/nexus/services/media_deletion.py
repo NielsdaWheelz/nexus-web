@@ -49,6 +49,7 @@ from nexus.services.collection_revisions import (
 )
 from nexus.services.consumption import service as consumption_service
 from nexus.services.content_indexing import IndexOwner, delete_content_index
+from nexus.services.contributor_writes import MediaTarget
 from nexus.services.document_embeds import (
     reconcile_document_embed_parent_edges_for_viewer,
 )
@@ -671,10 +672,9 @@ def delete_document_media_if_unreferenced(db: Session, media_id: UUID) -> list[s
         text("DELETE FROM user_media_deletions WHERE media_id = :media_id"),
         {"media_id": media_id},
     )
-    # Removes the credits, deletes this media's author-edit replay memos, and
-    # prunes any contributor left with no other reference (spec §2.8). Runs on
-    # this deletion transaction — the documented composition exception (§3).
-    contributors.cleanup_credits_for_deleted_target(db, target=contributors.MediaTarget(media_id))
+    # Removes the credits and this media's author-edit replay memos on this
+    # deletion transaction — the documented composition exception.
+    contributors.cleanup_credits_for_deleted_target(db, target=MediaTarget(media_id))
     media_upload_sessions.delete_published_media_support_in_current_transaction(
         db,
         media_id=media_id,

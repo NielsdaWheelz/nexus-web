@@ -663,7 +663,7 @@ pure black/white to reduce halation under long sessions.
 
 ### per-media progress
 
-- Consumption's `_reader_cursor_store.py` is the sole DML owner of
+- Consumption's `reader_cursor.py` is the sole DML owner of
   `reader_media_state`. One row per user/media carries a nullable jsonb
   `locator` and monotonic bigint `revision` (starts `1`). A null locator is an
   internal revisioned `Empty` reset tombstone; PUT never accepts a null/clear
