@@ -1,29 +1,20 @@
-"""Page title and note body workflows."""
+"""Pages, note blocks, the daily page, and the note attached to a highlight."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, assert_never, cast
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import asc, delete, desc, func, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import (
-    DailyPageBinding,
-    NoteBlock,
-    Page,
-)
+from nexus.db.models import DailyPageBinding, NoteBlock, Page
 from nexus.db.retries import retry_read_committed, retry_serializable
 from nexus.db.session import transaction
-from nexus.errors import (
-    ApiErrorCode,
-    ConflictError,
-    InvalidRequestError,
-    NotFoundError,
-)
+from nexus.errors import ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.notes import (
     CreatePageRequest,
     DailyCaptureRequest,
@@ -39,9 +30,8 @@ from nexus.schemas.notes import (
 )
 from nexus.schemas.presence import presence_from_nullable
 from nexus.services import note_bodies, passage_anchors
-from nexus.services.collection_keyset import Direction
 from nexus.services.content_indexing import IndexOwner, delete_content_index
-from nexus.services.highlight_access import get_highlight_for_visible_read_or_404
+from nexus.services.highlights import get_highlight_for_visible_read_or_404
 from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.resource_graph import highlight_notes as graph_highlight_notes
 from nexus.services.resource_graph.cleanup import (
@@ -49,10 +39,7 @@ from nexus.services.resource_graph.cleanup import (
     delete_resource_protocol_state,
 )
 from nexus.services.resource_graph.edges import create_edge
-from nexus.services.resource_graph.refs import (
-    ResourceRef,
-    ResourceScheme,
-)
+from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 from nexus.services.resource_graph.schemas import EdgeCreate
 from nexus.services.resource_items import surfaces as resource_surfaces
 from nexus.services.resource_items import versions
@@ -62,23 +49,26 @@ from nexus.services.resource_mutation_replay import (
     record_replay,
 )
 
+NotesIndexView = Literal["updated_desc", "updated_asc", "title_asc", "title_desc"]
+
+_INDEX_VIEWS: dict[tuple[str | None, str | None], NotesIndexView] = {
+    (None, None): "updated_desc",
+    ("updated", "asc"): "updated_asc",
+    ("title", "asc"): "title_asc",
+    ("title", "desc"): "title_desc",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class RecentNoteAnchorFact:
-    """One exact Page or NoteBlock edit fact."""
-
     ref: ResourceRef
     activity_at: datetime
 
 
 def count_retained_note_blocks(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    start: datetime | None,
-    end: datetime,
+    db: Session, *, viewer_id: UUID, start: datetime | None, end: datetime
 ) -> int:
-    """Count surviving viewer-owned NoteBlock rows by database creation time."""
+    """Surviving viewer-owned note blocks by database creation time."""
     return int(
         db.scalar(
             text(
@@ -102,13 +92,7 @@ def count_retained_note_blocks(
 def recent_note_anchor_facts(
     db: Session, *, viewer_id: UUID, limit: int
 ) -> tuple[RecentNoteAnchorFact, ...]:
-    """Recent viewer-owned NoteBlock and Page edits in one bounded read.
-
-    Each source contributes at most ``limit`` rows so the contextual consumer
-    can apply its own cross-source priority without either source crowding the
-    other out before composition. Returned refs stay exact; note/page facts do
-    not normalize to media.
-    """
+    """Recent note-block and page edits, each source capped at ``limit``."""
     if limit < 1:
         return ()
     rows = db.execute(
@@ -156,107 +140,33 @@ def recent_note_anchor_facts(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class PagesUpdatedNewest:
-    """Canonical: the most recently updated Page first."""
-
-
-@dataclass(frozen=True, slots=True)
-class PagesUpdatedOldest:
-    """The least recently updated Page first."""
-
-
-@dataclass(frozen=True, slots=True)
-class PagesTitle:
-    direction: Direction
-
-
-type NotesIndexView = PagesUpdatedNewest | PagesUpdatedOldest | PagesTitle
-
-_INDEX_QUERY_KEYS = frozenset({"sort", "direction"})
-
-
 def parse_notes_index_query(items: Sequence[tuple[str, str]]) -> NotesIndexView:
-    """Strict Pages-index view parse. ``items`` is the request's ``multi_items()``
-    so duplicate keys are visible. This index is exhaustive — it has no limit,
-    cursor, or collection-revision contract — so the two view keys are the only
-    keys it accepts at all. ``updated+desc`` is rejected rather than normalized
-    so the canonical view keeps exactly one URL."""
+    """The Pages index has no cursor or revision, so ``sort``/``direction`` are the
+    only keys it accepts, each at most once, and every view has exactly one URL."""
     parameters: dict[str, str] = {}
     for key, value in items:
-        if key not in _INDEX_QUERY_KEYS or key in parameters:
+        if key not in {"sort", "direction"} or key in parameters:
             raise InvalidRequestError(
                 ApiErrorCode.E_INVALID_REQUEST, "Unsupported notes index view"
             )
         parameters[key] = value
-    sort = parameters.get("sort")
-    direction = parameters.get("direction")
-    if sort is None and direction is None:
-        return PagesUpdatedNewest()
-    if sort == "updated" and direction == "asc":
-        return PagesUpdatedOldest()
-    if sort == "title" and (direction == "asc" or direction == "desc"):
-        return PagesTitle(direction)
-    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported notes index view")
+    view = _INDEX_VIEWS.get((parameters.get("sort"), parameters.get("direction")))
+    if view is None:
+        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported notes index view")
+    return view
 
 
 def list_pages(db: Session, viewer_id: UUID, *, view: NotesIndexView) -> list[NotePageSummaryOut]:
-    """Every Page the viewer owns, in the requested total order. The Page id is
-    unique, so every order is total; the title orders keep ``updated_at DESC``
-    in both directions so identically titled Pages always read newest-first."""
-    owned = select(Page).where(Page.user_id == viewer_id)
-    match view:
-        case PagesUpdatedNewest():
-            ordered = owned.order_by(Page.updated_at.desc(), Page.title.asc(), Page.id.asc())
-        case PagesUpdatedOldest():
-            ordered = owned.order_by(Page.updated_at.asc(), Page.title.asc(), Page.id.asc())
-        case PagesTitle(direction):
-            by = asc if direction == "asc" else desc
-            ordered = owned.order_by(
-                by(func.lower(func.btrim(Page.title))),
-                by(Page.title),
-                Page.updated_at.desc(),
-                Page.id.asc(),
-            )
-        case _:
-            assert_never(view)
-    return [
-        NotePageSummaryOut.model_validate(page, from_attributes=True)
-        for page in db.scalars(ordered).all()
-    ]
-
-
-def create_page(db: Session, viewer_id: UUID, request: CreatePageRequest) -> NotePageOut:
-    def op() -> UUID:
-        with transaction(db):
-            page = db.get(Page, request.page_id)
-            if page is not None:
-                if page.user_id != viewer_id or page.title != request.title:
-                    raise ConflictError(
-                        ApiErrorCode.E_RESOURCE_CONFLICT,
-                        "Page create id is already bound to a different resource",
-                    )
-            else:
-                page = Page(id=request.page_id, user_id=viewer_id, title=request.title)
-                db.add(page)
-                db.flush()
-            versions.ensure_version(
-                db,
-                viewer_id=viewer_id,
-                ref=_page_ref(page.id),
-                lane="title",
-            )
-            versions.ensure_version(
-                db,
-                viewer_id=viewer_id,
-                ref=_page_ref(page.id),
-                lane="outgoing_edges",
-            )
-            return page.id
-
-    page_id = retry_serializable(db, "create_page", op)
-    page = get_page_for_owner_or_404(db, viewer_id, page_id)
-    return _page_out(db, viewer_id, page)
+    """Every owned page in one total order; equal titles read newest-first."""
+    folded = func.lower(func.btrim(Page.title))
+    order = {
+        "updated_desc": (Page.updated_at.desc(), Page.title.asc(), Page.id.asc()),
+        "updated_asc": (Page.updated_at.asc(), Page.title.asc(), Page.id.asc()),
+        "title_asc": (folded.asc(), Page.title.asc(), Page.updated_at.desc(), Page.id.asc()),
+        "title_desc": (folded.desc(), Page.title.desc(), Page.updated_at.desc(), Page.id.asc()),
+    }[view]
+    pages = db.scalars(select(Page).where(Page.user_id == viewer_id).order_by(*order)).all()
+    return [NotePageSummaryOut.model_validate(page, from_attributes=True) for page in pages]
 
 
 def get_page_for_owner_or_404(db: Session, viewer_id: UUID, page_id: UUID) -> Page:
@@ -266,15 +176,34 @@ def get_page_for_owner_or_404(db: Session, viewer_id: UUID, page_id: UUID) -> Pa
     return page
 
 
+def create_page(db: Session, viewer_id: UUID, request: CreatePageRequest) -> NotePageOut:
+    """Idempotent by the client-chosen page id; a different owner or title conflicts."""
+
+    def op() -> UUID:
+        with transaction(db):
+            page = db.get(Page, request.page_id)
+            if page is None:
+                page = Page(id=request.page_id, user_id=viewer_id, title=request.title)
+                db.add(page)
+                db.flush()
+            elif page.user_id != viewer_id or page.title != request.title:
+                raise ConflictError(
+                    ApiErrorCode.E_RESOURCE_CONFLICT,
+                    "Page create id is already bound to a different resource",
+                )
+            _ensure_page_versions(db, viewer_id, page.id)
+            return page.id
+
+    page_id = retry_serializable(db, "create_page", op)
+    return _page_out(db, viewer_id, get_page_for_owner_or_404(db, viewer_id, page_id))
+
+
 def get_page(db: Session, viewer_id: UUID, page_id: UUID) -> NotePageOut:
     return _page_out(db, viewer_id, get_page_for_owner_or_404(db, viewer_id, page_id))
 
 
 def update_page(
-    db: Session,
-    viewer_id: UUID,
-    page_id: UUID,
-    request: UpdatePageRequest,
+    db: Session, viewer_id: UUID, page_id: UUID, request: UpdatePageRequest
 ) -> NotePageOut:
     page = get_page_for_owner_or_404(db, viewer_id, page_id)
     if page.title != request.title:
@@ -295,32 +224,26 @@ def delete_page(db: Session, viewer_id: UUID, page_id: UUID) -> None:
 
 
 def delete_page_in_current_transaction(db: Session, viewer_id: UUID, page_id: UUID) -> None:
-    """Stage one Page deletion inside its composing caller's retry attempt."""
-    page = get_page_for_owner_or_404(db, viewer_id, page_id)
-    ref = _page_ref(page.id)
+    """Stage one page deletion inside the composing caller's retry attempt."""
     from nexus.services.artifacts import engine as artifact_engine
 
+    page = get_page_for_owner_or_404(db, viewer_id, page_id)
+    ref = _page_ref(page.id)
     artifact_engine.on_subject_deleted(db, ref)
     delete_edges_for_deleted_resource(db, ref=ref)
     db.execute(
         delete(DailyPageBinding).where(
-            DailyPageBinding.user_id == viewer_id,
-            DailyPageBinding.page_id == page.id,
+            DailyPageBinding.user_id == viewer_id, DailyPageBinding.page_id == page.id
         )
     )
     delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
     db.delete(page)
 
 
-def read_daily_page(
-    db: Session,
-    viewer_id: UUID,
-    local_date: date,
-) -> DailyPageDescriptor:
+def read_daily_page(db: Session, viewer_id: UUID, local_date: date) -> DailyPageDescriptor:
     binding = db.scalar(
         select(DailyPageBinding).where(
-            DailyPageBinding.user_id == viewer_id,
-            DailyPageBinding.local_date == local_date,
+            DailyPageBinding.user_id == viewer_id, DailyPageBinding.local_date == local_date
         )
     )
     if binding is None:
@@ -329,30 +252,25 @@ def read_daily_page(
             local_date=local_date,
             default_title=_default_daily_page_title(local_date),
         )
-    page = _page_for_binding(db, viewer_id=viewer_id, binding=binding)
-    source = _page_ref(page.id)
+    page = get_page_for_owner_or_404(db, viewer_id, binding.page_id)
     return MaterializedDailyPageDescriptor(
         kind="Materialized",
         local_date=local_date,
         page=_page_out(db, viewer_id, page),
-        surface=resource_surfaces.get_surface(db, viewer_id=viewer_id, source=source),
+        surface=resource_surfaces.get_surface(db, viewer_id=viewer_id, source=_page_ref(page.id)),
     )
 
 
 def capture_daily_page_note(
-    db: Session,
-    viewer_id: UUID,
-    *,
-    local_date: date,
-    request: DailyCaptureRequest,
+    db: Session, viewer_id: UUID, *, local_date: date, request: DailyCaptureRequest
 ) -> DailyCaptureResult:
     page_id_candidate = uuid4()
 
     def op() -> DailyCaptureResult:
         with transaction(db):
-            return _capture_daily_page_note_in_transaction(
+            return capture_daily_page_note_in_current_transaction(
                 db,
-                viewer_id=viewer_id,
+                viewer_id,
                 local_date=local_date,
                 request=request,
                 page_id_candidate=page_id_candidate,
@@ -369,37 +287,18 @@ def capture_daily_page_note_in_current_transaction(
     request: DailyCaptureRequest,
     page_id_candidate: UUID,
 ) -> DailyCaptureResult:
-    """Stage one deterministic assistant capture in its journal transaction."""
-    return _capture_daily_page_note_in_transaction(
-        db,
-        viewer_id=viewer_id,
-        local_date=local_date,
-        request=request,
-        page_id_candidate=page_id_candidate,
-    )
-
-
-def _capture_daily_page_note_in_transaction(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    local_date: date,
-    request: DailyCaptureRequest,
-    page_id_candidate: UUID,
-) -> DailyCaptureResult:
+    """Append one capture to the end of the viewer's daily page surface."""
     if not note_bodies.text_from_pm_json(request.body_pm_json).strip():
         raise InvalidRequestError(
-            ApiErrorCode.E_EMPTY_NOTE_BODY,
-            "Daily capture requires a meaningful note body",
+            ApiErrorCode.E_EMPTY_NOTE_BODY, "Daily capture requires a meaningful note body"
         )
-    request_payload = request.model_dump(mode="json", by_alias=True)
-    request_payload["localDate"] = local_date.isoformat()
-    request_bytes = canonical_json_bytes(request_payload)
-    scope = "daily:capture"
+    request_bytes = canonical_json_bytes(
+        {**request.model_dump(mode="json", by_alias=True), "localDate": local_date.isoformat()}
+    )
     replay = lookup_replay(
         db,
         viewer_id=viewer_id,
-        scope=scope,
+        scope="daily:capture",
         client_mutation_id=request.client_mutation_id,
         request_bytes=request_bytes,
     )
@@ -408,19 +307,13 @@ def _capture_daily_page_note_in_transaction(
 
     binding = db.scalar(
         select(DailyPageBinding).where(
-            DailyPageBinding.user_id == viewer_id,
-            DailyPageBinding.local_date == local_date,
+            DailyPageBinding.user_id == viewer_id, DailyPageBinding.local_date == local_date
         )
     )
     page = (
-        _create_daily_page_binding_without_commit(
-            db,
-            viewer_id=viewer_id,
-            local_date=local_date,
-            page_id=page_id_candidate,
-        )
+        _materialize_daily_page(db, viewer_id, local_date, page_id_candidate)
         if binding is None
-        else _page_for_binding(db, viewer_id=viewer_id, binding=binding)
+        else get_page_for_owner_or_404(db, viewer_id, binding.page_id)
     )
     page_ref = _page_ref(page.id)
     resource_surfaces.insert_note_occurrence_without_commit(
@@ -436,16 +329,12 @@ def _capture_daily_page_note_in_transaction(
         client_mutation_id=request.client_mutation_id,
         local_date=local_date,
         page_id=page.id,
-        surface=resource_surfaces.get_surface(
-            db,
-            viewer_id=viewer_id,
-            source=page_ref,
-        ),
+        surface=resource_surfaces.get_surface(db, viewer_id=viewer_id, source=page_ref),
     )
     record_replay(
         db,
         viewer_id=viewer_id,
-        scope=scope,
+        scope="daily:capture",
         client_mutation_id=request.client_mutation_id,
         request_bytes=request_bytes,
         response_json=response.model_dump(mode="json", by_alias=True),
@@ -455,66 +344,30 @@ def _capture_daily_page_note_in_transaction(
 
 
 def append_note_block_to_page_in_current_transaction(
-    db: Session,
-    viewer_id: UUID,
-    *,
-    page_id: UUID,
-    note_id: UUID,
-    body_pm_json: dict[str, Any],
+    db: Session, viewer_id: UUID, *, page_id: UUID, note_id: UUID, body_pm_json: dict[str, Any]
 ) -> NoteBlockOut:
     """Append one client-stable note inside the assistant step transaction."""
     page = get_page_for_owner_or_404(db, viewer_id, page_id)
-    source = _page_ref(page.id)
     block = resource_surfaces.insert_note_occurrence_without_commit(
         db,
         viewer_id=viewer_id,
-        source=source,
+        source=_page_ref(page.id),
         note_id=note_id,
         body_pm_json=body_pm_json,
         position="end",
         reindex_reason="assistant_jot_note",
     )
-    response = NoteBlockOut(
-        id=block.id,
-        body_pm_json=block.body_pm_json,
-        body_text=block.body_text,
-        created_at=block.created_at,
-        updated_at=block.updated_at,
-        version_by_lane=versions.versions_for_ref(db, viewer_id=viewer_id, ref=_note_ref(block.id)),
-    )
-    return response
+    return _note_block_out(db, viewer_id, block)
 
 
 def get_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> NoteBlockOut:
-    block = note_bodies.get_note_block_for_owner_or_404(db, viewer_id, block_id)
-    return NoteBlockOut(
-        id=block.id,
-        body_pm_json=block.body_pm_json,
-        body_text=block.body_text,
-        created_at=block.created_at,
-        updated_at=block.updated_at,
-        version_by_lane=versions.versions_for_ref(db, viewer_id=viewer_id, ref=_note_ref(block.id)),
-    )
-
-
-def upsert_note_body_without_commit(
-    db: Session, viewer_id: UUID, block_id: UUID, body_pm_json: dict[str, Any]
-) -> NoteBlock:
-    return note_bodies.upsert_note_body(
-        db,
-        viewer_id=viewer_id,
-        block_id=block_id,
-        body_pm_json=body_pm_json,
+    return _note_block_out(
+        db, viewer_id, note_bodies.get_note_block_for_owner_or_404(db, viewer_id, block_id)
     )
 
 
 def remove_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> None:
-    """Delete one note block and its graph edges + content index (the assistant
-    ``jot_note`` undo seam, amanuensis F-02). Mirrors ``delete_page``: no single-
-    block deleter existed before this. Named ``remove_*`` to stay clear of the
-    notes-cutover's banned single-block editing command surface. Idempotent — an
-    already-absent block is a no-op so undo tolerates a manually-deleted target
-    (R-5)."""
+    """Delete one owned note block. An already-absent block is a no-op."""
 
     def attempt() -> None:
         if remove_note_block_in_current_transaction(db, viewer_id, block_id):
@@ -523,26 +376,11 @@ def remove_note_block(db: Session, viewer_id: UUID, block_id: UUID) -> None:
     retry_read_committed(db, "remove_note_block", attempt)
 
 
-def remove_note_block_in_current_transaction(
-    db: Session,
-    viewer_id: UUID,
-    block_id: UUID,
-) -> bool:
-    """Stage one idempotent NoteBlock deletion in the caller transaction."""
+def remove_note_block_in_current_transaction(db: Session, viewer_id: UUID, block_id: UUID) -> bool:
     block = db.get(NoteBlock, block_id)
     if block is None or block.user_id != viewer_id:
         return False
-    ref = _note_ref(block.id)
-    from nexus.services.artifacts import engine as artifact_engine
-
-    artifact_engine.on_subject_deleted(db, ref)
-    delete_edges_for_deleted_resource(db, ref=ref)
-    # True owner deletion: passage anchors owned by this block (and edges/view
-    # states touching them) die with it. Refresh/reindex never runs this.
-    passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=block.id)
-    delete_content_index(db, owner=IndexOwner("note_block", block.id))
-    delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
-    db.delete(block)
+    _delete_note_block(db, viewer_id, block)
     return True
 
 
@@ -556,9 +394,9 @@ def set_highlight_note_body_pm_json(
     client_mutation_id: str,
 ) -> NoteBlockOut:
     def op() -> NoteBlockOut:
-        response = _set_highlight_note_in_transaction(
+        response = set_highlight_note_body_pm_json_in_current_transaction(
             db,
-            viewer_id=viewer_id,
+            viewer_id,
             highlight_id=highlight_id,
             block_id=block_id,
             body_pm_json=body_pm_json,
@@ -579,30 +417,10 @@ def set_highlight_note_body_pm_json_in_current_transaction(
     body_pm_json: dict[str, Any],
     client_mutation_id: str,
 ) -> NoteBlockOut:
-    """Stage one deterministic assistant highlight note without committing."""
-    return _set_highlight_note_in_transaction(
-        db,
-        viewer_id=viewer_id,
-        highlight_id=highlight_id,
-        block_id=block_id,
-        body_pm_json=body_pm_json,
-        client_mutation_id=client_mutation_id,
-    )
-
-
-def _set_highlight_note_in_transaction(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    highlight_id: UUID,
-    block_id: UUID,
-    body_pm_json: dict[str, Any],
-    client_mutation_id: str,
-) -> NoteBlockOut:
-    request_payload = {"blockId": str(block_id), "bodyPmJson": body_pm_json}
+    """Attach or rewrite the viewer's note on a highlight, replayed on its mutation id."""
     scope = f"highlight_note:{highlight_id}"
-    request_bytes = canonical_json_bytes(request_payload)
-    # D-44 order: visibility (404) before replay lookup, on every attempt.
+    request_bytes = canonical_json_bytes({"blockId": str(block_id), "bodyPmJson": body_pm_json})
+    # Visibility (404) before the replay lookup, on every attempt.
     get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
     replay = lookup_replay(
         db,
@@ -619,10 +437,7 @@ def _set_highlight_note_in_transaction(
         raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Highlight note block id mismatch")
 
     block = note_bodies.upsert_note_body(
-        db,
-        viewer_id=viewer_id,
-        block_id=block_id,
-        body_pm_json=body_pm_json,
+        db, viewer_id=viewer_id, block_id=block_id, body_pm_json=body_pm_json
     )
     enqueue_note_reindex(db, note_block_id=block.id, reason="highlight_note")
     if existing is None:
@@ -631,19 +446,12 @@ def _set_highlight_note_in_transaction(
             viewer_id=viewer_id,
             input=EdgeCreate(
                 source=ResourceRef(scheme="highlight", id=highlight_id),
-                target=_note_ref(block.id),
+                target=note_bodies.note_ref(block.id),
                 kind="context",
                 origin="highlight_note",
             ),
         )
-    response = NoteBlockOut(
-        id=block.id,
-        body_pm_json=block.body_pm_json,
-        body_text=block.body_text,
-        created_at=block.created_at,
-        updated_at=block.updated_at,
-        version_by_lane=versions.versions_for_ref(db, viewer_id=viewer_id, ref=_note_ref(block.id)),
-    )
+    response = _note_block_out(db, viewer_id, block)
     record_replay(
         db,
         viewer_id=viewer_id,
@@ -666,10 +474,7 @@ def delete_highlight_note(
 ) -> None:
     def attempt() -> None:
         if delete_highlight_note_in_current_transaction(
-            db,
-            viewer_id,
-            highlight_id=highlight_id,
-            note_block_id=note_block_id,
+            db, viewer_id, highlight_id=highlight_id, note_block_id=note_block_id
         ):
             db.commit()
 
@@ -677,76 +482,64 @@ def delete_highlight_note(
 
 
 def delete_highlight_note_in_current_transaction(
-    db: Session,
-    viewer_id: UUID,
-    *,
-    highlight_id: UUID,
-    note_block_id: UUID | None,
+    db: Session, viewer_id: UUID, *, highlight_id: UUID, note_block_id: UUID | None
 ) -> bool:
-    """Stage one idempotent Highlight-note deletion in the caller transaction."""
+    """Detach and delete the viewer's note on a highlight; no note is a no-op."""
     get_highlight_for_visible_read_or_404(db, viewer_id, highlight_id)
     existing = graph_highlight_notes.first_note_block_for_highlight(db, viewer_id, highlight_id)
     if existing is None:
         return False
     if note_block_id is not None and existing.id != note_block_id:
         raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Note block not found")
-    ref = _note_ref(existing.id)
-    from nexus.services.artifacts import engine as artifact_engine
-
-    artifact_engine.on_subject_deleted(db, ref)
-    delete_edges_for_deleted_resource(db, ref=ref)
-    # True owner deletion: passage anchors owned by this block die with it.
-    passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=existing.id)
-    delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
-    db.delete(existing)
+    _delete_note_block(db, viewer_id, existing)
     return True
 
 
-def _create_daily_page_binding_without_commit(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    local_date: date,
-    page_id: UUID,
-) -> Page:
-    page = Page(
-        id=page_id,
-        user_id=viewer_id,
-        title=_default_daily_page_title(local_date),
+def _delete_note_block(db: Session, viewer_id: UUID, block: NoteBlock) -> None:
+    """The one note-block teardown: subject state, edges, anchors, index, row."""
+    from nexus.services.artifacts import engine as artifact_engine
+
+    ref = note_bodies.note_ref(block.id)
+    artifact_engine.on_subject_deleted(db, ref)
+    delete_edges_for_deleted_resource(db, ref=ref)
+    passage_anchors.delete_for_owner(db, owner_scheme="note_block", owner_id=block.id)
+    delete_content_index(db, owner=IndexOwner("note_block", block.id))
+    delete_resource_protocol_state(db, viewer_id=viewer_id, ref=ref)
+    db.delete(block)
+
+
+def _note_block_out(db: Session, viewer_id: UUID, block: NoteBlock) -> NoteBlockOut:
+    return NoteBlockOut(
+        id=block.id,
+        body_pm_json=block.body_pm_json,
+        body_text=block.body_text,
+        created_at=block.created_at,
+        updated_at=block.updated_at,
+        version_by_lane=versions.versions_for_ref(
+            db, viewer_id=viewer_id, ref=note_bodies.note_ref(block.id)
+        ),
     )
+
+
+def _materialize_daily_page(db: Session, viewer_id: UUID, local_date: date, page_id: UUID) -> Page:
+    page = Page(id=page_id, user_id=viewer_id, title=_default_daily_page_title(local_date))
     db.add(page)
     db.flush()
-    versions.ensure_version(db, viewer_id=viewer_id, ref=_page_ref(page.id), lane="title")
-    versions.ensure_version(db, viewer_id=viewer_id, ref=_page_ref(page.id), lane="outgoing_edges")
-    db.add(
-        DailyPageBinding(
-            user_id=viewer_id,
-            local_date=local_date,
-            page_id=page.id,
-        )
-    )
+    _ensure_page_versions(db, viewer_id, page.id)
+    db.add(DailyPageBinding(user_id=viewer_id, local_date=local_date, page_id=page.id))
     db.flush()
     return page
 
 
-def _page_for_binding(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    binding: DailyPageBinding,
-) -> Page:
-    page = db.get(Page, binding.page_id)
-    if page is None or page.user_id != viewer_id:
-        # justify-defect: a daily binding must point at its owner's durable Page.
-        raise AssertionError("daily Page binding ownership is inconsistent")
-    return page
+def _ensure_page_versions(db: Session, viewer_id: UUID, page_id: UUID) -> None:
+    for lane in ("title", "outgoing_edges"):
+        versions.ensure_version(db, viewer_id=viewer_id, ref=_page_ref(page_id), lane=lane)
 
 
 def _page_out(db: Session, viewer_id: UUID, page: Page) -> NotePageOut:
-    daily_local_date = db.scalar(
+    local_date = db.scalar(
         select(DailyPageBinding.local_date).where(
-            DailyPageBinding.page_id == page.id,
-            DailyPageBinding.user_id == viewer_id,
+            DailyPageBinding.page_id == page.id, DailyPageBinding.user_id == viewer_id
         )
     )
     return NotePageOut(
@@ -754,9 +547,7 @@ def _page_out(db: Session, viewer_id: UUID, page: Page) -> NotePageOut:
         title=page.title,
         updated_at=page.updated_at,
         daily_page=presence_from_nullable(
-            DailyPageSummaryOut(local_date=daily_local_date)
-            if daily_local_date is not None
-            else None
+            None if local_date is None else DailyPageSummaryOut(local_date=local_date)
         ),
     )
 
@@ -767,7 +558,3 @@ def _default_daily_page_title(local_date: date) -> str:
 
 def _page_ref(page_id: UUID) -> ResourceRef:
     return ResourceRef(scheme="page", id=page_id)
-
-
-def _note_ref(block_id: UUID) -> ResourceRef:
-    return ResourceRef(scheme="note_block", id=block_id)

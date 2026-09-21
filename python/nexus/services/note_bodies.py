@@ -1,4 +1,9 @@
-"""Note body persistence and body-derived graph edges."""
+"""The note body grammar: markdown projection, text projection, persistence, edges.
+
+``text_from_pm_json`` is a cross-language contract: the browser reimplements the
+identical projection and compares offsets against it, and ``body_text`` is the
+tsvector/trgm index basis and the offset basis for note passage anchors.
+"""
 
 from __future__ import annotations
 
@@ -24,7 +29,12 @@ _OBJECT_REF_MARKDOWN_RE = re.compile(
 )
 
 
+def note_ref(block_id: UUID) -> ResourceRef:
+    return ResourceRef(scheme="note_block", id=block_id)
+
+
 def pm_doc_from_markdown_projection(markdown: str) -> dict[str, Any]:
+    """One paragraph of text and ``[[scheme:uuid|label]]`` object references."""
     content: list[dict[str, Any]] = []
     position = 0
     for match in _OBJECT_REF_MARKDOWN_RE.finditer(markdown):
@@ -47,6 +57,14 @@ def pm_doc_from_markdown_projection(markdown: str) -> dict[str, Any]:
     if position < len(markdown):
         _append_text(content, markdown[position:])
     return {"type": "paragraph", "content": content} if content else {"type": "paragraph"}
+
+
+def _append_text(content: list[dict[str, Any]], text_value: str) -> None:
+    for index, line in enumerate(text_value.split("\n")):
+        if index > 0:
+            content.append({"type": "hard_break"})
+        if line:
+            content.append({"type": "text", "text": line})
 
 
 def text_from_pm_json(value: object) -> str:
@@ -89,11 +107,7 @@ def get_note_block_for_owner_or_404(db: Session, viewer_id: UUID, block_id: UUID
 
 
 def upsert_note_body(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    block_id: UUID,
-    body_pm_json: dict[str, Any],
+    db: Session, *, viewer_id: UUID, block_id: UUID, body_pm_json: dict[str, Any]
 ) -> NoteBlock:
     block = db.get(NoteBlock, block_id)
     if block is None:
@@ -105,10 +119,8 @@ def upsert_note_body(
         )
         db.add(block)
         db.flush()
-        versions.ensure_version(db, viewer_id=viewer_id, ref=_note_ref(block.id), lane="body")
-        versions.ensure_version(
-            db, viewer_id=viewer_id, ref=_note_ref(block.id), lane="outgoing_edges"
-        )
+        for lane in ("body", "outgoing_edges"):
+            versions.ensure_version(db, viewer_id=viewer_id, ref=note_ref(block.id), lane=lane)
         sync_note_body_edges(db, viewer_id=viewer_id, block=block)
         return block
     if block.user_id != viewer_id:
@@ -117,20 +129,15 @@ def upsert_note_body(
         block.body_pm_json = body_pm_json
         block.body_text = text_from_pm_json(body_pm_json)
         block.updated_at = func.now()
-        versions.bump_version(db, viewer_id=viewer_id, ref=_note_ref(block.id), lane="body")
+        versions.bump_version(db, viewer_id=viewer_id, ref=note_ref(block.id), lane="body")
         sync_note_body_edges(db, viewer_id=viewer_id, block=block)
     return block
 
 
 def sync_note_body_edges(db: Session, *, viewer_id: UUID, block: NoteBlock) -> None:
-    source = _note_ref(block.id)
-    # A note_body edge is a durable relationship endpoint, so it obeys Invariant 4:
-    # it never persists a passage-candidate (evidence_span/content_chunk/fragment/
-    # reader_apparatus_item/oracle_passage_anchor) or otherwise non-direct scheme.
-    # The reference-insertion UI only emits direct targets, but a stale/forked
-    # client, a direct API write, or hand-authored markdown could carry one; those
-    # object nodes stay in note-owned prose but never mint a graph edge (the same
-    # drop-not-raise discipline replace_edges_for_origin applies to self-targets).
+    """Replace the block's ``note_body`` edges. Self-targets and schemes that
+    cannot be a note reference target stay prose and mint no edge."""
+    source = note_ref(block.id)
     replace_edges_for_origin(
         db,
         viewer_id=viewer_id,
@@ -148,11 +155,6 @@ def _body_target_refs(value: object) -> list[ResourceRef]:
     refs: list[ResourceRef] = []
     seen: set[str] = set()
 
-    def append_ref(ref: ResourceRef) -> None:
-        if ref.uri not in seen:
-            seen.add(ref.uri)
-            refs.append(ref)
-
     def visit(node: object) -> None:
         if isinstance(node, list):
             for child in node:
@@ -160,28 +162,17 @@ def _body_target_refs(value: object) -> list[ResourceRef]:
             return
         if not isinstance(node, dict):
             return
-        node_type = node.get("type")
-        if node_type in {"object_ref", "object_embed"} and isinstance(node.get("attrs"), dict):
-            attrs = node["attrs"]
-            object_type = attrs.get("objectType")
-            object_id = attrs.get("objectId")
+        if node.get("type") in {"object_ref", "object_embed"} and isinstance(
+            node.get("attrs"), dict
+        ):
+            object_type = node["attrs"].get("objectType")
+            object_id = node["attrs"].get("objectId")
             if isinstance(object_type, str) and isinstance(object_id, str):
-                append_ref(
-                    ResourceRef(scheme=cast(ResourceScheme, object_type), id=UUID(object_id))
-                )
+                ref = ResourceRef(scheme=cast(ResourceScheme, object_type), id=UUID(object_id))
+                if ref.uri not in seen:
+                    seen.add(ref.uri)
+                    refs.append(ref)
         visit(node.get("content"))
 
     visit(value)
     return refs
-
-
-def _append_text(content: list[dict[str, Any]], text_value: str) -> None:
-    for index, line in enumerate(text_value.split("\n")):
-        if index > 0:
-            content.append({"type": "hard_break"})
-        if line:
-            content.append({"type": "text", "text": line})
-
-
-def _note_ref(block_id: UUID) -> ResourceRef:
-    return ResourceRef(scheme="note_block", id=block_id)
