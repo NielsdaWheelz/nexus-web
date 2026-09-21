@@ -108,13 +108,13 @@ from nexus.services.resource_graph.schemas import (
     ConnectionFilters,
     ConnectionQuery,
 )
-from nexus.services.search.content_chunk_candidates import (
+from nexus.services.search.chunks import (
     ContentChunkCandidate,
     has_searchable_content_chunks,
     retrieve_content_chunk_candidates,
 )
-from nexus.services.search.embedding import build_query_embedding
 from nexus.services.search.query import SearchScope
+from nexus.services.search.service import build_query_embedding
 from nexus.services.structured_synthesis import (
     INDEX_GROUNDING_RULE,
     StructuredSynthesisError,

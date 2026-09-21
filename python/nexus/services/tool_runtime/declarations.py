@@ -38,7 +38,7 @@ from nexus.services.contributor_taxonomy import (
 from nexus.services.media_read_map import _MAX_MAP_SECTIONS, READ_DOCUMENT_MAX_CHARS
 from nexus.services.resource_graph.schemas import EDGE_KINDS, ConnectionDirection, EdgeKind
 from nexus.services.resource_items.capabilities import app_search_scope_hint
-from nexus.services.search.kinds import SEARCH_FORMATS, SEARCH_KINDS, MediaFormat, SearchKind
+from nexus.services.search.query import SEARCH_FORMATS, SEARCH_KINDS, MediaFormat, SearchKind
 
 type ResultKind = Literal["retrieval", "navigation", "mutation"]
 type ContributorRole = Annotated[

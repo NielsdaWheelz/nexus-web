@@ -1,4 +1,4 @@
-"""Content chunking and semantic embedding helpers."""
+"""Embedding identity, the OpenAI batch embed, and resonance's ANN relation."""
 
 from __future__ import annotations
 
@@ -6,21 +6,143 @@ import asyncio
 import math
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from nexus.config import Settings, get_settings
 from nexus.errors import ApiError, ApiErrorCode
-from nexus.logging import get_logger
 
 if TYPE_CHECKING:
     import httpx
 
-logger = get_logger(__name__)
+_EMBEDDING_BATCH_SIZE = 64
 
 
 def transcript_embedding_dimensions() -> int:
+    return max(8, int(get_settings().transcript_embedding_dimensions))
+
+
+def current_transcript_embedding_model() -> str:
+    """The active model identity stamped on every row it embeds."""
     settings = get_settings()
-    return max(8, int(settings.transcript_embedding_dimensions))
+    normalized = re.sub(
+        r"[^a-z0-9]+",
+        "_",
+        str(settings.transcript_embedding_model_openai or "text-embedding-3-small").lower(),
+    ).strip("_")
+    return f"openai_{normalized}_{transcript_embedding_dimensions()}_v1"
+
+
+def transcript_embedding_provider_for_model(model_name: str) -> str:
+    del model_name
+    return "openai"
+
+
+def current_transcript_embedding_provider() -> str:
+    return transcript_embedding_provider_for_model(current_transcript_embedding_model())
+
+
+def to_pgvector_literal(vector: list[float]) -> str:
+    return "[" + ",".join(f"{float(value):.8f}" for value in vector) + "]"
+
+
+def _checked(
+    vectors: tuple[tuple[float, ...], ...], *, dimensions: int, expected_count: int
+) -> list[list[float]]:
+    """Every returned vector must be complete, finite and of the configured width."""
+    try:
+        if len(vectors) != expected_count:
+            raise ValueError("Embedding provider returned incomplete indexes")
+        checked: list[list[float]] = []
+        for vector in vectors:
+            values = [float(value) for value in vector]
+            if len(values) != dimensions or not all(math.isfinite(value) for value in values):
+                raise ValueError("Embedding payload is malformed")
+            checked.append(values)
+        return checked
+    except (TypeError, ValueError) as exc:
+        raise ApiError(
+            ApiErrorCode.E_APP_SEARCH_FAILED, "Embedding provider returned an invalid response."
+        ) from exc
+
+
+async def _embed_async(
+    texts: list[str], *, dimensions: int, settings: Settings, http_client: httpx.AsyncClient
+) -> list[list[float]]:
+    """Embed through the platform OpenAI credential, in bounded batches.
+
+    ``NonGenerationCallFailed`` (transient-exhausted or oversize input) and a
+    missing platform key propagate unwrapped: ``search.service`` is the sole
+    catcher of the former for its lexical fallback.
+    """
+    from provider_runtime import Credentials, EmbeddingCall, Present, ProviderRuntime
+
+    from nexus.services.llm_credentials import embedding_credential
+
+    credential = embedding_credential(settings)
+    runtime = ProviderRuntime(Credentials(openai=credential.key), http_client=http_client)
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), _EMBEDDING_BATCH_SIZE):
+        batch = texts[start : start + _EMBEDDING_BATCH_SIZE]
+        response = await runtime.embed(
+            EmbeddingCall(
+                model=settings.transcript_embedding_model_openai,
+                inputs=tuple(batch),
+                dimensions=Present(dimensions),
+            ),
+            credential=credential,
+        )
+        vectors.extend(
+            _checked(response.embeddings, dimensions=dimensions, expected_count=len(batch))
+        )
+    return vectors
+
+
+def build_text_embeddings(texts: list[str]) -> tuple[str, list[list[float]]]:
+    """Embed many texts from synchronous code (the indexing job's path)."""
+    import httpx
+
+    dimensions = transcript_embedding_dimensions()
+    model_name = current_transcript_embedding_model()
+    normalized = [str(text or "").strip() for text in texts]
+    if not normalized:
+        return model_name, []
+
+    settings = get_settings()
+
+    async def embed() -> list[list[float]]:
+        async with httpx.AsyncClient(trust_env=False) as client:
+            return await _embed_async(
+                normalized, dimensions=dimensions, settings=settings, http_client=client
+            )
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return model_name, asyncio.run(embed())
+    # Called from a thread that already owns a loop: run the call on its own.
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return model_name, executor.submit(lambda: asyncio.run(embed())).result()
+
+
+def build_text_embedding(text: str) -> tuple[str, list[float]]:
+    model_name, vectors = build_text_embeddings([text])
+    return model_name, (vectors[0] if vectors else [0.0] * transcript_embedding_dimensions())
+
+
+async def build_text_embedding_async(text: str) -> tuple[str, list[float]]:
+    """Build one query embedding on the caller's event loop, without DB state."""
+    import httpx
+
+    settings = get_settings()
+    dimensions = transcript_embedding_dimensions()
+    async with httpx.AsyncClient(trust_env=False) as client:
+        vectors = await _embed_async(
+            [str(text or "").strip()],
+            dimensions=dimensions,
+            settings=settings,
+            http_client=client,
+        )
+    return current_transcript_embedding_model(), vectors[0]
 
 
 def media_neighbor_rows_sql(eligible_media_relation: str) -> str:
@@ -138,161 +260,3 @@ def media_neighbor_rows_sql(eligible_media_relation: str) -> str:
             candidate_partition
         ORDER BY candidate_partition ASC, distance ASC, peer_media_id ASC
     """
-
-
-def current_transcript_embedding_model() -> str:
-    settings = get_settings()
-    dimensions = transcript_embedding_dimensions()
-    normalized_model = re.sub(
-        r"[^a-z0-9]+",
-        "_",
-        str(settings.transcript_embedding_model_openai or "text-embedding-3-small").lower(),
-    ).strip("_")
-    return f"openai_{normalized_model}_{dimensions}_v1"
-
-
-def transcript_embedding_provider_for_model(model_name: str) -> str:
-    del model_name
-    return "openai"
-
-
-def current_transcript_embedding_provider() -> str:
-    return transcript_embedding_provider_for_model(current_transcript_embedding_model())
-
-
-def to_pgvector_literal(vector: list[float]) -> str:
-    """Serialize numeric embedding payload to pgvector literal text."""
-    return "[" + ",".join(f"{float(value):.8f}" for value in vector) + "]"
-
-
-def _normalize_and_validate_vector(vector: Any, *, dimensions: int) -> list[float]:
-    if not isinstance(vector, list):
-        raise ValueError("Embedding payload must be a list")
-    normalized: list[float] = []
-    for value in vector:
-        numeric = float(value)
-        if not math.isfinite(numeric):
-            raise ValueError("Embedding payload values must be finite")
-        normalized.append(numeric)
-    if len(normalized) != dimensions:
-        raise ValueError(f"Expected embedding dimension {dimensions}, got {len(normalized)}")
-    return normalized
-
-
-def _validate_embedding_vectors(
-    vectors: tuple[tuple[float, ...], ...], *, dimensions: int, expected_count: int
-) -> list[list[float]]:
-    try:
-        if len(vectors) != expected_count:
-            raise ValueError("Embedding provider returned incomplete indexes")
-        return [
-            _normalize_and_validate_vector(list(vector), dimensions=dimensions)
-            for vector in vectors
-        ]
-    except (TypeError, ValueError) as exc:
-        raise ApiError(
-            ApiErrorCode.E_APP_SEARCH_FAILED,
-            "Embedding provider returned an invalid response.",
-        ) from exc
-
-
-async def _embed_with_openai_async(
-    texts: list[str],
-    *,
-    dimensions: int,
-    settings: Settings,
-    http_client: httpx.AsyncClient,
-) -> list[list[float]]:
-    """Embed via the platform OpenAI credential.
-
-    ``NonGenerationCallFailed`` (transient-exhausted or oversize input) and
-    ``RuntimeDefect`` (missing platform key — a deployment invariant, not a
-    product-facing failure) propagate unwrapped; ``search.embedding`` is the
-    sole catcher of ``NonGenerationCallFailed`` for the lexical-fallback
-    classification (§ preserved). A malformed response is a hard failure.
-    """
-    from provider_runtime import Credentials, EmbeddingCall, Present, ProviderRuntime
-
-    from nexus.services.llm_credentials import embedding_credential
-
-    credential = embedding_credential(settings)
-
-    vectors: list[list[float]] = []
-    runtime = ProviderRuntime(
-        Credentials(openai=credential.key),
-        http_client=http_client,
-    )
-    for start in range(0, len(texts), 64):
-        batch = texts[start : start + 64]
-        call = EmbeddingCall(
-            model=settings.transcript_embedding_model_openai,
-            inputs=tuple(batch),
-            dimensions=Present(dimensions),
-        )
-        response = await runtime.embed(call, credential=credential)
-        vectors.extend(
-            _validate_embedding_vectors(
-                response.embeddings,
-                dimensions=dimensions,
-                expected_count=len(batch),
-            )
-        )
-    return vectors
-
-
-def _embed_with_openai(texts: list[str], *, dimensions: int) -> list[list[float]]:
-    import httpx
-
-    settings = get_settings()
-
-    async def embed() -> list[list[float]]:
-        async with httpx.AsyncClient(trust_env=False) as client:
-            return await _embed_with_openai_async(
-                texts,
-                dimensions=dimensions,
-                settings=settings,
-                http_client=client,
-            )
-
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(embed())
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(lambda: asyncio.run(embed()))
-        return future.result()
-
-
-def build_text_embeddings(texts: list[str]) -> tuple[str, list[list[float]]]:
-    """Build embeddings for multiple texts using the configured embedding backend."""
-    dimensions = transcript_embedding_dimensions()
-    model_name = current_transcript_embedding_model()
-
-    normalized_texts = [str(text or "").strip() for text in texts]
-    if not normalized_texts:
-        return model_name, []
-
-    return model_name, _embed_with_openai(normalized_texts, dimensions=dimensions)
-
-
-def build_text_embedding(text: str) -> tuple[str, list[float]]:
-    model_name, vectors = build_text_embeddings([text])
-    return model_name, (vectors[0] if vectors else [0.0] * transcript_embedding_dimensions())
-
-
-async def build_text_embedding_async(text: str) -> tuple[str, list[float]]:
-    """Build one query embedding on the caller's event loop, without DB state."""
-    import httpx
-
-    settings = get_settings()
-    dimensions = transcript_embedding_dimensions()
-    model_name = current_transcript_embedding_model()
-    async with httpx.AsyncClient(trust_env=False) as client:
-        vectors = await _embed_with_openai_async(
-            [str(text or "").strip()],
-            dimensions=dimensions,
-            settings=settings,
-            http_client=client,
-        )
-    return model_name, vectors[0]
