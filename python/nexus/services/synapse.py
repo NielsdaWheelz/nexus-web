@@ -60,8 +60,11 @@ from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
     GenerationTerminal,
 )
-from nexus.services.generation_intent import GenerationIntent
-from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
+from nexus.services.generation_spec import (
+    GenerationIntent,
+    ImmutablePromptPayloadRef,
+    generation_fact_digest,
+)
 from nexus.services.llm_execution import (
     AcceptedGenerationFailure,
     CompletedGeneration,

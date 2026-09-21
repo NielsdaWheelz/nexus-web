@@ -132,7 +132,6 @@ CODEX_AGENT_HOST_STOP_GRACE_SECONDS = int(
 )
 
 type _AbortReason = Literal["cancelled", "policy_violation"]
-type _HostPhase = Literal["session_open", "turn_stream", "runtime_close"]
 type _RelayedFrame = bytes | None
 
 
@@ -766,7 +765,6 @@ async def _own_admitted_turn(
                     session=None,
                     accepted_at=accepted_at,
                     versions=versions,
-                    diagnostics=_diagnostics("turn_stream", "admission deadline expired"),
                 )
                 line = (
                     GenerationFrame(
@@ -1015,7 +1013,6 @@ async def _run_turn(
                     session=session,
                     accepted_at=accepted_at,
                     versions=versions,
-                    diagnostics=_diagnostics("turn_stream", "stream bound exceeded"),
                 )
                 break
             budget.record(line)
@@ -1057,7 +1054,6 @@ async def _run_turn(
                 session=None,
                 accepted_at=accepted_at,
                 versions=versions,
-                diagnostics=_diagnostics("session_open", "deadline expired"),
             )
         else:
             async for event in runtime.stream_turn(
@@ -1069,7 +1065,6 @@ async def _run_turn(
                         session=session,
                         accepted_at=accepted_at,
                         versions=versions,
-                        diagnostics=_diagnostics("turn_stream", "frame after terminal"),
                     )
                     break
                 if isinstance(event, AgentTerminal):
@@ -1125,7 +1120,6 @@ async def _run_turn(
                         session=session,
                         accepted_at=accepted_at,
                         versions=versions,
-                        diagnostics=_diagnostics("turn_stream", "forbidden tool event"),
                     )
                     break
                 if terminal is not None:
@@ -1136,7 +1130,6 @@ async def _run_turn(
                     session=session,
                     accepted_at=accepted_at,
                     versions=versions,
-                    diagnostics=_diagnostics("turn_stream", "stream ended without terminal"),
                 )
             elif terminal_seen:
                 for line in relay(flush_synthesis_text()):
@@ -1147,7 +1140,6 @@ async def _run_turn(
             session=session,
             accepted_at=accepted_at,
             versions=versions,
-            diagnostics=_diagnostics("session_open", "credential linking failed"),
         )
     except TurnNotStarted as error:
         terminal = _turn_not_started_terminal(
@@ -1159,23 +1151,20 @@ async def _run_turn(
             session=session,
             accepted_at=accepted_at,
             versions=versions,
-            diagnostics=_diagnostics("turn_stream", type(error).__name__),
         )
-    except AgentRuntimeDefect as error:
+    except AgentRuntimeDefect:
         terminal = _failed_terminal(
             "runtime_defect",
             session=session,
             accepted_at=accepted_at,
             versions=versions,
-            diagnostics=_diagnostics("turn_stream", type(error).__name__),
         )
-    except Exception as error:
+    except Exception:
         terminal = _failed_terminal(
             "runtime_defect",
             session=session,
             accepted_at=accepted_at,
             versions=versions,
-            diagnostics=_diagnostics("turn_stream", type(error).__name__),
         )
     finally:
         # A completed/interrupted turn has no authority to resolve another MCP
@@ -1190,14 +1179,13 @@ async def _run_turn(
                     operation.runtime_close_timeout_seconds,
                     runtime_close_unproven=runtime_close_unproven,
                 )
-            except Exception as error:
+            except Exception:
                 if control.reason != "policy_violation":
                     terminal = _failed_terminal(
                         "runtime_defect",
                         session=session,
                         accepted_at=accepted_at,
                         versions=versions,
-                        diagnostics=_diagnostics("runtime_close", type(error).__name__),
                     )
 
     if runtime_auth_link is not None:
@@ -1207,14 +1195,13 @@ async def _run_turn(
                 credential_file,
                 expected_identity=credential_identity,
             )
-        except CredentialStateUnavailable as error:
+        except CredentialStateUnavailable:
             credential_sync_failed = True
             terminal = _failed_terminal(
                 "runtime_defect",
                 session=session,
                 accepted_at=accepted_at,
                 versions=versions,
-                diagnostics=_diagnostics("runtime_close", type(error).__name__),
             )
 
     if control.reason == "policy_violation":
@@ -1223,7 +1210,6 @@ async def _run_turn(
             session=session,
             accepted_at=accepted_at,
             versions=versions,
-            diagnostics=_diagnostics("turn_stream", "policy violation abort"),
         )
     elif control.reason == "cancelled" and not credential_sync_failed:
         terminal = _cancelled_terminal(session=session, accepted_at=accepted_at, versions=versions)
@@ -1233,7 +1219,6 @@ async def _run_turn(
             session=session,
             accepted_at=accepted_at,
             versions=versions,
-            diagnostics=_diagnostics("turn_stream", "turn produced no terminal"),
         )
     line = serialize(terminal)
     if not budget.admits_terminal(line):
@@ -1242,7 +1227,6 @@ async def _run_turn(
             session=session,
             accepted_at=accepted_at,
             versions=versions,
-            diagnostics=_diagnostics("turn_stream", "terminal exceeded stream bound"),
         )
         line = serialize(terminal)
     yield line
@@ -1356,7 +1340,6 @@ def _terminal_to_wire(
                 session_ref=terminal.session_ref,
                 accepted_at=accepted_at,
                 versions=versions,
-                diagnostics=_diagnostics("turn_stream", "structured output was not an object"),
             )
         structured_output = structured
     else:
@@ -1368,7 +1351,6 @@ def _terminal_to_wire(
         structured_output=structured_output,
         session_ref=_session_ref(terminal.session_ref),
         usage=_optional_usage(terminal.usage),
-        diagnostics=_runtime_terminal_diagnostics(terminal.status, failure),
         accepted_at=accepted_at,
         sdk_version=versions.sdk,
         runtime_version=versions.runtime,
@@ -1396,7 +1378,6 @@ def _failed_terminal(
     session_ref: AgentSessionRef | None = None,
     accepted_at: str,
     versions: RuntimeVersions,
-    diagnostics: tuple[str, ...],
 ) -> GenerationTerminal:
     ref = session_ref
     if ref is None and session is not None and session.ref_is_complete:
@@ -1408,7 +1389,6 @@ def _failed_terminal(
         structured_output=None,
         session_ref=_session_ref(ref) if ref is not None else None,
         usage=None,
-        diagnostics=diagnostics,
         accepted_at=accepted_at,
         sdk_version=versions.sdk,
         runtime_version=versions.runtime,
@@ -1429,7 +1409,6 @@ def _cancelled_terminal(
         structured_output=None,
         session_ref=_session_ref(ref) if ref is not None else None,
         usage=None,
-        diagnostics=_diagnostics("turn_stream", "turn was cancelled"),
         accepted_at=accepted_at,
         sdk_version=versions.sdk,
         runtime_version=versions.runtime,
@@ -1451,7 +1430,6 @@ def _turn_not_started_terminal(
         session=session,
         accepted_at=accepted_at,
         versions=versions,
-        diagnostics=_diagnostics("turn_stream", f"turn not started: {error.reason}"),
     )
 
 
@@ -1472,20 +1450,6 @@ def _runtime_error_kind(error: AgentRuntimeError) -> FailureKind:
     ):
         return "invalid_request"
     raise AssertionError("unmapped AgentRuntimeError")
-
-
-def _runtime_terminal_diagnostics(
-    status: Literal["succeeded", "failed", "cancelled"],
-    failure: GenerationFailure | None,
-) -> tuple[str, ...]:
-    if status == "succeeded":
-        return ()
-    reason = failure.kind if failure is not None else status
-    return _diagnostics("turn_stream", f"runtime terminal {reason}")
-
-
-def _diagnostics(phase: _HostPhase, reason: str) -> tuple[str, ...]:
-    return (f"codex generation host {phase}: {reason}",)
 
 
 def _session_ref(ref: AgentSessionRef) -> GenerationSessionRef:

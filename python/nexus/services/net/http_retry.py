@@ -1,9 +1,7 @@
-"""Retry-with-backoff JSON GET for TRUSTED first-party provider APIs.
+"""Bounded-retry JSON GET for TRUSTED first-party provider APIs.
 
-`trust_env=False`, optional `Retry-After` honoring, bounded retries on a fixed
-retryable-status set. There is deliberately NO SSRF guard here: these are our own
-provider endpoints (Podcast Index now; browse is a noted follow-up), not
-feed-controlled URLs. Feed-controlled URLs use `net/safe_fetch.py` instead.
+No SSRF guard: these are our own provider endpoints, not feed-controlled URLs.
+Untrusted URLs go through ``net/safe_fetch.py`` instead.
 """
 
 from __future__ import annotations
@@ -34,10 +32,10 @@ def get_json_with_retry(
     provider_name: str,
     honor_retry_after: bool = False,
 ) -> dict[str, Any]:
-    """GET JSON from a trusted first-party API, retrying transient errors.
+    """GET JSON from a trusted first-party API, retrying transient failures.
 
-    Retries on `_RETRYABLE_STATUS` and transport errors up to `len(backoff_seconds)`
-    times. Raises `ApiError(error_code)` on exhaustion or a non-object payload.
+    Retries on ``_RETRYABLE_STATUS`` and transport errors up to
+    ``len(backoff_seconds)`` times, then raises ``ApiError(error_code)``.
     """
     attempts = len(backoff_seconds) + 1
     last_exc: Exception | None = None
@@ -66,16 +64,15 @@ def get_json_with_retry(
                 break
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 last_exc = exc
-                if attempt_index < attempts - 1:
-                    logger.warning(
-                        "provider_retryable_transport_error",
-                        provider=provider_name,
-                        attempt=attempt_index + 1,
-                        error=str(exc),
-                    )
-                    time.sleep(backoff_seconds[attempt_index])
-                    continue
-                break
+                if attempt_index >= attempts - 1:
+                    break
+                logger.warning(
+                    "provider_retryable_transport_error",
+                    provider=provider_name,
+                    attempt=attempt_index + 1,
+                    error=str(exc),
+                )
+                time.sleep(backoff_seconds[attempt_index])
             except (httpx.HTTPError, ValueError) as exc:
                 last_exc = exc
                 break
@@ -88,11 +85,10 @@ def _retry_delay(
     response: httpx.Response,
     honor_retry_after: bool,
 ) -> float:
-    if honor_retry_after:
-        raw = response.headers.get("retry-after")
-        if raw:
-            try:
-                return min(float(raw), _RETRY_AFTER_CAP_SECONDS)
-            except ValueError:
-                pass
+    raw = response.headers.get("retry-after") if honor_retry_after else None
+    if raw:
+        try:
+            return min(float(raw), _RETRY_AFTER_CAP_SECONDS)
+        except ValueError:
+            pass
     return backoff_seconds[attempt_index]

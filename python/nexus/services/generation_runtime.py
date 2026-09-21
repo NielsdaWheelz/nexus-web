@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import httpx
 
 from nexus.config import Settings
-from nexus.schemas.presence import Absent, Present
+from nexus.schemas.presence import Absent
 from nexus.services.codex_generation_client import CodexGenerationClient
-from nexus.services.generation_backend import (
-    GenerationBackend,
-    GenerationBackendComposition,
-    GenerationBackendDefect,
-)
+from nexus.services.generation_backend import GenerationBackend, GenerationBackendDefect
 from nexus.services.generation_catalog import GenerationCatalogService
 from nexus.services.generation_policy import GENERATION_POLICY
 from nexus.services.generation_service import GenerationService
@@ -29,31 +23,6 @@ from nexus.services.tool_runtime.catalog import (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class _ProviderToolProjection:
-    """Resolve only the operation already named by the frozen tool snapshot."""
-
-    tools: ComposedToolRuntime
-
-    def resolve(self, spec: GenerationSpec) -> ProviderModelTools | None:
-        snapshot = spec.model_tool_plan_snapshot
-        if isinstance(snapshot, Absent):
-            return None
-        if not isinstance(snapshot, Present):
-            raise GenerationBackendDefect("generation has an unknown model-tool presence arm")
-        try:
-            operation = self.tools.operations[snapshot.value.plan_id]
-        except KeyError as error:
-            raise GenerationBackendDefect(
-                "frozen provider model-tool plan is absent from process composition"
-            ) from error
-        if freeze_tool_plan_snapshot(operation) != snapshot.value:
-            raise GenerationBackendDefect(
-                "process provider model-tool authority differs from the frozen generation"
-            )
-        return compose_provider_model_tools(operation)
-
-
 def compose_generation_execution_runtime(
     settings: Settings,
     *,
@@ -63,22 +32,29 @@ def compose_generation_execution_runtime(
 ) -> ComposedExecutionRuntime:
     """Compose one runtime from process-owned dependencies without mutable routing."""
 
-    backend = GenerationBackend(
-        GenerationBackendComposition(
+    def resolve_provider_tools(spec: GenerationSpec) -> ProviderModelTools | None:
+        """Resolve only the operation already named by the frozen tool snapshot."""
+
+        snapshot = spec.model_tool_plan_snapshot
+        if isinstance(snapshot, Absent):
+            return None
+        operation = tools.operations.get(snapshot.value.plan_id)
+        if operation is None:
+            raise GenerationBackendDefect(
+                "frozen provider model-tool plan is absent from process composition"
+            )
+        if freeze_tool_plan_snapshot(operation) != snapshot.value:
+            raise GenerationBackendDefect(
+                "process provider model-tool authority differs from the frozen generation"
+            )
+        return compose_provider_model_tools(operation)
+
+    return ComposedExecutionRuntime(
+        backend=GenerationBackend(
             codex=CodexGenerationClient(settings.codex_agent_socket),
             provider=build_provider_generation_backend(settings, http_client),
-            provider_tools=_ProviderToolProjection(tools),
-        )
-    )
-    return ComposedExecutionRuntime(
-        backend=backend,
-        continuation_cipher=generation_continuation_cipher(settings),
-        admission=GenerationService(
-            catalog=catalog,
-            policy=GENERATION_POLICY,
-            tools=tools,
+            provider_tools=resolve_provider_tools,
         ),
+        continuation_cipher=generation_continuation_cipher(settings),
+        admission=GenerationService(catalog=catalog, policy=GENERATION_POLICY, tools=tools),
     )
-
-
-__all__ = ["compose_generation_execution_runtime"]

@@ -22,10 +22,11 @@ from sqlalchemy.orm import Session
 from nexus.errors import ApiErrorCode, NotFoundError
 from nexus.schemas.citation import CitationOut
 from nexus.services.artifacts.registry import visible_persisted_subject
-from nexus.services.generation_history import read_generation_history
-from nexus.services.generation_selection import CodexPersonalSelection, ProviderApiSelection
 from nexus.services.generation_spec import (
+    CodexPersonalSelection,
+    ProviderApiSelection,
     ProviderDispatchTargetSnapshot,
+    read_generation_history,
 )
 from nexus.services.llm_ledger import (
     GenerationRecord,
@@ -236,7 +237,7 @@ def _generation_provenance(
 
     if generation is None:
         return None, None, None
-    spec = read_generation_history(dict(generation.spec.value))
+    spec = read_generation_history(generation.spec)
     if isinstance(spec.selection, CodexPersonalSelection):
         provider = "codex-personal"
         model = spec.selection.model

@@ -11,22 +11,10 @@ from llm_tools import Available
 from nexus.schemas.llm import Ready
 from nexus.schemas.presence import Absent, Presence, Present
 from nexus.services.generation_admission import (
-    FrozenHostEvidence,
     GenerationConfigurationDefect,
     GenerationOperationUnavailable,
 )
-from nexus.services.generation_catalog import (
-    CodexDispatchTarget,
-    GenerationCatalogService,
-    ProviderDispatchTarget,
-    ResolvedCatalogPair,
-)
-from nexus.services.generation_intent import (
-    GenerationIntent,
-    JsonSchemaOutput,
-    TextOutput,
-    validate_intent_bounds,
-)
+from nexus.services.generation_catalog import GenerationCatalogService, ResolvedCatalogPair
 from nexus.services.generation_policy import (
     ChatPerRunTools,
     ExactHostToolPlan,
@@ -35,28 +23,23 @@ from nexus.services.generation_policy import (
     NoHostToolPlan,
     NoModelTools,
     OperationWorkflowSpec,
-    StrictJsonOutputContract,
-    TextOutputContract,
-)
-from nexus.services.generation_selection import (
-    CodexPersonalSelection,
-    ProviderApiSelection,
 )
 from nexus.services.generation_spec import (
     BackgroundOperationKey,
     CodexDispatchTargetSnapshot,
     FrozenHostToolPlanSnapshot,
     FrozenToolScope,
-    GenerationBounds,
+    GenerationIntent,
     GenerationOperation,
     GenerationSpec,
     GenerationSpecFacts,
-    GenerationStreamBounds,
     ImmutablePromptPayloadRef,
-    ProviderDispatchTargetSnapshot,
+    JsonSchemaOutput,
     StrictJsonOutputSnapshot,
+    TextOutput,
     TextOutputSnapshot,
     generation_fact_digest,
+    validate_intent_bounds,
 )
 from nexus.services.tool_runtime.catalog import (
     ComposedToolRuntime,
@@ -70,7 +53,7 @@ type ChatToolAuthority = Literal["ReadOnly", "AdditiveWrites"]
 @dataclass(frozen=True, slots=True)
 class ModelToolAdmission:
     operation: FrozenToolOperation
-    effect_mode: Literal["ReadOnly", "AdditiveWrites"]
+    effect_mode: ChatToolAuthority
     scope: FrozenToolScope
 
 
@@ -99,21 +82,18 @@ class GenerationService:
         prompt_template_revision: str,
         prompt_payload_ref: ImmutablePromptPayloadRef,
     ) -> GenerationSpec:
-        """Freeze a prevalidated Chat catalog receipt without further I/O.
-
-        Chat admission performs the final catalog/readiness check before opening
-        its database transaction.  The transaction then freezes prompt, scope,
-        tool plan, and this exact immutable pair into one spec; it must not hold
-        database locks while refreshing a remote catalog or readiness source.
-        """
+        """Freeze a prevalidated Chat receipt without holding locks across I/O."""
 
         if len(catalog_definition_revision) != 64:
             raise ValueError("Chat catalog definition revision must be SHA-256")
         workflow = self._policy.chat.workflow
-        tool_admission = self._chat_tool_admission(
-            workflow=workflow,
-            authority=tool_authority,
-            scope=scope,
+        policy = workflow.model_tool_policy
+        if not isinstance(policy, ChatPerRunTools):
+            raise GenerationConfigurationDefect("Chat workflow lacks per-run tool authority")
+        plan_id, revision = (
+            (policy.read_plan_id, policy.read_plan_authority_revision)
+            if tool_authority == "ReadOnly"
+            else (policy.additive_write_plan_id, policy.additive_write_plan_authority_revision)
         )
         return _freeze_spec(
             operation="chat",
@@ -125,8 +105,15 @@ class GenerationService:
             intent=intent,
             prompt_template_revision=prompt_template_revision,
             prompt_payload_ref=prompt_payload_ref,
-            host=None,
-            model_tools=tool_admission,
+            host_plan=None,
+            host_evidence_revision=None,
+            model_tools=ModelToolAdmission(
+                operation=self._required_tool_operation(
+                    plan_id=plan_id, authority_revision=revision, owner="chat"
+                ),
+                effect_mode=tool_authority,
+                scope=scope,
+            ),
         )
 
     async def freeze_background(
@@ -137,33 +124,32 @@ class GenerationService:
         prompt_template_revision: str,
         prompt_payload_ref: ImmutablePromptPayloadRef,
         scope: FrozenToolScope | None = None,
-        host: FrozenHostEvidence | None = None,
+        host_plan: FrozenHostToolPlanSnapshot | None = None,
+        host_evidence_revision: str | None = None,
     ) -> GenerationSpec:
         snapshot = await self._catalog.read_for_admission()
-        operation_policy = self._policy.background_operations[operation]
-        pair = snapshot.pair(operation_policy.selection)
+        entry = self._policy.background_operations[operation]
+        pair = snapshot.pair(entry.selection)
         if pair is None:
             raise GenerationConfigurationDefect(
                 f"background operation {operation!r} selection is absent from the catalog"
             )
-        _require_background_readiness(operation, pair)
-        tool_admission = self._background_tool_admission(
-            operation=operation,
-            workflow=operation_policy.workflow,
-            scope=scope,
-        )
+        if not isinstance(pair.readiness, Ready):
+            raise GenerationOperationUnavailable(operation, pair.readiness)
+        _validate_host_policy(entry.workflow, host_plan, host_evidence_revision)
         return _freeze_spec(
             operation=operation,
             selection_source="BackgroundPolicy",
             pair=pair,
             catalog_definition_revision=snapshot.catalog.definition_revision,
             policy_revision=self._policy.revision,
-            workflow=operation_policy.workflow,
+            workflow=entry.workflow,
             intent=intent,
             prompt_template_revision=prompt_template_revision,
             prompt_payload_ref=prompt_payload_ref,
-            host=_validate_host(operation_policy.workflow, host),
-            model_tools=tool_admission,
+            host_plan=host_plan,
+            host_evidence_revision=host_evidence_revision,
+            model_tools=self._background_tool_admission(operation, entry.workflow, scope),
         )
 
     async def require_dispatch_ready(self, spec: GenerationSpec) -> None:
@@ -175,27 +161,34 @@ class GenerationService:
             raise GenerationConfigurationDefect(
                 f"frozen {spec.operation!r} selection disappeared before dispatch"
             )
-        _require_exact_dispatch_identity(spec, pair)
-        if pair.lifecycle == "Retired":
+        frozen = (
+            spec.source_catalog_definition_revision,
+            spec.source_row_fingerprint,
+            spec.backend_contract_revision,
+            spec.resolved_dispatch_target,
+            spec.source_context_window,
+            spec.source_max_output_tokens,
+        )
+        current = (
+            pair.source_catalog_definition_revision,
+            pair.source_row_fingerprint,
+            pair.backend_contract_revision,
+            pair.resolved_dispatch_target,
+            pair.source_context_window,
+            pair.source_max_output_tokens,
+        )
+        if frozen != current:
             raise GenerationConfigurationDefect(
-                f"frozen {spec.operation!r} selection retired before dispatch"
+                f"frozen {spec.operation!r} dispatch identity changed before dispatch"
             )
-        readiness = pair.readiness
-        if not isinstance(readiness, Ready):
-            raise GenerationOperationUnavailable(spec.operation, readiness)
+        if not isinstance(pair.readiness, Ready):
+            raise GenerationOperationUnavailable(spec.operation, pair.readiness)
         operation = self.model_tool_operation(spec)
         if operation is not None:
-            _require_available_tool_bindings(
-                operation,
-                unavailable_owner=spec.operation,
-            )
+            _require_available_bindings(operation, owner=spec.operation)
 
     def model_tool_operation(self, spec: GenerationSpec) -> FrozenToolOperation | None:
-        """Resolve executable authority only from an already-frozen plan snapshot.
-
-        Admission owns this reverse lookup so domain callers never reach into the
-        configured tool catalogue or select a plan independently of ``spec``.
-        """
+        """Resolve executable authority only from the already-frozen plan snapshot."""
 
         snapshot = spec.model_tool_plan_snapshot
         if isinstance(snapshot, Absent):
@@ -207,33 +200,8 @@ class GenerationService:
             )
         return operation
 
-    def _chat_tool_admission(
-        self,
-        *,
-        workflow: OperationWorkflowSpec,
-        authority: ChatToolAuthority,
-        scope: FrozenToolScope,
-    ) -> ModelToolAdmission:
-        policy = workflow.model_tool_policy
-        if not isinstance(policy, ChatPerRunTools):
-            raise GenerationConfigurationDefect("Chat workflow lacks per-run tool authority")
-        if authority == "ReadOnly":
-            plan_id = policy.read_plan_id
-            expected_revision = policy.read_plan_authority_revision
-        else:
-            plan_id = policy.additive_write_plan_id
-            expected_revision = policy.additive_write_plan_authority_revision
-        operation = _required_tool_operation(
-            self._tools,
-            plan_id=plan_id,
-            authority_revision=expected_revision,
-            unavailable_owner="chat",
-        )
-        return ModelToolAdmission(operation=operation, effect_mode=authority, scope=scope)
-
     def _background_tool_admission(
         self,
-        *,
         operation: BackgroundOperationKey,
         workflow: OperationWorkflowSpec,
         scope: FrozenToolScope | None,
@@ -249,125 +217,60 @@ class GenerationService:
             )
         if scope is None:
             raise ValueError("ExactModelTools background admission requires a frozen scope")
-        tool_operation = _required_tool_operation(
-            self._tools,
-            plan_id=policy.plan_id,
-            authority_revision=policy.authority_revision,
-            unavailable_owner=operation,
-        )
         return ModelToolAdmission(
-            operation=tool_operation,
+            operation=self._required_tool_operation(
+                plan_id=policy.plan_id,
+                authority_revision=policy.authority_revision,
+                owner=operation,
+            ),
             effect_mode=policy.effect_mode,
             scope=scope,
         )
 
-
-def _required_tool_operation(
-    runtime: ComposedToolRuntime,
-    *,
-    plan_id: str,
-    authority_revision: str,
-    unavailable_owner: str,
-) -> FrozenToolOperation:
-    try:
-        operation = runtime.operations[plan_id]
-    except KeyError as error:
-        raise GenerationConfigurationDefect(f"unknown model-tool plan {plan_id!r}") from error
-    if operation.definition.authority_revision != authority_revision:
-        raise GenerationConfigurationDefect(f"model-tool plan {plan_id!r} authority drifted")
-    _require_available_tool_bindings(operation, unavailable_owner=unavailable_owner)
-    return operation
+    def _required_tool_operation(
+        self, *, plan_id: str, authority_revision: str, owner: str
+    ) -> FrozenToolOperation:
+        try:
+            operation = self._tools.operations[plan_id]
+        except KeyError as error:
+            raise GenerationConfigurationDefect(f"unknown model-tool plan {plan_id!r}") from error
+        if operation.definition.authority_revision != authority_revision:
+            raise GenerationConfigurationDefect(f"model-tool plan {plan_id!r} authority drifted")
+        _require_available_bindings(operation, owner=owner)
+        return operation
 
 
-def _require_available_tool_bindings(
-    operation: FrozenToolOperation,
-    *,
-    unavailable_owner: str,
-) -> None:
+def _require_available_bindings(operation: FrozenToolOperation, *, owner: str) -> None:
     unavailable = tuple(
         str(grant.id)
         for grant in operation.profile.ordered_grants
         if not isinstance(operation.plan.catalog_view.binding(grant.id).execute, Available)
     )
     if unavailable:
-        raise GenerationOperationUnavailable(
-            unavailable_owner,
-            {"unavailable_tools": unavailable},
-        )
+        raise GenerationOperationUnavailable(owner, {"unavailable_tools": unavailable})
 
 
-def _require_exact_dispatch_identity(
-    spec: GenerationSpec,
-    pair: ResolvedCatalogPair,
-) -> None:
-    dispatch, agent_revision, registry_revision = _dispatch_snapshot(pair)
-    current_source_facts = (
-        pair.selection,
-        pair.target_key,
-        pair.source_catalog_definition_revision,
-        pair.source_row_fingerprint,
-        pair.backend_contract_revision,
-        dispatch,
-        agent_revision,
-        pair.source_context_window,
-        pair.source_max_output_tokens,
-        registry_revision,
-    )
-    frozen_source_facts = (
-        spec.selection,
-        _selection_target_key(spec.selection),
-        spec.source_catalog_definition_revision,
-        spec.source_row_fingerprint,
-        spec.backend_contract_revision,
-        spec.resolved_dispatch_target,
-        spec.agent_definition_revision,
-        spec.source_context_window,
-        spec.source_max_output_tokens,
-        spec.provider_registry_revision,
-    )
-    if current_source_facts != frozen_source_facts:
-        raise GenerationConfigurationDefect(
-            f"frozen {spec.operation!r} dispatch identity changed before dispatch"
-        )
-
-
-def _selection_target_key(
-    selection: CodexPersonalSelection | ProviderApiSelection,
-) -> str:
-    if isinstance(selection, CodexPersonalSelection):
-        return f"CodexPersonal:{selection.model}"
-    if isinstance(selection, ProviderApiSelection):
-        return f"ProviderApi:{selection.model_ref}"
-    raise GenerationConfigurationDefect("generation selection union is not exhaustive")
-
-
-def _validate_host(
+def _validate_host_policy(
     workflow: OperationWorkflowSpec,
-    host: FrozenHostEvidence | None,
-) -> FrozenHostEvidence | None:
+    host_plan: FrozenHostToolPlanSnapshot | None,
+    host_evidence_revision: str | None,
+) -> None:
     policy = workflow.host_tool_plan
+    if (host_plan is None) != (host_evidence_revision is None):
+        raise ValueError("host-tool evidence requires both a plan and a revision")
     if isinstance(policy, NoHostToolPlan):
-        if host is not None:
+        if host_plan is not None:
             raise ValueError("NoHostToolPlan admission received host evidence")
-        return None
+        return
     if not isinstance(policy, ExactHostToolPlan):
         raise GenerationConfigurationDefect("unknown host-tool policy arm")
-    if host is None:
+    if host_plan is None:
         raise ValueError("exact host-tool policy requires frozen evidence")
-    if (host.plan.plan_id, host.plan.authority_revision) != (
+    if (host_plan.plan_id, host_plan.authority_revision) != (
         policy.plan_id,
         policy.authority_revision,
     ):
         raise ValueError("frozen host-tool evidence differs from policy")
-    return host
-
-
-def _require_background_readiness(operation: str, pair: ResolvedCatalogPair) -> None:
-    if pair.lifecycle == "Retired":
-        raise GenerationConfigurationDefect(f"background operation {operation!r} is retired")
-    readiness = pair.readiness
-    if not isinstance(readiness, Ready):
-        raise GenerationOperationUnavailable(operation, readiness)
 
 
 def _freeze_spec(
@@ -381,7 +284,8 @@ def _freeze_spec(
     intent: GenerationIntent,
     prompt_template_revision: str,
     prompt_payload_ref: ImmutablePromptPayloadRef,
-    host: FrozenHostEvidence | None,
+    host_plan: FrozenHostToolPlanSnapshot | None,
+    host_evidence_revision: str | None,
     model_tools: ModelToolAdmission | None,
 ) -> GenerationSpec:
     validate_intent_bounds(
@@ -389,50 +293,31 @@ def _freeze_spec(
         instructions_max_bytes=workflow.bounds.instructions_max_bytes,
         input_max_bytes=workflow.bounds.input_max_bytes,
     )
-    output = _output_snapshot(workflow, intent)
-    expected_payload_digest = generation_fact_digest(intent.model_dump(mode="json"))
-    if prompt_payload_ref.payload_digest != expected_payload_digest:
+    if prompt_payload_ref.payload_digest != generation_fact_digest(intent.model_dump(mode="json")):
         raise ValueError("prompt payload ref differs from the admitted intent")
-    effective_context = _effective_budget(
-        workflow.request_budget.max_context_tokens,
-        pair.source_context_window,
-    )
-    effective_output = _effective_budget(
-        workflow.request_budget.max_output_tokens,
-        pair.source_max_output_tokens,
-    )
-    if model_tools is None:
-        model_plan = Absent()
-        effect_mode: Presence[Literal["ReadOnly", "AdditiveWrites"]] = Absent()
-        tool_scope = Absent()
-        scope_digest = Absent()
-    else:
-        model_plan = Present(value=freeze_tool_plan_snapshot(model_tools.operation))
-        effect_mode = Present[Literal["ReadOnly", "AdditiveWrites"]](value=model_tools.effect_mode)
-        tool_scope = Present(value=model_tools.scope)
-        scope_digest = Present(
-            value=generation_fact_digest(model_tools.scope.model_dump(mode="json"))
-        )
-    if host is None:
-        host_plan: Presence[FrozenHostToolPlanSnapshot] = Absent()
-        host_revision: Presence[str] = Absent()
-    else:
-        host_plan = Present(value=host.plan)
-        host_revision = Present(value=host.evidence_revision)
-    dispatch, agent_revision, registry_revision = _dispatch_snapshot(pair)
+    output = _output_snapshot(workflow, intent)
+    target = pair.resolved_dispatch_target
     facts = GenerationSpecFacts(
         operation=operation,
         selection=pair.selection,
         selection_source=selection_source,
-        resolved_dispatch_target=dispatch,
+        resolved_dispatch_target=target,
         source_catalog_definition_revision=pair.source_catalog_definition_revision,
         source_row_fingerprint=pair.source_row_fingerprint,
-        agent_definition_revision=agent_revision,
+        agent_definition_revision=(
+            Present(value=target.agent_definition_revision)
+            if isinstance(target, CodexDispatchTargetSnapshot)
+            else Absent()
+        ),
         source_context_window=pair.source_context_window,
         source_max_output_tokens=pair.source_max_output_tokens,
-        effective_context_budget_tokens=effective_context,
-        effective_output_budget_tokens=effective_output,
-        bounds=_bounds_snapshot(workflow),
+        effective_context_budget_tokens=_budget(
+            workflow.request_budget.max_context_tokens, pair.source_context_window
+        ),
+        effective_output_budget_tokens=_budget(
+            workflow.request_budget.max_output_tokens, pair.source_max_output_tokens
+        ),
+        bounds=workflow.bounds,
         prompt_template_revision=prompt_template_revision,
         prompt_payload_ref=prompt_payload_ref,
         instructions_digest=_text_digest(intent.instructions),
@@ -442,115 +327,51 @@ def _freeze_spec(
             output.model_dump(mode="json", by_alias=True)
         ),
         display_at_dispatch=pair.presentation,
-        host_tool_plan_snapshot=host_plan,
-        host_evidence_revision=host_revision,
-        model_tool_plan_snapshot=model_plan,
-        tool_effect_mode=effect_mode,
-        admitted_tool_scope=tool_scope,
-        admitted_tool_scope_digest=scope_digest,
+        host_tool_plan_snapshot=(Absent() if host_plan is None else Present(value=host_plan)),
+        host_evidence_revision=(
+            Absent() if host_evidence_revision is None else Present(value=host_evidence_revision)
+        ),
+        model_tool_plan_snapshot=(
+            Absent()
+            if model_tools is None
+            else Present(value=freeze_tool_plan_snapshot(model_tools.operation))
+        ),
+        tool_effect_mode=(
+            Absent()
+            if model_tools is None
+            else Present[ChatToolAuthority](value=model_tools.effect_mode)
+        ),
+        admitted_tool_scope=(Absent() if model_tools is None else Present(value=model_tools.scope)),
+        admitted_tool_scope_digest=(
+            Absent()
+            if model_tools is None
+            else Present(value=generation_fact_digest(model_tools.scope.model_dump(mode="json")))
+        ),
         catalog_definition_revision=catalog_definition_revision,
         policy_revision=policy_revision,
         backend_contract_revision=pair.backend_contract_revision,
-        provider_registry_revision=registry_revision,
+        provider_registry_revision=(
+            Absent()
+            if isinstance(target, CodexDispatchTargetSnapshot)
+            else Present(value=target.registry_revision)
+        ),
     )
     return GenerationSpec.freeze(facts)
 
 
-def _effective_budget(requested: int, capacity: Presence[int]) -> int:
-    return min(requested, capacity.value) if isinstance(capacity, Present) else requested
-
-
-def _bounds_snapshot(workflow: OperationWorkflowSpec) -> GenerationBounds:
-    bounds = workflow.bounds
-    return GenerationBounds(
-        instructions_max_bytes=bounds.instructions_max_bytes,
-        input_max_bytes=bounds.input_max_bytes,
-        turn_timeout_seconds=bounds.turn_timeout_seconds,
-        session_open_timeout_seconds=bounds.session_open_timeout_seconds,
-        runtime_close_timeout_seconds=bounds.runtime_close_timeout_seconds,
-        transport_margin_seconds=bounds.transport_margin_seconds,
-        transport_deadline_seconds=bounds.transport_deadline_seconds,
-        stream=GenerationStreamBounds(
-            max_frames=bounds.stream.max_frames,
-            max_frame_bytes=bounds.stream.max_frame_bytes,
-            max_stream_bytes=bounds.stream.max_stream_bytes,
-            text_flush_interval_ms=(
-                Present(value=bounds.stream.text_flush_interval_ms)
-                if bounds.stream.text_flush_interval_ms is not None
-                else Absent()
-            ),
-            text_flush_bytes=(
-                Present(value=bounds.stream.text_flush_bytes)
-                if bounds.stream.text_flush_bytes is not None
-                else Absent()
-            ),
-        ),
-    )
-
-
 def _output_snapshot(
-    workflow: OperationWorkflowSpec,
-    intent: GenerationIntent,
+    workflow: OperationWorkflowSpec, intent: GenerationIntent
 ) -> TextOutputSnapshot | StrictJsonOutputSnapshot:
-    policy_output = workflow.output_contract
-    if isinstance(policy_output, TextOutputContract) and isinstance(intent.output, TextOutput):
+    if workflow.output_contract == "Text" and isinstance(intent.output, TextOutput):
         return TextOutputSnapshot()
-    if isinstance(policy_output, StrictJsonOutputContract) and isinstance(
-        intent.output, JsonSchemaOutput
-    ):
-        return StrictJsonOutputSnapshot(
-            name=intent.output.name,
-            schema=intent.output.schema_,
-        )
+    if workflow.output_contract == "StrictJson" and isinstance(intent.output, JsonSchemaOutput):
+        return StrictJsonOutputSnapshot(name=intent.output.name, schema=intent.output.schema_)
     raise ValueError("generation intent output differs from its operation contract")
 
 
-def _dispatch_snapshot(
-    pair: ResolvedCatalogPair,
-) -> tuple[
-    CodexDispatchTargetSnapshot | ProviderDispatchTargetSnapshot,
-    Presence[str],
-    Presence[str],
-]:
-    target = pair.resolved_dispatch_target
-    if isinstance(target, CodexDispatchTarget):
-        return (
-            CodexDispatchTargetSnapshot(
-                model_key=target.model_key,
-                dispatch_model=target.dispatch_model,
-                agent_definition_revision=target.agent_definition_revision,
-            ),
-            Present(value=target.agent_definition_revision),
-            Absent(),
-        )
-    if isinstance(target, ProviderDispatchTarget):
-        return (
-            ProviderDispatchTargetSnapshot.model_validate(
-                {
-                    "kind": "ProviderApi",
-                    "model_ref": target.model_ref,
-                    "provider": target.provider,
-                    "model_id": target.model_id,
-                    "engine": target.engine,
-                    "base_url": target.base_url.model_dump(mode="json"),
-                    "correlation": target.correlation,
-                    "routing": target.routing.model_dump(mode="json"),
-                    "continuation_codec": target.continuation_codec,
-                    "registry_revision": target.registry_revision,
-                }
-            ),
-            Absent(),
-            Present(value=target.registry_revision),
-        )
-    raise GenerationConfigurationDefect("catalog dispatch target union is not exhaustive")
+def _budget(requested: int, capacity: Presence[int]) -> int:
+    return min(requested, capacity.value) if isinstance(capacity, Present) else requested
 
 
 def _text_digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-__all__ = [
-    "ChatToolAuthority",
-    "GenerationService",
-    "ModelToolAdmission",
-]

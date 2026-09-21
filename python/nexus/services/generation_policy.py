@@ -1,9 +1,8 @@
 """Exact developer-owned generation selections and workflow authority.
 
-The policy is deliberately model-catalog agnostic: it names exact route-tagged
-selections and conservative Nexus request budgets, while catalog admission
-proves that those facts are currently runnable. It contains no tier, profile,
-fallback, or model-capacity table.
+The policy names exact route-tagged selections and conservative Nexus request
+budgets; catalog admission proves those facts are currently runnable. It holds
+no tier, profile, fallback, or model-capacity table.
 """
 
 from __future__ import annotations
@@ -13,24 +12,27 @@ import json
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, is_dataclass
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import Literal, cast, get_args
 
 from pydantic import BaseModel
 
-from nexus.services.generation_selection import (
+from nexus.schemas.presence import Absent, Present
+from nexus.services.generation_spec import (
+    BackgroundOperationKey,
     CodexPersonalSelection,
-    ProviderApiSelection,
+    GenerationBounds,
+    GenerationSelectionSpec,
+    GenerationStreamBounds,
 )
-from nexus.services.generation_spec import BackgroundOperationKey
-from nexus.services.tool_runtime.plan_revisions import tool_plan_authority_revision
+from nexus.services.tool_runtime.plan_revisions import (
+    TOOL_PLAN_AUTHORITY_REVISIONS,
+    tool_plan_authority_revision,
+)
 
-type GenerationSelection = CodexPersonalSelection | ProviderApiSelection
 type EffectMode = Literal["ReadOnly", "AdditiveWrites"]
+type OutputContract = Literal["Text", "StrictJson"]
 type ToolScopeDerivation = Literal[
-    "ChatAdmittedContext",
-    "LibraryDossierManifest",
-    "IdeaDossierEvidenceLedger",
-    "MetadataMedia",
+    "ChatAdmittedContext", "LibraryDossierManifest", "IdeaDossierEvidenceLedger", "MetadataMedia"
 ]
 
 
@@ -40,40 +42,6 @@ class RequestBudget:
 
     max_context_tokens: int
     max_output_tokens: int
-
-
-@dataclass(frozen=True, slots=True)
-class StreamBounds:
-    max_frames: int
-    max_frame_bytes: int
-    max_stream_bytes: int
-    text_flush_interval_ms: int | None = None
-    text_flush_bytes: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class OperationBounds:
-    instructions_max_bytes: int
-    input_max_bytes: int
-    turn_timeout_seconds: int
-    stream: StreamBounds
-    session_open_timeout_seconds: int = 90
-    runtime_close_timeout_seconds: int = 30
-    transport_margin_seconds: int = 15
-    transport_deadline_seconds: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class TextOutputContract:
-    kind: Literal["Text"] = "Text"
-
-
-@dataclass(frozen=True, slots=True)
-class StrictJsonOutputContract:
-    kind: Literal["StrictJson"] = "StrictJson"
-
-
-type OutputContract = TextOutputContract | StrictJsonOutputContract
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,16 +85,12 @@ class ChatPerRunTools:
 
 type ModelToolPolicy = NoModelTools | ExactModelTools | ChatPerRunTools
 
-_NO_HOST_TOOL_PLAN = NoHostToolPlan()
-_NO_MODEL_TOOLS = NoModelTools()
-_STRICT_JSON_OUTPUT = StrictJsonOutputContract()
-
 
 @dataclass(frozen=True, slots=True)
 class OperationWorkflowSpec:
     operation: str
     revision: str
-    bounds: OperationBounds
+    bounds: GenerationBounds
     request_budget: RequestBudget
     output_contract: OutputContract
     host_tool_plan: HostToolPlan
@@ -135,13 +99,13 @@ class OperationWorkflowSpec:
 
 @dataclass(frozen=True, slots=True)
 class ChatPolicy:
-    seed: GenerationSelection
+    seed: GenerationSelectionSpec
     workflow: OperationWorkflowSpec
 
 
 @dataclass(frozen=True, slots=True)
 class BackgroundOperationPolicy:
-    selection: GenerationSelection
+    selection: GenerationSelectionSpec
     workflow: OperationWorkflowSpec
 
 
@@ -152,26 +116,26 @@ class GenerationPolicy:
     background_operations: Mapping[BackgroundOperationKey, BackgroundOperationPolicy]
 
 
-_SYNTHESIS_STREAM = StreamBounds(
+_NO_HOST = NoHostToolPlan()
+_NO_TOOLS = NoModelTools()
+_SYNTHESIS_STREAM = GenerationStreamBounds(
     max_frames=1_024,
     max_frame_bytes=256 * 1024,
     max_stream_bytes=1024 * 1024,
+    text_flush_interval_ms=Absent(),
+    text_flush_bytes=Absent(),
 )
-_CHAT_STREAM = StreamBounds(
+_CHAT_STREAM = GenerationStreamBounds(
     max_frames=16_384,
     max_frame_bytes=8 * 1024 * 1024,
     max_stream_bytes=16 * 1024 * 1024,
-    text_flush_interval_ms=100,
-    text_flush_bytes=8 * 1024,
+    text_flush_interval_ms=Present[int](value=100),
+    text_flush_bytes=Present[int](value=8 * 1024),
 )
 
 
 def _codex(model: str, reasoning: str) -> CodexPersonalSelection:
-    return CodexPersonalSelection(
-        route="CodexPersonal",
-        model=model,
-        reasoning=reasoning,
-    )
+    return CodexPersonalSelection(route="CodexPersonal", model=model, reasoning=reasoning)
 
 
 def _tool_authority_revision(plan_id: str) -> str:
@@ -187,14 +151,17 @@ def _bounds(
     *,
     input_max_bytes: int,
     turn_timeout_seconds: int,
-    stream: StreamBounds = _SYNTHESIS_STREAM,
-) -> OperationBounds:
-    return OperationBounds(
+    stream: GenerationStreamBounds = _SYNTHESIS_STREAM,
+) -> GenerationBounds:
+    return GenerationBounds(
         instructions_max_bytes=32 * 1024,
         input_max_bytes=input_max_bytes,
         turn_timeout_seconds=turn_timeout_seconds,
-        stream=stream,
+        session_open_timeout_seconds=90,
+        runtime_close_timeout_seconds=30,
+        transport_margin_seconds=15,
         transport_deadline_seconds=90 + turn_timeout_seconds + 30 + 15,
+        stream=stream,
     )
 
 
@@ -220,31 +187,27 @@ def _canonical(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def _workflow_revision(facts: Mapping[str, object]) -> str:
-    digest = hashlib.sha256(b"nexus.operation-workflow.v2\0" + _canonical(facts)).hexdigest()
-    return f"operation-workflow.v2.{digest}"
-
-
 def _workflow(
     operation: str,
     *,
-    bounds: OperationBounds,
+    bounds: GenerationBounds,
     request_budget: RequestBudget,
     output_contract: OutputContract,
-    host_tool_plan: HostToolPlan = _NO_HOST_TOOL_PLAN,
-    model_tool_policy: ModelToolPolicy = _NO_MODEL_TOOLS,
+    host_tool_plan: HostToolPlan = _NO_HOST,
+    model_tool_policy: ModelToolPolicy = _NO_TOOLS,
 ) -> OperationWorkflowSpec:
     facts = {
         "operation": operation,
         "bounds": _canonical_value(bounds),
         "request_budget": _canonical_value(request_budget),
-        "output_contract": _canonical_value(output_contract),
+        "output_contract": output_contract,
         "host_tool_plan": _canonical_value(host_tool_plan),
         "model_tool_policy": _canonical_value(model_tool_policy),
     }
+    digest = hashlib.sha256(b"nexus.operation-workflow.v2\0" + _canonical(facts)).hexdigest()
     return OperationWorkflowSpec(
         operation=operation,
-        revision=_workflow_revision(facts),
+        revision=f"operation-workflow.v2.{digest}",
         bounds=bounds,
         request_budget=request_budget,
         output_contract=output_contract,
@@ -253,194 +216,79 @@ def _workflow(
     )
 
 
-def _background(
-    operation: BackgroundOperationKey,
-    *,
-    model: str,
-    reasoning: str,
-    timeout: int,
-    input_bytes: int,
-    context_tokens: int,
-    output_tokens: int,
-    output_contract: OutputContract = _STRICT_JSON_OUTPUT,
-    host_tool_plan: HostToolPlan = _NO_HOST_TOOL_PLAN,
-    model_tool_policy: ModelToolPolicy = _NO_MODEL_TOOLS,
-) -> BackgroundOperationPolicy:
-    return BackgroundOperationPolicy(
-        selection=_codex(model, reasoning),
+_METADATA_TOOLS = ExactModelTools(
+    "MetadataRead", _tool_authority_revision("MetadataRead"), "ReadOnly", "MetadataMedia"
+)
+_LIBRARY_TOOLS = ExactModelTools(
+    "LibraryDossierRead",
+    _tool_authority_revision("LibraryDossierRead"),
+    "ReadOnly",
+    "LibraryDossierManifest",
+)
+_IDEA_TOOLS = ExactModelTools(
+    "IdeaDossierRead",
+    _tool_authority_revision("IdeaDossierRead"),
+    "ReadOnly",
+    "IdeaDossierEvidenceLedger",
+)
+_IDEA_HOST_PLAN = ExactHostToolPlan(
+    "idea_dossier_research", _tool_authority_revision("idea_dossier_research")
+)
+
+# operation, model, reasoning, turn timeout s, input KiB, context tokens,
+# output tokens, host-tool plan, model-tool policy. Every background operation
+# is strict JSON over Codex Personal.
+_BACKGROUND_ROWS: tuple[
+    tuple[BackgroundOperationKey, str, str, int, int, int, int, HostToolPlan, ModelToolPolicy], ...
+] = (
+    ("metadata_enrichment", "luna", "low", 300, 32, 64_000, 8_000, _NO_HOST, _METADATA_TOOLS),
+    ("media_summary", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST, _NO_TOOLS),
+    ("synapse", "luna", "low", 120, 256, 128_000, 16_000, _NO_HOST, _NO_TOOLS),
+    ("oracle", "terra", "medium", 180, 256, 128_000, 16_000, _NO_HOST, _NO_TOOLS),
+    ("dossier_page", "luna", "low", 120, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
+    ("dossier_note", "luna", "low", 120, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
+    ("dossier_media", "terra", "medium", 180, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
+    ("dossier_conversation", "terra", "medium", 180, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
+    ("dossier_library", "terra", "high", 300, 1024, 400_000, 32_000, _NO_HOST, _LIBRARY_TOOLS),
+    ("dossier_podcast", "terra", "high", 300, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
+    ("dossier_contributor", "terra", "high", 300, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
+    ("dossier_idea", "terra", "high", 300, 1024, 400_000, 32_000, _IDEA_HOST_PLAN, _IDEA_TOOLS),
+    ("dossier_idea_resolve", "luna", "low", 60, 256, 128_000, 16_000, _NO_HOST, _NO_TOOLS),
+)
+_BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] = {
+    operation: BackgroundOperationPolicy(
+        selection=_codex(f"gpt-5.6-{model}", reasoning),
         workflow=_workflow(
             operation,
-            bounds=_bounds(
-                input_max_bytes=input_bytes,
-                turn_timeout_seconds=timeout,
-            ),
+            bounds=_bounds(input_max_bytes=input_kib * 1024, turn_timeout_seconds=timeout),
             request_budget=RequestBudget(
-                max_context_tokens=context_tokens,
-                max_output_tokens=output_tokens,
+                max_context_tokens=context_tokens, max_output_tokens=output_tokens
             ),
-            output_contract=output_contract,
-            host_tool_plan=host_tool_plan,
-            model_tool_policy=model_tool_policy,
+            output_contract="StrictJson",
+            host_tool_plan=host_plan,
+            model_tool_policy=model_tools,
         ),
     )
-
-
-_BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] = {
-    "metadata_enrichment": _background(
-        "metadata_enrichment",
-        model="gpt-5.6-luna",
-        reasoning="low",
-        timeout=300,
-        input_bytes=32 * 1024,
-        context_tokens=64_000,
-        output_tokens=8_000,
-        model_tool_policy=ExactModelTools(
-            plan_id="MetadataRead",
-            authority_revision=_tool_authority_revision("MetadataRead"),
-            effect_mode="ReadOnly",
-            scope_derivation="MetadataMedia",
-        ),
-    ),
-    "media_summary": _background(
-        "media_summary",
-        model="gpt-5.6-luna",
-        reasoning="low",
-        timeout=120,
-        input_bytes=256 * 1024,
-        context_tokens=128_000,
-        output_tokens=16_000,
-    ),
-    "synapse": _background(
-        "synapse",
-        model="gpt-5.6-luna",
-        reasoning="low",
-        timeout=120,
-        input_bytes=256 * 1024,
-        context_tokens=128_000,
-        output_tokens=16_000,
-    ),
-    "oracle": _background(
-        "oracle",
-        model="gpt-5.6-terra",
-        reasoning="medium",
-        timeout=180,
-        input_bytes=256 * 1024,
-        context_tokens=128_000,
-        output_tokens=16_000,
-    ),
-    "dossier_page": _background(
-        "dossier_page",
-        model="gpt-5.6-luna",
-        reasoning="low",
-        timeout=120,
-        input_bytes=1024 * 1024,
-        context_tokens=400_000,
-        output_tokens=32_000,
-    ),
-    "dossier_note": _background(
-        "dossier_note",
-        model="gpt-5.6-luna",
-        reasoning="low",
-        timeout=120,
-        input_bytes=1024 * 1024,
-        context_tokens=400_000,
-        output_tokens=32_000,
-    ),
-    "dossier_media": _background(
-        "dossier_media",
-        model="gpt-5.6-terra",
-        reasoning="medium",
-        timeout=180,
-        input_bytes=1024 * 1024,
-        context_tokens=400_000,
-        output_tokens=32_000,
-    ),
-    "dossier_conversation": _background(
-        "dossier_conversation",
-        model="gpt-5.6-terra",
-        reasoning="medium",
-        timeout=180,
-        input_bytes=1024 * 1024,
-        context_tokens=400_000,
-        output_tokens=32_000,
-    ),
-    "dossier_library": _background(
-        "dossier_library",
-        model="gpt-5.6-terra",
-        reasoning="high",
-        timeout=300,
-        input_bytes=1024 * 1024,
-        context_tokens=400_000,
-        output_tokens=32_000,
-        model_tool_policy=ExactModelTools(
-            plan_id="LibraryDossierRead",
-            authority_revision=_tool_authority_revision("LibraryDossierRead"),
-            effect_mode="ReadOnly",
-            scope_derivation="LibraryDossierManifest",
-        ),
-    ),
-    "dossier_podcast": _background(
-        "dossier_podcast",
-        model="gpt-5.6-terra",
-        reasoning="high",
-        timeout=300,
-        input_bytes=1024 * 1024,
-        context_tokens=400_000,
-        output_tokens=32_000,
-    ),
-    "dossier_contributor": _background(
-        "dossier_contributor",
-        model="gpt-5.6-terra",
-        reasoning="high",
-        timeout=300,
-        input_bytes=1024 * 1024,
-        context_tokens=400_000,
-        output_tokens=32_000,
-    ),
-    "dossier_idea": _background(
-        "dossier_idea",
-        model="gpt-5.6-terra",
-        reasoning="high",
-        timeout=300,
-        input_bytes=1024 * 1024,
-        context_tokens=400_000,
-        output_tokens=32_000,
-        host_tool_plan=ExactHostToolPlan(
-            plan_id="idea_dossier_research",
-            authority_revision=_tool_authority_revision("idea_dossier_research"),
-        ),
-        model_tool_policy=ExactModelTools(
-            plan_id="IdeaDossierRead",
-            authority_revision=_tool_authority_revision("IdeaDossierRead"),
-            effect_mode="ReadOnly",
-            scope_derivation="IdeaDossierEvidenceLedger",
-        ),
-    ),
-    "dossier_idea_resolve": _background(
-        "dossier_idea_resolve",
-        model="gpt-5.6-luna",
-        reasoning="low",
-        timeout=60,
-        input_bytes=256 * 1024,
-        context_tokens=128_000,
-        output_tokens=16_000,
-    ),
+    for (
+        operation,
+        model,
+        reasoning,
+        timeout,
+        input_kib,
+        context_tokens,
+        output_tokens,
+        host_plan,
+        model_tools,
+    ) in _BACKGROUND_ROWS
 }
 
 _CHAT = ChatPolicy(
     seed=_codex("gpt-5.6-terra", "medium"),
     workflow=_workflow(
         "chat",
-        bounds=_bounds(
-            input_max_bytes=512 * 1024,
-            turn_timeout_seconds=900,
-            stream=_CHAT_STREAM,
-        ),
-        request_budget=RequestBudget(
-            max_context_tokens=400_000,
-            max_output_tokens=32_000,
-        ),
-        output_contract=TextOutputContract(),
+        bounds=_bounds(input_max_bytes=512 * 1024, turn_timeout_seconds=900, stream=_CHAT_STREAM),
+        request_budget=RequestBudget(max_context_tokens=400_000, max_output_tokens=32_000),
+        output_contract="Text",
         model_tool_policy=ChatPerRunTools(
             read_plan_id="ChatRead",
             read_plan_authority_revision=_tool_authority_revision("ChatRead"),
@@ -452,43 +300,19 @@ _CHAT = ChatPolicy(
         ),
     ),
 )
-
-
-def _policy_facts(
-    *,
-    chat: ChatPolicy,
-    background_operations: Mapping[BackgroundOperationKey, BackgroundOperationPolicy],
-) -> dict[str, object]:
-    return cast(
-        dict[str, object],
-        _canonical_value(
-            {
-                "chat": chat,
-                "background_operations": background_operations,
-            }
-        ),
-    )
-
-
-def _policy_revision_from_facts(facts: Mapping[str, object]) -> str:
-    digest = hashlib.sha256(b"nexus.generation-policy.v2\0" + _canonical(facts)).hexdigest()
-    return f"generation-policy.v2.{digest}"
-
-
 _IMMUTABLE_BACKGROUND_OPERATIONS = MappingProxyType(_BACKGROUND_OPERATIONS)
-_INITIAL_POLICY_FACTS = _policy_facts(
-    chat=_CHAT,
-    background_operations=_IMMUTABLE_BACKGROUND_OPERATIONS,
-)
+_POLICY_DIGEST = hashlib.sha256(
+    b"nexus.generation-policy.v2\0"
+    + _canonical({"chat": _CHAT, "background_operations": _IMMUTABLE_BACKGROUND_OPERATIONS})
+).hexdigest()
 GENERATION_POLICY = GenerationPolicy(
-    revision=_policy_revision_from_facts(_INITIAL_POLICY_FACTS),
+    revision=f"generation-policy.v2.{_POLICY_DIGEST}",
     chat=_CHAT,
     background_operations=_IMMUTABLE_BACKGROUND_OPERATIONS,
 )
-# Durable capacity pauses recheck at a low-frequency fallback only when the
-# provider supplies no reset instant. They are not ordinary generation retries.
+# A durable capacity pause rechecks at this low-frequency fallback only when the
+# provider supplies no reset instant. It is not an ordinary generation retry.
 BACKGROUND_CAPACITY_PROBE_SECONDS = 15 * 60
-
 MODEL_TOOL_ADMISSION_RUNTIME_SECONDS = max(
     workflow.bounds.turn_timeout_seconds
     for workflow in (
@@ -517,85 +341,15 @@ def operation_revision(operation: str) -> str:
 
 
 def validate_policy() -> None:
-    # Load executable tool definitions only while validating complete process
-    # composition. Domain workers may import policy facts without loading tools.
+    # Executable tool definitions load only during full process composition;
+    # domain workers import policy facts without materialising the tool runtime.
     from nexus.services.tool_runtime.plans import TOOL_PLAN_DEFINITIONS_BY_ID
 
-    expected_operations = (
-        "metadata_enrichment",
-        "media_summary",
-        "synapse",
-        "oracle",
-        "dossier_page",
-        "dossier_note",
-        "dossier_media",
-        "dossier_conversation",
-        "dossier_library",
-        "dossier_podcast",
-        "dossier_contributor",
-        "dossier_idea",
-        "dossier_idea_resolve",
-    )
-    if tuple(GENERATION_POLICY.background_operations) != expected_operations:
+    expected = set(get_args(BackgroundOperationKey.__value__))
+    if set(GENERATION_POLICY.background_operations) != expected:
         raise AssertionError("background operation policy is not exact and total")
-    chat_tools = GENERATION_POLICY.chat.workflow.model_tool_policy
-    if not isinstance(chat_tools, ChatPerRunTools):
+    if not isinstance(GENERATION_POLICY.chat.workflow.model_tool_policy, ChatPerRunTools):
         raise AssertionError("Chat must own per-run read and additive-write plans")
-    referenced_model_plans = {
-        chat_tools.read_plan_id: chat_tools.read_plan_authority_revision,
-        chat_tools.additive_write_plan_id: chat_tools.additive_write_plan_authority_revision,
-        **{
-            workflow.model_tool_policy.plan_id: workflow.model_tool_policy.authority_revision
-            for workflow in (
-                entry.workflow for entry in GENERATION_POLICY.background_operations.values()
-            )
-            if isinstance(workflow.model_tool_policy, ExactModelTools)
-        },
-    }
-    current_model_plans = {
-        plan_id: TOOL_PLAN_DEFINITIONS_BY_ID[plan_id].authority_revision
-        for plan_id in (
-            "ChatRead",
-            "ChatReadAdditiveWrite",
-            "LibraryDossierRead",
-            "IdeaDossierRead",
-            "MetadataRead",
-        )
-    }
-    if referenced_model_plans != current_model_plans:
-        raise AssertionError("generation policy model-tool authority drifted")
-    idea_host = GENERATION_POLICY.background_operations["dossier_idea"].workflow.host_tool_plan
-    if not isinstance(idea_host, ExactHostToolPlan) or idea_host.authority_revision != (
-        _tool_authority_revision(idea_host.plan_id)
-    ):
-        raise AssertionError("Idea Dossier host-tool authority drifted")
-
-
-__all__ = [
-    "BACKGROUND_CAPACITY_PROBE_SECONDS",
-    "GENERATION_POLICY",
-    "MODEL_TOOL_ADMISSION_RUNTIME_SECONDS",
-    "BackgroundOperationPolicy",
-    "ChatPerRunTools",
-    "ChatPolicy",
-    "EffectMode",
-    "ExactHostToolPlan",
-    "ExactModelTools",
-    "GenerationPolicy",
-    "HostToolPlan",
-    "ModelToolPolicy",
-    "NoHostToolPlan",
-    "NoModelTools",
-    "OperationBounds",
-    "OperationWorkflowSpec",
-    "OutputContract",
-    "RequestBudget",
-    "StreamBounds",
-    "StrictJsonOutputContract",
-    "TextOutputContract",
-    "ToolScopeDerivation",
-    "background_operation_policy",
-    "operation_revision",
-    "validate_policy",
-    "workflow_for_operation",
-]
+    for plan_id, revision in TOOL_PLAN_AUTHORITY_REVISIONS.items():
+        if TOOL_PLAN_DEFINITIONS_BY_ID[plan_id].authority_revision != revision:
+            raise AssertionError(f"reviewed tool plan {plan_id!r} authority drifted")

@@ -1,4 +1,4 @@
-"""Canonical admission for transcript semantic-index jobs."""
+"""Admission for transcript semantic-index jobs."""
 
 from __future__ import annotations
 
@@ -37,10 +37,7 @@ def enqueue_transcript_semantic_job(
     enqueue_job(
         db,
         kind="podcast_reindex_semantic_job",
-        payload={
-            "media_id": str(media_id),
-            "request_reason": request_reason,
-        },
+        payload={"media_id": str(media_id), "request_reason": request_reason},
     )
 
 
@@ -52,13 +49,13 @@ def request_transcript_semantic_repair(
     now: datetime,
 ) -> TranscriptSemanticRepairAdmission:
     """Admit at most one repair job for one current readable transcript."""
-    locked_media_id = db.scalar(
-        text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
-        {"media_id": media_id},
-    )
-    if locked_media_id is None:
+    if (
+        db.scalar(
+            text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"), {"media_id": media_id}
+        )
+        is None
+    ):
         raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
-
     state = db.execute(
         text(
             """
@@ -69,45 +66,24 @@ def request_transcript_semantic_repair(
             """
         ),
         {"media_id": media_id},
-    ).one_or_none()
-    if (
-        state is None
-        or state.transcript_state not in {"ready", "partial"}
-        or state.transcript_coverage not in {"partial", "full"}
-        or state.semantic_status not in {"pending", "ready", "failed"}
-    ):
-        # justify-defect: the request dispatcher calls this operation only for a
-        # readable transcript snapshot; every writer serializes on the Media row.
-        raise AssertionError("semantic repair requires a current readable transcript")
-
+    ).one()
     transcript_state: Literal["ready", "partial"] = state.transcript_state
     transcript_coverage: Literal["partial", "full"] = state.transcript_coverage
+
     jobs = lock_jobs_for_payload(
         db,
         kind="podcast_reindex_semantic_job",
         expected_payload_match={"media_id": str(media_id)},
     )
-    if any(job.status not in TERMINAL_STATUSES for job in jobs):
-        return TranscriptSemanticRepairAdmission(
-            outcome="idempotent",
-            transcript_state=transcript_state,
-            transcript_coverage=transcript_coverage,
-        )
-    if state.semantic_status == "ready" and not _transcript_semantic_index_requires_repair(
-        db,
-        media_id=media_id,
+    if any(job.status not in TERMINAL_STATUSES for job in jobs) or (
+        state.semantic_status == "ready" and not _index_is_stale(db, media_id=media_id)
     ):
         return TranscriptSemanticRepairAdmission(
             outcome="idempotent",
             transcript_state=transcript_state,
             transcript_coverage=transcript_coverage,
         )
-
-    enqueue_transcript_semantic_job(
-        db,
-        media_id=media_id,
-        request_reason=request_reason,
-    )
+    enqueue_transcript_semantic_job(db, media_id=media_id, request_reason=request_reason)
     set_media_transcript_state(
         db,
         media_id=media_id,
@@ -125,13 +101,7 @@ def request_transcript_semantic_repair(
     )
 
 
-def _transcript_semantic_index_requires_repair(
-    db: Session,
-    *,
-    media_id: UUID,
-) -> bool:
-    embedding_model = current_transcript_embedding_model()
-    embedding_provider = current_transcript_embedding_provider()
+def _index_is_stale(db: Session, *, media_id: UUID) -> bool:
     row = db.execute(
         text(
             """
@@ -145,6 +115,6 @@ def _transcript_semantic_index_requires_repair(
     return (
         row is None
         or row.status != "ready"
-        or row.active_embedding_provider != embedding_provider
-        or row.active_embedding_model != embedding_model
+        or row.active_embedding_provider != current_transcript_embedding_provider()
+        or row.active_embedding_model != current_transcript_embedding_model()
     )

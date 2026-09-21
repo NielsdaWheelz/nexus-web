@@ -1,9 +1,8 @@
 """Terminal upload-failure value types.
 
-A leaf: the upload session response (`schemas/media.py`) and the import-history
-vocabulary (`schemas/import_history.py`) both name these facts, and history is
-read by the background supervisor, which must never load the ORM. Nothing here
-imports another Nexus module.
+A leaf: the upload-session response and the import-history vocabulary both name
+these facts, and history is read by the background supervisor, which must never
+load the ORM. Nothing here imports another Nexus module.
 """
 
 from __future__ import annotations
@@ -19,10 +18,8 @@ UploadVerificationFailureCode = Literal[
 ]
 """The closed set of deterministic upload rejections recorded on a session.
 
-Every producer and every egress projection of a terminal verification fact reuses
-this alias, so widening it is a type error in each consumer. It is a plain alias
-rather than a ``type`` statement so the same declaration is also the single
-runtime source of the codes (``typing.get_args``).
+A plain alias rather than a ``type`` statement, so the same declaration is also
+the runtime source of the codes (``typing.get_args``).
 """
 
 

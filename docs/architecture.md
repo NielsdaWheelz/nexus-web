@@ -341,7 +341,7 @@ Streaming bypasses the BFF for data delivery:
    event exhaustively (`lib/api/sse/events.ts`), and folds it into UI state.
 
 This is used by chat runs, oracle readings, Dossier builds, media processing
-status, Podcast refresh runs, and the active Podcast subscription lifecycle.
+status, and the active Podcast subscription lifecycle.
 The lifecycle stream is keyed by the subscription epoch UUID while its public
 route remains viewer + Podcast addressed; every snapshot reasserts that exact
 epoch and viewer before it can cross the stream.
@@ -632,7 +632,6 @@ keepalive, never drops it.
 | `oracle_reading_events` | insert on `oracle_reading_events` | oracle SSE tail  |
 | `artifact_build_events` | insert on `artifact_build_events` | Dossier SSE tail |
 | `media_events`          | update on `media`                 | media-status SSE |
-| `podcast_refresh_events` | insert/update on `podcast_refresh_runs` | Podcast refresh SSE |
 | `nexus_background_jobs` | enqueue in `jobs/queue.py`        | worker wake-up   |
 
 ### 7.3 Background jobs & the worker
@@ -1613,7 +1612,7 @@ or full-list replacement semantics.
 ### 8.8 Lectern & podcast playback
 
 `services/browse/*` owns Podcast Index discovery and read-only Preview.
-`services/podcasts/*` owns Subscribe/unsubscribe, OPML, canonical Podcast and
+`services/podcasts/*` owns Subscribe/unsubscribe, canonical Podcast and
 episode identity, live feed sync, the independent historical backfill, and
 explicit Transcribe after acquisition. A subscription exists exactly while its
 row exists. Named Podcast placement is only `library_entries(podcast_id)`;

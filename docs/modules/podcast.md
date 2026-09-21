@@ -2,7 +2,7 @@
 
 ## Scope
 
-The podcast module owns Subscribe/unsubscribe, OPML import/export, canonical
+The podcast module owns Subscribe/unsubscribe, canonical
 Podcast and episode identity, RSS feed sync, episode + chapter ingest, the
 independent per-subscription history backfill, and explicit episode Transcribe.
 Podcast Index search and read-only Preview are owned by
@@ -20,11 +20,7 @@ and terminal failure are separate owners in `podcasts/transcription_usage.py`,
 background supervisor path. Frontend pane composition lives under
 `apps/web/src/app/(authenticated)/podcasts/*`; reusable Podcast contracts and
 controllers live under `apps/web/src/lib/podcasts/*`, and reusable presentation
-lives under `apps/web/src/components/podcasts/*`. The Nexus Import session
-composes the OPML import boundary from
-`apps/web/src/lib/podcasts/opmlImport.ts`; it owns local file admission, one
-destination set, and aggregate result presentation, while the podcast backend
-remains the sole XML/feed/import policy owner.
+lives under `apps/web/src/components/podcasts/*`.
 
 Followed-show and episode pane text filtering is local Pane Search over the
 exhaustively loaded current domain view. It matches title and contributor
@@ -87,12 +83,8 @@ that matter:
   a `podcasts` row. Resolution precedence is **`provider_podcast_id` first, then normalized
   `feed_url`** (the Podcast Index id is the stable catalog identity; `feed_url` is a mutable
   ref). When the two disagree, the provider-matched row wins and the other row's `feed_url`
-  is left untouched. Browse Subscribe and OPML import both route through
-  `upsert_podcast`, so importing a feed already subscribed via Browse resolves to the
-  same `podcast_id`. OPML synthesizes a deterministic
-  `opml-feed-url={normalized_feed_url}` `provider_podcast_id` only when the
-  provider has none; a later Browse Subscribe with the real provider id
-  converges the row onto it.
+  is left untouched. Browse Subscribe routes through
+  `upsert_podcast`.
 
 - **Episode identity — `episode_identity.py`.** Every acquired episode resolves
   through stable `PodcastIndex | RssGuid | RssEnclosure` aliases in
@@ -134,7 +126,7 @@ that matter:
   projection, type filtering, ordering, pagination, and count. Sync, backfill,
   and explicit Episode Add retain physical child entries but cannot change that
   root cardinality. Unsubscribe removes the virtual parent and retained episodes
-  resurface in All with their consumption state intact. Subscribe and OPML add
+  resurface in All with their consumption state intact. Subscribe adds
   named destinations; unsubscribe uses
   `remove_unsubscribed_podcast_placements` to remove viewer-owned unshared
   placements and report retained shared placements. Within a named Library,
@@ -160,36 +152,30 @@ that matter:
 ## Sync Orchestration
 
 `services/podcasts/refresh.py` is the sole admission owner. Scheduled due
-refresh, manual Podcast/Podcasts/Library refresh, Subscribe, and OPML all call
+refresh, manual Podcast/Podcasts/Library refresh and Subscribe all call
 one generation primitive and enqueue the same
-`podcast_sync_subscription_job`. Manual and due admission additionally create
-durable `podcast_refresh_runs` plus one item per subscription epoch. Concurrent
+`podcast_sync_subscription_job`. Concurrent
 commands either join the active generation or serialize a single generation
 bump; the queue dedupe key includes both subscription UUID and generation.
 
 The background lane runs `podcast_refresh_due_job` every 15 minutes. Each pass
 claims at most `PODCAST_REFRESH_DUE_LIMIT` oldest eligible rows by
-`(next_sync_at, id)` with `FOR UPDATE SKIP LOCKED`, groups them into one run per
-viewer, and performs no network I/O. Healthy completion schedules the next
+`(next_sync_at, id)` with `FOR UPDATE SKIP LOCKED` and performs no network I/O. Healthy completion schedules the next
 check at 23 hours plus deterministic per-subscription jitter; modeled failures
 use the bounded 15m/1h/6h/24h backoff.
 
 `services/podcasts/sync.py` owns the exact queue-attempt protocol. Identity is
 subscription epoch + sync generation + queue job/attempt. The worker fences
-every claim, checkpoint, and final write against that exact live lease, fetches
-and parses RSS once, and persists an ingest checkpoint before the separate
-SERIALIZABLE auto-queue/finalization transaction. A retry resumes from the
-checkpoint without another feed request or recount. Expected feed failures and
-dead-letter exhaustion terminalize the subscription and all joined run items;
-unexpected defects remain queue retries. Unsubscribe marks joined items
-`Skipped`, deletes the subscription epoch, and deliberately leaves the queue
-row for a stale no-I/O exit.
+every claim and final write against that exact live lease, fetches and parses
+RSS once per attempt, and commits ingest before the separate SERIALIZABLE
+auto-queue/finalization transaction; a retry fetches the feed again. Expected
+feed failures and dead-letter exhaustion terminalize the subscription;
+unexpected defects remain queue retries. Unsubscribe deletes the subscription
+epoch and deliberately leaves the queue row for a stale no-I/O exit.
 
-Manual refresh is `POST /podcasts/refresh-runs` with a required
-`Idempotency-Key`; canonical snapshots are available by sealed run handle.
-Run changes notify `podcast_refresh_events`, and the snapshot SSE route
-rechecks ownership on each fresh read before emitting changed `state` frames
-and one terminal `done`.
+Manual refresh is `POST /podcasts/refresh` with a Podcast, Podcasts or Library
+scope; it enqueues one sync per selected subscription and answers 202 with the
+requested count. The pane observes each subscription's own lifecycle stream.
 
 Subscribe also creates one `podcast_subscription_backfills` row and enqueues
 `podcast_backfill_subscription`. Its immutable cutoff separates pre-subscription
@@ -209,8 +195,7 @@ only when both live sync and backfill are terminal. The web compares the initial
 snapshot to its installed detail, serializes changed-snapshot revalidations, and
 aborts observation on pane deactivation or unmount. Replacing a subscription
 epoch closes the old listener without emitting the replacement and reconnects
-the direct stream against the new epoch. It does not poll, start a manual
-refresh run, or treat a globally reused episode as new ingest.
+the direct stream against the new epoch. It does not poll or treat a globally reused episode as new ingest.
 
 ## Transcription
 

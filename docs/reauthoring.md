@@ -30,16 +30,16 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | docs (rules subtree 3.9k, modules 5.8k, architecture 2.3k, chapbook 1.4k, tickets 2k) | 17.9k | 9k | keep rules/local-rules/runbook/tickets; demote uncited module docs | open |
 | reader (epub, pdf, web article, selection/highlights; MediaPaneBody 7.6k, PdfReader 3.6k) | 46.3k | 15k | reauthor: one reader shell, one find | open |
 | reader-apparatus (footnotes, bibliography, latex, publisher extractors, doc map, margin rail) | 13.3k | 3k | keep footnotes/endnotes; delete latex, pdf legal-footnote, 6 publisher extractors, doc-map presenters | open |
-| ingest-imports (url/file/youtube/x/email/arxiv/remote, upload sessions, imports workspace, metadata intelligence) | 31.0k | 8k | reauthor; decide x, email, arxiv | open |
+| ingest-imports (url/file/youtube/x/email/arxiv/remote, upload sessions, imports workspace, metadata intelligence) | 27.8k | 8k | reauthor; decide x, email, arxiv | python source-ingest first pass landed (size/ingest-py): 12.5k→9.2k, −26%; imports history, metadata intelligence and the web Add/imports flow open |
 | media-core | 5.7k | 3k | reauthor | open |
 | chat (runs, conversations, forks, composer, tails) | 29.6k | 10k | reauthor; 17 chat_run_* files → 3 | open |
 | chat-tools (runtime, authority, MCP, six tools) | 5.8k | 2.5k | reauthor: six tools + one dispatcher | first pass landed (size/chat-tools) at 5.8k, −32%; remaining levers: MCP transport 0.9k, HostTable research plan 0.5k, ledger density |
-| generation (catalog, ledger, codex + 7 provider APIs, picker) | 13.5k | 3k | codex + 1–2 providers; drop model lifecycle | open |
+| generation (catalog, ledger, codex + 7 provider APIs, picker) | 10.2k | 3k | codex + 1–2 providers; drop model lifecycle | python first pass landed (size/generation-py): 10.9k→7.6k, −30%; model lifecycle deleted; picker web 2.6k open |
 | dossiers (engine 3.4k, ten subject bindings, web document runtime) | 18.7k | 5k | reauthor: one engine, one binding table | open |
 | oracle-atlas (oracle, plates, concordance, corpus ops, atlas, manifests, deploy plate train) | 12.6k | 0–4k | deferred by owner 2026-09-21; keep and reauthor: delete, or keep at 4k | open |
 | synapse-connections (resonance, synapse, dawn write, connections surface, reading slate) | 7.8k | 2k | keep synapse + connections; DELETE dawn write (decided 2026-09-21); reading slate deferred | dawn write deleted (size/dawn); rest open |
 | search-browse-nexus (index, 11 retrievers, browse adapters, nexus launcher, switchboard, /search) | 26.4k | 8k | reauthor: one search UI, one retriever | python search/index/retrieval first pass landed (size/search-py) at 6.0k of 9.0k, −33%; browse and the three web search UIs open |
-| podcasts (subscriptions, sync, refresh runs, backfill, transcription, OPML, detail panes) | 17.9k | 6k | reauthor; drop refresh-run ledger, OPML | open |
+| podcasts (subscriptions, sync, refresh runs, backfill, transcription, OPML, detail panes) | 14.1k | 6k | reauthor; drop refresh-run ledger, OPML | python first pass landed (size/podcasts-py): 10.9k→7.1k, −35%; OPML and the refresh-run ledger deleted (0239); web 7.0k open |
 | player (browser + android runtimes, protocol, lectern, walknotes, native player) | 21.3k | 6k | one runtime behind one transport; deferred by owner 2026-09-21; keep and reauthor walknotes | open |
 | consumption-stats (spans, projection, stats pane, outbox, exclusions) | 13.5k | 3k | reauthor; keep stats + exclusions | open |
 | library (libraries, entries, listing, placement 3.2k) | 15.5k | 5k | reauthor | open |
