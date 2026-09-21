@@ -1,4 +1,4 @@
-"""Podcast RSS feed fetch, pagination, and XML parsing."""
+"""SSRF-safe RSS feed fetch, parse, pagination and provider merge."""
 
 from __future__ import annotations
 
@@ -14,52 +14,36 @@ from urllib.parse import urljoin
 import lxml.etree as etree
 
 from nexus.coerce import coerce_positive_int
-from nexus.errors import (
-    ApiError,
-    ApiErrorCode,
-    InvalidRequestError,
-)
+from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.logging import get_logger
 from nexus.services.net.safe_fetch import safe_get
 from nexus.services.sanitize_html import sanitize_html
 from nexus.services.url_normalize import validate_requested_url
 
-from ._normalize import (
-    normalize_language_tag,
-    normalize_optional_text,
-    parse_iso_datetime,
-)
+from ._normalize import normalize_language_tag, normalize_optional_text, parse_iso_datetime
 from .provider import PODCAST_INDEX_EPISODE_PAGE_SIZE
 
 logger = get_logger(__name__)
 
 PODCAST_FEED_PAGINATION_MAX_PAGES = 10
-_ATOM_NAMESPACE = {"atom": "http://www.w3.org/2005/Atom"}
-_ITUNES_DURATION_XPATH = (
-    "*[local-name()='duration' and namespace-uri()='http://www.itunes.com/dtds/podcast-1.0.dtd']"
-)
-PODCAST_EPISODE_SHOW_NOTES_HTML_MAX_BYTES = 100_000
-PODCAST_EPISODE_SHOW_NOTES_TEXT_MAX_BYTES = 50_000
-_MAX_FEED_PAGE_BYTES = 10 * 1024 * 1024
-_MAX_CHAPTER_JSON_BYTES = 2 * 1024 * 1024
 PODCAST_CHAPTER_SOURCE_PODCASTING20 = "rss_podcasting20"
 PODCAST_CHAPTER_SOURCE_PODLOVE = "rss_podlove"
-_PODCAST_CHAPTERS_20_CONTENT_TYPES = {
-    "application/json+chapters",
-    "application/json",
-    "text/json",
-}
-_CHAPTER_TIMESTAMP_PATTERN = re.compile(
+_SHOW_NOTES_HTML_MAX_BYTES = 100_000
+_SHOW_NOTES_TEXT_MAX_BYTES = 50_000
+_MAX_FEED_PAGE_BYTES = 10 * 1024 * 1024
+_MAX_CHAPTER_JSON_BYTES = 2 * 1024 * 1024
+_ATOM = {"atom": "http://www.w3.org/2005/Atom"}
+_ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"
+_PERSON_NAMESPACES = (
+    "namespace-uri()='https://podcastindex.org/namespace/1.0'"
+    " or namespace-uri()='https://podcastnamespace.org/podcast/1.0'"
+)
+_CHAPTERS_20_CONTENT_TYPES = {"application/json+chapters", "application/json", "text/json"}
+_CHAPTER_TIMESTAMP = re.compile(
     r"^(?:(?P<hours>\d+):)?(?P<minutes>[0-5]?\d):(?P<seconds>[0-5]?\d(?:\.\d+)?)$"
 )
-_PODCAST_CONTENT_ENCODED_XPATH = "*[local-name()='encoded']"
-_ENRICHMENT_NONE_GUARD_FIELDS = ("rss_chapters", "rss_transcript_url", "authors")
-_ENRICHMENT_FALSY_GUARD_FIELDS = (
-    "description_html",
-    "description_text",
-    "language",
-    "feed_language",
-)
+_ENRICHMENT_FIELDS = "rss_chapters rss_transcript_url authors description_html \
+description_text language feed_language".split()
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,631 +61,345 @@ class LiveFeedSnapshot:
     source_limited: bool
 
 
-def _fill_episode_enrichment_from(target: dict[str, Any], source: dict[str, Any]) -> None:
-    for field in _ENRICHMENT_NONE_GUARD_FIELDS:
-        if target.get(field) is None:
-            target[field] = source.get(field)
-    for field in _ENRICHMENT_FALSY_GUARD_FIELDS:
-        if not target.get(field):
-            target[field] = source.get(field)
-
-
 def fetch_live_feed_snapshot(
     *,
     provider_episode_candidates: list[dict[str, Any]],
     feed_url: str,
 ) -> LiveFeedSnapshot:
-    """Fetch/parse RSS once and merge that snapshot into the provider window."""
-    normalized_feed_url = str(feed_url or "").strip()
-    if not normalized_feed_url:
-        raise ApiError(
-            ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
-            "Podcast feed URL is unavailable",
-        )
-    if not _is_safe_feed_page_url(normalized_feed_url):
-        raise ApiError(
-            ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
-            "Podcast feed URL is invalid",
-        )
-    supplemental, next_page_url = _fetch_live_feed_episode_page(normalized_feed_url)
+    """Fetch the live RSS page once and merge it into the provider window."""
+    normalized_feed_url = normalize_optional_text(feed_url)
+    if normalized_feed_url is None or not _is_safe_url(normalized_feed_url):
+        raise ApiError(ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE, "Podcast feed URL is unavailable")
+    supplemental, next_page_url = _fetch_feed_page(normalized_feed_url, strict=True)
 
     combined = list(provider_episode_candidates)
-    for episode in combined:
-        for field in (*_ENRICHMENT_NONE_GUARD_FIELDS, *_ENRICHMENT_FALSY_GUARD_FIELDS):
-            episode.setdefault(field, None)
-
     by_match_key: dict[str, dict[str, Any]] = {}
     for episode in combined:
-        for match_key in _episode_match_keys(episode):
+        for field in _ENRICHMENT_FIELDS:
+            episode.setdefault(field, None)
+        for match_key in _match_keys(episode):
             by_match_key.setdefault(match_key, episode)
 
     for episode in supplemental:
         existing = next(
-            (
-                by_match_key[match_key]
-                for match_key in _episode_match_keys(episode)
-                if match_key in by_match_key
-            ),
-            None,
+            (by_match_key[key] for key in _match_keys(episode) if key in by_match_key), None
         )
-        if existing is not None:
-            _fill_episode_enrichment_from(existing, episode)
+        if existing is None:
+            combined.append(episode)
+            for match_key in _match_keys(episode):
+                by_match_key.setdefault(match_key, episode)
             continue
-        combined.append(episode)
-        for match_key in _episode_match_keys(episode):
-            by_match_key.setdefault(match_key, episode)
+        for field in _ENRICHMENT_FIELDS:
+            if not existing.get(field):
+                existing[field] = episode.get(field)
 
-    source_limited = (
-        len(provider_episode_candidates) >= PODCAST_INDEX_EPISODE_PAGE_SIZE
-        or next_page_url is not None
-    )
-    logger.info(
-        "podcast_live_feed_snapshot",
-        feed_url=normalized_feed_url,
-        provider_candidate_count=len(provider_episode_candidates),
-        supplemental_count=len(supplemental),
-        combined_count=len(combined),
-        source_limited=source_limited,
-    )
     return LiveFeedSnapshot(
         episodes=tuple(combined),
-        source_limited=source_limited,
+        source_limited=(
+            len(provider_episode_candidates) >= PODCAST_INDEX_EPISODE_PAGE_SIZE
+            or next_page_url is not None
+        ),
     )
 
 
-def _is_safe_feed_page_url(page_url: str) -> bool:
-    try:
-        validate_requested_url(page_url)
-        return True
-    except InvalidRequestError as exc:
-        logger.warning(
-            "podcast_feed_page_url_rejected",
-            page_url=page_url,
-            reason=exc.message,
-        )
-        return False
-
-
-def fetch_feed_backfill_page(
-    *,
-    feed_url: str,
-    cursor: dict[str, object] | None,
-) -> FeedBackfillPage:
-    """Fetch one RSS page without interpreting an absent continuation as history."""
-    normalized_feed_url = str(feed_url or "").strip()
-    if not normalized_feed_url or not _is_safe_feed_page_url(normalized_feed_url):
+def fetch_feed_backfill_page(*, page_url: str, visited: tuple[str, ...]) -> FeedBackfillPage:
+    """Fetch one RSS page without reading an absent continuation as history."""
+    if _traversal_exhausted(page_url, visited):
         return FeedBackfillPage((), None, True)
-
-    if cursor is None:
-        page_url = normalized_feed_url
-        visited: tuple[str, ...] = ()
-    else:
-        if set(cursor) != {"kind", "url", "visited"} or cursor.get("kind") != "RssPage":
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                message="Invalid Podcast backfill continuation",
-            )
-        page_url = str(cursor.get("url") or "").strip()
-        raw_visited = cursor.get("visited")
-        if not isinstance(raw_visited, list) or any(
-            not isinstance(value, str) or not value for value in raw_visited
-        ):
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                message="Invalid Podcast backfill continuation",
-            )
-        visited = tuple(raw_visited)
-
-    if (
-        not page_url
-        or not _is_safe_feed_page_url(page_url)
-        or page_url in visited
-        or len(visited) >= PODCAST_FEED_PAGINATION_MAX_PAGES
-    ):
-        return FeedBackfillPage((), None, True)
-
-    episodes, next_page_url = _fetch_feed_episode_page(page_url)
+    episodes, next_page_url = _fetch_feed_page(page_url, strict=False)
     next_visited = (*visited, page_url)
     if next_page_url is None:
         return FeedBackfillPage(tuple(episodes), None, False)
-    if (
-        not _is_safe_feed_page_url(next_page_url)
-        or next_page_url in next_visited
-        or len(next_visited) >= PODCAST_FEED_PAGINATION_MAX_PAGES
-    ):
+    if _traversal_exhausted(next_page_url, next_visited):
         return FeedBackfillPage(tuple(episodes), None, True)
     return FeedBackfillPage(
         tuple(episodes),
-        {
-            "kind": "RssPage",
-            "url": next_page_url,
-            "visited": list(next_visited),
-        },
+        {"kind": "RssPage", "url": next_page_url, "visited": list(next_visited)},
         False,
     )
 
 
-def _fetch_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str | None]:
+def _traversal_exhausted(page_url: str, visited: tuple[str, ...]) -> bool:
+    return (
+        not page_url
+        or not _is_safe_url(page_url)
+        or page_url in visited
+        or len(visited) >= PODCAST_FEED_PAGINATION_MAX_PAGES
+    )
+
+
+def _is_safe_url(page_url: str) -> bool:
+    try:
+        validate_requested_url(page_url)
+    except InvalidRequestError as exc:
+        logger.warning("podcast_feed_url_rejected", page_url=page_url, reason=exc.message)
+        return False
+    return True
+
+
+def _fetch_feed_page(page_url: str, *, strict: bool) -> tuple[list[dict[str, Any]], str | None]:
+    """Fetch and parse one feed page; a strict caller surfaces the failure."""
     try:
         result = safe_get(page_url, max_bytes=_MAX_FEED_PAGE_BYTES, timeout_s=15.0)
-    except ApiError as exc:
-        logger.warning("podcast_feed_page_fetch_failed", page_url=page_url, error=exc.message)
+        parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=not strict)
+        root = etree.fromstring(result.content, parser=parser)
+    except (ApiError, etree.XMLSyntaxError) as exc:
+        if strict:
+            raise ApiError(
+                ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE, "Podcast feed is unavailable"
+            ) from exc
+        logger.warning("podcast_feed_page_failed", page_url=page_url, error=str(exc))
         return [], None
 
-    return _parse_feed_episode_page(result.content, result.final_url)
-
-
-def _fetch_live_feed_episode_page(page_url: str) -> tuple[list[dict[str, Any]], str | None]:
-    try:
-        result = safe_get(page_url, max_bytes=_MAX_FEED_PAGE_BYTES, timeout_s=15.0)
-    except ApiError as exc:
-        raise ApiError(
-            ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
-            "Podcast feed is unavailable",
-        ) from exc
-    content = result.content
-    final_url = result.final_url
-
-    try:
-        parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=False)
-        root = etree.fromstring(content, parser=parser)
-    except etree.XMLSyntaxError as exc:
-        raise ApiError(
-            ApiErrorCode.E_PODCAST_FEED_UNAVAILABLE,
-            "Podcast feed could not be parsed",
-        ) from exc
-    return _episodes_from_feed_root(root, final_url)
-
-
-def _parse_feed_episode_page(
-    content: bytes, page_url: str
-) -> tuple[list[dict[str, Any]], str | None]:
-    try:
-        parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=True)
-        root = etree.fromstring(content, parser=parser)
-    except etree.XMLSyntaxError as exc:
-        logger.warning("podcast_feed_page_parse_failed", page_url=page_url, error=str(exc))
-        return [], None
-
-    return _episodes_from_feed_root(root, page_url)
-
-
-def _episodes_from_feed_root(
-    root: Any,
-    page_url: str,
-) -> tuple[list[dict[str, Any]], str | None]:
-    item_nodes = root.xpath("./channel/item")
-    if not item_nodes:
-        item_nodes = root.xpath(".//atom:entry", namespaces=_ATOM_NAMESPACE)
-
+    base_url = result.final_url
+    item_nodes = root.xpath("./channel/item") or root.xpath(".//atom:entry", namespaces=_ATOM)
     feed_language = normalize_language_tag(root.xpath("string(./channel/language)"))
-
-    episodes: list[dict[str, Any]] = []
-    for item in item_nodes:
-        episode = _episode_from_feed_item(
-            item,
-            base_url=page_url,
-            feed_language=feed_language,
-        )
-        if episode is not None:
-            episodes.append(episode)
-
-    next_page_url = _extract_feed_next_page_url(root, page_url)
-    return episodes, next_page_url
-
-
-def _episode_from_feed_item(
-    item: Any,
-    *,
-    base_url: str | None = None,
-    feed_language: str | None = None,
-) -> dict[str, Any] | None:
-    title = str(item.xpath("string(./title)")).strip() or "Untitled Episode"
-    guid = normalize_optional_text(item.xpath("string(./guid)") or item.xpath("string(./id)"))
-
-    audio_url = str(item.xpath("string(./enclosure/@url)")).strip()
-    if not audio_url:
-        audio_url = str(item.xpath("string(./link[@rel='enclosure']/@href)")).strip()
-    if not audio_url:
-        audio_url = str(item.xpath("string(./link)")).strip()
-    if not audio_url:
-        audio_url = str(item.xpath("string(./link/@href)")).strip()
-
-    published_raw = (
-        item.xpath("string(./pubDate)")
-        or item.xpath("string(./published)")
-        or item.xpath("string(./updated)")
+    return (
+        [_episode_from_item(item, base_url, feed_language) for item in item_nodes],
+        _next_page_url(root, base_url),
     )
-    published_at = _normalize_feed_published_at(published_raw)
 
-    duration_raw = item.xpath(f"string({_ITUNES_DURATION_XPATH})") or item.xpath(
-        "string(./duration)"
-    )
-    duration_seconds = _parse_feed_duration_seconds(duration_raw)
-    description_html, description_text = _extract_episode_show_notes_from_feed_item(
-        item,
-        base_url=base_url,
-    )
-    authors: list[str] = []
-    person_nodes = item.xpath(
-        "./*[local-name()='person' and namespace-uri()='https://podcastindex.org/namespace/1.0']"
-    )
-    if not person_nodes:
-        person_nodes = item.xpath(
-            "./*[local-name()='person' and namespace-uri()='https://podcastnamespace.org/podcast/1.0']"
-        )
-    for person_node in person_nodes:
-        name = str(getattr(person_node, "text", "") or "").strip()
-        if name and name not in authors:
-            authors.append(name)
-    if not authors:
-        raw_author = (
-            item.xpath("string(./author)")
-            or item.xpath(
-                "string(./*[local-name()='author' and namespace-uri()='http://www.itunes.com/dtds/podcast-1.0.dtd'])"
-            )
-            or item.xpath("string(./*[local-name()='creator'])")
-        )
-        for name in re.split(r"\s*[,;]\s*|\s+and\s+", str(raw_author or "").strip()):
-            normalized_name = name.strip()
-            if normalized_name and normalized_name not in authors:
-                authors.append(normalized_name)
 
-    chapter_rows = _extract_rss_chapters_from_feed_item(item, base_url=base_url)
-    transcript_url = _extract_rss_transcript_url_from_feed_item(item, base_url=base_url)
-    episode_language = normalize_language_tag(item.xpath("string(./language)")) or feed_language
-
+def _episode_from_item(item: Any, base_url: str, feed_language: str | None) -> dict[str, Any]:
+    description_html, description_text = _show_notes(item, base_url)
     return {
         "podcast_index_episode_ref": None,
-        "guid": guid,
-        "title": title,
-        "authors": authors or None,
-        "audio_url": audio_url,
-        "published_at": published_at,
-        "duration_seconds": duration_seconds,
+        "guid": normalize_optional_text(item.xpath("string(./guid)") or item.xpath("string(./id)")),
+        "title": str(item.xpath("string(./title)")).strip() or "Untitled Episode",
+        "authors": _authors(item) or None,
+        "audio_url": (
+            str(item.xpath("string(./enclosure/@url)")).strip()
+            or str(item.xpath("string(./link[@rel='enclosure']/@href)")).strip()
+            or str(item.xpath("string(./link)")).strip()
+            or str(item.xpath("string(./link/@href)")).strip()
+        ),
+        "published_at": _published_at(
+            item.xpath("string(./pubDate)")
+            or item.xpath("string(./published)")
+            or item.xpath("string(./updated)")
+        ),
+        "duration_seconds": _duration_seconds(
+            item.xpath(f"string(*[local-name()='duration' and namespace-uri()='{_ITUNES}'])")
+            or item.xpath("string(./duration)")
+        ),
         "description_html": description_html,
         "description_text": description_text,
-        "rss_chapters": chapter_rows,
-        "rss_transcript_url": transcript_url,
-        "language": episode_language,
+        "rss_chapters": _chapters(item, base_url),
+        "rss_transcript_url": _transcript_url(item, base_url),
+        "language": normalize_language_tag(item.xpath("string(./language)")) or feed_language,
         "feed_language": feed_language,
     }
 
 
-def _extract_episode_show_notes_from_feed_item(
-    item: Any,
-    *,
-    base_url: str | None,
-) -> tuple[str | None, str | None]:
-    raw_content_encoded = str(
-        item.xpath(f"string(./{_PODCAST_CONTENT_ENCODED_XPATH})") or ""
-    ).strip()
-    raw_description = str(item.xpath("string(./description)") or "").strip()
-    raw_show_notes = raw_content_encoded or raw_description
+def _authors(item: Any) -> list[str]:
+    candidates = [
+        str(getattr(node, "text", "") or "")
+        for node in item.xpath(f"./*[local-name()='person' and ({_PERSON_NAMESPACES})]")
+    ]
+    if not any(candidate.strip() for candidate in candidates):
+        raw_author = (
+            item.xpath("string(./author)")
+            or item.xpath(f"string(./*[local-name()='author' and namespace-uri()='{_ITUNES}'])")
+            or item.xpath("string(./*[local-name()='creator'])")
+        )
+        candidates = re.split(r"\s*[,;]\s*|\s+and\s+", str(raw_author or "").strip())
+    names: list[str] = []
+    for candidate in candidates:
+        name = candidate.strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _show_notes(item: Any, base_url: str) -> tuple[str | None, str | None]:
+    raw_show_notes = (
+        str(item.xpath("string(./*[local-name()='encoded'])") or "").strip()
+        or str(item.xpath("string(./description)") or "").strip()
+    )
     if not raw_show_notes:
         return None, None
-
-    sanitize_base_url = str(base_url or "https://example.invalid/")
     try:
-        sanitized_html = sanitize_html(raw_show_notes, sanitize_base_url)
+        sanitized_html = sanitize_html(raw_show_notes, base_url)
     except ValueError:
         sanitized_html = ""
-
-    normalized_html = normalize_optional_text(sanitized_html)
-    if normalized_html is not None:
-        normalized_html = _truncate_utf8_bytes(
-            normalized_html,
-            PODCAST_EPISODE_SHOW_NOTES_HTML_MAX_BYTES,
-        )
-
-    description_text_source = normalized_html or raw_show_notes
-    normalized_text = normalize_optional_text(
-        _extract_plain_text_from_html_fragment(description_text_source)
+    html = _truncate_utf8(normalize_optional_text(sanitized_html), _SHOW_NOTES_HTML_MAX_BYTES)
+    text = _truncate_utf8(
+        normalize_optional_text(_plain_text(html or raw_show_notes)), _SHOW_NOTES_TEXT_MAX_BYTES
     )
-    if normalized_text is not None:
-        normalized_text = _truncate_utf8_bytes(
-            normalized_text,
-            PODCAST_EPISODE_SHOW_NOTES_TEXT_MAX_BYTES,
-        )
-
-    return normalized_html, normalized_text
+    return html, text
 
 
-def _extract_plain_text_from_html_fragment(raw_value: str) -> str:
-    if not raw_value:
-        return ""
+def _plain_text(raw_value: str) -> str:
     try:
         parser = etree.HTMLParser(no_network=True, recover=True)
         root = etree.fromstring(f"<div>{raw_value}</div>".encode(), parser=parser)
-        if root is None:
-            return ""
-        text_tokens = [str(token).strip() for token in root.xpath("//text()")]
-        return re.sub(r"\s+", " ", " ".join(token for token in text_tokens if token)).strip()
+        tokens = [str(token).strip() for token in root.xpath("//text()")]
+        return re.sub(r"\s+", " ", " ".join(token for token in tokens if token)).strip()
     except etree.XMLSyntaxError:
-        stripped = re.sub(r"<[^>]+>", " ", raw_value)
-        return re.sub(r"\s+", " ", stripped).strip()
+        return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", raw_value)).strip()
 
 
-def _truncate_utf8_bytes(value: str, max_bytes: int) -> str:
+def _truncate_utf8(value: str | None, max_bytes: int) -> str | None:
+    if value is None:
+        return None
     encoded = value.encode("utf-8")
     if len(encoded) <= max_bytes:
         return value
     return encoded[:max_bytes].decode("utf-8", errors="ignore")
 
 
-def _extract_rss_chapters_from_feed_item(
-    item: Any,
-    *,
-    base_url: str | None,
-) -> list[dict[str, Any]] | None:
-    podcasting20_url = _extract_podcasting20_chapter_url(item, base_url=base_url)
-    if podcasting20_url is not None:
-        return _fetch_podcasting20_chapters(podcasting20_url)
-    return _parse_podlove_chapters(item, base_url=base_url)
-
-
-def _extract_rss_transcript_url_from_feed_item(
-    item: Any,
-    *,
-    base_url: str | None,
-) -> str | None:
-    for transcript_node in item.xpath("./*[local-name()='transcript' and @url]"):
-        resolved_url = normalize_podcast_chapter_link(
-            transcript_node.attrib.get("url"),
+def _chapters(item: Any, base_url: str) -> list[dict[str, Any]] | None:
+    chapter_tags = item.xpath("./*[local-name()='chapters' and @url]")
+    if not chapter_tags:
+        return _chapter_rows(
+            [
+                dict(node.attrib)
+                for node in item.xpath(".//*[local-name()='chapters']/*[local-name()='chapter']")
+            ],
+            source=PODCAST_CHAPTER_SOURCE_PODLOVE,
             base_url=base_url,
         )
-        if resolved_url is not None and _is_safe_feed_page_url(resolved_url):
-            return resolved_url
+    chapter_type = str(chapter_tags[0].attrib.get("type") or "").strip().lower()
+    chapters_url = _resolve_link(chapter_tags[0].attrib.get("url"), base_url)
+    if chapters_url is None or (chapter_type and chapter_type not in _CHAPTERS_20_CONTENT_TYPES):
+        return None
+    try:
+        payload = json.loads(
+            safe_get(chapters_url, max_bytes=_MAX_CHAPTER_JSON_BYTES, timeout_s=15.0).text
+        )
+    except (ApiError, ValueError) as exc:
+        logger.warning("podcast_chapters_json_failed", chapters_url=chapters_url, error=str(exc))
+        return None
+    entries = payload.get("chapters") if isinstance(payload, dict) else payload
+    return _chapter_rows(
+        [entry for entry in entries or [] if isinstance(entry, dict)],
+        source=PODCAST_CHAPTER_SOURCE_PODCASTING20,
+        base_url=chapters_url,
+    )
+
+
+def _chapter_rows(
+    entries: list[dict[str, Any]], *, source: str, base_url: str
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for entry in entries:
+        title = str(entry.get("title") or "").strip()
+        t_start_ms = _chapter_timestamp_ms(_first(entry, "startTime", "start_time", "start"))
+        if not title or t_start_ms is None:
+            continue
+        t_end_ms = _chapter_timestamp_ms(_first(entry, "endTime", "end_time", "end"))
+        rows.append(
+            {
+                "title": title,
+                "t_start_ms": t_start_ms,
+                "t_end_ms": None if t_end_ms is None or t_end_ms < t_start_ms else t_end_ms,
+                "url": _resolve_link(_first(entry, "url", "href"), base_url),
+                "image_url": _resolve_link(_first(entry, "img", "image", "image_url"), base_url),
+                "source": source,
+            }
+        )
+    rows.sort(key=lambda row: row["t_start_ms"])
+    return rows
+
+
+def _first(entry: dict[str, Any], *names: str) -> Any:
+    return next((entry[name] for name in names if entry.get(name) is not None), None)
+
+
+def _resolve_link(raw_url: Any, base_url: str) -> str | None:
+    normalized = normalize_optional_text(raw_url)
+    if normalized is None:
+        return None
+    resolved = urljoin(base_url, normalized)
+    try:
+        validate_requested_url(resolved)
+    except InvalidRequestError:
+        return None
+    return resolved
+
+
+def _chapter_timestamp_ms(raw_value: Any) -> int | None:
+    if isinstance(raw_value, (int, float)):
+        return None if raw_value < 0 else int(math.floor(float(raw_value) * 1000.0))
+    raw_text = normalize_optional_text(raw_value)
+    if raw_text is None:
+        return None
+    try:
+        return max(0, int(math.floor(float(raw_text) * 1000.0)))
+    except ValueError:
+        pass
+    match = _CHAPTER_TIMESTAMP.match(raw_text)
+    if match is None:
+        return None
+    hours, minutes, seconds = (
+        match.group("hours") or "0",
+        match.group("minutes"),
+        match.group("seconds"),
+    )
+    return int(math.floor((int(hours) * 3600.0 + int(minutes) * 60.0 + float(seconds)) * 1000.0))
+
+
+def _transcript_url(item: Any, base_url: str) -> str | None:
+    for node in item.xpath("./*[local-name()='transcript' and @url]"):
+        resolved = _resolve_link(node.attrib.get("url"), base_url)
+        if resolved is not None:
+            return resolved
     return None
 
 
-def _extract_podcasting20_chapter_url(item: Any, *, base_url: str | None) -> str | None:
-    chapter_tag_nodes = item.xpath("./*[local-name()='chapters' and @url]")
-    if not chapter_tag_nodes:
+def _next_page_url(root: Any, base_url: str) -> str | None:
+    for expression in (
+        "string(./channel/atom:link[@rel='next'][1]/@href)",
+        "string(./atom:link[@rel='next'][1]/@href)",
+        "string(.//*[local-name()='link' and @rel='next'][1]/@href)",
+    ):
+        href = str(root.xpath(expression, namespaces=_ATOM)).strip()
+        if href:
+            return urljoin(base_url, href)
+    return None
+
+
+def _published_at(raw_value: Any) -> str | None:
+    raw_text = normalize_optional_text(raw_value)
+    if raw_text is None:
         return None
-    chapter_tag = chapter_tag_nodes[0]
-    chapter_type = str(chapter_tag.attrib.get("type") or "").strip().lower()
-    if chapter_type and chapter_type not in _PODCAST_CHAPTERS_20_CONTENT_TYPES:
-        return None
-    raw_url = chapter_tag.attrib.get("url")
-    resolved_url = normalize_podcast_chapter_link(raw_url, base_url=base_url)
-    if resolved_url is None:
-        return None
-    if not _is_safe_feed_page_url(resolved_url):
-        return None
-    return resolved_url
-
-
-def _fetch_podcasting20_chapters(chapters_url: str) -> list[dict[str, Any]] | None:
-    try:
-        result = safe_get(chapters_url, max_bytes=_MAX_CHAPTER_JSON_BYTES, timeout_s=15.0)
-    except ApiError as exc:
-        logger.warning(
-            "podcast_chapters_json_fetch_failed",
-            chapters_url=chapters_url,
-            error=exc.message,
-        )
-        return None
-
-    try:
-        payload = json.loads(result.text)
-    except ValueError as exc:
-        logger.warning(
-            "podcast_chapters_json_invalid",
-            chapters_url=chapters_url,
-            error=str(exc),
-        )
-        return None
-    return _parse_podcasting20_chapter_payload(payload, base_url=chapters_url)
-
-
-def _parse_podcasting20_chapter_payload(
-    payload: Any, *, base_url: str | None
-) -> list[dict[str, Any]]:
-    chapter_entries: list[Any]
-    if isinstance(payload, dict):
-        raw_chapters = payload.get("chapters")
-        chapter_entries = raw_chapters if isinstance(raw_chapters, list) else []
-    elif isinstance(payload, list):
-        chapter_entries = payload
-    else:
-        chapter_entries = []
-
-    parsed_rows: list[dict[str, Any]] = []
-    for entry in chapter_entries:
-        if not isinstance(entry, dict):
-            continue
-        title = str(entry.get("title") or "").strip()
-        if not title:
-            continue
-        t_start_ms = _parse_chapter_timestamp_ms(
-            entry.get("startTime") or entry.get("start_time") or entry.get("start")
-        )
-        if t_start_ms is None:
-            continue
-        t_end_ms = _parse_chapter_timestamp_ms(
-            entry.get("endTime") or entry.get("end_time") or entry.get("end")
-        )
-        if t_end_ms is not None and t_end_ms < t_start_ms:
-            t_end_ms = None
-        parsed_rows.append(
-            {
-                "title": title,
-                "t_start_ms": t_start_ms,
-                "t_end_ms": t_end_ms,
-                "url": normalize_podcast_chapter_link(
-                    entry.get("url") or entry.get("href"),
-                    base_url=base_url,
-                ),
-                "image_url": normalize_podcast_chapter_link(
-                    entry.get("img") or entry.get("image") or entry.get("image_url"),
-                    base_url=base_url,
-                ),
-                "source": PODCAST_CHAPTER_SOURCE_PODCASTING20,
-            }
-        )
-    parsed_rows.sort(key=lambda row: row["t_start_ms"])
-    return parsed_rows
-
-
-def _parse_podlove_chapters(item: Any, *, base_url: str | None) -> list[dict[str, Any]]:
-    chapter_nodes = item.xpath(".//*[local-name()='chapters']/*[local-name()='chapter']")
-    if not chapter_nodes:
-        return []
-
-    parsed_rows: list[dict[str, Any]] = []
-    for chapter_node in chapter_nodes:
-        title = str(chapter_node.attrib.get("title") or "").strip()
-        if not title:
-            continue
-        t_start_ms = _parse_chapter_timestamp_ms(chapter_node.attrib.get("start"))
-        if t_start_ms is None:
-            continue
-        t_end_ms = _parse_chapter_timestamp_ms(chapter_node.attrib.get("end"))
-        if t_end_ms is not None and t_end_ms < t_start_ms:
-            t_end_ms = None
-        parsed_rows.append(
-            {
-                "title": title,
-                "t_start_ms": t_start_ms,
-                "t_end_ms": t_end_ms,
-                "url": normalize_podcast_chapter_link(
-                    chapter_node.attrib.get("href") or chapter_node.attrib.get("url"),
-                    base_url=base_url,
-                ),
-                "image_url": normalize_podcast_chapter_link(
-                    chapter_node.attrib.get("image") or chapter_node.attrib.get("img"),
-                    base_url=base_url,
-                ),
-                "source": PODCAST_CHAPTER_SOURCE_PODLOVE,
-            }
-        )
-    parsed_rows.sort(key=lambda row: row["t_start_ms"])
-    return parsed_rows
-
-
-def normalize_podcast_chapter_link(raw_url: Any, *, base_url: str | None) -> str | None:
-    if raw_url is None:
-        return None
-    normalized_raw = str(raw_url).strip()
-    if not normalized_raw:
-        return None
-    resolved_url = urljoin(base_url, normalized_raw) if base_url else normalized_raw
-    try:
-        validate_requested_url(resolved_url)
-    except InvalidRequestError:
-        return None
-    return resolved_url
-
-
-def _parse_chapter_timestamp_ms(raw_value: Any) -> int | None:
-    if raw_value is None:
-        return None
-    if isinstance(raw_value, (int, float)):
-        if raw_value < 0:
-            return None
-        return int(math.floor(float(raw_value) * 1000.0))
-
-    raw_text = str(raw_value).strip()
-    if not raw_text:
-        return None
-
-    try:
-        numeric_seconds = float(raw_text)
-    except ValueError:
-        numeric_seconds = None
-    if numeric_seconds is not None:
-        if numeric_seconds < 0:
-            return None
-        return int(math.floor(numeric_seconds * 1000.0))
-
-    match = _CHAPTER_TIMESTAMP_PATTERN.match(raw_text)
-    if match is None:
-        return None
-    hours = int(match.group("hours") or "0")
-    minutes = int(match.group("minutes"))
-    seconds = float(match.group("seconds"))
-    total_seconds = (hours * 3600.0) + (minutes * 60.0) + seconds
-    return int(math.floor(total_seconds * 1000.0))
-
-
-def _extract_feed_next_page_url(root: Any, base_url: str) -> str | None:
-    href = str(
-        root.xpath("string(./channel/atom:link[@rel='next'][1]/@href)", namespaces=_ATOM_NAMESPACE)
-    ).strip()
-    if not href:
-        href = str(
-            root.xpath("string(./atom:link[@rel='next'][1]/@href)", namespaces=_ATOM_NAMESPACE)
-        ).strip()
-    if not href:
-        href = str(root.xpath("string(.//*[local-name()='link' and @rel='next'][1]/@href)")).strip()
-    if not href:
-        return None
-    return urljoin(base_url, href)
-
-
-def _normalize_feed_published_at(raw_value: Any) -> str | None:
-    if raw_value is None:
-        return None
-
-    raw_text = str(raw_value).strip()
-    if not raw_text:
-        return None
-
     try:
         parsed = parsedate_to_datetime(raw_text)
     except (TypeError, ValueError):
         parsed = parse_iso_datetime(raw_text)
-
     if parsed is None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-
     return parsed.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _parse_feed_duration_seconds(raw_value: Any) -> int | None:
-    if raw_value is None:
+def _duration_seconds(raw_value: Any) -> int | None:
+    raw_text = normalize_optional_text(raw_value)
+    if raw_text is None:
         return None
-
-    raw_text = str(raw_value).strip()
-    if not raw_text:
-        return None
-
     if ":" not in raw_text:
         return coerce_positive_int(raw_text)
-
-    parts = raw_text.split(":")
-    if len(parts) not in (2, 3):
-        return None
     try:
-        values = [int(part) for part in parts]
+        values = [int(part) for part in raw_text.split(":")]
     except ValueError:
         return None
-    if any(value < 0 for value in values):
+    if len(values) not in (2, 3) or any(value < 0 for value in values):
         return None
-
-    if len(values) == 2:
-        minutes, seconds = values
-        return (minutes * 60) + seconds
-
-    hours, minutes, seconds = values
-    return (hours * 3600) + (minutes * 60) + seconds
+    hours, minutes, seconds = [0, *values] if len(values) == 2 else values
+    return hours * 3600 + minutes * 60 + seconds
 
 
-def _episode_match_keys(episode: dict[str, Any]) -> list[str]:
-    keys: list[str] = []
+def _match_keys(episode: dict[str, Any]) -> list[str]:
     guid = normalize_optional_text(episode.get("guid"))
-    if guid:
-        keys.append(f"guid:{guid.lower()}")
-
-    audio_url = str(episode.get("audio_url") or "").strip().lower()
-    if audio_url:
-        keys.append(f"audio:{audio_url}")
-
-    podcast_index_episode_ref = str(episode.get("podcast_index_episode_ref") or "").strip()
-    if podcast_index_episode_ref:
-        keys.append(f"podcast_index:{podcast_index_episode_ref}")
-
-    return keys
+    audio_url = normalize_optional_text(episode.get("audio_url"))
+    provider_ref = normalize_optional_text(episode.get("podcast_index_episode_ref"))
+    return [
+        key
+        for key in (
+            f"guid:{guid.lower()}" if guid else None,
+            f"audio:{audio_url.lower()}" if audio_url else None,
+            f"podcast_index:{provider_ref}" if provider_ref else None,
+        )
+        if key is not None
+    ]

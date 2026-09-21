@@ -1,14 +1,7 @@
-"""Search Pydantic schemas.
+"""Search response schemas: one envelope and its typed variants.
 
-Contains request and response models for the search endpoint.
-
-Search returns mixed typed results from different content types:
-- media (titles)
-- podcasts (titles/descriptions)
-- content chunks (indexed document evidence)
-- pages (titles)
-- note blocks (body)
-- messages (content)
+The web decoder asserts exact key sets per variant, so every field here is on
+the wire contract — including ones no component renders today.
 """
 
 from typing import Annotated, Any, Literal
@@ -26,13 +19,9 @@ from nexus.schemas.retrieval import (
 )
 from nexus.schemas.search_types import SEARCH_RESULT_TYPES
 
-# =============================================================================
-# Response Schemas
-# =============================================================================
-
 
 class SearchResultSourceOut(BaseModel):
-    """Source metadata shared by media/content search rows."""
+    """Source metadata shared by media-anchored rows."""
 
     media_id: UUID
     media_kind: str
@@ -69,10 +58,8 @@ class SearchResultContextRefOut(BaseModel):
 class SearchResultActivationOut(BaseModel):
     """Search-owned snake-case occurrence activation.
 
-    Search uses one intentional camel key (``actionSubjectRef``), but its
-    established transport otherwise remains snake-case. A local DTO prevents
-    outer ``by_alias=True`` serialization from leaking the resource-items
-    activation aliases into this boundary.
+    A local DTO so the response's ``by_alias=True`` dump cannot leak the
+    resource-items activation aliases onto this boundary.
     """
 
     resource_ref: str
@@ -84,7 +71,7 @@ class SearchResultActivationOut(BaseModel):
 
 
 class SearchResultBaseOut(BaseModel):
-    """Envelope fields shared by every typed search result variant."""
+    """Envelope fields shared by every typed variant."""
 
     score: float
     snippet: str
@@ -103,7 +90,7 @@ class SearchResultBaseOut(BaseModel):
 
 
 class SearchResultLocatorBackedOut[ResultTypeT: LocatorBackedResultType](SearchResultBaseOut):
-    """Envelope for the variants that carry a locator bound to their result type."""
+    """Envelope for the variants carrying a locator bound to their result type."""
 
     type: ResultTypeT
     locator: RetrievalLocator
@@ -115,31 +102,15 @@ class SearchResultLocatorBackedOut[ResultTypeT: LocatorBackedResultType](SearchR
 
 
 class SearchResultMediaOut(SearchResultBaseOut):
-    """Typed search result for media title hits."""
+    """A media hit; the discriminant names the document's format family."""
 
-    type: Literal["media"]
-    id: UUID
-    source: SearchResultSourceOut
-
-
-class SearchResultEpisodeOut(SearchResultBaseOut):
-    """Typed search result for podcast episode media hits."""
-
-    type: Literal["episode"]
-    id: UUID
-    source: SearchResultSourceOut
-
-
-class SearchResultVideoOut(SearchResultBaseOut):
-    """Typed search result for video media hits."""
-
-    type: Literal["video"]
+    type: Literal["media", "episode", "video"]
     id: UUID
     source: SearchResultSourceOut
 
 
 class SearchResultPodcastOut(SearchResultBaseOut):
-    """Typed search result for visible podcast hits."""
+    """A visible podcast hit."""
 
     type: Literal["podcast"]
     id: UUID
@@ -147,7 +118,7 @@ class SearchResultPodcastOut(SearchResultBaseOut):
 
 
 class SearchResultContentChunkOut(SearchResultLocatorBackedOut[Literal["content_chunk"]]):
-    """Typed search result for indexed document evidence."""
+    """An indexed document passage."""
 
     id: UUID
     source_kind: str
@@ -157,7 +128,7 @@ class SearchResultContentChunkOut(SearchResultLocatorBackedOut[Literal["content_
 
 
 class SearchResultFragmentOut(SearchResultLocatorBackedOut[Literal["fragment"]]):
-    """Typed search result for a readable source fragment."""
+    """A readable source fragment."""
 
     id: UUID
     source: SearchResultSourceOut
@@ -165,13 +136,7 @@ class SearchResultFragmentOut(SearchResultLocatorBackedOut[Literal["fragment"]])
 
 
 class SearchResultContributorIdentityOut(BaseModel):
-    """Minimal contributor identity embedded in a contributor search hit (D-33).
-
-    The narrowed replacement for the old nested full ``ContributorOut`` on the
-    ``/search`` wire: handle + display name only. No status, kind, sort name,
-    disambiguation, aliases, or external ids ever reach this surface (AC 24).
-    The ``/search`` wire is snake-case throughout (``ok(by_alias=False)``).
-    """
+    """Handle + display name only: no status, aliases, or external ids."""
 
     handle: str
     display_name: str
@@ -180,7 +145,7 @@ class SearchResultContributorIdentityOut(BaseModel):
 
 
 class SearchResultContributorOut(SearchResultBaseOut):
-    """Typed search result for contributor identity hits."""
+    """A contributor identity hit."""
 
     type: Literal["contributor"]
     id: str
@@ -189,7 +154,7 @@ class SearchResultContributorOut(SearchResultBaseOut):
 
 
 class SearchResultNoteBlockOut(SearchResultLocatorBackedOut[Literal["note_block"]]):
-    """Typed search result for note-block body hits."""
+    """A note-block body hit."""
 
     id: UUID
     body_text: str
@@ -198,7 +163,7 @@ class SearchResultNoteBlockOut(SearchResultLocatorBackedOut[Literal["note_block"
 
 
 class SearchResultHighlightOut(SearchResultLocatorBackedOut[Literal["highlight"]]):
-    """Typed search result for a saved source highlight."""
+    """A saved source highlight."""
 
     id: UUID
     color: str
@@ -208,14 +173,14 @@ class SearchResultHighlightOut(SearchResultLocatorBackedOut[Literal["highlight"]
 
 
 class SearchResultPageOut(SearchResultBaseOut):
-    """Typed search result for note pages."""
+    """A note page."""
 
     type: Literal["page"]
     id: UUID
 
 
 class SearchResultMessageOut(SearchResultLocatorBackedOut[Literal["message"]]):
-    """Typed search result for conversation message hits."""
+    """A conversation message hit."""
 
     id: UUID
     conversation_id: UUID
@@ -223,7 +188,7 @@ class SearchResultMessageOut(SearchResultLocatorBackedOut[Literal["message"]]):
 
 
 class SearchResultEvidenceSpanOut(SearchResultLocatorBackedOut[Literal["evidence_span"]]):
-    """Typed search result for one durable evidence span."""
+    """One durable evidence span, produced only by citation reopen."""
 
     id: UUID
     source: SearchResultSourceOut
@@ -234,7 +199,7 @@ class SearchResultEvidenceSpanOut(SearchResultLocatorBackedOut[Literal["evidence
 class SearchResultReaderApparatusItemOut(
     SearchResultLocatorBackedOut[Literal["reader_apparatus_item"]]
 ):
-    """Typed search result for source-authored reader apparatus rows."""
+    """A source-authored reader apparatus row."""
 
     id: UUID
     source: SearchResultSourceOut
@@ -242,18 +207,15 @@ class SearchResultReaderApparatusItemOut(
 
 
 class SearchResultConversationOut(SearchResultBaseOut):
-    """Typed search result for visible conversations."""
+    """A visible conversation."""
 
     type: Literal["conversation"]
     id: UUID
 
 
 class ConversationArtifactSearchOut(SearchResultBaseOut):
-    """Typed search result for a current Conversation Dossier claim.
-
-    The exact revision ref preserves historical selection while activation opens
-    the Conversation subject and its workspace-local Dossier surface.
-    """
+    """A current Conversation Dossier claim; the exact revision ref preserves
+    historical selection while activation opens the conversation subject."""
 
     type: Literal["artifact"]
     id: UUID
@@ -262,7 +224,7 @@ class ConversationArtifactSearchOut(SearchResultBaseOut):
 
 
 class SearchResultWebOut(SearchResultLocatorBackedOut[Literal["web_result"]]):
-    """Typed public-web result shape shared with chat web search."""
+    """A persisted public-web result, shaped as chat web search returns it."""
 
     id: str
     result_type: Literal["web_result"]
@@ -278,20 +240,10 @@ class SearchResultWebOut(SearchResultLocatorBackedOut[Literal["web_result"]]):
     provider_request_id: str | None = None
     selected: bool
 
-    @model_validator(mode="after")
-    def validate_web_result_contract(self) -> "SearchResultWebOut":
-        if self.context_ref.type != "web_result":
-            raise ValueError("context_ref.type must be web_result")
-        if str(self.context_ref.id) != self.source_id:
-            raise ValueError("web_result context_ref.id must match source_id")
-        return self
-
 
 SearchResultOut = Annotated[
     SearchResultMediaOut
     | SearchResultPodcastOut
-    | SearchResultEpisodeOut
-    | SearchResultVideoOut
     | SearchResultContentChunkOut
     | SearchResultFragmentOut
     | SearchResultContributorOut
@@ -309,10 +261,7 @@ SearchResultOut = Annotated[
 
 
 class SearchPageInfo(BaseModel):
-    """Pagination information for search results.
-
-    Uses offset-based cursor encoded as base64url JSON.
-    """
+    """Offset pagination, encoded as a base64url JSON cursor."""
 
     has_more: bool = False
     next_cursor: str | None = None
@@ -321,10 +270,7 @@ class SearchPageInfo(BaseModel):
 
 
 class SearchResponse(BaseModel):
-    """Response for search endpoint.
-
-    Results are a mixed, ordered list of typed search results.
-    """
+    """A mixed, ordered page of typed search results."""
 
     results: list[SearchResultOut] = Field(default_factory=list)
     page: SearchPageInfo = Field(default_factory=SearchPageInfo)

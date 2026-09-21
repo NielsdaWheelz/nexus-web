@@ -1,6 +1,6 @@
 """Retrieval telemetry: the one validated `message_retrievals` writer.
 
-Turns a ``SearchResultOut`` (from ``search.resolver.get_search_result``) into a
+Turns a ``SearchResultOut`` (from ``search.service.get_search_result``) into a
 ``RetrievalCitation`` whose ``result_ref``/``locator`` pass the strict retrieval
 validators, and inserts it as a ``message_retrievals`` row.
 

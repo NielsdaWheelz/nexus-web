@@ -254,7 +254,6 @@ const TODAY_APPEND_UNAVAILABLE =
 type ExitIntent =
   | { readonly kind: "Close" }
   | { readonly kind: "Root" }
-  | { readonly kind: "Content" }
   | { readonly kind: "Replace"; readonly detail: NexusOpenIntent }
   | {
       readonly kind: "Navigate";
@@ -396,7 +395,6 @@ export function useNexusController(): NexusController {
   const addSession = useAddContentSession();
   const {
     start: startAddSession,
-    backToContent: backToAddContent,
     discard: discardAddSession,
     stop: stopAddSession,
   } = addSession;
@@ -1491,9 +1489,6 @@ export function useNexusController(): NexusController {
     (intent: ExitIntent) => {
       setPendingDismissal(null);
       switch (intent.kind) {
-        case "Content":
-          backToAddContent();
-          return;
         case "Root":
           discardAddSession();
           restoreRoot();
@@ -1587,7 +1582,6 @@ export function useNexusController(): NexusController {
     },
     [
       applyNavigationOutcome,
-      backToAddContent,
       discardAddSession,
       dispatch,
       dispatchCtx,
@@ -1608,7 +1602,6 @@ export function useNexusController(): NexusController {
         setPendingDismissal({ confirmation: "Stop", intent });
         return "blocked";
       }
-      if (intent.kind === "Content") return "accepted";
       if (addSession.dirty) {
         setPendingDismissal({ confirmation: "Discard", intent });
         return "blocked";
@@ -1624,10 +1617,6 @@ export function useNexusController(): NexusController {
     [guardExit, performExit],
   );
   const back = useCallback(() => {
-    if (page.kind === "Add" && addSession.state.branch === "Opml") {
-      requestExit({ kind: "Content" });
-      return;
-    }
     if (page.kind === "ManageTabs" && page.origin.kind === "Recovery") {
       setPage({ kind: "ActivationBlocked", retained: page.origin.retained });
       return;
@@ -1637,7 +1626,7 @@ export function useNexusController(): NexusController {
       return;
     }
     requestExit({ kind: "Root" });
-  }, [addSession.state.branch, page, requestExit, restoreReturnPoint]);
+  }, [page, requestExit, restoreReturnPoint]);
   const close = useCallback(() => requestExit({ kind: "Close" }), [requestExit]);
   const escape = useCallback(() => {
     if (page.kind === "Root" && query.trim()) {
@@ -1681,13 +1670,7 @@ export function useNexusController(): NexusController {
   const openAddTarget = useCallback(
     (target: NexusTarget) => {
       let replayId: string | null = null;
-      if (
-        target.kind === "InternalHref" &&
-        target.href === "/podcasts" &&
-        addSession.state.opml.kind === "Complete"
-      ) {
-        replayId = addSession.opmlReplayIdentity;
-      } else if (target.kind === "InternalHref") {
+      if (target.kind === "InternalHref") {
         const mediaId = /^\/media\/([^/?#]+)/.exec(target.href)?.[1] ?? null;
         const committed = mediaId
           ? addSession.state.items.find(
@@ -1713,14 +1696,7 @@ export function useNexusController(): NexusController {
         },
       });
     },
-    [
-      addSession.opmlReplayIdentity,
-      addSession.state.items,
-      addSession.state.opml.kind,
-      page,
-      requestExit,
-      rootReturnPoint,
-    ],
+    [addSession.state.items, page, requestExit, rootReturnPoint],
   );
   const keepWorking = useCallback(() => setPendingDismissal(null), []);
   const confirmDismissal = useCallback(() => {
@@ -1750,27 +1726,21 @@ export function useNexusController(): NexusController {
       }
       if (page.kind === "Add") {
         return resolveAddPanelInitialFocus(container, isMobile, {
-          branch: addSession.state.branch,
           initialFocus: addSession.state.initialFocus,
         });
       }
       return container.querySelector<HTMLElement>("[data-switchboard-heading]");
     },
-    [addSession.state.branch, addSession.state.initialFocus, page.kind],
+    [addSession.state.initialFocus, page.kind],
   );
   const shouldSuppressReturnFocusOnClose = useCallback(
     () => suppressReturnFocusRef.current,
     [],
   );
-  const dialogLabel =
-    page.kind === "Add"
-      ? addSession.state.branch === "Opml"
-        ? "Import OPML"
-        : "Add content"
-      : "Nexus";
+  const dialogLabel = page.kind === "Add" ? "Add content" : "Nexus";
   const focusKey =
     page.kind === "Add"
-      ? `${addSession.state.sessionId}:${addSession.state.branch}:${addSession.state.initialFocus}`
+      ? `${addSession.state.sessionId}:${addSession.state.initialFocus}`
       : page.kind;
   const dismissalConfirmation: AddDismissalConfirmation = pendingDismissal
     ? {

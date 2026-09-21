@@ -1,42 +1,35 @@
-"""Source-attempt payload artifact ownership helpers."""
+"""Which storage objects a source-attempt payload owns."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
 
-_DERIVED_ARTIFACT_PAYLOAD_KEYS = frozenset({"arxiv_source_package"})
+_ATTEMPT_LOCAL_KEYS = ("source_storage_path", "arxiv_source_package")
 
 
 def source_attempt_storage_paths(source_payload: Mapping[str, Any] | None) -> list[str]:
-    """Return storage objects owned or referenced by a source-attempt payload."""
-    if source_payload is None:
-        return []
-
-    storage_paths: list[str] = []
-    _append_storage_path(storage_paths, source_payload.get("storage_path"))
-    _append_storage_path(storage_paths, source_payload.get("source_storage_path"))
-    for key in _DERIVED_ARTIFACT_PAYLOAD_KEYS:
-        nested = source_payload.get(key)
-        if isinstance(nested, Mapping):
-            _append_storage_path(storage_paths, nested.get("storage_path"))
-    return storage_paths
+    """Storage objects owned or referenced by one source-attempt payload."""
+    payload = source_payload or {}
+    package = payload.get("arxiv_source_package")
+    candidates = [
+        payload.get("storage_path"),
+        payload.get("source_storage_path"),
+        package.get("storage_path") if isinstance(package, Mapping) else None,
+    ]
+    paths: list[str] = []
+    for candidate in candidates:
+        path = candidate.strip() if isinstance(candidate, str) else ""
+        if path and path not in paths:
+            paths.append(path)
+    return paths
 
 
 def clone_source_payload_for_new_attempt(
     source_payload: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    """Copy source identity for retry/refresh without carrying attempt-local artifacts."""
+    """Copy source identity for a retry, dropping the previous attempt's artifacts."""
     payload = dict(source_payload or {})
-    payload.pop("source_storage_path", None)
-    for key in _DERIVED_ARTIFACT_PAYLOAD_KEYS:
+    for key in _ATTEMPT_LOCAL_KEYS:
         payload.pop(key, None)
     return payload
-
-
-def _append_storage_path(storage_paths: list[str], value: object) -> None:
-    if not isinstance(value, str):
-        return
-    storage_path = value.strip()
-    if storage_path and storage_path not in storage_paths:
-        storage_paths.append(storage_path)

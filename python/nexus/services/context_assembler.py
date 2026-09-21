@@ -72,7 +72,7 @@ from nexus.services.resource_items.capabilities import (
     resource_prompt_render_policy,
 )
 from nexus.services.retrieval_citation import RetrievalCitation, citation_from_search_result
-from nexus.services.search.resolver import get_search_result
+from nexus.services.search.service import get_search_result
 
 if TYPE_CHECKING:
     from nexus.services.generation_service import ChatToolAuthority
