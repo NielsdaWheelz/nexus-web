@@ -18,10 +18,7 @@ import {
   type PaneFindResultKey,
   type PaneFindSourceKey,
 } from "@/lib/panes/paneSearch";
-import type {
-  PaneFindAdapter,
-  PaneFindPreviewReceipt,
-} from "@/lib/panes/usePaneFind";
+import type { PaneFindAdapter } from "@/lib/panes/usePaneFind";
 import { canonicalTextFind } from "@/lib/reader/canonicalTextFind";
 import { isAbortError } from "@/lib/errors";
 import type { ReaderScrollPositioner } from "@/lib/reader/paneScroll";
@@ -34,8 +31,6 @@ import type { MediaFindPreviewLease } from "./mediaFindPreviewLease";
 const ENTIRE_TRANSCRIPT_SCOPE_ID = "EntireTranscript";
 const CURRENT_CHAPTER_SCOPE_PREFIX = "CurrentChapter:";
 const RENDER_ATTEMPT_LIMIT = 48;
-
-export type TranscriptPaneFindError = MediaPaneFindError;
 
 export interface TranscriptFindSnapshotFragment {
   readonly id: string;
@@ -76,7 +71,7 @@ interface TranscriptFindOrigin {
   readonly scrollOwnerTop: number;
 }
 
-export interface TranscriptFindAdapter extends PaneFindAdapter<TranscriptPaneFindError> {
+export interface TranscriptFindAdapter extends PaneFindAdapter<MediaPaneFindError> {
   dispose(): void;
 }
 
@@ -309,16 +304,6 @@ export function createTranscriptFindAdapter({
       throwAbort("Transcript Find session was replaced.");
     }
   };
-  const previewReceipt = (
-    request: Parameters<TranscriptFindAdapter["preview"]>[0],
-  ): PaneFindPreviewReceipt<TranscriptPaneFindError> => ({
-    kind: "Previewed",
-    sessionId: request.sessionId,
-    queryId: request.queryId,
-    sourceKey: request.sourceKey,
-    key: request.key,
-    returnAvailable: true,
-  });
   const publishMatches = (activeKey: PaneFindResultKey) => {
     publishPresentation({
       kind: "Matches",
@@ -362,26 +347,22 @@ export function createTranscriptFindAdapter({
             endMs: activeChapter.endMs,
           }
         : null;
-      return {
-        sessionId: request.sessionId,
-        sourceKey: request.sourceKey,
-        scopes: [
-          {
-            kind: "EntireResource",
-            id: ENTIRE_TRANSCRIPT_SCOPE_ID,
-            label: "Entire transcript",
-          },
-          ...(preparedScope
-            ? [
-                {
-                  kind: "Narrow" as const,
-                  id: preparedScope.id,
-                  label: "This chapter",
-                },
-              ]
-            : []),
-        ],
-      };
+      return [
+        {
+          kind: "EntireResource",
+          id: ENTIRE_TRANSCRIPT_SCOPE_ID,
+          label: "Entire transcript",
+        },
+        ...(preparedScope
+          ? [
+              {
+                kind: "Narrow" as const,
+                id: preparedScope.id,
+                label: "This chapter",
+              },
+            ]
+          : []),
+      ];
     },
     async find(request) {
       assertCurrentSource(request.sourceKey);
@@ -414,17 +395,7 @@ export function createTranscriptFindAdapter({
         wholeWord: request.wholeWord,
         completeness: snapshot.completeness,
       });
-      const base = {
-        sessionId: request.sessionId,
-        queryId: request.queryId,
-        sourceKey: request.sourceKey,
-      } as const;
-      if (result.kind === "NoMatches") {
-        return { ...base, ...result };
-      }
-      if (result.kind === "TooManyMatches") {
-        return { ...base, ...result };
-      }
+      if (result.kind !== "Ready") return result;
       const fragmentById = new Map(
         snapshot.fragments.map((fragment) => [fragment.id, fragment]),
       );
@@ -471,7 +442,6 @@ export function createTranscriptFindAdapter({
         );
       }
       return {
-        ...base,
         kind: "Ready",
         completeness: result.completeness,
         rows,
@@ -503,10 +473,6 @@ export function createTranscriptFindAdapter({
         }
         return {
           kind: "Rejected",
-          sessionId: request.sessionId,
-          queryId: request.queryId,
-          sourceKey: request.sourceKey,
-          key: request.key,
           error: { kind: "OriginUnavailable" },
         };
       }
@@ -539,7 +505,7 @@ export function createTranscriptFindAdapter({
         });
       } catch (error) {
         if (isAbortError(error) && request.signal.aborted) {
-          return previewReceipt(request);
+          return { kind: "Previewed" };
         }
         if (isAbortError(error)) throw error;
         try {
@@ -556,13 +522,13 @@ export function createTranscriptFindAdapter({
           await nextAnimationFrame(new AbortController().signal);
           const restoredScrollOwner = getScrollOwner();
           if (!restoredScrollOwner) {
-            return previewReceipt(request);
+            return { kind: "Previewed" };
           }
           await scrollPositioner.run(({ setTop }) => {
             setTop(restoredScrollOwner, previous.scrollOwnerTop);
           });
         } catch {
-          return previewReceipt(request);
+          return { kind: "Previewed" };
         }
         if (originWasNew) {
           origin = null;
@@ -570,7 +536,7 @@ export function createTranscriptFindAdapter({
         }
         throw error;
       }
-      return previewReceipt(request);
+      return { kind: "Previewed" };
     },
     async clearPresentation(request) {
       assertCurrentSource(request.sourceKey);

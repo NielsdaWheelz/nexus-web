@@ -20,9 +20,7 @@ export interface PaneFindSessionRequest {
   readonly signal: AbortSignal;
 }
 
-export type PaneFindPrepareRequest = PaneFindSessionRequest;
-
-export interface PaneFindSession {
+interface PaneFindSession {
   readonly sessionId: number;
   readonly sourceKey: PaneFindSourceKey;
   readonly scopes: readonly PaneFindScopeOption[];
@@ -44,56 +42,33 @@ export interface PaneFindPreviewRequest extends PaneFindSessionRequest {
 export type PaneFindResponse<TError> =
   | {
       readonly kind: "Ready";
-      readonly sessionId: number;
-      readonly queryId: number;
-      readonly sourceKey: PaneFindSourceKey;
       readonly completeness: "Complete" | "Partial";
       readonly rows: readonly PaneFindResultRow[];
       readonly initialActiveKey: PaneFindResultKey;
     }
   | {
       readonly kind: "NoMatches";
-      readonly sessionId: number;
-      readonly queryId: number;
-      readonly sourceKey: PaneFindSourceKey;
       readonly completeness: "Complete" | "Partial";
     }
   | {
       readonly kind: "TooManyMatches";
-      readonly sessionId: number;
-      readonly queryId: number;
-      readonly sourceKey: PaneFindSourceKey;
       readonly threshold: number;
     }
   | {
       readonly kind: "Failed";
-      readonly sessionId: number;
-      readonly queryId: number;
-      readonly sourceKey: PaneFindSourceKey;
       readonly error: TError;
     };
 
 export type PaneFindPreviewReceipt<TError> =
-  | {
-      readonly kind: "Previewed";
-      readonly sessionId: number;
-      readonly queryId: number;
-      readonly sourceKey: PaneFindSourceKey;
-      readonly key: PaneFindResultKey;
-      readonly returnAvailable: true;
-    }
+  | { readonly kind: "Previewed" }
   | {
       readonly kind: "Rejected";
-      readonly sessionId: number;
-      readonly queryId: number;
-      readonly sourceKey: PaneFindSourceKey;
-      readonly key: PaneFindResultKey;
       readonly error: TError;
     };
 
 export interface PaneFindAdapter<TError> {
   readonly sourceKey: PaneFindSourceKey;
-  prepare(request: PaneFindPrepareRequest): Promise<PaneFindSession>;
+  prepare(request: PaneFindSessionRequest): Promise<readonly PaneFindScopeOption[]>;
   find(request: PaneFindRequest): Promise<PaneFindResponse<TError>>;
   preview(
     request: PaneFindPreviewRequest,
@@ -346,18 +321,19 @@ export function usePaneFind<TError>({
           sourceKey: sourceAdapter.sourceKey,
           signal: abort.signal,
         })
-        .then((session) => {
+        .then((scopes) => {
           if (
             abort.signal.aborted ||
-            sessionIdRef.current !== sessionId ||
-            session.sessionId !== sessionId ||
-            session.sourceKey !== sourceAdapter.sourceKey
+            sessionIdRef.current !== sessionId
           ) {
             return;
           }
-          const entire = entireResourceScope(session.scopes);
+          const entire = entireResourceScope(scopes);
           setSelectedScopeId(entire.id);
-          setPrepared({ kind: "Ready", session });
+          setPrepared({
+            kind: "Ready",
+            session: { sessionId, sourceKey: sourceAdapter.sourceKey, scopes },
+          });
         })
         .catch(defectAsync);
     },
@@ -454,9 +430,8 @@ export function usePaneFind<TError>({
       .then((response) => {
         if (
           abort.signal.aborted ||
-          sessionIdRef.current !== response.sessionId ||
-          queryIdRef.current !== response.queryId ||
-          response.sourceKey !== session.sourceKey
+          sessionIdRef.current !== session.sessionId ||
+          queryIdRef.current !== queryId
         ) {
           return;
         }
@@ -503,15 +478,9 @@ export function usePaneFind<TError>({
                 key: response.initialActiveKey,
               })
               .then((receipt) => {
-                const identifiesRequest =
-                  receipt.sessionId === session.sessionId &&
-                  receipt.queryId === queryId &&
-                  receipt.sourceKey === session.sourceKey &&
-                  receipt.key === response.initialActiveKey;
                 const settlement = settlePreviewAttempt({
                   generation: previewGeneration,
-                  capturedOrigin:
-                    identifiesRequest && receipt.kind === "Previewed",
+                  capturedOrigin: receipt.kind === "Previewed",
                 });
                 if (settlement.kind === "Current" && settlement.reprepare) {
                   startPreparation({
@@ -522,10 +491,8 @@ export function usePaneFind<TError>({
                 if (
                   settlement.kind === "Stale" ||
                   previewAbort.signal.aborted ||
-                  sessionIdRef.current !== receipt.sessionId ||
-                  queryIdRef.current !== receipt.queryId ||
-                  receipt.sourceKey !== session.sourceKey ||
-                  receipt.key !== response.initialActiveKey
+                  sessionIdRef.current !== session.sessionId ||
+                  queryIdRef.current !== queryId
                 ) {
                   return;
                 }
@@ -641,14 +608,9 @@ export function usePaneFind<TError>({
           signal: abort.signal,
           key: attempt.key,
         });
-        const identifiesRequest =
-          receipt.sessionId === session.sessionId &&
-          receipt.queryId === attempt.queryId &&
-          receipt.sourceKey === session.sourceKey &&
-          receipt.key === attempt.key;
         const settlement = settlePreviewAttempt({
           generation: previewGeneration,
-          capturedOrigin: identifiesRequest && receipt.kind === "Previewed",
+          capturedOrigin: receipt.kind === "Previewed",
         });
         if (settlement.kind === "Current" && settlement.reprepare) {
           startPreparation({
@@ -659,10 +621,8 @@ export function usePaneFind<TError>({
         if (
           settlement.kind === "Stale" ||
           abort.signal.aborted ||
-          sessionIdRef.current !== receipt.sessionId ||
-          queryIdRef.current !== receipt.queryId ||
-          receipt.sourceKey !== session.sourceKey ||
-          receipt.key !== attempt.key
+          sessionIdRef.current !== session.sessionId ||
+          queryIdRef.current !== attempt.queryId
         ) {
           return false;
         }

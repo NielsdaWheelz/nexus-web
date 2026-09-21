@@ -101,6 +101,11 @@ revision-scoped result keys, one immutable **Go back to reading position**
 origin, and transient Companion results. Web articles and readable
 video/podcast transcripts, EPUBs, and PDFs use that shared lifecycle.
 
+the controller owns session/query identity and checks captured requests against
+current counters when promises settle. adapters return scopes and semantic
+results. preview settlement records a captured return origin before handling
+cancellation, so closing find during a completed move does not lose Return.
+
 `MediaPaneBody` selects one route-local adapter under one `usePaneFind`
 controller. Web searches every loaded canonical fragment and uses one
 `SearchPreview` lease beside the existing progress/activity owners. The lease

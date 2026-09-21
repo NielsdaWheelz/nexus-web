@@ -16,7 +16,6 @@ import {
 import {
   createEpubFindSnapshot,
   requestEpubFind,
-  type EpubFindRequest,
   type EpubFindResultOut,
   type EpubFindSnapshot,
   type EpubFindSnapshotFragment,
@@ -52,8 +51,6 @@ import {
 const ENTIRE_BOOK_SCOPE_ID = "EntireBook";
 const CURRENT_SECTION_SCOPE_PREFIX = "CurrentSection:";
 const RENDER_ATTEMPT_LIMIT = 48;
-
-export type EpubFindError = MediaPaneFindError;
 
 export interface EpubFindPreparedAnchor {
   readonly fragmentIdx: number;
@@ -104,25 +101,13 @@ interface EpubFindPreviewLease {
 }
 
 export interface EpubPaneFindAdapter
-  extends CanonicalTextFindAdapter<EpubFindError> {
+  extends CanonicalTextFindAdapter<MediaPaneFindError> {
   dispose(): void;
 }
 
 type EpubPaneFindCapability =
   | { readonly kind: "Unavailable" }
   | { readonly kind: "Available"; readonly adapter: EpubPaneFindAdapter };
-
-type FindOccurrences = (input: {
-  readonly mediaId: string;
-  readonly request: EpubFindRequest;
-  readonly signal: AbortSignal;
-}) => Promise<EpubFindResultOut>;
-
-type LoadFragment = (input: {
-  readonly mediaId: string;
-  readonly fragmentId: string;
-  readonly signal: AbortSignal;
-}) => Promise<EpubFragmentContent>;
 
 interface EpubFindAdapterInput {
   readonly snapshot: EpubFindSnapshot;
@@ -141,8 +126,6 @@ interface EpubFindAdapterInput {
   readonly focusReaderViewport: () => void;
   readonly presentation: CanonicalTextFindPresentationOwner;
   readonly scrollPositioner: ReaderScrollPositioner;
-  readonly findOccurrences?: FindOccurrences;
-  readonly loadFragment?: LoadFragment;
 }
 
 interface PreparedSession {
@@ -344,8 +327,6 @@ function createEpubFindAdapter({
   focusReaderViewport,
   presentation,
   scrollPositioner,
-  findOccurrences = requestEpubFind,
-  loadFragment = requestEpubFragment,
 }: EpubFindAdapterInput): EpubPaneFindAdapter {
   let preparedBySession = new Map<number, PreparedSession>();
   let occurrencesByKey = new Map<PaneFindResultKey, EpubFindOccurrence>();
@@ -552,26 +533,22 @@ function createEpubFindAdapter({
       preparedBySession = new Map([
         [request.sessionId, { anchor, narrowSectionId }],
       ]);
-      return {
-        sessionId: request.sessionId,
-        sourceKey: request.sourceKey,
-        scopes: [
-          {
-            kind: "EntireResource",
-            id: ENTIRE_BOOK_SCOPE_ID,
-            label: "Entire book",
-          },
-          ...(narrowSectionId
-            ? [
-                {
-                  kind: "Narrow" as const,
-                  id: `${CURRENT_SECTION_SCOPE_PREFIX}${narrowSectionId}`,
-                  label: "This section",
-                },
-              ]
-            : []),
-        ],
-      };
+      return [
+        {
+          kind: "EntireResource",
+          id: ENTIRE_BOOK_SCOPE_ID,
+          label: "Entire book",
+        },
+        ...(narrowSectionId
+          ? [
+              {
+                kind: "Narrow" as const,
+                id: `${CURRENT_SECTION_SCOPE_PREFIX}${narrowSectionId}`,
+                label: "This section",
+              },
+            ]
+          : []),
+      ];
     },
     async find(request) {
       assertCurrent(request.sourceKey);
@@ -592,7 +569,7 @@ function createEpubFindAdapter({
 
       let result: EpubFindResultOut;
       try {
-        result = await findOccurrences({
+        result = await requestEpubFind({
           mediaId: snapshot.mediaId,
           request: {
             source_witness_fragment_id:
@@ -618,9 +595,6 @@ function createEpubFindAdapter({
         ) {
           return {
             kind: "Failed",
-            sessionId: request.sessionId,
-            queryId: request.queryId,
-            sourceKey: request.sourceKey,
             error: { kind: "RequestUnavailable" },
           };
         }
@@ -634,18 +608,12 @@ function createEpubFindAdapter({
       if (result.kind === "NoMatches") {
         return {
           kind: "NoMatches",
-          sessionId: request.sessionId,
-          queryId: request.queryId,
-          sourceKey: request.sourceKey,
           completeness: "Complete",
         };
       }
       if (result.kind === "TooManyMatches") {
         return {
           kind: "TooManyMatches",
-          sessionId: request.sessionId,
-          queryId: request.queryId,
-          sourceKey: request.sourceKey,
           threshold: result.threshold,
         };
       }
@@ -704,9 +672,6 @@ function createEpubFindAdapter({
       );
       return {
         kind: "Ready",
-        sessionId: request.sessionId,
-        queryId: request.queryId,
-        sourceKey: request.sourceKey,
         completeness: "Complete",
         rows,
         initialActiveKey: initial.key,
@@ -714,7 +679,7 @@ function createEpubFindAdapter({
     },
     async preview(
       request,
-    ): Promise<PaneFindPreviewReceipt<EpubFindError>> {
+    ): Promise<PaneFindPreviewReceipt<MediaPaneFindError>> {
       assertCurrent(request.sourceKey);
       throwIfAborted(request.signal);
       const occurrence = occurrencesByKey.get(request.key);
@@ -729,10 +694,6 @@ function createEpubFindAdapter({
       if (!candidateOrigin) {
         return {
           kind: "Rejected",
-          sessionId: request.sessionId,
-          queryId: request.queryId,
-          sourceKey: request.sourceKey,
-          key: request.key,
           error: { kind: "OriginUnavailable" },
         };
       }
@@ -793,7 +754,7 @@ function createEpubFindAdapter({
           };
           let fragment: EpubFragmentContent;
           try {
-            fragment = await loadFragment({
+            fragment = await requestEpubFragment({
               mediaId: snapshot.mediaId,
               fragmentId: occurrence.fragmentId,
               signal: request.signal,
@@ -828,10 +789,6 @@ function createEpubFindAdapter({
               throwIfAborted(request.signal);
               return {
                 kind: "Rejected",
-                sessionId: request.sessionId,
-                queryId: request.queryId,
-                sourceKey: request.sourceKey,
-                key: request.key,
                 error: { kind: "RequestUnavailable" },
               };
             }
@@ -896,14 +853,7 @@ function createEpubFindAdapter({
         request.signal,
       );
       setAwaitingReaderAdoption(true);
-      return {
-        kind: "Previewed",
-        sessionId: request.sessionId,
-        queryId: request.queryId,
-        sourceKey: request.sourceKey,
-        key: request.key,
-        returnAvailable: true,
-      };
+      return { kind: "Previewed" };
     },
     async clearPresentation(request) {
       assertCurrent(request.sourceKey);

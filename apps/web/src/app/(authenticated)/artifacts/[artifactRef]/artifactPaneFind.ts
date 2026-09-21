@@ -74,26 +74,22 @@ export function createArtifactPaneFindAdapter(
       if (currentSessionId === request.sessionId) {
         currentSectionId = preparedSectionId;
       }
-      return {
-        sessionId: request.sessionId,
-        sourceKey: request.sourceKey,
-        scopes: [
-          {
-            kind: "EntireResource",
-            id: ENTIRE_SCOPE_ID,
-            label: "Entire dossier",
-          },
-          ...(prepared.currentSection.kind === "Present"
-            ? [
-                {
-                  kind: "Narrow" as const,
-                  id: CURRENT_SECTION_SCOPE_ID,
-                  label: "This section",
-                },
-              ]
-            : []),
-        ],
-      };
+      return [
+        {
+          kind: "EntireResource",
+          id: ENTIRE_SCOPE_ID,
+          label: "Entire dossier",
+        },
+        ...(prepared.currentSection.kind === "Present"
+          ? [
+              {
+                kind: "Narrow" as const,
+                id: CURRENT_SECTION_SCOPE_ID,
+                label: "This section",
+              },
+            ]
+          : []),
+      ];
     },
     async find(request) {
       assertCurrentSource(request.sourceKey, "query");
@@ -120,21 +116,14 @@ export function createArtifactPaneFindAdapter(
         wholeWord: request.wholeWord,
         signal: request.signal,
       });
-      const base = {
-        sessionId: request.sessionId,
-        queryId: request.queryId,
-        sourceKey: request.sourceKey,
-      } as const;
       switch (result.kind) {
         case "NoMatches":
           return {
-            ...base,
             kind: "NoMatches",
             completeness: "Complete",
           };
         case "TooManyMatches":
           return {
-            ...base,
             kind: "TooManyMatches",
             threshold: result.threshold,
           };
@@ -183,7 +172,6 @@ export function createArtifactPaneFindAdapter(
             );
           }
           return {
-            ...base,
             kind: "Ready",
             completeness: "Complete",
             rows,
@@ -216,20 +204,9 @@ export function createArtifactPaneFindAdapter(
         throw new Error("Artifact Find activated the wrong occurrence.");
       }
       return activation.kind === "Activated"
-        ? {
-            kind: "Previewed",
-            sessionId: request.sessionId,
-            queryId: request.queryId,
-            sourceKey: request.sourceKey,
-            key: request.key,
-            returnAvailable: true,
-          }
+        ? { kind: "Previewed" }
         : {
             kind: "Rejected",
-            sessionId: request.sessionId,
-            queryId: request.queryId,
-            sourceKey: request.sourceKey,
-            key: request.key,
             error: { kind: activation.reason },
           };
     },

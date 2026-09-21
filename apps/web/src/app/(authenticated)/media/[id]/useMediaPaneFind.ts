@@ -315,26 +315,22 @@ function createWebFindAdapter({
         }
       }
       preparedScopeBySession = new Map([[request.sessionId, preparedScope]]);
-      return {
-        sessionId: request.sessionId,
-        sourceKey: request.sourceKey,
-        scopes: [
-          {
-            kind: "EntireResource",
-            id: ENTIRE_ARTICLE_SCOPE_ID,
-            label: "Entire article",
-          },
-          ...(preparedScope
-            ? [
-                {
-                  kind: "Narrow" as const,
-                  id: preparedScope.id,
-                  label: "This section",
-                },
-              ]
-            : []),
-        ],
-      };
+      return [
+        {
+          kind: "EntireResource",
+          id: ENTIRE_ARTICLE_SCOPE_ID,
+          label: "Entire article",
+        },
+        ...(preparedScope
+          ? [
+              {
+                kind: "Narrow" as const,
+                id: preparedScope.id,
+                label: "This section",
+              },
+            ]
+          : []),
+      ];
     },
     async find(request) {
       assertCurrent(request.sourceKey);
@@ -382,18 +378,12 @@ function createWebFindAdapter({
       if (result.kind === "NoMatches") {
         return {
           kind: "NoMatches",
-          sessionId: request.sessionId,
-          queryId: request.queryId,
-          sourceKey: request.sourceKey,
           completeness: "Complete",
         };
       }
       if (result.kind === "TooManyMatches") {
         return {
           kind: "TooManyMatches",
-          sessionId: request.sessionId,
-          queryId: request.queryId,
-          sourceKey: request.sourceKey,
           threshold: result.threshold,
         };
       }
@@ -435,9 +425,6 @@ function createWebFindAdapter({
       }
       return {
         kind: "Ready",
-        sessionId: request.sessionId,
-        queryId: request.queryId,
-        sourceKey: request.sourceKey,
         completeness: "Complete",
         rows,
         initialActiveKey: initial.key,
@@ -458,10 +445,6 @@ function createWebFindAdapter({
       if (!candidateOrigin) {
         return {
           kind: "Rejected",
-          sessionId: request.sessionId,
-          queryId: request.queryId,
-          sourceKey: request.sourceKey,
-          key: request.key,
           error: { kind: "OriginUnavailable" },
         };
       }
@@ -478,14 +461,7 @@ function createWebFindAdapter({
           // The fragment switch itself is already a reversible move. Settle a
           // receipt so the foundation retains Return, but never repaint marks
           // that Close has concurrently cleared.
-          return {
-            kind: "Previewed",
-            sessionId: request.sessionId,
-            queryId: request.queryId,
-            sourceKey: request.sourceKey,
-            key: request.key,
-            returnAvailable: true,
-          };
+          return { kind: "Previewed" };
         }
         activeOccurrence = occurrence;
         publishCurrentRanges(rendered);
@@ -503,14 +479,7 @@ function createWebFindAdapter({
           const current = getRenderedState();
           if (current?.fragmentId === occurrence.fragmentId) {
             assertRenderedFragment(snapshot, current);
-            return {
-              kind: "Previewed",
-              sessionId: request.sessionId,
-              queryId: request.queryId,
-              sourceKey: request.sourceKey,
-              key: request.key,
-              returnAvailable: true,
-            };
+            return { kind: "Previewed" };
           }
           const restoreSignal = new AbortController().signal;
           await showPreviewFragment(candidateOrigin.fragmentId, restoreSignal);
@@ -532,14 +501,7 @@ function createWebFindAdapter({
         }
         throw error;
       }
-      return {
-        kind: "Previewed",
-        sessionId: request.sessionId,
-        queryId: request.queryId,
-        sourceKey: request.sourceKey,
-        key: request.key,
-        returnAvailable: true,
-      };
+      return { kind: "Previewed" };
     },
     async clearPresentation(request) {
       assertCurrent(request.sourceKey);

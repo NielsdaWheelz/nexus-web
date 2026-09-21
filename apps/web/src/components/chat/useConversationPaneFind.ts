@@ -136,17 +136,13 @@ function createConversationFindAdapter({
         sessionId: request.sessionId,
         units: prepareConversationFindUnits({ snapshot, transcript }),
       };
-      return {
-        sessionId: request.sessionId,
-        sourceKey: request.sourceKey,
-        scopes: [
-          {
-            kind: "EntireResource",
-            id: SELECTED_PATH_SCOPE_ID,
-            label: "Current fork",
-          },
-        ],
-      };
+      return [
+        {
+          kind: "EntireResource",
+          id: SELECTED_PATH_SCOPE_ID,
+          label: "Current fork",
+        },
+      ];
     },
     async find(request) {
       assertCurrent(request.sourceKey);
@@ -168,12 +164,7 @@ function createConversationFindAdapter({
       matchesByKey = new Map();
       if (matches.kind !== "Ready") {
         highlightOwner.clear();
-        return {
-          ...matches,
-          sessionId: request.sessionId,
-          queryId: request.queryId,
-          sourceKey: request.sourceKey,
-        };
+        return matches;
       }
       for (const occurrence of matches.occurrences) {
         matchesByKey.set(occurrence.key, {
@@ -191,9 +182,6 @@ function createConversationFindAdapter({
       }
       return {
         kind: "Ready",
-        sessionId: request.sessionId,
-        queryId: request.queryId,
-        sourceKey: request.sourceKey,
         completeness: "Complete",
         rows,
         initialActiveKey: initial.key,
@@ -214,10 +202,6 @@ function createConversationFindAdapter({
       if (!candidateOrigin) {
         return {
           kind: "Rejected",
-          sessionId: request.sessionId,
-          queryId: request.queryId,
-          sourceKey: request.sourceKey,
-          key: request.key,
           error: { kind: "OriginUnavailable" },
         };
       }
@@ -237,14 +221,7 @@ function createConversationFindAdapter({
       throwIfAborted(request.signal);
       highlightOwner.publish({ all: allRanges(), active: ranges });
       origin ??= candidateOrigin;
-      return {
-        kind: "Previewed",
-        sessionId: request.sessionId,
-        queryId: request.queryId,
-        sourceKey: request.sourceKey,
-        key: request.key,
-        returnAvailable: true,
-      };
+      return { kind: "Previewed" };
     },
     async clearPresentation(request) {
       if (

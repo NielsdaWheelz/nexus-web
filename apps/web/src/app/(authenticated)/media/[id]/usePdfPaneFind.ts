@@ -195,26 +195,6 @@ function scopeForRequest({
   throw new Error(`Unknown PDF Find scope: ${scopeId}`);
 }
 
-function failedResponse({
-  sessionId,
-  queryId,
-  sourceKey,
-  error,
-}: {
-  readonly sessionId: number;
-  readonly queryId: number;
-  readonly sourceKey: PaneFindSourceKey;
-  readonly error: PdfFindError;
-}) {
-  return {
-    kind: "Failed" as const,
-    sessionId,
-    queryId,
-    sourceKey,
-    error,
-  };
-}
-
 function createPdfFindAdapter({
   mediaId,
   runtime,
@@ -270,14 +250,6 @@ function createPdfFindAdapter({
     nextPreviewGeneration += 1;
     activePreviewGeneration = nextPreviewGeneration;
   };
-  const responseBase = ({
-    sessionId,
-    queryId,
-  }: {
-    readonly sessionId: number;
-    readonly queryId: number;
-  }) => ({ sessionId, queryId, sourceKey }) as const;
-
   return {
     sourceKey,
     async prepare(request) {
@@ -299,26 +271,22 @@ function createPdfFindAdapter({
       }
       preparedPageNumber =
         captured.kind === "Captured" ? captured.value.pageNumber : null;
-      return {
-        sessionId: request.sessionId,
-        sourceKey,
-        scopes: [
-          {
-            kind: "EntireResource",
-            id: ENTIRE_PDF_SCOPE_ID,
-            label: "Entire PDF",
-          },
-          ...(preparedPageNumber === null
-            ? []
-            : [
-                {
-                  kind: "Narrow" as const,
-                  id: `${PAGE_SCOPE_PREFIX}${preparedPageNumber}`,
-                  label: `This page (${preparedPageNumber})`,
-                },
-              ]),
-        ],
-      };
+      return [
+        {
+          kind: "EntireResource",
+          id: ENTIRE_PDF_SCOPE_ID,
+          label: "Entire PDF",
+        },
+        ...(preparedPageNumber === null
+          ? []
+          : [
+              {
+                kind: "Narrow" as const,
+                id: `${PAGE_SCOPE_PREFIX}${preparedPageNumber}`,
+                label: `This page (${preparedPageNumber})`,
+              },
+            ]),
+      ];
     },
     async find(request) {
       assertCurrent(request.sourceKey);
@@ -338,10 +306,10 @@ function createPdfFindAdapter({
       if (origin.kind === "Absent") {
         const captured = runtime.captureOrigin();
         if (captured.kind === "Unavailable") {
-          return failedResponse({
-            ...responseBase(request),
+          return {
+            kind: "Failed",
             error: { kind: "OriginUnavailable" },
-          });
+          };
         }
         assertPdfFindOrigin(captured.value, runtime.source.numPages);
         origin = { kind: "Provisional", value: captured.value };
@@ -388,31 +356,30 @@ function createPdfFindAdapter({
       if (result.generation !== query.generation) {
         throw new Error("PDF Find runtime settled the wrong generation.");
       }
-      const base = responseBase(request);
       switch (result.kind) {
         case "NoMatches":
           settleNeutralQuery(query);
-          return { ...base, kind: "NoMatches", completeness: "Complete" };
+          return { kind: "NoMatches", completeness: "Complete" };
         case "TooManyMatches":
           settleNeutralQuery(query);
           if (result.threshold !== 2_000) {
             throw new Error("PDF Find runtime returned an invalid match cap.");
           }
-          return { ...base, kind: "TooManyMatches", threshold: 2_000 };
+          return { kind: "TooManyMatches", threshold: 2_000 };
         case "TextUnavailable":
           settleNeutralQuery(query);
           return scope.kind === "Page"
-            ? { ...base, kind: "NoMatches", completeness: "Complete" }
-            : failedResponse({
-                ...base,
+            ? { kind: "NoMatches", completeness: "Complete" }
+            : {
+                kind: "Failed",
                 error: { kind: "TextUnavailable", scope: "EntirePdf" },
-              });
+              };
         case "RuntimeUnavailable":
           settleNeutralQuery(query);
-          return failedResponse({
-            ...base,
+          return {
+            kind: "Failed",
             error: { kind: "RuntimeUnavailable" },
-          });
+          };
         case "Ready": {
           if (
             result.occurrences.length === 0 ||
@@ -465,7 +432,6 @@ function createPdfFindAdapter({
             throw new Error("PDF Find Ready requires an initial occurrence.");
           }
           return {
-            ...base,
             kind: "Ready",
             completeness: "Complete",
             rows,
@@ -512,8 +478,6 @@ function createPdfFindAdapter({
           }
           return {
             kind: "Rejected",
-            ...responseBase(request),
-            key: request.key,
             error: { kind: "OriginUnavailable" },
           };
         }
@@ -566,8 +530,6 @@ function createPdfFindAdapter({
           }
           return {
             kind: "Rejected",
-            ...responseBase(request),
-            key: request.key,
             error: { kind: "RuntimeUnavailable" },
           };
         } finally {
@@ -586,12 +548,7 @@ function createPdfFindAdapter({
       if (activePreviewInFlightGeneration === previewGeneration) {
         activePreviewInFlightGeneration = null;
       }
-      return {
-        kind: "Previewed",
-        ...responseBase(request),
-        key: request.key,
-        returnAvailable: true,
-      };
+      return { kind: "Previewed" };
     },
     async clearPresentation(request) {
       assertCurrent(request.sourceKey);
