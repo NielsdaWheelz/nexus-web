@@ -94,17 +94,12 @@ export type NexusHistorySource =
   | "Search"
   | "Ai";
 
-export type AddSeed =
-  | {
-      readonly kind: "Content";
-      readonly initialFocus: "Url" | "File";
-      readonly initialDestinations: readonly LibraryDestinationSelection[];
-      readonly initialUrlDraft?: string;
-    }
-  | {
-      readonly kind: "Opml";
-      readonly initialDestinations: readonly LibraryDestinationSelection[];
-    };
+export interface AddSeed {
+  readonly kind: "Content";
+  readonly initialFocus: "Url" | "File";
+  readonly initialDestinations: readonly LibraryDestinationSelection[];
+  readonly initialUrlDraft?: string;
+}
 
 export interface NexusTargetActivation {
   readonly disposition: WorkspaceTargetDisposition;

@@ -755,15 +755,7 @@ export default function PodcastsPaneBody() {
           ? { kind: "Pending" }
           : { kind: "Count", value: finalCount, unit: "show" },
     },
-    menuActions: [
-      ...PODCASTS_ACTIONS,
-      {
-        kind: "link",
-        id: "Podcasts.ExportOpml",
-        label: "Export OPML",
-        href: "/api/podcasts/export/opml",
-      },
-    ],
+    menuActions: PODCASTS_ACTIONS,
     search: subscriptionFilterRows.publication,
     refresh: {
       kind: "Refreshable",

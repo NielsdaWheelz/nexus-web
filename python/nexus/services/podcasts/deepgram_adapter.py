@@ -1,4 +1,4 @@
-"""Deepgram transcription provider behind a port."""
+"""Deepgram transcription provider behind a narrow port."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from nexus.services.url_normalize import validate_requested_url
 
 logger = get_logger(__name__)
 
-_DEEPGRAM_LISTEN_PATH = "/v1/listen"
+_LISTEN_PATH = "/v1/listen"
 
 TerminalTranscriptionErrorCode = Literal[
     "E_TRANSCRIPT_UNAVAILABLE",
@@ -26,7 +26,7 @@ TerminalTranscriptionErrorCode = Literal[
 
 @dataclass(frozen=True)
 class TranscriptionResult:
-    """Provider-owned result for a single podcast transcription attempt."""
+    """Provider-owned result for a single transcription attempt."""
 
     status: Literal["completed", "failed"]
     segments: list[dict[str, Any]] = field(default_factory=list)
@@ -36,72 +36,61 @@ class TranscriptionResult:
 
 
 class DeepgramClient:
-    """Thin client for Deepgram listen transcription with diarization fallback."""
+    """Deepgram listen transcription with a non-diarized fallback."""
 
-    def __init__(
-        self,
-        *,
-        api_key: str | None,
-        base_url: str,
-        model: str,
-        timeout_seconds: float,
-    ):
+    def __init__(self, *, api_key: str | None, base_url: str, model: str, timeout_seconds: float):
         self.api_key = api_key
         self.base_url = base_url
         self.model = model
         self.timeout_seconds = timeout_seconds
 
     def transcribe(self, audio_url: str | None) -> TranscriptionResult:
+        """Transcribe a remote audio URL, retrying once without diarization."""
         normalized_audio_url = str(audio_url or "").strip()
-        if not normalized_audio_url:
-            return _transcription_failure_result(
-                ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
-                "Transcript unavailable",
-            )
-
         try:
             validate_requested_url(normalized_audio_url)
         except InvalidRequestError:
-            return _transcription_failure_result(
-                ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
-                "Transcript unavailable",
-            )
+            return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
+        self._require_credentials()
 
-        if not self.api_key:
-            raise RuntimeError("Transcription provider credentials are not configured")
-
-        diarized_result = self._transcribe_with_deepgram(normalized_audio_url, diarize=True)
-        if diarized_result.status == "completed":
+        diarized = self._listen(
+            params={"diarize": "true", "utterances": "true"},
+            json_body={"url": normalized_audio_url},
+        )
+        if diarized.status == "completed":
+            return diarized
+        fallback = self._listen(
+            params={"diarize": "false", "utterances": "true"},
+            json_body={"url": normalized_audio_url},
+        )
+        if fallback.status == "completed":
             return TranscriptionResult(
                 status="completed",
-                segments=diarized_result.segments,
-                diagnostic_error_code=None,
-            )
-
-        fallback_result = self._transcribe_with_deepgram(normalized_audio_url, diarize=False)
-        if fallback_result.status == "completed":
-            return TranscriptionResult(
-                status="completed",
-                segments=fallback_result.segments,
+                segments=fallback.segments,
                 diagnostic_error_code=ApiErrorCode.E_DIARIZATION_FAILED.value,
             )
-
-        return fallback_result
+        return fallback
 
     def transcribe_raw_audio(self, audio_bytes: bytes, content_type: str) -> TranscriptionResult:
-        """Transcribe raw audio bytes via Deepgram /v1/listen.
+        """Transcribe raw audio bytes posted directly as the request body."""
+        self._require_credentials()
+        return self._listen(params={}, content=audio_bytes, content_type=content_type)
 
-        Posts the bytes directly as the request body with the given Content-Type.
-        Uses the same params as the non-diarized URL path (no diarization for short
-        clips).
-        """
+    def _require_credentials(self) -> None:
         if not self.api_key:
             raise RuntimeError("Transcription provider credentials are not configured")
 
-        request_url = f"{self.base_url.rstrip('/')}{_DEEPGRAM_LISTEN_PATH}"
+    def _listen(
+        self,
+        *,
+        params: dict[str, str],
+        json_body: dict[str, str] | None = None,
+        content: bytes | None = None,
+        content_type: str = "application/json",
+    ) -> TranscriptionResult:
         try:
             response = httpx.post(
-                request_url,
+                f"{self.base_url.rstrip('/')}{_LISTEN_PATH}",
                 headers={
                     "Authorization": f"Token {self.api_key}",
                     "Content-Type": content_type,
@@ -111,198 +100,105 @@ class DeepgramClient:
                     "smart_format": "true",
                     "punctuate": "true",
                     "language": "en",
+                    **params,
                 },
-                content=audio_bytes,
+                json=json_body,
+                content=content,
                 timeout=self.timeout_seconds,
             )
             response.raise_for_status()
             payload = response.json()
         except httpx.TimeoutException:
-            return _transcription_failure_result(
-                ApiErrorCode.E_TRANSCRIPTION_TIMEOUT.value,
-                "Transcription timed out",
-            )
+            return _failure(ApiErrorCode.E_TRANSCRIPTION_TIMEOUT.value, "Transcription timed out")
         except httpx.HTTPStatusError as exc:
-            code = (
+            logger.warning("deepgram_provider_http_error", status_code=exc.response.status_code)
+            return _failure(
                 ApiErrorCode.E_TRANSCRIPTION_TIMEOUT.value
                 if exc.response.status_code in {408, 504}
-                else ApiErrorCode.E_TRANSCRIPTION_FAILED.value
-            )
-            logger.warning(
-                "walknote_transcription_provider_http_error",
-                content_type=content_type,
-                byte_count=len(audio_bytes),
-                status_code=exc.response.status_code,
-            )
-            return _transcription_failure_result(code, "Transcription failed")
-        except (httpx.HTTPError, ValueError) as exc:
-            logger.warning(
-                "walknote_transcription_provider_request_failed",
-                content_type=content_type,
-                byte_count=len(audio_bytes),
-                error=str(exc),
-            )
-            return _transcription_failure_result(
-                ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
+                else ApiErrorCode.E_TRANSCRIPTION_FAILED.value,
                 "Transcription failed",
             )
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("deepgram_provider_request_failed", error=str(exc))
+            return _failure(ApiErrorCode.E_TRANSCRIPTION_FAILED.value, "Transcription failed")
 
-        segments = _extract_deepgram_segments(payload)
+        segments = _extract_segments(payload)
         if not segments:
-            return _transcription_failure_result(
-                ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
-                "Transcript unavailable",
-            )
-
-        return TranscriptionResult(status="completed", segments=segments)
-
-    def _transcribe_with_deepgram(self, audio_url: str, *, diarize: bool) -> TranscriptionResult:
-        request_url = f"{self.base_url.rstrip('/')}{_DEEPGRAM_LISTEN_PATH}"
-        diarize_str = "true" if diarize else "false"
-        response = httpx.post(
-            request_url,
-            headers={
-                "Authorization": f"Token {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            params={
-                "model": self.model,
-                "diarize": diarize_str,
-                "utterances": "true",
-                "smart_format": "true",
-                "punctuate": "true",
-                "language": "en",
-            },
-            json={"url": audio_url},
-            timeout=self.timeout_seconds,
-        )
-        response.raise_for_status()
-        payload = response.json()
-
-        segments = _extract_deepgram_segments(payload)
-        if not segments:
-            return _transcription_failure_result(
-                ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value,
-                "Transcript unavailable",
-            )
-
+            return _failure(ApiErrorCode.E_TRANSCRIPT_UNAVAILABLE.value, "Transcript unavailable")
         return TranscriptionResult(status="completed", segments=segments)
 
 
 def get_deepgram_client() -> DeepgramClient:
-    s = get_settings()
+    settings = get_settings()
     return DeepgramClient(
-        api_key=s.deepgram_api_key,
-        base_url=s.deepgram_base_url,
-        model=s.deepgram_model,
-        timeout_seconds=s.podcast_transcription_timeout_seconds,
+        api_key=settings.deepgram_api_key,
+        base_url=settings.deepgram_base_url,
+        model=settings.deepgram_model,
+        timeout_seconds=settings.podcast_transcription_timeout_seconds,
     )
 
 
-def _transcription_failure_result(
-    error_code: TerminalTranscriptionErrorCode, error_message: str
-) -> TranscriptionResult:
-    return TranscriptionResult(
-        status="failed",
-        error_code=error_code,
-        error_message=error_message,
-    )
+def _failure(error_code: TerminalTranscriptionErrorCode, error_message: str) -> TranscriptionResult:
+    return TranscriptionResult(status="failed", error_code=error_code, error_message=error_message)
 
 
-def _extract_deepgram_segments(payload: Any) -> list[dict[str, Any]]:
-    if not isinstance(payload, dict):
-        raise ValueError("Deepgram response must be an object")
-    results = payload.get("results")
+def _extract_segments(payload: Any) -> list[dict[str, Any]]:
+    """Prefer diarized utterances, else the first channel's whole transcript."""
+    results = payload.get("results") if isinstance(payload, dict) else None
     if not isinstance(results, dict):
         raise ValueError("Deepgram response is missing results")
 
-    utterances = results.get("utterances")
-    if isinstance(utterances, list):
-        segments: list[dict[str, Any]] = []
-        for utterance in utterances:
-            if not isinstance(utterance, dict):
-                continue
-            transcript = str(utterance.get("transcript") or "").strip()
-            if not transcript:
-                continue
-            t_start_ms = _seconds_to_ms(utterance.get("start"))
-            t_end_ms = _seconds_to_ms(utterance.get("end"))
-            if t_start_ms is None or t_end_ms is None:
-                continue
-            speaker_value = utterance.get("speaker")
-            speaker_label = str(speaker_value).strip() if speaker_value is not None else None
-            if speaker_label == "":
-                speaker_label = None
-            segments.append(
-                {
-                    "text": transcript,
-                    "t_start_ms": t_start_ms,
-                    "t_end_ms": t_end_ms,
-                    "speaker_label": speaker_label,
-                }
-            )
-        if segments:
-            return segments
+    segments: list[dict[str, Any]] = []
+    for utterance in results.get("utterances") or []:
+        if not isinstance(utterance, dict):
+            continue
+        transcript = str(utterance.get("transcript") or "").strip()
+        t_start_ms = _seconds_to_ms(utterance.get("start"))
+        t_end_ms = _seconds_to_ms(utterance.get("end"))
+        if not transcript or t_start_ms is None or t_end_ms is None:
+            continue
+        speaker = utterance.get("speaker")
+        segments.append(
+            {
+                "text": transcript,
+                "t_start_ms": t_start_ms,
+                "t_end_ms": t_end_ms,
+                "speaker_label": (str(speaker).strip() or None) if speaker is not None else None,
+            }
+        )
+    if segments:
+        return segments
 
-    channels = results.get("channels")
-    if not isinstance(channels, list) or not channels:
-        return []
-    first_channel = channels[0]
-    if not isinstance(first_channel, dict):
-        return []
-    alternatives = first_channel.get("alternatives")
-    if not isinstance(alternatives, list) or not alternatives:
-        return []
-    first_alt = alternatives[0]
-    if not isinstance(first_alt, dict):
-        return []
-
-    transcript = str(first_alt.get("transcript") or "").strip()
-    duration_seconds = None
+    alternatives = _first_dict(_first_dict(results.get("channels")).get("alternatives"))
+    transcript = str(alternatives.get("transcript") or "").strip()
     metadata = payload.get("metadata")
-    if isinstance(metadata, dict):
-        duration_seconds = metadata.get("duration")
-    duration_ms = _seconds_to_ms(duration_seconds)
+    duration_ms = _seconds_to_ms(metadata.get("duration") if isinstance(metadata, dict) else None)
     if duration_ms is None:
-        words = first_alt.get("words")
-        duration_ms = _word_range_end_ms(words)
+        duration_ms = max(
+            (
+                end_ms
+                for word in alternatives.get("words") or []
+                if isinstance(word, dict)
+                and (end_ms := _seconds_to_ms(word.get("end"))) is not None
+            ),
+            default=None,
+        )
     if not transcript or duration_ms is None:
         return []
+    return [{"text": transcript, "t_start_ms": 0, "t_end_ms": duration_ms, "speaker_label": None}]
 
-    return [
-        {
-            "text": transcript,
-            "t_start_ms": 0,
-            "t_end_ms": duration_ms,
-            "speaker_label": None,
-        }
-    ]
+
+def _first_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, list) and value and isinstance(value[0], dict):
+        return value[0]
+    return {}
 
 
 def _seconds_to_ms(raw_value: Any) -> int | None:
-    if raw_value is None:
-        return None
     try:
         seconds = float(raw_value)
     except (TypeError, ValueError):
         return None
-    if not math.isfinite(seconds):
-        return None
-    if seconds < 0:
+    if not math.isfinite(seconds) or seconds < 0:
         return None
     return int(round(seconds * 1000))
-
-
-def _word_range_end_ms(raw_words: Any) -> int | None:
-    if not isinstance(raw_words, list) or not raw_words:
-        return None
-    max_end_ms: int | None = None
-    for word in raw_words:
-        if not isinstance(word, dict):
-            continue
-        end_ms = _seconds_to_ms(word.get("end"))
-        if end_ms is None:
-            continue
-        if max_end_ms is None or end_ms > max_end_ms:
-            max_end_ms = end_ms
-    return max_end_ms

@@ -1,4 +1,4 @@
-"""Durable, lease-fenced Podcast subscription history traversal."""
+"""Durable, step-fenced Podcast subscription history traversal."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from nexus.db.retries import retry_read_committed
@@ -36,46 +35,21 @@ def seed_subscription_backfill_in_current_transaction(
     subscription_id: UUID,
     cutoff_at: datetime,
 ) -> UUID:
-    """Create the one current backfill and its first durable job."""
+    """Create the one current backfill and its first durable step job."""
     backfill_id = new_uuid7()
     db.execute(
         text(
             """
             INSERT INTO podcast_subscription_backfills (
-                id,
-                subscription_id,
-                cutoff_at,
-                step_no,
-                cursor,
-                processed_count,
-                added_count,
-                created_at,
-                updated_at
+                id, subscription_id, cutoff_at, step_no, cursor,
+                processed_count, added_count, created_at, updated_at
             )
-            VALUES (
-                :id,
-                :subscription_id,
-                :cutoff_at,
-                0,
-                NULL,
-                0,
-                0,
-                now(),
-                now()
-            )
+            VALUES (:id, :subscription_id, :cutoff_at, 0, NULL, 0, 0, now(), now())
             """
         ),
-        {
-            "id": backfill_id,
-            "subscription_id": subscription_id,
-            "cutoff_at": cutoff_at,
-        },
+        {"id": backfill_id, "subscription_id": subscription_id, "cutoff_at": cutoff_at},
     )
-    enqueue_backfill_step_in_current_transaction(
-        db,
-        backfill_id=backfill_id,
-        step_no=0,
-    )
+    enqueue_backfill_step_in_current_transaction(db, backfill_id=backfill_id, step_no=0)
     return backfill_id
 
 
@@ -84,18 +58,14 @@ def enqueue_backfill_step_in_current_transaction(
     *,
     backfill_id: UUID,
     step_no: int,
-) -> bool:
-    _, inserted = enqueue_unique_job(
+) -> None:
+    enqueue_unique_job(
         db,
         kind=BACKFILL_JOB_KIND,
-        payload={
-            "backfillId": str(backfill_id),
-            "expectedStepNo": int(step_no),
-        },
+        payload={"backfillId": str(backfill_id), "expectedStepNo": int(step_no)},
         dedupe_key=f"podcast-backfill:{backfill_id}:{step_no}",
         max_attempts=3,
     )
-    return inserted
 
 
 def run_backfill_step(
@@ -105,25 +75,19 @@ def run_backfill_step(
     context: JobExecutionContext,
 ) -> dict[str, Any]:
     """Fetch outside a transaction, then apply one exactly-once fenced step."""
-    backfill_id, expected_step_no = _decode_payload(payload)
+    backfill_id = UUID(str(payload["backfillId"]))
+    expected_step_no = int(payload["expectedStepNo"])
     preflight = (
         db.execute(
             text(
                 """
-            SELECT
-                backfill.step_no,
-                backfill.cursor,
-                backfill.cutoff_at,
-                subscription.user_id,
-                subscription.podcast_id,
-                podcast.feed_url
-            FROM podcast_subscription_backfills backfill
-            JOIN podcast_subscriptions subscription
-              ON subscription.id = backfill.subscription_id
-            JOIN podcasts podcast
-              ON podcast.id = subscription.podcast_id
-            WHERE backfill.id = :backfill_id
-            """
+                SELECT backfill.step_no, backfill.cursor, podcast.feed_url
+                FROM podcast_subscription_backfills backfill
+                JOIN podcast_subscriptions subscription
+                  ON subscription.id = backfill.subscription_id
+                JOIN podcasts podcast ON podcast.id = subscription.podcast_id
+                WHERE backfill.id = :backfill_id
+                """
             ),
             {"backfill_id": backfill_id},
         )
@@ -133,55 +97,41 @@ def run_backfill_step(
     db.rollback()
     if preflight is None:
         return {"status": "StaleOrUnsubscribed"}
-    if int(preflight["step_no"]) > expected_step_no:
-        return {"status": "AlreadyApplied"}
     if int(preflight["step_no"]) != expected_step_no:
-        # justify-service-invariant-check: a job is only enqueued after the fence
-        # advances to its step, so its expected step never exceeds the durable one.
-        # justify-defect: a job naming a step ahead of the fence is corruption.
-        raise RuntimeError("Podcast backfill job names a future step")
-    current_cursor = _coerce_cursor(preflight["cursor"])
+        return {"status": "AlreadyApplied"}
 
-    fetched = fetch_feed_backfill_page(
-        feed_url=str(preflight["feed_url"]),
-        cursor=current_cursor,
-    )
+    page_url, visited = _decode_cursor(preflight["cursor"], feed_url=str(preflight["feed_url"]))
+    fetched = fetch_feed_backfill_page(page_url=page_url, visited=visited)
 
     def apply() -> dict[str, Any]:
         with transaction(db):
             if (
                 lock_and_renew_running_job_claim(
-                    db,
-                    context=context,
-                    lease_seconds=BACKFILL_JOB_LEASE_SECONDS,
+                    db, context=context, lease_seconds=BACKFILL_JOB_LEASE_SECONDS
                 )
                 is None
             ):
                 return {"status": "StaleJobAttempt"}
-
             row = (
                 db.execute(
                     text(
                         """
-                    SELECT
-                        backfill.subscription_id,
-                        backfill.cutoff_at,
-                        backfill.step_no,
-                        backfill.cursor,
-                        backfill.completed_at,
-                        backfill.source_limited_at,
-                        backfill.failed_at,
-                        subscription.user_id,
-                        subscription.podcast_id,
-                        podcast.feed_url
-                    FROM podcast_subscription_backfills backfill
-                    JOIN podcast_subscriptions subscription
-                      ON subscription.id = backfill.subscription_id
-                    JOIN podcasts podcast
-                      ON podcast.id = subscription.podcast_id
-                    WHERE backfill.id = :backfill_id
-                    FOR UPDATE OF backfill
-                    """
+                        SELECT
+                            backfill.cutoff_at,
+                            backfill.step_no,
+                            backfill.completed_at,
+                            backfill.source_limited_at,
+                            backfill.failed_at,
+                            subscription.user_id,
+                            subscription.podcast_id,
+                            podcast.feed_url
+                        FROM podcast_subscription_backfills backfill
+                        JOIN podcast_subscriptions subscription
+                          ON subscription.id = backfill.subscription_id
+                        JOIN podcasts podcast ON podcast.id = subscription.podcast_id
+                        WHERE backfill.id = :backfill_id
+                        FOR UPDATE OF backfill
+                        """
                     ),
                     {"backfill_id": backfill_id},
                 )
@@ -190,24 +140,15 @@ def run_backfill_step(
             )
             if row is None:
                 return {"status": "StaleOrUnsubscribed"}
-
-            actual_step_no = int(row["step_no"])
-            if actual_step_no > expected_step_no:
-                return {"status": "AlreadyApplied"}
-            if actual_step_no < expected_step_no:
-                # justify-service-invariant-check: the locked fence row only advances
-                # forward, never behind a job that named its step.
-                # justify-defect: a job naming a step ahead of the locked fence is corruption.
-                raise RuntimeError("Podcast backfill job names a future step")
-            if any(
+            if int(row["step_no"]) != expected_step_no or any(
                 row[field] is not None
                 for field in ("completed_at", "source_limited_at", "failed_at")
             ):
                 return {"status": "AlreadyApplied"}
 
             cutoff_at = row["cutoff_at"]
-            selected: list[dict[str, Any]] = []
             source_limited = fetched.source_limited
+            selected: list[dict[str, Any]] = []
             for episode in sorted(fetched.episodes, key=_newest_first_key):
                 published_at = parse_iso_datetime(episode.get("published_at"))
                 if published_at is not None and published_at > cutoff_at:
@@ -217,53 +158,23 @@ def run_backfill_step(
                     continue
                 selected.append(episode)
 
-            now = db.scalar(text("SELECT transaction_timestamp()"))
-            if not isinstance(now, datetime):
-                # justify-service-invariant-check: transaction_timestamp() always returns
-                # the open transaction's start time as a datetime.
-                # justify-defect: a missing transaction timestamp means the session is broken.
-                raise AssertionError("database transaction timestamp is unavailable")
-            podcast_id = UUID(str(row["podcast_id"]))
-            subscription_id = UUID(str(row["subscription_id"]))
-            if (
-                db.execute(
-                    text(
-                        """
-                        SELECT 1
-                        FROM podcast_subscriptions
-                        WHERE id = :subscription_id
-                          AND podcast_id = :podcast_id
-                        FOR UPDATE
-                        """
-                    ),
-                    {
-                        "subscription_id": subscription_id,
-                        "podcast_id": podcast_id,
-                    },
-                ).first()
-                is None
-            ):
-                return {"status": "StaleOrUnsubscribed"}
-            # sync_subscription_ingest re-acquires the identical candidate-alias
-            # locks (in canonical order) plus the parent Podcast row FOR UPDATE as
-            # its first action, so no separate parent-alias lock is taken here.
+            # sync_subscription_ingest re-acquires the candidate-alias locks in
+            # canonical order plus the parent Podcast row, so nothing is locked here.
             result = sync_subscription_ingest(
                 db=db,
                 viewer_id=UUID(str(row["user_id"])),
-                podcast_id=podcast_id,
+                podcast_id=UUID(str(row["podcast_id"])),
                 feed_url=str(row["feed_url"]),
                 selected_episodes=selected,
-                now=now,
+                now=db.execute(text("SELECT transaction_timestamp()")).scalar_one(),
             )
-            next_step_no = actual_step_no + 1
             next_cursor = None if source_limited else fetched.next_cursor
             terminal_complete = next_cursor is None and not source_limited
-            updated = db.execute(
+            db.execute(
                 text(
                     """
                     UPDATE podcast_subscription_backfills
-                    SET
-                        step_no = :next_step_no,
+                    SET step_no = :next_step_no,
                         cursor = CAST(:next_cursor AS jsonb),
                         processed_count = processed_count + :processed_count,
                         added_count = added_count + :added_count,
@@ -271,20 +182,16 @@ def run_backfill_step(
                         completed_at =
                             CASE WHEN :complete THEN transaction_timestamp() ELSE NULL END,
                         source_limited_at =
-                            CASE
-                                WHEN :source_limited THEN transaction_timestamp()
-                                ELSE NULL
-                            END,
+                            CASE WHEN :source_limited THEN transaction_timestamp() ELSE NULL END,
                         updated_at = transaction_timestamp()
-                    WHERE id = :backfill_id
-                      AND step_no = :expected_step_no
+                    WHERE id = :backfill_id AND step_no = :expected_step_no
                     """
                 ),
                 {
                     "backfill_id": backfill_id,
-                    "next_step_no": next_step_no,
+                    "next_step_no": expected_step_no + 1,
                     "next_cursor": (
-                        json.dumps(next_cursor, sort_keys=True) if next_cursor is not None else None
+                        None if next_cursor is None else json.dumps(next_cursor, sort_keys=True)
                     ),
                     "processed_count": len(fetched.episodes),
                     "added_count": result.added_to_subscriber_all_count,
@@ -293,16 +200,9 @@ def run_backfill_step(
                     "source_limited": source_limited,
                 },
             )
-            if not isinstance(updated, CursorResult) or updated.rowcount != 1:
-                # justify-service-invariant-check: the backfill row is held FOR UPDATE at
-                # the matched step for the life of this transaction.
-                # justify-defect: the fenced update must strike exactly the locked row.
-                raise AssertionError("locked Podcast backfill fence update affected no row")
             if next_cursor is not None:
                 enqueue_backfill_step_in_current_transaction(
-                    db,
-                    backfill_id=backfill_id,
-                    step_no=next_step_no,
+                    db, backfill_id=backfill_id, step_no=expected_step_no + 1
                 )
             return {
                 "status": "Applied",
@@ -314,26 +214,18 @@ def run_backfill_step(
     return retry_read_committed(db, "podcast_backfill_step", apply)
 
 
-def _decode_payload(payload: Mapping[str, Any]) -> tuple[UUID, int]:
-    backfill_id = UUID(str(payload["backfillId"]))
-    expected_step_no = int(payload["expectedStepNo"])
-    if expected_step_no < 0:
-        raise ValueError("Invalid Podcast backfill fence")
-    return backfill_id, expected_step_no
-
-
-def _coerce_cursor(value: object) -> dict[str, object] | None:
+def _decode_cursor(value: object, *, feed_url: str) -> tuple[str, tuple[str, ...]]:
+    """Read the durable traversal position: the feed head, or a visited chain."""
     if value is None:
-        return None
-    if not isinstance(value, dict):
-        # justify-service-invariant-check: the cursor column is a jsonb object or NULL.
-        # justify-defect: a non-object cursor is schema corruption.
-        raise RuntimeError("Podcast backfill cursor is not an object")
-    return {str(key): item for key, item in value.items()}
+        return feed_url, ()
+    cursor = dict(value) if isinstance(value, dict) else {}
+    visited = cursor.get("visited")
+    return (
+        str(cursor.get("url") or ""),
+        tuple(str(entry) for entry in visited) if isinstance(visited, list) else (),
+    )
 
 
 def _newest_first_key(episode: Mapping[str, Any]) -> tuple[int, float]:
     published_at = parse_iso_datetime(episode.get("published_at"))
-    if published_at is None:
-        return (1, 0.0)
-    return (0, -published_at.timestamp())
+    return (1, 0.0) if published_at is None else (0, -published_at.timestamp())
