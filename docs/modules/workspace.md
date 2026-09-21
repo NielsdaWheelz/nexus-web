@@ -148,7 +148,7 @@ A resource pane publishes only its canonical `actionSubject`
 `menuActions` through `ContextualActionMenu`; the unchanged canonical resource
 descriptors are one ordered contiguous suffix
 (`canonical-resource-action-menu-hard-cutover.md`). Membership, current verb,
-order, and danger-last come from the server action snapshot and pure planner,
+order, and danger-last come from the server action snapshot and direct menu projection,
 so the pane menu includes `Open`. Pane bodies never build resource action
 arrays.
 

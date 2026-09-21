@@ -1,16 +1,4 @@
-"""Universal Dossier value types (CP2-TYPES).
-
-The closed vocabulary the generic dossier engine, subject policies, and bindings
-share: the server-derived :class:`AudienceScope`, the decoded
-:class:`DossierSubjectLocator`, the closed failure/phase/event enums, the strict
-persisted build-event payloads, the :class:`BuildTicket` create outcome, and the
-typed API errors. No database, no engine orchestration — pure owned values
-(``docs/rules/boundaries.md`` internal representation).
-
-Identity keys per CONTRACTS.md A2/A5/A7/A8/A19: a dossier head is unique by
-``(subject_scheme, subject_id, audience_scheme, audience_id)``; the audience is
-always derived server-side and is one of exactly two schemes.
-"""
+"""Closed owned values shared by the dossier engine, bindings, and routes."""
 
 from __future__ import annotations
 
@@ -24,18 +12,11 @@ from pydantic import BaseModel, ConfigDict
 
 from nexus.errors import ApiError, ApiErrorCode, ConflictError, InvalidRequestError, NotFoundError
 from nexus.schemas.presence import Presence
-from nexus.services.contributor_taxonomy import ContributorHandle
-from nexus.services.resource_graph.refs import ResourceRef
-
-# ---------------------------------------------------------------------------
-# Audience scope (A2) — closed, server-derived, never client-supplied.
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
 class AudienceUser:
-    """The requesting/owning user is the audience (Media, Podcast, Contributor,
-    Page, Note, and owner-User Conversation dossiers)."""
+    """The requesting user is the audience (every subject except Library)."""
 
     user_id: UUID
 
@@ -50,7 +31,7 @@ class AudienceUser:
 
 @dataclass(frozen=True, slots=True)
 class AudienceLibrary:
-    """A whole library is the audience (Library dossiers)."""
+    """A whole library is the audience; every member reads the one head."""
 
     library_id: UUID
 
@@ -63,45 +44,11 @@ class AudienceLibrary:
         return self.library_id
 
 
-# The closed audience union. `.scheme` / `.audience_id` are the two persisted
-# head columns; keep the rich variant while it flows through owned logic.
 AudienceScope = AudienceUser | AudienceLibrary
 
 
-# ---------------------------------------------------------------------------
-# Subject locator (A2) — decoded once from the route, never re-parsed downstream.
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class SubjectResource:
-    """A resource-schemed subject (Media, Conversation, Library, Podcast, Page,
-    NoteBlock). Cannot carry a contributor."""
-
-    ref: ResourceRef
-
-
-@dataclass(frozen=True, slots=True)
-class SubjectContributor:
-    """The Author subject, resolved from its outward handle server-side; the
-    private contributor id is never exposed through the locator."""
-
-    handle: ContributorHandle
-
-
-DossierSubjectLocator = SubjectResource | SubjectContributor
-
-
-# ---------------------------------------------------------------------------
-# Closed code enums (A7/A8) — StrEnum so `str(member)` is the bare wire value
-# stored in and compared against the text columns (naming.md: PascalCase).
-# ---------------------------------------------------------------------------
-
-
 class DossierBuildFailureCode(StrEnum):
-    """The only codes that become an ``artifact_build_failures`` row. Everything
-    else (unexpected exceptions, invariant violations, retry exhaustion,
-    unreconciled Uncertain) is a defect — there is no generic Internal code."""
+    """The only codes that become an ``artifact_build_failures`` row."""
 
     NoSourceMaterial = "NoSourceMaterial"
     InputsChanged = "InputsChanged"
@@ -120,8 +67,7 @@ class DossierBuildFailureCode(StrEnum):
 
 
 class ArtifactBuildEventType(StrEnum):
-    """The persisted, sequenced build-event log types (A5). Stored in
-    ``artifact_build_events.event_type`` (append-only, storage-enum CHECK)."""
+    """``artifact_build_events.event_type``; closed by the storage CHECK."""
 
     Started = "Started"
     Progress = "Progress"
@@ -130,67 +76,37 @@ class ArtifactBuildEventType(StrEnum):
     Cancelled = "Cancelled"
 
 
-# ---------------------------------------------------------------------------
-# Persisted build-event payloads (A5 §678) — strict, extra='forbid'.
-# One payload model per ArtifactBuildEventType; discriminated wire subject.
-# ---------------------------------------------------------------------------
-
-
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
 class StartedEventPayload(_StrictModel):
-    """Started{build handle, artifact ref}.
-
-    The Artifact head owns subject identity. Repeating a route locator in every
-    build event leaks private contributor/Idea identity and gives clients a
-    second activation contract.
-    """
-
     build_handle: str
     artifact_ref: str
 
 
 class ProgressEventPayload(_StrictModel):
-    """Progress{phase, user message}."""
-
     phase: str
     message: str
 
 
 class SucceededEventPayload(_StrictModel):
-    """Succeeded{artifact revision ref}. Identifies the revision it created."""
-
     artifact_revision_ref: str
 
 
 class FailedEventPayload(_StrictModel):
-    """A failed build and its optional diagnostic detail."""
-
     failure_code: DossierBuildFailureCode
     detail: Presence[str]
 
 
 class CancelledEventPayload(_StrictModel):
-    """Cancelled{actor, time}."""
-
     actor: Presence[UUID]
     at: datetime
 
 
-# ---------------------------------------------------------------------------
-# Build-create outcome shared by the three engine commands.
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class BuildTicket:
-    """One engine build command's head + existing/new attempt.
-
-    ``created`` is True only when this call inserted the build; a reused
-    idempotency key returns the original build with ``created=False`` (A6 rule 1).
-    ``handle`` is the sealed, non-authorizing outward :mod:`.handles` value."""
+    """One build command's head + attempt. ``created`` is False on replay."""
 
     artifact_id: UUID
     build_id: UUID
@@ -198,73 +114,38 @@ class BuildTicket:
     created: bool
 
 
-# ---------------------------------------------------------------------------
-# Typed API errors (A9/A19). Subclasses of the repo's ApiError family so the
-# route boundary maps them to the correct status; not-found/unauthorized reuse
-# the existing masked NotFoundError. (Dedicated ApiErrorCode values are deferred
-# to the engine/routes slice — errors.py is out of scope for CP2-TYPES.)
-# ---------------------------------------------------------------------------
-
-
 class DossierGenerationInProgress(ConflictError):
-    """A different idempotency key arrived while a build is active (A6 rule 2)."""
-
     def __init__(self, message: str = "A dossier build is already in progress") -> None:
         super().__init__(ApiErrorCode.E_DOSSIER_GENERATION_IN_PROGRESS, message)
 
 
-class DossierAlreadyExists(ConflictError):
-    """Resource bootstrap targeted a head that already exists."""
-
-    def __init__(self, message: str = "This dossier already exists") -> None:
-        super().__init__(ApiErrorCode.E_DOSSIER_ALREADY_EXISTS, message)
-
-
 class DossierIdeaUnresolved(ApiError):
-    """The bounded resolver could not establish one exact Idea identity."""
-
     def __init__(self, message: str = "The selected idea could not be resolved") -> None:
         super().__init__(ApiErrorCode.E_DOSSIER_IDEA_UNRESOLVED, message)
 
 
 class WebResearchNotConfigured(ApiError):
-    """Idea Dossier admission requires configured Web research authority."""
-
     def __init__(self, message: str = "Dossier Web research is not configured") -> None:
         super().__init__(ApiErrorCode.E_DOSSIER_WEB_RESEARCH_NOT_CONFIGURED, message)
 
 
 class BuildNotActive(ConflictError):
-    """Public cancel of an already-succeeded/failed/cancelled build (A9)."""
-
     def __init__(self, message: str = "This dossier build is no longer active") -> None:
         super().__init__(ApiErrorCode.E_DOSSIER_BUILD_NOT_ACTIVE, message)
 
 
 class RevisionNotFound(NotFoundError):
-    """make-current / read targeted a revision that does not exist (masked)."""
-
-    def __init__(self, message: str = "Dossier revision not found") -> None:
-        super().__init__(ApiErrorCode.E_DOSSIER_REVISION_NOT_FOUND, message)
-
-
-class RevisionNotOwnedByHead(NotFoundError):
-    """The revision exists but is not under the caller's head — masked as 404."""
-
     def __init__(self, message: str = "Dossier revision not found") -> None:
         super().__init__(ApiErrorCode.E_DOSSIER_REVISION_NOT_FOUND, message)
 
 
 class InvalidSubjectLocator(InvalidRequestError):
-    """The route subject scheme/handle is not one of the seven locator-addressable
-    Resource subjects (the internal idea scheme is entered only via Learn/by-ref)."""
+    """The route subject scheme/handle is not a locator-addressable subject."""
 
     def __init__(self, message: str = "Invalid dossier subject") -> None:
         super().__init__(ApiErrorCode.E_DOSSIER_INVALID_SUBJECT, message)
 
 
 class InvalidInstruction(InvalidRequestError):
-    """The supplied build instruction is not acceptable."""
-
     def __init__(self, message: str = "Invalid dossier instruction") -> None:
         super().__init__(ApiErrorCode.E_DOSSIER_INVALID_INSTRUCTION, message)

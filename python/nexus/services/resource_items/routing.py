@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import visible_media_ids_cte_sql
 from nexus.schemas.reader_apparatus import ReaderApparatusLocatorStatus
 from nexus.schemas.resource_items import ResourceActivationOut
-from nexus.services.artifacts.registry import visible_persisted_subject_sql
 from nexus.services.resource_graph.refs import ResourceRef
 
 _BATCHED_ROUTE_SCHEMES = frozenset(
@@ -302,6 +301,9 @@ def _dynamic_routes_for_refs(
     """Resolve non-static adjacency routes with one set query per scheme."""
 
     routes: dict[str, str] = {}
+    # Imported here: the dossier binding table sits above resource routing.
+    from nexus.services.artifacts.subjects import visible_persisted_subject_sql
+
     artifact_refs = by_scheme["artifact"]
     if artifact_refs:
         rows = db.execute(

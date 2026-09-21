@@ -81,22 +81,8 @@ kind is a frozen `JobDefinition`:
 - `periodic_priority` — routine scheduler rows use priority 200 so newly
   accepted ordinary work at priority 100 wins before the older periodic slot
   timestamp can break a tie. The stale-ingest reconciler is the sole urgent
-  periodic exception at priority -1000. On every schedule pass, the scheduler
-  locks every active row that claims the kind's global periodic dedupe
-  namespace, validates its exact aligned slot identity, and applies the current
-  priority without changing payload, availability, attempts, lease, claimant,
-  lifecycle, or timestamps. Propagated `request_id` values remain correlation
-  and do not claim that namespace.
-- `periodic_checkpoint_keys` — the closed set of optional top-level checkpoint
-  keys a periodic handler may persist alongside immutable scheduler identity.
-  The storage orphan sweep declares its continuation token; all other
-  periodic jobs declare none.
-  The scheduler rejects undeclared keys while each handler-owned strict codec
-  validates checkpoint values. Namespace selection is global across kinds and
-  bounded to 256 active rows; a foreign-kind claimant, noncanonical identity,
-  undeclared checkpoint, or overflow defects the whole transaction before any
-  durable mutation. On-demand rows sharing a kind are untouched, and terminal
-  rows remain immutable history.
+  periodic exception at priority -1000. The priority is stamped when a slot is
+  enqueued, so a change applies to newly scheduled slots only.
 - `failed_result_statuses` — see the gotcha below.
 - `dead_letter_projection` — a member of the closed `DeadLetterProjection` union
   applied once retries are exhausted; a projection may finalize domain state,
@@ -116,9 +102,8 @@ kind/attempts/delays/lease policy. API `/version` and each worker heartbeat expo
 it for exact release proof. It changes only when that contract changes.
 
 `oracle_reading_generate` has one canonical producer and one exact payload:
-`{"reading_id": "<canonical-lowercase-uuid>"}`. Its registry adapter rejects
-missing, additional, coerced, padded, or noncanonical values and passes a typed
-`UUID` to the Oracle task. The task does not decode the durable carrier again.
+`{"reading_id": "<canonical-lowercase-uuid>"}`. Its registry adapter passes a
+typed `UUID` to the Oracle task, which does not decode the durable carrier again.
 
 ### Lease policy by kind
 
@@ -301,37 +286,34 @@ see [media metadata](media-metadata.md) for date ownership and maintenance.
 
 `dossier_build` is one generic kind for Media, Conversation, Library, Podcast,
 Contributor, Page, Note, and internal Idea subjects. Its immutable registration
-selects one inseparable subject-policy and binding pair for collection, prompt,
-operation, coverage, freshness, identity, and authorization. The Idea binding
-receives one frozen HostTable operation whose sole grant is `web.search`; it
-never inherits Chat's MCP catalog. Research tools remain domain-owned journal
-steps and never become Codex built-ins; synthesis uses the fixed `Synthesis`
-capability. Stored binding metadata owns its `BilledOnce` replay policy, so an
-uncertain public-Web search is never automatically redispatched. Synthesis and
-document repair remain suspended after an unresolved dispatch; a sealed
-provider successor continuation permits safe resumption. Direct Nexus-search
-and page accept/readiness/read observations are `ReDispatchable`, and pages
-awaiting ingest yield the worker. The artifact head is the database
+selects one binding-table entry for collection, prompt, operation, freshness,
+identity, and authorization. The Idea binding receives one frozen HostTable
+operation whose sole grant is `web.search`; it never inherits Chat's MCP
+catalog. Research tools remain domain-owned journal steps and never become
+Codex built-ins; synthesis uses the fixed `Synthesis` capability. Stored
+binding metadata owns its `BilledOnce` replay policy, so an uncertain
+public-Web search is never automatically redispatched. Synthesis remains
+suspended after an unresolved dispatch; a sealed provider successor
+continuation permits safe resumption. A document that fails HTML acceptance or
+citation grounding is a modeled build failure the user regenerates from. Direct
+Nexus-search and page accept/readiness/read observations are `ReDispatchable`,
+and pages awaiting ingest yield the worker. The artifact head is the database
 serialization point; the build is the replay identity. Build success, modeled
-failure, and cancellation are terminal children, while exhausted or
-unresolved execution remains a visible suspended build requiring incident repair.
-Dead `dossier_build` rows are never pruned.
+failure, and cancellation are terminal children, while exhausted or unresolved
+execution remains a visible suspended build requiring incident repair. Dead
+`dossier_build` rows are never pruned.
 
 `services/durable_step_journal.py` owns the shared strict replay-state codec,
 stable step identity, lease-fenced queue-payload checkpoint, and durable
-execution-phase projection. `services/artifacts/generation_step.py` owns the
-Dossier-specific generation request fingerprint, strict accepted/invalid result
-envelope, and exact `Prepared | Uncertain | Completed` application for both
-`synthesis` and `document-repair`. `services/artifacts/coordination.py` owns the
-Dossier runtime capability and bounded research-yield behavior. The engine owns
-the distinct streaming/cancellation and unary-repair transports; it does not
-reimplement their journal protocol. Each binding materializes one fully compiled
-`PublishableDossier`; `_DossierDocumentAcceptance` owns the single primary/repair
-acceptance phase and its document-versus-citation failure precedence, so
-`run_build` composes that phase instead of duplicating compilation branches.
-`services/artifacts/registry.py` is the sole eight-scheme composition owner; it
-constructs one cached immutable registration after module initialization, with
-no mutable policy mirror, package re-export, or lazy fallback lookup.
+execution-phase projection. `services/artifacts/generation.py` owns the
+Dossier-specific generation request fingerprint, the strict accepted/failed
+result envelope, and exact `Prepared | Uncertain | Completed` application for
+the one `synthesis` step. `services/artifacts/coordination.py` owns the Dossier
+runtime capability and bounded research-yield behavior. The generation lands
+one fully compiled `PublishableDossier`, so `run_build` publishes it instead of
+duplicating compilation branches. `services/artifacts/subjects.py` is the sole
+eight-scheme composition owner: one literal binding table, with no mutable
+policy mirror, package re-export, or lazy fallback lookup.
 
 `chat_run` uses that kernel for preparation, every generation/MCP tool turn,
 and final publication. Dead chat jobs are retained because their payload is the in-flight

@@ -1,4 +1,10 @@
-"""Bounded, replay-safe evidence collection for Idea Dossiers."""
+"""Bounded, replay-safe evidence collection for Idea dossiers.
+
+Seed highlights, up to six Nexus sources from three derived queries, and up to
+six fetched web articles (one per domain). Every external step is journaled:
+the Nexus and page steps are re-dispatchable, the public web search is billed
+once and is never automatically repeated.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +13,7 @@ import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from llm_tools import (
@@ -29,27 +35,33 @@ from llm_tools import (
     canonical_json_bytes,
 )
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.db.async_session import open_async_session
-from nexus.jobs.queue import JobRow
-from nexus.logging import get_logger
-from nexus.schemas.presence import Present, absent, present
+from nexus.errors import NotFoundError
+from nexus.schemas.presence import Presence, Present, absent, present
+from nexus.services.artifacts.collect import EXCERPT_CHARS, Candidate, Collected
 from nexus.services.artifacts.coordination import DossierBuildRuntime, ResearchLeaseLost
-from nexus.services.artifacts.dossier_types import WebResearchNotConfigured
-from nexus.services.artifacts.idea_seeds import list_idea_seed_highlight_ids
-from nexus.services.artifacts.subject_policy import ResolvedIdeaSubject
-from nexus.services.artifacts.web_page_read import (
+from nexus.services.artifacts.dossier_types import AudienceScope, WebResearchNotConfigured
+from nexus.services.artifacts.idea import IdeaSubject, list_idea_seed_highlight_ids
+from nexus.services.artifacts.manifests import (
+    IdeaIncludedSource,
+    IdeaInputManifestV1,
+    IdeaOmittedSource,
+    InputManifestV1,
+)
+from nexus.services.artifacts.web_pages import (
     PageAcceptResult,
     PageReadReceipt,
     PageReadyResult,
-    ReadWebPage,
+    WebPageOmissionReason,
     WebSearchItem,
     WebSearchResult,
     accept_web_search_result,
-    dossier_web_search_items_from_tool_result,
     observe_web_page,
     read_web_page,
+    web_search_items,
 )
 from nexus.services.durable_step_journal import (
     Completed,
@@ -61,12 +73,7 @@ from nexus.services.durable_step_journal import (
     stable_generation_id,
 )
 from nexus.services.media_read_map import load_media_document
-from nexus.services.resource_graph.refs import (
-    ResourceRef,
-    ResourceRefParseFailure,
-    parse_resource_ref,
-)
-from nexus.services.resource_graph.resolve import load_resource_batch
+from nexus.services.resource_graph.refs import ResourceRef, assert_resource_ref
 from nexus.services.resource_graph.schemas import CitationSnapshot
 from nexus.services.resource_items.capabilities import resource_read_policy
 from nexus.services.search.query import SearchKind, SearchQuery
@@ -75,11 +82,6 @@ from nexus.services.tool_runtime.catalog import (
     encode_tool_plan_snapshot,
     validate_tool_plan_snapshot,
 )
-
-if TYPE_CHECKING:
-    from nexus.services.artifacts.bindings._shared import Candidate
-
-logger = get_logger(__name__)
 
 _SOURCE_TEXT_BUDGET = 120_000
 _MAX_NEXUS_RESULTS_PER_QUERY = 6
@@ -90,25 +92,37 @@ _TOOL_PLAN_STEP_PATH = "research/tool-plan"
 _NEXUS_RESEARCH_KINDS: frozenset[SearchKind] = frozenset(
     {"documents", "notes", "highlights", "people"}
 )
+_IDEA_HEADING = "IDEA CONTEXTS AND RESEARCH SOURCES"
+_IDEA_CONTEXT = (
+    "Teach one coherent idea from foundations through practical examples. "
+    "The highlighted seeds establish user context; Nexus and Web Article "
+    "sources provide broader evidence. Omitted sources are not evidence."
+)
+
+type SourceRole = Literal["seed", "nexus", "web"]
 
 
-class _StrictStepResult(BaseModel):
+class ResearchInputsChanged(Exception):
+    """A completed read receipt no longer resolves to the same visible content."""
+
+
+class _StepModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
-class NexusSearchItem(_StrictStepResult):
+class NexusSearchItem(_StepModel):
     read_ref: str = Field(min_length=1, max_length=256)
     target_ref: str = Field(min_length=1, max_length=256)
     title: str = Field(min_length=1, max_length=1_000)
     rank: int = Field(ge=1)
 
 
-class NexusSearchResult(_StrictStepResult):
+class NexusSearchResult(_StepModel):
     query_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     items: list[NexusSearchItem]
 
 
-class ResourceReadReceipt(_StrictStepResult):
+class ResourceReadReceipt(_StepModel):
     read_ref: str = Field(min_length=1, max_length=256)
     target_ref: str = Field(min_length=1, max_length=256)
     title: str = Field(min_length=1, max_length=1_000)
@@ -116,135 +130,85 @@ class ResourceReadReceipt(_StrictStepResult):
 
 
 @dataclass(frozen=True, slots=True)
-class ResearchSource:
+class _Source:
     read_ref: ResourceRef
     target_ref: ResourceRef
     title: str
     body: str
     content_fingerprint: str
-    role: Literal["seed", "nexus", "web"]
-
-    def candidate(self, index: int) -> Candidate:
-        from nexus.services.artifacts.bindings._shared import Candidate
-
-        return Candidate(
-            index=index,
-            target=self.target_ref,
-            text=f"{self.title}\n{self.body}",
-            snapshot=CitationSnapshot(
-                title=self.title,
-                excerpt=self.body[:600],
-                result_type=self.target_ref.scheme,
-            ),
-        )
+    role: SourceRole
 
 
-@dataclass(frozen=True, slots=True)
-class ResearchOmission:
-    locator: str
-    reason: str
+# ---------------------------------------------------------------------------
+# The Idea entry in the binding table.
+# ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
-class FrozenIdeaEvidence:
-    idea_subject_id: UUID
-    included_seed_refs: tuple[str, ...]
-    nexus_query_fingerprints: tuple[str, ...]
-    web_query_fingerprints: tuple[str, ...]
-    sources: tuple[ResearchSource, ...]
-    omissions: tuple[ResearchOmission, ...]
-
-    @property
-    def candidates(self) -> list[Candidate]:
-        return [source.candidate(index) for index, source in enumerate(self.sources)]
-
-
-class ResearchInputsChanged(Exception):
-    """A completed read receipt no longer resolves to the same visible content."""
-
-
-class _DossierToolCancellation:
-    @property
-    def cancelled(self) -> bool:
-        return False
-
-
-class _DossierToolTelemetry:
-    def event(self, name: str, attributes: dict[str, Any]) -> None:
-        logger.info(
-            "dossier_tool_runtime_event",
-            tool_event=name,
-            attributes=attributes,
-        )
-
-
-async def collect_idea_evidence(
+async def collect_idea_inputs(
     db: Session,
-    *,
-    resolved: ResolvedIdeaSubject,
+    subject: object,
+    audience: AudienceScope,
     runtime: DossierBuildRuntime,
-) -> FrozenIdeaEvidence:
-    """Collect seeds, Nexus sources, and fetched Web Articles under fixed budgets."""
-
-    queries = idea_research_queries(resolved)
-    query_fingerprints = tuple(_fingerprint(query) for query in queries)
-    sources: list[ResearchSource] = []
-    omissions: list[ResearchOmission] = []
+) -> Collected:
+    """Seeds, Nexus sources, and fetched web articles under fixed budgets."""
+    del audience
+    idea = _require_idea(subject)
+    queries = _idea_queries(idea)
+    fingerprints = tuple(_sha256(query) for query in queries)
+    sources: list[_Source] = []
+    omissions: list[IdeaOmittedSource] = []
+    seed_refs: list[str] = []
     used_chars = 0
-    seen_targets: set[str] = set()
+    seen: set[str] = set()
 
-    def include(source: ResearchSource) -> bool:
+    def include(source: _Source) -> bool:
         nonlocal used_chars
-        if source.target_ref.uri in seen_targets:
+        if source.target_ref.uri in seen:
             return False
-        source_chars = len(source.title) + 1 + len(source.body)
-        if used_chars + source_chars > _SOURCE_TEXT_BUDGET:
-            omissions.append(ResearchOmission(source.target_ref.uri, "Budget"))
+        cost = len(source.title) + 1 + len(source.body)
+        if used_chars + cost > _SOURCE_TEXT_BUDGET:
+            omissions.append(IdeaOmittedSource(locator=source.target_ref.uri, reason="Budget"))
             return False
-        used_chars += source_chars
-        seen_targets.add(source.target_ref.uri)
+        used_chars += cost
+        seen.add(source.target_ref.uri)
         sources.append(source)
         return True
 
-    included_seed_refs: list[str] = []
     for highlight_id in list_idea_seed_highlight_ids(db, artifact_id=runtime.artifact_id):
         seed_ref = ResourceRef(scheme="highlight", id=highlight_id)
         source = _read_source(
             db,
-            viewer_id=resolved.user_id,
+            viewer_id=idea.user_id,
             read_ref=seed_ref,
             target_ref=seed_ref,
-            fallback_title=resolved.display_title,
+            fallback_title=idea.display_title,
             role="seed",
         )
         if source is None:
             raise ResearchInputsChanged
         if include(source):
-            included_seed_refs.append(seed_ref.uri)
+            seed_refs.append(seed_ref.uri)
 
     nexus_results = [
         await _redispatchable_step(
             db,
             runtime=runtime,
             path=f"research/nexus-search/{index}",
-            request_fingerprint=query_fingerprints[index],
+            request_fingerprint=fingerprints[index],
             schema=NexusSearchResult,
-            dispatch=lambda query=query, fingerprint=query_fingerprints[index]: _nexus_search(
-                db,
-                viewer_id=resolved.user_id,
-                query=query,
-                query_fingerprint=fingerprint,
+            dispatch=lambda query=query, fingerprint=fingerprints[index]: _nexus_search(
+                db, viewer_id=idea.user_id, query=query, query_fingerprint=fingerprint
             ),
         )
         for index, query in enumerate(queries)
     ]
     nexus_items: list[NexusSearchItem] = []
-    seen_nexus: set[str] = set()
+    chosen_targets: set[str] = set()
     for result in nexus_results:
         for item in result.items:
-            if item.target_ref in seen_nexus or item.target_ref in seen_targets:
+            if item.target_ref in chosen_targets or item.target_ref in seen:
                 continue
-            seen_nexus.add(item.target_ref)
+            chosen_targets.add(item.target_ref)
             nexus_items.append(item)
             if len(nexus_items) == _MAX_NEXUS_SOURCES:
                 break
@@ -256,129 +220,124 @@ async def collect_idea_evidence(
             db,
             runtime=runtime,
             path=f"research/nexus-read/{index}",
-            request_fingerprint=_fingerprint(f"{item.read_ref}\0{item.target_ref}"),
+            request_fingerprint=_sha256(f"{item.read_ref}\0{item.target_ref}"),
             schema=ResourceReadReceipt,
-            dispatch=lambda item=item: _read_nexus_receipt(
-                db,
-                viewer_id=resolved.user_id,
-                item=item,
-            ),
+            dispatch=lambda item=item: _read_nexus_receipt(db, viewer_id=idea.user_id, item=item),
         )
-        source = _hydrate_resource_receipt(
+        source = _read_source(
             db,
-            viewer_id=resolved.user_id,
-            receipt=receipt,
+            viewer_id=idea.user_id,
+            read_ref=assert_resource_ref(receipt.read_ref),
+            target_ref=assert_resource_ref(receipt.target_ref),
+            fallback_title=receipt.title,
             role="nexus",
         )
+        if source is None or source.content_fingerprint != receipt.content_fingerprint:
+            raise ResearchInputsChanged
         include(source)
 
     _ensure_research_tool_plan(db, runtime=runtime)
     web_results = [
-        await _web_search_tool_step(
+        await _web_search_step(
             db,
             runtime=runtime,
             path=f"research/web-search/{index}",
-            principal=Principal(str(resolved.user_id)),
+            principal=Principal(str(idea.user_id)),
             query=query,
-            request_fingerprint=query_fingerprints[index],
+            request_fingerprint=fingerprints[index],
         )
         for index, query in enumerate(queries)
     ]
-    web_items = _select_web_items(web_results)
-    for index, item in enumerate(web_items):
+    for index, item in enumerate(_select_web_items(web_results)):
         accepted = await _redispatchable_step(
             db,
             runtime=runtime,
             path=f"research/page-accept/{index}",
-            request_fingerprint=_fingerprint(f"{item.result_id}\0{item.canonical_url}"),
+            request_fingerprint=_sha256(f"{item.result_id}\0{item.canonical_url}"),
             schema=PageAcceptResult,
             dispatch=lambda item=item: _accept_page(
-                db,
-                viewer_id=resolved.user_id,
-                build_id=runtime.build_id,
-                job=runtime.job,
-                result_id=item.result_id,
+                db, viewer_id=idea.user_id, runtime=runtime, result_id=item.result_id
             ),
         )
         if accepted.status == "Omitted":
-            if not isinstance(accepted.omission_reason, Present):
-                raise AssertionError("omitted Web page has no reason")
-            omissions.append(ResearchOmission(item.result_id, accepted.omission_reason.value.value))
+            omissions.append(
+                IdeaOmittedSource(locator=item.result_id, reason=_reason(accepted.omission_reason))
+            )
             continue
-        ready = _observe_page_step(
-            db,
-            runtime=runtime,
-            index=index,
-            accepted=accepted,
-        )
+        ready = _observe_page_step(db, runtime=runtime, index=index, accepted=accepted)
         if ready.status == "Omitted":
-            if not isinstance(ready.omission_reason, Present):
-                raise AssertionError("omitted Web page has no reason")
-            omissions.append(ResearchOmission(item.result_id, ready.omission_reason.value.value))
+            omissions.append(
+                IdeaOmittedSource(locator=item.result_id, reason=_reason(ready.omission_reason))
+            )
             continue
         receipt = await _redispatchable_step(
             db,
             runtime=runtime,
             path=f"research/page-read/{index}",
-            request_fingerprint=_fingerprint(encode_step_result(accepted)),
+            request_fingerprint=_sha256(encode_step_result(accepted)),
             schema=PageReadReceipt,
             dispatch=lambda accepted=accepted: _read_page_receipt(
-                db,
-                viewer_id=resolved.user_id,
-                accepted=accepted,
+                db, viewer_id=idea.user_id, accepted=accepted
             ),
         )
-        hydrated = _hydrate_page_receipt(
-            db,
-            viewer_id=resolved.user_id,
-            receipt=receipt,
-        )
+        media_ref = assert_resource_ref(receipt.media_ref)
+        document = load_media_document(db, idea.user_id, media_ref.id)
+        if document is None or _sha256(document.body) != receipt.content_fingerprint:
+            raise ResearchInputsChanged
         include(
-            ResearchSource(
-                read_ref=_parse_owned_ref(receipt.media_ref),
-                target_ref=_parse_owned_ref(receipt.media_ref),
+            _Source(
+                read_ref=media_ref,
+                target_ref=media_ref,
                 title=receipt.title,
-                body=hydrated.body,
+                body=document.body,
                 content_fingerprint=receipt.content_fingerprint,
                 role="web",
             )
         )
 
-    return FrozenIdeaEvidence(
-        idea_subject_id=resolved.subject_id,
-        included_seed_refs=tuple(included_seed_refs),
-        nexus_query_fingerprints=query_fingerprints,
-        web_query_fingerprints=query_fingerprints,
-        sources=tuple(sources),
-        omissions=tuple(omissions),
+    return Collected(
+        candidates=[_candidate(index, source) for index, source in enumerate(sources)],
+        manifest=IdeaInputManifestV1(
+            idea_subject_id=str(idea.id),
+            included_seed_refs=seed_refs,
+            nexus_query_fingerprints=list(fingerprints),
+            web_query_fingerprints=list(fingerprints),
+            included_sources=[
+                IdeaIncludedSource(
+                    ref=source.read_ref.uri,
+                    content_fingerprint=source.content_fingerprint,
+                    role=source.role,
+                )
+                for source in sources
+            ],
+            omitted_sources=omissions,
+        ),
+        heading=_IDEA_HEADING,
+        context=_IDEA_CONTEXT,
     )
 
 
-def idea_research_queries(resolved: ResolvedIdeaSubject) -> tuple[str, str, str]:
-    disambiguator = resolved.idea_key.disambiguator_key
-    base = (
-        f"{resolved.display_title} {disambiguator.value}"
-        if isinstance(disambiguator, Present)
-        else resolved.display_title
-    )
-    return (base, f"{base} explained", f"{base} examples")
-
-
-def evidence_is_current(
+def idea_evidence_is_current(
     db: Session,
-    *,
-    viewer_id: UUID,
-    evidence: FrozenIdeaEvidence,
+    subject: object,
+    audience: AudienceScope,
+    collected: Collected,
 ) -> bool:
-    """Recheck only the frozen seed/source witness; later seeds are irrelevant."""
-
-    for source in evidence.sources:
+    """Recheck only the frozen sources; later seeds are irrelevant to this build."""
+    del audience
+    idea = _require_idea(subject)
+    manifest = collected.manifest
+    if not isinstance(manifest, IdeaInputManifestV1):
+        raise AssertionError("an Idea dossier has the wrong manifest")
+    # ``included_sources`` and ``candidates`` are both built from the frozen
+    # source list in order: index i is one source's read ref and cited target.
+    for source, candidate in zip(manifest.included_sources, collected.candidates, strict=True):
         current = _read_source(
             db,
-            viewer_id=viewer_id,
-            read_ref=source.read_ref,
-            target_ref=source.target_ref,
-            fallback_title=source.title,
+            viewer_id=idea.user_id,
+            read_ref=assert_resource_ref(source.ref),
+            target_ref=candidate.target,
+            fallback_title=candidate.snapshot.title or "",
             role=source.role,
         )
         if current is None or current.content_fingerprint != source.content_fingerprint:
@@ -386,23 +345,49 @@ def evidence_is_current(
     return True
 
 
-def current_research_source_fingerprint(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    ref: ResourceRef,
-) -> str | None:
-    """Read one persisted manifest source through the same audience boundary."""
+def idea_live_manifest(db: Session, subject: object, audience: AudienceScope) -> InputManifestV1:
+    """The stored manifest with every source's fingerprint re-read live."""
+    del audience
+    idea = _require_idea(subject)
+    raw = db.execute(
+        text(
+            "SELECT r.input_manifest FROM artifacts a "
+            "JOIN artifact_revisions r ON r.id = a.current_revision_id "
+            "WHERE a.subject_scheme = 'idea' AND a.subject_id = :subject_id "
+            "AND a.audience_scheme = 'user' AND a.audience_id = :audience_id"
+        ),
+        {"subject_id": idea.id, "audience_id": str(idea.user_id)},
+    ).scalar_one_or_none()
+    if not isinstance(raw, dict):
+        raise NotFoundError(message="Dossier not found")
+    stored = IdeaInputManifestV1.model_validate(raw)
+    refreshed: list[IdeaIncludedSource] = []
+    for source in stored.included_sources:
+        ref = assert_resource_ref(source.ref)
+        current = _read_source(
+            db,
+            viewer_id=idea.user_id,
+            read_ref=ref,
+            target_ref=ref,
+            fallback_title="",
+            role=source.role,
+        )
+        # A SHA-256 fingerprint is never empty, so disappearance differs.
+        refreshed.append(
+            source.model_copy(
+                update={
+                    "content_fingerprint": (
+                        current.content_fingerprint if current is not None else ""
+                    )
+                }
+            )
+        )
+    return stored.model_copy(update={"included_sources": refreshed})
 
-    source = _read_source(
-        db,
-        viewer_id=viewer_id,
-        read_ref=ref,
-        target_ref=ref,
-        fallback_title="",
-        role="nexus",
-    )
-    return source.content_fingerprint if source is not None else None
+
+# ---------------------------------------------------------------------------
+# Journaled steps.
+# ---------------------------------------------------------------------------
 
 
 async def _redispatchable_step[T: BaseModel](
@@ -414,28 +399,9 @@ async def _redispatchable_step[T: BaseModel](
     schema: type[T],
     dispatch: Callable[[], Awaitable[T]],
 ) -> T:
-    state = runtime.read_step(path)
-    generation_id = stable_generation_id(runtime.build_id, path)
-    if state is not None:
-        if state.generation_id != generation_id:
-            raise AssertionError(f"Dossier research step {path!r} changed identity")
-        if (
-            not isinstance(state.request_fingerprint, Present)
-            or state.request_fingerprint.value != request_fingerprint
-        ):
-            raise ResearchInputsChanged
-        if state.dispatch_phase is Completed:
-            if not isinstance(state.terminal_result, Present):
-                raise AssertionError(f"Completed Dossier step {path!r} has no result")
-            return decode_step_result(state.terminal_result.value, schema)
-    else:
-        state = StepReplayState(
-            generation_id=generation_id,
-            dispatch_phase=Prepared,
-            request_fingerprint=present(request_fingerprint),
-            terminal_result=absent(),
-        )
-        _checkpoint(db, runtime=runtime, path=path, state=state)
+    state = _step_state(db, runtime=runtime, path=path, request_fingerprint=request_fingerprint)
+    if state.dispatch_phase is Completed:
+        return decode_step_result(_terminal(state, path), schema)
 
     uncertain = state.model_copy(update={"dispatch_phase": Uncertain})
     _checkpoint(db, runtime=runtime, path=path, state=uncertain)
@@ -454,50 +420,56 @@ async def _redispatchable_step[T: BaseModel](
     return result
 
 
-async def _nexus_search(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    query: str,
-    query_fingerprint: str,
-) -> NexusSearchResult:
-    if db.in_transaction():
-        raise RuntimeError("research search requires its committed dispatch checkpoint")
-    prepared_query = SearchQuery(
-        text=query,
-        requested_kinds=_NEXUS_RESEARCH_KINDS,
-        limit=_MAX_NEXUS_RESULTS_PER_QUERY,
-    )
-    async with open_async_session(sessionmaker(bind=db.get_bind())) as database:
-        response = await search_scopes_async(
-            database, viewer_id, prepared_query, (prepared_query.scope,)
-        )
-    items: list[NexusSearchItem] = []
-    for rank, result in enumerate(response.results, start=1):
-        if result.citation_target is None:
-            continue
-        items.append(
-            NexusSearchItem(
-                read_ref=result.resource_ref,
-                target_ref=result.citation_target,
-                title=result.title,
-                rank=rank,
-            )
-        )
-    return NexusSearchResult(query_fingerprint=query_fingerprint, items=items)
-
-
-def _ensure_research_tool_plan(
+def _step_state(
     db: Session,
     *,
     runtime: DossierBuildRuntime,
+    path: str,
+    request_fingerprint: str,
+) -> StepReplayState:
+    """This step's journal record, prepared on first sight and never drifting."""
+    generation_id = stable_generation_id(runtime.build_id, path)
+    state = runtime.read_step(path)
+    if state is None:
+        state = StepReplayState(
+            generation_id=generation_id,
+            dispatch_phase=Prepared,
+            request_fingerprint=present(request_fingerprint),
+            terminal_result=absent(),
+        )
+        _checkpoint(db, runtime=runtime, path=path, state=state)
+        return state
+    if state.generation_id != generation_id:
+        raise AssertionError(f"Dossier research step {path!r} changed identity")
+    if (
+        not isinstance(state.request_fingerprint, Present)
+        or state.request_fingerprint.value != request_fingerprint
+    ):
+        raise ResearchInputsChanged
+    return state
+
+
+def _terminal(state: StepReplayState, path: str) -> str:
+    if not isinstance(state.terminal_result, Present):
+        raise AssertionError(f"Completed Dossier step {path!r} has no result")
+    return state.terminal_result.value
+
+
+def _checkpoint(
+    db: Session, *, runtime: DossierBuildRuntime, path: str, state: StepReplayState
 ) -> None:
+    if not runtime.checkpoint_step(db, path=path, state=state):
+        db.rollback()
+        raise ResearchLeaseLost
+    db.commit()
+
+
+def _ensure_research_tool_plan(db: Session, *, runtime: DossierBuildRuntime) -> None:
     operation = runtime.research_tool_operation
     if not isinstance(operation.plan.exposure, HostTable):
         raise AssertionError("Idea Dossier research requires a HostTable tool plan")
-    snapshot = encode_tool_plan_snapshot(operation)
-    state = runtime.read_step(_TOOL_PLAN_STEP_PATH)
     generation_id = stable_generation_id(runtime.build_id, _TOOL_PLAN_STEP_PATH)
+    state = runtime.read_step(_TOOL_PLAN_STEP_PATH)
     if state is not None:
         if (
             state.generation_id != generation_id
@@ -507,26 +479,27 @@ def _ensure_research_tool_plan(
             or not isinstance(state.terminal_result, Present)
         ):
             raise AssertionError("Dossier research tool-plan snapshot changed identity")
-        validate_tool_plan_snapshot(
-            state.terminal_result.value,
-            operation=operation,
-        )
+        validate_tool_plan_snapshot(state.terminal_result.value, operation=operation)
         return
-    completed = StepReplayState(
-        generation_id=generation_id,
-        dispatch_phase=Completed,
-        request_fingerprint=present(operation.plan.plan_revision),
-        terminal_result=present(snapshot),
+    _checkpoint(
+        db,
+        runtime=runtime,
+        path=_TOOL_PLAN_STEP_PATH,
+        state=StepReplayState(
+            generation_id=generation_id,
+            dispatch_phase=Completed,
+            request_fingerprint=present(operation.plan.plan_revision),
+            terminal_result=present(encode_tool_plan_snapshot(operation)),
+        ),
     )
-    _checkpoint(db, runtime=runtime, path=_TOOL_PLAN_STEP_PATH, state=completed)
 
 
-@dataclass(slots=True)
 class _ResearchBudget:
     """The run budget for one fixed research step; the plan caps calls at three."""
 
-    limits: RunLimits
-    remaining_elapsed_seconds: float
+    def __init__(self, *, limits: RunLimits, remaining_elapsed_seconds: float) -> None:
+        self.limits = limits
+        self.remaining_elapsed_seconds = remaining_elapsed_seconds
 
     async def reserve(self, position: InvocationPosition, reservation: Reservation) -> bool:
         del position, reservation
@@ -536,23 +509,20 @@ class _ResearchBudget:
         del position, settlement
 
 
-class _ResearchPositionRecorder:
-    """In-process recorder for one fixed BilledOnce step.
+class _ResearchRecorder:
+    """In-process recorder for one fixed ``BilledOnce`` step.
 
-    The step journal owns durability: ``_web_search_tool_step`` checkpoints
-    Prepared -> Uncertain -> Completed around this recorder, so the recorder
-    only satisfies the portable executor's phase protocol and reports whether
-    the dispatch outcome stayed uncertain.
+    The step journal owns durability: :func:`_web_search_step` checkpoints
+    Prepared -> Uncertain -> Completed around this recorder, which only
+    satisfies the portable executor's phase protocol and reports whether the
+    dispatch outcome stayed uncertain.
     """
 
     def __init__(self, *, position: InvocationPosition, budgets: _ResearchBudget) -> None:
         self.position = position
         self.budgets = budgets
         self.uncertain_outcome = False
-
-    @property
-    def durable(self) -> bool:
-        return True
+        self.durable = True
 
     async def occupy(self, **kwargs: Any) -> PositionState:
         del kwargs
@@ -578,7 +548,16 @@ class _ResearchPositionRecorder:
         return result
 
 
-async def _web_search_tool_step(
+class _InertToolSeams:
+    """The cancellation and telemetry seams this one fixed step does not use."""
+
+    cancelled = False
+
+    def event(self, name: str, attributes: dict[str, object]) -> None:
+        del name, attributes
+
+
+async def _web_search_step(
     db: Session,
     *,
     runtime: DossierBuildRuntime,
@@ -587,37 +566,18 @@ async def _web_search_tool_step(
     query: str,
     request_fingerprint: str,
 ) -> WebSearchResult:
-    """Run one public Web search once; an uncertain outcome is never redispatched."""
-
+    """Run one public web search once; an uncertain outcome is never redispatched."""
     operation = runtime.research_tool_operation
     binding = operation.plan.catalog_view.binding(_WEB_SEARCH_TOOL_ID)
     if binding.replay_policy is not ReplayPolicy.BilledOnce:
         raise AssertionError("Idea research Web search must remain BilledOnce")
     db.commit()
-    generation_id = stable_generation_id(runtime.build_id, path)
-    state = runtime.read_step(path)
-    if state is not None:
-        if state.generation_id != generation_id or (
-            not isinstance(state.request_fingerprint, Present)
-            or state.request_fingerprint.value != request_fingerprint
-        ):
-            raise ResearchInputsChanged
-        if state.dispatch_phase is Completed:
-            if not isinstance(state.terminal_result, Present):
-                raise AssertionError(f"Completed Dossier step {path!r} has no result")
-            return _web_search_items(state.terminal_result.value, runtime, request_fingerprint)
-        if state.dispatch_phase is Uncertain:
-            # docs/modules/jobs.md:309 — a billed public-Web search is never
-            # automatically redispatched.
-            raise ResearchInputsChanged
-    else:
-        state = StepReplayState(
-            generation_id=generation_id,
-            dispatch_phase=Prepared,
-            request_fingerprint=present(request_fingerprint),
-            terminal_result=absent(),
-        )
-        _checkpoint(db, runtime=runtime, path=path, state=state)
+    state = _step_state(db, runtime=runtime, path=path, request_fingerprint=request_fingerprint)
+    if state.dispatch_phase is Completed:
+        return _web_search_result(_terminal(state, path), runtime, request_fingerprint)
+    if state.dispatch_phase is Uncertain:
+        # A billed public-Web search is never automatically redispatched.
+        raise ResearchInputsChanged
     _checkpoint(
         db,
         runtime=runtime,
@@ -630,13 +590,14 @@ async def _web_search_tool_step(
     if started_at.tzinfo is None:
         started_at = started_at.replace(tzinfo=UTC)
     elapsed = (datetime.now(UTC) - started_at).total_seconds()
-    recorder = _ResearchPositionRecorder(
+    recorder = _ResearchRecorder(
         position=InvocationPosition(path),
         budgets=_ResearchBudget(
             limits=limits,
             remaining_elapsed_seconds=max(0.0, float(limits.max_elapsed_seconds) - elapsed),
         ),
     )
+    seams = _InertToolSeams()
     try:
         result = await ToolExecutor.execute(
             binding,
@@ -651,13 +612,13 @@ async def _web_search_tool_step(
                 budgets=recorder.budgets,
                 principal=principal,
                 scope=Scope("idea_dossier_research"),
-                cancellation=_DossierToolCancellation(),
-                telemetry=_DossierToolTelemetry(),
+                cancellation=seams,
+                telemetry=seams,
             ),
         )
     except PositionConflictDefect as exc:
-        # With the exact frozen plan already validated, a conflict at this fixed
-        # position means the Idea-derived query changed after durable occupation.
+        # With the frozen plan already validated, a conflict at this fixed
+        # position means the Idea-derived query changed after occupation.
         raise ResearchInputsChanged from exc
     if recorder.uncertain_outcome:
         raise ResearchInputsChanged
@@ -667,20 +628,15 @@ async def _web_search_tool_step(
         db,
         runtime=runtime,
         path=path,
-        state=StepReplayState(
-            generation_id=generation_id,
-            dispatch_phase=Completed,
-            request_fingerprint=present(request_fingerprint),
-            terminal_result=present(terminal),
+        state=state.model_copy(
+            update={"dispatch_phase": Completed, "terminal_result": present(terminal)}
         ),
     )
-    return _web_search_items(terminal, runtime, request_fingerprint)
+    return _web_search_result(terminal, runtime, request_fingerprint)
 
 
-def _web_search_items(
-    terminal: str,
-    runtime: DossierBuildRuntime,
-    request_fingerprint: str,
+def _web_search_result(
+    terminal: str, runtime: DossierBuildRuntime, request_fingerprint: str
 ) -> WebSearchResult:
     decoded = json.loads(terminal)
     if decoded.get("type") != "Success":
@@ -691,34 +647,87 @@ def _web_search_items(
         raise RuntimeError(f"Dossier Web search failed: {error_type or 'InvalidToolResult'}")
     return WebSearchResult(
         query_fingerprint=request_fingerprint,
-        items=list(dossier_web_search_items_from_tool_result(terminal, build_id=runtime.build_id)),
+        items=list(web_search_items(terminal, build_id=runtime.build_id)),
     )
 
 
-def _checkpoint(
+def _observe_page_step(
     db: Session,
     *,
     runtime: DossierBuildRuntime,
-    path: str,
-    state: StepReplayState,
-) -> None:
-    if not runtime.checkpoint_step(db, path=path, state=state):
-        db.rollback()
-        raise ResearchLeaseLost
-    db.commit()
+    index: int,
+    accepted: PageAcceptResult,
+) -> PageReadyResult:
+    path = f"research/page-ready/{index}"
+    fingerprint = _sha256(encode_step_result(accepted))
+    state = runtime.read_step(path)
+    if state is not None and state.dispatch_phase is Completed:
+        if (
+            not isinstance(state.request_fingerprint, Present)
+            or state.request_fingerprint.value != fingerprint
+        ):
+            raise ResearchInputsChanged
+        return decode_step_result(_terminal(state, path), PageReadyResult)
+
+    observed = observe_web_page(db, accepted=accepted)
+    if observed.status == "Pending":
+        if not isinstance(accepted.ready_deadline, Present):
+            raise AssertionError("accepted page has no readiness deadline")
+        runtime.yield_until(accepted.ready_deadline.value)
+    _checkpoint(
+        db,
+        runtime=runtime,
+        path=path,
+        state=StepReplayState(
+            generation_id=stable_generation_id(runtime.build_id, path),
+            dispatch_phase=Completed,
+            request_fingerprint=present(fingerprint),
+            terminal_result=present(encode_step_result(observed)),
+        ),
+    )
+    return observed
+
+
+# ---------------------------------------------------------------------------
+# Dispatches.
+# ---------------------------------------------------------------------------
+
+
+async def _nexus_search(
+    db: Session, *, viewer_id: UUID, query: str, query_fingerprint: str
+) -> NexusSearchResult:
+    if db.in_transaction():
+        raise RuntimeError("research search requires its committed dispatch checkpoint")
+    prepared = SearchQuery(
+        text=query,
+        requested_kinds=_NEXUS_RESEARCH_KINDS,
+        limit=_MAX_NEXUS_RESULTS_PER_QUERY,
+    )
+    async with open_async_session(sessionmaker(bind=db.get_bind())) as database:
+        response = await search_scopes_async(database, viewer_id, prepared, (prepared.scope,))
+    return NexusSearchResult(
+        query_fingerprint=query_fingerprint,
+        items=[
+            NexusSearchItem(
+                read_ref=result.resource_ref,
+                target_ref=result.citation_target,
+                title=result.title,
+                rank=rank,
+            )
+            for rank, result in enumerate(response.results, start=1)
+            if result.citation_target is not None
+        ],
+    )
 
 
 async def _read_nexus_receipt(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    item: NexusSearchItem,
+    db: Session, *, viewer_id: UUID, item: NexusSearchItem
 ) -> ResourceReadReceipt:
     source = _read_source(
         db,
         viewer_id=viewer_id,
-        read_ref=_parse_owned_ref(item.read_ref),
-        target_ref=_parse_owned_ref(item.target_ref),
+        read_ref=assert_resource_ref(item.read_ref),
+        target_ref=assert_resource_ref(item.target_ref),
         fallback_title=item.title,
         role="nexus",
     )
@@ -732,103 +741,27 @@ async def _read_nexus_receipt(
     )
 
 
-def _hydrate_resource_receipt(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    receipt: ResourceReadReceipt,
-    role: Literal["seed", "nexus", "web"],
-) -> ResearchSource:
-    source = _read_source(
-        db,
-        viewer_id=viewer_id,
-        read_ref=_parse_owned_ref(receipt.read_ref),
-        target_ref=_parse_owned_ref(receipt.target_ref),
-        fallback_title=receipt.title,
-        role=role,
-    )
-    if source is None or source.content_fingerprint != receipt.content_fingerprint:
-        raise ResearchInputsChanged
-    return source
-
-
 async def _accept_page(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    build_id: UUID,
-    job: JobRow,
-    result_id: str,
+    db: Session, *, viewer_id: UUID, runtime: DossierBuildRuntime, result_id: str
 ) -> PageAcceptResult:
     return accept_web_search_result(
         db,
         viewer_id=viewer_id,
-        build_id=build_id,
-        job=job,
+        build_id=runtime.build_id,
+        job=runtime.job,
         result_id=result_id,
     )
 
 
-def _observe_page_step(
-    db: Session,
-    *,
-    runtime: DossierBuildRuntime,
-    index: int,
-    accepted: PageAcceptResult,
-) -> PageReadyResult:
-    path = f"research/page-ready/{index}"
-    fingerprint = _fingerprint(encode_step_result(accepted))
-    state = runtime.read_step(path)
-    if state is not None and state.dispatch_phase is Completed:
-        if (
-            not isinstance(state.request_fingerprint, Present)
-            or state.request_fingerprint.value != fingerprint
-            or not isinstance(state.terminal_result, Present)
-        ):
-            raise ResearchInputsChanged
-        ready = decode_step_result(state.terminal_result.value, PageReadyResult)
-        if ready.status == "Pending":
-            raise AssertionError("completed page-ready step cannot remain Pending")
-        return ready
-
-    observed = observe_web_page(db, accepted=accepted)
-    if observed.status == "Pending":
-        if not isinstance(accepted.ready_deadline, Present):
-            raise AssertionError("accepted page has no readiness deadline")
-        runtime.yield_until(accepted.ready_deadline.value)
-    completed = StepReplayState(
-        generation_id=stable_generation_id(runtime.build_id, path),
-        dispatch_phase=Completed,
-        request_fingerprint=present(fingerprint),
-        terminal_result=present(encode_step_result(observed)),
-    )
-    _checkpoint(db, runtime=runtime, path=path, state=completed)
-    return observed
-
-
 async def _read_page_receipt(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    accepted: PageAcceptResult,
+    db: Session, *, viewer_id: UUID, accepted: PageAcceptResult
 ) -> PageReadReceipt:
     return read_web_page(db, viewer_id=viewer_id, accepted=accepted).receipt
 
 
-def _hydrate_page_receipt(
-    db: Session,
-    *,
-    viewer_id: UUID,
-    receipt: PageReadReceipt,
-) -> ReadWebPage:
-    ref = _parse_owned_ref(receipt.media_ref)
-    document = load_media_document(db, viewer_id, ref.id)
-    if document is None:
-        raise ResearchInputsChanged
-    fingerprint = _fingerprint(document.body)
-    if fingerprint != receipt.content_fingerprint:
-        raise ResearchInputsChanged
-    return ReadWebPage(receipt=receipt, body=document.body)
+# ---------------------------------------------------------------------------
+# Source reading.
+# ---------------------------------------------------------------------------
 
 
 def _read_source(
@@ -838,14 +771,12 @@ def _read_source(
     read_ref: ResourceRef,
     target_ref: ResourceRef,
     fallback_title: str,
-    role: Literal["seed", "nexus", "web"],
-) -> ResearchSource | None:
+    role: SourceRole,
+) -> _Source | None:
+    from nexus.services.resource_graph.resolve import load_resource_batch
+
     if target_ref != read_ref:
-        target = load_resource_batch(
-            db,
-            [target_ref],
-            viewer_id=viewer_id,
-        )[target_ref.uri]
+        target = load_resource_batch(db, [target_ref], viewer_id=viewer_id)[target_ref.uri]
         if target.missing:
             return None
     if resource_read_policy(read_ref) == "media":
@@ -861,27 +792,19 @@ def _read_source(
             quote = loaded.quote
             title = quote.source_label
             body = "\n".join(
-                part
-                for part in (
-                    quote.prefix,
-                    quote.exact,
-                    quote.suffix,
-                    quote.note or "",
-                )
-                if part
+                part for part in (quote.prefix, quote.exact, quote.suffix, quote.note or "") if part
             )
         else:
             title = loaded.title or fallback_title
             body = loaded.body or ""
     if not body.strip():
         return None
-    title = title or fallback_title or "Untitled"
-    return ResearchSource(
+    return _Source(
         read_ref=read_ref,
         target_ref=target_ref,
-        title=title,
+        title=title or fallback_title or "Untitled",
         body=body,
-        content_fingerprint=_fingerprint(body),
+        content_fingerprint=_sha256(body),
         role=role,
     )
 
@@ -902,12 +825,40 @@ def _select_web_items(results: list[WebSearchResult]) -> list[WebSearchItem]:
     return selected
 
 
-def _parse_owned_ref(uri: str) -> ResourceRef:
-    parsed = parse_resource_ref(uri)
-    if isinstance(parsed, ResourceRefParseFailure):
-        raise AssertionError(f"owned Dossier research ref is malformed: {uri!r}")
-    return parsed
+def _candidate(index: int, source: _Source) -> Candidate:
+    return Candidate(
+        index=index,
+        target=source.target_ref,
+        text=f"{source.title}\n{source.body}",
+        snapshot=CitationSnapshot(
+            title=source.title,
+            excerpt=source.body[:EXCERPT_CHARS],
+            result_type=source.target_ref.scheme,
+        ),
+    )
 
 
-def _fingerprint(value: str) -> str:
+def _idea_queries(idea: IdeaSubject) -> tuple[str, str, str]:
+    disambiguator = idea.idea_key.disambiguator_key
+    base = (
+        f"{idea.display_title} {disambiguator.value}"
+        if isinstance(disambiguator, Present)
+        else idea.display_title
+    )
+    return (base, f"{base} explained", f"{base} examples")
+
+
+def _require_idea(subject: object) -> IdeaSubject:
+    if not isinstance(subject, IdeaSubject):
+        raise AssertionError("the Idea dossier binding received a Resource subject")
+    return subject
+
+
+def _reason(omission: Presence[WebPageOmissionReason]) -> str:
+    if not isinstance(omission, Present):
+        raise AssertionError("an omitted Web page has no reason")
+    return omission.value.value
+
+
+def _sha256(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()

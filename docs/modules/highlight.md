@@ -59,6 +59,14 @@ Reflowable anchors use canonical codepoint offsets, not DOM ranges. The browser
 maps selections to offsets with the highlight cursor helpers, and the backend
 validates offsets against the stored fragment text before writing.
 
+`domTextCursor.ts` records the source spans for each canonical codepoint;
+`domTextRanges.ts` owns both directions of the mapping. selection, hosted and
+public painting, find marks, and margin geometry use that provenance. unicode
+normalization can compose or expand source characters: selection takes the
+smallest contiguous canonical interval covering the touched source spans.
+highlights sharing a source character share its paint, with all ids retained
+and the newest highlight on top.
+
 PDF anchors use page-space coordinates and text-layer match metadata. Geometry
 is canonical; rendered viewport coordinates are derived presentation state.
 PDF writes serialize through the PDF highlight geometry owner so duplicate and
@@ -172,12 +180,13 @@ durable `highlight:<id>` ref to `POST /artifacts/dossiers/learn`. Popover state
 ends normally. Global feedback owns pending/failure state, and success adopts
 the standalone Artifact pane.
 
-The Artifact subsystem, not Highlight, resolves the occurrence to one
-user-owned Idea, records the Highlight as a generation seed, and owns exact
-Learn replay. Re-Learn is the recovery path. Highlight deletion explicitly
-removes Idea resolution, seed, and affected Learn replay rows before the
-Highlight row. Learn creates no Resource Graph Link and Highlight still
-publishes no Inspector.
+The Artifact subsystem, not Highlight, canonicalizes the selected text to one
+user-owned Idea and records the Highlight as a generation seed. Learning the
+same phrase twice reaches the same Idea, so the resolution row, the seed pair
+and the head key carry the replay; re-Learn is the recovery path. Highlight
+deletion explicitly removes Idea resolution, seed, and any leftover Learn rows
+before the Highlight row. Learn creates no Resource Graph Link and Highlight
+still publishes no Inspector.
 
 ## Reader Presentation
 

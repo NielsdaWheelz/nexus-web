@@ -1,19 +1,10 @@
-"""Library governance: the `libraries` and `memberships` tables.
+"""Library governance: the `libraries` table and the viewer's index over it."""
 
-Owns library CRUD, membership/role management, ownership transfer, the
-membership-fetch-and-lock guards reused across the library domain, and the
-libraries/memberships access checks used by ingest paths. Entry rows and
-invitations are owned by their own modules.
-"""
-
-import base64
-import binascii
-import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, assert_never
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import text
@@ -40,13 +31,11 @@ from nexus.schemas.library import (
     CreateLibraryRequest,
     LibraryDeleteOut,
     LibraryDestinationOut,
-    LibraryGovernancePageInfo,
-    LibraryMemberOut,
     LibraryOut,
     LibraryRenameOut,
     LibraryRole,
 )
-from nexus.schemas.presence import absent, presence_from_nullable, present
+from nexus.schemas.presence import absent, present
 from nexus.services.collection_keyset import (
     Direction,
     SortKey,
@@ -70,18 +59,21 @@ from nexus.services.keyset_cursor import (
     decode_keyset_cursor,
     encode_keyset_cursor,
 )
-from nexus.services.sealed_handles import seal_user, unseal_user
+from nexus.services.sealed_handles import seal_user
 from nexus.storage.client import StorageError, get_storage_client
 from nexus.text import escape_like
 
 logger = logging.getLogger(__name__)
 
+_LIBRARY_COLUMNS = """
+    l.id, l.name, l.owner_user_id, l.is_default,
+    l.system_key, l.created_at, l.updated_at, m.role
+"""
+
 
 @dataclass(frozen=True)
 class LibraryMembershipContext:
-    """A library row joined with the viewer's membership role. The frozen result of
-    `lock_library_for_member`; consumers read fields by name instead of unpacking a
-    positional tuple."""
+    """A library row joined with the viewer's membership role."""
 
     library_id: UUID
     is_default: bool
@@ -93,123 +85,8 @@ class LibraryMembershipContext:
     updated_at: datetime
 
 
-def _library_capabilities(
-    *,
-    role: str,
-    is_default: bool,
-    system_key: str | None,
-    viewer_user_id: UUID,
-    owner_user_id: UUID,
-) -> dict:
-    """Derive the user-facing mutability affordances for a LibraryOut. System and
-    default libraries are immutable; common edits gate on admin while destructive
-    ownership actions remain owner-only."""
-    mutable = system_key is None and not is_default
-    is_owner = viewer_user_id == owner_user_id
-    return {
-        "can_rename": mutable and role == "admin",
-        "can_delete": mutable and is_owner,
-        "can_edit_entries": mutable and role == "admin",
-        "can_manage_members": mutable and role == "admin",
-        "can_transfer_ownership": mutable and is_owner,
-    }
-
-
-def _library_out_from_row(row, *, viewer_user_id: UUID) -> LibraryOut:
-    return LibraryOut(
-        id=row["id"],
-        name=row["name"],
-        owner_user_handle=seal_user(row["owner_user_id"]),
-        is_default=row["is_default"],
-        role=row["role"],
-        system_key=row["system_key"],
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-        **_library_capabilities(
-            role=row["role"],
-            is_default=row["is_default"],
-            system_key=row["system_key"],
-            viewer_user_id=viewer_user_id,
-            owner_user_id=row["owner_user_id"],
-        ),
-    )
-
-
-def _library_destination_out_from_row(row) -> LibraryDestinationOut:
-    return LibraryDestinationOut(
-        id=row["id"],
-        name=row["name"],
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-    )
-
-
-def _library_member_out_from_row(row, *, owner_user_id: UUID) -> LibraryMemberOut:
-    return LibraryMemberOut(
-        user_handle=seal_user(row["user_id"]),
-        role=row["role"],
-        is_owner=row["user_id"] == owner_user_id,
-        email=presence_from_nullable(row["email"]),
-        display_name=presence_from_nullable(row["display_name"]),
-        created_at=row["created_at"],
-    )
-
-
-def _library_member_ids(db: Session, library_id: UUID) -> list[UUID]:
-    return [
-        UUID(str(user_id))
-        for user_id in db.execute(
-            text("SELECT user_id FROM memberships WHERE library_id = :library_id ORDER BY user_id"),
-            {"library_id": library_id},
-        ).scalars()
-    ]
-
-
-def _bump_library_index(
-    db: Session,
-    viewer_ids: Sequence[UUID],
-    *,
-    conversations: bool = False,
-) -> None:
-    bump_collection_families(
-        db,
-        viewer_ids=viewer_ids,
-        families=(*ENTRY_VISIBILITY_FAMILIES, CollectionFamily.LibrariesIndex),
-    )
-    if conversations:
-        bump_collection_revisions(
-            db,
-            viewer_ids=viewer_ids,
-            family=CollectionFamily.ConversationIndex,
-        )
-
-
-def lock_library_for_member(
-    db: Session, viewer_id: UUID, library_id: UUID, *, lock: bool = True
-) -> LibraryMembershipContext:
-    """Fetch a library joined with the viewer's membership; mask a non-member as 404.
-
-    With `lock=True` (the default for mutations) the library row is `FOR UPDATE OF l`
-    locked. Read-only auth checks pass `lock=False`.
-    """
-    lock_clause = "FOR UPDATE OF l" if lock else ""
-    row = (
-        db.execute(
-            text(f"""
-            SELECT l.id, l.is_default, l.owner_user_id, l.name,
-                   m.role, l.system_key, l.created_at, l.updated_at
-            FROM libraries l
-            JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
-            WHERE l.id = :library_id
-            {lock_clause}
-        """),
-            {"library_id": library_id, "viewer_id": viewer_id},
-        )
-        .mappings()
-        .fetchone()
-    )
-    if row is None:
-        raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
+def membership_context(row: Any) -> LibraryMembershipContext:
+    """Adapt one `_LIBRARY_COLUMNS` row into the frozen membership context."""
     return LibraryMembershipContext(
         library_id=row["id"],
         is_default=row["is_default"],
@@ -220,6 +97,65 @@ def lock_library_for_member(
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def library_out(
+    ctx: LibraryMembershipContext,
+    *,
+    viewer_id: UUID,
+    name: str | None = None,
+    owner_user_id: UUID | None = None,
+    role: LibraryRole | None = None,
+    updated_at: datetime | None = None,
+) -> LibraryOut:
+    """The one LibraryOut builder. System and default libraries are immutable;
+    common edits gate on admin, destructive ownership actions on ownership."""
+    owner = ctx.owner_user_id if owner_user_id is None else owner_user_id
+    effective_role = ctx.role if role is None else role
+    mutable = ctx.system_key is None and not ctx.is_default
+    is_owner = viewer_id == owner
+    return LibraryOut(
+        id=ctx.library_id,
+        name=ctx.name if name is None else name,
+        owner_user_handle=seal_user(owner),
+        is_default=ctx.is_default,
+        role=effective_role,
+        system_key=ctx.system_key,
+        created_at=ctx.created_at,
+        updated_at=ctx.updated_at if updated_at is None else updated_at,
+        can_rename=mutable and effective_role == "admin",
+        can_delete=mutable and is_owner,
+        can_edit_entries=mutable and effective_role == "admin",
+        can_manage_members=mutable and effective_role == "admin",
+        can_transfer_ownership=mutable and is_owner,
+    )
+
+
+def lock_library_for_member(
+    db: Session, viewer_id: UUID, library_id: UUID, *, lock: bool = True
+) -> LibraryMembershipContext:
+    """Fetch a library joined with the viewer's membership; mask a non-member as 404.
+
+    With `lock=True` the library row is `FOR UPDATE OF l` locked; read-only
+    checks and SERIALIZABLE commands pass `lock=False`.
+    """
+    row = (
+        db.execute(
+            text(f"""
+            SELECT {_LIBRARY_COLUMNS}
+            FROM libraries l
+            JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
+            WHERE l.id = :library_id
+            {"FOR UPDATE OF l" if lock else ""}
+        """),
+            {"library_id": library_id, "viewer_id": viewer_id},
+        )
+        .mappings()
+        .fetchone()
+    )
+    if row is None:
+        raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
+    return membership_context(row)
 
 
 def lock_library_rows_in_order(db: Session, library_ids: Sequence[UUID]) -> list[UUID]:
@@ -235,13 +171,13 @@ def lock_library_rows_in_order(db: Session, library_ids: Sequence[UUID]) -> list
 
 
 def require_admin(role: LibraryRole) -> None:
-    """Raise E_FORBIDDEN if role is not admin."""
+    """Raise E_FORBIDDEN unless the viewer is an admin of the library."""
     if role != "admin":
         raise ForbiddenError(ApiErrorCode.E_FORBIDDEN, "Admin access required")
 
 
 def require_non_default(is_default: bool) -> None:
-    """Raise E_DEFAULT_LIBRARY_FORBIDDEN if library is default."""
+    """Raise E_DEFAULT_LIBRARY_FORBIDDEN for the viewer's virtual All library."""
     if is_default:
         raise ForbiddenError(
             ApiErrorCode.E_DEFAULT_LIBRARY_FORBIDDEN,
@@ -250,15 +186,80 @@ def require_non_default(is_default: bool) -> None:
 
 
 def require_not_system(system_key: str | None) -> None:
-    """Raise E_LIBRARY_FORBIDDEN for system-owned libraries (user mutations are blocked)."""
+    """Raise E_LIBRARY_FORBIDDEN for system-owned libraries."""
     if system_key is not None:
         raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "System library cannot be modified")
 
 
+def library_member_ids(db: Session, library_id: UUID) -> list[UUID]:
+    """Every current member of a library, in UUID order."""
+    return [
+        UUID(str(user_id))
+        for user_id in db.execute(
+            text("SELECT user_id FROM memberships WHERE library_id = :library_id ORDER BY user_id"),
+            {"library_id": library_id},
+        ).scalars()
+    ]
+
+
+def bump_library_index(
+    db: Session, viewer_ids: Sequence[UUID], *, conversations: bool = False
+) -> None:
+    """Invalidate the index and entry inventories of every affected member."""
+    bump_collection_families(
+        db,
+        viewer_ids=viewer_ids,
+        families=(*ENTRY_VISIBILITY_FAMILIES, CollectionFamily.LibrariesIndex),
+    )
+    if conversations:
+        bump_collection_revisions(
+            db, viewer_ids=viewer_ids, family=CollectionFamily.ConversationIndex
+        )
+
+
+def keyset_page(
+    db: Session,
+    *,
+    family: str,
+    query: dict[str, object],
+    plan: Sequence[SortKey],
+    alias: str,
+    cursor: str | None,
+    limit: int,
+    params: dict[str, object],
+    sql: Callable[[str, str], str],
+) -> tuple[list[Any], str | None]:
+    """Run one keyset page for the library domain's four cursored listings.
+
+    `sql(keyset_predicate, order_by)` returns a statement selecting `:limit`
+    rows from `alias`; this binds `limit + 1` and reports the next cursor.
+    """
+    bound = dict(params, limit=limit + 1)
+    keyset_sql = ""
+    if cursor is not None:
+        keyset_sql = keyset_clause(plan, alias=alias)
+        bound.update(
+            keyset_params(
+                plan,
+                decode_keyset_cursor(
+                    cursor, family=family, query=query, expected_kinds=expected_kinds(plan)
+                ),
+            )
+        )
+    rows = (
+        db.execute(text(sql(keyset_sql, order_by_sql(plan, alias=alias))), bound).mappings().all()
+    )
+    page_rows = list(rows[:limit])
+    next_cursor = (
+        encode_keyset_cursor(family=family, query=query, after=after_values(plan, page_rows[-1]))
+        if len(rows) > limit
+        else None
+    )
+    return page_rows, next_cursor
+
+
 def _validate_library_name(name: str) -> str:
-    """Normalize and validate a non-default library name. ``All`` (any trimmed,
-    Unicode-casefolded spelling) is reserved for the All view alias, so it is
-    rejected for every user-authored create/rename."""
+    """Normalize a user-authored name; `All` is reserved for the All view."""
     name = name.strip()
     if not name or len(name) > 100:
         raise InvalidRequestError(ApiErrorCode.E_NAME_INVALID, "Name must be 1-100 characters")
@@ -267,103 +268,72 @@ def _validate_library_name(name: str) -> str:
     return name
 
 
-def create_library(
-    db: Session,
-    viewer_id: UUID,
-    request: CreateLibraryRequest,
-) -> LibraryOut:
-    """Create a new non-default library with the creator as owner-admin."""
+def create_library(db: Session, viewer_id: UUID, request: CreateLibraryRequest) -> LibraryOut:
+    """Create a non-default library with the creator as owner-admin, idempotent by id."""
     name = _validate_library_name(request.name)
 
-    def op():
+    def attempt() -> LibraryMembershipContext:
         with transaction(db):
-            row = (
+            existing = (
                 db.execute(
-                    text(
-                        """
-                        SELECT
-                            l.id, l.name, l.owner_user_id, l.is_default,
-                            l.system_key, l.created_at, l.updated_at, m.role
+                    text(f"""
+                        SELECT {_LIBRARY_COLUMNS}
                         FROM libraries l
                         LEFT JOIN memberships m
                           ON m.library_id = l.id AND m.user_id = :viewer_id
                         WHERE l.id = :library_id
-                        """
-                    ),
-                    {
-                        "library_id": request.library_id,
-                        "viewer_id": viewer_id,
-                    },
+                    """),
+                    {"library_id": request.library_id, "viewer_id": viewer_id},
                 )
                 .mappings()
                 .fetchone()
             )
-            if row is not None:
+            if existing is not None:
                 if (
-                    row["owner_user_id"] != viewer_id
-                    or row["name"] != name
-                    or row["is_default"]
-                    or row["system_key"] is not None
-                    or row["role"] != "admin"
+                    existing["owner_user_id"] != viewer_id
+                    or existing["name"] != name
+                    or existing["is_default"]
+                    or existing["system_key"] is not None
+                    or existing["role"] != "admin"
                 ):
                     raise ConflictError(
                         ApiErrorCode.E_RESOURCE_CONFLICT,
                         "Library create id is already bound to a different resource",
                     )
-                return row, False
+                return membership_context(existing)
 
-            row = (
+            created = (
                 db.execute(
-                    text(
-                        """
-                        INSERT INTO libraries (
-                            id, name, owner_user_id, is_default
-                        )
+                    text("""
+                        INSERT INTO libraries (id, name, owner_user_id, is_default)
                         VALUES (:library_id, :name, :viewer_id, false)
-                        RETURNING
-                            id, name, owner_user_id, is_default,
-                            system_key, created_at, updated_at
-                        """
-                    ),
-                    {
-                        "library_id": request.library_id,
-                        "name": name,
-                        "viewer_id": viewer_id,
-                    },
+                        RETURNING id, name, owner_user_id, is_default,
+                                  system_key, created_at, updated_at
+                    """),
+                    {"library_id": request.library_id, "name": name, "viewer_id": viewer_id},
                 )
                 .mappings()
                 .one()
             )
             db.execute(
-                text(
-                    """
+                text("""
                     INSERT INTO memberships (library_id, user_id, role)
                     VALUES (:library_id, :user_id, 'admin')
-                    """
-                ),
+                """),
                 {"library_id": request.library_id, "user_id": viewer_id},
             )
             bump_collection_families(
                 db,
                 viewer_ids=(viewer_id,),
-                families=(
-                    CollectionFamily.LibrariesIndex,
-                    CollectionFamily.LibraryEntries,
-                ),
+                families=(CollectionFamily.LibrariesIndex, CollectionFamily.LibraryEntries),
             )
-            return {**row, "role": "admin"}, True
+            return membership_context({**created, "role": "admin"})
 
-    row, _created = retry_serializable(db, "create_library", op)
-    return _library_out_from_row(row, viewer_user_id=viewer_id)
+    return library_out(retry_serializable(db, "create_library", attempt), viewer_id=viewer_id)
 
 
 def ensure_system_library(db: Session, *, system_key: str, name: str, owner_user_id: UUID) -> UUID:
-    """Create or return the system library identified by ``system_key`` (idempotent).
-
-    System maintenance command. System libraries are protected from user
-    rename/delete/share/entry edits (``system_key IS NOT NULL``); only explicit system
-    commands like this one create or mutate them. The owner gets an admin membership.
-    """
+    """Create or return the system library identified by `system_key` (idempotent)."""
     with transaction(db):
         existing = db.execute(
             text("SELECT id FROM libraries WHERE system_key = :system_key"),
@@ -372,37 +342,31 @@ def ensure_system_library(db: Session, *, system_key: str, name: str, owner_user
         if existing is not None:
             return existing
         library_id = db.execute(
-            text(
-                """
+            text("""
                 INSERT INTO libraries (name, owner_user_id, is_default, system_key)
                 VALUES (:name, :owner_user_id, false, :system_key)
                 RETURNING id
-                """
-            ),
+            """),
             {"name": name, "owner_user_id": owner_user_id, "system_key": system_key},
         ).scalar_one()
         db.execute(
-            text(
-                "INSERT INTO memberships (library_id, user_id, role) "
-                "VALUES (:library_id, :user_id, 'admin')"
-            ),
+            text("""
+                INSERT INTO memberships (library_id, user_id, role)
+                VALUES (:library_id, :user_id, 'admin')
+            """),
             {"library_id": library_id, "user_id": owner_user_id},
         )
         bump_collection_families(
             db,
             viewer_ids=(owner_user_id,),
-            families=(
-                CollectionFamily.LibrariesIndex,
-                CollectionFamily.LibraryEntries,
-            ),
+            families=(CollectionFamily.LibrariesIndex, CollectionFamily.LibraryEntries),
         )
         return library_id
 
 
 def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) -> LibraryRenameOut:
-    """Rename a non-default library. Admin-only; default library forbidden."""
+    """Rename a mutable library. Admin-only."""
     name = _validate_library_name(name)
-
     with transaction(db):
         ctx = lock_library_for_member(db, viewer_id, library_id)
         require_non_default(ctx.is_default)
@@ -412,74 +376,49 @@ def rename_library(db: Session, viewer_id: UUID, library_id: UUID, name: str) ->
         now = datetime.now(UTC)
         db.execute(
             text("""
-                UPDATE libraries
-                SET name = :name, updated_at = :updated_at
+                UPDATE libraries SET name = :name, updated_at = :updated_at
                 WHERE id = :library_id
             """),
             {"name": name, "updated_at": now, "library_id": library_id},
         )
-        _bump_library_index(db, _library_member_ids(db, library_id))
+        bump_library_index(db, library_member_ids(db, library_id))
         collection_revision = read_collection_revision(
-            db,
-            viewer_id=viewer_id,
-            family=CollectionFamily.LibrariesIndex,
+            db, viewer_id=viewer_id, family=CollectionFamily.LibrariesIndex
         )
 
     return LibraryRenameOut(
-        library=LibraryOut(
-            id=ctx.library_id,
-            name=name,
-            owner_user_handle=seal_user(ctx.owner_user_id),
-            is_default=ctx.is_default,
-            role=ctx.role,
-            system_key=ctx.system_key,
-            created_at=ctx.created_at,
-            updated_at=now,
-            **_library_capabilities(
-                role=ctx.role,
-                is_default=ctx.is_default,
-                system_key=ctx.system_key,
-                viewer_user_id=viewer_id,
-                owner_user_id=ctx.owner_user_id,
-            ),
-        ),
+        library=library_out(ctx, viewer_id=viewer_id, name=name, updated_at=now),
         collection_revision=collection_revision,
     )
 
 
 def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDeleteOut:
-    """Delete a non-default library. Owner-only; non-owner admins get E_OWNER_REQUIRED."""
+    """Delete a mutable library and everything sourced by it. Owner-only."""
     from nexus.services import library_entries, media_deletion, media_upload_sessions
     from nexus.services.artifacts import engine as artifact_engine
     from nexus.services.artifacts.dossier_types import AudienceUser
     from nexus.services.resource_graph.cleanup import delete_edges_for_deleted_resource
     from nexus.services.resource_graph.refs import ResourceRef
 
+    def require_owner(lock: bool) -> LibraryMembershipContext:
+        ctx = lock_library_for_member(db, viewer_id, library_id, lock=lock)
+        require_non_default(ctx.is_default)
+        require_not_system(ctx.system_key)
+        if ctx.owner_user_id != viewer_id:
+            raise ForbiddenError(
+                ApiErrorCode.E_OWNER_REQUIRED, "Only the library owner can delete it"
+            )
+        return ctx
+
     def attempt() -> tuple[list[str], CollectionRevision]:
         with transaction(db):
-            ctx = lock_library_for_member(db, viewer_id, library_id, lock=False)
-            require_non_default(ctx.is_default)
-            require_not_system(ctx.system_key)
-            if ctx.owner_user_id != viewer_id:
-                raise ForbiddenError(
-                    ApiErrorCode.E_OWNER_REQUIRED, "Only the library owner can delete it"
-                )
-
+            require_owner(lock=False)
             media_ids = sorted(set(library_entries.list_media_ids_in_library(db, library_id)))
             if library_entries.lock_media_rows_in_order(db, media_ids) != media_ids:
                 raise TransactionRestart("library media lock set contained a missing media row")
 
-            ctx = lock_library_for_member(db, viewer_id, library_id)
-            require_non_default(ctx.is_default)
-            require_not_system(ctx.system_key)
-            if ctx.owner_user_id != viewer_id:
-                raise ForbiddenError(
-                    ApiErrorCode.E_OWNER_REQUIRED, "Only the library owner can delete it"
-                )
-            locked_media_ids = sorted(
-                set(library_entries.list_media_ids_in_library(db, library_id))
-            )
-            if locked_media_ids != media_ids:
+            require_owner(lock=True)
+            if sorted(set(library_entries.list_media_ids_in_library(db, library_id))) != media_ids:
                 raise TransactionRestart("library media lock set changed before deletion")
 
             affected_user_ids = [
@@ -492,40 +431,25 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDel
                     {"library_id": library_id},
                 ).scalars()
             ]
-            _bump_library_index(db, affected_user_ids, conversations=True)
-            # This transaction composes Library-subject cleanup, zero-reference
-            # Media-subject cleanup, and every affected member's User-audience
-            # visibility sweep. Prelock their complete possible head union once
-            # in the Dossier owner's canonical order before any nested cleanup.
-            # Using all original Media members is intentionally conservative:
-            # the reference owner decides which are actually hard-deleted later.
+            bump_library_index(db, affected_user_ids, conversations=True)
+            # Prelock the whole possible Dossier head union once, in the owner's
+            # canonical order, before any nested cleanup can take a head lock.
             artifact_engine.lock_cleanup_heads_in_order(
                 db,
                 subject_refs=[
                     ResourceRef(scheme="library", id=library_id),
                     *(ResourceRef(scheme="media", id=media_id) for media_id in media_ids),
                 ],
-                audiences=[
-                    AudienceUser(user_id=affected_user_id) for affected_user_id in affected_user_ids
-                ],
+                audiences=[AudienceUser(user_id=user_id) for user_id in affected_user_ids],
             )
             artifact_engine.on_subject_deleted(db, ResourceRef(scheme="library", id=library_id))
-
-            # The library itself is a graph resource: context refs and app_search
-            # scopes point at ``library:<id>`` (§9.6 rule 2). Clean them with the
-            # row, mirroring conversation/media delete, or they dangle as phantom
-            # scopes. Cited edges sourced by the library (rule 1) — none today — die
-            # the same way.
             delete_edges_for_deleted_resource(db, ref=ResourceRef(scheme="library", id=library_id))
-
             media_upload_sessions.delete_library_destination_support_in_current_transaction(
-                db,
-                library_id=library_id,
+                db, library_id=library_id
             )
             library_entries.delete_library_entries(db, library_id)
             db.execute(
-                text("DELETE FROM libraries WHERE id = :library_id"),
-                {"library_id": library_id},
+                text("DELETE FROM libraries WHERE id = :library_id"), {"library_id": library_id}
             )
 
             storage_paths: list[str] = []
@@ -533,17 +457,13 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDel
                 paths = media_deletion.delete_document_media_if_unreferenced(db, media_id)
                 if paths:
                     storage_paths.extend(paths)
-            for affected_user_id in affected_user_ids:
+            for user_id in affected_user_ids:
                 artifact_engine.on_audience_visibility_changed(
-                    db,
-                    audience=AudienceUser(user_id=affected_user_id),
+                    db, audience=AudienceUser(user_id=user_id)
                 )
-            collection_revision = read_collection_revision(
-                db,
-                viewer_id=viewer_id,
-                family=CollectionFamily.LibrariesIndex,
+            return storage_paths, read_collection_revision(
+                db, viewer_id=viewer_id, family=CollectionFamily.LibrariesIndex
             )
-            return storage_paths, collection_revision
 
     storage_paths, collection_revision = retry_read_committed(db, "delete_library", attempt)
 
@@ -553,35 +473,29 @@ def delete_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryDel
             try:
                 storage_client.delete_object(storage_path)
             except StorageError as exc:
-                # justify-ignore-error: library deletion has already committed
-                # the DB state that makes this object unreachable.
+                # justify-ignore-error: the commit already made this object unreachable.
                 logger.warning(
                     "library_storage_delete_failed storage_path=%s error=%s",
                     storage_path,
                     exc.message,
                 )
-    return LibraryDeleteOut(
-        library_id=library_id,
-        collection_revision=collection_revision,
+    return LibraryDeleteOut(library_id=library_id, collection_revision=collection_revision)
+
+
+def get_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryOut:
+    """Read one library the viewer is a member of; mask a non-member as 404."""
+    return library_out(
+        lock_library_for_member(db, viewer_id, library_id, lock=False), viewer_id=viewer_id
     )
 
 
 @dataclass(frozen=True, slots=True)
-class LibrariesCreatedOldest:
-    """Canonical: the earliest created Library first."""
+class LibrariesIndexView:
+    """One advertised total order over the viewer's libraries index."""
 
-
-@dataclass(frozen=True, slots=True)
-class LibrariesCreatedNewest:
-    """The most recently created Library first."""
-
-
-@dataclass(frozen=True, slots=True)
-class LibrariesName:
+    sort: Literal["created", "name"]
     direction: Direction
 
-
-type LibrariesIndexView = LibrariesCreatedOldest | LibrariesCreatedNewest | LibrariesName
 
 _INDEX_QUERY_KEYS = frozenset({"sort", "direction"})
 # Versioned family: a cursor minted under the single unordered index carried no
@@ -590,52 +504,43 @@ _INDEX_CURSOR_FAMILY = f"{CollectionFamily.LibrariesIndex.value}:v2"
 # The presented Library name, matching `libraries/presentation.ts`. Ordering on
 # the authored column would file the Default Library under a name no one sees.
 _PRESENTED_NAME_SQL = "CASE WHEN l.is_default THEN 'All' ELSE l.name END"
+# `created+asc` is absent deliberately: the canonical view keeps exactly one URL.
+_INDEX_VIEWS: dict[tuple[str | None, str | None], LibrariesIndexView] = {
+    (None, None): LibrariesIndexView("created", "asc"),
+    ("created", "desc"): LibrariesIndexView("created", "desc"),
+    ("name", "asc"): LibrariesIndexView("name", "asc"),
+    ("name", "desc"): LibrariesIndexView("name", "desc"),
+}
+# Every plan ends in `id`, which is unique, so every order is total; the name
+# orders keep `id ASC` in both directions.
+_DIRECTIONS: tuple[Direction, ...] = ("asc", "desc")
+_INDEX_PLANS: dict[LibrariesIndexView, tuple[SortKey, ...]] = {
+    LibrariesIndexView("created", direction): (
+        SortKey("created_at", direction, KeysetValueKind.DateTime),
+        SortKey("id", direction, KeysetValueKind.Uuid),
+    )
+    for direction in _DIRECTIONS
+} | {
+    LibrariesIndexView("name", direction): (
+        SortKey("name_key", direction, KeysetValueKind.Text),
+        SortKey("presented_name", direction, KeysetValueKind.Text),
+        SortKey("id", "asc", KeysetValueKind.Uuid),
+    )
+    for direction in _DIRECTIONS
+}
 
 
 def parse_libraries_index_query(
     items: Sequence[tuple[str, str]],
 ) -> tuple[LibrariesIndexView, ParsedCollectionQuery]:
-    """Strict Libraries-index view parse. ``items`` is the request's
-    ``multi_items()`` so duplicate keys are visible. Both keys absent is the
-    canonical oldest-first view; anything else must name one advertised
-    non-default view exactly. ``created+asc`` is rejected rather than normalized
-    so the canonical view keeps exactly one URL."""
+    """Strict libraries-index view parse over the request's `multi_items()`."""
     query = parse_collection_query(items, domain_keys=_INDEX_QUERY_KEYS)
-    sort = query.parameters.get("sort")
-    direction = query.parameters.get("direction")
-    if sort is None and direction is None:
-        return LibrariesCreatedOldest(), query
-    if sort == "created" and direction == "desc":
-        return LibrariesCreatedNewest(), query
-    if sort == "name" and (direction == "asc" or direction == "desc"):
-        return LibrariesName(direction), query
-    raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Unsupported Libraries index view")
-
-
-def _index_plan(view: LibrariesIndexView) -> list[SortKey]:
-    """The total, stable sort-key plan that drives ORDER BY, the keyset, and the
-    cursor `after`. The Library id is unique, so every plan is total; the name
-    order keeps ``id ASC`` in both directions so identically named Libraries
-    always read in the same sequence."""
-    match view:
-        case LibrariesCreatedOldest():
-            return [
-                SortKey("created_at", "asc", KeysetValueKind.DateTime),
-                SortKey("id", "asc", KeysetValueKind.Uuid),
-            ]
-        case LibrariesCreatedNewest():
-            return [
-                SortKey("created_at", "desc", KeysetValueKind.DateTime),
-                SortKey("id", "desc", KeysetValueKind.Uuid),
-            ]
-        case LibrariesName(direction):
-            return [
-                SortKey("name_key", direction, KeysetValueKind.Text),
-                SortKey("presented_name", direction, KeysetValueKind.Text),
-                SortKey("id", "asc", KeysetValueKind.Uuid),
-            ]
-        case _:
-            assert_never(view)
+    view = _INDEX_VIEWS.get((query.parameters.get("sort"), query.parameters.get("direction")))
+    if view is None:
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST, "Unsupported Libraries index view"
+        )
+    return view, query
 
 
 def list_libraries(
@@ -647,17 +552,13 @@ def list_libraries(
     collection_revision: CollectionRevision | None = None,
     limit: int = 100,
 ) -> CollectionPage[LibraryOut]:
-    """List one immutable-keyset page of the viewer's Libraries index in the
-    requested total order. The ``facts`` wrapper projects the derived sort
-    columns once so ORDER BY, the keyset, and the cursor read identical
-    expressions; the returned cursor is bound to this exact viewer, plan, and
-    revision."""
+    """One immutable-keyset page of the viewer's libraries index.
+
+    The `facts` wrapper projects the derived sort columns once so ORDER BY, the
+    keyset and the cursor read identical expressions.
+    """
     revision = (
-        read_collection_revision(
-            db,
-            viewer_id=viewer_id,
-            family=CollectionFamily.LibrariesIndex,
-        )
+        read_collection_revision(db, viewer_id=viewer_id, family=CollectionFamily.LibrariesIndex)
         if collection_revision is None
         else require_collection_revision(
             db,
@@ -666,70 +567,37 @@ def list_libraries(
             expected=collection_revision,
         )
     )
-    plan = _index_plan(view)
-    cursor_query = {
+    plan = _INDEX_PLANS[view]
+    cursor_query: dict[str, object] = {
         "family": _INDEX_CURSOR_FAMILY,
         "plan": plan_json(plan),
         "revision": revision,
         "viewerId": str(viewer_id),
     }
-    keyset_sql = ""
-    params: dict[str, object] = {"viewer_id": viewer_id, "limit": limit + 1}
-    if cursor is not None:
-        keyset_sql = keyset_clause(plan, alias="facts")
-        params.update(
-            keyset_params(
-                plan,
-                decode_keyset_cursor(
-                    cursor,
-                    family=_INDEX_CURSOR_FAMILY,
-                    query=cursor_query,
-                    expected_kinds=expected_kinds(plan),
-                ),
-            )
-        )
-
-    rows = (
-        db.execute(
-            text(f"""
-            WITH memberships_held AS (
-                SELECT l.id, l.name, l.owner_user_id, l.is_default,
-                       l.system_key, l.created_at, l.updated_at, m.role,
-                       {_PRESENTED_NAME_SQL} AS presented_name
+    page_rows, next_cursor = keyset_page(
+        db,
+        family=_INDEX_CURSOR_FAMILY,
+        query=cursor_query,
+        plan=plan,
+        alias="facts",
+        cursor=cursor,
+        limit=limit,
+        params={"viewer_id": viewer_id},
+        sql=lambda keyset, order: f"""
+            WITH facts AS (
+                SELECT {_LIBRARY_COLUMNS},
+                       {_PRESENTED_NAME_SQL} AS presented_name,
+                       lower(btrim({_PRESENTED_NAME_SQL})) AS name_key
                 FROM libraries l
                 JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
-            ),
-            facts AS (
-                SELECT memberships_held.*,
-                       lower(btrim(memberships_held.presented_name)) AS name_key
-                FROM memberships_held
             )
-            SELECT facts.id, facts.name, facts.owner_user_id, facts.is_default,
-                   facts.system_key, facts.created_at, facts.updated_at, facts.role,
-                   facts.presented_name, facts.name_key
-            FROM facts
-            WHERE 1 = 1
-              {keyset_sql}
-            ORDER BY {order_by_sql(plan, alias="facts")}
+            SELECT * FROM facts WHERE 1 = 1 {keyset}
+            ORDER BY {order}
             LIMIT :limit
-        """),
-            params,
-        )
-        .mappings()
-        .all()
-    )
-    page_rows = rows[:limit]
-    next_cursor = (
-        encode_keyset_cursor(
-            family=_INDEX_CURSOR_FAMILY,
-            query=cursor_query,
-            after=after_values(plan, page_rows[-1]),
-        )
-        if len(rows) > limit
-        else None
+        """,
     )
     return CollectionPage[LibraryOut](
-        items=[_library_out_from_row(row, viewer_user_id=viewer_id) for row in page_rows],
+        items=[library_out(membership_context(row), viewer_id=viewer_id) for row in page_rows],
         collectionRevision=revision,
         nextCursor=present(next_cursor) if next_cursor is not None else absent(),
     )
@@ -752,47 +620,35 @@ def list_writable_library_destinations(
     cursor: str | None = None,
     limit: int = 25,
 ) -> tuple[list[LibraryDestinationOut], str | None]:
+    """Rank the viewer's writable named libraries exact → prefix → contains → name."""
     if limit <= 0:
         raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
     limit = min(limit, 50)
     query = q or ""
-    cursor_query = {
+    cursor_query: dict[str, object] = {
         "family": _DESTINATIONS_CURSOR_FAMILY,
         "plan": plan_json(_DESTINATIONS_PLAN),
         "q": query,
         "viewerId": str(viewer_id),
     }
-    keyset_sql = ""
-    params: dict[str, object] = {
-        "viewer_id": viewer_id,
-        "q": query,
-        "prefix_q": f"{escape_like(query)}%",
-        "contains_q": f"%{escape_like(query)}%",
-        "limit": limit + 1,
-    }
-    if cursor is not None:
-        keyset_sql = keyset_clause(_DESTINATIONS_PLAN, alias="ranked")
-        params.update(
-            keyset_params(
-                _DESTINATIONS_PLAN,
-                decode_keyset_cursor(
-                    cursor,
-                    family=_DESTINATIONS_CURSOR_FAMILY,
-                    query=cursor_query,
-                    expected_kinds=expected_kinds(_DESTINATIONS_PLAN),
-                ),
-            )
-        )
-
-    rows = (
-        db.execute(
-            text(f"""
+    page_rows, next_cursor = keyset_page(
+        db,
+        family=_DESTINATIONS_CURSOR_FAMILY,
+        query=cursor_query,
+        plan=_DESTINATIONS_PLAN,
+        alias="ranked",
+        cursor=cursor,
+        limit=limit,
+        params={
+            "viewer_id": viewer_id,
+            "q": query,
+            "prefix_q": f"{escape_like(query)}%",
+            "contains_q": f"%{escape_like(query)}%",
+        },
+        sql=lambda keyset, order: f"""
             WITH ranked AS (
                 SELECT
-                    l.id,
-                    l.name,
-                    l.created_at,
-                    l.updated_at,
+                    l.id, l.name, l.created_at, l.updated_at,
                     lower(l.name) AS normalized_name,
                     CASE
                         WHEN :q = '' THEN 3
@@ -801,36 +657,26 @@ def list_writable_library_destinations(
                         ELSE 2
                     END AS match_rank
                 FROM libraries l
-                LEFT JOIN memberships m
-                  ON m.library_id = l.id AND m.user_id = :viewer_id
+                LEFT JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
                 WHERE l.is_default = false
                   AND l.system_key IS NULL
                   AND (l.owner_user_id = :viewer_id OR m.role = 'admin')
                   AND (:q = '' OR lower(l.name) LIKE :contains_q ESCAPE '\\')
             )
-            SELECT *
-            FROM ranked
-            WHERE 1 = 1
-              {keyset_sql}
-            ORDER BY {order_by_sql(_DESTINATIONS_PLAN, alias="ranked")}
+            SELECT * FROM ranked WHERE 1 = 1 {keyset}
+            ORDER BY {order}
             LIMIT :limit
-        """),
-            params,
-        )
-        .mappings()
-        .all()
+        """,
     )
-    page_rows = rows[:limit]
-    next_cursor = (
-        encode_keyset_cursor(
-            family=_DESTINATIONS_CURSOR_FAMILY,
-            query=cursor_query,
-            after=after_values(_DESTINATIONS_PLAN, page_rows[-1]),
+    return [
+        LibraryDestinationOut(
+            id=row["id"],
+            name=row["name"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
-        if len(rows) > limit
-        else None
-    )
-    return [_library_destination_out_from_row(row) for row in page_rows], next_cursor
+        for row in page_rows
+    ], next_cursor
 
 
 @dataclass(frozen=True, slots=True)
@@ -845,29 +691,18 @@ class LibraryManagementFacts:
 def library_management_facts(
     db: Session, *, viewer_id: UUID, library_ids: list[UUID]
 ) -> dict[UUID, LibraryManagementFacts]:
-    """Batch the viewer's settings/delete authority for each supplied library.
-
-    One set query, keyed by library id; libraries the viewer is not a member of
-    are omitted. Managing settings requires an admin role on a mutable (non-system,
-    non-default) library; deletion additionally requires ownership. Authority is
-    derived through :func:`_library_capabilities` — the same rule the mutation
-    routes enforce — so the snapshot capability and the enforced rule cannot
-    diverge. This is the set-based read the action-snapshot aggregator uses instead
-    of looping :func:`get_library` per ref.
-    """
+    """Batch the viewer's authority per library through the enforced capability rule."""
     ordered = list(dict.fromkeys(library_ids))
     if not ordered:
         return {}
     rows = (
         db.execute(
-            text(
-                """
-                SELECT l.id, l.owner_user_id, l.is_default, l.system_key, m.role
+            text(f"""
+                SELECT {_LIBRARY_COLUMNS}
                 FROM libraries l
                 JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
                 WHERE l.id = ANY(:library_ids)
-                """
-            ),
+            """),
             {"viewer_id": viewer_id, "library_ids": ordered},
         )
         .mappings()
@@ -875,380 +710,17 @@ def library_management_facts(
     )
     facts: dict[UUID, LibraryManagementFacts] = {}
     for row in rows:
-        capabilities = _library_capabilities(
-            role=row["role"],
-            is_default=row["is_default"],
-            system_key=row["system_key"],
-            viewer_user_id=viewer_id,
-            owner_user_id=row["owner_user_id"],
-        )
-        mutable = not bool(row["is_default"]) and row["system_key"] is None
-        facts[UUID(str(row["id"]))] = LibraryManagementFacts(
-            mutable=mutable,
-            can_manage_settings=capabilities["can_rename"],
-            can_delete=capabilities["can_delete"],
+        out = library_out(membership_context(row), viewer_id=viewer_id)
+        facts[out.id] = LibraryManagementFacts(
+            mutable=not out.is_default and out.system_key is None,
+            can_manage_settings=out.can_rename,
+            can_delete=out.can_delete,
         )
     return facts
 
 
-def get_library(db: Session, viewer_id: UUID, library_id: UUID) -> LibraryOut:
-    """Get a single library the viewer is a member of; mask a non-member as 404."""
-    row = (
-        db.execute(
-            text("""
-            SELECT l.id, l.name, l.owner_user_id, l.is_default,
-                   l.system_key, l.created_at, l.updated_at, m.role
-            FROM libraries l
-            JOIN memberships m ON m.library_id = l.id AND m.user_id = :viewer_id
-            WHERE l.id = :library_id
-        """),
-            {"library_id": library_id, "viewer_id": viewer_id},
-        )
-        .mappings()
-        .fetchone()
-    )
-    if row is None:
-        raise NotFoundError(ApiErrorCode.E_LIBRARY_NOT_FOUND, "Library not found")
-    return _library_out_from_row(row, viewer_user_id=viewer_id)
-
-
-def _encode_library_member_cursor(
-    row,
-    *,
-    viewer_id: UUID,
-    library_id: UUID,
-) -> str:
-    payload = {
-        "k": "library_members:v1",
-        "viewer": str(seal_user(viewer_id)),
-        "library_id": str(library_id),
-        "after_user": str(seal_user(row["user_id"])),
-    }
-    # justify-base64url-over-base64: cursor rides in a URL query parameter.
-    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
-    return encoded.rstrip("=")
-
-
-def _decode_library_member_cursor(
-    cursor: str,
-    *,
-    viewer_id: UUID,
-    library_id: UUID,
-) -> UUID:
-    try:
-        if not cursor or "=" in cursor:
-            raise ValueError
-        padded = cursor + "=" * (-len(cursor) % 4)
-        decoded = base64.b64decode(padded, altchars=b"-_", validate=True)
-        # justify-base64url-over-base64: cursor rides in a URL query parameter.
-        if base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii") != cursor:
-            raise ValueError
-        raw_payload: Any = json.loads(decoded.decode("utf-8"))
-        if not isinstance(raw_payload, dict):
-            raise ValueError
-        payload: dict[str, Any] = raw_payload
-        if (
-            set(payload) != {"k", "viewer", "library_id", "after_user"}
-            or not all(isinstance(value, str) for value in payload.values())
-            or payload["k"] != "library_members:v1"
-            or payload["viewer"] != str(seal_user(viewer_id))
-            or UUID(str(payload["library_id"])) != library_id
-        ):
-            raise ValueError
-        return unseal_user(str(payload["after_user"]))
-    except (
-        ValueError,
-        TypeError,
-        KeyError,
-        UnicodeDecodeError,
-        binascii.Error,
-        json.JSONDecodeError,
-    ):
-        # justify-ignore-error: malformed cursor input is an expected API error path.
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_CURSOR, "Invalid cursor") from None
-
-
-def list_library_members(
-    db: Session,
-    viewer_id: UUID,
-    library_id: UUID,
-    *,
-    cursor: str | None = None,
-    limit: int = 100,
-) -> tuple[list[LibraryMemberOut], LibraryGovernancePageInfo]:
-    """List one immutable-keyset page of library members. Admin-only."""
-    if limit <= 0:
-        raise InvalidRequestError(ApiErrorCode.E_INVALID_REQUEST, "Limit must be positive")
-    limit = min(limit, 200)
-
-    ctx = lock_library_for_member(db, viewer_id, library_id, lock=False)
-    require_admin(ctx.role)
-
-    cursor_clause = ""
-    params: dict[str, object] = {"library_id": library_id, "limit": limit + 1}
-    if cursor is not None:
-        cursor_user_id = _decode_library_member_cursor(
-            cursor,
-            viewer_id=viewer_id,
-            library_id=library_id,
-        )
-        cursor_clause = "AND m.user_id > :cursor_user_id"
-        params["cursor_user_id"] = cursor_user_id
-
-    rows = (
-        db.execute(
-            text(f"""
-            SELECT m.user_id, m.role, m.created_at, u.email, u.display_name
-            FROM memberships m
-            JOIN users u ON u.id = m.user_id
-            WHERE m.library_id = :library_id
-              {cursor_clause}
-            ORDER BY m.user_id ASC
-            LIMIT :limit
-        """),
-            params,
-        )
-        .mappings()
-        .all()
-    )
-
-    page_rows = rows[:limit]
-    next_cursor = (
-        _encode_library_member_cursor(
-            page_rows[-1],
-            viewer_id=viewer_id,
-            library_id=library_id,
-        )
-        if len(rows) > limit
-        else None
-    )
-    return (
-        [_library_member_out_from_row(row, owner_user_id=ctx.owner_user_id) for row in page_rows],
-        LibraryGovernancePageInfo(
-            next_cursor=present(next_cursor) if next_cursor is not None else absent()
-        ),
-    )
-
-
-def update_library_member_role(
-    db: Session,
-    viewer_id: UUID,
-    library_id: UUID,
-    target_user_id: UUID,
-    role: LibraryRole,
-) -> LibraryMemberOut:
-    """Update a member's role. Admin-only; cannot change owner's role; default forbidden."""
-
-    def attempt() -> LibraryMemberOut:
-        with transaction(db):
-            ctx = lock_library_for_member(db, viewer_id, library_id)
-            require_admin(ctx.role)
-            require_non_default(ctx.is_default)
-            require_not_system(ctx.system_key)
-
-            db.execute(
-                text("SELECT 1 FROM memberships WHERE library_id = :lid FOR UPDATE"),
-                {"lid": library_id},
-            )
-
-            if target_user_id == ctx.owner_user_id:
-                raise ForbiddenError(
-                    ApiErrorCode.E_OWNER_EXIT_FORBIDDEN,
-                    "Cannot change owner role; transfer ownership first",
-                )
-
-            target = (
-                db.execute(
-                    text("""
-                    SELECT m.user_id, m.role, m.created_at, u.email, u.display_name
-                    FROM memberships m
-                    JOIN users u ON u.id = m.user_id
-                    WHERE m.library_id = :lid AND m.user_id = :uid
-                """),
-                    {"lid": library_id, "uid": target_user_id},
-                )
-                .mappings()
-                .fetchone()
-            )
-            if target is None:
-                raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Member not found")
-
-            role_changed = target["role"] != role
-            if role_changed:
-                result = db.execute(
-                    text("""
-                    UPDATE memberships SET role = :role
-                    WHERE library_id = :lid AND user_id = :uid
-                """),
-                    {"role": role, "lid": library_id, "uid": target_user_id},
-                )
-                assert getattr(result, "rowcount", None) == 1
-                target = (
-                    db.execute(
-                        text("""
-                        SELECT m.user_id, m.role, m.created_at, u.email, u.display_name
-                        FROM memberships m
-                        JOIN users u ON u.id = m.user_id
-                        WHERE m.library_id = :lid AND m.user_id = :uid
-                    """),
-                        {"lid": library_id, "uid": target_user_id},
-                    )
-                    .mappings()
-                    .one()
-                )
-            if role_changed:
-                _bump_library_index(db, _library_member_ids(db, library_id))
-
-            return _library_member_out_from_row(target, owner_user_id=ctx.owner_user_id)
-
-    return retry_serializable(db, "update_library_member_role", attempt)
-
-
-def remove_library_member(
-    db: Session, viewer_id: UUID, library_id: UUID, target_user_id: UUID
-) -> None:
-    """Remove a member. Admin-only; cannot remove owner; default forbidden; idempotent."""
-
-    def attempt() -> None:
-        with transaction(db):
-            ctx = lock_library_for_member(db, viewer_id, library_id)
-            require_admin(ctx.role)
-            require_non_default(ctx.is_default)
-            require_not_system(ctx.system_key)
-
-            db.execute(
-                text("SELECT 1 FROM memberships WHERE library_id = :lid FOR UPDATE"),
-                {"lid": library_id},
-            )
-
-            if target_user_id == ctx.owner_user_id:
-                raise ForbiddenError(
-                    ApiErrorCode.E_OWNER_EXIT_FORBIDDEN,
-                    "Cannot remove owner; transfer ownership first",
-                )
-
-            target = db.execute(
-                text("SELECT 1 FROM memberships WHERE library_id = :lid AND user_id = :uid"),
-                {"lid": library_id, "uid": target_user_id},
-            ).fetchone()
-            if target is None:
-                return
-
-            result = db.execute(
-                text("DELETE FROM memberships WHERE library_id = :lid AND user_id = :uid"),
-                {"lid": library_id, "uid": target_user_id},
-            )
-            assert getattr(result, "rowcount", None) == 1
-            _bump_library_index(
-                db,
-                _library_member_ids(db, library_id) + [target_user_id],
-                conversations=True,
-            )
-            from nexus.services.artifacts.dossier_types import AudienceUser
-            from nexus.services.artifacts.engine import on_audience_visibility_changed
-
-            on_audience_visibility_changed(
-                db,
-                audience=AudienceUser(user_id=target_user_id),
-            )
-
-    retry_serializable(db, "remove_library_member", attempt)
-
-
-def transfer_library_ownership(
-    db: Session, viewer_id: UUID, library_id: UUID, new_owner_user_id: UUID
-) -> LibraryOut:
-    """Transfer ownership to another member. Owner-only; previous owner stays admin."""
-
-    def attempt() -> LibraryOut:
-        with transaction(db):
-            ctx = lock_library_for_member(db, viewer_id, library_id)
-            require_non_default(ctx.is_default)
-            require_not_system(ctx.system_key)
-            if ctx.owner_user_id != viewer_id:
-                raise ForbiddenError(
-                    ApiErrorCode.E_OWNER_REQUIRED,
-                    "Only the library owner can transfer ownership",
-                )
-
-            db.execute(
-                text("SELECT 1 FROM memberships WHERE library_id = :lid FOR UPDATE"),
-                {"lid": library_id},
-            )
-
-            if new_owner_user_id == ctx.owner_user_id:
-                return LibraryOut(
-                    id=ctx.library_id,
-                    name=ctx.name,
-                    owner_user_handle=seal_user(ctx.owner_user_id),
-                    is_default=ctx.is_default,
-                    role=ctx.role,
-                    system_key=ctx.system_key,
-                    created_at=ctx.created_at,
-                    updated_at=ctx.updated_at,
-                    **_library_capabilities(
-                        role=ctx.role,
-                        is_default=ctx.is_default,
-                        system_key=ctx.system_key,
-                        viewer_user_id=viewer_id,
-                        owner_user_id=ctx.owner_user_id,
-                    ),
-                )
-
-            target = db.execute(
-                text("SELECT role FROM memberships WHERE library_id = :lid AND user_id = :uid"),
-                {"lid": library_id, "uid": new_owner_user_id},
-            ).fetchone()
-            if target is None:
-                raise ConflictError(
-                    ApiErrorCode.E_OWNERSHIP_TRANSFER_INVALID,
-                    "Transfer target must be an existing member",
-                )
-
-            if target[0] != "admin":
-                result = db.execute(
-                    text("""
-                        UPDATE memberships SET role = 'admin'
-                        WHERE library_id = :lid AND user_id = :uid
-                    """),
-                    {"lid": library_id, "uid": new_owner_user_id},
-                )
-                assert getattr(result, "rowcount", None) == 1
-
-            now = datetime.now(UTC)
-            result = db.execute(
-                text("""
-                    UPDATE libraries SET owner_user_id = :new_owner, updated_at = :now
-                    WHERE id = :lid
-                """),
-                {"new_owner": new_owner_user_id, "now": now, "lid": library_id},
-            )
-            assert getattr(result, "rowcount", None) == 1
-            _bump_library_index(db, _library_member_ids(db, library_id))
-
-            return LibraryOut(
-                id=ctx.library_id,
-                name=ctx.name,
-                owner_user_handle=seal_user(new_owner_user_id),
-                is_default=ctx.is_default,
-                created_at=ctx.created_at,
-                updated_at=now,
-                role="admin",
-                system_key=ctx.system_key,
-                **_library_capabilities(
-                    role="admin",
-                    is_default=ctx.is_default,
-                    system_key=ctx.system_key,
-                    viewer_user_id=viewer_id,
-                    owner_user_id=new_owner_user_id,
-                ),
-            )
-
-    return retry_serializable(db, "transfer_library_ownership", attempt)
-
-
 def find_default_library_id(db: Session, user_id: UUID) -> UUID | None:
-    """The user's default library id, or None if they have none (tolerant lookup)."""
+    """The user's default library id, or None if bootstrap has not made one."""
     row = db.execute(
         text("SELECT id FROM libraries WHERE owner_user_id = :uid AND is_default = true"),
         {"uid": user_id},
@@ -1272,8 +744,7 @@ def resolve_writable_non_default_library_ids(
         return []
     if len(set(library_ids)) != len(library_ids):
         raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "library_ids must not contain duplicates",
+            ApiErrorCode.E_INVALID_REQUEST, "library_ids must not contain duplicates"
         )
     rows = (
         db.execute(
@@ -1290,25 +761,21 @@ def resolve_writable_non_default_library_ids(
         .all()
     )
     rows_by_id = {UUID(str(row["id"])): row for row in rows}
-    targets: list[UUID] = []
     for library_id in library_ids:
         row = rows_by_id.get(library_id)
-        if row is None:
-            raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "library not writable")
-        if row["owner_user_id"] != viewer_id and row["role"] != "admin":
+        if row is None or (row["owner_user_id"] != viewer_id and row["role"] != "admin"):
             raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "library not writable")
         if row["is_default"]:
             raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_REQUEST,
-                "Default library cannot be selected",
+                ApiErrorCode.E_INVALID_REQUEST, "Default library cannot be selected"
             )
         if row["system_key"] is not None:
             raise ForbiddenError(ApiErrorCode.E_LIBRARY_FORBIDDEN, "library not writable")
-        targets.append(library_id)
-    return targets
+    return list(library_ids)
 
 
 def validate_writable_library_destinations(
     db: Session, viewer_id: UUID, library_ids: list[UUID]
 ) -> None:
+    """Reject any selection the viewer cannot file into."""
     resolve_writable_non_default_library_ids(db, viewer_id, library_ids)

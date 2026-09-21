@@ -27,7 +27,7 @@ interface ResourceActionMenuProps {
  * The canonical resource-only dropdown. It is a thin wrapper over `ActionMenu`:
  * resource-only surfaces render this directly. It owns no policy —
  * membership, current verb, ordering, danger-last, busy/blocked, and dispatch
- * all live in the resource-action runtime and the pure planner. It accepts no
+ * all live in the resource-action runtime and menu projection. It accepts no
  * actions, groups, capability flags, action callbacks, projection, or surface id; only
  * a subject and menu presentation.
  *

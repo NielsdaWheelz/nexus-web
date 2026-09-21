@@ -742,15 +742,11 @@ accepted child model turn through the private UDS host; a ProviderRuntime API
 tool loop creates one child per accepted provider call and advances only from a
 sealed persisted continuation. Completed children replay without dispatch;
 accepted ambiguity requires exact operator reconciliation.
-Within `dossier_build`, `services/artifacts/generation_step.py` is the sole
-Artifact owner of the exact `synthesis` and `document-repair` request
-fingerprints, memoized result envelope, and
-`Prepared | Uncertain | Completed` transitions; the engine keeps their
-streaming and unary transports explicit.
-The request-scoped dossier idea resolver uses the same generation service and
-read-only UDS mount from the API process; API and worker clients receive no
-credential mount. The existing PostgreSQL queue, leases, and publication owners
-remain unchanged.
+Within `dossier_build`, `services/artifacts/generation.py` is the sole
+Artifact owner of the exact `synthesis` request fingerprint, memoized result
+envelope, and `Prepared | Uncertain | Completed` transitions; the engine keeps
+its streaming transport explicit. The existing PostgreSQL queue, leases, and
+publication owners remain unchanged.
 See [modules/llms.md](modules/llms.md).
 
 Eligible Chat and background runs use one canonical tool authority. Codex
@@ -1040,13 +1036,12 @@ The backend separates three owners:
   manifest, coverage, freshness, citation materialization, and final document
   compilation;
 - the generic engine owns idempotent build creation, durable execution,
-  one primary/repair document-acceptance phase, terminal children, revision
-  history, Make current, cancellation, and events.
+  document acceptance, terminal children, revision history, Make current,
+  cancellation, and events.
 
-`services/artifacts/registry.py` composes each policy and binding into one
-immutable eight-scheme registration. Callers perform one correlated lookup;
-there is no second mutable policy map or package-initializer registration side
-effect.
+`services/artifacts/subjects.py` holds the one eight-entry binding table.
+Callers look a subject scheme up once; there is no second mutable policy map or
+package-initializer registration side effect.
 
 Revision responses use the binding's stored manifest directly, including the
 Idea subject id for its owning user; Idea subject routes remain unavailable.
@@ -1409,8 +1404,8 @@ roles, ownership transfer, membership guards, ingest access checks),
 ordering, and all item-in-library commands; it also composes the URL-only
 factual view lenses, the fixed `Unfiled`/`In Progress` entry projections, and
 the hide-finished completion filter for reads — no DML on
-  alternate views, positions unchanged), and `services/library_invitations.py` (the
-  `library_invitations` table). Visibility itself is enforced by the boolean
+  alternate views, positions unchanged), and `services/library_sharing.py` (the
+  `memberships` and `library_invitations` tables). Visibility itself is enforced by the boolean
   predicates in `auth/permissions.py`; the search/object readers read
   `library_entries` under an explicit Tier-R allowlist. Library list hydration is
   private and total: the repeatable-read membership query filters visibility,
@@ -1461,7 +1456,8 @@ the hide-finished completion filter for reads — no DML on
   deleting a subscription removes its virtual Podcast row.
   Default Podcast rows expose absent placement rather than a fabricated entry
   ID or position. Filing media into the default library directly — the one
-  actor-authorized filing command in `library_entries.ensure_media_in_library`
+  actor-authorized filing command in
+  `library_entries.ensure_media_in_library_in_current_transaction`
   — always inserts (or idempotently keeps) a physical `library_entries` row
   there; a work already visible virtually through another membership can
   still be explicitly filed, and that direct entry is what a later

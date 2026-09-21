@@ -7,11 +7,17 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from nexus.db.models import ChatRun, ChatRunTurnContext, Conversation, Message
+from nexus.db.session import get_session_factory
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.jobs.queue import enqueue_job, lock_chat_generation_admission_in_current_transaction
-from nexus.schemas.conversation import AcceptedChatAdmission, ChatRunResponse
+from nexus.schemas.conversation import (
+    AcceptedChatAdmission,
+    ChatAdmissionReceipt,
+    ChatRunResponse,
+)
 from nexus.services import generation_policy
 from nexus.services.chat_failure import rerun_eligibility
 from nexus.services.chat_run_event_store import ChatRunEventEmitter
@@ -45,7 +51,6 @@ type RepeatOperation = Literal["rerun", "regenerate"]
 
 
 async def repeat_assistant_response(
-    db: Session,
     *,
     operation: RepeatOperation,
     viewer_id: UUID,
@@ -80,45 +85,61 @@ async def repeat_assistant_response(
         policy=generation_policy.GENERATION_POLICY,
         tools=tool_runtime,
     )
-    try:
-        lock_chat_generation_admission_in_current_transaction(db)
-        lock_idempotency_key(db, viewer_id, normalized_key)
-        receipt = lookup_chat_admission(
-            db, viewer_id=viewer_id, idempotency_key=normalized_key, request_bytes=request_bytes
-        )
-        replayed = receipt is not None
-        if receipt is None:
-            if catalog_error is not None:
-                raise catalog_error
-            if pair is None:
-                raise AssertionError("catalog admission lost its resolved selection")
-            source_assistant, _, source_run, source_user = _resolve_source(
-                db, viewer_id=viewer_id, assistant_message_id=assistant_message_id
-            )
-            _assert_repeat_eligible(operation, source_run, source_assistant)
-            run = _create_sibling_candidate(
-                db,
-                viewer_id=viewer_id,
-                source_run=source_run,
-                source_user_message=source_user,
-                catalog_definition_revision=catalog_definition_revision,
-                pair=pair,
-                generation_service=generation_service,
-            )
-            receipt = accepted_chat_admission(run, normalized_key)
-            record_chat_admission(
-                db, viewer_id=viewer_id, request_bytes=request_bytes, receipt=receipt
-            )
-        if not isinstance(receipt.outcome, AcceptedChatAdmission):
-            raise AssertionError("candidate admission has a rejected receipt")
-        run_id = receipt.outcome.run_id
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+
+    def settle() -> tuple[ChatAdmissionReceipt, bool, UUID]:
+        # The complete database phase owns its session and runs on one worker
+        # thread; see chat_runs.create_chat_run.
+        with get_session_factory()() as db:
+            try:
+                lock_chat_generation_admission_in_current_transaction(db)
+                lock_idempotency_key(db, viewer_id, normalized_key)
+                receipt = lookup_chat_admission(
+                    db,
+                    viewer_id=viewer_id,
+                    idempotency_key=normalized_key,
+                    request_bytes=request_bytes,
+                )
+                replayed = receipt is not None
+                if receipt is None:
+                    if catalog_error is not None:
+                        raise catalog_error
+                    if pair is None:
+                        raise AssertionError("catalog admission lost its resolved selection")
+                    source_assistant, _, source_run, source_user = _resolve_source(
+                        db, viewer_id=viewer_id, assistant_message_id=assistant_message_id
+                    )
+                    _assert_repeat_eligible(operation, source_run, source_assistant)
+                    run = _create_sibling_candidate(
+                        db,
+                        viewer_id=viewer_id,
+                        source_run=source_run,
+                        source_user_message=source_user,
+                        catalog_definition_revision=catalog_definition_revision,
+                        pair=pair,
+                        generation_service=generation_service,
+                    )
+                    receipt = accepted_chat_admission(run, normalized_key)
+                    record_chat_admission(
+                        db, viewer_id=viewer_id, request_bytes=request_bytes, receipt=receipt
+                    )
+                if not isinstance(receipt.outcome, AcceptedChatAdmission):
+                    raise AssertionError("candidate admission has a rejected receipt")
+                run_id = receipt.outcome.run_id
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        return receipt, replayed, run_id
+
+    receipt, replayed, run_id = await run_in_threadpool(settle)
     log_chat_admission(receipt, viewer_id=viewer_id, replayed=replayed)
     snapshot = await catalog.read_chat()
-    return read_chat_run_response(db, viewer_id, run_id, catalog_snapshot=snapshot)
+
+    def read() -> ChatRunResponse:
+        with get_session_factory()() as db:
+            return read_chat_run_response(db, viewer_id, run_id, catalog_snapshot=snapshot)
+
+    return await run_in_threadpool(read)
 
 
 def _resolve_source(

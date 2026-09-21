@@ -1,11 +1,19 @@
-import { isWsCp } from "./canonicalText";
 import { codepointLength } from "./codepoints";
+
+/**
+ * Test whether a codepoint is whitespace (including non-breaking space).
+ * Python's \s includes U+001C..U+001F and U+0085; JavaScript's \s does not,
+ * so the class is spelled out to match the backend canonicalize.py exactly.
+ */
+function isWsCp(cp: string): boolean {
+  return /[\s -]/.test(cp);
+}
+
 
 type DomTextNode = {
   node: Text;
   start: number;
   end: number;
-  trimLeadCp: number;
 };
 
 export type DomTextSpan = {
@@ -60,7 +68,6 @@ const SKIP_ELEMENTS = new Set(["script", "style", "noscript", "template"]);
 
 type SourceSpan = DomTextSpan & {
   order: number;
-  nodeCanonicalStart: number;
 };
 
 type Token = {
@@ -86,7 +93,6 @@ function normalizedTextTokens(
   const text = node.data;
   const tokens: Token[] = [];
   let utf16Offset = 0;
-  let nodeCanonicalOffset = 0;
 
   while (utf16Offset < text.length) {
     const codepoint = String.fromCodePoint(text.codePointAt(utf16Offset)!);
@@ -100,12 +106,10 @@ function normalizedTextTokens(
             startUtf16: utf16Offset,
             endUtf16,
             order: nextSourceOrder(),
-            nodeCanonicalStart: nodeCanonicalOffset,
           },
         ],
       });
       utf16Offset = endUtf16;
-      nodeCanonicalOffset += 1;
       continue;
     }
 
@@ -125,11 +129,9 @@ function normalizedTextTokens(
           startUtf16,
           endUtf16: utf16Offset,
           order: nextSourceOrder(),
-          nodeCanonicalStart: nodeCanonicalOffset,
         },
       ],
     });
-    nodeCanonicalOffset += 1;
   }
 
   return tokens;
@@ -351,17 +353,12 @@ export function buildDomTextCursor(
           node: span.node,
           start: i,
           end: i + 1,
-          trimLeadCp: span.nodeCanonicalStart,
           firstSourceOrder: span.order,
         });
         continue;
       }
       existing.start = Math.min(existing.start, i);
       existing.end = Math.max(existing.end, i + 1);
-      existing.trimLeadCp = Math.min(
-        existing.trimLeadCp,
-        span.nodeCanonicalStart,
-      );
       existing.firstSourceOrder = Math.min(existing.firstSourceOrder, span.order);
     }
   }

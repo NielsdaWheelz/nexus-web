@@ -56,7 +56,7 @@ from nexus.services.retrieval_citation import RetrievalCitation
 from nexus.services.tool_runtime.catalog import FrozenToolOperation, freeze_tool_plan_snapshot
 
 if TYPE_CHECKING:
-    from nexus.services.artifacts.model_tools import DossierToolExecutionProjection
+    from nexus.services.artifacts.generation import DossierToolExecutionProjection
     from nexus.services.generation_backend import (
         BackendToolExecutionRequest,
         BackendToolExecutionResult,

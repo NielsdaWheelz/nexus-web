@@ -1,14 +1,7 @@
-"""Library routes.
+"""Library routes: transport only.
 
-Routes are transport-only:
-- Extract viewer_user_id from request.state
-- Call exactly one service function
-- Return success(...) or raise ApiError
-
-No domain logic or raw DB access in routes.
-
-IMPORTANT: Static routes (/libraries/invites) must be registered BEFORE
-dynamic routes (/libraries/{library_id}) to prevent UUID path capture.
+Static `/libraries/invites*` routes MUST stay registered before
+`/libraries/{library_id}` or FastAPI captures `invites` as a UUID path param.
 """
 
 from typing import Annotated
@@ -35,33 +28,34 @@ from nexus.services import (
     library_entries,
     library_entry_listing,
     library_governance,
-    library_invitations,
+    library_sharing,
 )
 from nexus.services.resonance import service as resonance_service
 from nexus.services.sealed_handles import InvalidSealedHandle, unseal_user
 
 router = APIRouter(tags=["libraries"])
 
+_STATUS_QUERY = Query(description="Filter by invite status")
+_CURSOR_QUERY = Query(description="Pagination cursor")
+_LIMIT_QUERY = Query(ge=1, description="Maximum results (clamped to 200)")
 
-# =============================================================================
-# Static invite routes (MUST be before /libraries/{library_id} routes)
-# =============================================================================
+
+def _user_id(user_handle: str) -> UUID:
+    try:
+        return unseal_user(user_handle)
+    except InvalidSealedHandle as exc:
+        raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found") from exc
 
 
 @router.get("/libraries/invites")
 def list_viewer_invites(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    status: Annotated[
-        LibraryInvitationStatusValue, Query(description="Filter by invite status")
-    ] = "pending",
-    limit: Annotated[int, Query(ge=1, description="Maximum results (clamped to 200)")] = 100,
+    status: Annotated[LibraryInvitationStatusValue, _STATUS_QUERY] = "pending",
+    limit: Annotated[int, _LIMIT_QUERY] = 100,
 ) -> dict:
-    """List invitations addressed to the current viewer.
-
-    Returns invites where invitee_user_id = viewer, ordered by created_at DESC.
-    """
-    result = library_invitations.list_viewer_invites(db, viewer.user_id, status=status, limit=limit)
+    """List invitations addressed to the current viewer."""
+    result = library_sharing.list_viewer_invites(db, viewer.user_id, status=status, limit=limit)
     return ok(result, by_alias=True)
 
 
@@ -71,12 +65,8 @@ def accept_library_invite(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Accept a library invitation.
-
-    Invitee-only. Transactionally creates membership and upserts backfill job.
-    Idempotent when already accepted.
-    """
-    result = library_invitations.accept_library_invite(db, viewer.user_id, invitation_handle)
+    """Accept a library invitation. Invitee-only; idempotent when already accepted."""
+    result = library_sharing.accept_library_invite(db, viewer.user_id, invitation_handle)
     return ok(result, by_alias=True)
 
 
@@ -86,11 +76,8 @@ def decline_library_invite(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Decline a library invitation.
-
-    Invitee-only. Idempotent when already declined.
-    """
-    result = library_invitations.decline_library_invite(db, viewer.user_id, invitation_handle)
+    """Decline a library invitation. Invitee-only; idempotent when already declined."""
+    result = library_sharing.decline_library_invite(db, viewer.user_id, invitation_handle)
     return ok(result, by_alias=True)
 
 
@@ -100,17 +87,9 @@ def revoke_library_invite(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    """Revoke a pending library invitation.
-
-    Admin/owner of the invite's library only. Idempotent when already revoked.
-    """
-    library_invitations.revoke_library_invite(db, viewer.user_id, invitation_handle)
+    """Revoke a pending invitation. Admin-only; idempotent when already revoked."""
+    library_sharing.revoke_library_invite(db, viewer.user_id, invitation_handle)
     return Response(status_code=204)
-
-
-# =============================================================================
-# Standard library routes
-# =============================================================================
 
 
 @router.get("/libraries")
@@ -119,12 +98,7 @@ def list_libraries(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
-    """List all libraries the viewer is a member of, in the requested view.
-
-    Errors:
-        E_INVALID_REQUEST (400): A view state outside the advertised inventory.
-        E_INVALID_CURSOR (400): Cursor is malformed or outside its binding.
-    """
+    """List the viewer's libraries in the requested view."""
     view, query = library_governance.parse_libraries_index_query(request.query_params.multi_items())
     page = library_governance.list_libraries(
         db,
@@ -142,19 +116,15 @@ def list_writable_library_destinations(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
     q: str | None = Query(default=None, max_length=100, description="Name search query"),
-    cursor: str | None = Query(default=None, description="Pagination cursor"),
+    cursor: Annotated[str | None, _CURSOR_QUERY] = None,
     limit: int = Query(default=25, ge=1, le=50, description="Maximum results"),
 ) -> dict:
+    """Rank the named libraries the viewer may file into."""
     result, next_cursor = library_governance.list_writable_library_destinations(
-        db,
-        viewer.user_id,
-        q=(q or "").strip().lower(),
-        cursor=cursor,
-        limit=limit,
+        db, viewer.user_id, q=(q or "").strip().lower(), cursor=cursor, limit=limit
     )
     return ok_page(
-        result,
-        LibraryPageInfo(has_more=next_cursor is not None, next_cursor=next_cursor),
+        result, LibraryPageInfo(has_more=next_cursor is not None, next_cursor=next_cursor)
     )
 
 
@@ -164,15 +134,9 @@ def get_podcast_libraries(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Read canonical Library placement for one existing Podcast.
-
-    Library placement remains available independently of the optional Podcast
-    ingestion/control router, just like the Library-owned add/remove commands.
-    """
+    """Read the canonical library placement inventory for one podcast."""
     rows = library_entries.list_item_libraries(
-        db,
-        viewer_id=viewer.user_id,
-        target=library_entries.podcast_target(podcast_id),
+        db, viewer_id=viewer.user_id, target=library_entries.podcast_target(podcast_id)
     )
     return ok(rows, by_alias=True)
 
@@ -183,12 +147,8 @@ def create_library(
     body: CreateLibraryRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Create a new non-default library.
-
-    The viewer becomes the owner and admin of the new library.
-    """
-    result = library_governance.create_library(db, viewer.user_id, body)
-    return ok(result, by_alias=True)
+    """Create a non-default library owned and admin'd by the caller."""
+    return ok(library_governance.create_library(db, viewer.user_id, body), by_alias=True)
 
 
 @router.get("/libraries/{library_id}")
@@ -197,12 +157,8 @@ def get_library(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Get a single library by ID.
-
-    Viewer must be a member. Non-members get masked 404.
-    """
-    result = library_governance.get_library(db, viewer.user_id, library_id)
-    return ok(result, by_alias=True)
+    """Read one library. Non-members get a masked 404."""
+    return ok(library_governance.get_library(db, viewer.user_id, library_id), by_alias=True)
 
 
 @router.patch("/libraries/{library_id}")
@@ -212,10 +168,7 @@ def rename_library(
     body: UpdateLibraryRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Rename a library.
-
-    Only admins can rename libraries. Cannot rename default library.
-    """
+    """Rename a library. Admin-only; not the default or a system library."""
     result = library_governance.rename_library(db, viewer.user_id, library_id, body.name)
     return ok(result, by_alias=True)
 
@@ -226,15 +179,8 @@ def delete_library(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Delete a library.
-
-    Owner-only for non-default libraries. Non-owner admins get 403 E_OWNER_REQUIRED.
-    """
-    result = library_governance.delete_library(db, viewer.user_id, library_id)
-    return ok(result, by_alias=True)
-
-
-# ---- Library-scoped Invites ----
+    """Delete a library. Owner-only; a non-owner admin gets E_OWNER_REQUIRED."""
+    return ok(library_governance.delete_library(db, viewer.user_id, library_id), by_alias=True)
 
 
 @router.post("/libraries/{library_id}/invites", status_code=201)
@@ -244,16 +190,9 @@ def create_library_invite(
     body: CreateLibraryInviteRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Create an invitation to a library.
-
-    Admin/owner only. Invitee must exist. Default library targets forbidden.
-    """
-    result = library_invitations.create_library_invite(
-        db,
-        viewer.user_id,
-        library_id,
-        body.invitee,
-        body.role,
+    """Invite an existing user to a library. Admin-only."""
+    result = library_sharing.create_library_invite(
+        db, viewer.user_id, library_id, body.invitee, body.role
     )
     return ok(result, by_alias=True)
 
@@ -263,28 +202,15 @@ def list_library_invites(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    status: Annotated[
-        LibraryInvitationStatusValue, Query(description="Filter by invite status")
-    ] = "pending",
-    cursor: str | None = Query(default=None, description="Pagination cursor"),
-    limit: Annotated[int, Query(ge=1, description="Maximum results (clamped to 200)")] = 100,
+    status: Annotated[LibraryInvitationStatusValue, _STATUS_QUERY] = "pending",
+    cursor: Annotated[str | None, _CURSOR_QUERY] = None,
+    limit: Annotated[int, _LIMIT_QUERY] = 100,
 ) -> dict:
-    """List invitations for a library.
-
-    Admin/owner only. Ordered by created_at DESC, id DESC.
-    """
-    result, page = library_invitations.list_library_invites(
-        db,
-        viewer.user_id,
-        library_id,
-        status=status,
-        cursor=cursor,
-        limit=limit,
+    """List a library's invitations, newest first. Admin-only."""
+    result, page = library_sharing.list_library_invites(
+        db, viewer.user_id, library_id, status=status, cursor=cursor, limit=limit
     )
     return ok_page(result, page, by_alias=True)
-
-
-# ---- Members ----
 
 
 @router.get("/libraries/{library_id}/members")
@@ -292,19 +218,12 @@ def list_library_members(
     library_id: UUID,
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
-    cursor: str | None = Query(default=None, description="Pagination cursor"),
-    limit: int = Query(default=100, ge=1, description="Maximum results (clamped to 200)"),
+    cursor: Annotated[str | None, _CURSOR_QUERY] = None,
+    limit: Annotated[int, _LIMIT_QUERY] = 100,
 ) -> dict:
-    """List members of a library.
-
-    Admin-only. Ordered by the immutable member user handle identity.
-    """
-    result, page = library_governance.list_library_members(
-        db,
-        viewer.user_id,
-        library_id,
-        cursor=cursor,
-        limit=limit,
+    """List a library's members by immutable member identity. Admin-only."""
+    result, page = library_sharing.list_library_members(
+        db, viewer.user_id, library_id, cursor=cursor, limit=limit
     )
     return ok_page(result, page, by_alias=True)
 
@@ -317,17 +236,9 @@ def update_library_member_role(
     body: UpdateLibraryMemberRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Update a library member's role.
-
-    Admin-only. Cannot change owner role.
-    Default library forbidden.
-    """
-    try:
-        user_id = unseal_user(user_handle)
-    except InvalidSealedHandle as exc:
-        raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found") from exc
-    result = library_governance.update_library_member_role(
-        db, viewer.user_id, library_id, user_id, body.role
+    """Set a member's role. Admin-only; the owner's role is fixed."""
+    result = library_sharing.update_library_member_role(
+        db, viewer.user_id, library_id, _user_id(user_handle), body.role
     )
     return ok(result, by_alias=True)
 
@@ -339,20 +250,9 @@ def remove_library_member(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    """Remove a member from a library.
-
-    Admin-only. Cannot remove owner.
-    Default library forbidden. Idempotent for absent targets.
-    """
-    try:
-        user_id = unseal_user(user_handle)
-    except InvalidSealedHandle as exc:
-        raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found") from exc
-    library_governance.remove_library_member(db, viewer.user_id, library_id, user_id)
+    """Remove a member. Admin-only; idempotent for an absent target."""
+    library_sharing.remove_library_member(db, viewer.user_id, library_id, _user_id(user_handle))
     return Response(status_code=204)
-
-
-# ---- Ownership Transfer ----
 
 
 @router.post("/libraries/{library_id}/transfer-ownership")
@@ -362,25 +262,11 @@ def transfer_library_ownership(
     body: TransferLibraryOwnershipRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Transfer library ownership to another member.
-
-    Owner-only. Target must be existing member. Previous owner stays admin.
-    Default library forbidden.
-    """
-    try:
-        new_owner_user_id = unseal_user(body.new_owner_user_handle)
-    except InvalidSealedHandle as exc:
-        raise NotFoundError(ApiErrorCode.E_USER_NOT_FOUND, "User not found") from exc
-    result = library_governance.transfer_library_ownership(
-        db,
-        viewer.user_id,
-        library_id,
-        new_owner_user_id,
+    """Transfer ownership to another member. Owner-only."""
+    result = library_sharing.transfer_library_ownership(
+        db, viewer.user_id, library_id, _user_id(body.new_owner_user_handle)
     )
     return ok(result, by_alias=True)
-
-
-# ---- Library Entries ----
 
 
 @router.get("/libraries/{library_id}/entries")
@@ -390,19 +276,7 @@ def list_library_entries(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
-    """List a library's entries under a view lens.
-
-    Returns one mixed list of podcasts and media. Canonical order (sort omitted)
-    is Default's `media.created_at DESC` or the physical position order;
-    ``sort=title|creator|published|added`` with a ``direction`` selects a factual
-    order. ``projection=unfiled|in-progress`` selects a fixed entry projection
-    (omitted means all items; ``unfiled`` is Default-only) and an optional
-    ``completion=unfinished`` composes with all-items/unfiled projections only.
-    ``entry_type=web_article|epub|pdf|video|podcast_episode|podcast`` selects one
-    exact type; omission means all types. Podcast shows support only the complete
-    all-items view. The whole query is parsed strictly (see
-    ``library_entry_listing.parse_entries_query``).
-    """
+    """List a library's entries under a view lens (see `parse_entries_query`)."""
     view, query = library_entry_listing.parse_entries_query(request.query_params.multi_items())
     page = library_entry_listing.list_library_entries(
         db,
@@ -423,10 +297,10 @@ def get_library_slate(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_repeatable_read_db)],
 ) -> dict:
+    """Read the library's Reading Slate."""
     if request.query_params:
         raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            "Reading Slate does not accept query parameters",
+            ApiErrorCode.E_INVALID_REQUEST, "Reading Slate does not accept query parameters"
         )
     slate = resonance_service.build_library_slate(
         db, viewer_id=viewer.user_id, library_id=library_id
@@ -441,7 +315,7 @@ def patch_library_entry_order(
     body: LibraryEntryOrderRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    """Replace full entry ordering for a library."""
+    """Replace the full entry ordering for a library."""
     library_entries.reorder_entries(db, viewer.user_id, library_id, body)
     return Response(status_code=204)
 
@@ -454,12 +328,7 @@ def remove_podcast_from_library(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
     """Remove a podcast reference from one non-default library."""
-    result = library_entries.remove_podcast_from_library(
-        db,
-        viewer.user_id,
-        library_id,
-        podcast_id,
-    )
+    result = library_entries.remove_podcast_from_library(db, viewer.user_id, library_id, podcast_id)
     return ok(result, by_alias=True)
 
 
@@ -470,11 +339,8 @@ def add_subscribed_podcast_to_library(
     viewer: Annotated[Viewer, Depends(get_viewer)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
-    """Place an existing active Podcast subscription in one named Library."""
+    """Place an existing active podcast subscription in one named library."""
     result = library_entries.place_subscribed_podcast_in_named_library(
-        db,
-        viewer.user_id,
-        library_id,
-        podcast_id,
+        db, viewer.user_id, library_id, podcast_id
     )
     return ok(result, by_alias=True)
