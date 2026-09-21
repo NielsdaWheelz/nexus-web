@@ -73,17 +73,7 @@ class ExactModelTools:
     kind: Literal["ExactModelTools"] = "ExactModelTools"
 
 
-@dataclass(frozen=True, slots=True)
-class ChatPerRunTools:
-    read_plan_id: str
-    read_plan_authority_revision: str
-    additive_write_plan_id: str
-    additive_write_plan_authority_revision: str
-    scope_derivation: Literal["ChatAdmittedContext"]
-    kind: Literal["ChatPerRunTools"] = "ChatPerRunTools"
-
-
-type ModelToolPolicy = NoModelTools | ExactModelTools | ChatPerRunTools
+type ModelToolPolicy = NoModelTools | ExactModelTools
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,14 +278,11 @@ _CHAT = ChatPolicy(
         bounds=_bounds(input_max_bytes=512 * 1024, turn_timeout_seconds=900, stream=_CHAT_STREAM),
         request_budget=RequestBudget(max_context_tokens=400_000, max_output_tokens=32_000),
         output_contract="Text",
-        model_tool_policy=ChatPerRunTools(
-            read_plan_id="ChatRead",
-            read_plan_authority_revision=_tool_authority_revision("ChatRead"),
-            additive_write_plan_id="ChatReadAdditiveWrite",
-            additive_write_plan_authority_revision=_tool_authority_revision(
-                "ChatReadAdditiveWrite"
-            ),
-            scope_derivation="ChatAdmittedContext",
+        model_tool_policy=ExactModelTools(
+            "ChatReadAdditiveWrite",
+            _tool_authority_revision("ChatReadAdditiveWrite"),
+            "AdditiveWrites",
+            "ChatAdmittedContext",
         ),
     ),
 )
@@ -347,8 +334,13 @@ def validate_policy() -> None:
     expected = set(get_args(BackgroundOperationKey.__value__))
     if set(GENERATION_POLICY.background_operations) != expected:
         raise AssertionError("background operation policy is not exact and total")
-    if not isinstance(GENERATION_POLICY.chat.workflow.model_tool_policy, ChatPerRunTools):
-        raise AssertionError("Chat must own per-run read and additive-write plans")
+    if GENERATION_POLICY.chat.workflow.model_tool_policy != ExactModelTools(
+        "ChatReadAdditiveWrite",
+        _tool_authority_revision("ChatReadAdditiveWrite"),
+        "AdditiveWrites",
+        "ChatAdmittedContext",
+    ):
+        raise AssertionError("Chat must own the fixed additive-write plan")
     for plan_id, revision in TOOL_PLAN_AUTHORITY_REVISIONS.items():
         if TOOL_PLAN_DEFINITIONS_BY_ID[plan_id].authority_revision != revision:
             raise AssertionError(f"reviewed tool plan {plan_id!r} authority drifted")

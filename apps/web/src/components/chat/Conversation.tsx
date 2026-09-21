@@ -711,7 +711,6 @@ export default function Conversation() {
                 parentMessageId={activeReplyParentMessageId}
                 inheritedRunSelection={convo.inheritedRunSelection}
                 sendCapability={convo.sendCapability}
-                writeGrantResetVersion={convo.writeGrantResetVersion}
                 projectionReloadRequestId={convo.projectionReloadRequestId}
                 activeRunId={convo.activeRunId}
                 onCancelRun={convo.cancelActiveRun}

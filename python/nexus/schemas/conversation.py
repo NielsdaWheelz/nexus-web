@@ -860,7 +860,6 @@ class ChatRunCreateRequest(BaseModel):
     content: str
     catalog_definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
     selection: GenerationSelectionSpec
-    tool_authority: Literal["ReadOnly", "AdditiveWrites"]
     reader_selection: Presence[ReaderSelectionInput]
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid", strict=True)
@@ -873,11 +872,10 @@ class ChatRunCreateRequest(BaseModel):
 
 
 class ChatRunRepeatRequest(BaseModel):
-    """Exact selection for rerun/regenerate; write authority never carries over."""
+    """Exact selection for rerun/regenerate."""
 
     catalog_definition_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
     selection: GenerationSelectionSpec
-    tool_authority: Literal["ReadOnly"]
 
     model_config = ConfigDict(extra="forbid", strict=True)
 

@@ -87,8 +87,6 @@ export function useChatDraft({
     setContent: store.setContent,
     selection: record.selection,
     setSelection: store.setSelection,
-    toolAuthority: record.toolAuthority,
-    setToolAuthority: store.setToolAuthority,
     restored,
     activeDraftKey,
     editableDraftKey,

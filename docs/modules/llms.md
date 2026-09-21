@@ -37,8 +37,7 @@ Primary owners:
   tool executor with API-function and Codex-MCP adapters;
 - `apps/codex_agent/`: isolated subscription-backed Codex host.
 
-Queue ownership is documented in [jobs.md](jobs.md). The full cutover contract
-is [Generation Backends Hard Cutover](../cutovers/generation-backends-hard-cutover.md).
+queue ownership is documented in [jobs.md](jobs.md).
 
 ## Catalog and exact selection
 
@@ -46,8 +45,9 @@ is [Generation Backends Hard Cutover](../cutovers/generation-backends-hard-cutov
 Codex model catalog with `api_model_catalog()` rows for exactly the API providers
 present in `GENERATION_API_PROVIDERS`. Nexus neither reads Codex cache files nor
 maintains a second model/reasoning allowlist. A model exposes every reasoning
-value the source catalog reports; unavailable or unqualified pairs remain
-visible with their typed readiness state but are not selectable.
+value the source catalog reports. the catalog keeps typed readiness for all
+pairs; the picker offers only selectable pairs and retains an unavailable
+current identity without substitution.
 
 The strict Chat selection is one tagged value:
 
@@ -78,16 +78,19 @@ Model selection does not grant tools. The operation policy independently
 resolves one of:
 
 - `NoModelTools`;
-- `ChatRead` or `ChatReadAdditiveWrite` from fresh per-run Chat authority;
+- `ChatReadAdditiveWrite` for every new chat send, rerun, and regeneration;
+- `MetadataRead`;
 - `LibraryDossierRead`;
 - `IdeaDossierRead`.
 
-Chat read mode grants `web.search` and the five Nexus reads. The additive-write
-extension grants the five existing owner-gated writes only after the composer
-control labelled **Allow this reply to add to Nexus** is explicitly enabled for
-that run. It is off by default and never inherited. The two Dossier plans grant
-only the five Nexus reads over their exact frozen evidence scope; no background
-plan grants a write. The remaining background operations publish no model-tool
+chat uses `ExactModelTools` with `AdditiveWrites` and
+`ChatAdmittedContext`: `web.search`, five nexus reads, and five owner-gated
+additive writes. the prompt requires user-directed actions; existing scope,
+limits, receipts, and undo govern execution. the two dossier plans grant
+only the five Nexus reads over their exact frozen evidence scope. metadata
+enrichment publishes `web.search`, `web.read`, `nexus.document.search`, and
+`nexus.resource.read` through `MetadataRead`. no background plan grants a
+write. the remaining background operations publish no model-tool
 schema or MCP configuration. Idea host research remains a separate bounded,
 durable three-search preparation plan.
 
@@ -154,10 +157,12 @@ effects.
 
 ## Product API and reset boundary
 
-`POST /chat-runs`, rerun, and regenerate carry an explicit selection,
-`catalog_definition_revision`, and `tool_authority: ReadOnly | AdditiveWrites`.
+`POST /chat-runs`, rerun, and regenerate carry an explicit selection and
+`catalog_definition_revision`. requests reject the retired `tool_authority`
+field. policy owns new tool authority.
 Chat history, SSE meta, and trust projections expose the same immutable
-selection and authority plus safe execution disclosure. They never expose
+selection and frozen authority, including historical read-only facts, plus safe
+execution disclosure. they never expose
 credentials, dispatch aliases, continuation bytes, or a generation default.
 
 The hard-cut migration deletes the complete legacy Chat aggregate and all

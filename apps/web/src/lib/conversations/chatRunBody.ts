@@ -24,7 +24,6 @@ export function buildChatRunBody(input: {
   content: string;
   catalogDefinitionRevision: string;
   selection: GenerationSelectionSpec;
-  toolAuthority: "ReadOnly" | "AdditiveWrites";
   branchDraft: BranchDraft | null;
   parentMessageId: string | null;
   readerSelection?: ReaderSelectionInput | null;
@@ -34,7 +33,6 @@ export function buildChatRunBody(input: {
     content: input.content,
     catalog_definition_revision: input.catalogDefinitionRevision,
     selection: input.selection,
-    tool_authority: input.toolAuthority,
     reader_selection: input.readerSelection ? present(input.readerSelection) : absent(),
   };
 }

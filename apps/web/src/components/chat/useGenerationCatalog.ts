@@ -12,8 +12,6 @@ import {
   type GenerationCatalog,
 } from "@/lib/conversations/generationCatalog";
 
-const OPEN_REFRESH_INTERVAL_MS = 60_000;
-
 let cachedCatalog: GenerationCatalog | null = null;
 let catalogRequest: Promise<GenerationCatalog> | null = null;
 const listeners = new Set<() => void>();
@@ -51,28 +49,23 @@ export function loadGenerationCatalog(input?: {
 interface UseGenerationCatalog {
   readonly catalog: GenerationCatalog | null;
   readonly loading: boolean;
-  readonly refreshing: boolean;
   readonly error: Error | null;
   readonly retry: () => void;
 }
 
 export function useGenerationCatalog(input?: {
-  readonly pickerOpen?: boolean;
   readonly enabled?: boolean;
 }): UseGenerationCatalog {
-  const pickerOpen = input?.pickerOpen ?? false;
   const enabled = input?.enabled ?? true;
   const [catalog, setCatalog] = useState<GenerationCatalog | null>(
     () => cachedCatalog,
   );
   const [loading, setLoading] = useState(cachedCatalog === null);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [defect, setDefect] = useState<{ readonly error: unknown } | null>(null);
 
   const refresh = useCallback((force: boolean) => {
     if (cachedCatalog === null) setLoading(true);
-    else setRefreshing(true);
     setError(null);
     void loadGenerationCatalog({ refresh: force })
       .then((next) => {
@@ -92,7 +85,6 @@ export function useGenerationCatalog(input?: {
       })
       .finally(() => {
         setLoading(false);
-        setRefreshing(false);
       });
   }, []);
 
@@ -105,19 +97,9 @@ export function useGenerationCatalog(input?: {
     };
   }, [enabled, refresh]);
 
-  useEffect(() => {
-    if (!enabled || !pickerOpen) return;
-    refresh(true);
-    const timer = window.setInterval(
-      () => refresh(true),
-      OPEN_REFRESH_INTERVAL_MS,
-    );
-    return () => window.clearInterval(timer);
-  }, [enabled, pickerOpen, refresh]);
-
   const retry = useCallback(() => refresh(true), [refresh]);
 
   if (defect !== null) throw defect.error;
 
-  return { catalog, loading, refreshing, error, retry };
+  return { catalog, loading, error, retry };
 }

@@ -147,10 +147,6 @@ export default function ChatFailureCard(props: ChatFailureCardProps) {
           >
             Rerun
           </Button>
-          <label className={styles.rerunWritesOff}>
-            <input type="checkbox" checked={false} disabled readOnly />
-            <span>Writes are off for reruns</span>
-          </label>
         </div>
       ) : null}
     </div>

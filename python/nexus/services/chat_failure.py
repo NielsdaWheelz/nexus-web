@@ -2,8 +2,7 @@
 
 ``ChatRunOut``, message hydration, terminal SSE folding and the trust trail all
 derive the same ``ExpectedChatFailure`` from ``ChatRun``; none stores a second
-failure. A rerun is always a fresh ``ReadOnly`` admission, so an earlier
-additive-write grant can never carry into it.
+failure. A rerun receives the current fixed chat tool plan as a new admission.
 """
 
 from __future__ import annotations

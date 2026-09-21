@@ -123,7 +123,7 @@ export default function AssistantDetails({
               </div>
               <div>
                 <dt>Write authority</dt>
-                <dd>{trustTrail.run.run_selection.tool_authority === "AdditiveWrites" ? "Allowed for this reply" : "Read-only"}</dd>
+                <dd>{trustTrail.run.run_selection.tool_authority === "AdditiveWrites" ? "Additive writes" : "Read-only"}</dd>
               </div>
               <div>
                 <dt>Current readiness</dt>
