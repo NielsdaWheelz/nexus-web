@@ -74,8 +74,12 @@ from nexus.services.public_share_handles import (
 )
 from nexus.services.public_source_urls import current_public_source_url
 from nexus.services.resource_graph.refs import ResourceRef
-from nexus.storage.client import StorageClient, StorageError, get_storage_client
-from nexus.storage.read import read_object_checked
+from nexus.storage.client import (
+    StorageClient,
+    StorageError,
+    get_storage_client,
+    read_object_checked,
+)
 
 _MAX_PAGE_BYTES = 8 * 1024 * 1024
 _MAX_EPUB_FIELD_BYTES = 4 * 1024 * 1024

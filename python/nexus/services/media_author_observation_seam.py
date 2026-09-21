@@ -1,19 +1,4 @@
-"""Author-observation seam between source adapters and the ingest runner.
-
-A source handler finishes its parser/LLM work and leaves zero or more typed
-author observations on the ``dict`` it returns to ``run_source_attempt`` under
-``author_observations``, each a ``(media_id, observation, source)`` tuple. After
-the source transaction commits, the runner drains them and applies each through
-the author facade in a fresh session (spec 2.4), then crosses ready.
-
-``media_id`` may be ``None`` to target the attempt's terminal media id (the
-common single-media lane); a handler that already knows a distinct media id (an
-X quoted-post sub-media, say) sets it explicitly.
-
-The carrier never survives into the returned or logged job result: it holds
-in-memory observation values with credited names, so the runner pops it before
-returning.
-"""
+"""Author observations carried from a source handler to the ingest runner."""
 
 from __future__ import annotations
 
@@ -24,7 +9,7 @@ from nexus.services.contributor_taxonomy import ContributorObservationBatch, Not
 
 _AUTHOR_OBSERVATIONS_KEY = "author_observations"
 
-# One drained observation: (target media id or None, observation batch, source).
+# (target media id or None for the attempt's terminal media, batch, source).
 SourceAuthorObservation = tuple[UUID | None, ContributorObservationBatch, str]
 
 
@@ -35,26 +20,15 @@ def attach_author_observation(
     source: str,
     media_id: UUID | None = None,
 ) -> None:
-    """Attach one author observation to a source-handler result.
-
-    ``NOT_OBSERVED`` is dropped here so lanes can attach unconditionally; it
-    never erases prior credits (spec 2.1).
-    """
+    """Attach one author observation; NOT_OBSERVED is dropped, never recorded."""
     if isinstance(observation, NotObserved):
         return
-    bucket = cast(
-        list[SourceAuthorObservation],
-        result.setdefault(_AUTHOR_OBSERVATIONS_KEY, []),
-    )
+    bucket = cast(list[SourceAuthorObservation], result.setdefault(_AUTHOR_OBSERVATIONS_KEY, []))
     bucket.append((media_id, observation, source))
 
 
 def take_author_observations(result: dict[str, object]) -> list[SourceAuthorObservation]:
-    """Pop and return the observations a handler left (empty when none).
-
-    Popping — not reading — is deliberate: the returned/logged job result must
-    never carry credited names.
-    """
+    """Pop the observations a handler left, so credited names never reach a job result."""
     if _AUTHOR_OBSERVATIONS_KEY not in result:
         return []
     return cast(list[SourceAuthorObservation], result.pop(_AUTHOR_OBSERVATIONS_KEY))

@@ -1,4 +1,4 @@
-"""Cloudflare R2 storage client."""
+"""Cloudflare R2 storage client (S3-compatible API)."""
 
 import time
 from collections.abc import Iterator
@@ -12,22 +12,19 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from nexus.config import get_settings
 
+_PUT_OBJECT_ATTEMPTS = 3
+_READ_CHUNK_BYTES = 8 * 1024 * 1024
+
 
 @dataclass(frozen=True)
 class SignedUpload:
-    """Signed direct-upload URL for a storage path."""
-
     path: str
     upload_url: str
 
 
 @dataclass(frozen=True)
 class ObjectMetadata:
-    """Storage object metadata.
-
-    Metadata is advisory. The reliable existence signal is None vs not-None
-    from head_object().
-    """
+    """Advisory object metadata. Existence is None vs not-None from head_object."""
 
     content_type: str
     size_bytes: int
@@ -35,8 +32,6 @@ class ObjectMetadata:
 
 @dataclass(frozen=True)
 class StorageObjectEntry:
-    """One listed object: its path, last-modified time, and size."""
-
     path: str
     last_modified: datetime
     size_bytes: int
@@ -44,27 +39,24 @@ class StorageObjectEntry:
 
 @dataclass(frozen=True)
 class ObjectPage:
-    """One page of a prefix listing plus the token to fetch the next page."""
-
     objects: tuple[StorageObjectEntry, ...]
     next_continuation_token: str | None
 
 
-_PUT_OBJECT_ATTEMPTS = 3
-
-
 class StorageError(Exception):
-    """Storage operation error."""
-
     def __init__(self, message: str, code: str = "E_STORAGE_ERROR"):
         super().__init__(message)
         self.message = message
         self.code = code
 
 
-class StorageClient:
-    """Cloudflare R2 client using the S3-compatible API."""
+def _client_error_is_missing(exc: ClientError) -> bool:
+    response = getattr(exc, "response", {})
+    error_code = str(response.get("Error", {}).get("Code") or "")
+    return error_code in {"404", "NoSuchKey", "NotFound"}
 
+
+class StorageClient:
     def __init__(
         self,
         endpoint_url: str,
@@ -92,12 +84,7 @@ class StorageClient:
         )
 
     def sign_upload(
-        self,
-        path: str,
-        *,
-        content_type: str,
-        size_bytes: int,
-        expires_in: int = 300,
+        self, path: str, *, content_type: str, size_bytes: int, expires_in: int = 300
     ) -> SignedUpload:
         try:
             upload_url = self._client.generate_presigned_url(
@@ -115,12 +102,7 @@ class StorageClient:
             raise StorageError(f"Failed to sign upload for {path}") from exc
         return SignedUpload(path=path, upload_url=upload_url)
 
-    def sign_download(
-        self,
-        path: str,
-        *,
-        expires_in: int = 300,
-    ) -> str:
+    def sign_download(self, path: str, *, expires_in: int = 300) -> str:
         try:
             return self._client.generate_presigned_url(
                 "get_object",
@@ -140,90 +122,71 @@ class StorageClient:
             raise StorageError(f"Failed to read object metadata for {path}") from exc
         except BotoCoreError as exc:
             raise StorageError(f"Failed to read object metadata for {path}") from exc
-
         return ObjectMetadata(
             content_type=str(response.get("ContentType") or "application/octet-stream"),
             size_bytes=int(response.get("ContentLength") or 0),
         )
 
     def stream_object(self, path: str) -> Iterator[bytes]:
-        try:
-            response = self._client.get_object(Bucket=self._bucket, Key=path)
-        except ClientError as exc:
-            if _client_error_is_missing(exc):
-                raise StorageError(f"Object not found: {path}", code="E_STORAGE_MISSING") from exc
-            raise StorageError(f"Failed to stream object {path}") from exc
-        except BotoCoreError as exc:
-            raise StorageError(f"Failed to stream object {path}") from exc
+        return self._stream(path, remaining=None)
 
-        body = response["Body"]
-        try:
-            try:
-                while chunk := body.read(8 * 1024 * 1024):
-                    yield chunk
-            except (BotoCoreError, ClientError, OSError) as exc:
-                raise StorageError(f"Failed to stream object {path}") from exc
-        finally:
-            close = getattr(body, "close", None)
-            if close:
-                close()
-
-    def stream_object_range(
-        self,
-        path: str,
-        *,
-        start: int,
-        end_inclusive: int,
-    ) -> Iterator[bytes]:
+    def stream_object_range(self, path: str, *, start: int, end_inclusive: int) -> Iterator[bytes]:
         if start < 0 or end_inclusive < start:
             raise ValueError("invalid inclusive object range")
+        return self._stream(
+            path, remaining=end_inclusive - start + 1, range_header=f"bytes={start}-{end_inclusive}"
+        )
+
+    def _stream(
+        self, path: str, *, remaining: int | None, range_header: str | None = None
+    ) -> Iterator[bytes]:
+        what = "object" if range_header is None else "object range"
+        params = {"Bucket": self._bucket, "Key": path}
+        if range_header is not None:
+            params["Range"] = range_header
         try:
-            response = self._client.get_object(
-                Bucket=self._bucket,
-                Key=path,
-                Range=f"bytes={start}-{end_inclusive}",
-            )
+            response = self._client.get_object(**params)
         except ClientError as exc:
             if _client_error_is_missing(exc):
                 raise StorageError(f"Object not found: {path}", code="E_STORAGE_MISSING") from exc
-            raise StorageError(f"Failed to stream object range {path}") from exc
+            raise StorageError(f"Failed to stream {what} {path}") from exc
         except BotoCoreError as exc:
-            raise StorageError(f"Failed to stream object range {path}") from exc
+            raise StorageError(f"Failed to stream {what} {path}") from exc
 
         body = response["Body"]
-        remaining = end_inclusive - start + 1
         try:
             try:
-                while remaining > 0:
-                    chunk = body.read(min(8 * 1024 * 1024, remaining))
+                while remaining is None or remaining > 0:
+                    want = (
+                        _READ_CHUNK_BYTES
+                        if remaining is None
+                        else min(_READ_CHUNK_BYTES, remaining)
+                    )
+                    chunk = body.read(want)
                     if not chunk:
+                        if remaining is None:
+                            return
                         raise StorageError("Stored object range ended before persisted metadata")
-                    remaining -= len(chunk)
+                    if remaining is not None:
+                        remaining -= len(chunk)
                     yield chunk
             except (BotoCoreError, ClientError, OSError) as exc:
-                raise StorageError(f"Failed to stream object range {path}") from exc
+                raise StorageError(f"Failed to stream {what} {path}") from exc
         finally:
             close = getattr(body, "close", None)
             if close:
                 close()
 
     def put_object(
-        self,
-        path: str,
-        content: bytes,
-        content_type: str = "application/octet-stream",
+        self, path: str, content: bytes, content_type: str = "application/octet-stream"
     ) -> None:
-        # A whole-bytes put is idempotent, and single-request transient
-        # failures have been observed terminally failing captures (one of two
-        # back-to-back puts dying instantly). Bounded retry, ~0.8s worst case.
+        # A whole-bytes put is idempotent, and single-request transient failures
+        # have terminally failed captures. Bounded retry, ~0.8s worst case.
         delay_seconds = 0.2
         for attempt in range(1, _PUT_OBJECT_ATTEMPTS + 1):
             try:
                 self._client.put_object(
-                    Bucket=self._bucket,
-                    Key=path,
-                    Body=content,
-                    ContentType=content_type,
+                    Bucket=self._bucket, Key=path, Body=content, ContentType=content_type
                 )
                 return
             except (BotoCoreError, ClientError) as exc:
@@ -233,18 +196,12 @@ class StorageClient:
                 delay_seconds *= 3
 
     def put_object_stream(
-        self,
-        path: str,
-        content: BinaryIO,
-        content_type: str = "application/octet-stream",
+        self, path: str, content: BinaryIO, content_type: str = "application/octet-stream"
     ) -> None:
         # No retry: the stream body is not replayable after a partial send.
         try:
             self._client.put_object(
-                Bucket=self._bucket,
-                Key=path,
-                Body=content,
-                ContentType=content_type,
+                Bucket=self._bucket, Key=path, Body=content, ContentType=content_type
             )
         except (BotoCoreError, ClientError) as exc:
             raise StorageError(f"Failed to upload object {path}: {exc}") from exc
@@ -267,12 +224,7 @@ class StorageClient:
         except (BotoCoreError, ClientError) as exc:
             raise StorageError(f"Failed to delete object {path}") from exc
 
-    def list_objects(
-        self,
-        prefix: str,
-        *,
-        continuation_token: str | None = None,
-    ) -> ObjectPage:
+    def list_objects(self, prefix: str, *, continuation_token: str | None = None) -> ObjectPage:
         params: dict[str, str] = {"Bucket": self._bucket, "Prefix": prefix}
         if continuation_token is not None:
             params["ContinuationToken"] = continuation_token
@@ -289,9 +241,8 @@ class StorageClient:
             )
             for item in response.get("Contents", [])
         )
-        is_truncated = bool(response.get("IsTruncated", False))
         next_token = None
-        if is_truncated:
+        if bool(response.get("IsTruncated", False)):
             candidate = response.get("NextContinuationToken")
             if not isinstance(candidate, str) or not candidate or candidate != candidate.strip():
                 raise StorageError("Storage listing returned an invalid next continuation token")
@@ -303,21 +254,29 @@ class StorageClient:
         return ObjectPage(objects=objects, next_continuation_token=next_token)
 
 
+def read_object_checked(storage: StorageClient, storage_path: str, *, expected_size: int) -> bytes:
+    """Stream an object fully, verifying its byte size before returning."""
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in storage.stream_object(storage_path):
+        total += len(chunk)
+        if total > expected_size:
+            raise StorageError("Stored object is larger than persisted metadata")
+        chunks.append(chunk)
+    if total != expected_size:
+        raise StorageError("Stored object integrity mismatch")
+    return b"".join(chunks)
+
+
 def get_storage_client() -> StorageClient:
     settings = get_settings()
-    endpoint_url = settings.r2_s3_api_origin
-    access_key_id = settings.r2_access_key_id
-    secret_access_key = settings.r2_secret_access_key
-    bucket = settings.r2_bucket
-    region = settings.r2_region or "auto"
-
     resolved: dict[str, str] = {}
     missing: list[str] = []
     for key, value in (
-        ("R2_S3_API_ORIGIN", endpoint_url),
-        ("R2_ACCESS_KEY_ID", access_key_id),
-        ("R2_SECRET_ACCESS_KEY", secret_access_key),
-        ("R2_BUCKET", bucket),
+        ("R2_S3_API_ORIGIN", settings.r2_s3_api_origin),
+        ("R2_ACCESS_KEY_ID", settings.r2_access_key_id),
+        ("R2_SECRET_ACCESS_KEY", settings.r2_secret_access_key),
+        ("R2_BUCKET", settings.r2_bucket),
     ):
         if value:
             resolved[key] = value
@@ -331,11 +290,5 @@ def get_storage_client() -> StorageClient:
         access_key_id=resolved["R2_ACCESS_KEY_ID"],
         secret_access_key=resolved["R2_SECRET_ACCESS_KEY"],
         bucket=resolved["R2_BUCKET"],
-        region=region,
+        region=settings.r2_region or "auto",
     )
-
-
-def _client_error_is_missing(exc: ClientError) -> bool:
-    response = getattr(exc, "response", {})
-    error_code = str(response.get("Error", {}).get("Code") or "")
-    return error_code in {"404", "NoSuchKey", "NotFound"}
