@@ -253,7 +253,6 @@ _BACKGROUND_ROWS: tuple[
     ("dossier_podcast", "terra", "high", 300, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
     ("dossier_contributor", "terra", "high", 300, 1024, 400_000, 32_000, _NO_HOST, _NO_TOOLS),
     ("dossier_idea", "terra", "high", 300, 1024, 400_000, 32_000, _IDEA_HOST_PLAN, _IDEA_TOOLS),
-    ("dossier_idea_resolve", "luna", "low", 60, 256, 128_000, 16_000, _NO_HOST, _NO_TOOLS),
 )
 _BACKGROUND_OPERATIONS: dict[BackgroundOperationKey, BackgroundOperationPolicy] = {
     operation: BackgroundOperationPolicy(

@@ -736,7 +736,7 @@ def delete_highlight_rows(db: Session, highlight: Highlight) -> None:
         return
 
     from nexus.services import resource_grants
-    from nexus.services.artifacts.idea_seeds import delete_highlight_idea_rows
+    from nexus.services.artifacts.idea import delete_highlight_idea_rows
     from nexus.services.media_deletion import claim_document_teardown_if_unreferenced_locked
 
     ref = ResourceRef(scheme="highlight", id=locked.id)

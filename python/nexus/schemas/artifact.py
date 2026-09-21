@@ -1,16 +1,9 @@
-"""Schemas for the universal Dossier engine (stable head + immutable revisions).
+"""Wire schemas for the universal dossier: head, builds, revisions, events.
 
-Recomposed for CONTRACTS.md A19 (resource-inspector-and-universal-dossiers hard
-cutover): superseded feature-specific revision wrappers and REST facades are
-gone. The seven public Resource subjects plus the internal user-owned Idea
-subject share this one generic read/build/event contract; per-subject behavior
-lives in the binding layer
-(``services/artifacts/bindings/``), never in these shapes.
-
-Owned absence uses the repository-wide ``Presence[T]`` encoding
-(``nexus.schemas.presence`` / ``docs/rules/boundaries.md``). Closed codes and
-the persisted build-event payloads are reused directly from
-``services.artifacts.dossier_types`` rather than re-declared here.
+The seven public Resource subjects and the internal user-owned Idea subject
+share one read/build/event contract. Every key set here is decoded key-exact by
+``apps/web/src/lib/dossiers``; owned absence is the repository ``Presence[T]``
+encoding, never ``null``.
 """
 
 from __future__ import annotations
@@ -42,26 +35,18 @@ class ArtifactSchemaModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-# Head-read-only freshness label (A9/A15). Not a `dossier_types` enum: this is
-# a presentation summary of the binding's `manifests_equal(stored, live)`
-# comparison (A18), not a persisted or replayed value.
+# The head's freshness label: a presentation summary of the binding's manifest
+# comparison, never a persisted or replayed value.
 DossierFreshness = Literal["Current", "Stale"]
 
-# Shared bound for user-supplied build instructions (A9's `POST .../builds`
-# body and, hoisted for display, the build/revision read models below).
 _InstructionText = Annotated[str, Field(max_length=4000)]
 
 
 class DossierGenerateRequest(ArtifactSchemaModel):
-    """``POST /artifacts/dossiers/{subject_scheme}/{subject_handle}/builds`` body
-    (A9/A19). Absent = no custom instruction supplied for this build."""
-
     instruction: Presence[_InstructionText]
 
 
 class DossierBuildCreatedOut(ArtifactSchemaModel):
-    """The accepted build attempt returned by the generic Generate endpoint."""
-
     artifact_ref: str
     build_handle: str
     created: bool
@@ -89,24 +74,16 @@ LearnDossierOut = Annotated[
 
 
 class DossierBuildExecution(ArtifactSchemaModel):
-    """The advisory-only queue/coordination liveness for an active build
-    (A8/A9). Wraps `DurableExecutionPhase` so the wire shape matches A15's
-    nested ``DossierBuild{execution: Queued|Running|Recovering|Suspended}`` —
-    never a persisted event, never a failure, cannot legalize a second Generate.
-    """
+    """Advisory-only queue liveness; never a persisted event, never a failure."""
 
     phase: DurableExecutionPhase
 
 
 class DossierBuildNoModelToolsOut(ArtifactSchemaModel):
-    """The admitted generation publishes no model-callable tool."""
-
     kind: Literal["NoModelTools"] = "NoModelTools"
 
 
 class DossierBuildExactModelToolsOut(ArtifactSchemaModel):
-    """The admitted generation runs exactly one frozen read plan (section 3.4)."""
-
     kind: Literal["ExactModelTools"] = "ExactModelTools"
     plan_id: str = Field(min_length=1)
     plan_revision: str = Field(min_length=1)
@@ -120,13 +97,12 @@ DossierBuildToolPlanOut = Annotated[
 
 
 class DossierBuildAdmittedGenerationOut(ArtifactSchemaModel):
-    """Read-only facts of the build's latest admitted generation (spec 3.4, AC 15).
+    """Read-only facts of the build's latest admitted generation.
 
-    The exact frozen selection and its dispatch-time disclosure come from the
-    generation ledger, never from mutable policy; the tool plan is the frozen
-    model-tool authority and ``tool_positions`` counts journaled tool positions.
-    No control, credential, price, or current catalog state crosses here:
-    background eligibility stays server-internal (section 5.2)."""
+    The frozen selection and its dispatch-time disclosure come from the ledger,
+    never from mutable policy. No control, credential, price, or current
+    catalog state crosses here.
+    """
 
     selection: GenerationSelectionSpec
     display_at_dispatch: SelectionPresentation
@@ -135,18 +111,12 @@ class DossierBuildAdmittedGenerationOut(ArtifactSchemaModel):
 
 
 class DossierBuildSummary(ArtifactSchemaModel):
-    """One build attempt's identity and current execution/terminal summary.
+    """One attempt's identity and its execution or terminal facts.
 
-    Serves both `DossierHeadOut.active_build` (only `execution` Present) and
-    `.latest_unsuccessful_build` (exactly one of `failure`/`cancellation`
-    Present, `execution` Absent). The terminal facets reuse the exact
-    `dossier_types` build-event payloads, so the head snapshot and the live SSE
-    stream agree on one shape for the same fact (A15: `Failed|Cancelled`).
-    ``requester_user_id`` is the nullable attribution FK (User teardown nulls
-    it — UI "Deleted user", A5). ``admitted_generation`` is the latest ledger
-    generation admitted for the build; ``capacity_pause`` is the durable
-    pre-admission ``CapacityPaused`` parked on an active build's job (spec
-    3.4). Both are read-only and Absent whenever the fact does not exist."""
+    Serves both ``DossierHeadOut.active_build`` (only ``execution`` Present) and
+    ``.latest_unsuccessful_build`` (exactly one of ``failure``/``cancellation``).
+    ``requester_user_id`` is Absent once user teardown nulls the attribution.
+    """
 
     handle: str
     requester_user_id: Presence[UUID]
@@ -208,59 +178,42 @@ DossierCoverageOut = Annotated[
 ]
 
 
-class DossierRevisionOut(ArtifactSchemaModel):
-    """One immutable, citation-bearing revision (A5/A9/A10).
+class _DossierRevisionFacts(ArtifactSchemaModel):
+    """The facts both revision reads carry.
 
-    Reused both standalone (``GET /artifact-revisions/{artifact_revision_ref}``)
-    and nested as `DossierHeadOut.current_revision` — the current revision's
-    body is the one historical body the head read is allowed to carry (A9: "NO
-    historical revision body"). ``input_manifest`` is the typed, binding-owned
-    coverage source (A18/A21): coverage is derived from it, not duplicated as a
-    separate generic count. ``instruction`` is hoisted from the originating
-    build for display."""
+    ``input_manifest`` is the typed, binding-owned coverage source: coverage is
+    derived from it rather than duplicated as a separate count. ``instruction``
+    is hoisted from the originating build for display.
+    """
+
+    revision_id: UUID
+    revision_ref: str
+    is_current: bool
+    input_manifest: InputManifestV1
+    coverage: DossierCoverageOut
+    instruction: Presence[_InstructionText]
+    creator_user_id: Presence[UUID]
+    model_provider: Presence[str]
+    model_name: Presence[str]
+    total_tokens: Presence[int]
+    created_at: datetime
+    promoted_at: Presence[datetime]
+
+
+class DossierRevisionOut(_DossierRevisionFacts):
+    """One immutable, citation-bearing revision, standalone or as the head's current."""
 
     artifact_id: UUID
     artifact_ref: str
-    revision_id: UUID
-    revision_ref: str
-    is_current: bool
     content_html: str
     content_text: str
     citations: list[CitationOut]
-    input_manifest: InputManifestV1
-    coverage: DossierCoverageOut
-    instruction: Presence[_InstructionText]
-    creator_user_id: Presence[UUID]
-    model_provider: Presence[str]
-    model_name: Presence[str]
-    total_tokens: Presence[int]
-    created_at: datetime
-    promoted_at: Presence[datetime]
 
 
-class DossierRevisionSummaryOut(ArtifactSchemaModel):
-    """One ``GET /artifacts/{artifact_ref}/revisions`` list item.
+class DossierRevisionSummaryOut(_DossierRevisionFacts):
+    """One history entry: no body — fetch the single revision for that."""
 
-    No document body (the "no historical body" boundary — fetch the single
-    revision for body text) and no ``artifact_id``/``artifact_ref`` (the route
-    is already scoped to one artifact). ``input_manifest`` still rides along so
-    the history list can render binding-specific coverage per revision without
-    a second round trip; ``citation_count`` stands in for the omitted full
-    `citations` list."""
-
-    revision_id: UUID
-    revision_ref: str
-    is_current: bool
     citation_count: int = Field(ge=0)
-    input_manifest: InputManifestV1
-    coverage: DossierCoverageOut
-    instruction: Presence[_InstructionText]
-    creator_user_id: Presence[UUID]
-    model_provider: Presence[str]
-    model_name: Presence[str]
-    total_tokens: Presence[int]
-    created_at: datetime
-    promoted_at: Presence[datetime]
 
 
 class MediaAbstractBuildingOut(ArtifactSchemaModel):
@@ -273,9 +226,7 @@ class MediaAbstractReadyOut(ArtifactSchemaModel):
 
 
 class MediaAbstractStaleOut(ArtifactSchemaModel):
-    """MediaIntelligence has a summary, but not for the media's current content
-    fingerprint (reingestion happened since it was generated); still shown,
-    marked stale (A11/A18)."""
+    """A summary exists, but not for the media's current content fingerprint."""
 
     kind: Literal["Stale"] = "Stale"
     summary_md: str
@@ -286,15 +237,11 @@ class MediaAbstractFailedOut(ArtifactSchemaModel):
 
 
 class MediaAbstractNotAvailableOut(ArtifactSchemaModel):
-    """No MediaIntelligence attempt exists yet for this media (e.g. not yet
-    ready for reading, or no audience-resolvable citation candidate)."""
-
     kind: Literal["NotAvailable"] = "NotAvailable"
 
 
-# Media Abstract (A11 §252): compact, read-only, current-only, no Generate
-# control, no history — the Media Dossier's subordinate MediaIntelligence
-# display, never the Dossier's own build state.
+# The Media dossier's subordinate Media Intelligence display: compact, current
+# only, no Generate control and no history of its own.
 MediaAbstractOut = Annotated[
     MediaAbstractBuildingOut
     | MediaAbstractReadyOut
@@ -323,15 +270,12 @@ DossierIdentityOut = Annotated[
 
 
 class DossierHeadOut(ArtifactSchemaModel):
-    """``GET /artifacts/dossiers/{subject_scheme}/{subject_handle}`` read model
-    (A9) — every field the FE controller union's `Ready` case needs (A15)
-    except ``history``, which comes from the separate revisions-list endpoint.
+    """The dossier surface for one subject.
 
-    Absent ``artifact_id``/``artifact_ref`` (and every other field) is the
-    legitimate "never generated" state: `read_head` never inserts a head row —
-    only the bootstrap/Learn commands do (A6, "First-head create" is scoped to
-    build creation, not read). ``media_abstract`` is Present only for the Media
-    binding (A9/A11); every other subject always carries it Absent."""
+    Every field Absent with ``revision_count`` zero is the legitimate "never
+    generated" state: the head read never inserts a head row. ``media_abstract``
+    is Present only for the Media subject.
+    """
 
     artifact_id: Presence[UUID]
     artifact_ref: Presence[str]
@@ -344,16 +288,6 @@ class DossierHeadOut(ArtifactSchemaModel):
     media_abstract: Presence[MediaAbstractOut]
 
 
-_BUILD_EVENT_PAYLOAD_TYPES: dict[ArtifactBuildEventType, type[BaseModel]] = {
-    ArtifactBuildEventType.Started: StartedEventPayload,
-    ArtifactBuildEventType.Progress: ProgressEventPayload,
-    ArtifactBuildEventType.Succeeded: SucceededEventPayload,
-    ArtifactBuildEventType.Failed: FailedEventPayload,
-    ArtifactBuildEventType.Cancelled: CancelledEventPayload,
-}
-
-# The closed set of persisted build-event payloads (A5 §678), reused verbatim
-# from `dossier_types` rather than re-declared.
 BuildEventPayload = (
     StartedEventPayload
     | ProgressEventPayload
@@ -362,18 +296,22 @@ BuildEventPayload = (
     | CancelledEventPayload
 )
 
+_BUILD_EVENT_PAYLOAD_TYPES: dict[ArtifactBuildEventType, type[BaseModel]] = {
+    ArtifactBuildEventType.Started: StartedEventPayload,
+    ArtifactBuildEventType.Progress: ProgressEventPayload,
+    ArtifactBuildEventType.Succeeded: SucceededEventPayload,
+    ArtifactBuildEventType.Failed: FailedEventPayload,
+    ArtifactBuildEventType.Cancelled: CancelledEventPayload,
+}
+
 
 class ArtifactBuildEventOut(ArtifactSchemaModel):
-    """One replayable ``artifact_build_events`` row (A5 §678), strict end to
-    end: ``payload`` is always the exact `dossier_types` payload model for
-    ``event_type``, never a loose ``dict`` — one strict build-event boundary
-    and folds the old `ArtifactDoneEventPayload` into the typed
-    `SucceededEventPayload`/`FailedEventPayload`.
+    """One replayable ``artifact_build_events`` row, strict end to end.
 
-    A raw-dict ``payload`` (e.g. read back from the JSONB column alongside its
-    sibling ``event_type`` column) is coerced into the matching payload model
-    before validation; an already-typed payload instance (the construction path
-    when the engine appends a live event) passes straight through."""
+    A raw-dict ``payload`` read back from the jsonb column alongside its sibling
+    ``event_type`` is coerced into the matching payload model before validation;
+    an already-typed payload passes straight through.
+    """
 
     seq: int
     event_type: ArtifactBuildEventType

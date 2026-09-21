@@ -1,10 +1,9 @@
-"""Fail-closed acceptance and compilation for generated Dossier articles.
+"""Acceptance and compilation for generated dossier articles.
 
-The model supplies one inert semantic ``article`` fragment.  This owner parses it
-with the WHATWG algorithm, accepts a closed grammar, proves serialization is
-stable under a second parse, and returns the only model-authored representation
-the application may persist.  Citation controls are compiled separately from
-strictly materialized citations; model output can never create an active control.
+The model supplies one inert semantic ``article`` fragment. It is parsed with
+the WHATWG algorithm, accepted against a closed element/attribute/class
+grammar, and proven stable under a second parse. Citation controls are compiled
+by the server from strictly materialized citations, never taken from the model.
 """
 
 from __future__ import annotations
@@ -28,76 +27,35 @@ _MAX_CITATIONS = 256
 _TOKEN = re.compile(r"[a-z][a-z0-9-]{0,63}\Z")
 _POSITIVE_INTEGER = re.compile(r"[1-9][0-9]*\Z")
 _ALLOWED_ELEMENTS = frozenset(
-    {
-        "article",
-        "section",
-        "header",
-        "h2",
-        "h3",
-        "h4",
-        "p",
-        "ol",
-        "ul",
-        "li",
-        "dl",
-        "dt",
-        "dd",
-        "blockquote",
-        "pre",
-        "code",
-        "em",
-        "strong",
-        "table",
-        "thead",
-        "tbody",
-        "tr",
-        "th",
-        "td",
-        "figure",
-        "figcaption",
-        "div",
-        "span",
-        "cite",
-    }
+    "article section header h2 h3 h4 p ol ul li dl dt dd blockquote pre code em strong "
+    "table thead tbody tr th td figure figcaption div span cite".split()
 )
 _ALLOWED_CLASSES = frozenset(
-    {
-        "dossier-lede",
-        "dossier-definition",
-        "dossier-example",
-        "dossier-warning",
-        "dossier-steps",
-        "dossier-diagram",
-        "dossier-muted",
-    }
+    "dossier-lede dossier-definition dossier-example dossier-warning dossier-steps "
+    "dossier-diagram dossier-muted".split()
 )
 _TABLE_ATTRIBUTES = frozenset({"scope", "colspan", "rowspan", "class"})
 _GENERIC_ATTRIBUTES = frozenset({"class"})
 
 
 class DocumentHtmlError(ValueError):
-    """Generated markup is not in the accepted Dossier document language."""
+    """Generated markup is not in the accepted dossier document language."""
 
 
 @dataclass(frozen=True, slots=True)
 class AcceptedModelArticle:
-    """Canonical inert article plus the citation ordinals it contains."""
-
     content_html: str
     citation_ordinals: tuple[int, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class CompiledLearningDocument:
-    """The persisted article and its derived plain-text projection."""
-
     content_html: str
     content_text: str
 
 
 def accept_model_article(content_html: str) -> AcceptedModelArticle:
     """Accept one model-authored semantic article without repairing it."""
-
     fragment = _parse_fragment(content_html)
     citation_ordinals = _validate_model_fragment(fragment)
     _strip_fragment_padding(fragment)
@@ -112,10 +70,7 @@ def accept_model_article(content_html: str) -> AcceptedModelArticle:
         raise DocumentHtmlError("article changes shape when reparsed")
     if citation_ordinals != reparsed_ordinals:
         raise DocumentHtmlError("citation tokens change when reparsed")
-    return AcceptedModelArticle(
-        content_html=canonical,
-        citation_ordinals=citation_ordinals,
-    )
+    return AcceptedModelArticle(content_html=canonical, citation_ordinals=citation_ordinals)
 
 
 def compile_learning_document(
@@ -123,9 +78,7 @@ def compile_learning_document(
     citations: Sequence[CitationInput],
 ) -> CompiledLearningDocument:
     """Replace accepted inert tokens with exact app-owned citation controls."""
-
-    ordinals = tuple(citation.ordinal for citation in citations)
-    if ordinals != accepted.citation_ordinals:
+    if tuple(citation.ordinal for citation in citations) != accepted.citation_ordinals:
         raise AssertionError("compiled citations do not match the accepted document")
 
     fragment = _parse_fragment(accepted.content_html)
@@ -135,8 +88,7 @@ def compile_learning_document(
         raise DocumentHtmlError("article has no readable text")
 
     for parent in article.iter():
-        children = list(parent)
-        for index, child in enumerate(children):
+        for index, child in enumerate(list(parent)):
             if _local_name(child) != "cite":
                 continue
             ordinal = int(child.attrib["data-nexus-citation"])
@@ -149,22 +101,18 @@ def compile_learning_document(
                     "aria-label": f"Open citation {ordinal}",
                 },
             )
-            superscript = SubElement(control, _qualified("sup"))
-            superscript.text = str(ordinal)
+            SubElement(control, _qualified("sup")).text = str(ordinal)
             control.tail = child.tail
             parent.remove(child)
             parent.insert(index, control)
 
     compiled = _serialize(fragment)
-    reparsed = _parse_fragment(compiled)
-    if _tree_shape(fragment) != _tree_shape(reparsed):
+    if _tree_shape(fragment) != _tree_shape(_parse_fragment(compiled)):
         raise AssertionError("trusted citation controls change shape when reparsed")
     return CompiledLearningDocument(content_html=compiled, content_text=content_text)
 
 
 def _parse_fragment(source: str) -> Element:
-    if not isinstance(source, str):
-        raise DocumentHtmlError("article body must be a string")
     if len(source.encode("utf-8")) > _MAX_SERIALIZED_BYTES:
         raise DocumentHtmlError("article exceeds the 160000-byte limit")
     parser = html5lib.HTMLParser(namespaceHTMLElements=True)
@@ -192,8 +140,6 @@ def _validate_model_fragment(fragment: Element) -> tuple[int, ...]:
             raise DocumentHtmlError("article exceeds the 4000-node limit")
         if depth > _MAX_DEPTH:
             raise DocumentHtmlError("article exceeds the depth limit")
-        if not isinstance(element.tag, str):
-            raise DocumentHtmlError("comments and processing instructions are forbidden")
         name = _local_name(element)
         if name not in _ALLOWED_ELEMENTS:
             raise DocumentHtmlError(f"element {name!r} is forbidden")
@@ -206,7 +152,6 @@ def _validate_model_fragment(fragment: Element) -> tuple[int, ...]:
             citation_ordinals=citation_ordinals,
         )
         stack.extend((child, depth + 1) for child in reversed(list(element)))
-
     if len(citation_ordinals) > _MAX_CITATIONS:
         raise DocumentHtmlError("article exceeds the citation-token limit")
     return tuple(citation_ordinals)
@@ -220,7 +165,7 @@ def _validate_model_attributes(
     citation_ordinals: list[int],
 ) -> None:
     attributes = element.attrib
-    if any(_attribute_namespace(key) is not None for key in attributes):
+    if any(key.startswith("{") for key in attributes):
         raise DocumentHtmlError("namespaced attributes are forbidden")
 
     if name == "article":
@@ -236,8 +181,7 @@ def _validate_model_attributes(
         raw_ordinal = attributes["data-nexus-citation"]
         if _POSITIVE_INTEGER.fullmatch(raw_ordinal) is None:
             raise DocumentHtmlError("citation ordinal must be a canonical positive integer")
-        ordinal = int(raw_ordinal)
-        citation_ordinals.append(ordinal)
+        citation_ordinals.append(int(raw_ordinal))
         return
 
     allowed = (
@@ -247,8 +191,7 @@ def _validate_model_attributes(
         if name in {"th", "td"}
         else _GENERIC_ATTRIBUTES
     )
-    unknown = set(attributes) - allowed
-    if unknown:
+    if set(attributes) - allowed:
         raise DocumentHtmlError(f"element {name!r} has forbidden attributes")
 
     if name == "section":
@@ -287,7 +230,6 @@ def _only_article(fragment: Element) -> Element:
     children = list(fragment)
     if (
         len(children) != 1
-        or not isinstance(children[0].tag, str)
         or _local_name(children[0]) != "article"
         or (children[0].tail or "").strip()
     ):
@@ -302,16 +244,12 @@ def _strip_fragment_padding(fragment: Element) -> None:
 
 
 def _local_name(element: Element) -> str:
+    prefix = f"{{{_HTML_NAMESPACE}}}"
     if not isinstance(element.tag, str):
         raise DocumentHtmlError("comments and processing instructions are forbidden")
-    prefix = f"{{{_HTML_NAMESPACE}}}"
     if not element.tag.startswith(prefix):
         raise DocumentHtmlError("foreign namespaces are forbidden")
     return element.tag[len(prefix) :]
-
-
-def _attribute_namespace(name: str) -> str | None:
-    return name[1:].partition("}")[0] if name.startswith("{") else None
 
 
 def _qualified(name: str) -> str:

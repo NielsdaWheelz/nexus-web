@@ -172,12 +172,13 @@ durable `highlight:<id>` ref to `POST /artifacts/dossiers/learn`. Popover state
 ends normally. Global feedback owns pending/failure state, and success adopts
 the standalone Artifact pane.
 
-The Artifact subsystem, not Highlight, resolves the occurrence to one
-user-owned Idea, records the Highlight as a generation seed, and owns exact
-Learn replay. Re-Learn is the recovery path. Highlight deletion explicitly
-removes Idea resolution, seed, and affected Learn replay rows before the
-Highlight row. Learn creates no Resource Graph Link and Highlight still
-publishes no Inspector.
+The Artifact subsystem, not Highlight, canonicalizes the selected text to one
+user-owned Idea and records the Highlight as a generation seed. Learning the
+same phrase twice reaches the same Idea, so the resolution row, the seed pair
+and the head key carry the replay; re-Learn is the recovery path. Highlight
+deletion explicitly removes Idea resolution, seed, and any leftover Learn rows
+before the Highlight row. Learn creates no Resource Graph Link and Highlight
+still publishes no Inspector.
 
 ## Reader Presentation
 
