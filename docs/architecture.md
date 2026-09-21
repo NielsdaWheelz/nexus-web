@@ -1522,11 +1522,10 @@ A canonical authorship graph split across single owners: `contributor_taxonomy.p
 `contributors.py` (the public author-operations facade: search, contributor
 detail, distinct works, ref resolve/hydrate for panes, observed role-slice
 replacement, media-author PUT/reset, rename, and the transaction-scoped
-target-cleanup/orphan-prune helpers — no second identity/write path exists),
-two private collaborators it alone calls (`_contributor_identity.py` for
-identity-row resolution/creation/alias attachment, `_contributor_credit_writes.py`
-for all credit-row DML and the media manual/automatic pin), `_contributor_replay.py`
-(forced-new-edit replay memos), and `contributor_credits.py` (the read-side
+target-cleanup helper — no second identity/write path exists),
+`contributor_writes.py` (the one write module it calls: identity-row
+resolution/creation/alias attachment, all credit-row DML, and the media
+manual/automatic pin), and `contributor_credits.py` (the read-side
 credit junction: canonical credit relation + visible-work queries). Every final
 `contributors` row is active — there is no self-FK, status, merge, split, or
 tombstone; duplicates were collapsed once by migration 0179 and never merge at
@@ -1545,8 +1544,9 @@ adapters and that facade. An absent carrier means no observation; a malformed
 container, tuple, media identity, observation, or source is a same-system defect
 and never degrades to empty authorship. Visibility predicates
 (`visible_podcast_ids_cte_sql`, `visible_content_credit_rows_sql`,
-`visible_contributor_ids_cte_sql`) live solely in `auth/permissions.py`;
-persisted-chat-ref checks live in `chat_context_refs.py`. There is no `/authors`
+`visible_contributor_ids_cte_sql`) live solely in `auth/permissions.py`.
+An orphaned contributor is already invisible under those predicates, so nothing
+prunes contributor rows. There is no `/authors`
 directory or root Authors pane; author search lives in desktop Nexus
 at `/search?kinds=people`, and author chips link to the `/authors/{handle}`
 detail-only pane (works list).
@@ -1713,19 +1713,19 @@ The **Lectern** is the one ordered, mixed-media list of outstanding intentions
 Playing** is one device-local audio session, not a second durable list.
 `services/consumption/` is the sole backend consumption owner, split by table:
 `_lectern_store.py` (`consumption_queue_items` membership/order + the
-canonical `LecternSnapshot`), `_state_store.py` (`consumption_overrides`
-explicit `Unread`/`Finished` plus the natural-end override revision),
+canonical `LecternSnapshot`), `state.py` (`consumption_overrides` explicit
+`Unread`/`Finished` plus the natural-end override revision, and
+`reader_engagement_states` current-state reader recency — `last_engaged_at`
+plus, for non-PDF locators, a monotonic `max_total_progression`),
 `_listening_store.py` (`podcast_listening_states`
 position/duration/nullable established episode rate + heartbeat fencing tokens
-`write_revision`/`reset_epoch`), `_reader_cursor_store.py`
+`write_revision`/`reset_epoch`), `reader_cursor.py`
 (`reader_media_state` revisioned
-`Empty`/`Positioned` cursor CAS), `_reader_engagement_store.py`
-(`reader_engagement_states`, the sole DML owner of current-state reader
-recency — `last_engaged_at` plus, for non-PDF locators, a monotonic
-`max_total_progression`), `_activity_store.py`
+`Empty`/`Positioned` cursor CAS), `activity_store.py`
 (`consumption_activity_spans` and `consumption_completion_facts` DML),
-`_activity_stats.py` (read-time aggregation/sessionization), and `_projection.py`
-(the combined explicit-override + reader-engagement read model, plus batched
+`activity_stats.py` (read-time aggregation/sessionization), `stats_read.py`
+(the Stats and Sessions wire payloads), and `projection.py` (the combined
+explicit-override + reader-engagement read model, plus batched
 `PlayerDescriptor`s reusing `derive_playback_source`). Consumption exposes
 policy-neutral engagement and complete queue-membership reads to Resonance; it
 does not own a second public Recent product. `GET /lectern/slate` builds the

@@ -41,17 +41,17 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | search-browse-nexus (index, 11 retrievers, browse adapters, nexus launcher, switchboard, /search) | 26.4k | 8k | reauthor: one search UI, one retriever | python search/index/retrieval first pass landed (size/search-py) at 6.0k of 9.0k, −33%; browse and the three web search UIs open |
 | podcasts (subscriptions, sync, refresh runs, backfill, transcription, OPML, detail panes) | 14.1k | 6k | reauthor; drop refresh-run ledger, OPML | python first pass landed (size/podcasts-py): 10.9k→7.1k, −35%; OPML and the refresh-run ledger deleted (0239); web 7.0k open |
 | player (browser + android runtimes, protocol, lectern, walknotes, native player) | 21.3k | 6k | one runtime behind one transport; deferred by owner 2026-09-21; keep and reauthor walknotes | open |
-| consumption-stats (spans, projection, stats pane, outbox, exclusions) | 13.5k | 3k | reauthor; keep stats + exclusions | open |
+| consumption-stats (spans, projection, stats pane, outbox, exclusions) | 12.2k | 3k | reauthor; keep stats + exclusions | python first pass landed (size/consumption-py): 6.0k→4.6k, −23%; web 6.0k and android outbox open |
 | library (libraries, entries, listing, placement 3.2k) | 15.5k | 5k | reauthor | open |
 | library-sharing (memberships, invitations, governance) | 5.0k | 2k | keep, reauthor | open |
 | resource-sharing (grants, public /s reader, share overlay) | 7.2k | 2.5k | keep grants + link; /s reader reuses the reader | open |
-| notes-pages (daily pages, two body editors, highlights service) | 12.2k | 4k | one editor | open |
-| authors (contributors, credits, taxonomy, author pane) | 7.3k | 2k | reauthor | open |
+| notes-pages (daily pages, two body editors, highlights service) | 11.2k | 4k | one editor | python first pass landed (size/notes-py): 3.5k→2.4k, −30%; web 8.7k (two body editors) open |
+| authors (contributors, credits, taxonomy, author pane) | 6.0k | 2k | reauthor | python first pass landed (size/contributors-py): 3.2k→2.0k, −39%; web 4.0k open |
 | offline-android (delivery, packages, downloads, two kotlin stores) | 17.6k | 8k | one store | open |
 | vault (export/sync/watch CLI + pane) | 1.9k | 0–1k | deferred by owner 2026-09-21; keep and reauthor: keep at 1k or delete | open |
 | billing-settings (billing, entitlements, quota, 7 settings panes) | 4.4k | 2k | keep, reauthor | open |
 | auth-extension (auth, users, sessions, extension 2.8k of which 2.3k vendored Readability) | 4.9k | 2k | deferred by owner 2026-09-21; keep and reauthor extension; keep auth | open |
-| substrate: resource graph (refs, edges, citations) | 6.9k | 2k | reauthor | open |
+| substrate: resource graph (refs, edges, citations) | 5.2k | 2k | reauthor | first pass landed (size/resource-graph-py): 6.6k→4.9k, −25%; two blocks await the action-menu rewrite |
 | substrate: action menu (snapshot→planner→runtime→cache) | 11.4k | 1.5k | one catalog + one menu | open |
 | substrate: workspace/panes (store, host, memento, mobile chrome, pane find, route model) | 20.7k | 6k | reauthor | open |
 | substrate: api/auth/bff (proxy, sse, session; BFF routes already collapsed) | 14.5k | 4k | reauthor | open |

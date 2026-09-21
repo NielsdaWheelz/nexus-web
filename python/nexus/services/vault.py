@@ -43,7 +43,7 @@ from nexus.services.highlights import (
     map_integrity_error,
     validate_offsets_or_400,
 )
-from nexus.services.note_bodies import pm_doc_from_markdown_projection
+from nexus.services.note_bodies import pm_doc_from_markdown_projection, upsert_note_body
 from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.notes import delete_page_in_current_transaction
 from nexus.services.resource_graph import adjacency as graph_adjacency
@@ -666,8 +666,11 @@ def _apply_page_body_from_vault(
     if not nodes:
         if not text_body:
             return False, None, set()
-        block = notes_service.upsert_note_body_without_commit(
-            db, viewer_id, uuid4(), _vault_body_pm_json(text_body)
+        block = upsert_note_body(
+            db,
+            viewer_id=viewer_id,
+            block_id=uuid4(),
+            body_pm_json=_vault_body_pm_json(text_body),
         )
         graph_adjacency.replace_ordered_targets(
             db,
@@ -692,8 +695,11 @@ def _apply_page_body_from_vault(
     if len(flat_nodes) == 1:
         if text_body == current_body:
             return False, None, set()
-        notes_service.upsert_note_body_without_commit(
-            db, viewer_id, flat_nodes[0].block.id, _vault_body_pm_json(text_body)
+        upsert_note_body(
+            db,
+            viewer_id=viewer_id,
+            block_id=flat_nodes[0].block.id,
+            body_pm_json=_vault_body_pm_json(text_body),
         )
         return True, None, {flat_nodes[0].block.id}
 
@@ -710,8 +716,11 @@ def _apply_page_body_from_vault(
     for node, block_body in zip(nodes, fallback_blocks, strict=True):
         if block_body == _block_vault_body(node.block).strip():
             continue
-        notes_service.upsert_note_body_without_commit(
-            db, viewer_id, node.block.id, _vault_body_pm_json(block_body)
+        upsert_note_body(
+            db,
+            viewer_id=viewer_id,
+            block_id=node.block.id,
+            body_pm_json=_vault_body_pm_json(block_body),
         )
         changed = True
         changed_block_ids.add(node.block.id)
@@ -749,8 +758,11 @@ def _apply_marked_page_blocks(
         block = blocks_by_id[parsed_block["id"]]
         if _block_vault_body(block).strip() == parsed_block["body"]:
             continue
-        notes_service.upsert_note_body_without_commit(
-            db, viewer_id, block.id, _vault_body_pm_json(parsed_block["body"])
+        upsert_note_body(
+            db,
+            viewer_id=viewer_id,
+            block_id=block.id,
+            body_pm_json=_vault_body_pm_json(parsed_block["body"]),
         )
         changed = True
         changed_block_ids.add(block.id)
@@ -1119,8 +1131,11 @@ def _patch_existing_note_block_bodies_from_vault(
     if not body_by_block_id:
         return
     for block_id, body in body_by_block_id.items():
-        notes_service.upsert_note_body_without_commit(
-            db, viewer_id, block_id, _vault_body_pm_json(body)
+        upsert_note_body(
+            db,
+            viewer_id=viewer_id,
+            block_id=block_id,
+            body_pm_json=_vault_body_pm_json(body),
         )
         enqueue_note_reindex(db, note_block_id=block_id, reason="vault_highlight_note_sync")
 

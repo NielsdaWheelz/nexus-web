@@ -19,7 +19,7 @@ from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok, success_response
 from nexus.schemas.contributors import MediaAuthorsPutRequest
 from nexus.schemas.media import MediaIntelligenceOut, MediaLibrariesRequest
-from nexus.schemas.resource_graph import ConnectionEndpointOut, RelatedMediaOut
+from nexus.schemas.resource_graph import RelatedMediaOut, endpoint_out
 from nexus.services import (
     contributors as contributors_service,
 )
@@ -31,26 +31,12 @@ from nexus.services import (
 from nexus.services import media as media_service
 from nexus.services import media_deletion as media_deletion_service
 from nexus.services.resonance import service as resonance_service
-from nexus.services.resource_graph.schemas import ConnectionEndpoint
 
 router = APIRouter(tags=["media"])
 
 # Clamp for GET /media/{id}/related ``limit`` (spec S5).
 _RELATED_LIMIT_MIN = 1
 _RELATED_LIMIT_MAX = 20
-
-
-def _endpoint_out(endpoint: ConnectionEndpoint) -> ConnectionEndpointOut:
-    return ConnectionEndpointOut(
-        ref=endpoint.ref.uri,
-        scheme=endpoint.ref.scheme,
-        id=endpoint.ref.id,
-        label=endpoint.label,
-        description=endpoint.description,
-        activation=endpoint.activation,
-        href=endpoint.href,
-        missing=endpoint.missing,
-    )
 
 
 @router.get("/media")
@@ -179,7 +165,7 @@ def get_related_media(
     peers = resonance_service.related_media(
         db, viewer_id=viewer.user_id, media_id=media_id, limit=limit
     )
-    return ok(RelatedMediaOut(peers=[_endpoint_out(peer) for peer in peers]))
+    return ok(RelatedMediaOut(peers=[endpoint_out(peer) for peer in peers]))
 
 
 @router.post("/media/{media_id}/libraries", status_code=204)

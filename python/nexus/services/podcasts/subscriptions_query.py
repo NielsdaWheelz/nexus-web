@@ -32,7 +32,7 @@ from nexus.services.collection_revisions import (
     read_collection_revision,
     require_collection_revision,
 )
-from nexus.services.consumption import _projection
+from nexus.services.consumption import projection
 from nexus.services.contributor_credits import load_contributor_credits_for_podcasts
 from nexus.services.keyset_cursor import (
     KeysetValueKind,
@@ -267,14 +267,14 @@ def list_subscriptions(
                         pe.podcast_id,
                         pe.published_at,
                         {
-                    _projection.episode_state_case_sql(
+                    projection.episode_state_case_sql(
                         listening_alias="pls", override_alias="co", episode_alias="pe"
                     )
                 } AS episode_state
                     FROM podcast_episodes pe
                     JOIN visible_media vm ON vm.media_id = pe.media_id
                     {
-                    _projection.episode_state_joins_sql(
+                    projection.episode_state_joins_sql(
                         user_param=":user_id",
                         media_expr="pe.media_id",
                         listening_alias="pls",

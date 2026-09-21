@@ -25,6 +25,7 @@ from nexus.services.contributor_taxonomy import (
     RawCreditEntry,
     build_observation,
 )
+from nexus.services.contributor_writes import GutenbergTarget
 
 _CATALOG_FEED_URLS = (
     "https://www.gutenberg.org/cache/epub/feeds/pg_catalog.csv.gz",
@@ -91,11 +92,9 @@ def sync_project_gutenberg_catalog(
             if parsed_names.get(ebook_id, ()) != stored_names.get(ebook_id, ())
         )
 
-        # Credits (and any orphan prune) before the catalog row, so the FK holds.
+        # Credits before the catalog row, so the FK holds.
         for ebook_id in removed_ids:
-            contributors.cleanup_credits_for_deleted_target(
-                db, target=contributors.GutenbergTarget(ebook_id)
-            )
+            contributors.cleanup_credits_for_deleted_target(db, target=GutenbergTarget(ebook_id))
         if removed_ids:
             db.execute(
                 delete(ProjectGutenbergCatalogEntry).where(
@@ -118,7 +117,7 @@ def sync_project_gutenberg_catalog(
     contributors.replace_observed_role_slices_batch(
         [
             (
-                contributors.GutenbergTarget(ebook_id),
+                GutenbergTarget(ebook_id),
                 observations[ebook_id],
                 _GUTENBERG_CREDIT_SOURCE,
             )

@@ -1,10 +1,9 @@
-"""Citation ownership: ordinals, the ``CitationOut`` read-model, concordance (§9.5).
+"""Citation ordinals: the single numbering owner and the single ``CitationOut`` producer.
 
-An ordinal marks a citation (D5): the ordinal-bearing ``origin='citation'``
-edges of one source output are its citation set, numbered densely. This module
-is the single numbering owner and the single backend ``CitationOut`` producer;
-``message_retrievals`` keeps telemetry and merely points back via
-``cited_edge_id`` (D6).
+An ordinal marks a citation: the ordinal-bearing ``origin='citation'`` edges of one
+source output are its citation set, numbered densely 1..N because the stored prose
+carries ``[N]`` markers. The edge stores no locator — position lives in the target — so
+the in-reader jump is reconstructed on read from the target's own anchoring.
 """
 
 from __future__ import annotations
@@ -67,7 +66,7 @@ def record_citation(
     kind: EdgeKind,
     snapshot: CitationSnapshot,
 ) -> EdgeOut:
-    """Write one citation edge inside the caller's transaction (chat/Oracle write-through)."""
+    """Write one citation edge inside the caller's transaction."""
     return create_edge(
         db,
         viewer_id=viewer_id,
@@ -89,12 +88,13 @@ def replace_citations_for_output(
     source: ResourceRef,
     citations: Sequence[CitationInput],
 ) -> list[EdgeOut]:
-    """Replace the source's citation set atomically inside the caller's transaction.
-
-    Ordinals must be dense (1..N): the ``[N]`` markers in the stored prose depend
-    on them.
-    """
-    _dense_citation_ordinals(citations)
+    """Replace the source's whole citation set atomically; ordinals must be dense 1..N."""
+    ordinals = sorted(citation.ordinal for citation in citations)
+    if ordinals != list(range(1, len(ordinals) + 1)):
+        raise InvalidRequestError(
+            ApiErrorCode.E_INVALID_REQUEST,
+            f"Citation ordinals must be dense 1..{len(ordinals)}; got {ordinals}",
+        )
     return replace_edges_for_origin(
         db,
         viewer_id=viewer_id,
@@ -130,25 +130,8 @@ def parse_generated_markdown_citation_markers(
 
 
 def build_citation_outs(db: Session, *, viewer_id: UUID, source: ResourceRef) -> list[CitationOut]:
-    """Build the shared ``CitationOut`` read-model from the source's citation edges.
-
-    ``role`` is the edge kind and ``deep_link`` is lifted from the edge snapshot.
-    The edge stores no locator (position lives in the target grain, D11); the
-    in-reader jump ``(media_id, locator)`` is reconstructed here from the target's
-    own anchoring (``reader_target_for_citation_target``), uniformly for chat,
-    Oracle, and Universal Dossiers (G6).
-
-    Media-target chips also carry the LLM ``summary_md`` abstract (snapshot is
-    display-only and stores no abstract, N6): it is reconstructed on read via
-    ``media_intelligence.read_batch`` — batched once over all media targets of this
-    source (no per-edge N+1) — applying the same freshness gate as the result-card
-    enrichment. Non-media targets keep ``summary_md = None``.
-    """
     return build_citation_outs_for_sources(
-        db,
-        viewer_id=viewer_id,
-        edge_owner_id=viewer_id,
-        sources=[source],
+        db, viewer_id=viewer_id, edge_owner_id=viewer_id, sources=[source]
     ).get(source.uri, [])
 
 
@@ -159,14 +142,15 @@ def build_citation_outs_for_sources(
     edge_owner_id: UUID,
     sources: Sequence[ResourceRef],
 ) -> dict[str, list[CitationOut]]:
-    """Batch-build ``CitationOut`` lists for sources.
+    """Batch-build the ``CitationOut`` list per source, in ordinal order.
 
-    Citation edge ownership is not always the same as the current reader:
-    shared conversations store citation edges under the conversation owner, while
-    target jump hydration still uses the current viewer's visibility.
+    Edge ownership is not always the current reader: a shared conversation stores its
+    citation edges under the conversation owner, while jump hydration still uses the
+    current viewer's visibility. Media targets carry the LLM ``summary_md`` abstract,
+    batched once over all media targets rather than per edge.
     """
     unique_sources = list({source.uri: source for source in sources}.values())
-    out = {source.uri: [] for source in unique_sources}
+    out: dict[str, list[CitationOut]] = {source.uri: [] for source in unique_sources}
     if not unique_sources:
         return out
 
@@ -188,9 +172,7 @@ def build_citation_outs_for_sources(
                 ),
             )
             .order_by(
-                ResourceEdge.source_scheme,
-                ResourceEdge.source_id,
-                ResourceEdge.ordinal.asc(),
+                ResourceEdge.source_scheme, ResourceEdge.source_id, ResourceEdge.ordinal.asc()
             )
         )
     )
@@ -209,10 +191,7 @@ def build_citation_outs_for_sources(
         ref.uri for ref, item in zip(target_refs, resolved, strict=True) if item.missing
     }
     activations = resource_activations_for_refs(
-        db,
-        viewer_id=viewer_id,
-        refs=target_refs,
-        missing_ref_uris=missing_uris,
+        db, viewer_id=viewer_id, refs=target_refs, missing_ref_uris=missing_uris
     )
     projections = citation_reader_targets_for_edges(
         db,
@@ -224,8 +203,7 @@ def build_citation_outs_for_sources(
         },
     )
     for row in rows:
-        source_uri = f"{row.source_scheme}:{row.source_id}"
-        out.setdefault(source_uri, []).append(
+        out.setdefault(f"{row.source_scheme}:{row.source_id}", []).append(
             _citation_out(
                 row=row,
                 projection=projections[row.id],
@@ -239,7 +217,6 @@ def build_citation_outs_for_sources(
 def citation_counts_for_sources(
     db: Session, *, source_scheme: ResourceScheme, source_ids: Sequence[UUID]
 ) -> dict[UUID, int]:
-    """Count canonical citation edges for a batch of output resources."""
     ordered = list(dict.fromkeys(source_ids))
     if not ordered:
         return {}
@@ -272,22 +249,21 @@ def citation_reader_targets_for_edges(
     target_missing_ref_uris: set[str],
     target_routeable_ref_uris: set[str],
 ) -> dict[UUID, CitationTargetProjection]:
-    """Project each unique readable citation target once for a graph page.
+    """Project each unique readable citation target once for a page of edges.
 
-    Endpoint hydration already owns visibility and routeability. Locator
-    resolution remains entirely in reader_target_for_citation_target; this seam
-    only deduplicates repeated targets and avoids resolving endpoint state again.
+    Endpoint hydration owns visibility and routeability; this only deduplicates repeated
+    targets and asks ``reader_target_for_citation_target`` for the jump.
     """
-
     citation_edges = [
-        edge for edge in edges if edge.origin == "citation" and edge.ordinal is not None
+        (edge, edge.ordinal)
+        for edge in edges
+        if edge.origin == "citation" and edge.ordinal is not None
     ]
     targets = {
         f"{edge.target_scheme}:{edge.target_id}": ResourceRef(
-            scheme=cast("ResourceScheme", edge.target_scheme),
-            id=edge.target_id,
+            scheme=cast("ResourceScheme", edge.target_scheme), id=edge.target_id
         )
-        for edge in citation_edges
+        for edge, _ in citation_edges
     }
     reader_targets = {
         uri: (
@@ -297,30 +273,27 @@ def citation_reader_targets_for_edges(
         )
         for uri, target in targets.items()
     }
-
     out: dict[UUID, CitationTargetProjection] = {}
-    for edge in citation_edges:
-        assert edge.ordinal is not None and edge.snapshot is not None, (
-            f"citation edge {edge.id} lost its ordinal/snapshot pair"
-        )
+    for edge, ordinal in citation_edges:
         uri = f"{edge.target_scheme}:{edge.target_id}"
         media_id, locator = reader_targets[uri]
-        target_status = (
-            "missing"
-            if uri in target_missing_ref_uris
-            else (
-                "current"
-                if media_id is not None or locator is not None or uri in target_routeable_ref_uris
-                else "unanchorable"
-            )
-        )
         out[edge.id] = CitationTargetProjection(
-            ordinal=edge.ordinal,
+            ordinal=ordinal,
             role=cast("EdgeKind", edge.kind),
-            snapshot=snapshot_from_jsonb(edge.snapshot),
+            snapshot=snapshot_from_jsonb(edge.snapshot or {}),
             media_id=media_id,
             locator=locator,
-            target_status=target_status,
+            target_status=(
+                "missing"
+                if uri in target_missing_ref_uris
+                else (
+                    "current"
+                    if media_id is not None
+                    or locator is not None
+                    or uri in target_routeable_ref_uris
+                    else "unanchorable"
+                )
+            ),
         )
     return out
 
@@ -332,10 +305,10 @@ def concordant_sources(
     source: ResourceRef,
     source_scheme: ResourceScheme,
 ) -> list[ConcordantSource]:
-    """Other ``source_scheme`` outputs citing a target this source also cites (§5.3).
+    """Other ``source_scheme`` outputs citing a target this source also cites.
 
-    Concordance is identity equality on ``(target_scheme, target_id)`` —
-    locators and snapshots are deliberately excluded from the key.
+    Concordance is identity equality on ``(target_scheme, target_id)``; locators and
+    snapshots are deliberately out of the key.
     """
     rows = db.execute(
         text(
@@ -371,21 +344,10 @@ def concordant_sources(
     ).fetchall()
     return [
         ConcordantSource(
-            source=ResourceRef(scheme=source_scheme, id=row[0]),
-            shared_target_count=int(row[1]),
+            source=ResourceRef(scheme=source_scheme, id=row[0]), shared_target_count=int(row[1])
         )
         for row in rows
     ]
-
-
-def _dense_citation_ordinals(citations: Sequence[CitationInput]) -> list[int]:
-    ordinals = sorted(citation.ordinal for citation in citations)
-    if ordinals != list(range(1, len(ordinals) + 1)):
-        raise InvalidRequestError(
-            ApiErrorCode.E_INVALID_REQUEST,
-            f"Citation ordinals must be dense 1..{len(ordinals)}; got {ordinals}",
-        )
-    return ordinals
 
 
 def _citation_out(
@@ -395,17 +357,14 @@ def _citation_out(
     activation: ResourceActivationOut,
     summaries: Mapping[UUID, MediaProjection],
 ) -> CitationOut:
-    # Only media-scheme targets carry the summary abstract; a content_chunk/span
-    # whose parent happens to be media is a finer grain and does not (mirrors the
-    # harness's "media targets only" rule, keyed by the media target id).
+    # Only media-scheme targets carry the summary abstract; a chunk or span whose parent
+    # happens to be media is a finer grain and does not.
     media_projection = summaries.get(row.target_id) if row.target_scheme == "media" else None
-    summary_md = media_projection.summary_md if media_projection is not None else None
     return CitationOut(
         ordinal=projection.ordinal,
         role=cast("CitationRole", projection.role),
         target_ref=CitationTargetRef(
-            type=cast("CitationTargetType", row.target_scheme),
-            id=row.target_id,
+            type=cast("CitationTargetType", row.target_scheme), id=row.target_id
         ),
         activation=activation,
         media_id=projection.media_id,
@@ -417,6 +376,6 @@ def _citation_out(
             excerpt=projection.snapshot.excerpt,
             section_label=projection.snapshot.section_label,
             result_type=projection.snapshot.result_type,
-            summary_md=summary_md,
+            summary_md=media_projection.summary_md if media_projection is not None else None,
         ),
     )
