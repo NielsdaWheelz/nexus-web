@@ -54,7 +54,7 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | substrate: resource graph (refs, edges, citations) | 5.2k | 2k | reauthor | first pass landed (size/resource-graph-py): 6.6k→4.9k, −25%; two blocks await the action-menu rewrite |
 | substrate: action menu (snapshot→menu→runtime/cache) | 11.4k | 1.5k | one catalog + one menu | catalog/environment/menu/runtime core: 3,265→2,168 lines and 104,151→70,217 bytes; direct capability-to-command projection replaces intent/plan/dispatch layers. cache, mutation leases, editor handoff and remaining substrate stay open |
 | substrate: workspace/panes (store, host, memento, mobile chrome, pane find, route model) | 20.7k | 6k | reauthor | open |
-| substrate: api/auth/bff (proxy, sse, session; BFF routes already collapsed) | 13.9k | 4k | reauthor | bff transport 940→328 lines: one forwarding owner with explicit session/public/share/extension lanes; auth, clients and sse remain open |
+| substrate: api/auth/bff (proxy, sse, session; BFF routes already collapsed) | 13.9k | 4k | reauthor | bff transport 940→328 lines: one forwarding owner with explicit session/public/share/extension lanes; server JSON fetch now owns its deadline through body consumption; auth, client consolidation and sse remain open |
 | substrate: ui primitives (+3.5k css, fonts/legal) | 14.3k | 6k | reauthor css | open |
 | substrate: jobs/worker | 6.6k | 2k | reauthor | open |
 | codex agent host (+ deploy isolation) | 4.4k | 2k | keep; declare isolation in compose, not python | open |
