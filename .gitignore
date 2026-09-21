@@ -74,6 +74,8 @@ next-env.d.ts
 !apps/web/src/css.d.ts
 # pdf.js runtime assets copied from node_modules at build time, not source
 /apps/web/public/pdfjs/
+# Android offline reader shelf built by `bun run build:offline-reading` at gradle time
+/apps/android/app/src/main/assets/nexus-offline/
 
 # Android
 apps/android/.idea/

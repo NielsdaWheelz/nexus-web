@@ -18,7 +18,12 @@ Nexus is a reading and notes platform with a Next.js frontend, a first-party And
 - Git
 - Node.js 22+
 - Bun
-- Android Studio + Android SDK (only if working in `apps/android/`)
+- Android Studio + Android SDK (only if working in `apps/android/`). The
+  Gradle build regenerates the packaged offline reader shelf by running
+  `bun run build:offline-reading` in `apps/web`, so Bun and a completed
+  `bun install` in `apps/web` are required on any machine that builds the APK.
+  Gradle invokes `bun` from its own `PATH`, so launch Android Studio from a
+  shell that has Bun on `PATH` (or set it in the IDE's environment).
 - Docker (running)
 - `uv`
 - `actionlint`
@@ -105,13 +110,15 @@ does not cache mutable release facts in page copy:
 - `https://github.com/NielsdaWheelz/nexus-web/releases/latest`
 
 Build the signed APK with `make build-android-release`, record its SHA-256, and
-install that exact APK on a physical device. Verify App Links and login before
-manually creating the `android-v*` GitHub release and attaching stable and
-versioned asset names. There is no automated Android release gate.
+install that exact APK on a physical device. The release machine needs Bun and
+a completed `bun install` in `apps/web`: the offline reader shelf is built from
+source during the Gradle build rather than committed. Verify App Links and
+login before manually creating the `android-v*` GitHub release and attaching
+stable and versioned asset names. There is no automated Android release gate.
 
 ## Repository Map
 
-- `apps/android/` -> Android shell app. Debug builds default to `http://10.0.2.2:3000`; native auth uses the environment-agnostic `nexus://auth/handoff` flow plus native Google bootstrap. Release APKs require explicit hosted and direct-API origins, version, release keystore, and release certificate fingerprint inputs. `NEXUS_ANDROID_RELEASE_API_ORIGIN` must exactly equal the backend `STREAM_BASE_URL` origin. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
+- `apps/android/` -> Android shell app. Building it runs `bun run build:offline-reading` in `apps/web` to regenerate the git-ignored packaged offline reader shelf. Debug builds default to `http://10.0.2.2:3000`; native auth uses the environment-agnostic `nexus://auth/handoff` flow plus native Google bootstrap. Release APKs require explicit hosted and direct-API origins, version, release keystore, and release certificate fingerprint inputs. `NEXUS_ANDROID_RELEASE_API_ORIGIN` must exactly equal the backend `STREAM_BASE_URL` origin. App links require updating `apps/web/public/.well-known/assetlinks.json` with the release APK signing certificate fingerprint.
 - `apps/web/` -> frontend + BFF: see `apps/web/README.md`
 - `apps/extension/` -> browser extension for article, PDF/EPUB, and supported video capture
 - `python/` -> backend package: see `python/README.md`

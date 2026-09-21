@@ -28,7 +28,7 @@ private val BYTE_RANGE = Regex("bytes=([0-9]+)-([0-9]*)")
 internal fun parseOfflineReadingLocalPath(path: String): OfflineReadingLocalPath? {
     if (!path.startsWith("/nexus-offline/") || '%' in path || '\\' in path) return null
     val tail = path.removePrefix("/nexus-offline/")
-    if (tail == "index.html" || tail == "asset-manifest.sha256" || tail.startsWith("assets/") || tail.startsWith("pdfjs/")) {
+    if (tail == "index.html" || tail.startsWith("assets/") || tail.startsWith("pdfjs/")) {
         val parts = tail.split('/')
         if (parts.any { it.isEmpty() || it == "." || it == ".." }) return null
         return OfflineReadingLocalPath.Static(tail)
