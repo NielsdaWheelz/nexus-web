@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from nexus.auth.permissions import can_read_conversation, can_read_media, is_library_member
 from nexus.errors import ApiErrorCode, InvalidRequestError, NotFoundError
 from nexus.services.library_entries import library_media_ids_cte_sql
-from nexus.services.resource_graph.policy import SEARCH_SCOPE_EDGE_KIND
+from nexus.services.resource_graph.schemas import SEARCH_SCOPE_EDGE_KIND
 from nexus.services.resource_items.capabilities import (
     CONVERSATION_CONTEXT_EDGE_ORIGINS,
     NOTE_MEDIA_SEARCH_EDGE_ORIGINS,

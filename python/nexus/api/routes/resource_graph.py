@@ -1,17 +1,4 @@
-"""Resource provenance graph routes (spec §10.2/§10.3, § Mutation APIs).
-
-- POST   /resource-graph/connections/query hydrated connection reads
-- POST   /resource-graph/links       create-or-reuse one neutral Link
-- DELETE /resource-graph/links/{id}   Remove Link (idempotent)
-- PUT    /resource-graph/links/{id}/note   add/edit the Link's one note
-- DELETE /resource-graph/links/{id}/note   delete the Link's note
-- PUT    /resource-graph/stances      replace the one directed stance on a pair
-- DELETE /resource-graph/stances/{id} remove a stance (idempotent)
-
-Routes parse ref strings and the kind/origin vocabulary at the boundary, call
-graph services, and return envelopes. Graph semantics (dedup, permission checks,
-hydration, replay) live in ``nexus.services.resource_graph``.
-"""
+"""Resource-graph routes: parse refs at the boundary, call the service, envelope."""
 
 from typing import Annotated
 from uuid import UUID
@@ -24,8 +11,6 @@ from nexus.db.session import get_db
 from nexus.errors import ApiErrorCode, InvalidRequestError
 from nexus.responses import ok
 from nexus.schemas.resource_graph import (
-    ConnectionEndpointOut,
-    ConnectionFiltersRequest,
     ConnectionPageOut,
     ConnectionQueryRequest,
     CreateLinkRequest,
@@ -34,21 +19,23 @@ from nexus.schemas.resource_graph import (
     connection_out,
 )
 from nexus.services.resource_graph import connections as connections_service
-from nexus.services.resource_graph import refs as refs_service
 from nexus.services.resource_graph import user_relations as user_relations_service
-from nexus.services.resource_graph.refs import ResourceRef
-from nexus.services.resource_graph.schemas import (
-    ConnectionEndpoint,
-    ConnectionFilters,
-    ConnectionQuery,
+from nexus.services.resource_graph.refs import (
+    ResourceRef,
+    ResourceRefParseFailure,
+    parse_resource_ref,
 )
+from nexus.services.resource_graph.schemas import ConnectionFilters, ConnectionQuery
+
+ViewerDep = Annotated[Viewer, Depends(get_viewer)]
+DbDep = Annotated[Session, Depends(get_db)]
 
 router = APIRouter(prefix="/resource-graph", tags=["resource-graph"])
 
 
-def _parse_ref_or_400(raw: str) -> ResourceRef:
-    parsed = refs_service.parse_resource_ref(raw)
-    if isinstance(parsed, refs_service.ResourceRefParseFailure):
+def _parse_ref(raw: str) -> ResourceRef:
+    parsed = parse_resource_ref(raw)
+    if isinstance(parsed, ResourceRefParseFailure):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             f"Invalid resource ref: {raw!r}. Expected '<scheme>:<uuid>'.",
@@ -57,20 +44,25 @@ def _parse_ref_or_400(raw: str) -> ResourceRef:
 
 
 @router.post("/connections/query")
-def query_connections(
-    body: ConnectionQueryRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    parsed = tuple(_parse_ref_or_400(raw) for raw in body.refs)
+def query_connections(body: ConnectionQueryRequest, viewer: ViewerDep, db: DbDep) -> dict:
+    filters = body.filters
     page = connections_service.query_connections(
         db=db,
         viewer_id=viewer.user_id,
         query=ConnectionQuery(
-            refs=parsed,
+            refs=tuple(_parse_ref(raw) for raw in body.refs),
             direction=body.direction,
             rollup=body.rollup,
-            filters=_connection_filters(body.filters),
+            filters=ConnectionFilters(
+                origins=tuple(filters.origins) if filters.origins is not None else None,
+                kinds=tuple(filters.kinds) if filters.kinds is not None else None,
+                source_schemes=(
+                    tuple(filters.source_schemes) if filters.source_schemes is not None else None
+                ),
+                target_schemes=(
+                    tuple(filters.target_schemes) if filters.target_schemes is not None else None
+                ),
+            ),
             limit=body.limit,
             cursor=body.cursor,
         ),
@@ -83,124 +75,37 @@ def query_connections(
 
 
 @router.post("/links", status_code=201)
-def create_link(
-    body: CreateLinkRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Create-or-reuse one neutral Link (§ Mutation APIs).
-
-    Errors:
-        E_INVALID_REQUEST (400): malformed ref or non-passage candidate target.
-        E_NOT_FOUND (404): a masked missing/hidden endpoint or owner.
-        E_LINK_SELF / E_LINK_CAPABILITY / E_LINK_TARGET_AMBIGUOUS (422).
-        E_LINK_TARGET_STALE / E_HIGHLIGHT_CONFLICT /
-        E_IDEMPOTENCY_KEY_REPLAY_MISMATCH (409).
-    """
-    result = user_relations_service.create_link(db, viewer_id=viewer.user_id, request=body)
-    return ok(result)
+def create_link(body: CreateLinkRequest, viewer: ViewerDep, db: DbDep) -> dict:
+    return ok(user_relations_service.create_link(db, viewer_id=viewer.user_id, request=body))
 
 
 @router.delete("/links/{link_id}", status_code=204)
-def delete_link(
-    link_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    """Remove a Link (idempotent); detaches attachment motifs, preserves note prose.
-
-    Errors:
-        E_FORBIDDEN (403): the edge exists but is not user-authored.
-        E_NOT_FOUND (404): the id is the viewer's but is not a neutral Link.
-    """
+def delete_link(link_id: UUID, viewer: ViewerDep, db: DbDep) -> Response:
     user_relations_service.delete_link(db, viewer_id=viewer.user_id, link_id=link_id)
     return Response(status_code=204)
 
 
 @router.put("/links/{link_id}/note")
-def put_link_note(
-    link_id: UUID,
-    body: PutLinkNoteRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Add/Edit the Link's single ordinary note (§ Mutation APIs).
-
-    Errors:
-        E_NOT_FOUND (404): no such Link for the viewer.
-        E_NOTE_CONFLICT (409): the Link already has a different note.
-    """
-    result = user_relations_service.put_link_note(
-        db, viewer_id=viewer.user_id, link_id=link_id, request=body
+def put_link_note(link_id: UUID, body: PutLinkNoteRequest, viewer: ViewerDep, db: DbDep) -> dict:
+    return ok(
+        user_relations_service.put_link_note(
+            db, viewer_id=viewer.user_id, link_id=link_id, request=body
+        )
     )
-    return ok(result)
 
 
 @router.delete("/links/{link_id}/note", status_code=204)
-def delete_link_note(
-    link_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    """Delete the Link's note and its attachments; the Link is preserved.
-
-    Errors:
-        E_NOT_FOUND (404): no such Link for the viewer.
-    """
+def delete_link_note(link_id: UUID, viewer: ViewerDep, db: DbDep) -> Response:
     user_relations_service.delete_link_note(db, viewer_id=viewer.user_id, link_id=link_id)
     return Response(status_code=204)
 
 
 @router.put("/stances")
-def put_stance(
-    body: PutStanceRequest,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict:
-    """Replace the one directed stance on an unordered pair (§ Stance).
-
-    Errors:
-        E_INVALID_REQUEST (400): a malformed ref.
-        E_NOT_FOUND (404): a masked missing/hidden endpoint.
-        E_LINK_SELF / E_LINK_CAPABILITY (422).
-    """
-    result = user_relations_service.put_stance(db, viewer_id=viewer.user_id, request=body)
-    return ok(result)
+def put_stance(body: PutStanceRequest, viewer: ViewerDep, db: DbDep) -> dict:
+    return ok(user_relations_service.put_stance(db, viewer_id=viewer.user_id, request=body))
 
 
 @router.delete("/stances/{stance_id}", status_code=204)
-def delete_stance(
-    stance_id: UUID,
-    viewer: Annotated[Viewer, Depends(get_viewer)],
-    db: Annotated[Session, Depends(get_db)],
-) -> Response:
-    """Remove a stance (idempotent).
-
-    Errors:
-        E_FORBIDDEN (403): the edge exists but is not user-authored.
-        E_NOT_FOUND (404): the id is the viewer's but is not a stance.
-    """
+def delete_stance(stance_id: UUID, viewer: ViewerDep, db: DbDep) -> Response:
     user_relations_service.delete_stance(db, viewer_id=viewer.user_id, stance_id=stance_id)
     return Response(status_code=204)
-
-
-def _connection_filters(body: ConnectionFiltersRequest) -> ConnectionFilters:
-    return ConnectionFilters(
-        origins=tuple(body.origins) if body.origins is not None else None,
-        kinds=tuple(body.kinds) if body.kinds is not None else None,
-        source_schemes=tuple(body.source_schemes) if body.source_schemes is not None else None,
-        target_schemes=tuple(body.target_schemes) if body.target_schemes is not None else None,
-    )
-
-
-def _endpoint_out(endpoint: ConnectionEndpoint) -> ConnectionEndpointOut:
-    return ConnectionEndpointOut(
-        ref=endpoint.ref.uri,
-        scheme=endpoint.ref.scheme,
-        id=endpoint.ref.id,
-        label=endpoint.label,
-        description=endpoint.description,
-        activation=endpoint.activation,
-        href=endpoint.href,
-        missing=endpoint.missing,
-    )
