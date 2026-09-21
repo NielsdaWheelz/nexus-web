@@ -13,7 +13,7 @@ from nexus.config import Settings
 from nexus.jobs.queue import RUNNING, JobExecutionContext, JobRow, get_job
 from nexus.services import durable_step_journal
 from nexus.services.llm_execution import ExecutionRuntime
-from nexus.services.tool_runtime.composition import FrozenToolOperation
+from nexus.services.tool_runtime.catalog import FrozenToolOperation
 
 
 class DossierResearchPending(Exception):

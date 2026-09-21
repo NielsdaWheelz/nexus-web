@@ -607,6 +607,8 @@ CHAT_TOOL_DECLARATIONS_BY_ID: Mapping[str, PresentedToolDeclaration] = MappingPr
 
 
 def _error_tags(schema: object) -> set[str]:
+    """Collect every declared error tag from one JSON-Schema error union."""
+
     tags: set[str] = set()
     if isinstance(schema, list):
         for item in schema:
@@ -620,7 +622,18 @@ def _error_tags(schema: object) -> set[str]:
     return tags
 
 
-BROWSER_TOOL_PROJECTION_CONTRACT = {
+# The browser's decoder is a closed vocabulary; the revision below gates a stale
+# tab. The per-record nullability rule is enforced by ToolProjectionOut and by
+# toolProjectionWire.ts, not published here.
+BROWSER_TOOL_PROJECTION_CONTRACT: Mapping[str, tuple[str, ...]] = {
+    "effects": tuple(effect.value for effect in ToolEffect),
+    "error_types": tuple(
+        sorted(
+            set().union(
+                *(_error_tags(entry.spec.error_schema.semantic) for entry in CHAT_TOOL_DECLARATIONS)
+            )
+        )
+    ),
     "fields": (
         "activity_label",
         "canonical_tool_id",
@@ -630,81 +643,20 @@ BROWSER_TOOL_PROJECTION_CONTRACT = {
         "record_kind",
         "result_kind",
     ),
-    "effects": tuple(effect.value for effect in ToolEffect),
-    "result_kinds": (
-        "attached_context",
-        "mutation",
-        "navigation",
-        "retrieval",
-    ),
-    "error_types": tuple(
-        sorted(
-            set().union(
-                *(_error_tags(entry.spec.error_schema.semantic) for entry in CHAT_TOOL_DECLARATIONS)
-            )
-        )
-    ),
-    "record_kinds": (
-        "attached_context",
-        "current_execution",
-        "historical_execution",
-    ),
-    "record_shapes": {
-        "attached_context": {
-            "non_null_fields": ("activity_label", "record_kind", "result_kind"),
-            "null_fields": ("canonical_tool_id", "effect", "error_type", "provider_wire_name"),
-        },
-        "current_execution": {
-            "non_null_fields": (
-                "activity_label",
-                "canonical_tool_id",
-                "effect",
-                "record_kind",
-                "result_kind",
-            ),
-            "null_fields": (),
-        },
-        "historical_execution": {
-            "non_null_fields": (
-                "activity_label",
-                "canonical_tool_id",
-                "effect",
-                "record_kind",
-                "result_kind",
-            ),
-            "null_fields": ("error_type", "provider_wire_name"),
-        },
-    },
+    "record_kinds": ("attached_context", "current_execution", "historical_execution"),
+    "result_kinds": ("attached_context", "mutation", "navigation", "retrieval"),
 }
 
-
-def _normalize_unordered(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: _normalize_unordered(child) for key, child in value.items()}
-    if isinstance(value, (list, tuple)):
-        children = [_normalize_unordered(child) for child in value]
-        return sorted(children, key=canonical_json_bytes)
-    return value
-
-
-def browser_tool_projection_revision(
-    wire_contract: dict[str, Any],
-    declaration_result_kinds: tuple[str, ...],
-) -> str:
-    """Hash semantic same-system wire policy without publishing its id mapping."""
-
-    value = {
-        "declaration_result_kinds": declaration_result_kinds,
-        "wire_contract": _normalize_unordered(wire_contract),
-    }
-    return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
-
-
-_DECLARATION_RESULT_KINDS = tuple(entry.result_kind for entry in CHAT_TOOL_DECLARATIONS)
-BROWSER_TOOL_PROJECTION_REVISION = browser_tool_projection_revision(
-    BROWSER_TOOL_PROJECTION_CONTRACT,
-    _DECLARATION_RESULT_KINDS,
-)
+BROWSER_TOOL_PROJECTION_REVISION = hashlib.sha256(
+    canonical_json_bytes(
+        {
+            "declaration_result_kinds": tuple(
+                entry.result_kind for entry in CHAT_TOOL_DECLARATIONS
+            ),
+            "wire_contract": BROWSER_TOOL_PROJECTION_CONTRACT,
+        }
+    )
+).hexdigest()
 
 
 __all__ = [
@@ -714,5 +666,4 @@ __all__ = [
     "CHAT_TOOL_DECLARATIONS_BY_ID",
     "NEXUS_TOOL_DECLARATIONS",
     "PresentedToolDeclaration",
-    "browser_tool_projection_revision",
 ]

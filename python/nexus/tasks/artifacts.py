@@ -31,9 +31,9 @@ from nexus.jobs.queue import JobExecutionContext, RescheduleRequested, get_job
 from nexus.services.artifacts import engine
 from nexus.services.artifacts.coordination import DossierBuildRuntime
 from nexus.services.llm_execution import ExecutionRuntime
-from nexus.services.tool_runtime.composition import (
+from nexus.services.tool_runtime.catalog import (
     compose_configured_web_search_provider,
-    compose_product_tool_runtime,
+    compose_tool_runtime,
 )
 from nexus.tasks.llm_task import LlmTaskSpec, run_llm_task
 
@@ -72,7 +72,7 @@ def dossier_build(
                 client,
                 settings=settings,
             )
-            tool_runtime = compose_product_tool_runtime(web_provider)
+            tool_runtime = compose_tool_runtime(web_provider)
             dossier_runtime = DossierBuildRuntime(
                 build_id=build_id,
                 artifact_id=build.artifact_id,

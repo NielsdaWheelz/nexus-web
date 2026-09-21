@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid5
 
 from llm_tools import ToolEffect
@@ -34,9 +34,7 @@ from nexus.db.models import Conversation, MessageToolCall
 from nexus.errors import ApiError, ApiErrorCode
 from nexus.schemas.notes import DailyCaptureRequest
 from nexus.services import highlights, library_entries, note_bodies, notes, text_quote, users
-from nexus.services.chat_run_tools import (
-    decode_persisted_tool_record,
-)
+from nexus.services.chat_run_tools import decode_persisted_tool_record
 from nexus.services.consumption import _lectern_store
 from nexus.services.consumption import service as consumption_service
 from nexus.services.passage_anchors import normalize_quote_text
@@ -47,7 +45,16 @@ from nexus.services.resource_graph.refs import (
     parse_resource_ref,
 )
 from nexus.services.resource_graph.resolve import assert_ref_visible, resolve_refs
-from nexus.services.resource_graph.schemas import EDGE_KINDS, CitationSnapshot, EdgeCreate
+from nexus.services.resource_graph.schemas import CitationSnapshot, EdgeCreate
+
+if TYPE_CHECKING:
+    from nexus.services.tool_runtime.declarations import (
+        EdgeCreateInput,
+        HighlightCreateInput,
+        LibraryAddInput,
+        NoteCreateInput,
+        QueueAddInput,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,27 +77,12 @@ def _effect_uuid(effect_id: UUID, component: str) -> UUID:
     return uuid5(effect_id, component)
 
 
-# ---------------------------------------------------------------------------
-# Argument helpers
-# ---------------------------------------------------------------------------
-
-
-def _require_str(args: dict[str, Any], key: str) -> str:
-    value = args.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise WriteToolRefusal(
-            "invalid_arguments", f"{key} is required and must be a non-empty string"
-        )
-    return value.strip()
-
-
-def _optional_str(args: dict[str, Any], key: str) -> str | None:
-    value = args.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise WriteToolRefusal("invalid_arguments", f"{key} must be a string")
-    return value
+def _text(value: str, field: str) -> str:
+    """Strip and refuse blank: pydantic ``min_length`` admits whitespace."""
+    stripped = value.strip()
+    if not stripped:
+        raise WriteToolRefusal("invalid_arguments", f"{field} must not be blank")
+    return stripped
 
 
 def _parse_ref(raw: str, *, allowed: tuple[str, ...]) -> ResourceRef:
@@ -105,12 +97,7 @@ def _parse_ref(raw: str, *, allowed: tuple[str, ...]) -> ResourceRef:
     return parsed
 
 
-# ---------------------------------------------------------------------------
-# Handlers
-# ---------------------------------------------------------------------------
-
-
-def add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> WriteEffect:
+def add_to_library(db: Session, viewer_id: UUID, value: LibraryAddInput) -> WriteEffect:
     """File a resource into a library through the one actor-authorized filing
     command REST also uses (spec S4.3), so the agent path has full parity: system-
     library rejection, podcast-into-Default rejection, active-subscription
@@ -122,11 +109,11 @@ def add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> WriteE
     `assert_ref_visible`, which uses full readable visibility and would 404 a
     tombstoned media the viewer is trying to restore by re-filing it. Podcasts
     have no restorable lane, so that branch still asserts visibility here."""
-    ref = _parse_ref(_require_str(args, "resource_uri"), allowed=("media", "podcast"))
+    ref = _parse_ref(_text(value.resource_uri, "resource_uri"), allowed=("media", "podcast"))
     if ref.scheme == "podcast":
         assert_ref_visible(db, viewer_id=viewer_id, ref=ref)
 
-    library_id = _resolve_library_id(db, viewer_id, args)
+    library_id = _resolve_library_id(db, viewer_id, value)
 
     if ref.scheme == "media":
         outcome = library_entries.ensure_media_in_library_in_current_transaction(
@@ -191,14 +178,10 @@ def add_to_library(db: Session, viewer_id: UUID, args: dict[str, Any]) -> WriteE
     )
 
 
-def _resolve_library_id(db: Session, viewer_id: UUID, args: dict[str, Any]) -> UUID:
-    raw_id = _optional_str(args, "library_id")
-    if raw_id:
-        try:
-            return UUID(raw_id)
-        except ValueError as exc:
-            raise WriteToolRefusal("invalid_arguments", "library_id must be a UUID") from exc
-    name = _optional_str(args, "library_name")
+def _resolve_library_id(db: Session, viewer_id: UUID, value: LibraryAddInput) -> UUID:
+    if value.library_id is not None:
+        return value.library_id
+    name = value.library_name
     if not name:
         raise WriteToolRefusal(
             "invalid_arguments", "Provide library_id or library_name to file into"
@@ -227,12 +210,11 @@ def create_note(
     db: Session,
     viewer_id: UUID,
     effect_id: UUID,
-    args: dict[str, Any],
+    value: NoteCreateInput,
 ) -> WriteEffect:
-    markdown = _require_str(args, "markdown")
-    body_pm_json = note_bodies.pm_doc_from_markdown_projection(markdown)
+    body_pm_json = note_bodies.pm_doc_from_markdown_projection(_text(value.markdown, "markdown"))
     note_id = _effect_uuid(effect_id, "nexus.note.create:note_block")
-    page_uri = _optional_str(args, "page_uri")
+    page_uri = value.page_uri
     if page_uri:
         page_ref = _parse_ref(page_uri, allowed=("page",))
         block = notes.append_note_block_to_page_in_current_transaction(
@@ -271,22 +253,19 @@ def create_highlight(
     db: Session,
     viewer_id: UUID,
     effect_id: UUID,
-    args: dict[str, Any],
+    value: HighlightCreateInput,
 ) -> WriteEffect:
-    media_ref = _parse_ref(_require_str(args, "media_uri"), allowed=("media",))
+    media_ref = _parse_ref(_text(value.media_uri, "media_uri"), allowed=("media",))
     assert_ref_visible(db, viewer_id=viewer_id, ref=media_ref)
-    exact = _require_str(args, "exact")
-    prefix = _optional_str(args, "prefix")
-    suffix = _optional_str(args, "suffix")
-    color = _optional_str(args, "color") or "yellow"
+    exact = _text(value.exact, "exact")
 
     match = text_quote.resolve_owner_quote(
         db,
         owner_scheme="media",
         owner_id=media_ref.id,
         exact=normalize_quote_text(exact),
-        prefix=normalize_quote_text(prefix or ""),
-        suffix=normalize_quote_text(suffix or ""),
+        prefix=normalize_quote_text(value.prefix or ""),
+        suffix=normalize_quote_text(value.suffix or ""),
     )
     if match.status is not text_quote.QuoteStatus.unique:
         raise WriteToolRefusal(
@@ -317,12 +296,12 @@ def create_highlight(
         fragment_id=match.fragment_id,
         start_offset=match.raw_start,
         end_offset=match.raw_end,
-        color=color,
+        color=value.color or "yellow",
     )
     created_refs: list[dict[str, Any]] = [
         {"kind": "highlight", "id": str(highlight.id), "label": exact}
     ]
-    note = _optional_str(args, "note")
+    note = value.note
     if note and note.strip():
         block = notes.set_highlight_note_body_pm_json_in_current_transaction(
             db,
@@ -349,14 +328,12 @@ def create_highlight(
     )
 
 
-def create_assistant_edge(db: Session, viewer_id: UUID, args: dict[str, Any]) -> WriteEffect:
+def create_assistant_edge(db: Session, viewer_id: UUID, value: EdgeCreateInput) -> WriteEffect:
     endpoints = ("media", "page", "note_block", "highlight")
-    source = _parse_ref(_require_str(args, "source_uri"), allowed=endpoints)
-    target = _parse_ref(_require_str(args, "target_uri"), allowed=endpoints)
-    rationale = _require_str(args, "rationale")
-    kind = _optional_str(args, "kind") or "context"
-    if kind not in EDGE_KINDS:
-        raise WriteToolRefusal("invalid_arguments", f"kind must be one of {', '.join(EDGE_KINDS)}")
+    source = _parse_ref(_text(value.source_uri, "source_uri"), allowed=endpoints)
+    target = _parse_ref(_text(value.target_uri, "target_uri"), allowed=endpoints)
+    rationale = _text(value.rationale, "rationale")
+    kind = value.kind or "context"
 
     edge = create_edge(
         db,
@@ -364,7 +341,7 @@ def create_assistant_edge(db: Session, viewer_id: UUID, args: dict[str, Any]) ->
         input=EdgeCreate(
             source=source,
             target=target,
-            kind=kind,  # type: ignore[arg-type]
+            kind=kind,
             origin="assistant",
             snapshot=CitationSnapshot(excerpt=rationale),
         ),
@@ -394,8 +371,8 @@ def create_assistant_edge(db: Session, viewer_id: UUID, args: dict[str, Any]) ->
     )
 
 
-def add_to_queue(db: Session, viewer_id: UUID, args: dict[str, Any]) -> WriteEffect:
-    media_ref = _parse_ref(_require_str(args, "media_uri"), allowed=("media",))
+def add_to_queue(db: Session, viewer_id: UUID, value: QueueAddInput) -> WriteEffect:
+    media_ref = _parse_ref(_text(value.media_uri, "media_uri"), allowed=("media",))
     assert_ref_visible(db, viewer_id=viewer_id, ref=media_ref)
     # Trusted ensure: append the row at Last if absent, never move an existing row
     # (idempotent re-add). Only its lock-owned inserted receipt grants Undo

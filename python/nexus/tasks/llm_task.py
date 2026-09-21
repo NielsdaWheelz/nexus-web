@@ -42,9 +42,9 @@ def run_llm_task[R](
 
         from nexus.services.generation_catalog import build_generation_catalog_service
         from nexus.services.generation_runtime import compose_generation_execution_runtime
-        from nexus.services.tool_runtime.composition import (
+        from nexus.services.tool_runtime.catalog import (
             compose_configured_web_search_provider,
-            compose_product_tool_runtime,
+            compose_tool_runtime,
         )
 
         settings = get_settings()
@@ -53,7 +53,7 @@ def run_llm_task[R](
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             trust_env=False,
         ) as http_client:
-            tools = compose_product_tool_runtime(
+            tools = compose_tool_runtime(
                 compose_configured_web_search_provider(http_client, settings=settings)
             )
             runtime = compose_generation_execution_runtime(

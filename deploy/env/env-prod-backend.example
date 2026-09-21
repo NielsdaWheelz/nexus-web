@@ -67,10 +67,6 @@ GENERATION_CONTINUATION_ENCRYPTION_KEY=<base64-encoded-distinct-32-byte-key>
 # Required acknowledgement for Anthropic/Fable retention semantics.
 NEXUS_FABLE_RETENTION_ACCEPTED_AT=2026-08-31T00:00:00Z
 
-# Dedicated HS256 key for short-lived, run-scoped MCP tool grants. Do not reuse
-# STREAM_TOKEN_SIGNING_KEY. Generate at least 32 random bytes.
-AGENT_TOOL_GRANT_SIGNING_KEY=<generate-a-distinct-32-byte-or-longer-secret>
-
 # BRAVE_SEARCH_API_KEY=
 
 # Stripe, required only if BILLING_ENABLED=true.

@@ -20,7 +20,7 @@ from nexus.services.generation_spec import (
 )
 
 if TYPE_CHECKING:
-    from nexus.services.tool_runtime.composition import FrozenToolOperation
+    from nexus.services.tool_runtime.catalog import FrozenToolOperation
 
 
 @dataclass(frozen=True, slots=True)

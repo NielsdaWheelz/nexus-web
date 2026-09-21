@@ -11,7 +11,7 @@ from enum import StrEnum
 from typing import Final, Self
 from uuid import UUID, uuid5
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from sqlalchemy.orm import Session
 
 from nexus.jobs.queue import (
@@ -56,133 +56,6 @@ class DurableExecutionPhase(StrEnum):
     Suspended = "Suspended"
 
 
-class ToolExecutionIdentity(BaseModel):
-    """Immutable identity of one tool invocation at a durable position."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tool_id: str
-    tool_contract_revision: str
-    policy_revision: str
-    plan_revision: str
-    input_digest: str
-    replay_policy: ReplayPolicy
-
-    @model_validator(mode="after")
-    def validate_identity(self) -> Self:
-        from llm_tools import ToolId
-
-        try:
-            ToolId(self.tool_id)
-        except ValueError as exc:
-            raise ValueError("tool execution identity has an invalid tool id") from exc
-        revisions = (
-            self.tool_contract_revision,
-            self.policy_revision,
-            self.plan_revision,
-        )
-        if any(not _is_sha256(value) for value in revisions):
-            raise ValueError("tool execution revisions must be lowercase sha256")
-        if not _is_sha256(self.input_digest):
-            raise ValueError("tool execution input digest must be lowercase sha256")
-        return self
-
-
-class ToolExecutionReservation(BaseModel):
-    """The immutable per-position budget reservation and its decision."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    calls: int
-    input_bytes: int
-    max_attempts: int
-    max_output_bytes: int
-    accepted: bool
-
-    @model_validator(mode="after")
-    def validate_reservation(self) -> Self:
-        if self.calls != 1:
-            raise ValueError("tool execution reserves exactly one call")
-        if self.input_bytes < 0:
-            raise ValueError("tool execution input bytes must not be negative")
-        if self.max_attempts < 0:
-            raise ValueError("tool execution max attempts must not be negative")
-        if self.max_output_bytes <= 0:
-            raise ValueError("tool execution output limit must be positive")
-        return self
-
-
-class ToolExecutionSettlement(BaseModel):
-    """Actual usage committed with one terminal tool result."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    actual_attempts: int
-    actual_output_bytes: int
-
-    @model_validator(mode="after")
-    def validate_settlement(self) -> Self:
-        if self.actual_attempts < 0 or self.actual_output_bytes < 0:
-            raise ValueError("tool execution settlement must not be negative")
-        return self
-
-
-class ToolDispatchClaim(BaseModel):
-    """Queue-attempt identity that durably owns an in-flight dispatch."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    worker_id: str = Field(min_length=1)
-    attempt_no: int = Field(ge=1)
-
-
-class ToolExecutionState(BaseModel):
-    """Strict tool-only state embedded in the shared step journal."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    identity: ToolExecutionIdentity
-    reservation: Presence[ToolExecutionReservation] = Absent()
-    settlement: Presence[ToolExecutionSettlement] = Absent()
-    dispatch_claim: Presence[ToolDispatchClaim] = Absent()
-    abandoned_attempts: int = 0
-
-    @model_validator(mode="after")
-    def validate_accounting(self) -> Self:
-        if self.abandoned_attempts < 0:
-            raise ValueError("abandoned tool attempts must not be negative")
-        if isinstance(self.reservation, Present):
-            reservation = self.reservation.value
-            if self.abandoned_attempts > reservation.max_attempts:
-                raise ValueError("abandoned tool attempts exceed the reservation")
-            if isinstance(self.settlement, Present):
-                settlement = self.settlement.value
-                if settlement.actual_attempts < self.abandoned_attempts:
-                    raise ValueError("settled attempts omit abandoned attempts")
-                if settlement.actual_attempts > reservation.max_attempts:
-                    raise ValueError("settled attempts exceed the reservation")
-                if settlement.actual_output_bytes > reservation.max_output_bytes:
-                    raise ValueError("settled output exceeds the reservation")
-            if not reservation.accepted:
-                if self.abandoned_attempts != 0:
-                    raise ValueError("rejected reservation cannot have abandoned attempts")
-                if isinstance(self.dispatch_claim, Present):
-                    raise ValueError("rejected reservation cannot have a dispatch claim")
-                if isinstance(self.settlement, Present) and (
-                    self.settlement.value.actual_attempts != 0
-                    or self.settlement.value.actual_output_bytes != 0
-                ):
-                    raise ValueError("rejected reservation must settle zero usage")
-        else:
-            if self.abandoned_attempts != 0:
-                raise ValueError("abandoned tool attempts require a reservation")
-            if isinstance(self.settlement, Present):
-                raise ValueError("tool settlement requires a reservation")
-            if isinstance(self.dispatch_claim, Present):
-                raise ValueError("tool dispatch claim requires a reservation")
-        return self
-
-
 class StepReplayState(BaseModel):
     """One step's strict coordination record in an owner payload."""
 
@@ -192,7 +65,6 @@ class StepReplayState(BaseModel):
     dispatch_phase: DispatchPhase
     request_fingerprint: Presence[str]
     terminal_result: Presence[str]
-    tool_execution: Presence[ToolExecutionState] = Absent()
 
     @model_validator(mode="after")
     def validate_phase_fields(self) -> Self:
@@ -205,44 +77,7 @@ class StepReplayState(BaseModel):
             raise ValueError(
                 f"{self.dispatch_phase.value} durable step cannot have a terminal result"
             )
-        if isinstance(self.tool_execution, Present):
-            tool_execution = self.tool_execution.value
-            assert isinstance(self.request_fingerprint, Present)
-            if self.request_fingerprint.value != tool_execution.identity.input_digest:
-                raise ValueError("tool request fingerprint differs from its input digest")
-            if self.dispatch_phase is Prepared:
-                if isinstance(tool_execution.settlement, Present):
-                    raise ValueError("Prepared tool execution cannot have a settlement")
-                if isinstance(tool_execution.dispatch_claim, Present):
-                    raise ValueError("Prepared tool execution cannot have a dispatch claim")
-            elif self.dispatch_phase is Uncertain:
-                if not isinstance(tool_execution.reservation, Present):
-                    raise ValueError("Uncertain tool execution requires a reservation")
-                if not tool_execution.reservation.value.accepted:
-                    raise ValueError("Uncertain tool execution requires an accepted reservation")
-                if isinstance(tool_execution.settlement, Present):
-                    raise ValueError("Uncertain tool execution cannot have a settlement")
-                if not isinstance(tool_execution.dispatch_claim, Present):
-                    raise ValueError("Uncertain tool execution requires a dispatch claim")
-            elif self.dispatch_phase is Completed:
-                if not isinstance(tool_execution.reservation, Present):
-                    raise ValueError("Completed tool execution requires a reservation")
-                if not isinstance(tool_execution.settlement, Present):
-                    raise ValueError("Completed tool execution requires a settlement")
-                if isinstance(tool_execution.dispatch_claim, Present):
-                    raise ValueError("Completed tool execution cannot have a dispatch claim")
-                assert isinstance(self.terminal_result, Present)
-                if (
-                    tool_execution.reservation.value.accepted
-                    and tool_execution.settlement.value.actual_output_bytes
-                    != len(self.terminal_result.value.encode("utf-8"))
-                ):
-                    raise ValueError("settled tool output differs from terminal UTF-8 length")
         return self
-
-
-def _is_sha256(value: str) -> bool:
-    return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
 
 
 _GENERATION_NAMESPACE: Final = UUID("6f1d3f2e-6a3b-5c7d-8e9f-0a1b2c3d4e5f")
@@ -281,8 +116,7 @@ def payload_with_step_state(
         raise AssertionError("Durable step journal payload must be an object")
     coordination: dict[str, object] = {str(path): record for path, record in raw.items()}
     validated = StepReplayState.model_validate(state.model_dump(mode="python"))
-    excluded = {"tool_execution"} if isinstance(validated.tool_execution, Absent) else None
-    coordination[step_path] = validated.model_dump(mode="json", exclude=excluded)
+    coordination[step_path] = validated.model_dump(mode="json")
     return {**payload, _COORDINATION_KEY: coordination}
 
 

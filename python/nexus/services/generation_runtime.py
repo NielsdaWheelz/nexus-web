@@ -22,7 +22,7 @@ from nexus.services.llm_credentials import generation_continuation_cipher
 from nexus.services.llm_execution import ComposedExecutionRuntime
 from nexus.services.provider_generation_backend import build_provider_generation_backend
 from nexus.services.provider_generation_contract import ProviderModelTools
-from nexus.services.tool_runtime.composition import (
+from nexus.services.tool_runtime.catalog import (
     ComposedToolRuntime,
     compose_provider_model_tools,
     freeze_tool_plan_snapshot,

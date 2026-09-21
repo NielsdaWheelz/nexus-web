@@ -48,16 +48,10 @@ def can_edit_media_authors(*, can_read: bool, is_creator: bool) -> bool:
     return can_read and is_creator
 
 
-READABLE_PROCESSING_STATUSES = frozenset(
-    {
-        ProcessingStatus.ready_for_reading.value,
-    }
-)
 _REFRESHABLE_PROCESSING_STATUSES = {
     ProcessingStatus.ready_for_reading.value,
     ProcessingStatus.failed.value,
 }
-_VALID_PROCESSING_STATUSES = {status.value for status in ProcessingStatus} | {"suspended"}
 _DOCUMENT_MEDIA_KINDS = {
     MediaKind.epub.value,
     MediaKind.web_article.value,
@@ -73,8 +67,6 @@ _SOURCE_REFRESH_MEDIA_KINDS = {
     MediaKind.pdf.value,
     MediaKind.epub.value,
 }
-_VALID_TRANSCRIPT_STATES = {state.value for state in TranscriptState}
-_VALID_TRANSCRIPT_COVERAGES = {coverage.value for coverage in TranscriptCoverage}
 _READABLE_TRANSCRIPT_STATES = {
     TranscriptState.ready.value,
     TranscriptState.partial.value,
@@ -97,34 +89,8 @@ _SAME_SOURCE_TERMINAL_ERROR_CODES = frozenset(
 )
 
 
-def _processing_status_value(processing_status: str | ProcessingStatus) -> str:
-    if isinstance(processing_status, ProcessingStatus):
-        return processing_status.value
-    if isinstance(processing_status, str):
-        return processing_status
-    raise ValueError(f"Unsupported processing status: {processing_status}")
-
-
-def _validate_processing_status(processing_status: str | ProcessingStatus) -> str:
-    processing_status = _processing_status_value(processing_status)
-    if processing_status not in _VALID_PROCESSING_STATUSES:
-        raise ValueError(f"Unsupported processing status: {processing_status}")
-    return processing_status
-
-
-def _validate_transcript_state(transcript_state: str | None) -> None:
-    if transcript_state is not None and transcript_state not in _VALID_TRANSCRIPT_STATES:
-        raise ValueError(f"Unsupported transcript state: {transcript_state}")
-
-
-def _validate_transcript_coverage(transcript_coverage: str | None) -> None:
-    if transcript_coverage is not None and transcript_coverage not in _VALID_TRANSCRIPT_COVERAGES:
-        raise ValueError(f"Unsupported transcript coverage: {transcript_coverage}")
-
-
 def is_document_status_ready(processing_status: str | ProcessingStatus) -> bool:
-    processing_status = _validate_processing_status(processing_status)
-    return processing_status in READABLE_PROCESSING_STATUSES
+    return processing_status == ProcessingStatus.ready_for_reading.value
 
 
 def is_same_source_terminal_error(error_code: str | None) -> bool:
@@ -133,8 +99,6 @@ def is_same_source_terminal_error(error_code: str | None) -> bool:
 
 
 def is_transcript_readable(transcript_state: str | None, transcript_coverage: str | None) -> bool:
-    _validate_transcript_state(transcript_state)
-    _validate_transcript_coverage(transcript_coverage)
     return transcript_state in _READABLE_TRANSCRIPT_STATES and (
         transcript_coverage in _READABLE_TRANSCRIPT_COVERAGES
     )
@@ -173,10 +137,6 @@ def derive_capabilities(
     search_recovery: SearchRecoveryAnswer,
 ) -> CapabilitiesOut:
     """Derive capabilities from media state and the owners' recovery answers."""
-    processing_status = _validate_processing_status(processing_status)
-    _validate_transcript_state(transcript_state)
-    _validate_transcript_coverage(transcript_coverage)
-
     is_pdf = kind == MediaKind.pdf.value
     is_document = kind in _DOCUMENT_MEDIA_KINDS
     is_transcript_media = kind in _TRANSCRIPT_MEDIA_KINDS
