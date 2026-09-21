@@ -1,4 +1,4 @@
-"""Assemble the ChatRunResponse envelope from a persisted ChatRun row."""
+"""The ``ChatRunResponse`` envelope and the event-log fold behind it."""
 
 from __future__ import annotations
 
@@ -18,14 +18,10 @@ from nexus.schemas.conversation import (
     ChatRunStreamStateOut,
     ChatRunStreamToolCallOut,
     chat_publication_warning_from_nullable,
-    chat_run_event_payload_json,
 )
-from nexus.schemas.llm import ExpectedChatFailure, RunSelectionOut, Selectable
+from nexus.schemas.llm import RunSelectionOut, Selectable
 from nexus.schemas.presence import presence_from_nullable
-from nexus.services.chat_failure import (
-    chat_failure_projection,
-)
-from nexus.services.chat_run_access import get_run_for_owner
+from nexus.services.chat_failure import chat_failure_projection
 from nexus.services.chat_run_selection import run_selection_out
 from nexus.services.conversations import (
     conversation_to_out,
@@ -36,6 +32,17 @@ from nexus.services.conversations import (
 from nexus.services.generation_catalog import GenerationCatalogSnapshot
 from nexus.services.message_trust_trails import build_assistant_trust_trail
 
+_PROJECTION_KEYS = (
+    "record_kind",
+    "canonical_tool_id",
+    "provider_wire_name",
+    "effect",
+    "result_kind",
+    "activity_label",
+    "error_type",
+)
+_TERMINAL_RUN_STATUSES = frozenset({"complete", "error", "cancelled"})
+
 
 def read_chat_run_response(
     db: Session,
@@ -45,10 +52,13 @@ def read_chat_run_response(
     catalog_snapshot: GenerationCatalogSnapshot,
 ) -> ChatRunResponse:
     """Read a committed command from one fresh bounded database snapshot."""
+
     get_repeatable_read_db(db)
     db.expire_all()
     try:
-        run = get_run_for_owner(db, viewer_id, run_id)
+        run = db.get(ChatRun, run_id)
+        if run is None or run.owner_user_id != viewer_id:
+            raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Chat run not found")
         return build_chat_run_response(
             db,
             viewer_id,
@@ -77,80 +87,60 @@ def build_chat_run_response(
         viewer_id=viewer_id,
         assistant_message_ids=[assistant_message.id],
     )
-    user_message_out = message_to_out(
-        db,
-        user_message,
-        viewer_id=viewer_id,
-    )
     trust_trail = build_assistant_trust_trail(
         db,
         viewer_id=viewer_id,
         assistant_message_id=assistant_message.id,
         run_selections={run.id: run_selection},
     )
-    assistant_message_out = message_to_out(
-        db,
-        assistant_message,
-        viewer_id=viewer_id,
-        can_rerun=assistant_message.id in rerunnable_ids,
-        trust_trail=trust_trail,
-        citations=[trust_citation.citation for trust_citation in trust_trail.citations],
-    )
-    failure = chat_failure_projection(
-        run,
-        selection_selectable=isinstance(run_selection.current_state, Selectable),
-    )
     if trust_trail.run is None or trust_trail.run.run_id != run.id:
         raise AssertionError("Chat run response trust projection lost its owning run")
-    run_out = _run_out(
-        run,
-        failure,
-        execution=trust_trail.run.execution,
-        run_selection=run_selection,
-    )
     return ChatRunResponse(
-        run=run_out,
+        run=ChatRunOut(
+            id=run.id,
+            status=cast(Any, run.status),
+            conversation_id=run.conversation_id,
+            user_message_id=run.user_message_id,
+            assistant_message_id=run.assistant_message_id,
+            run_selection=run_selection,
+            support_id=presence_from_nullable(run.support_id),
+            publication_warning=chat_publication_warning_from_nullable(
+                run.publication_warning_code
+            ),
+            failure=chat_failure_projection(
+                run,
+                selection_selectable=isinstance(run_selection.current_state, Selectable),
+            ),
+            execution=trust_trail.run.execution,
+            cancel_requested_at=run.cancel_requested_at,
+            started_at=run.started_at,
+            completed_at=run.completed_at,
+            error_code=run.error_code,
+            created_at=run.created_at,
+            updated_at=run.updated_at,
+        ),
         conversation=conversation_to_out(
             db,
             conversation,
             get_message_count(db, conversation.id),
             viewer_id=viewer_id,
         ),
-        user_message=user_message_out,
-        assistant_message=assistant_message_out,
+        user_message=message_to_out(db, user_message, viewer_id=viewer_id),
+        assistant_message=message_to_out(
+            db,
+            assistant_message,
+            viewer_id=viewer_id,
+            can_rerun=assistant_message.id in rerunnable_ids,
+            trust_trail=trust_trail,
+            citations=[trust_citation.citation for trust_citation in trust_trail.citations],
+        ),
         stream_state=_stream_state(db, run, assistant_message.content or ""),
     )
 
 
-def _run_out(
-    run: ChatRun,
-    failure: ExpectedChatFailure | None,
-    *,
-    execution: Any,
-    run_selection: RunSelectionOut,
-) -> ChatRunOut:
-    """Project nullable row facts once into the owned chat-run wire contract."""
-    return ChatRunOut(
-        id=run.id,
-        status=cast(Any, run.status),
-        conversation_id=run.conversation_id,
-        user_message_id=run.user_message_id,
-        assistant_message_id=run.assistant_message_id,
-        run_selection=run_selection,
-        support_id=presence_from_nullable(run.support_id),
-        publication_warning=chat_publication_warning_from_nullable(run.publication_warning_code),
-        failure=failure,
-        execution=execution,
-        cancel_requested_at=run.cancel_requested_at,
-        started_at=run.started_at,
-        completed_at=run.completed_at,
-        error_code=run.error_code,
-        created_at=run.created_at,
-        updated_at=run.updated_at,
-    )
-
-
 def _stream_state(db: Session, run: ChatRun, assistant_content: str) -> ChatRunStreamStateOut:
+    """Fold the run's replay log into the state a reconnecting client needs."""
+
     rows = (
         db.execute(
             select(ChatRunEvent)
@@ -165,91 +155,49 @@ def _stream_state(db: Session, run: ChatRun, assistant_content: str) -> ChatRunS
     activity: ChatRunStreamActivityOut | None = None
     tool_calls_by_index: dict[int, dict[str, Any]] = {}
     for row in rows:
+        folded_event_seq = row.seq
+        payload = row.payload
         if row.event_type == "assistant_text_delta":
-            raw = row.payload.get("text")
+            raw = payload.get("text")
             if isinstance(raw, str):
                 text += raw
         elif row.event_type == "assistant_activity":
-            phase = row.payload.get("phase")
+            phase = payload.get("phase")
             if isinstance(phase, str):
-                label = row.payload.get("label")
+                label = payload.get("label")
                 activity = ChatRunStreamActivityOut(
                     phase=cast(Any, phase),
                     label=label if isinstance(label, str) else None,
                 )
-        elif row.event_type in {"tool_call_start", "tool_call_delta", "tool_call_done"}:
-            payload = chat_run_event_payload_json(row.event_type, row.payload)
+        elif row.event_type in {"tool_call_start", "tool_call_done", "tool_result"}:
             index = payload.get("tool_call_index")
             if not isinstance(index, int):
-                folded_event_seq = row.seq
                 continue
             item = tool_calls_by_index.setdefault(
                 index,
                 {
-                    "id": payload.get("tool_call_id"),
                     "assistant_message_id": payload.get("assistant_message_id"),
-                    "record_kind": payload.get("record_kind"),
-                    "canonical_tool_id": payload.get("canonical_tool_id"),
-                    "provider_wire_name": payload.get("provider_wire_name"),
-                    "effect": payload.get("effect"),
-                    "result_kind": payload.get("result_kind"),
-                    "activity_label": payload.get("activity_label"),
-                    "error_type": payload.get("error_type"),
                     "tool_call_index": index,
                     "status": "running",
                     "input_preview": None,
                 },
             )
-            if payload.get("tool_call_id") is not None:
+            item.update({key: payload.get(key) for key in _PROJECTION_KEYS})
+            if payload.get("tool_call_id") is not None or row.event_type == "tool_result":
                 item["id"] = payload.get("tool_call_id")
-            for field in (
-                "record_kind",
-                "canonical_tool_id",
-                "provider_wire_name",
-                "effect",
-                "result_kind",
-                "activity_label",
-                "error_type",
-            ):
-                item[field] = payload.get(field)
-            if isinstance(payload.get("input_preview"), str):
-                item["input_preview"] = payload["input_preview"]
-        elif row.event_type == "tool_result":
-            payload = chat_run_event_payload_json(row.event_type, row.payload)
-            index = payload.get("tool_call_index")
-            if not isinstance(index, int):
-                folded_event_seq = row.seq
-                continue
-            item = tool_calls_by_index.setdefault(
-                index,
-                {
-                    "id": payload.get("tool_call_id"),
-                    "assistant_message_id": payload.get("assistant_message_id"),
-                    "tool_call_index": index,
-                    "input_preview": None,
-                },
-            )
-            item.update(
-                {
-                    "id": payload.get("tool_call_id"),
-                    "assistant_message_id": payload.get("assistant_message_id"),
-                    "record_kind": payload.get("record_kind"),
-                    "canonical_tool_id": payload.get("canonical_tool_id"),
-                    "provider_wire_name": payload.get("provider_wire_name"),
-                    "effect": payload.get("effect"),
-                    "result_kind": payload.get("result_kind"),
-                    "activity_label": payload.get("activity_label"),
-                    "error_type": payload.get("error_type"),
-                    "status": payload.get("status"),
-                    "scope": payload.get("scope"),
-                    "requested_types": payload.get("types", []),
-                    "provider_request_ids": payload.get("provider_request_ids", []),
-                    "result_count": payload.get("result_count") or 0,
-                    "selected_count": payload.get("selected_count") or 0,
-                }
-            )
-        folded_event_seq = row.seq
-    terminal = run.status in {"complete", "error", "cancelled"}
+            if row.event_type == "tool_result":
+                item.update(
+                    {
+                        "assistant_message_id": payload.get("assistant_message_id"),
+                        "status": payload.get("status"),
+                        "scope": payload.get("scope"),
+                        "requested_types": payload.get("types", []),
+                        "provider_request_ids": payload.get("provider_request_ids", []),
+                        "result_count": payload.get("result_count") or 0,
+                        "selected_count": payload.get("selected_count") or 0,
+                    }
+                )
+    terminal = run.status in _TERMINAL_RUN_STATUSES
     return ChatRunStreamStateOut(
         status=cast(Any, run.status),
         last_event_seq=rows[-1].seq if rows else 0,

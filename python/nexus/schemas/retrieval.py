@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, NewType
+from typing import Annotated, Any, ClassVar, Literal, NewType, cast
 from uuid import UUID
 
 from pydantic import (
@@ -29,7 +29,13 @@ class RetrievalContextRef(BaseModel):
 
 
 class RetrievalResultRefBase(BaseModel):
-    """Envelope fields shared by every typed retrieval result ref."""
+    """Envelope fields shared by every typed retrieval result ref.
+
+    ``context_ref_type`` is the context scheme this result type addresses; it is
+    the result type itself except for episode/video, which both address media.
+    """
+
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES]
 
     title: str
     source_label: str | None = None
@@ -42,8 +48,23 @@ class RetrievalResultRefBase(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="after")
+    def validate_envelope(self) -> RetrievalResultRefBase:
+        if self.context_ref.type != self.context_ref_type:
+            raise ValueError(f"context_ref.type must be {self.context_ref_type}")
+        # Only the locator-backed result types declare a locator, and each of
+        # those addresses a context scheme of its own name.
+        locator = getattr(self, "locator", None)
+        if locator is not None:
+            validate_locator_for_result_type(
+                cast(LocatorBackedResultType, self.context_ref_type), locator
+            )
+        return self
+
 
 class MediaRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "media"
+
     type: Literal["media"]
     id: UUID | str
     result_type: Literal["media"]
@@ -52,14 +73,10 @@ class MediaRetrievalResultRef(RetrievalResultRefBase):
     media_id: UUID | str | None = None
     media_kind: str | None = None
 
-    @model_validator(mode="after")
-    def validate_media_ref(self) -> MediaRetrievalResultRef:
-        if self.context_ref.type != "media":
-            raise ValueError("media context_ref.type must be media")
-        return self
-
 
 class PodcastRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "podcast"
+
     type: Literal["podcast"]
     id: UUID | str
     result_type: Literal["podcast"]
@@ -69,14 +86,10 @@ class PodcastRetrievalResultRef(RetrievalResultRefBase):
     media_kind: None = None
     contributors: list[dict[str, Any]] = Field(default_factory=list)
 
-    @model_validator(mode="after")
-    def validate_podcast_ref(self) -> PodcastRetrievalResultRef:
-        if self.context_ref.type != "podcast":
-            raise ValueError("podcast context_ref.type must be podcast")
-        return self
-
 
 class EpisodeRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "media"
+
     type: Literal["episode"]
     id: UUID | str
     result_type: Literal["episode"]
@@ -85,14 +98,10 @@ class EpisodeRetrievalResultRef(RetrievalResultRefBase):
     media_id: UUID | str | None = None
     media_kind: str | None = None
 
-    @model_validator(mode="after")
-    def validate_episode_ref(self) -> EpisodeRetrievalResultRef:
-        if self.context_ref.type != "media":
-            raise ValueError("episode context_ref.type must be media")
-        return self
-
 
 class VideoRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "media"
+
     type: Literal["video"]
     id: UUID | str
     result_type: Literal["video"]
@@ -101,14 +110,10 @@ class VideoRetrievalResultRef(RetrievalResultRefBase):
     media_id: UUID | str | None = None
     media_kind: str | None = None
 
-    @model_validator(mode="after")
-    def validate_video_ref(self) -> VideoRetrievalResultRef:
-        if self.context_ref.type != "media":
-            raise ValueError("video context_ref.type must be media")
-        return self
-
 
 class ContentChunkRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "content_chunk"
+
     type: Literal["content_chunk"]
     id: UUID | str
     result_type: Literal["content_chunk"]
@@ -121,15 +126,10 @@ class ContentChunkRetrievalResultRef(RetrievalResultRefBase):
     media_id: UUID | str | None = None
     media_kind: str | None = None
 
-    @model_validator(mode="after")
-    def validate_content_chunk_ref(self) -> ContentChunkRetrievalResultRef:
-        if self.context_ref.type != "content_chunk":
-            raise ValueError("content_chunk context_ref.type must be content_chunk")
-        validate_locator_for_result_type(self.type, self.locator)
-        return self
-
 
 class FragmentRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "fragment"
+
     type: Literal["fragment"]
     id: UUID | str
     result_type: Literal["fragment"]
@@ -139,15 +139,10 @@ class FragmentRetrievalResultRef(RetrievalResultRefBase):
     media_id: UUID | str | None = None
     media_kind: str | None = None
 
-    @model_validator(mode="after")
-    def validate_fragment_ref(self) -> FragmentRetrievalResultRef:
-        if self.context_ref.type != "fragment":
-            raise ValueError("fragment context_ref.type must be fragment")
-        validate_locator_for_result_type(self.type, self.locator)
-        return self
-
 
 class ContributorRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "contributor"
+
     type: Literal["contributor"]
     id: str
     result_type: Literal["contributor"]
@@ -157,14 +152,10 @@ class ContributorRetrievalResultRef(RetrievalResultRefBase):
     media_id: None = None
     media_kind: None = None
 
-    @model_validator(mode="after")
-    def validate_contributor_ref(self) -> ContributorRetrievalResultRef:
-        if self.context_ref.type != "contributor":
-            raise ValueError("contributor context_ref.type must be contributor")
-        return self
-
 
 class PageRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "page"
+
     type: Literal["page"]
     id: UUID | str
     result_type: Literal["page"]
@@ -173,14 +164,10 @@ class PageRetrievalResultRef(RetrievalResultRefBase):
     media_id: None = None
     media_kind: None = None
 
-    @model_validator(mode="after")
-    def validate_page_ref(self) -> PageRetrievalResultRef:
-        if self.context_ref.type != "page":
-            raise ValueError("page context_ref.type must be page")
-        return self
-
 
 class NoteBlockRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "note_block"
+
     type: Literal["note_block"]
     id: UUID | str
     result_type: Literal["note_block"]
@@ -191,15 +178,10 @@ class NoteBlockRetrievalResultRef(RetrievalResultRefBase):
     media_id: None = None
     media_kind: None = None
 
-    @model_validator(mode="after")
-    def validate_note_block_ref(self) -> NoteBlockRetrievalResultRef:
-        if self.context_ref.type != "note_block":
-            raise ValueError("note_block context_ref.type must be note_block")
-        validate_locator_for_result_type(self.type, self.locator)
-        return self
-
 
 class HighlightRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "highlight"
+
     type: Literal["highlight"]
     id: UUID | str
     result_type: Literal["highlight"]
@@ -211,15 +193,10 @@ class HighlightRetrievalResultRef(RetrievalResultRefBase):
     media_id: UUID | str | None = None
     media_kind: str | None = None
 
-    @model_validator(mode="after")
-    def validate_highlight_ref(self) -> HighlightRetrievalResultRef:
-        if self.context_ref.type != "highlight":
-            raise ValueError("highlight context_ref.type must be highlight")
-        validate_locator_for_result_type(self.type, self.locator)
-        return self
-
 
 class MessageRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "message"
+
     type: Literal["message"]
     id: UUID | str
     result_type: Literal["message"]
@@ -230,15 +207,10 @@ class MessageRetrievalResultRef(RetrievalResultRefBase):
     media_id: None = None
     media_kind: None = None
 
-    @model_validator(mode="after")
-    def validate_message_ref(self) -> MessageRetrievalResultRef:
-        if self.context_ref.type != "message":
-            raise ValueError("message context_ref.type must be message")
-        validate_locator_for_result_type(self.type, self.locator)
-        return self
-
 
 class WebRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "web_result"
+
     type: Literal["web_result"]
     id: ExternalSnapshotId
     result_type: Literal["web_result"]
@@ -257,19 +229,17 @@ class WebRetrievalResultRef(RetrievalResultRefBase):
     media_kind: None = None
 
     @model_validator(mode="after")
-    def validate_web_ref(self) -> WebRetrievalResultRef:
-        if self.context_ref.type != "web_result":
-            raise ValueError("web context_ref.type must be web_result")
+    def validate_snapshot_identity(self) -> WebRetrievalResultRef:
         if self.id != self.source_id:
             raise ValueError("web_result id must match source_id")
         if str(self.context_ref.id) != str(self.source_id):
             raise ValueError("web_result context_ref.id must match source_id")
-        if self.locator.type != "external_url":
-            raise ValueError("web_result locator must be external_url")
         return self
 
 
 class EvidenceSpanRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "evidence_span"
+
     type: Literal["evidence_span"]
     id: UUID | str
     result_type: Literal["evidence_span"]
@@ -280,15 +250,10 @@ class EvidenceSpanRetrievalResultRef(RetrievalResultRefBase):
     media_id: UUID | str
     media_kind: str | None = None
 
-    @model_validator(mode="after")
-    def validate_evidence_span_ref(self) -> EvidenceSpanRetrievalResultRef:
-        if self.context_ref.type != "evidence_span":
-            raise ValueError("evidence_span context_ref.type must be evidence_span")
-        validate_locator_for_result_type(self.type, self.locator)
-        return self
-
 
 class ReaderApparatusItemRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "reader_apparatus_item"
+
     type: Literal["reader_apparatus_item"]
     id: UUID | str
     result_type: Literal["reader_apparatus_item"]
@@ -298,15 +263,10 @@ class ReaderApparatusItemRetrievalResultRef(RetrievalResultRefBase):
     media_id: UUID | str
     media_kind: str | None = None
 
-    @model_validator(mode="after")
-    def validate_reader_apparatus_item_ref(self) -> ReaderApparatusItemRetrievalResultRef:
-        if self.context_ref.type != "reader_apparatus_item":
-            raise ValueError("reader_apparatus_item context_ref.type must be reader_apparatus_item")
-        validate_locator_for_result_type(self.type, self.locator)
-        return self
-
 
 class ConversationRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "conversation"
+
     type: Literal["conversation"]
     id: UUID | str
     result_type: Literal["conversation"]
@@ -315,14 +275,10 @@ class ConversationRetrievalResultRef(RetrievalResultRefBase):
     media_id: None = None
     media_kind: None = None
 
-    @model_validator(mode="after")
-    def validate_conversation_ref(self) -> ConversationRetrievalResultRef:
-        if self.context_ref.type != "conversation":
-            raise ValueError("conversation context_ref.type must be conversation")
-        return self
-
 
 class ArtifactRetrievalResultRef(RetrievalResultRefBase):
+    context_ref_type: ClassVar[SEARCH_RESULT_TYPES] = "artifact"
+
     type: Literal["artifact"]
     id: UUID | str
     result_type: Literal["artifact"]
@@ -334,9 +290,7 @@ class ArtifactRetrievalResultRef(RetrievalResultRefBase):
     media_kind: None = None
 
     @model_validator(mode="after")
-    def validate_artifact_ref(self) -> ArtifactRetrievalResultRef:
-        if self.context_ref.type != "artifact":
-            raise ValueError("artifact context_ref.type must be artifact")
+    def validate_subject_identity(self) -> ArtifactRetrievalResultRef:
         if str(self.id) != self.source_id or str(self.context_ref.id) != self.source_id:
             raise ValueError("artifact id, source_id, and context_ref.id must match")
         if self.subject_ref != f"conversation:{self.source_id}":
@@ -556,16 +510,14 @@ _SOURCE_LOCATOR_TYPES: frozenset[RetrievalLocatorType] = frozenset(
     }
 )
 _NOTE_LOCATOR_TYPES: frozenset[RetrievalLocatorType] = frozenset({"note_block_offsets"})
-_MESSAGE_LOCATOR_TYPES: frozenset[RetrievalLocatorType] = frozenset({"message_offsets"})
-_EXTERNAL_LOCATOR_TYPES: frozenset[RetrievalLocatorType] = frozenset({"external_url"})
 _LOCATOR_TYPES_BY_RESULT_TYPE: dict[LocatorBackedResultType, frozenset[RetrievalLocatorType]] = {
     "content_chunk": _SOURCE_LOCATOR_TYPES,
     "fragment": _SOURCE_LOCATOR_TYPES,
     "highlight": _SOURCE_LOCATOR_TYPES,
     "evidence_span": _SOURCE_LOCATOR_TYPES | _NOTE_LOCATOR_TYPES,
     "note_block": _NOTE_LOCATOR_TYPES,
-    "message": _MESSAGE_LOCATOR_TYPES,
-    "web_result": _EXTERNAL_LOCATOR_TYPES,
+    "message": frozenset({"message_offsets"}),
+    "web_result": frozenset({"external_url"}),
     "reader_apparatus_item": _SOURCE_LOCATOR_TYPES,
 }
 
@@ -579,8 +531,7 @@ def validate_locator_for_result_type(
     result_type: LocatorBackedResultType,
     locator: RetrievalLocator,
 ) -> None:
-    expected = _LOCATOR_TYPES_BY_RESULT_TYPE[result_type]
-    if locator.type not in expected:
+    if locator.type not in _LOCATOR_TYPES_BY_RESULT_TYPE[result_type]:
         raise ValueError(f"{result_type} locator type is invalid")
 
 

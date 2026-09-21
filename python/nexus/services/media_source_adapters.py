@@ -9,7 +9,6 @@ live in ``media_source_ingest``.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from datetime import UTC, datetime
 from typing import Literal
@@ -46,6 +45,7 @@ from nexus.services.epub_ingest import EpubExtractionPlan
 from nexus.services.epub_lifecycle import prepare_epub_source, publish_epub_source
 from nexus.services.file_ingest_validation import validate_file_ingest_request
 from nexus.services.fragment_blocks import insert_fragment_blocks
+from nexus.services.html_apparatus import attach_fragment_locators
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.media_deletion import delete_document_storage_objects
 from nexus.services.media_fact_revisions import bump_all_media_fact_collections
@@ -54,20 +54,15 @@ from nexus.services.media_source_ingest import (
     enqueue_accepted_source_attempt_in_transaction,
     reusable_embedded_source_media_ids,
 )
-from nexus.services.pdf_ingest import PdfExtractionPlan, PdfSourcePackageArtifact
+from nexus.services.pdf_ingest import PdfExtractionPlan
 from nexus.services.pdf_lifecycle import prepare_pdf_source, publish_pdf_source
 from nexus.services.podcasts.transcription import run_podcast_transcription_now
-from nexus.services.reader_apparatus import (
-    attach_fragment_locators,
-    replace_media_apparatus,
-    source_fingerprint,
-)
+from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.reader_publication import (
     ReaderPublicationSourceFile,
     replace_reader_publication,
 )
 from nexus.services.remote_file_client import REMOTE_FILE_CONTENT_TYPES, fetch_binary_to_storage
-from nexus.services.remote_file_ingest import arxiv_pdf_source_from_url
 from nexus.services.source_publication import (
     SourcePublicationFence,
     record_source_extraction_progress,
@@ -353,14 +348,6 @@ def _run_remote_file(
         signature_kind=kind,
     )
     validate_file_ingest_request(kind, fetched.content_type, fetched.size_bytes)
-    source_package, package_storage_path = _fetch_arxiv_source_package(
-        session_factory=session_factory,
-        media_id=media_id,
-        attempt_id=attempt.id,
-        requested_url=requested_url,
-        kind=kind,
-        storage_client=storage_client,
-    )
     prepared = _prepare_file_source(
         session_factory,
         media_id,
@@ -369,20 +356,14 @@ def _run_remote_file(
         storage_path=storage_path,
         source_size_bytes=fetched.size_bytes,
         source_sha256=fetched.sha256_hex,
-        source_package=source_package,
     )
 
-    def publish(db: Session, locked: MediaSourceAttempt) -> tuple[dict[str, object], list[str]]:
+    def publish(db: Session, _locked: MediaSourceAttempt) -> tuple[dict[str, object], list[str]]:
         media = db.get(Media, media_id)
         if media is None:
             raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
         media.canonical_source_url = normalize_url_for_display(fetched.final_url)
         media.updated_at = func.now()
-        if source_package is not None:
-            locked.source_payload = {
-                **dict(locked.source_payload or {}),
-                "arxiv_source_package": {"storage_path": source_package.storage_path},
-            }
         return _publish_file_source(
             db,
             media_id=media_id,
@@ -403,64 +384,10 @@ def _run_remote_file(
         media_ids=(media_id,),
         mutate=publish,
     )
-    for path in (storage_path, package_storage_path):
-        if path is not None:
-            _finalize(session_factory, media_id, path, storage_client)
+    _finalize(session_factory, media_id, storage_path, storage_client)
     _finalize_file_source(session_factory, media_id=media_id, prepared=prepared)
     delete_document_storage_objects(cleanup_paths, storage_client)
     return response
-
-
-def _fetch_arxiv_source_package(
-    *,
-    session_factory: sessionmaker[Session],
-    media_id: UUID,
-    attempt_id: UUID,
-    requested_url: str,
-    kind: str,
-    storage_client: StorageClient,
-) -> tuple[PdfSourcePackageArtifact | None, str | None]:
-    """Best-effort arxiv e-print tarball; a failure degrades to no package."""
-    arxiv_source = arxiv_pdf_source_from_url(requested_url) if kind == MediaKind.pdf.value else None
-    if arxiv_source is None:
-        return None, None
-    storage_path = build_source_artifact_storage_path(media_id, attempt_id, "tar")
-    _reserve(session_factory, media_id, storage_path)
-    try:
-        fetched = fetch_binary_to_storage(
-            url=arxiv_source.source_url,
-            storage_path=storage_path,
-            storage_client=storage_client,
-            content_type="application/x-tar",
-            max_bytes=get_settings().max_arxiv_source_bytes,
-            accept=(
-                "application/e-print,application/x-tar,application/gzip,"
-                "application/octet-stream,*/*;q=0.8"
-            ),
-        )
-    # justify-ignore-error: the source package is an optional enrichment of a PDF
-    # that already downloaded; its absence never fails the import.
-    except Exception as exc:
-        logger.warning(
-            "arxiv_source_package_fetch_failed",
-            media_id=str(media_id),
-            arxiv_id=arxiv_source.arxiv_id,
-            source_url=arxiv_source.source_url,
-            error=str(exc),
-        )
-        return None, None
-    return (
-        PdfSourcePackageArtifact(
-            storage_path=storage_path,
-            content_type=fetched.content_type,
-            size_bytes=fetched.size_bytes,
-            sha256_hex=fetched.sha256_hex,
-            source_url=fetched.final_url,
-            source_kind="arxiv_source",
-            source_ref={"arxiv_id": arxiv_source.arxiv_id, "requested_pdf_url": requested_url},
-        ),
-        storage_path,
-    )
 
 
 def _run_existing_file(
@@ -527,7 +454,6 @@ def _prepare_file_source(
     storage_path: str,
     source_size_bytes: int,
     source_sha256: str,
-    source_package: PdfSourcePackageArtifact | None = None,
 ) -> ExtractionPlan:
     """Parse the source into a publication plan, recording counted progress."""
 
@@ -549,7 +475,6 @@ def _prepare_file_source(
             source_size_bytes=source_size_bytes,
             expected_source_sha256=source_sha256,
             record_progress=record_progress,
-            source_package=source_package,
         )
     else:
         prepared = prepare_epub_source(
@@ -836,14 +761,6 @@ def _replace_stored_html_projection(
     replace_media_apparatus(
         db,
         media_id=media_id,
-        media_kind="web_article",
-        source_fingerprint_value=source_fingerprint(
-            "web_article",
-            locked_attempt.requested_url or media.requested_url,
-            storage_path,
-            hashlib.sha256(content_html.encode("utf-8")).hexdigest(),
-            prepared.canonical_text,
-        ),
         items=attach_fragment_locators(
             media_id=media_id,
             fragment_id=fragment.id,

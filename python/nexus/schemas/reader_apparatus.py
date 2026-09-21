@@ -1,13 +1,16 @@
-"""Reader apparatus response schemas."""
+"""Reader apparatus item, edge and read-model shapes."""
 
+from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, JsonValue, model_validator
 
 from nexus.schemas.retrieval import RetrievalLocator
 
 ReaderApparatusStatus = Literal["ready", "empty", "partial", "unsupported", "failed"]
+# The eleven persisted kinds. Extraction produces the footnote/endnote/bibliography
+# and margin-note kinds; the rest are read back from rows older extractors wrote.
 ReaderApparatusItemKind = Literal[
     "footnote_ref",
     "endnote_ref",
@@ -27,22 +30,9 @@ ReaderApparatusRelation = Literal[
     "points_to_sidenote",
     "points_to_margin_note",
     "cites_bibliography_entry",
-    "backlink_to_marker",
-    "contains_reference",
 ]
 ReaderApparatusConfidence = Literal["exact", "strong", "probable"]
 ReaderApparatusLocatorStatus = Literal["exact", "container", "missing"]
-
-
-class ReaderApparatusCapabilities(BaseModel):
-    has_inline_markers: bool
-    has_sidecar_items: bool
-    supports_hover_preview: bool
-    supports_jump_to_marker: bool
-    supports_jump_to_target: bool
-    has_probable_items: bool
-
-    model_config = ConfigDict(extra="forbid")
 
 
 class ReaderApparatusItemOut(BaseModel):
@@ -63,10 +53,8 @@ class ReaderApparatusItemOut(BaseModel):
 
     @model_validator(mode="after")
     def validate_locator_status(self) -> "ReaderApparatusItemOut":
-        if self.locator is None and self.locator_status != "missing":
-            raise ValueError("locator_status must be missing when locator is null")
-        if self.locator is not None and self.locator_status == "missing":
-            raise ValueError("locator_status cannot be missing when locator is present")
+        if (self.locator is None) != (self.locator_status == "missing"):
+            raise ValueError("locator_status is missing exactly when locator is null")
         return self
 
 
@@ -83,14 +71,11 @@ class ReaderApparatusEdgeOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ReaderApparatusResponse(BaseModel):
-    media_id: UUID
-    media_kind: str
-    status: ReaderApparatusStatus
-    source_fingerprint: str
-    capabilities: ReaderApparatusCapabilities
-    items: list[ReaderApparatusItemOut] = Field(default_factory=list)
-    edges: list[ReaderApparatusEdgeOut] = Field(default_factory=list)
-    diagnostics: dict[str, JsonValue] = Field(default_factory=dict)
+@dataclass(frozen=True, slots=True)
+class ReaderApparatusResponse:
+    """One media's apparatus as the Document Map reads it. Never serialised."""
 
-    model_config = ConfigDict(extra="forbid")
+    media_id: UUID
+    status: ReaderApparatusStatus
+    items: list[ReaderApparatusItemOut]
+    edges: list[ReaderApparatusEdgeOut]

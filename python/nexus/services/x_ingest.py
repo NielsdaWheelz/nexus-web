@@ -31,13 +31,10 @@ from nexus.services.document_embeds import (
     resolved_document_embed_target_media_ids,
 )
 from nexus.services.fragment_blocks import FragmentBlockSpec, insert_fragment_blocks
+from nexus.services.html_apparatus import attach_fragment_locators
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.media_processing_state import mark_ready_for_reading
-from nexus.services.reader_apparatus import (
-    attach_fragment_locators,
-    replace_media_apparatus,
-    source_fingerprint,
-)
+from nexus.services.reader_apparatus import replace_media_apparatus
 from nexus.services.reader_publication import replace_reader_publication
 from nexus.services.source_publication import SourcePublicationFence, run_source_publication_phase
 from nexus.services.web_article_artifacts import delete_web_article_artifacts
@@ -490,13 +487,6 @@ def _replace_thread_projection(
     replace_media_apparatus(
         db,
         media_id=media.id,
-        media_kind="web_article",
-        source_fingerprint_value=source_fingerprint(
-            "x_thread",
-            snapshot.canonical_url,
-            "\n\n".join(fragment.html_sanitized for fragment in fragments),
-            "\n\n".join(fragment.canonical_text for fragment in fragments),
-        ),
         items=[
             item
             for prepared in prepared_fragments
@@ -544,13 +534,6 @@ def _replace_post_projection(
     replace_media_apparatus(
         db,
         media_id=media.id,
-        media_kind="web_article",
-        source_fingerprint_value=source_fingerprint(
-            "x_post",
-            snapshot.canonical_url,
-            prepared.fragment.html_sanitized,
-            prepared.fragment.canonical_text,
-        ),
         items=attach_fragment_locators(
             media_id=media.id,
             fragment_id=prepared.fragment.id,
