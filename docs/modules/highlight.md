@@ -59,6 +59,14 @@ Reflowable anchors use canonical codepoint offsets, not DOM ranges. The browser
 maps selections to offsets with the highlight cursor helpers, and the backend
 validates offsets against the stored fragment text before writing.
 
+`domTextCursor.ts` records the source spans for each canonical codepoint;
+`domTextRanges.ts` owns both directions of the mapping. selection, hosted and
+public painting, find marks, and margin geometry use that provenance. unicode
+normalization can compose or expand source characters: selection takes the
+smallest contiguous canonical interval covering the touched source spans.
+highlights sharing a source character share its paint, with all ids retained
+and the newest highlight on top.
+
 PDF anchors use page-space coordinates and text-layer match metadata. Geometry
 is canonical; rendered viewport coordinates are derived presentation state.
 PDF writes serialize through the PDF highlight geometry owner so duplicate and

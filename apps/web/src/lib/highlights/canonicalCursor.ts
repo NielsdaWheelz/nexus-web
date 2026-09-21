@@ -13,11 +13,6 @@ export function buildCanonicalCursor(root: Element) {
 }
 
 export type CanonicalCursorResult = ReturnType<typeof buildCanonicalCursor>;
-export type CanonicalNode = CanonicalCursorResult["nodes"][number];
-export type CanonicalProvenanceSpan =
-  CanonicalCursorResult["provenance"][number];
-export type CanonicalDomSpan = CanonicalProvenanceSpan["spans"][number];
-
 export function validateCanonicalText(
   result: CanonicalCursorResult,
   expectedCanonicalText: string,
