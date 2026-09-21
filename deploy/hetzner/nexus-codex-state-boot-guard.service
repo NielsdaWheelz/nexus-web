@@ -1,0 +1,13 @@
+[Unit]
+Description=Protect the unmounted Nexus Codex credential-state underlay
+DefaultDependencies=no
+After=local-fs.target
+Before=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nexus-codex-state-boot-guard
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

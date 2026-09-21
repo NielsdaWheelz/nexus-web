@@ -197,9 +197,7 @@ unexpected timeouts. See
 
 - [open] oi-115 · api availability · 2026-09-15 memory review · p2 · api startup requires codex catalogue availability despite its independent-readiness contract: [ticket](tickets/api-startup-requires-codex-catalog-availability.md).
 
-- [open] oi-118 · release operations · 2026-09-15 restoration cutover · p2 · generic command errors and removed one-off logs obscure failure causes: [ticket](tickets/release-command-failures-lose-diagnostics.md).
 
-- [open] oi-119 · release recovery · 2026-09-15 source review · p2 · a permanently failed current publication prefix blocks successor resource convergence: [ticket](tickets/failed-published-release-cannot-converge-successor.md).
 
 - [open] oi-125 · epub assets · 2026-09-15 source review · p2 · complete asset bodies, broad media reads and per-request storage clients lack an aggregate allocation budget: [ticket](tickets/epub-asset-response-allocation-and-client-lifetime.md).
 - [open] oi-126 · backend publication · 2026-09-15 restoration release · p2 · disk exhaustion aborts the runner before bundle upload and cleanup: [ticket](tickets/backend-publication-can-exhaust-devbox-disk.md).
@@ -214,9 +212,9 @@ unexpected timeouts. See
 - [open] oi-135 · search memory · 2026-09-15 pr #270 review · p2 · selected result pages still retain complete fragment quotes without an aggregate byte bound: [ticket](tickets/search-result-pages-retain-full-fragment-quotes.md).
 - [open] oi-136 · search performance · 2026-09-15 pr #270 diagnosis · p2 · semantic ranking still scans/sorts the embedding corpus and spills substantial temporary data: [ticket](tickets/semantic-ranking-still-scans-embedding-corpus.md).
 - [open] oi-137 · api memory · 2026-09-16 utc pr #270 manual acceptance · p2 · paired readers stayed usable but reached the 320-mib cap; sustained margin remains unproved: [ticket](tickets/api-reader-search-memory-margin-remains-small.md).
-- [open] oi-138 · codex host runbook · 2026-09-16 retained pr #203 finding · p2 · boot-guard installation precedes the enrollment its storage check requires: [ticket](tickets/codex-host-runbook-boot-guard-order.md).
 - [open] oi-139 · codex host provisioning · 2026-09-16 retained pr #203 finding · p2 · encrypted-state formatting lacks a qualified memory bound and usable-keyslot check: [ticket](tickets/codex-state-luks-format-oom.md).
 
+- [open] oi-174 · release · 2026-09-21 deploy collapse · p2 · the release no longer gates on the latest published stable Android release's player-protocol manifest; only the frontend's own contract is proved: [ticket](tickets/android-player-protocol-release-gate-removed.md).
 - [open] oi-161 · web panes · 2026-09-17 slop sweep · p3 · four pane bodies are oversized with no split that does not invent abstractions; re-measure after the dedupes land: [ticket](tickets/oversized-pane-bodies-have-no-obvious-split.md).
 - [open] pdf passage positioning · 2026-09-17 passage cleanup · p2 · actual viewport verification is blocked by standalone renderer bootstrap: [ticket](tickets/pdf-passage-positioning-needs-browser-verification.md).
 - [open] oi-167 · pdf highlights · 2026-09-17 typecheck cleanup · p2 · write-time matching combines cached text with current publication spans: [ticket](tickets/pdf-highlight-matching-mixes-publication-snapshots.md).

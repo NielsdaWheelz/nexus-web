@@ -140,10 +140,10 @@ the rest of Nexus from starting while Codex is locked; `restart: "no"` keeps
 the credential host stopped until the release controller admits it.
 
 The release-owned PostgreSQL backup neither mounts nor reads the Codex state filesystem.
-Automated admission proves only the repository-owned secret locations:
-`/var/lib/nexus/codex-state.luks`, `/dev/mapper/nexus-codex-state`, and
-`/srv/nexus/codex-state`. It also proves that `/var/lib/nexus/codex-state.key`
-and an automatic crypttab entry are absent. It never inventories profile files.
+Automated admission proves only that `/dev/mapper/nexus-codex-state` is mounted
+`rw,nosuid,nodev,noexec` at `/srv/nexus/codex-state`; it never inventories
+profile files. The absent key file and crypttab entry above are provisioning
+facts, not release-time declarations, and no release checks them.
 
 On a new host, Docker must remain stopped until the mapping is unlocked and
 the initial container has been provisioned:
@@ -178,16 +178,13 @@ sudo sysctl --system
 test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1
 ```
 
-Install the release-owned boot guard from the exact candidate, then create the
-shared run volume and its non-root socket directory:
+Every release installs the boot guard from `deploy/hetzner/`
+(`codex-state-boot-guard.sh`, `nexus-codex-state-boot-guard.service`, and the
+`docker-codex-state-guard.conf` drop-in) and enables the unit, so a release is
+all that is needed here. Create the shared run volume and its non-root socket
+directory once:
 
 ```sh
-readonly SOURCE_SHA='<installed candidate source SHA>'
-sudo env PYTHONDONTWRITEBYTECODE=1 \
-  PYTHONPATH="/opt/nexus/releases/${SOURCE_SHA}/python" \
-  python3 -B "/opt/nexus/releases/${SOURCE_SHA}/release.py" \
-  install-codex-state-boot-guard --source-sha "$SOURCE_SHA"
-
 docker volume create --name nexus_nexus_codex_run
 docker run --rm --network none --user 0:0 --read-only \
   --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges:true \
@@ -234,71 +231,46 @@ sudo stat -c '%u:%g:%a %n' \
   /srv/nexus/codex-state/codex/codex-personal/auth.json
 ```
 
-## One-time Caddy route activation
+## Caddy route activation
 
-Before the first Codex cutover, load the candidate Caddyfile without replacing
-the bind-mounted file's inode. Caddy keeps its prior in-memory config if this
-procedure is interrupted; release admission then fails before writer mutation.
-
-```sh
-readonly SOURCE_SHA='<installed candidate source SHA>'
-readonly CANDIDATE_ROOT="/opt/nexus/releases/${SOURCE_SHA}"
-sudo env PYTHONDONTWRITEBYTECODE=1 \
-  PYTHONPATH="${CANDIDATE_ROOT}/python" \
-  python3 -B "${CANDIDATE_ROOT}/release.py" \
-  activate-caddy-config --source-sha "${SOURCE_SHA}"
-```
-
-The controller supplies the candidate's pinned Compose inputs, validates both
-old and new configurations, preserves and rechecks the live bind inode and
-container identity, reloads in place, proves the admin API loaded the exact
-adapted candidate, and rolls back in place on failure. Do not use `install`,
-`mv`, direct Compose, or container recreation for this update. Release admission
-repeats the loaded-config proof before it stops writers. Activation proves the
-currently published release before and after the reload; the later release apply
-proves that the new public TLS MCP route returns the exact bodyless unauthenticated
-401 before the backend phase can advance.
+The release writes `deploy/hetzner/Caddyfile` into `/etc/nexus/Caddyfile` with
+`tee`, so the bind-mounted inode never changes, and it adapts the candidate
+bytes through the running proxy *before* overwriting the file. It then reloads
+and requires the admin API's loaded config to equal the adapted candidate. Do
+not use `install`, `mv`, direct Compose, or container recreation for this file.
 
 ## Release and reboot resume
 
-Normal release admission installs and parses the exact AppArmor profile before
-writers stop. It verifies the LUKS mapping/mount, boot guard, enrolled-file
-metadata, exact writable file bind,
-container environment, the private executable runtime tmpfs and general
-`noexec` tmpfs, UDS volume, two-network egress topology, fixed private addresses
-and DNS, sidecar isolation, real SDK launcher/auth startup, the real pinned
-inner-sandbox behavior (`TMPDIR` writable and bare `/tmp` unwritable), and exact
-v2 health identity. It also proves that the authenticated catalog can be read
-through the private UDS; no API process receives the subscription credential or
-imports the Codex SDK.
+The isolation contract is declared in `deploy/hetzner/docker-compose.yml`, the
+AppArmor profile, and the boot-guard unit; a release installs those, then
+asserts that Docker and the kernel applied them — see
+[deployment.md](../../deployment.md#codex-agent-host-isolation) for the exact
+assertions. The release also proves the sandbox cannot reach the private bridge,
+Postgres, or Caddy, and the container's own healthcheck
+(`apps.codex_agent.health`) is what `up --wait` waits for.
 
-After reboot, unlock and mount the credential state interactively, then use the
-controller. Do not invoke Compose directly:
+After reboot, unlock and mount the credential state interactively, then run a
+release (or `--check` first). Do not invoke Compose directly:
 
 ```sh
 sudo cryptsetup open /var/lib/nexus/codex-state.luks nexus-codex-state
 sudo mount -o rw,nosuid,nodev,noexec \
   /dev/mapper/nexus-codex-state /srv/nexus/codex-state
-readonly SOURCE_SHA="$(sudo cat /var/lib/nexus/releases/current)"
-sudo env PYTHONDONTWRITEBYTECODE=1 \
-  PYTHONPATH="/opt/nexus/releases/${SOURCE_SHA}/python" \
-  python3 -B "/opt/nexus/releases/${SOURCE_SHA}/release.py" \
-  resume-codex-agent-host --source-sha "$SOURCE_SHA"
+PYTHONPATH=python python3 deploy/hetzner/release.py --check
+./deploy/hetzner/deploy.sh "$(git rev-parse origin/main)"
 ```
 
-Success emits one bounded `nexus-codex-agent-host-resume.v1` receipt. A missing
-mapping, changed mount option, unexpected environment/mount/network peer,
-sidecar-policy mismatch, or health mismatch refuses before the host is
-admitted.
+Until the volume is mounted, release preflight refuses: Docker cannot create the
+Codex host without its credential bind source.
 
 ## Locked-reboot acceptance
 
 The accepted reboot state is: mapping absent, `/srv/nexus/codex-state`
 root-owned mode `000`, boot guard enabled, the rest of Nexus allowed to run,
-and the Codex host stopped. `resume-codex-agent-host` is the only supported way
-to start it again. Demonstrate that it refuses before unlock; then unlock,
-mount, use the controller resume command, and prove the exact host isolation
-again. Store only the bounded receipt and system-service status; never archive
+and the Codex host stopped. Unlocking the volume and running a release is the
+only supported way to start it again. Demonstrate that release preflight refuses
+before unlock; then unlock, mount, release, and prove the exact host isolation
+again with `release.py --check`. Store only the bounded receipt and system-service status; never archive
 credential paths or SDK frames.
 
 ### Disposable-VM locked-reboot acceptance (live evidence pending)
@@ -359,15 +331,15 @@ revoked artifact, keep the host stopped and treat generation as unavailable.
 Without reading or copying it, atomically rename `auth.json` to a unique
 `auth.json.retired-<UTC timestamp>` inside the still-encrypted profile, run the
 same one-shot enrollment command to create a new `auth.json`, and resume only
-through `resume-codex-agent-host`. Retain the retired artifact encrypted until
-the new host passes release admission, then unlink it. Never edit, print,
+through a release. Retain the retired artifact encrypted until the new host
+passes a release, then unlink it. Never edit, print,
 restore, or copy credential contents, and never re-enroll while the host runs.
 
-application rollback is permitted only before either database mutation or
-backend activation begins. after either boundary, recovery moves forward under
-the [canonical release recovery contract](../../deployment.md#failure-and-recovery).
+the release is idempotent and forward-only: repair the named cause and rerun
+it, under the
+[canonical release recovery contract](../../deployment.md#failure-and-recovery).
 the dedicated encrypted state remains untouched in either case. do not bypass
-health, policy, sandbox, environment, mcp-origin, or resource-limit checks.
+health, policy, sandbox, environment, or resource-limit checks.
 
 ## Incident boundaries
 
