@@ -1620,7 +1620,7 @@ def _citation_for_ref(
     if result_type is None:
         return None
     from nexus.services.retrieval_citation import citation_from_search_result
-    from nexus.services.search.resolver import get_search_result
+    from nexus.services.search.service import get_search_result
 
     try:
         result = get_search_result(
@@ -1637,7 +1637,7 @@ def _citation_for_ref(
 
 
 def _kind_for_result_type(result_type: str) -> str:
-    from nexus.services.search.kinds import KIND_TO_RESULT_TYPES
+    from nexus.services.search.query import KIND_TO_RESULT_TYPES
 
     matches = [
         kind for kind, result_types in KIND_TO_RESULT_TYPES.items() if result_type in result_types
@@ -1697,10 +1697,14 @@ async def _run_search(
     )
     from nexus.services.resource_items.capabilities import resource_can_be_app_search_scope
     from nexus.services.retrieval_citation import citation_from_search_result
-    from nexus.services.search.batch import search_scopes_async
-    from nexus.services.search.query import SearchQuery, SearchScope, build_search_query
+    from nexus.services.search.query import (
+        SearchQuery,
+        SearchScope,
+        build_search_query,
+        hash_query,
+    )
     from nexus.services.search.scope import scope_from_uri
-    from nexus.services.search.telemetry import hash_query
+    from nexus.services.search.service import search_scopes_async
 
     recorder = _nexus_recorder(context)
     viewer_id = UUID(str(context.principal))
@@ -1903,9 +1907,9 @@ async def _run_document_search(
     context: ExecutionContext,
 ) -> HandlerSuccess[tool_declarations.DocumentSearchSuccess]:
     from nexus.services.retrieval_citation import citation_from_search_result
-    from nexus.services.search.batch import search_scopes_async
     from nexus.services.search.query import SearchQuery, build_search_query
     from nexus.services.search.scope import scope_from_uri
+    from nexus.services.search.service import search_scopes_async
 
     recorder = _nexus_recorder(context)
 

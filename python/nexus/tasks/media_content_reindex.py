@@ -1,4 +1,4 @@
-"""Durable three-phase document content reindex job."""
+"""The durable three-phase document content reindex job."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from nexus.services.content_indexing import (
     MEDIA_CONTENT_REINDEX_JOB_KIND,
     MEDIA_CONTENT_REINDEX_REASONS,
     IndexOwner,
-    MediaContentReindexWork,
     build_spooled_content_index_plan,
     prepare_media_content_reindex,
     publish_media_content_reindex,
@@ -23,45 +22,35 @@ from nexus.services.semantic_chunks import build_text_embeddings
 
 
 def media_content_reindex_job(
-    *,
-    payload: Mapping[str, Any],
-    context: JobExecutionContext,
+    *, payload: Mapping[str, Any], context: JobExecutionContext
 ) -> dict[str, object]:
-    """Run the three fenced phases of one reindex execution."""
-    media_id, revision, reason = _parse_payload(payload)
-
+    """Fence and snapshot, embed through a local spool, then fence and publish."""
     from nexus.jobs.registry import get_default_registry
 
+    media_id, revision, reason = _parse_payload(payload)
     lease_seconds = get_default_registry()[MEDIA_CONTENT_REINDEX_JOB_KIND].lease_seconds
-    prepared_db = get_session_factory()()
+    superseded = {"status": "superseded", "media_id": str(media_id), "revision": revision}
+
+    prepare_db = get_session_factory()()
     try:
 
-        def prepare() -> MediaContentReindexWork | None:
+        def prepare():
             work = prepare_media_content_reindex(
-                prepared_db,
+                prepare_db,
                 media_id=media_id,
                 revision=revision,
                 reason=reason,
                 context=context,
                 lease_seconds=lease_seconds,
             )
-            prepared_db.commit()
+            prepare_db.commit()
             return work
 
-        work = retry_serializable(
-            prepared_db,
-            "prepare_media_content_reindex",
-            prepare,
-        )
+        work = retry_serializable(prepare_db, "prepare_media_content_reindex", prepare)
     finally:
-        prepared_db.close()
-
+        prepare_db.close()
     if work is None:
-        return {
-            "status": "superseded",
-            "media_id": str(media_id),
-            "revision": revision,
-        }
+        return superseded
 
     with parser_attempt_directory(context.job_id) as attempt_directory:
         plan = build_spooled_content_index_plan(
@@ -71,12 +60,11 @@ def media_content_reindex_job(
             spool_path=attempt_directory / "content-index.jsonl",
             embed_texts=build_text_embeddings,
         )
-
         publish_db = get_session_factory()()
         try:
 
             def publish():
-                result = publish_media_content_reindex(
+                published = publish_media_content_reindex(
                     publish_db,
                     work=work,
                     plan=plan,
@@ -84,31 +72,19 @@ def media_content_reindex_job(
                     lease_seconds=lease_seconds,
                 )
                 publish_db.commit()
-                return result
+                return published
 
-            result = retry_serializable(
-                publish_db,
-                "publish_media_content_reindex",
-                publish,
-            )
+            result = retry_serializable(publish_db, "publish_media_content_reindex", publish)
         finally:
             publish_db.close()
 
     if result is None:
-        return {
-            "status": "superseded",
-            "media_id": str(media_id),
-            "revision": revision,
-        }
-    return {
-        "status": result.status,
-        "media_id": str(media_id),
-        "revision": revision,
-        "chunk_count": result.chunk_count,
-    }
+        return superseded
+    return {**superseded, "status": result.status, "chunk_count": result.chunk_count}
 
 
 def _parse_payload(payload: Mapping[str, Any]) -> tuple[UUID, int, str]:
+    """The payload is the durable resume point: exactly four keys, all checked."""
     if set(payload) != {"media_id", "revision", "reason", "request_id"}:
         raise ValueError("media content-reindex payload keys are invalid")
     try:

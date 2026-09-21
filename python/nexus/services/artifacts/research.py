@@ -58,9 +58,8 @@ from nexus.services.resource_graph.refs import (
 from nexus.services.resource_graph.resolve import load_resource_batch
 from nexus.services.resource_graph.schemas import CitationSnapshot
 from nexus.services.resource_items.capabilities import resource_read_policy
-from nexus.services.search.batch import search_scopes_async
-from nexus.services.search.kinds import SearchKind
-from nexus.services.search.query import SearchQuery
+from nexus.services.search.query import SearchKind, SearchQuery
+from nexus.services.search.service import search_scopes_async
 from nexus.services.tool_runtime.composition import (
     encode_tool_plan_snapshot,
     validate_tool_plan_snapshot,
