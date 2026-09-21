@@ -1,4 +1,9 @@
-"""Ordered resource adjacency over resource_edges."""
+"""Ordered adjacency: a source's occurrence list plus its per-occurrence view state.
+
+A moved occurrence keeps its edge id — and therefore its collapse state — because
+reordering renames every key through a temporary ``reordering:<id>`` value before
+renumbering, which is what keeps ``uq_resource_edges_source_order`` satisfied mid-move.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +17,7 @@ from sqlalchemy.orm import Session
 from nexus.db.models import NoteBlock, Page, ResourceEdge, ResourceViewState
 from nexus.errors import ApiError, ApiErrorCode, NotFoundError
 from nexus.services.resource_graph.refs import ResourceRef
+from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_items.capabilities import (
     resource_can_be_ordered_adjacency_target,
     resource_can_own_ordered_adjacency,
@@ -65,31 +71,19 @@ def load_page_surface(db: Session, *, user_id: UUID, page_id: UUID) -> PageSurfa
 
 
 def replace_ordered_targets(
-    db: Session,
-    *,
-    user_id: UUID,
-    source: ResourceRef,
-    targets: Sequence[OrderedTarget],
+    db: Session, *, user_id: UUID, source: ResourceRef, targets: Sequence[OrderedTarget]
 ) -> list[UUID]:
-    _assert_source_visible(db, user_id=user_id, source=source)
-    if not resource_can_own_ordered_adjacency(source):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot own ordered adjacency")
+    _admit_source(db, user_id=user_id, source=source)
     seen_order: set[str] = set()
     seen_targets: set[tuple[str, UUID]] = set()
     for target in targets:
         if target.source_order_key in seen_order:
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Adjacent items need unique order keys")
         seen_order.add(target.source_order_key)
-        # The broad ordinal-null pair index is gone (it collided ordered edges
-        # with neutral Links); a repeated target ref in one set is now rejected
-        # in application validation so outline semantics do not weaken.
-        target_key = (target.target.scheme, target.target.id)
-        if target_key in seen_targets:
+        if (target.target.scheme, target.target.id) in seen_targets:
             raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Adjacent items must be distinct")
-        seen_targets.add(target_key)
-        _assert_target_visible(db, user_id=user_id, target=target.target)
-        if not resource_can_be_ordered_adjacency_target(target.target):
-            raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be an ordered target")
+        seen_targets.add((target.target.scheme, target.target.id))
+        _admit_target(db, user_id=user_id, target=target.target)
 
     existing = ordered_edges(db, user_id=user_id, source=source)
     by_target = {(edge.target_scheme, edge.target_id): edge for edge in existing}
@@ -109,55 +103,17 @@ def replace_ordered_targets(
     for target in targets:
         edge = by_target.get((target.target.scheme, target.target.id))
         if edge is None:
-            edge = ResourceEdge(
-                user_id=user_id,
-                kind="context",
-                origin="user",
-                source_scheme=source.scheme,
-                source_id=source.id,
-                target_scheme=target.target.scheme,
-                target_id=target.target.id,
-                source_order_key=f"pending:{target.target.id}",
-            )
-            db.add(edge)
-            db.flush()
+            edge = _new_occurrence(db, user_id=user_id, source=source, target=target.target)
         ordered.append(edge)
     reorder_ordered_edges(db, user_id=user_id, source=source, edges=ordered)
     return [edge.id for edge in ordered]
 
 
-def ordered_edges(db: Session, *, user_id: UUID, source: ResourceRef) -> list[ResourceEdge]:
-    return list(
-        db.scalars(
-            select(ResourceEdge)
-            .where(
-                ResourceEdge.user_id == user_id,
-                ResourceEdge.origin == "user",
-                ResourceEdge.kind == "context",
-                ResourceEdge.source_scheme == source.scheme,
-                ResourceEdge.source_id == source.id,
-                ResourceEdge.source_order_key.is_not(None),
-                ResourceEdge.ordinal.is_(None),
-                ResourceEdge.snapshot.is_(None),
-            )
-            .order_by(ResourceEdge.source_order_key.asc(), ResourceEdge.id.asc())
-        ).all()
-    )
-
-
 def insert_ordered_target(
-    db: Session,
-    *,
-    user_id: UUID,
-    source: ResourceRef,
-    target: ResourceRef,
+    db: Session, *, user_id: UUID, source: ResourceRef, target: ResourceRef
 ) -> ResourceEdge:
-    _assert_source_visible(db, user_id=user_id, source=source)
-    if not resource_can_own_ordered_adjacency(source):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot own ordered adjacency")
-    _assert_target_visible(db, user_id=user_id, target=target)
-    if not resource_can_be_ordered_adjacency_target(target):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be an ordered target")
+    _admit_source(db, user_id=user_id, source=source)
+    _admit_target(db, user_id=user_id, target=target)
     if source == target:
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "A resource cannot be adjacent to itself")
     if any(
@@ -165,6 +121,133 @@ def insert_ordered_target(
         for edge in ordered_edges(db, user_id=user_id, source=source)
     ):
         raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Adjacent items must be distinct")
+    return _new_occurrence(db, user_id=user_id, source=source, target=target)
+
+
+def remove_ordered_edge(
+    db: Session, *, user_id: UUID, source: ResourceRef, occurrence_id: UUID
+) -> ResourceEdge:
+    edge = ordered_edge_for_occurrence(
+        db, user_id=user_id, source=source, occurrence_id=occurrence_id
+    )
+    db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id == edge.id))
+    db.delete(edge)
+    db.flush()
+    return edge
+
+
+def ordered_edges(db: Session, *, user_id: UUID, source: ResourceRef) -> list[ResourceEdge]:
+    return list(
+        db.scalars(
+            select(ResourceEdge)
+            .where(*_occurrence_predicates(user_id, source))
+            .order_by(ResourceEdge.source_order_key.asc(), ResourceEdge.id.asc())
+        ).all()
+    )
+
+
+def ordered_edge_for_occurrence(
+    db: Session, *, user_id: UUID, source: ResourceRef, occurrence_id: UUID
+) -> ResourceEdge:
+    edge = db.scalar(
+        select(ResourceEdge).where(
+            ResourceEdge.id == occurrence_id, *_occurrence_predicates(user_id, source)
+        )
+    )
+    if edge is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Surface occurrence not found")
+    return edge
+
+
+def reorder_ordered_edges(
+    db: Session, *, user_id: UUID, source: ResourceRef, edges: Sequence[ResourceEdge]
+) -> None:
+    current = ordered_edges(db, user_id=user_id, source=source)
+    if {edge.id for edge in current} != {edge.id for edge in edges} or len(current) != len(edges):
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Ordered occurrences must match the surface")
+    if len({edge.id for edge in edges}) != len(edges):
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Ordered occurrences must be unique")
+    # Temporary keys let every surviving occurrence keep its identity (and its attached
+    # view state) while moving past the unique source-order index.
+    for edge in current:
+        edge.source_order_key = f"reordering:{edge.id}"
+    db.flush()
+    for index, edge in enumerate(edges, start=1):
+        edge.source_order_key = f"{index:010d}"
+    db.flush()
+
+
+def set_collapsed(
+    db: Session, *, user_id: UUID, parent: ResourceRef, block_id: UUID, collapsed: bool
+) -> None:
+    edge = db.scalar(
+        select(ResourceEdge).where(
+            ResourceEdge.user_id == user_id,
+            ResourceEdge.origin == "user",
+            ResourceEdge.source_scheme == parent.scheme,
+            ResourceEdge.source_id == parent.id,
+            ResourceEdge.target_scheme == "note_block",
+            ResourceEdge.target_id == block_id,
+            ResourceEdge.source_order_key.is_not(None),
+        )
+    )
+    if edge is None:
+        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Adjacent note not found")
+    row = db.scalar(
+        select(ResourceViewState).where(
+            ResourceViewState.user_id == user_id,
+            ResourceViewState.surface_scheme == parent.scheme,
+            ResourceViewState.surface_id == parent.id,
+            ResourceViewState.edge_id == edge.id,
+            ResourceViewState.target_scheme == "note_block",
+            ResourceViewState.target_id == block_id,
+        )
+    )
+    if row is None:
+        db.add(
+            ResourceViewState(
+                user_id=user_id,
+                surface_scheme=parent.scheme,
+                surface_id=parent.id,
+                edge_id=edge.id,
+                target_scheme="note_block",
+                target_id=block_id,
+                state={"collapsed": collapsed},
+            )
+        )
+    else:
+        row.state = {"collapsed": collapsed}
+    db.flush()
+
+
+def _occurrence_predicates(user_id: UUID, source: ResourceRef):
+    return (
+        ResourceEdge.user_id == user_id,
+        ResourceEdge.origin == "user",
+        ResourceEdge.kind == "context",
+        ResourceEdge.source_scheme == source.scheme,
+        ResourceEdge.source_id == source.id,
+        ResourceEdge.source_order_key.is_not(None),
+        ResourceEdge.ordinal.is_(None),
+        ResourceEdge.snapshot.is_(None),
+    )
+
+
+def _admit_source(db: Session, *, user_id: UUID, source: ResourceRef) -> None:
+    assert_ref_visible(db, viewer_id=user_id, ref=source)
+    if not resource_can_own_ordered_adjacency(source):
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot own ordered adjacency")
+
+
+def _admit_target(db: Session, *, user_id: UUID, target: ResourceRef) -> None:
+    assert_ref_visible(db, viewer_id=user_id, ref=target)
+    if not resource_can_be_ordered_adjacency_target(target):
+        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Resource cannot be an ordered target")
+
+
+def _new_occurrence(
+    db: Session, *, user_id: UUID, source: ResourceRef, target: ResourceRef
+) -> ResourceEdge:
     edge = ResourceEdge(
         user_id=user_id,
         kind="context",
@@ -180,141 +263,10 @@ def insert_ordered_target(
     return edge
 
 
-def remove_ordered_edge(
-    db: Session,
-    *,
-    user_id: UUID,
-    source: ResourceRef,
-    occurrence_id: UUID,
-) -> ResourceEdge:
-    edge = ordered_edge_for_occurrence(
-        db, user_id=user_id, source=source, occurrence_id=occurrence_id
-    )
-    db.execute(delete(ResourceViewState).where(ResourceViewState.edge_id == edge.id))
-    db.delete(edge)
-    db.flush()
-    return edge
-
-
-def ordered_edge_for_occurrence(
-    db: Session,
-    *,
-    user_id: UUID,
-    source: ResourceRef,
-    occurrence_id: UUID,
-) -> ResourceEdge:
-    edge = db.scalar(
-        select(ResourceEdge).where(
-            ResourceEdge.id == occurrence_id,
-            ResourceEdge.user_id == user_id,
-            ResourceEdge.origin == "user",
-            ResourceEdge.kind == "context",
-            ResourceEdge.source_scheme == source.scheme,
-            ResourceEdge.source_id == source.id,
-            ResourceEdge.source_order_key.is_not(None),
-            ResourceEdge.ordinal.is_(None),
-            ResourceEdge.snapshot.is_(None),
-        )
-    )
-    if edge is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Surface occurrence not found")
-    return edge
-
-
-def reorder_ordered_edges(
-    db: Session,
-    *,
-    user_id: UUID,
-    source: ResourceRef,
-    edges: Sequence[ResourceEdge],
-) -> None:
-    current = ordered_edges(db, user_id=user_id, source=source)
-    if {edge.id for edge in current} != {edge.id for edge in edges} or len(current) != len(edges):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Ordered occurrences must match the surface")
-    if len({edge.id for edge in edges}) != len(edges):
-        raise ApiError(ApiErrorCode.E_INVALID_REQUEST, "Ordered occurrences must be unique")
-    # The database enforces unique source keys. Temporary keys let every surviving
-    # occurrence keep its identity (and attached view state) while moving.
-    for edge in current:
-        edge.source_order_key = f"reordering:{edge.id}"
-    db.flush()
-    for index, edge in enumerate(edges, start=1):
-        edge.source_order_key = f"{index:010d}"
-    db.flush()
-
-
-def set_collapsed(
-    db: Session,
-    *,
-    user_id: UUID,
-    parent: ResourceRef,
-    block_id: UUID,
-    collapsed: bool,
-) -> None:
-    edge = _edge_for_child(db, user_id=user_id, parent=parent, block_id=block_id)
-    row = db.scalar(
-        select(ResourceViewState).where(
-            ResourceViewState.user_id == user_id,
-            ResourceViewState.surface_scheme == parent.scheme,
-            ResourceViewState.surface_id == parent.id,
-            ResourceViewState.edge_id == edge.id,
-            ResourceViewState.target_scheme == "note_block",
-            ResourceViewState.target_id == block_id,
-        )
-    )
-    state: dict[str, object] = {"collapsed": collapsed}
-    if row is None:
-        db.add(
-            ResourceViewState(
-                user_id=user_id,
-                surface_scheme=parent.scheme,
-                surface_id=parent.id,
-                edge_id=edge.id,
-                target_scheme="note_block",
-                target_id=block_id,
-                state=state,
-            )
-        )
-        db.flush()
-        return
-    row.state = state
-    db.flush()
-
-
 def _note_children(
-    db: Session,
-    *,
-    user_id: UUID,
-    parent: ResourceRef,
-    path: set[UUID],
+    db: Session, *, user_id: UUID, parent: ResourceRef, path: set[UUID]
 ) -> list[SurfaceNote]:
-    out: list[SurfaceNote] = []
-    for edge, block in _ordered_note_rows(db, user_id=user_id, parent=parent):
-        collapsed = _collapsed_for_edge(db, user_id=user_id, edge=edge)
-        children: list[SurfaceNote] = []
-        if block.id not in path:
-            children = _note_children(
-                db,
-                user_id=user_id,
-                parent=ResourceRef(scheme="note_block", id=block.id),
-                path={*path, block.id},
-            )
-        out.append(
-            SurfaceNote(
-                block=block,
-                parent=parent,
-                source_order_key=edge.source_order_key or "",
-                collapsed=collapsed,
-                children=children,
-            )
-        )
-    return out
-
-
-def _ordered_note_rows(
-    db: Session, *, user_id: UUID, parent: ResourceRef
-) -> list[tuple[ResourceEdge, NoteBlock]]:
-    return list(
+    rows = (
         db.execute(
             select(ResourceEdge, NoteBlock)
             .join(
@@ -335,46 +287,29 @@ def _ordered_note_rows(
         .tuples()
         .all()
     )
-
-
-def _edge_for_child(
-    db: Session, *, user_id: UUID, parent: ResourceRef, block_id: UUID
-) -> ResourceEdge:
-    edge = db.scalar(
-        select(ResourceEdge).where(
-            ResourceEdge.user_id == user_id,
-            ResourceEdge.origin == "user",
-            ResourceEdge.source_scheme == parent.scheme,
-            ResourceEdge.source_id == parent.id,
-            ResourceEdge.target_scheme == "note_block",
-            ResourceEdge.target_id == block_id,
-            ResourceEdge.source_order_key.is_not(None),
+    out: list[SurfaceNote] = []
+    for edge, block in rows:
+        state = db.scalar(
+            select(ResourceViewState).where(
+                ResourceViewState.user_id == user_id, ResourceViewState.edge_id == edge.id
+            )
         )
-    )
-    if edge is None:
-        raise NotFoundError(ApiErrorCode.E_NOT_FOUND, "Adjacent note not found")
-    return edge
-
-
-def _collapsed_for_edge(db: Session, *, user_id: UUID, edge: ResourceEdge) -> bool:
-    row = db.scalar(
-        select(ResourceViewState).where(
-            ResourceViewState.user_id == user_id,
-            ResourceViewState.edge_id == edge.id,
+        out.append(
+            SurfaceNote(
+                block=block,
+                parent=parent,
+                source_order_key=edge.source_order_key or "",
+                collapsed=bool(state.state.get("collapsed")) if state is not None else False,
+                children=(
+                    []
+                    if block.id in path
+                    else _note_children(
+                        db,
+                        user_id=user_id,
+                        parent=ResourceRef(scheme="note_block", id=block.id),
+                        path={*path, block.id},
+                    )
+                ),
+            )
         )
-    )
-    if row is None:
-        return False
-    return bool(row.state.get("collapsed"))
-
-
-def _assert_source_visible(db: Session, *, user_id: UUID, source: ResourceRef) -> None:
-    from nexus.services.resource_graph.resolve import assert_ref_visible
-
-    assert_ref_visible(db, viewer_id=user_id, ref=source)
-
-
-def _assert_target_visible(db: Session, *, user_id: UUID, target: ResourceRef) -> None:
-    from nexus.services.resource_graph.resolve import assert_ref_visible
-
-    assert_ref_visible(db, viewer_id=user_id, ref=target)
+    return out

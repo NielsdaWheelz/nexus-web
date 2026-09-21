@@ -18,14 +18,11 @@ def ingest_media_source(
     *,
     context: JobExecutionContext,
 ) -> dict[str, object]:
-    media_uuid = UUID(media_id)
-    attempt_uuid = UUID(attempt_id)
-    actor_uuid = UUID(actor_user_id)
     result = run_source_attempt(
         session_factory=get_session_factory(),
-        media_id=media_uuid,
-        attempt_id=attempt_uuid,
-        actor_user_id=actor_uuid,
+        media_id=UUID(media_id),
+        attempt_id=UUID(attempt_id),
+        actor_user_id=UUID(actor_user_id),
         request_id=request_id,
         context=context,
     )

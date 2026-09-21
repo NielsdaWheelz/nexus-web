@@ -1,12 +1,12 @@
-"""Typed payloads shared across the graph package modules (spec §9).
+"""Edge vocabularies and the plain records the graph modules exchange.
 
-The edge vocabularies (``kind``/``origin``) mirror the ``resource_edges``
-CHECKs exactly; adding a value requires a migration and a sole writer (N9).
+``EdgeKind``/``EdgeOrigin`` mirror the ``resource_edges`` CHECKs exactly; widening one
+needs a migration and a change to the sole writer, ``resource_graph.edges``.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Literal, get_args
 from uuid import UUID
@@ -14,12 +14,6 @@ from uuid import UUID
 from nexus.schemas.resource_items import ResourceActivationOut
 from nexus.services.resource_graph.refs import ResourceRef, ResourceScheme
 
-# Single source for the edge vocabularies (LOW #20): the wire schema
-# (``nexus.schemas.resource_graph``) and the citation read-model
-# (``nexus.schemas.citation``) alias these, mirroring how ``ResourceScheme``
-# is sourced in ``refs.py``. Boundary value-tuples derive via ``get_args`` so a
-# new value lands in exactly one place; it still requires a migration and the
-# sole writer to widen the ``resource_edges`` CHECK (N9).
 EdgeKind = Literal["context", "supports", "contradicts"]
 EdgeOrigin = Literal[
     "user",
@@ -32,22 +26,19 @@ EdgeOrigin = Literal[
     "assistant",
     "link_note",
 ]
-
 EDGE_KINDS: tuple[EdgeKind, ...] = get_args(EdgeKind)
 EDGE_ORIGINS: tuple[EdgeOrigin, ...] = get_args(EdgeOrigin)
-# The *query* direction (a request parameter) and the *result* direction (a
-# per-connection output field) are distinct types (D7). Neutral user/context
-# Links carry ``undirected``; only the read model decides it, once, in
-# ``connections._connection_for_row``.
 ConnectionDirection = Literal["incoming", "outgoing", "both"]
-ConnectionResultDirection = Literal["incoming", "outgoing", "undirected"]
-ConnectionRollup = Literal["exact", "owner"]
-ConnectionTargetStatus = Literal["current", "missing", "forbidden", "unanchorable"]
+
+SEARCH_SCOPE_EDGE_KIND: EdgeKind = "context"
+SYNAPSE_SOURCE_SCHEMES: tuple[ResourceScheme, ...] = ("media", "page", "note_block", "highlight")
+SYNAPSE_TARGET_SCHEMES: tuple[ResourceScheme, ...] = ("media", "note_block", "evidence_span")
+ASSISTANT_EDGE_SCHEMES: tuple[ResourceScheme, ...] = ("media", "page", "note_block", "highlight")
 
 
 @dataclass(frozen=True, slots=True)
 class CitationSnapshot:
-    """The schema-validated edge ``snapshot`` (§8.1): display fields only (N6)."""
+    """The edge ``snapshot`` column: display fields only."""
 
     title: str | None = None
     excerpt: str | None = None
@@ -57,26 +48,17 @@ class CitationSnapshot:
 
 
 def snapshot_to_jsonb(snapshot: CitationSnapshot) -> dict[str, object]:
-    fields = {
-        "title": snapshot.title,
-        "excerpt": snapshot.excerpt,
-        "section_label": snapshot.section_label,
-        "result_type": snapshot.result_type,
-        "deep_link": snapshot.deep_link,
-    }
-    return {key: value for key, value in fields.items() if value is not None}
+    return {key: value for key, value in asdict(snapshot).items() if value is not None}
 
 
 def snapshot_from_jsonb(raw: dict[str, object]) -> CitationSnapshot:
-    def _opt_str(value: object) -> str | None:
-        return value if isinstance(value, str) else None
-
+    strings = {key: value for key, value in raw.items() if isinstance(value, str)}
     return CitationSnapshot(
-        title=_opt_str(raw.get("title")),
-        excerpt=_opt_str(raw.get("excerpt")),
-        section_label=_opt_str(raw.get("section_label")),
-        result_type=_opt_str(raw.get("result_type")),
-        deep_link=_opt_str(raw.get("deep_link")),
+        title=strings.get("title"),
+        excerpt=strings.get("excerpt"),
+        section_label=strings.get("section_label"),
+        result_type=strings.get("result_type"),
+        deep_link=strings.get("deep_link"),
     )
 
 
@@ -115,13 +97,10 @@ def is_neutral_link_shape(
     source_order_key: str | None,
     target_order_key: str | None,
 ) -> bool:
-    """The exact canonical neutral-Link predicate (§ Graph Shapes).
+    """The canonical neutral-Link predicate: ``uq_resource_edges_user_context_link_pair``.
 
-    Matches ``uq_resource_edges_user_context_link_pair``: a user context Link
-    with no ordinal, snapshot, or order keys. Stance (non-context kind) and
-    ordered adjacency (order key set) are deliberately excluded. This is the one
-    definition the graph writer, the Link service, and the connection read all
-    share, so a change to the neutral-Link shape can never drift between them.
+    The writer, the delete gate and the "is this undirected?" read all share it, so the
+    neutral-Link shape cannot drift between them. Stance and ordered adjacency are out.
     """
     return (
         origin == "user"
@@ -135,8 +114,6 @@ def is_neutral_link_shape(
 
 @dataclass(frozen=True, slots=True)
 class CitationInput:
-    """One citation in a replace-set: ordinal and snapshot are mandatory (D5)."""
-
     target: ResourceRef
     ordinal: int
     kind: EdgeKind
@@ -145,8 +122,6 @@ class CitationInput:
 
 @dataclass(frozen=True, slots=True)
 class ConcordantSource:
-    """Another source output sharing cited targets with the queried source (§5.3)."""
-
     source: ResourceRef
     shared_target_count: int
 
@@ -158,7 +133,7 @@ class CitationTargetProjection:
     snapshot: CitationSnapshot
     media_id: UUID | None
     locator: dict[str, object] | None
-    target_status: ConnectionTargetStatus
+    target_status: Literal["current", "missing", "forbidden", "unanchorable"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,7 +148,7 @@ class ConnectionFilters:
 class ConnectionQuery:
     refs: tuple[ResourceRef, ...]
     direction: ConnectionDirection
-    rollup: ConnectionRollup
+    rollup: Literal["exact", "owner"]
     filters: ConnectionFilters
     limit: int
     cursor: str | None = None
@@ -197,16 +172,12 @@ class ConnectionCitation:
     activation: ResourceActivationOut
     target_media_id: UUID | None
     target_locator: dict[str, object] | None
-    target_status: ConnectionTargetStatus
+    target_status: Literal["current", "missing", "forbidden", "unanchorable"]
 
 
 @dataclass(frozen=True, slots=True)
 class ConnectionLinkNote:
-    """The one ordinary note folded onto a user/context Link (§ Graph Shapes).
-
-    Resolved from the two structural ``origin='link_note'`` attachment edges;
-    the structural rows never render as their own connections (Invariant 12).
-    """
+    """The one ordinary note folded onto a Link, resolved from its two attachment edges."""
 
     ref: ResourceRef
     preview: str | None
@@ -215,7 +186,7 @@ class ConnectionLinkNote:
 @dataclass(frozen=True, slots=True)
 class Connection:
     edge_id: UUID
-    direction: ConnectionResultDirection
+    direction: Literal["incoming", "outgoing", "undirected"]
     kind: EdgeKind
     origin: EdgeOrigin
     snapshot: CitationSnapshot | None

@@ -1,33 +1,22 @@
-"""Remote PDF/EPUB fetch policy."""
+"""Remote PDF/EPUB download behind the SSRF boundary, spooled into storage."""
+
+from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
 from tempfile import TemporaryFile
-from urllib.parse import urljoin
-
-import httpx
 
 from nexus.errors import ApiError, ApiErrorCode, InvalidRequestError
 from nexus.services.file_ingest_validation import has_valid_file_signature
-from nexus.services.image_validation import (
-    check_hostname_denylist,
-    validate_dns_resolution,
-    validate_url,
-)
+from nexus.services.net.safe_fetch import SafeFetchFailed, safe_stream
 from nexus.storage.client import StorageClient, StorageError
 
-REMOTE_FILE_CONTENT_TYPES = {
-    "pdf": "application/pdf",
-    "epub": "application/epub+zip",
-}
+REMOTE_FILE_CONTENT_TYPES = {"pdf": "application/pdf", "epub": "application/epub+zip"}
 
-_CHUNK_BYTES = 1024 * 1024
-_REDIRECT_LIMIT = 3
-_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
-_USER_AGENT = "Nexus Media Ingestion/1.0"
+_TIMEOUT_SECONDS = 30.0
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RemoteFileFetchResult:
     content_type: str
     size_bytes: int
@@ -45,129 +34,64 @@ def fetch_binary_to_storage(
     accept: str,
     signature_kind: str | None = None,
 ) -> RemoteFileFetchResult:
-    current_url = url
-
-    with httpx.Client(timeout=_TIMEOUT, follow_redirects=False, trust_env=False) as client:
-        for _ in range(_REDIRECT_LIMIT + 1):
-            normalized_url, hostname, _ = validate_url(current_url)
-            check_hostname_denylist(hostname)
-            validate_dns_resolution(hostname)
-
-            try:
-                with client.stream(
-                    "GET",
-                    normalized_url,
-                    headers={
-                        "User-Agent": _USER_AGENT,
-                        "Accept": accept,
-                    },
-                ) as response:
-                    if response.status_code in {301, 302, 303, 307, 308}:
-                        location = response.headers.get("location")
-                        if not location:
-                            raise ApiError(
-                                ApiErrorCode.E_INGEST_FAILED,
-                                "Remote file redirect did not include a Location header.",
-                            )
-                        current_url = urljoin(normalized_url, location)
-                        continue
-
-                    if response.status_code < 200 or response.status_code >= 300:
-                        raise ApiError(
-                            ApiErrorCode.E_INGEST_FAILED,
-                            f"Remote file returned status {response.status_code}.",
-                        )
-
-                    content_length = response.headers.get("content-length")
-                    if content_length and int(content_length) > max_bytes:
-                        raise InvalidRequestError(
-                            ApiErrorCode.E_FILE_TOO_LARGE,
-                            f"Remote {_fetch_error_label(signature_kind)} exceeds maximum size.",
-                        )
-
-                    return _write_response_to_storage(
-                        response=response,
-                        content_type=content_type,
-                        max_bytes=max_bytes,
-                        storage_path=storage_path,
-                        storage_client=storage_client,
-                        final_url=normalized_url,
-                        signature_kind=signature_kind,
-                    )
-            except ValueError as exc:
-                raise InvalidRequestError(
-                    ApiErrorCode.E_INVALID_REQUEST,
-                    "Invalid remote file response.",
-                ) from exc
-            except httpx.TimeoutException as exc:
-                raise ApiError(
-                    ApiErrorCode.E_INGEST_TIMEOUT, "Remote file fetch timed out."
-                ) from exc
-            except httpx.RequestError as exc:
-                raise ApiError(
-                    ApiErrorCode.E_INGEST_FAILED, "Failed to fetch remote file."
-                ) from exc
-
-    raise ApiError(ApiErrorCode.E_INGEST_FAILED, "Remote file had too many redirects.")
-
-
-def _write_response_to_storage(
-    *,
-    response: httpx.Response,
-    content_type: str,
-    max_bytes: int,
-    storage_path: str,
-    storage_client: StorageClient,
-    final_url: str,
-    signature_kind: str | None,
-) -> RemoteFileFetchResult:
+    """Download one bounded remote file, checking its magic bytes on arrival."""
+    label = signature_kind.upper() if signature_kind is not None else "file"
+    digest = hashlib.sha256()
     size_bytes = 0
-    saw_chunk = False
-    hasher = hashlib.sha256()
+    with TemporaryFile() as spool:
 
-    with TemporaryFile() as payload:
-        for chunk in response.iter_bytes(chunk_size=_CHUNK_BYTES):
+        def write(chunk: bytes) -> None:
+            nonlocal size_bytes
             if not chunk:
-                continue
-            if not saw_chunk:
-                if signature_kind is not None and not has_valid_file_signature(
-                    chunk,
-                    signature_kind,
-                ):
-                    raise InvalidRequestError(
-                        ApiErrorCode.E_INVALID_FILE_TYPE,
-                        f"Remote URL did not return a valid {signature_kind.upper()} file.",
-                    )
-                saw_chunk = True
-
-            size_bytes += len(chunk)
-            if size_bytes > max_bytes:
+                return
+            if (
+                size_bytes == 0
+                and signature_kind is not None
+                and not has_valid_file_signature(chunk, signature_kind)
+            ):
                 raise InvalidRequestError(
-                    ApiErrorCode.E_FILE_TOO_LARGE,
-                    f"Remote {_fetch_error_label(signature_kind)} exceeds maximum size.",
+                    ApiErrorCode.E_INVALID_FILE_TYPE,
+                    f"Remote URL did not return a valid {label} file.",
                 )
-            hasher.update(chunk)
-            payload.write(chunk)
+            size_bytes += len(chunk)
+            digest.update(chunk)
+            spool.write(chunk)
 
-        if not saw_chunk:
-            raise InvalidRequestError(
-                ApiErrorCode.E_INVALID_FILE_TYPE,
-                "Remote URL did not return a non-empty file.",
-            )
-
-        payload.seek(0)
         try:
-            storage_client.put_object_stream(storage_path, payload, content_type)
+            headers = safe_stream(
+                url,
+                max_bytes=max_bytes,
+                timeout_s=_TIMEOUT_SECONDS,
+                sink=write,
+                accept=accept,
+                allowed_ports=frozenset({80, 443}),
+            )
+        except SafeFetchFailed as exc:
+            raise _remote_file_error(exc, label) from exc
+        if size_bytes == 0:
+            raise InvalidRequestError(
+                ApiErrorCode.E_INVALID_FILE_TYPE, "Remote URL did not return a non-empty file."
+            )
+        spool.seek(0)
+        try:
+            storage_client.put_object_stream(storage_path, spool, content_type)
         except StorageError as exc:
             raise ApiError(ApiErrorCode.E_STORAGE_ERROR, "Failed to store remote file.") from exc
-
     return RemoteFileFetchResult(
         content_type=content_type,
         size_bytes=size_bytes,
-        sha256_hex=hasher.hexdigest(),
-        final_url=final_url,
+        sha256_hex=digest.hexdigest(),
+        final_url=headers.final_url,
     )
 
 
-def _fetch_error_label(signature_kind: str | None) -> str:
-    return signature_kind.upper() if signature_kind is not None else "file"
+def _remote_file_error(exc: SafeFetchFailed, label: str) -> ApiError:
+    if exc.reason == "Blocked":
+        return ApiError(ApiErrorCode.E_SSRF_BLOCKED, exc.message)
+    if exc.reason == "TooLarge":
+        return InvalidRequestError(
+            ApiErrorCode.E_FILE_TOO_LARGE, f"Remote {label} exceeds maximum size."
+        )
+    if exc.reason == "Timeout":
+        return ApiError(ApiErrorCode.E_INGEST_TIMEOUT, "Remote file fetch timed out.")
+    return ApiError(ApiErrorCode.E_INGEST_FAILED, f"Remote file fetch failed: {exc.message}")

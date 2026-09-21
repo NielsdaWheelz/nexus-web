@@ -60,8 +60,11 @@ from nexus.services import generation_policy
 from nexus.services.codex_generation_contract import (
     GenerationTerminal,
 )
-from nexus.services.generation_intent import GenerationIntent
-from nexus.services.generation_spec import ImmutablePromptPayloadRef, generation_fact_digest
+from nexus.services.generation_spec import (
+    GenerationIntent,
+    ImmutablePromptPayloadRef,
+    generation_fact_digest,
+)
 from nexus.services.llm_execution import (
     AcceptedGenerationFailure,
     CompletedGeneration,
@@ -86,7 +89,6 @@ from nexus.services.resource_graph.edges import (
     replace_edges_for_origin,
 )
 from nexus.services.resource_graph.highlight_notes import linked_note_blocks_for_highlights
-from nexus.services.resource_graph.policy import SYNAPSE_SOURCE_SCHEMES
 from nexus.services.resource_graph.refs import (
     ResourceRef,
     ResourceScheme,
@@ -94,6 +96,7 @@ from nexus.services.resource_graph.refs import (
 )
 from nexus.services.resource_graph.resolve import assert_ref_visible
 from nexus.services.resource_graph.schemas import (
+    SYNAPSE_SOURCE_SCHEMES,
     CitationSnapshot,
     ConnectionFilters,
     ConnectionQuery,

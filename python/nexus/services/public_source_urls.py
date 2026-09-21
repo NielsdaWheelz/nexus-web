@@ -1,11 +1,15 @@
-"""Closed owner of source URLs allowed in anonymous media projections."""
+"""The allowlisted public source URL for anonymous media projections.
+
+Only a handful of source types may leak their origin URL to an anonymous
+viewer, and only when every identity the attempt carries — provider target ref,
+canonical source URL, requested URL — canonicalizes to the same public URL.
+"""
 
 from __future__ import annotations
 
 import ipaddress
 import re
 import unicodedata
-from dataclasses import dataclass
 from urllib.parse import quote, urlparse, urlunparse
 from uuid import UUID
 
@@ -20,16 +24,6 @@ from nexus.services.youtube_identity import (
     classify_youtube_url,
 )
 
-_PUBLIC_SOURCE_TYPES = frozenset(
-    {
-        "generic_web_url",
-        "x_author_thread",
-        "x_post",
-        "youtube_video",
-        "video_transcript",
-        "remote_pdf_url",
-    }
-)
 _BLOCKED_HOST_SUFFIXES = (
     ".example",
     ".home",
@@ -44,19 +38,8 @@ _DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _MAX_PUBLIC_URL_BYTES = 2048
 
 
-@dataclass(frozen=True, slots=True)
-class CurrentSourceIdentity:
-    """Source-owned identity from the current successful acquisition attempt."""
-
-    source_type: str
-    canonical_source_url: str | None
-    requested_url: str | None
-    provider: str | None
-    provider_target_ref: str | None
-
-
 def current_public_source_url(db: Session, *, media_id: UUID) -> str | None:
-    """Return the allowlisted public URL for the current successful source."""
+    """The allowlisted public URL of the current successful source, if any."""
     row = (
         db.execute(
             text(
@@ -77,95 +60,66 @@ def current_public_source_url(db: Session, *, media_id: UUID) -> str | None:
     )
     if row is None:
         return None
-    return public_source_url(
-        CurrentSourceIdentity(
-            source_type=str(row["source_type"]),
-            canonical_source_url=(
-                str(row["canonical_source_url"])
-                if row["canonical_source_url"] is not None
-                else None
-            ),
-            requested_url=str(row["requested_url"]) if row["requested_url"] is not None else None,
-            provider=str(row["provider"]) if row["provider"] is not None else None,
-            provider_target_ref=(
-                str(row["provider_target_ref"]) if row["provider_target_ref"] is not None else None
-            ),
+    source_type = str(row["source_type"])
+    provider = row["provider"]
+    ref = str(row["provider_target_ref"] or "").strip()
+    urls = [value for value in (row["canonical_source_url"], row["requested_url"]) if value]
+
+    if source_type == "generic_web_url":
+        return _canonical_public_http_url(row["canonical_source_url"])
+    if source_type in {"x_author_thread", "x_post"} and provider == "x":
+        return _agreed(
+            [canonical_x_post_url(ref) if re.fullmatch(r"[0-9]+", ref) else None] if ref else [],
+            [_x_identity(url) for url in urls],
         )
-    )
-
-
-def public_source_url(identity: CurrentSourceIdentity) -> str | None:
-    """Project only source identities explicitly approved for anonymous egress."""
-    if identity.source_type not in _PUBLIC_SOURCE_TYPES:
-        return None
-
-    if identity.source_type == "generic_web_url":
-        return _canonical_public_http_url(identity.canonical_source_url)
-
-    if identity.source_type in {"x_author_thread", "x_post"}:
-        if identity.provider != "x":
-            return None
-        identities: list[str] = []
-        provider_target_ref = (identity.provider_target_ref or "").strip()
-        if provider_target_ref:
-            if re.fullmatch(r"[0-9]+", provider_target_ref) is None:
-                return None
-            identities.append(canonical_x_post_url(provider_target_ref))
-        for candidate in (identity.canonical_source_url, identity.requested_url):
-            if candidate:
-                classified = classify_x_url(candidate)
-                if classified is None:
-                    return None
-                identities.append(classified.canonical_url)
-        return _one_identity(identities)
-
-    if identity.source_type in {"youtube_video", "video_transcript"}:
-        if identity.provider != "youtube":
-            return None
-        identities: list[str] = []
-        provider_target_ref = (identity.provider_target_ref or "").strip()
-        if provider_target_ref:
-            classified = classify_youtube_provider_video_id(provider_target_ref)
-            if classified is None:
-                return None
-            identities.append(classified.watch_url)
-        for candidate in (identity.canonical_source_url, identity.requested_url):
-            if candidate:
-                from_url = classify_youtube_url(candidate)
-                if from_url is None:
-                    return None
-                identities.append(from_url.watch_url)
-        return _one_identity(identities)
-
-    if identity.source_type == "remote_pdf_url":
-        if identity.provider not in {None, "arxiv"}:
-            return None
-        identities: list[str] = []
-        provider_target_ref = (identity.provider_target_ref or "").strip()
-        if provider_target_ref:
-            arxiv = arxiv_pdf_source_from_url(f"https://arxiv.org/abs/{provider_target_ref}")
-            if arxiv is None:
-                return None
-            identities.append(f"https://arxiv.org/abs/{arxiv.arxiv_id}")
-        for candidate in (identity.requested_url, identity.canonical_source_url):
-            if candidate:
-                arxiv = arxiv_pdf_source_from_url(candidate)
-                if arxiv is None:
-                    return None
-                identities.append(f"https://arxiv.org/abs/{arxiv.arxiv_id}")
-        return _one_identity(identities)
-
+    if source_type in {"youtube_video", "video_transcript"} and provider == "youtube":
+        return _agreed(
+            [_youtube_identity_from_ref(ref)] if ref else [],
+            [_youtube_identity(url) for url in urls],
+        )
+    if source_type == "remote_pdf_url" and provider in {None, "arxiv"}:
+        return _agreed(
+            [_arxiv_abs_url(f"https://arxiv.org/abs/{ref}")] if ref else [],
+            [
+                _arxiv_abs_url(url)
+                for url in (row["requested_url"], row["canonical_source_url"])
+                if url
+            ],
+        )
     return None
 
 
-def _one_identity(identities: list[str]) -> str | None:
-    if not identities or len(set(identities)) != 1:
+def _agreed(from_ref: list[str | None], from_urls: list[str | None]) -> str | None:
+    """One URL only when every identity present canonicalizes to the same value."""
+    identities = [*from_ref, *from_urls]
+    if not identities or any(identity is None for identity in identities):
         return None
-    return identities[0]
+    return identities[0] if len(set(identities)) == 1 else None
 
 
-def _canonical_public_http_url(raw: str | None) -> str | None:
-    if raw is None:
+def _x_identity(url: str) -> str | None:
+    identity = classify_x_url(url)
+    return None if identity is None else identity.canonical_url
+
+
+def _youtube_identity(url: str) -> str | None:
+    identity = classify_youtube_url(url)
+    return None if identity is None else identity.watch_url
+
+
+def _youtube_identity_from_ref(ref: str) -> str | None:
+    identity = classify_youtube_provider_video_id(ref)
+    return None if identity is None else identity.watch_url
+
+
+def _arxiv_abs_url(url: str) -> str | None:
+    arxiv = arxiv_pdf_source_from_url(url)
+    return None if arxiv is None else f"https://arxiv.org/abs/{arxiv.arxiv_id}"
+
+
+def _canonical_public_http_url(raw: object) -> str | None:
+    """A strict, auditable public http(s) URL: named host, no IP literal, no credentials."""
+    if not isinstance(raw, str):
         return None
     try:
         parsed = urlparse(raw)
@@ -179,8 +133,8 @@ def _canonical_public_http_url(raw: str | None) -> str | None:
         or not unicode_host
         or parsed.username is not None
         or parsed.password is not None
-        or any(char.isspace() or unicodedata.category(char).startswith("C") for char in raw)
         or "\\" in raw
+        or any(char.isspace() or unicodedata.category(char).startswith("C") for char in raw)
     ):
         return None
     try:
@@ -196,26 +150,15 @@ def _canonical_public_http_url(raw: str | None) -> str | None:
     ):
         return None
     try:
-        # Source URLs never expose IP literals, including globally routable
-        # literals. A hostname keeps the public-source policy auditable.
         ipaddress.ip_address(host)
     except ValueError:
         pass
     else:
         return None
-    if (
-        port is not None
-        and not (scheme == "http" and port == 80)
-        and not (scheme == "https" and port == 443)
-    ):
-        netloc = f"{host}:{port}"
-    else:
-        netloc = host
+    default_port = 80 if scheme == "http" else 443
+    netloc = f"{host}:{port}" if port is not None and port != default_port else host
     path = parsed.path or "/"
     if re.search(r"%(?![0-9A-Fa-f]{2})", path):
         return None
-    canonical_path = quote(path, safe="/:@!$&'()*+,;=-._~%")
-    normalized = urlunparse((scheme, netloc, canonical_path, "", "", ""))
-    if len(normalized.encode("utf-8")) > _MAX_PUBLIC_URL_BYTES:
-        return None
-    return normalized
+    normalized = urlunparse((scheme, netloc, quote(path, safe="/:@!$&'()*+,;=-._~%"), "", "", ""))
+    return normalized if len(normalized.encode("utf-8")) <= _MAX_PUBLIC_URL_BYTES else None

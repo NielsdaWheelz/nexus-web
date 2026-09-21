@@ -1,4 +1,4 @@
-"""Highlight-linked note projections over resource graph edges."""
+"""Highlight ↔ note projections over ``origin='highlight_note'`` edges."""
 
 from uuid import UUID
 
@@ -10,12 +10,9 @@ from nexus.db.models import Highlight, NoteBlock, ResourceEdge
 
 
 def linked_note_blocks_for_highlights(
-    db: Session,
-    viewer_id: UUID,
-    highlight_ids: list[UUID],
+    db: Session, viewer_id: UUID, highlight_ids: list[UUID]
 ) -> dict[UUID, list[NoteBlock]]:
-    """Attached notes per highlight: ``origin=highlight_note`` edges."""
-
+    """Attached notes per highlight, ordered by their containing surface then age."""
     if not highlight_ids:
         return {}
     containment = aliased(ResourceEdge)
@@ -54,37 +51,8 @@ def linked_note_blocks_for_highlights(
     return result
 
 
-def first_note_block_for_highlight(
-    db: Session,
-    viewer_id: UUID,
-    highlight_id: UUID,
-) -> NoteBlock | None:
-    """First attached note for one highlight."""
-
-    return db.scalar(
-        select(NoteBlock)
-        .join(
-            ResourceEdge,
-            (ResourceEdge.target_scheme == "note_block") & (ResourceEdge.target_id == NoteBlock.id),
-        )
-        .where(
-            ResourceEdge.user_id == viewer_id,
-            ResourceEdge.origin == "highlight_note",
-            ResourceEdge.source_scheme == "highlight",
-            ResourceEdge.source_id == highlight_id,
-            NoteBlock.user_id == viewer_id,
-        )
-        .order_by(ResourceEdge.created_at.asc(), ResourceEdge.id.asc(), NoteBlock.id.asc())
-    )
-
-
-def note_blocks_for_highlight(
-    db: Session,
-    viewer_id: UUID,
-    highlight_id: UUID,
-) -> list[NoteBlock]:
-    """All attached notes for one highlight."""
-
+def note_blocks_for_highlight(db: Session, viewer_id: UUID, highlight_id: UUID) -> list[NoteBlock]:
+    """All attached notes for one highlight, oldest attachment first."""
     return list(
         db.scalars(
             select(NoteBlock)
@@ -100,22 +68,22 @@ def note_blocks_for_highlight(
                 ResourceEdge.source_id == highlight_id,
                 NoteBlock.user_id == viewer_id,
             )
-            .order_by(
-                ResourceEdge.created_at.asc(),
-                ResourceEdge.id.asc(),
-                NoteBlock.id.asc(),
-            )
+            .order_by(ResourceEdge.created_at.asc(), ResourceEdge.id.asc(), NoteBlock.id.asc())
         )
     )
 
 
-def note_block_ids_with_highlight_notes(
-    db: Session,
-    viewer_id: UUID,
-    block_ids: list[UUID],
-) -> set[UUID]:
-    """Note block ids that are attached to highlights."""
+def first_note_block_for_highlight(
+    db: Session, viewer_id: UUID, highlight_id: UUID
+) -> NoteBlock | None:
+    blocks = note_blocks_for_highlight(db, viewer_id, highlight_id)
+    return blocks[0] if blocks else None
 
+
+def note_block_ids_with_highlight_notes(
+    db: Session, viewer_id: UUID, block_ids: list[UUID]
+) -> set[UUID]:
+    """Which of the given note blocks are attached to a highlight."""
     if not block_ids:
         return set()
     return set(
@@ -131,12 +99,9 @@ def note_block_ids_with_highlight_notes(
 
 
 def highlight_excerpts_for_note_blocks(
-    db: Session,
-    viewer_id: UUID,
-    note_ids: list[UUID],
+    db: Session, viewer_id: UUID, note_ids: list[UUID]
 ) -> dict[UUID, str]:
-    """First attached-highlight exact text per note block."""
-
+    """The first attached highlight's exact text per note block."""
     if not note_ids:
         return {}
     excerpts: dict[UUID, str] = {}

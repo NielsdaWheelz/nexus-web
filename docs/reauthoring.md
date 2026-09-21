@@ -30,11 +30,11 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | docs (rules subtree 3.9k, modules 5.8k, architecture 2.3k, chapbook 1.4k, tickets 2k) | 17.9k | 9k | keep rules/local-rules/runbook/tickets; demote uncited module docs | open |
 | reader (epub, pdf, web article, selection/highlights; MediaPaneBody 7.6k, PdfReader 3.6k) | 46.3k | 15k | reauthor: one reader shell, one find | open |
 | reader-apparatus (footnotes, bibliography, latex, publisher extractors, doc map, margin rail) | 13.3k | 3k | keep footnotes/endnotes; delete latex, pdf legal-footnote, 6 publisher extractors, doc-map presenters | open |
-| ingest-imports (url/file/youtube/x/email/arxiv/remote, upload sessions, imports workspace, metadata intelligence) | 31.0k | 8k | reauthor; decide x, email, arxiv | open |
+| ingest-imports (url/file/youtube/x/email/arxiv/remote, upload sessions, imports workspace, metadata intelligence) | 27.8k | 8k | reauthor; decide x, email, arxiv | python source-ingest first pass landed (size/ingest-py): 12.5k→9.2k, −26%; imports history, metadata intelligence and the web Add/imports flow open |
 | media-core | 5.7k | 3k | reauthor | open |
 | chat (runs, conversations, forks, composer, tails) | 29.6k | 10k | reauthor; 17 chat_run_* files → 3 | open |
 | chat-tools (runtime, authority, MCP, six tools) | 5.8k | 2.5k | reauthor: six tools + one dispatcher | first pass landed (size/chat-tools) at 5.8k, −32%; remaining levers: MCP transport 0.9k, HostTable research plan 0.5k, ledger density |
-| generation (catalog, ledger, codex + 7 provider APIs, picker) | 13.5k | 3k | codex + 1–2 providers; drop model lifecycle | open |
+| generation (catalog, ledger, codex + 7 provider APIs, picker) | 10.2k | 3k | codex + 1–2 providers; drop model lifecycle | python first pass landed (size/generation-py): 10.9k→7.6k, −30%; model lifecycle deleted; picker web 2.6k open |
 | dossiers (engine 3.4k, ten subject bindings, web document runtime) | 18.7k | 5k | reauthor: one engine, one binding table | open |
 | oracle-atlas (oracle, plates, concordance, corpus ops, atlas, manifests, deploy plate train) | 12.6k | 0–4k | deferred by owner 2026-09-21; keep and reauthor: delete, or keep at 4k | open |
 | synapse-connections (resonance, synapse, dawn write, connections surface, reading slate) | 7.8k | 2k | keep synapse + connections; DELETE dawn write (decided 2026-09-21); reading slate deferred | dawn write deleted (size/dawn); rest open |
@@ -51,7 +51,7 @@ verification is the static gate (`./scripts/test`: ruff, pyright, eslint, tsc, o
 | vault (export/sync/watch CLI + pane) | 1.9k | 0–1k | deferred by owner 2026-09-21; keep and reauthor: keep at 1k or delete | open |
 | billing-settings (billing, entitlements, quota, 7 settings panes) | 4.4k | 2k | keep, reauthor | open |
 | auth-extension (auth, users, sessions, extension 2.8k of which 2.3k vendored Readability) | 4.9k | 2k | deferred by owner 2026-09-21; keep and reauthor extension; keep auth | open |
-| substrate: resource graph (refs, edges, citations) | 6.9k | 2k | reauthor | open |
+| substrate: resource graph (refs, edges, citations) | 5.2k | 2k | reauthor | first pass landed (size/resource-graph-py): 6.6k→4.9k, −25%; two blocks await the action-menu rewrite |
 | substrate: action menu (snapshot→planner→runtime→cache) | 11.4k | 1.5k | one catalog + one menu | open |
 | substrate: workspace/panes (store, host, memento, mobile chrome, pane find, route model) | 20.7k | 6k | reauthor | open |
 | substrate: api/auth/bff (proxy, sse, session; BFF routes already collapsed) | 14.5k | 4k | reauthor | open |

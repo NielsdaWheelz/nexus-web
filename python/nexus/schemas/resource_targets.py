@@ -1,11 +1,9 @@
-"""Wire schemas for ``POST /resource-items/targets/search``.
+"""Wire schemas for ``POST /resource-items/targets/search``, camelCase on the wire.
 
-Resource-target search (universal-link-authoring-hard-cutover.md, Resource
-Target Search): one request shape for both the ``purpose=link`` hybrid profile
-and the ``purpose=reference`` lexical profile, and a two-variant target union.
-``candidate_ref`` on a passage target is transient — derived from the underlying
-index row id, reloaded at Link confirmation, and never persisted. ``excerpt``
-keeps the search snippet conventions (``<b>…</b>`` match markup).
+One request shape covers the ``link`` hybrid profile and the ``reference`` lexical
+profile. A passage target's ``candidate_ref`` is transient — derived from the index row,
+reloaded at Link confirmation, never persisted — and ``excerpt`` keeps the search
+snippet's ``<b>…</b>`` match markup.
 """
 
 from __future__ import annotations
@@ -13,61 +11,38 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
-from nexus.schemas.resource_items import ResourceActivationOut, ResourceItemOut
+from nexus.schemas.resource_items import CamelModel, ResourceActivationOut, ResourceItemOut
 from nexus.services.resource_graph.refs import ResourceScheme
 
 
-class ResourceTargetSearchRequest(BaseModel):
+class ResourceTargetSearchRequest(CamelModel):
     q: str
     purpose: Literal["link", "reference"]
-    source_ref: str | None = Field(
-        None,
-        validation_alias=AliasChoices("source_ref", "sourceRef"),
-        serialization_alias="sourceRef",
-    )
+    source_ref: str | None = None
     schemes: list[ResourceScheme] | None = None
-    exclude_refs: list[str] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("exclude_refs", "excludeRefs"),
-        serialization_alias="excludeRefs",
-    )
+    exclude_refs: list[str] = Field(default_factory=list)
     cursor: str | None = None
     limit: int = Field(10, ge=1, le=20)
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    model_config = ConfigDict(extra="forbid")
 
 
-class ResourceTargetResourceOut(BaseModel):
+class ResourceTargetResourceOut(CamelModel):
     kind: Literal["resource"] = "resource"
     item: ResourceItemOut
-    existing_link_id: UUID | None = Field(
-        None,
-        validation_alias=AliasChoices("existing_link_id", "existingLinkId"),
-        serialization_alias="existingLinkId",
-    )
-
-    model_config = ConfigDict(populate_by_name=True)
+    existing_link_id: UUID | None = None
 
 
-class ResourceTargetPassageOut(BaseModel):
+class ResourceTargetPassageOut(CamelModel):
     kind: Literal["passage"] = "passage"
-    candidate_ref: str = Field(
-        validation_alias=AliasChoices("candidate_ref", "candidateRef"),
-        serialization_alias="candidateRef",
-    )
+    candidate_ref: str
     source: ResourceItemOut
     label: str
     excerpt: str
     activation: ResourceActivationOut
-    existing_link_id: UUID | None = Field(
-        None,
-        validation_alias=AliasChoices("existing_link_id", "existingLinkId"),
-        serialization_alias="existingLinkId",
-    )
-
-    model_config = ConfigDict(populate_by_name=True)
+    existing_link_id: UUID | None = None
 
 
 ResourceTargetOut = Annotated[
@@ -76,12 +51,6 @@ ResourceTargetOut = Annotated[
 ]
 
 
-class ResourceTargetSearchResponse(BaseModel):
+class ResourceTargetSearchResponse(CamelModel):
     targets: list[ResourceTargetOut]
-    next_cursor: str | None = Field(
-        None,
-        validation_alias=AliasChoices("next_cursor", "nextCursor"),
-        serialization_alias="nextCursor",
-    )
-
-    model_config = ConfigDict(populate_by_name=True)
+    next_cursor: str | None = None

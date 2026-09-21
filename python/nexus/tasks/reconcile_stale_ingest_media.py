@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from functools import partial
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
@@ -13,259 +15,158 @@ from nexus.config import get_settings
 from nexus.db.retries import retry_serializable
 from nexus.db.session import get_session_factory
 from nexus.errors import NotFoundError
-from nexus.services.content_indexing import (
-    MediaContentReindexIntent,
-    ensure_media_content_reindex_job,
-)
+from nexus.services.content_indexing import ensure_media_content_reindex_job
 from nexus.services.media_source_ingest import ensure_stale_source_attempt_job
 from nexus.services.transcripts.semantic import request_transcript_semantic_repair
 
 _BATCH_LIMIT = 25
 
+_STALE_SOURCE_ATTEMPTS = """
+    SELECT msa.id AS attempt_id, msa.media_id
+    FROM media_source_attempts msa
+    JOIN media m ON m.id = msa.media_id
+    WHERE msa.status IN ('accepted', 'queued', 'running')
+      AND m.processing_status = 'extracting'
+      AND m.processing_started_at IS NOT NULL
+      AND m.processing_started_at
+          < now() - (CAST(:stale_seconds AS integer) * interval '1 second')
+      AND NOT EXISTS (
+          SELECT 1
+          FROM media_source_attempts newer
+          WHERE newer.media_id = msa.media_id
+            AND (newer.attempt_no, newer.created_at, newer.id)
+              > (msa.attempt_no, msa.created_at, msa.id)
+      )
+    ORDER BY m.processing_started_at ASC, msa.id ASC
+    LIMIT :limit
+"""
 
-def reconcile_stale_ingest_media_job(
-    request_id: str | None,
-) -> dict[str, int]:
-    settings = get_settings()
-    discovery = get_session_factory()()
-    try:
-        source_rows = (
-            discovery.execute(
-                text(
-                    """
-                SELECT msa.id AS attempt_id, msa.media_id
-                FROM media_source_attempts msa
-                JOIN media m ON m.id = msa.media_id
-                WHERE msa.status IN ('accepted', 'queued', 'running')
-                  AND m.processing_status = 'extracting'
-                  AND m.processing_started_at IS NOT NULL
-                  AND m.processing_started_at
-                      < now() - (CAST(:stale_seconds AS integer) * interval '1 second')
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM media_source_attempts newer
-                      WHERE newer.media_id = msa.media_id
-                        AND (
-                            newer.attempt_no,
-                            newer.created_at,
-                            newer.id
-                        ) > (
-                            msa.attempt_no,
-                            msa.created_at,
-                            msa.id
-                        )
-                  )
-                ORDER BY m.processing_started_at ASC, msa.id ASC
-                LIMIT :limit
-                """
-                ),
-                {
-                    "stale_seconds": int(settings.ingest_stale_extracting_seconds),
-                    "limit": _BATCH_LIMIT,
-                },
-            )
-            .mappings()
-            .all()
+_STALE_CONTENT_INDEX_STATES = """
+    SELECT cis.owner_id AS media_id
+    FROM content_index_states cis
+    JOIN media m ON cis.owner_kind = 'media' AND m.id = cis.owner_id
+    WHERE m.kind IN ('web_article', 'epub', 'pdf')
+      AND m.processing_status = 'ready_for_reading'
+      AND (
+          cis.status = 'pending'
+          OR (
+              cis.status = 'indexing'
+              AND cis.updated_at
+                  < now() - (CAST(:stale_seconds AS integer) * interval '1 second')
+          )
+      )
+    ORDER BY cis.updated_at ASC, cis.owner_id ASC
+    LIMIT :limit
+"""
+
+_PENDING_TRANSCRIPT_SEMANTICS = """
+    SELECT mts.media_id
+    FROM media_transcript_states mts
+    JOIN media m ON m.id = mts.media_id
+    WHERE m.kind IN ('podcast_episode', 'video')
+      AND mts.transcript_state IN ('ready', 'partial')
+      AND mts.transcript_coverage IN ('partial', 'full')
+      AND mts.semantic_status IN ('pending', 'failed')
+      AND EXISTS (
+          SELECT 1 FROM podcast_transcript_segments pts WHERE pts.media_id = mts.media_id
+      )
+    ORDER BY mts.updated_at ASC, mts.media_id ASC
+    LIMIT :limit
+"""
+
+
+def reconcile_stale_ingest_media_job(request_id: str | None) -> dict[str, int]:
+    """Ensure the canonical job for every stuck source, index and semantic row."""
+    stale_seconds = int(get_settings().ingest_stale_extracting_seconds)
+    source_rows = _discover(_STALE_SOURCE_ATTEMPTS, stale_seconds=stale_seconds)
+    index_rows = _discover(_STALE_CONTENT_INDEX_STATES, stale_seconds=stale_seconds)
+    semantic_rows = _discover(_PENDING_TRANSCRIPT_SEMANTICS)
+
+    source_outcomes = [
+        _each(
+            "reconcile_stale_source_attempt",
+            partial(
+                _ensure_source,
+                media_id=UUID(str(row["media_id"])),
+                attempt_id=UUID(str(row["attempt_id"])),
+                request_id=request_id,
+            ),
         )
-        index_rows = (
-            discovery.execute(
-                text(
-                    """
-                SELECT cis.owner_id AS media_id
-                FROM content_index_states cis
-                JOIN media m
-                  ON cis.owner_kind = 'media'
-                 AND m.id = cis.owner_id
-                WHERE m.kind IN ('web_article', 'epub', 'pdf')
-                  AND m.processing_status = 'ready_for_reading'
-                  AND (
-                      cis.status = 'pending'
-                      OR (
-                          cis.status = 'indexing'
-                          AND cis.updated_at
-                              < now()
-                                - (CAST(:stale_seconds AS integer) * interval '1 second')
-                      )
-                  )
-                ORDER BY cis.updated_at ASC, cis.owner_id ASC
-                LIMIT :limit
-                """
-                ),
-                {
-                    "stale_seconds": int(settings.ingest_stale_extracting_seconds),
-                    "limit": _BATCH_LIMIT,
-                },
-            )
-            .mappings()
-            .all()
+        for row in source_rows
+    ]
+    index_outcomes = [
+        _each(
+            "reconcile_media_content_index",
+            partial(_ensure_index, media_id=UUID(str(row["media_id"])), request_id=request_id),
         )
-        semantic_rows = (
-            discovery.execute(
-                text(
-                    """
-                SELECT mts.media_id
-                FROM media_transcript_states mts
-                JOIN media m ON m.id = mts.media_id
-                WHERE m.kind IN ('podcast_episode', 'video')
-                  AND mts.transcript_state IN ('ready', 'partial')
-                  AND mts.transcript_coverage IN ('partial', 'full')
-                  AND mts.semantic_status IN ('pending', 'failed')
-                  AND EXISTS (
-                      SELECT 1
-                      FROM podcast_transcript_segments pts
-                      WHERE pts.media_id = mts.media_id
-                  )
-                ORDER BY mts.updated_at ASC, mts.media_id ASC
-                LIMIT :limit
-                """
-                ),
-                {"limit": _BATCH_LIMIT},
-            )
-            .mappings()
-            .all()
+        for row in index_rows
+    ]
+    semantic_outcomes = [
+        _each(
+            "reconcile_podcast_semantic_index",
+            partial(_ensure_semantic, media_id=UUID(str(row["media_id"]))),
         )
-        discovery.rollback()
-    finally:
-        discovery.close()
-
-    source_enqueued = 0
-    source_deduplicated = 0
-    source_suspended = 0
-    source_skipped = 0
-    for row in source_rows:
-        db = get_session_factory()()
-        try:
-            outcome = retry_serializable(
-                db,
-                "reconcile_stale_source_attempt",
-                partial(
-                    _ensure_source,
-                    db,
-                    media_id=UUID(str(row["media_id"])),
-                    attempt_id=UUID(str(row["attempt_id"])),
-                    request_id=request_id,
-                ),
-            )
-        finally:
-            db.close()
-        if outcome == "enqueued":
-            source_enqueued += 1
-        elif outcome == "deduplicated":
-            source_deduplicated += 1
-        elif outcome == "suspended":
-            source_suspended += 1
-        else:
-            source_skipped += 1
-
-    index_enqueued = 0
-    index_deduplicated = 0
-    index_suspended = 0
-    for row in index_rows:
-        db = get_session_factory()()
-        try:
-            intent = retry_serializable(
-                db,
-                "reconcile_media_content_index",
-                partial(
-                    _ensure_index,
-                    db,
-                    media_id=UUID(str(row["media_id"])),
-                    request_id=request_id,
-                ),
-            )
-        finally:
-            db.close()
-        if intent.suspended:
-            index_suspended += 1
-        elif intent.enqueued:
-            index_enqueued += 1
-        else:
-            index_deduplicated += 1
-
-    semantic_enqueued = 0
-    semantic_deduplicated = 0
-    for row in semantic_rows:
-        db = get_session_factory()()
-        try:
-            inserted = retry_serializable(
-                db,
-                "reconcile_podcast_semantic_index",
-                partial(
-                    _ensure_semantic,
-                    db,
-                    media_id=UUID(str(row["media_id"])),
-                ),
-            )
-        finally:
-            db.close()
-        if inserted:
-            semantic_enqueued += 1
-        else:
-            semantic_deduplicated += 1
-
+        for row in semantic_rows
+    ]
     return {
         "source_scanned": len(source_rows),
-        "source_enqueued": source_enqueued,
-        "source_deduplicated": source_deduplicated,
-        "source_suspended": source_suspended,
-        "source_skipped": source_skipped,
+        "source_enqueued": source_outcomes.count("enqueued"),
+        "source_deduplicated": source_outcomes.count("deduplicated"),
+        "source_suspended": source_outcomes.count("suspended"),
+        "source_skipped": source_outcomes.count("skipped"),
         "content_index_scanned": len(index_rows),
-        "content_index_enqueued": index_enqueued,
-        "content_index_deduplicated": index_deduplicated,
-        "content_index_suspended": index_suspended,
+        "content_index_enqueued": index_outcomes.count("enqueued"),
+        "content_index_deduplicated": index_outcomes.count("deduplicated"),
+        "content_index_suspended": index_outcomes.count("suspended"),
         "semantic_scanned": len(semantic_rows),
-        "semantic_enqueued": semantic_enqueued,
-        "semantic_deduplicated": semantic_deduplicated,
+        "semantic_enqueued": semantic_outcomes.count("enqueued"),
+        "semantic_deduplicated": semantic_outcomes.count("deduplicated"),
     }
 
 
-def _ensure_source(
-    db: Session,
-    *,
-    media_id: UUID,
-    attempt_id: UUID,
-    request_id: str | None,
-) -> str:
+def _discover(statement: str, **params: Any) -> Sequence[Any]:
+    db = get_session_factory()()
+    try:
+        rows = db.execute(text(statement), {"limit": _BATCH_LIMIT, **params}).mappings().all()
+        db.rollback()
+    finally:
+        db.close()
+    return rows
+
+
+def _each(label: str, operation: Callable[[Session], str]) -> str:
+    db = get_session_factory()()
+    try:
+        return retry_serializable(db, label, partial(operation, db))
+    finally:
+        db.close()
+
+
+def _ensure_source(db: Session, *, media_id: UUID, attempt_id: UUID, request_id: str | None) -> str:
     outcome = ensure_stale_source_attempt_job(
-        db,
-        media_id=media_id,
-        attempt_id=attempt_id,
-        request_id=request_id,
+        db, media_id=media_id, attempt_id=attempt_id, request_id=request_id
     )
     db.commit()
     return outcome
 
 
-def _ensure_index(
-    db: Session,
-    *,
-    media_id: UUID,
-    request_id: str | None,
-) -> MediaContentReindexIntent:
+def _ensure_index(db: Session, *, media_id: UUID, request_id: str | None) -> str:
     intent = ensure_media_content_reindex_job(
-        db,
-        media_id=media_id,
-        reason="reconciliation",
-        request_id=request_id,
+        db, media_id=media_id, reason="reconciliation", request_id=request_id
     )
     db.commit()
-    return intent
+    if intent.suspended:
+        return "suspended"
+    return "enqueued" if intent.enqueued else "deduplicated"
 
 
-def _ensure_semantic(
-    db: Session,
-    *,
-    media_id: UUID,
-) -> bool:
+def _ensure_semantic(db: Session, *, media_id: UUID) -> str:
     try:
         admission = request_transcript_semantic_repair(
-            db,
-            media_id=media_id,
-            request_reason="operator_requeue",
-            now=datetime.now(UTC),
+            db, media_id=media_id, request_reason="operator_requeue", now=datetime.now(UTC)
         )
     except NotFoundError:
         db.commit()
-        return False
+        return "deduplicated"
     db.commit()
-    return admission.outcome == "queued"
+    return "enqueued" if admission.outcome == "queued" else "deduplicated"

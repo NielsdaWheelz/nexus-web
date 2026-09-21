@@ -1,10 +1,20 @@
+"""Wire schemas for resource items.
+
+Two serialization families live here and the split is load-bearing: the item /
+activation / capability / locator / mutation models are camelCase on the wire
+(:class:`CamelModel`), while the surface and command models stay snake_case — the web
+decodes both key-exact, so a blanket alias generator over the module would break the
+surface routes.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Annotated, Any, Literal, TypeGuard
 from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, AliasGenerator, BaseModel, ConfigDict, Field, field_validator
+from pydantic.alias_generators import to_camel
 
 from nexus.services.resource_graph.refs import (
     RESOURCE_SCHEMES,
@@ -29,6 +39,24 @@ NOTE_PM_INLINE_NODE_TYPES = {"text", "hard_break", "object_ref", "image"}
 NOTE_PM_MARK_TYPES = {"strong", "em", "code", "link", "strikethrough"}
 
 
+class CamelModel(BaseModel):
+    """Accepts snake_case or camelCase; emits camelCase under ``by_alias=True``.
+
+    Validation keeps the snake name first so a request body's declared schema stays
+    snake_case, which is what the web sends.
+    """
+
+    model_config = ConfigDict(
+        alias_generator=AliasGenerator(
+            validation_alias=lambda field: (
+                AliasChoices(field, to_camel(field)) if to_camel(field) != field else field
+            ),
+            serialization_alias=to_camel,
+        ),
+        populate_by_name=True,
+    )
+
+
 def is_object_type(value: str) -> TypeGuard[OBJECT_TYPES]:
     return value in OBJECT_TYPE_VALUES
 
@@ -49,11 +77,8 @@ def _validate_pm_node(node: object, *, path: str, top_level: bool = False) -> st
         raise ValueError(f"{path}.type must be a known notes ProseMirror node type")
     if top_level and node_type not in NOTE_PM_BODY_NODE_TYPES:
         raise ValueError(f"{path}.type must be paragraph, code_block, or object_embed")
-
-    unknown_keys = set(node) - {"type", "attrs", "content", "marks", "text"}
-    if unknown_keys:
+    if set(node) - {"type", "attrs", "content", "marks", "text"}:
         raise ValueError(f"{path} contains unsupported ProseMirror node fields")
-
     if "marks" in node:
         _validate_pm_marks(node["marks"], path=f"{path}.marks")
 
@@ -65,7 +90,6 @@ def _validate_pm_node(node: object, *, path: str, top_level: bool = False) -> st
         if "content" in node:
             raise ValueError(f"{path}.content is not valid on text nodes")
         return node_type
-
     if "text" in node:
         raise ValueError(f"{path}.text is only valid on text nodes")
 
@@ -81,12 +105,16 @@ def _validate_pm_node(node: object, *, path: str, top_level: bool = False) -> st
         raise ValueError(f"{path}.content is not valid on atom nodes")
     if not isinstance(content, list):
         raise ValueError(f"{path}.content must be a list")
-
     child_types = [
         _validate_pm_node(child, path=f"{path}.content[{index}]")
         for index, child in enumerate(content)
     ]
-    _validate_pm_child_types(node_type, child_types, path=f"{path}.content")
+    if node_type == "paragraph" and any(
+        child not in NOTE_PM_INLINE_NODE_TYPES for child in child_types
+    ):
+        raise ValueError(f"{path}.content must contain only inline nodes")
+    if node_type == "code_block" and any(child != "text" for child in child_types):
+        raise ValueError(f"{path}.content must contain only text nodes")
     return node_type
 
 
@@ -100,8 +128,7 @@ def _validate_pm_marks(marks: object, *, path: str) -> None:
         mark_type = mark.get("type")
         if not isinstance(mark_type, str) or mark_type not in NOTE_PM_MARK_TYPES:
             raise ValueError(f"{mark_path}.type must be a known notes ProseMirror mark type")
-        unknown_keys = set(mark) - {"type", "attrs"}
-        if unknown_keys:
+        if set(mark) - {"type", "attrs"}:
             raise ValueError(f"{mark_path} contains unsupported ProseMirror mark fields")
         attrs = mark.get("attrs")
         if attrs is not None and not isinstance(attrs, dict):
@@ -150,118 +177,45 @@ def _validate_pm_attrs(node_type: str, attrs: dict[str, Any] | None, *, path: st
             raise ValueError(f"{path}.title must be a string or null")
 
 
-def _validate_pm_child_types(node_type: str, child_types: list[str], *, path: str) -> None:
-    if node_type == "paragraph":
-        if any(child_type not in NOTE_PM_INLINE_NODE_TYPES for child_type in child_types):
-            raise ValueError(f"{path} must contain only inline nodes")
-    elif node_type == "code_block":
-        if any(child_type != "text" for child_type in child_types):
-            raise ValueError(f"{path} must contain only text nodes")
+class ResourceUserRelationPolicyOut(CamelModel):
+    user_link_source: bool
+    user_link_target: Literal["none", "direct", "materialize_passage"]
+    note_reference_target: bool
 
 
-class ResourceUserRelationPolicyOut(BaseModel):
-    user_link_source: bool = Field(
-        validation_alias=AliasChoices("user_link_source", "userLinkSource"),
-        serialization_alias="userLinkSource",
-    )
-    user_link_target: Literal["none", "direct", "materialize_passage"] = Field(
-        validation_alias=AliasChoices("user_link_target", "userLinkTarget"),
-        serialization_alias="userLinkTarget",
-    )
-    note_reference_target: bool = Field(
-        validation_alias=AliasChoices("note_reference_target", "noteReferenceTarget"),
-        serialization_alias="noteReferenceTarget",
-    )
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
-class ResourceItemCapabilitiesOut(BaseModel):
-    sharing: Literal[
-        "None",
-        "CopyOnly",
-        "ResourceGrants",
-        "HighlightGrants",
-        "LibraryMembership",
-    ]
-    library_placement: Literal["None", "ManageEntries"] = Field(
-        validation_alias=AliasChoices("library_placement", "libraryPlacement"),
-        serialization_alias="libraryPlacement",
-    )
-    user_relation: ResourceUserRelationPolicyOut = Field(
-        validation_alias=AliasChoices("user_relation", "userRelation"),
-        serialization_alias="userRelation",
-    )
+class ResourceItemCapabilitiesOut(CamelModel):
+    sharing: Literal["None", "CopyOnly", "ResourceGrants", "HighlightGrants", "LibraryMembership"]
+    library_placement: Literal["None", "ManageEntries"]
+    user_relation: ResourceUserRelationPolicyOut
     attachable: bool
-    chat_subject: Literal["none", "label", "scope", "readable", "quote", "generated_output"] = (
-        Field(
-            validation_alias=AliasChoices("chat_subject", "chatSubject"),
-            serialization_alias="chatSubject",
-        )
-    )
+    chat_subject: Literal["none", "label", "scope", "readable", "quote", "generated_output"]
     readable: Literal["none", "scope", "body", "media"]
     inspectable: Literal["none", "media_document_map"]
-    citable_result_type: str | None = Field(
-        None,
-        validation_alias=AliasChoices("citable_result_type", "citableResultType"),
-        serialization_alias="citableResultType",
-    )
-    citation_output_source: bool = Field(
-        validation_alias=AliasChoices("citation_output_source", "citationOutputSource"),
-        serialization_alias="citationOutputSource",
-    )
-    app_search_scope: bool = Field(
-        validation_alias=AliasChoices("app_search_scope", "appSearchScope"),
-        serialization_alias="appSearchScope",
-    )
-    conversation_search_scope: bool = Field(
-        validation_alias=AliasChoices("conversation_search_scope", "conversationSearchScope"),
-        serialization_alias="conversationSearchScope",
-    )
-    adjacency_source: bool = Field(
-        validation_alias=AliasChoices("adjacency_source", "adjacencySource"),
-        serialization_alias="adjacencySource",
-    )
-    adjacency_target: bool = Field(
-        validation_alias=AliasChoices("adjacency_target", "adjacencyTarget"),
-        serialization_alias="adjacencyTarget",
-    )
-    prompt_render: Literal["none", "label", "inline_body", "quote"] = Field(
-        validation_alias=AliasChoices("prompt_render", "promptRender"),
-        serialization_alias="promptRender",
-    )
+    citable_result_type: str | None = None
+    citation_output_source: bool
+    app_search_scope: bool
+    conversation_search_scope: bool
+    adjacency_source: bool
+    adjacency_target: bool
+    prompt_render: Literal["none", "label", "inline_body", "quote"]
     expansion_policy: Literal[
         "none",
         "media_owned_reader_children",
         "page_note_blocks",
         "note_block_owned_evidence",
         "artifact_revisions",
-    ] = Field(
-        validation_alias=AliasChoices("expansion_policy", "expansionPolicy"),
-        serialization_alias="expansionPolicy",
-    )
+    ]
     expandable: bool
 
-    model_config = ConfigDict(populate_by_name=True)
 
-
-class ResourceActivationOut(BaseModel):
-    resource_ref: str = Field(
-        validation_alias=AliasChoices("resource_ref", "resourceRef"),
-        serialization_alias="resourceRef",
-    )
+class ResourceActivationOut(CamelModel):
+    resource_ref: str
     kind: Literal["route", "external", "none"]
     href: str | None = None
-    unresolved_reason: str | None = Field(
-        None,
-        validation_alias=AliasChoices("unresolved_reason", "unresolvedReason"),
-        serialization_alias="unresolvedReason",
-    )
-
-    model_config = ConfigDict(populate_by_name=True)
+    unresolved_reason: str | None = None
 
 
-class ResourceItemOut(BaseModel):
+class ResourceItemOut(CamelModel):
     ref: str
     scheme: ResourceScheme
     id: UUID
@@ -271,13 +225,7 @@ class ResourceItemOut(BaseModel):
     activation: ResourceActivationOut
     missing: bool = False
     capabilities: ResourceItemCapabilitiesOut
-    version_by_lane: dict[str, int] = Field(
-        default_factory=dict,
-        validation_alias=AliasChoices("version_by_lane", "versionByLane"),
-        serialization_alias="versionByLane",
-    )
-
-    model_config = ConfigDict(populate_by_name=True)
+    version_by_lane: dict[str, int] = Field(default_factory=dict)
 
 
 class ResourceRefLocatorIn(BaseModel):
@@ -289,8 +237,7 @@ class ResourceRefLocatorIn(BaseModel):
     @field_validator("ref")
     @classmethod
     def validate_ref(cls, value: str) -> str:
-        parsed = parse_resource_ref(value)
-        if isinstance(parsed, ResourceRefParseFailure):
+        if isinstance(parse_resource_ref(value), ResourceRefParseFailure):
             raise ValueError("ref must be a canonical ResourceRef")
         return value
 
@@ -314,25 +261,14 @@ class ResourceLocatorResolveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ResourceLocatorResolutionOut(BaseModel):
+class ResourceLocatorResolutionOut(CamelModel):
     locator: ResourceLocatorIn
-    resource_item: ResourceItemOut = Field(
-        validation_alias=AliasChoices("resource_item", "resourceItem"),
-        serialization_alias="resourceItem",
-    )
-    canonical_href: str | None = Field(
-        None,
-        validation_alias=AliasChoices("canonical_href", "canonicalHref"),
-        serialization_alias="canonicalHref",
-    )
-
-    model_config = ConfigDict(populate_by_name=True)
+    resource_item: ResourceItemOut
+    canonical_href: str | None = None
 
 
 class ResourceLocatorResolveResponse(BaseModel):
     resolutions: list[ResourceLocatorResolutionOut]
-
-    model_config = ConfigDict(populate_by_name=True)
 
 
 class PageTitleSurfaceContent(BaseModel):
@@ -473,94 +409,11 @@ SurfaceCommand = Annotated[
 
 
 class ResourceSurfaceCommandRequest(BaseModel):
-    client_mutation_id: str = Field(
-        min_length=1,
-        max_length=120,
-    )
+    client_mutation_id: str = Field(min_length=1, max_length=120)
     base_versions: list[ResourceLaneVersionIn] = Field(default_factory=list)
     command: SurfaceCommand
 
     model_config = ConfigDict(extra="forbid")
-
-
-class ResourceBodyMutationRequest(BaseModel):
-    client_mutation_id: str = Field(
-        min_length=1,
-        max_length=120,
-        validation_alias=AliasChoices("client_mutation_id", "clientMutationId"),
-        serialization_alias="clientMutationId",
-    )
-    base_versions: list[ResourceLaneVersionIn] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("base_versions", "baseVersions"),
-        serialization_alias="baseVersions",
-    )
-    body_pm_json: dict[str, Any] = Field(
-        validation_alias=AliasChoices("body_pm_json", "bodyPmJson"),
-        serialization_alias="bodyPmJson",
-    )
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-    @field_validator("body_pm_json")
-    @classmethod
-    def validate_body_pm_json(cls, value: dict[str, Any]) -> dict[str, Any]:
-        return validate_note_body_pm_json(value) or value
-
-
-class ResourceTitleMutationRequest(BaseModel):
-    client_mutation_id: str = Field(
-        min_length=1,
-        max_length=120,
-        validation_alias=AliasChoices("client_mutation_id", "clientMutationId"),
-        serialization_alias="clientMutationId",
-    )
-    base_versions: list[ResourceLaneVersionIn] = Field(
-        default_factory=list,
-        validation_alias=AliasChoices("base_versions", "baseVersions"),
-        serialization_alias="baseVersions",
-    )
-    title: str = Field(min_length=1, max_length=200)
-
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-
-class ResourceBodyMutationOut(BaseModel):
-    client_mutation_id: str = Field(
-        validation_alias=AliasChoices("client_mutation_id", "clientMutationId"),
-        serialization_alias="clientMutationId",
-    )
-    item: ResourceItemOut
-    body_pm_json: dict[str, Any] = Field(
-        validation_alias=AliasChoices("body_pm_json", "bodyPmJson"),
-        serialization_alias="bodyPmJson",
-    )
-    body_text: str = Field(
-        validation_alias=AliasChoices("body_text", "bodyText"),
-        serialization_alias="bodyText",
-    )
-    versions: dict[str, dict[str, int]] = Field(default_factory=dict)
-    updated_at: datetime = Field(
-        validation_alias=AliasChoices("updated_at", "updatedAt"),
-        serialization_alias="updatedAt",
-    )
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
-class ResourceTitleMutationOut(BaseModel):
-    client_mutation_id: str = Field(
-        validation_alias=AliasChoices("client_mutation_id", "clientMutationId"),
-        serialization_alias="clientMutationId",
-    )
-    item: ResourceItemOut
-    versions: dict[str, dict[str, int]] = Field(default_factory=dict)
-    updated_at: datetime = Field(
-        validation_alias=AliasChoices("updated_at", "updatedAt"),
-        serialization_alias="updatedAt",
-    )
-
-    model_config = ConfigDict(populate_by_name=True)
 
 
 class ResourceSurfaceCommandOut(BaseModel):
@@ -568,3 +421,40 @@ class ResourceSurfaceCommandOut(BaseModel):
     surface: ResourceSurfaceOut
 
     model_config = ConfigDict(extra="forbid")
+
+
+class ResourceBodyMutationRequest(CamelModel):
+    client_mutation_id: str = Field(min_length=1, max_length=120)
+    base_versions: list[ResourceLaneVersionIn] = Field(default_factory=list)
+    body_pm_json: dict[str, Any]
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("body_pm_json")
+    @classmethod
+    def validate_body_pm_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_note_body_pm_json(value) or value
+
+
+class ResourceTitleMutationRequest(CamelModel):
+    client_mutation_id: str = Field(min_length=1, max_length=120)
+    base_versions: list[ResourceLaneVersionIn] = Field(default_factory=list)
+    title: str = Field(min_length=1, max_length=200)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ResourceBodyMutationOut(CamelModel):
+    client_mutation_id: str
+    item: ResourceItemOut
+    body_pm_json: dict[str, Any]
+    body_text: str
+    versions: dict[str, dict[str, int]] = Field(default_factory=dict)
+    updated_at: datetime
+
+
+class ResourceTitleMutationOut(CamelModel):
+    client_mutation_id: str
+    item: ResourceItemOut
+    versions: dict[str, dict[str, int]] = Field(default_factory=dict)
+    updated_at: datetime

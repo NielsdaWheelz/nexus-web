@@ -1,20 +1,17 @@
-"""URL validation and normalization utilities for web article ingestion.
+"""The one public-HTTP URL policy for ingest.
 
-This module provides URL validation and normalization functions:
-- validate_requested_url(): Strict validation, raises InvalidRequestError on failure
-- normalize_url_for_display(): Returns normalized URL for canonical_source_url
-
-Key behaviors:
-- Scheme must be http or https
-- Length must be ≤ 2048 characters
-- Host must be present and non-empty
-- Userinfo (user:pass@host) is forbidden
-- Localhost, internal-network suffixes, and private/reserved IPs are rejected
-- Fragment (#...) is stripped during normalization
-- Scheme and host are lowercased during normalization
+``validate_requested_url`` is the raising gate every user- or feed-supplied URL
+passes: http/https, at most ``MAX_URL_LENGTH`` characters, no userinfo, a host
+that is neither a denylisted internal name nor a private/reserved IP literal.
+``normalize_url_for_display`` is the canonical form stored on media and attempts,
+and ``parse_identity_url`` is the shared decomposition the provider classifiers
+(YouTube, X) match against.
 """
 
+from __future__ import annotations
+
 import ipaddress
+from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
 
 from nexus.errors import ApiErrorCode, InvalidRequestError
@@ -25,85 +22,45 @@ from nexus.services.net.egress_policy import (
 )
 
 MAX_URL_LENGTH = 2048
-
-# Allowed schemes
-ALLOWED_SCHEMES = {"http", "https"}
+ALLOWED_SCHEMES = frozenset({"http", "https"})
 
 
-def _is_blocked_hostname(hostname: str) -> bool:
-    """Reject localhost, internal-network suffixes, and private/reserved IP literals."""
-    hostname_lower = hostname.lower()
-    if hostname_lower in HOSTNAME_DENYLIST_EXACT:
-        return True
-    if hostname_lower.endswith(HOSTNAME_DENYLIST_SUFFIXES):
-        return True
-    try:
-        return is_private_ip(ipaddress.ip_address(hostname))
-    except ValueError:
-        return False
-
-
-def normalize_host(hostname: str | None) -> str:
-    """Lowercase, strip trailing dots, and drop leading 'www.' from a URL host."""
-    if hostname is None:
-        return ""
-    host = hostname.strip().lower().rstrip(".")
-    if host.startswith("www."):
-        host = host[4:]
-    return host
+@dataclass(frozen=True, slots=True)
+class ParsedIdentityUrl:
+    host: str
+    path_segments: tuple[str, ...]
+    query: str
 
 
 def validate_requested_url(url: str) -> None:
-    """Validate a URL for web article ingestion.
-
-    Strict validation that raises InvalidRequestError on any validation failure.
-
-    Args:
-        url: The URL to validate.
-
-    Raises:
-        InvalidRequestError: If validation fails with details about the failure.
-    """
-    # Check length
+    """Raise ``InvalidRequestError`` unless the URL is an absolute public http(s) URL."""
     if len(url) > MAX_URL_LENGTH:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             f"URL exceeds maximum length of {MAX_URL_LENGTH} characters",
         )
-
     parsed = urlparse(url)
-
-    # Check scheme
-    scheme = parsed.scheme.lower()
-    if scheme not in ALLOWED_SCHEMES:
+    if parsed.scheme.lower() not in ALLOWED_SCHEMES:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             f"Invalid URL scheme '{parsed.scheme}'. Only http and https are allowed.",
         )
-
-    # Check for userinfo (credentials in URL)
     if parsed.username or parsed.password:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             "URLs with credentials (user:pass@host) are not allowed",
         )
-
-    # Check host exists
     if not parsed.hostname:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             "URL must have a valid hostname",
         )
-
-    # Check for blocked hostnames
     if _is_blocked_hostname(parsed.hostname):
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             f"URL hostname '{parsed.hostname}' is not allowed",
         )
-
-    # Verify it's an absolute URL (has both scheme and netloc)
-    if not parsed.scheme or not parsed.netloc:
+    if not parsed.netloc:
         raise InvalidRequestError(
             ApiErrorCode.E_INVALID_REQUEST,
             "URL must be an absolute URL with scheme and host",
@@ -111,53 +68,39 @@ def validate_requested_url(url: str) -> None:
 
 
 def normalize_url_for_display(url: str) -> str:
-    """Normalize a URL for display and canonical_source_url storage.
-
-    Normalization rules:
-    - Lowercase scheme
-    - Lowercase host
-    - Strip fragment (#...)
-    - Preserve path, query params, port
-
-    This function assumes the URL has already been validated.
-    It does NOT follow redirects or modify query params.
-
-    Args:
-        url: The URL to normalize.
-
-    Returns:
-        The normalized URL string.
-    """
+    """Lowercase scheme and host, drop the default port and the fragment."""
     parsed = urlparse(url)
-
-    # Lowercase scheme and netloc (includes host and optional port)
-    # We need to handle the port separately from the hostname
     scheme = parsed.scheme.lower()
-
-    # Build normalized netloc
     hostname = parsed.hostname.lower() if parsed.hostname else ""
     port = parsed.port
+    default_port = 80 if scheme == "http" else 443
+    netloc = f"{hostname}:{port}" if port and port != default_port else hostname
+    return urlunparse((scheme, netloc, parsed.path or "/", parsed.params, parsed.query, ""))
 
-    if port:
-        # Include port only if it's non-standard
-        if (scheme == "http" and port != 80) or (scheme == "https" and port != 443):
-            netloc = f"{hostname}:{port}"
-        else:
-            netloc = hostname
-    else:
-        netloc = hostname
 
-    # Reconstruct URL without fragment
-    # urlunparse takes (scheme, netloc, path, params, query, fragment)
-    normalized = urlunparse(
-        (
-            scheme,
-            netloc,
-            parsed.path or "/",  # Empty path becomes /
-            parsed.params,
-            parsed.query,
-            "",  # Empty fragment - stripped
-        )
+def normalize_host(hostname: str | None) -> str:
+    """Lowercase, strip trailing dots, and drop a leading ``www.``."""
+    if hostname is None:
+        return ""
+    host = hostname.strip().lower().rstrip(".")
+    return host[4:] if host.startswith("www.") else host
+
+
+def parse_identity_url(url: str) -> ParsedIdentityUrl:
+    """Decompose a URL into the parts a provider classifier matches on."""
+    parsed = urlparse(url)
+    return ParsedIdentityUrl(
+        host=normalize_host(parsed.hostname),
+        path_segments=tuple(segment for segment in parsed.path.split("/") if segment),
+        query=parsed.query,
     )
 
-    return normalized
+
+def _is_blocked_hostname(hostname: str) -> bool:
+    lowered = hostname.lower()
+    if lowered in HOSTNAME_DENYLIST_EXACT or lowered.endswith(HOSTNAME_DENYLIST_SUFFIXES):
+        return True
+    try:
+        return is_private_ip(ipaddress.ip_address(hostname))
+    except ValueError:
+        return False
