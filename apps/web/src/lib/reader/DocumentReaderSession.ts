@@ -49,7 +49,7 @@ export type ReaderInitialEpubTarget = { kind: "Section" | "Fragment"; id: string
 export interface DocumentReaderSession {
   load(signal: AbortSignal): Promise<LoadedDocumentReaderSession>;
   /**
-   * Discard the memoized composed load (and its one-shot content grants) so
+   * Discard the memoized composed load so
    * the next `load` re-runs the whole descriptor/progress/content transaction.
    * This is the single retry/invalidation identity for the session.
    */
@@ -200,8 +200,6 @@ export function createDocumentReaderSession({
   let loaded: LoadedDocumentReaderSession | null = null;
   let pendingLoad: Promise<LoadedDocumentReaderSession> | null = null;
   let loadGeneration = 0;
-  let initialEpubFragmentAvailable = false;
-  let initialPdfDocumentAvailable = false;
   let initialEpubTarget: ReaderInitialEpubTarget | null = null;
 
   const loadOnce = async (
@@ -282,8 +280,6 @@ export function createDocumentReaderSession({
     const attempt = loadOnce(signal).then((result) => {
       if (generation === loadGeneration) {
         loaded = result;
-        initialEpubFragmentAvailable = result.document.kind === "Epub";
-        initialPdfDocumentAvailable = result.document.kind === "Pdf";
         pendingLoad = null;
       }
       return result;
@@ -312,36 +308,13 @@ export function createDocumentReaderSession({
       loadGeneration += 1;
       loaded = null;
       pendingLoad = null;
-      initialEpubFragmentAvailable = false;
-      initialPdfDocumentAvailable = false;
     },
     // Initial navigation is projected directly from `load`; this method is
     // reserved for explicit source invalidation after the mounted session is
     // already visible.
-    loadNavigation: (signal) => {
-      // Source invalidation replaces content: the composed one-shot fragment
-      // and PDF grants must never serve pre-invalidation payloads afterwards.
-      initialEpubFragmentAvailable = false;
-      initialPdfDocumentAvailable = false;
-      return source.loadNavigation(mediaId, signal);
-    },
-    loadEpubFragment: (fragmentId, signal) => {
-      if (
-        initialEpubFragmentAvailable &&
-        loaded?.document.kind === "Epub" &&
-        loaded.document.fragment.fragment_id === fragmentId
-      ) {
-        initialEpubFragmentAvailable = false;
-        return Promise.resolve(loaded.document.fragment);
-      }
-      return source.loadEpubFragment(mediaId, fragmentId, signal);
-    },
-    openPdf: (signal) => {
-      if (initialPdfDocumentAvailable && loaded?.document.kind === "Pdf") {
-        initialPdfDocumentAvailable = false;
-        return Promise.resolve(loaded.document.document);
-      }
-      return source.openPdf(mediaId, signal);
-    },
+    loadNavigation: (signal) => source.loadNavigation(mediaId, signal),
+    loadEpubFragment: (fragmentId, signal) =>
+      source.loadEpubFragment(mediaId, fragmentId, signal),
+    openPdf: (signal) => source.openPdf(mediaId, signal),
   };
 }
