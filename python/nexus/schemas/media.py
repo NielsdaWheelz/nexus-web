@@ -23,12 +23,6 @@ from nexus.services.sealed_handles import UploadSessionHandle
 class _Strict(BaseModel):
     """Base for every closed model on this wire: an unknown key is rejected."""
 
-<<<<<<< HEAD
-
-||||||| c407b35808
-MediaUnitStatus = Literal["building", "ready", "failed"]
-
-=======
     model_config = ConfigDict(extra="forbid")
 
 
@@ -36,8 +30,6 @@ _CAMEL_CONFIG = ConfigDict(alias_generator=to_camel, populate_by_name=True, extr
 
 MediaProcessingStatus = Literal["pending", "extracting", "ready_for_reading", "failed", "suspended"]
 MediaSourceAttemptStatus = Literal["accepted", "queued", "running", "succeeded", "failed"]
-MediaUnitStatus = Literal["building", "ready", "failed"]
->>>>>>> origin/main
 MediaReadState = Literal["unread", "in_progress", "finished"]
 MediaIntelligenceStatus = Literal[
     "building", "ready", "stale", "failed", "suspended", "not_available"
