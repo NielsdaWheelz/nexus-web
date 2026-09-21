@@ -6,8 +6,8 @@ import type {
 import {
   buildDomTextCursor,
   type DomTextCursor,
-  type DomTextSpan,
 } from "@/lib/highlights/domTextCursor";
+import { resolveDomTextRanges } from "@/lib/highlights/domTextRanges";
 
 export interface PreparedConversationFindUnit extends ConversationFindUnit {
   readonly root: HTMLElement;
@@ -72,37 +72,6 @@ export function prepareConversationFindUnits({
   );
 }
 
-function compareDomSpans(left: DomTextSpan, right: DomTextSpan): number {
-  if (left.node === right.node) {
-    return (
-      left.startUtf16 - right.startUtf16 ||
-      left.endUtf16 - right.endUtf16
-    );
-  }
-  const position = left.node.compareDocumentPosition(right.node);
-  if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-  if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
-  throw new Error(
-    "Conversation Find provenance must share one document tree.",
-  );
-}
-
-function mergeDomSpans(spans: readonly DomTextSpan[]): readonly DomTextSpan[] {
-  const merged: DomTextSpan[] = [];
-  for (const span of [...spans].sort(compareDomSpans)) {
-    const previous = merged[merged.length - 1];
-    if (
-      previous?.node === span.node &&
-      span.startUtf16 <= previous.endUtf16
-    ) {
-      previous.endUtf16 = Math.max(previous.endUtf16, span.endUtf16);
-    } else {
-      merged.push({ ...span });
-    }
-  }
-  return merged;
-}
-
 export function resolveConversationFindRanges({
   units,
   occurrence,
@@ -126,18 +95,13 @@ export function resolveConversationFindRanges({
   ) {
     throw new Error("Conversation Find occurrence is not renderable.");
   }
-  const spans = mergeDomSpans(
-    unit.cursor.provenance
-      .slice(occurrence.startCp, occurrence.endCp)
-      .flatMap(({ spans: sourceSpans }) => sourceSpans),
+  const ranges = resolveDomTextRanges(
+    unit.cursor,
+    occurrence.startCp,
+    occurrence.endCp,
   );
-  if (spans.length === 0) {
+  if (ranges === null) {
     throw new Error("Conversation Find occurrence has no DOM provenance.");
   }
-  return spans.map((span) => {
-    const range = span.node.ownerDocument.createRange();
-    range.setStart(span.node, span.startUtf16);
-    range.setEnd(span.node, span.endUtf16);
-    return range;
-  });
+  return ranges;
 }

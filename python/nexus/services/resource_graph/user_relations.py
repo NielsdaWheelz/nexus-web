@@ -35,7 +35,7 @@ from nexus.schemas.resource_graph import (
     StanceOut,
     connection_out,
 )
-from nexus.services import highlights, notes, passage_anchors, pdf_highlights
+from nexus.services import highlights, note_bodies, notes, passage_anchors, pdf_highlights
 from nexus.services.note_indexing import enqueue_note_reindex
 from nexus.services.resource_graph import cleanup, connections, edges
 from nexus.services.resource_graph.edges import source_is, target_is
@@ -200,8 +200,11 @@ def put_link_note(
         if existing_note_id is not None and existing_note_id != request.note_block_id:
             raise ConflictError(ApiErrorCode.E_NOTE_CONFLICT, "Link already has a different note")
 
-        block = notes.upsert_note_body_without_commit(
-            db, viewer_id, request.note_block_id, request.body_pm_json
+        block = note_bodies.upsert_note_body(
+            db,
+            viewer_id=viewer_id,
+            block_id=request.note_block_id,
+            body_pm_json=request.body_pm_json,
         )
         if existing_note_id is None:
             note_ref = ResourceRef(scheme="note_block", id=block.id)

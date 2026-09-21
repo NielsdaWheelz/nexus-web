@@ -363,17 +363,13 @@ def lectern_anchors(db: Session, *, viewer_id: UUID) -> tuple[Anchor, ...]:
 
 
 def library_anchors(db: Session, *, viewer_id: UUID, library_id: UUID) -> tuple[Anchor, ...]:
-    facts = library_entries.library_anchor_facts(
+    refs = library_entries.library_anchor_facts(
         db,
         viewer_id=viewer_id,
         library_id=library_id,
         limit=SLATE_ANCHOR_LIMIT,
     )
-    return _resolved_anchors(
-        db,
-        viewer_id=viewer_id,
-        refs=[fact.ref for fact in facts],
-    )
+    return _resolved_anchors(db, viewer_id=viewer_id, refs=list(refs))
 
 
 def _resolved_anchors(

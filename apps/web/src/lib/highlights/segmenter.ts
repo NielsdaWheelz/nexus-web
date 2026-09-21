@@ -34,8 +34,8 @@ export const HIGHLIGHT_COLORS: readonly HighlightColor[] = [
  */
 export type NormalizedHighlight = {
   id: string;
-  start: number; // inclusive, codepoint index
-  end: number; // exclusive, codepoint index
+  start: number; // inclusive; same coordinate unit as textLen
+  end: number; // exclusive; same coordinate unit as textLen
   color: HighlightColor;
   created_at_ms: number; // Date.parse(created_at)
 };
@@ -115,9 +115,7 @@ function compareEvents(a: Event, b: Event): number {
 // =============================================================================
 
 /**
- * Persisted offsets measured against the freshly built canonical text: a
- * highlight that no longer fits the rendered document is dropped rather than
- * painted at a wrong location.
+ * Offsets must fit the text extent in the caller's coordinate space.
  */
 function isValidHighlight(h: NormalizedHighlight, textLen: number): boolean {
   return h.start >= 0 && h.end > h.start && h.end <= textLen;
@@ -131,7 +129,7 @@ function isValidHighlight(h: NormalizedHighlight, textLen: number): boolean {
  * Segment highlights into disjoint ranges.
  *
  * Given:
- * - textLen: number of Unicode codepoints in canonical_text
+ * - textLen: text extent in the same coordinate unit as highlight offsets
  * - highlights: list of normalized highlights
  *
  * Produces:
@@ -197,7 +195,7 @@ export function segmentHighlights(
       if (segment) {
         // Merge with previous segment if identical activeIds
         const last = segments[segments.length - 1];
-        if (last && areActiveIdsSame(last.activeIds, segment.activeIds)) {
+        if (last && last.end === segment.start && areActiveIdsSame(last.activeIds, segment.activeIds)) {
           // Extend previous segment
           last.end = segment.end;
         } else {

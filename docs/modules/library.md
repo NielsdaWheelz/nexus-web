@@ -7,10 +7,10 @@ media publication labels and ordering use the original work's publication date.
 unknown originals never borrow edition dates. podcast-container release ordering
 keeps its provider timestamp. date ownership lives in [media metadata](media-metadata.md).
 
-The domain is split into three owned modules, each owning its own tables:
+The domain is split into four owned modules, each owning its own tables:
 
-- **`services/library_governance.py`** owns the `libraries` and `memberships`
-  tables: library CRUD, membership/role management, ownership transfer, the
+- **`services/library_governance.py`** owns the `libraries` table: library CRUD,
+  the viewer's libraries index, the
   membership guards (`lock_library_for_member` returns a frozen
   `LibraryMembershipContext`; `require_admin` / `require_non_default`), the
   writable-destination contract ingest paths call
@@ -26,10 +26,10 @@ The domain is split into three owned modules, each owning its own tables:
   the single canonical entry ordering constant (`_ENTRY_ORDER = "position ASC,
 created_at DESC, id DESC"`), the locked `ensure_entry` append, deletes and
   `normalize_positions`, all read accessors, and the item-in-library
-  commands (`list_item_libraries`, `ensure_media_in_library`,
-  `add_podcast_to_library`, `remove_podcast_from_library`, `reorder_entries`,
-  `ensure_media_in_libraries_for_viewer`,
-  `ensure_media_absent_from_library_for_viewer`,
+  commands (`list_item_libraries`,
+  `ensure_media_in_library_in_current_transaction`,
+  `remove_podcast_from_library`, `reorder_entries`,
+  `ensure_media_in_libraries_for_viewer`, `remove_media_from_library`,
   `assign_libraries_for_media_in_current_transaction`,
   named Podcast placement/compaction, and unsubscribe placement teardown).
 - **`services/library_entry_listing.py`** owns the entry listing path:
@@ -41,7 +41,9 @@ created_at DESC, id DESC"`), the locked `ensure_entry` append, deletes and
   the sort-key plan and strict keyset cursor codec, `count_default_root_inventory`,
   `list_library_entries`, and hydration into the wire DTOs. It reads through
   `library_entries` and writes nothing; `library_entries` never imports it.
-- **`services/library_invitations.py`** owns the `library_invitations` table:
+- **`services/library_sharing.py`** owns the `memberships` and
+  `library_invitations` tables: member listing, role changes, removal,
+  ownership transfer, and
   create/list/list-for-viewer/accept/decline/revoke. Accept is one transaction
   — membership upsert, then invite status update — and returns
   `{invite, membership, idempotent}`. The membership commit alone is what
@@ -131,7 +133,7 @@ Every INSERT/UPDATE/DELETE on `library_entries` goes through
   read the table under an explicit allowlist: `auth/permissions.py`,
   `services/search/scope.py`, `services/contributors.py`,
   `services/agent_tools/app_search.py`, `services/note_indexing.py`, and
-  `services/artifacts/bindings/library.py`. `services/object_refs.py` is deleted;
+  `services/artifacts/subjects.py`. `services/object_refs.py` is deleted;
   its former note/@-mention reads are superseded by `services/resource_items/
   targets.py` (target search) and the shared frontend target controller — see
   [universal-link-authoring-hard-cutover.md](../cutovers/universal-link-authoring-hard-cutover.md).
@@ -162,7 +164,8 @@ on the next read; unsubscribing removes the virtual show row and retained child
 episodes immediately resurface with their consumption state intact.
 
 - **The one actor-authorized filing command.**
-  `library_entries.ensure_media_in_library` is the sole path that files media
+  `library_entries.ensure_media_in_library_in_current_transaction` is the sole
+  path that files media
   into any library, including the default one. Filing into the default
   library always inserts (or idempotently keeps) a direct, physical
   `library_entries` row there — there is no separate "intrinsic" bookkeeping

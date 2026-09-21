@@ -49,7 +49,6 @@ type BackgroundOperationKey = Literal[
     "dossier_podcast",
     "dossier_contributor",
     "dossier_idea",
-    "dossier_idea_resolve",
 ]
 type GenerationOperation = Literal["chat"] | BackgroundOperationKey
 

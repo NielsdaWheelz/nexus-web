@@ -105,7 +105,8 @@ def add_to_library(db: Session, viewer_id: UUID, value: LibraryAddInput) -> Writ
     inserted-only outcome for Undo correctness (AC4).
 
     Media readable-or-restorable authorization (rule 1) is the shared filing
-    command's own gate (`library_entries.ensure_media_in_library`) — NOT
+    command's own gate
+    (`library_entries.ensure_media_in_library_in_current_transaction`) — NOT
     `assert_ref_visible`, which uses full readable visibility and would 404 a
     tombstoned media the viewer is trying to restore by re-filing it. Podcasts
     have no restorable lane, so that branch still asserts visibility here."""
@@ -116,14 +117,14 @@ def add_to_library(db: Session, viewer_id: UUID, value: LibraryAddInput) -> Writ
     library_id = _resolve_library_id(db, viewer_id, value)
 
     if ref.scheme == "media":
-        outcome = library_entries.ensure_media_in_library_in_current_transaction(
+        inserted = library_entries.ensure_media_in_library_in_current_transaction(
             db,
             viewer_id=viewer_id,
             library_id=library_id,
             media_id=ref.id,
         )
     else:
-        outcome = library_entries.place_subscribed_podcast_in_named_library_in_current_transaction(
+        inserted = library_entries.place_subscribed_podcast_in_named_library_in_current_transaction(
             db,
             viewer_id=viewer_id,
             library_id=library_id,
@@ -134,7 +135,7 @@ def add_to_library(db: Session, viewer_id: UUID, value: LibraryAddInput) -> Writ
         text("SELECT name FROM libraries WHERE id = :id"), {"id": library_id}
     ).scalar_one()
 
-    if outcome.kind != "Added":
+    if not inserted:
         # Already filed here (by the user earlier, or a prior run). Record NO ref
         # so a later Undo can never delete a filing the assistant did not create
         # (R-5); the tool still reports success to the model.
@@ -460,11 +461,12 @@ def _revert_ref(db: Session, *, viewer_id: UUID, ref: dict[str, Any]) -> None:
         elif kind == "entry":
             target_scheme = ref["target_scheme"]
             if target_scheme == "media":
-                library_entries.undo_media_filing_for_viewer(
+                library_entries.remove_media_from_library(
                     db,
                     viewer_id,
                     UUID(ref["target_id"]),
                     UUID(ref["library_id"]),
+                    allow_default=True,
                 )
             elif target_scheme == "podcast":
                 library_entries.undo_podcast_filing_for_viewer_in_current_transaction(

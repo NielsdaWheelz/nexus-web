@@ -280,7 +280,7 @@ def subscribe_to_podcast(
                 podcast_id=podcast_id,
                 priority=PODCAST_SYNC_INTERACTIVE_PRIORITY,
             )
-        placement = place_podcast_in_named_libraries_in_current_transaction(
+        added_library_ids = place_podcast_in_named_libraries_in_current_transaction(
             db,
             viewer_id=viewer_id,
             podcast_id=podcast_id,
@@ -295,14 +295,12 @@ def subscribe_to_podcast(
             outcome=(
                 "Subscribed"
                 if created
-                else ("DestinationsAdded" if placement.added_library_ids else "AlreadySubscribed")
+                else ("DestinationsAdded" if added_library_ids else "AlreadySubscribed")
             ),
             destinations=[
                 PodcastSubscribeDestinationOutcomeOut(
                     library_id=library_id,
-                    outcome=(
-                        "Added" if library_id in placement.added_library_ids else "AlreadyPresent"
-                    ),
+                    outcome=("Added" if library_id in added_library_ids else "AlreadyPresent"),
                 )
                 for library_id in dict.fromkeys(body.named_library_ids)
             ],
@@ -396,7 +394,7 @@ def unsubscribe_from_podcast(
                 collectionRevision=subscriptions_revision,
                 libraryEntriesCollectionRevision=library_entries_revision,
             )
-        removal = remove_unsubscribed_podcast_placements(
+        removed_placement_count, retained_shared_count = remove_unsubscribed_podcast_placements(
             db, viewer_id=viewer_id, podcast_id=podcast_id
         )
         db.execute(
@@ -417,8 +415,8 @@ def unsubscribe_from_podcast(
         subscriptions_revision, library_entries_revision = _revisions(db, viewer_id)
         return PodcastUnsubscribedOut(
             podcast_id=podcast_id,
-            removed_placement_count=removal.removed_from_library_count,
-            retained_shared_count=removal.retained_shared_library_count,
+            removed_placement_count=removed_placement_count,
+            retained_shared_count=retained_shared_count,
             collectionRevision=subscriptions_revision,
             libraryEntriesCollectionRevision=library_entries_revision,
         )

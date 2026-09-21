@@ -225,3 +225,20 @@ unexpected timeouts. See
 - [open] secret scanning · 2026-09-18 pr #334 · gitguardian repeats an operator-classified false positive on a compose variable reference: [ticket](tickets/gitguardian-repeats-classified-variable-reference.md).
 - [open] oi-175 · chat tool runtime · 2026-09-21 reauthoring · p3 · `tool_call_delta` has no producer but remains in the event vocabulary, the CHECK and the browser decoder; removal needs one owner preflight count: [ticket](tickets/tool-call-delta-event-has-no-producer.md).
 - [open] oi-176 · consumption · 2026-09-21 reauthoring · p3 · the python and SQL read-state ladders enter the audio arm on different predicates for a podcast episode with no audio: [ticket](tickets/consumption-read-state-divergence.md).
+- [open] oi-177 · dossiers · 2026-09-21 reauthoring · p3 · the three artifact_learn_* tables have no writer and await a 0240 drop: [ticket](tickets/artifact-learn-tables-are-write-free.md).
+- [open] oi-178 · dossiers · 2026-09-21 reauthoring · p2 · a recheck raising DossierInputTooLarge escapes the terminal writers and leaves a build active with no terminal: [ticket](tickets/dossier-recheck-can-raise-past-the-terminal-writer.md).
+
+- [open] 2026-09-21 chat-database repair · chat worker runs synchronous database work on its execution loop: [ticket](tickets/chat-worker-database-work-runs-on-its-execution-loop.md).
+- [open] 2026-09-21 chat-database repair · request session release runs on the api event loop: [ticket](tickets/request-db-session-release-runs-on-event-loop.md).
+- [open] 2026-09-21 cleanup audit · offline reading store retains unused construction modes: [ticket](tickets/cleanup-offline-reading-unused-construction-seams.md).
+- [open] pane find · 2026-09-21 reader cleanup · adapters echo request identities through redundant response contracts: [ticket](tickets/pane-find-response-echo-protocol.md).
+- [open] epub find · 2026-09-21 reader cleanup · private adapter retains unused transport injection: [ticket](tickets/epub-find-unused-transport-injection.md).
+- [open] highlight interaction · 2026-09-21 reader cleanup · hook keeps unused focus callbacks and hover metadata: [ticket](tickets/highlight-interaction-unused-api.md).
+- [open] 2026-09-21 extension review · article capture conflates extraction, transport and defects: [ticket](tickets/extension-article-capture-conflates-failures.md).
+- [open] 2026-09-21 auth audit · cookie settlement polls callbacks already awaited by the sdk: [ticket](tickets/auth-cookie-settlement-polls-an-awaited-sdk-callback.md).
+- [open] 2026-09-21 auth audit · one refresh can rotate the provider session twice: [ticket](tickets/auth-refresh-can-rotate-the-provider-session-twice.md).
+- [open] 2026-09-21 auth audit · response cookie ownership is split between route clients and refresh: [ticket](tickets/auth-response-cookie-ownership-is-split.md).
+- [open] 2026-09-21 auth audit · auth flows retain unused injection seams: [ticket](tickets/auth-flows-retain-unused-injection-seams.md).
+- [open] 2026-09-21 auth audit · default android debug origin disagrees with bff csrf configuration: [ticket](tickets/android-debug-origin-disagrees-with-bff-csrf-origin.md).
+- [open] 2026-09-21 auth audit · browser auth redirects have two owners with different handled results: [ticket](tickets/unauthenticated-api-redirect-has-two-owners.md).
+- [open] 2026-09-21 auth audit · sdk operation deadlines end before response bodies: [ticket](tickets/supabase-operation-deadline-ends-at-response-headers.md).

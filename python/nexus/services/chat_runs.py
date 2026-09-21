@@ -45,6 +45,7 @@ from provider_runtime.types import (
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
+from starlette.concurrency import run_in_threadpool
 
 from nexus.config import Settings
 from nexus.db.models import (
@@ -55,6 +56,7 @@ from nexus.db.models import (
     ConversationActivePath,
     Message,
 )
+from nexus.db.session import get_session_factory
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
@@ -579,7 +581,6 @@ def persist_frozen_chat_admission_in_current_transaction(
 
 
 async def create_chat_run(
-    db: Session,
     *,
     viewer_id: UUID,
     destination: ChatDestination,
@@ -618,52 +619,66 @@ async def create_chat_run(
         policy=generation_policy.GENERATION_POLICY,
         tools=tool_runtime,
     )
-    try:
-        lock_chat_generation_admission_in_current_transaction(db)
-        lock_idempotency_key(db, viewer_id, normalized_key)
-        receipt = lookup_chat_admission(
-            db, viewer_id=viewer_id, idempotency_key=normalized_key, request_bytes=request_bytes
-        )
-        replayed = receipt is not None
-        if receipt is None:
+
+    def settle() -> tuple[ChatAdmissionReceipt, bool]:
+        # The complete database phase owns its session and runs on one worker
+        # thread: request cancellation cannot close a session mid-transaction,
+        # and lock waits never hold the event loop.
+        with get_session_factory()() as db:
             try:
-                # Every domain check and provisional write belongs to this
-                # savepoint under the settlement lock, never the catalog phase.
-                with db.begin_nested():
-                    if catalog_error is not None:
-                        raise catalog_error
-                    if pair is None:
-                        raise AssertionError("catalog admission lost its resolved selection")
-                    run = _admit_chat_run(
-                        db,
-                        viewer_id=viewer_id,
-                        destination=destination,
-                        reader_selection=reader_selection,
-                        content=content,
-                        catalog_definition_revision=catalog_definition_revision,
-                        tool_authority=tool_authority,
-                        pair=pair,
-                        generation_service=generation_service,
-                    )
-                    receipt = accepted_chat_admission(run, normalized_key)
-            except ApiError as exc:
-                if exc.code.value not in get_args(ChatAdmissionRejectionCode):
-                    raise
-                receipt = ChatAdmissionReceipt(
+                lock_chat_generation_admission_in_current_transaction(db)
+                lock_idempotency_key(db, viewer_id, normalized_key)
+                receipt = lookup_chat_admission(
+                    db,
+                    viewer_id=viewer_id,
                     idempotency_key=normalized_key,
-                    outcome=RejectedChatAdmission(
-                        reason=ChatAdmissionRejection(
-                            code=cast(ChatAdmissionRejectionCode, exc.code.value)
-                        )
-                    ),
+                    request_bytes=request_bytes,
                 )
-            record_chat_admission(
-                db, viewer_id=viewer_id, request_bytes=request_bytes, receipt=receipt
-            )
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+                replayed = receipt is not None
+                if receipt is None:
+                    try:
+                        # Every domain check and provisional write belongs to this
+                        # savepoint under the settlement lock, never the catalog phase.
+                        with db.begin_nested():
+                            if catalog_error is not None:
+                                raise catalog_error
+                            if pair is None:
+                                raise AssertionError(
+                                    "catalog admission lost its resolved selection"
+                                )
+                            run = _admit_chat_run(
+                                db,
+                                viewer_id=viewer_id,
+                                destination=destination,
+                                reader_selection=reader_selection,
+                                content=content,
+                                catalog_definition_revision=catalog_definition_revision,
+                                tool_authority=tool_authority,
+                                pair=pair,
+                                generation_service=generation_service,
+                            )
+                            receipt = accepted_chat_admission(run, normalized_key)
+                    except ApiError as exc:
+                        if exc.code.value not in get_args(ChatAdmissionRejectionCode):
+                            raise
+                        receipt = ChatAdmissionReceipt(
+                            idempotency_key=normalized_key,
+                            outcome=RejectedChatAdmission(
+                                reason=ChatAdmissionRejection(
+                                    code=cast(ChatAdmissionRejectionCode, exc.code.value)
+                                )
+                            ),
+                        )
+                    record_chat_admission(
+                        db, viewer_id=viewer_id, request_bytes=request_bytes, receipt=receipt
+                    )
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        return receipt, replayed
+
+    receipt, replayed = await run_in_threadpool(settle)
     log_chat_admission(receipt, viewer_id=viewer_id, replayed=replayed)
     return receipt
 

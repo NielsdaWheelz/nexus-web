@@ -47,6 +47,11 @@ supplies resolved format inputs and `ReaderProgressPort` supplies
 load/save/conflict transport. Neither interface grants generic network or
 storage access.
 
+the composed load owns its initial content. hosted composition projects that
+content directly and does not start another epub fragment request while using
+the initial fragment. explicit fragment reads and pdf access refreshes always
+call the source; the session keeps no second consumable copy of initial content.
+
 Hosted media composition installs the current BFF/API source and canonical
 online cursor port. The Android APK shelf installs a lease-scoped local source
 and native latest-value progress port. `TextDocumentReader` and `PdfReader`
@@ -129,7 +134,7 @@ remains library-owned.
 Web-article and EPUB Find share one presentation owner,
 `canonicalTextFindPresentation.ts`. Its `publish` filters an adapter's logical
 occurrences to the rendered fragment, projects each through
-`resolveCanonicalTextRanges` against the current cursor, and defects on any range
+`domTextRanges.ts`’s `resolveDomTextRanges` against the current cursor, and defects on any range
 that is absent, collapsed, disconnected, outside the viewport, or inconsistent
 with its nonempty span. It paints every in-fragment passive range and only the
 visible active target; it stores no occurrence source of truth. It privately
