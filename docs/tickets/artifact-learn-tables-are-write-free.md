@@ -11,7 +11,7 @@ teardown for FK safety.
 impact: three dead tables and two delete blocks; existing rows are history
 nothing reads.
 
-fix: revision 0240 drops the three tables (and `uq_artifact_learn_requests_user_key`
+fix: the next alembic revision drops the three tables (and `uq_artifact_learn_requests_user_key`
 from `db/retries.py`), then the two delete blocks in `idea.py` and the ORM
 classes go. `LlmCallOwnerKind` still admits `artifact_learn_request` as a read
 vocabulary for existing `llm_calls` rows; drop it in the same change if those
