@@ -1,9 +1,4 @@
-"""PDF source lifecycle boundary.
-
-PDF extraction/materialization is invoked by the durable source-ingest worker.
-Public confirm/retry calls route through ``media_source_ingest`` so source
-attempts remain the owner.
-"""
+"""PDF source lifecycle boundary: prepare one plan, publish it under the fence."""
 
 from collections.abc import Callable
 from typing import Literal
@@ -20,10 +15,8 @@ from nexus.errors import (
     ResourceLimitError,
 )
 from nexus.logging import get_logger
-from nexus.services.collection_revisions import (
-    CollectionFamily,
-    bump_all_collection_families,
-)
+from nexus.services.collection_revisions import CollectionFamily, bump_all_collection_families
+from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.pdf_ingest import (
     PdfExtractionError,
@@ -32,7 +25,6 @@ from nexus.services.pdf_ingest import (
     build_pdf_extraction_plan,
     publish_pdf_extraction_plan,
 )
-from nexus.services.pdf_metadata import build_pdf_author_observation, persist_pdf_metadata
 from nexus.services.reader_publication import (
     ReaderPublicationSourceFile,
     replace_reader_publication,
@@ -42,24 +34,6 @@ from nexus.services.reader_publication import (
 from nexus.storage.client import get_storage_client
 
 logger = get_logger(__name__)
-
-_MAX_ERROR_MSG_LEN = 1000
-_PDF_AUTHOR_SOURCE = "pdf_metadata"
-
-
-def _extraction_api_error(plan: PdfExtractionError) -> ApiError:
-    message = (plan.error_message or "PDF extraction failed")[:_MAX_ERROR_MSG_LEN]
-    code = _source_api_error_code(plan.error_code)
-    if plan.resource_limit_dimension is None:
-        return ApiError(code, message)
-    # justify-service-invariant-check: the parser result pairs a free-form code
-    # string with an optional dimension, so only this projection can state that
-    # a dimension means the declared resource-limit code.
-    assert code is ApiErrorCode.E_RESOURCE_LIMIT, (
-        f"PDF extraction reported dimension {plan.resource_limit_dimension} "
-        f"with error code {code.value}"
-    )
-    return ResourceLimitError(message, dimension=plan.resource_limit_dimension)
 
 
 def prepare_pdf_source(
@@ -81,9 +55,16 @@ def prepare_pdf_source(
         storage_client=get_storage_client(),
         record_progress=record_progress,
     )
-    if isinstance(plan, PdfExtractionError):
-        raise _extraction_api_error(plan)
-    return plan
+    if not isinstance(plan, PdfExtractionError):
+        return plan
+    message = (plan.error_message or "PDF extraction failed")[:1000]
+    if plan.resource_limit_dimension is not None:
+        raise ResourceLimitError(message, dimension=plan.resource_limit_dimension)
+    try:
+        code = ApiErrorCode(plan.error_code or "")
+    except ValueError:
+        code = ApiErrorCode.E_INGEST_FAILED
+    raise ApiError(code, message)
 
 
 def publish_pdf_source(
@@ -114,21 +95,14 @@ def publish_pdf_source(
             "reason": "not_extracting",
         }, unpublished_reader_source_paths(db, media_id=media_id, source_file=source_file)
     superseded_source_paths = superseded_reader_source_paths(
-        db,
-        media_id=media_id,
-        source_file=source_file,
+        db, media_id=media_id, source_file=source_file
     )
 
     def replace_projection(locked_media: Media) -> dict[str, object]:
         result = publish_pdf_extraction_plan(db, media_id=media_id, plan=plan)
-        assert isinstance(result, PdfExtractionResult)
-        persist_pdf_metadata(locked_media, result)
+        _persist_pdf_metadata(locked_media, result)
         bump_all_collection_families(
-            db,
-            families=(
-                CollectionFamily.AuthorWorks,
-                CollectionFamily.LibraryEntries,
-            ),
+            db, families=(CollectionFamily.AuthorWorks, CollectionFamily.LibraryEntries)
         )
         db.flush()
         response: dict[str, object] = {
@@ -139,10 +113,14 @@ def publish_pdf_source(
         }
         if not result.has_text:
             response["warning_error_code"] = "E_PDF_TEXT_UNAVAILABLE"
-        observation, truncated = build_pdf_author_observation(result)
+        # D-31: only semicolons separate people; ``Last, First`` is ONE name.
+        names = [part.strip() for part in (result.pdf_author or "").split(";") if part.strip()]
+        observation, truncated = build_observation(
+            {"author": [RawCreditEntry(credited_name=name) for name in names]}
+        )
         if truncated:
             logger.info("pdf_author_truncation", media_id=str(media_id), truncated=truncated)
-        attach_author_observation(response, observation=observation, source=_PDF_AUTHOR_SOURCE)
+        attach_author_observation(response, observation=observation, source="pdf_metadata")
         return response
 
     response = replace_reader_publication(
@@ -155,8 +133,9 @@ def publish_pdf_source(
     return response, superseded_source_paths
 
 
-def _source_api_error_code(error_code: str | None) -> ApiErrorCode:
-    try:
-        return ApiErrorCode(str(error_code or ""))
-    except ValueError:
-        return ApiErrorCode.E_INGEST_FAILED
+def _persist_pdf_metadata(media: Media, result: PdfExtractionResult) -> None:
+    """Fill the media row from PDF document metadata; credits travel separately."""
+    if result.pdf_title and media.title and ".pdf" in media.title.lower():
+        media.title = result.pdf_title[:255]
+    if result.pdf_subject and not media.description:
+        media.description = result.pdf_subject[:2000]

@@ -1,7 +1,12 @@
-"""Reconcile publisher navigation and source headings without splitting content."""
+"""Reconcile publisher navigation and source headings into semantic sections.
+
+Publisher TOC targets, source headings and -- where a book uses them -- an
+anchored `[n] <em>incipit` sequence become one ordered list of sections with
+parents and ends, without splitting the content itself.
+"""
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import Literal
@@ -12,6 +17,8 @@ from nexus.schemas.presence import Presence, Present, absent, present
 from nexus.services.canonicalize import HEADING_TAGS, STRUCTURAL_TAGS, CanonicalStructure
 from nexus.services.reader_structure import DocumentPoint, SectionRangeInput, resolve_section_ends
 from nexus.text import normalize_whitespace
+
+type SectionSource = Literal["Publisher", "Heading", "Both", "InferredNumberedEntry"]
 
 
 @dataclass(frozen=True)
@@ -48,7 +55,7 @@ class EpubStructureSection:
     start_offset: int
     parent_section_id: Presence[str]
     end: Presence[DocumentPoint]
-    source: Literal["Publisher", "Heading", "Both", "InferredNumberedEntry"]
+    source: SectionSource
 
 
 @dataclass
@@ -63,7 +70,7 @@ class _Section:
     heading_rank: Presence[int]
     parent: Presence[str]
     container_end: Presence[DocumentPoint]
-    source: Literal["Publisher", "Heading", "Both", "InferredNumberedEntry"]
+    source: SectionSource
     owns_container: bool = False
 
 
@@ -72,15 +79,15 @@ def build_epub_structure(
     media_id: UUID,
     fragments: Sequence[EpubStructureFragment],
     toc_nodes: Sequence[EpubStructureTocNode],
-    existing_location_ids: Mapping[str, str],
 ) -> list[EpubStructureSection]:
-    """Build exact semantic rows; existing ids belong to their source toc node."""
+    """Build the exact semantic rows one publication installs."""
     by_fragment = {fragment.fragment_idx: fragment for fragment in fragments}
     by_toc = {node.node_id: node for node in toc_nodes}
     sections: list[_Section] = []
     by_source_node: dict[str, _Section] = {}
     by_element: dict[tuple[int, int], list[_Section]] = {}
     used_ids: set[str] = set()
+
     for node in toc_nodes:
         node.target_offset = None
         if node.fragment_idx is None:
@@ -109,13 +116,11 @@ def build_epub_structure(
         if node.nav_type != "toc":
             continue
         source_target = fragment.package_href + (f"#{href_fragment}" if href_fragment else "")
-        location_id = existing_location_ids.get(node.node_id)
-        if location_id is None:
-            location_id = (
-                source_target
-                if len(source_target) <= 255 and source_target not in used_ids
-                else str(uuid5(media_id, f"publisher:{node.node_id}"))
-            )
+        location_id = (
+            source_target
+            if len(source_target) <= 255 and source_target not in used_ids
+            else str(uuid5(media_id, f"publisher:{node.node_id}"))
+        )
         if location_id in used_ids or not 1 <= len(location_id) <= 255:
             raise ValueError("EPUB source section identity is invalid or duplicated")
         used_ids.add(location_id)
@@ -196,17 +201,59 @@ def build_epub_structure(
             sections.append(section)
             by_element[(fragment.fragment_idx, index)] = [section]
 
-    # Infer only a complete, anchored sequence with typographic opening evidence.
+    _add_inferred_numbered_entries(media_id, fragments, sections, by_element)
+    by_container = _bind_containers(fragments, sections, by_element)
+    _assign_parents(sections, by_element, by_container)
+
+    if not fragments:
+        return []
+    last = max(fragments, key=lambda fragment: fragment.fragment_idx)
+    ends = resolve_section_ends(
+        [
+            SectionRangeInput(
+                section.location_id,
+                section.target,
+                section.parent,
+                section.container_end,
+                section.owns_container,
+            )
+            for section in sections
+        ],
+        DocumentPoint(last.fragment_idx, len(last.canonical.text)),
+    )
+    return [
+        EpubStructureSection(
+            location_id=section.location_id,
+            label=section.label,
+            source_node_id=section.source_node_id,
+            fragment_idx=section.fragment.fragment_idx,
+            href_path=section.fragment.package_href,
+            href_fragment=section.href_fragment,
+            start_offset=section.target.offset,
+            parent_section_id=section.parent,
+            end=ends[section.location_id],
+            source=section.source,
+        )
+        for section in sections
+    ]
+
+
+def _add_inferred_numbered_entries(
+    media_id: UUID,
+    fragments: Sequence[EpubStructureFragment],
+    sections: list[_Section],
+    by_element: dict[tuple[int, int], list[_Section]],
+) -> None:
+    """Infer only a complete, anchored sequence with typographic opening evidence."""
     numbered: list[tuple[EpubStructureFragment, int, int, str, str]] = []
     for fragment in fragments:
         elements = fragment.canonical.elements
-        anchors = fragment.canonical.anchors
         children: dict[int, list[int]] = {}
         names_by_element: dict[int, list[str]] = {}
         for index, element in enumerate(elements):
             if isinstance(element.parent_element, Present):
                 children.setdefault(element.parent_element.value, []).append(index)
-        for name, index in anchors.items():
+        for name, index in fragment.canonical.anchors.items():
             names_by_element.setdefault(index, []).append(name)
         for index, element in enumerate(elements):
             if element.tag != "p" or not element.numbering_allowed:
@@ -246,35 +293,42 @@ def build_epub_structure(
                 continue
             number = int(marker[1])
             numbered.append((fragment, index, number, f"[{number}] {incipit}", opening_names[0]))
-    if len(numbered) >= 3 and all(right[2] == left[2] + 1 for left, right in pairwise(numbered)):
-        for fragment, index, number, label, anchor in numbered:
-            explicit = by_element.get((fragment.fragment_idx, index), []) + by_element.get(
-                (fragment.fragment_idx, fragment.canonical.anchors[anchor]), []
-            )
-            if explicit:
-                for section in explicit:
-                    section.heading_rank = present(7)
-                continue
-            element = fragment.canonical.elements[index]
-            location_id = "numbered:" + str(
-                uuid5(media_id, f"{fragment.fragment_id}:{element.start_offset}:{number}")
-            )
-            section = _Section(
-                location_id=location_id,
-                label=label[:512],
-                source_node_id=absent(),
-                fragment=fragment,
-                href_fragment=present(anchor),
-                element_index=present(index),
-                target=DocumentPoint(fragment.fragment_idx, element.start_offset),
-                heading_rank=present(7),
-                parent=absent(),
-                container_end=absent(),
-                source="InferredNumberedEntry",
-            )
-            sections.append(section)
-            by_element[(fragment.fragment_idx, index)] = [section]
 
+    if len(numbered) < 3 or any(right[2] != left[2] + 1 for left, right in pairwise(numbered)):
+        return
+    for fragment, index, number, label, anchor in numbered:
+        explicit = by_element.get((fragment.fragment_idx, index), []) + by_element.get(
+            (fragment.fragment_idx, fragment.canonical.anchors[anchor]), []
+        )
+        if explicit:
+            for section in explicit:
+                section.heading_rank = present(7)
+            continue
+        element = fragment.canonical.elements[index]
+        section = _Section(
+            location_id="numbered:"
+            + str(uuid5(media_id, f"{fragment.fragment_id}:{element.start_offset}:{number}")),
+            label=label[:512],
+            source_node_id=absent(),
+            fragment=fragment,
+            href_fragment=present(anchor),
+            element_index=present(index),
+            target=DocumentPoint(fragment.fragment_idx, element.start_offset),
+            heading_rank=present(7),
+            parent=absent(),
+            container_end=absent(),
+            source="InferredNumberedEntry",
+        )
+        sections.append(section)
+        by_element[(fragment.fragment_idx, index)] = [section]
+
+
+def _bind_containers(
+    fragments: Sequence[EpubStructureFragment],
+    sections: list[_Section],
+    by_element: dict[tuple[int, int], list[_Section]],
+) -> dict[tuple[int, int], _Section]:
+    """Give each `section`/`article` its owning heading and each section its end."""
     by_container: dict[tuple[int, int], _Section] = {}
     for fragment in fragments:
         for index, container in enumerate(fragment.canonical.elements):
@@ -311,7 +365,6 @@ def build_epub_structure(
                         DocumentPoint(fragment.fragment_idx, container.end_offset)
                     )
 
-    by_id = {section.location_id: section for section in sections}
     for section in sections:
         if not isinstance(section.element_index, Present):
             continue
@@ -324,6 +377,16 @@ def build_epub_structure(
             section.container_end = present(
                 DocumentPoint(section.fragment.fragment_idx, source_container.end_offset)
             )
+    return by_container
+
+
+def _assign_parents(
+    sections: list[_Section],
+    by_element: dict[tuple[int, int], list[_Section]],
+    by_container: dict[tuple[int, int], _Section],
+) -> None:
+    """Nest sections by source container first, then by heading rank."""
+    by_id = {section.location_id: section for section in sections}
 
     # Publisher grouping can span a title page and independently declared chapters.
     # Its presentation parent cannot override a chapter's exact source container.
@@ -398,49 +461,17 @@ def build_epub_structure(
             section.parent = present(stack[-1].location_id)
         # Publisher boundaries reset context; only headings and containers can parent it.
         chain: list[_Section] = []
-        parent = section.parent
+        parent_presence = section.parent
         visited = {section.location_id}
-        while isinstance(parent, Present):
-            if parent.value in visited:
+        while isinstance(parent_presence, Present):
+            if parent_presence.value in visited:
                 raise ValueError("EPUB semantic ancestry contains a cycle")
-            visited.add(parent.value)
-            ancestor = by_id[parent.value]
+            visited.add(parent_presence.value)
+            ancestor = by_id[parent_presence.value]
             chain.append(ancestor)
-            parent = ancestor.parent
+            parent_presence = ancestor.parent
         stack = [
             ancestor
             for ancestor in [*reversed(chain), section]
             if isinstance(ancestor.heading_rank, Present) or ancestor.owns_container
         ]
-
-    if not fragments:
-        return []
-    last = max(fragments, key=lambda fragment: fragment.fragment_idx)
-    ends = resolve_section_ends(
-        [
-            SectionRangeInput(
-                section.location_id,
-                section.target,
-                section.parent,
-                section.container_end,
-                section.owns_container,
-            )
-            for section in sections
-        ],
-        DocumentPoint(last.fragment_idx, len(last.canonical.text)),
-    )
-    return [
-        EpubStructureSection(
-            location_id=section.location_id,
-            label=section.label,
-            source_node_id=section.source_node_id,
-            fragment_idx=section.fragment.fragment_idx,
-            href_path=section.fragment.package_href,
-            href_fragment=section.href_fragment,
-            start_offset=section.target.offset,
-            parent_section_id=section.parent,
-            end=ends[section.location_id],
-            source=section.source,
-        )
-        for section in sections
-    ]

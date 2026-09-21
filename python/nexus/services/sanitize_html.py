@@ -1,15 +1,7 @@
-"""HTML sanitization for web article content.
+"""The web-article sanitizer: allowlisted tags and attributes, proxied images.
 
-Sanitizes HTML from extracted article content:
-- Allowlisted tags only
-- Allowlisted attributes only
-- No event handlers (on*)
-- No inline styles
-- No javascript:/data: URLs
-- Images rewritten to proxy endpoint
-- External links get rel/target/referrerpolicy
-
-This module uses lxml for robust HTML parsing and transformation.
+Its output is the stored `fragments.html_sanitized` and therefore the input to
+canonicalization, so every rule here is part of the persisted byte contract.
 """
 
 import re
@@ -19,86 +11,30 @@ from lxml.etree import ParserError
 from lxml.html import HtmlElement
 
 from nexus import web_paths
-from nexus.services.html5_shape import normalize_html5_shape
-from nexus.services.html_tree import (
-    inner_html,
-    parse_html_document,
-)
+from nexus.services.html_tree import inner_html, normalize_html5_shape, parse_html_document
 
 ALLOWED_TAGS = frozenset(
-    {
-        "p",
-        "br",
-        "strong",
-        "em",
-        "b",
-        "i",
-        "u",
-        "s",
-        "cite",
-        "blockquote",
-        "pre",
-        "code",
-        "ul",
-        "ol",
-        "li",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "hr",
-        "a",
-        "img",
-        "table",
-        "thead",
-        "tbody",
-        "tr",
-        "th",
-        "td",
-        "sup",
-        "sub",
-        "xref",
-        # Container elements (allowed but stripped of attributes)
-        "div",
-        "span",
-        "section",
-        "article",
-        "header",
-        "footer",
-        "nav",
-        "aside",
-        "figure",
-        "figcaption",
-    }
+    "p br strong em b i u s cite blockquote pre code ul ol li h1 h2 h3 h4 h5 h6 hr a img"
+    " table thead tbody tr th td sup sub xref"
+    # Container elements, allowed but stripped of attributes.
+    " div span section article header footer nav aside figure figcaption".split()
 )
-
-# Allowed attributes per tag
 ALLOWED_ATTRS = {
     "a": {"href", "title"},
     "img": {"src", "alt"},
     "th": {"colspan", "rowspan"},
     "td": {"colspan", "rowspan"},
 }
+# Reader clients read these three out of the stored HTML.
 READER_APPARATUS_ATTRS = frozenset(
-    {
-        "data-reader-apparatus-item-id",
-        "data-reader-apparatus-kind",
-        "data-reader-apparatus-confidence",
-    }
+    "data-reader-apparatus-item-id data-reader-apparatus-kind"
+    " data-reader-apparatus-confidence".split()
 )
 DOCUMENT_EMBED_ATTRS = frozenset(
-    {
-        "data-nexus-document-embed-id",
-        "data-nexus-document-embed-kind",
-    }
+    "data-nexus-document-embed-id data-nexus-document-embed-kind".split()
 )
-
-# Forbidden URL schemes
+DROPPED_WITH_CONTENT = frozenset("script style iframe form object embed svg meta link base".split())
 FORBIDDEN_SCHEMES = frozenset({"javascript", "vbscript", "data", "file"})
-
-# Regex to detect event handlers
 EVENT_HANDLER_RE = re.compile(r"^on", re.IGNORECASE)
 
 
@@ -109,44 +45,16 @@ def sanitize_html(
     allow_reader_apparatus_attrs: bool = False,
     allow_document_embed_attrs: bool = False,
 ) -> str:
-    """Sanitize HTML content from web article extraction.
-
-    This function:
-    1. Parses HTML into DOM
-    2. Resolves relative URLs using base_url
-    3. Applies tag/attribute allowlist
-    4. Strips all event handlers and styles
-    5. Rewrites images to proxy endpoint
-    6. Adds security attributes to links
-
-    Args:
-        html: The HTML content to sanitize (from Readability).
-        base_url: The base URL for resolving relative URLs.
-        allow_reader_apparatus_attrs: Keep server-authored reader apparatus
-            attributes after the reader apparatus extractor has stripped
-            untrusted source attributes and re-applied trusted annotations.
-
-    Returns:
-        Sanitized HTML string.
-
-    Raises:
-        ValueError: If HTML cannot be parsed.
-    """
+    """Sanitize extracted article HTML into the stored fragment shape."""
     if not html or not html.strip():
         return ""
-
     try:
-        # Parse HTML - lxml handles malformed HTML gracefully
         doc = parse_html_document(html)
-    except ParserError as e:
-        raise ValueError(f"Failed to parse HTML: {e}") from e
-
-    # Get body element - this is where content lives
+    except ParserError as exc:
+        raise ValueError(f"Failed to parse HTML: {exc}") from exc
     body = doc.body
     if body is None:
         return ""
-
-    # Process body's children (not body itself, as we need to preserve it for serialization)
     for child in list(body):
         if isinstance(child, HtmlElement):
             _sanitize_element(
@@ -155,13 +63,7 @@ def sanitize_html(
                 allow_reader_apparatus_attrs=allow_reader_apparatus_attrs,
                 allow_document_embed_attrs=allow_document_embed_attrs,
             )
-
-    # Emit only shapes libxml2 and HTML5 tree construction read identically, so a
-    # later canonicalizing parse of this output agrees with the browser's DOM.
     normalize_html5_shape(body)
-
-    # Serialize the sanitized children; the `body` wrapper lxml added is not part
-    # of the fragment we store.
     return inner_html(body)
 
 
@@ -172,11 +74,6 @@ def _sanitize_element(
     allow_reader_apparatus_attrs: bool,
     allow_document_embed_attrs: bool,
 ) -> None:
-    """Recursively sanitize an element and its children.
-
-    Modifies the element tree in-place.
-    """
-    # Process children first (deepest elements first)
     for child in list(element):
         if isinstance(child, HtmlElement):
             _sanitize_element(
@@ -186,93 +83,31 @@ def _sanitize_element(
                 allow_document_embed_attrs=allow_document_embed_attrs,
             )
 
-    # Check if this element's tag is allowed
     tag = element.tag.lower() if element.tag else ""
-
-    # Handle special cases
-    if tag in (
-        "script",
-        "style",
-        "iframe",
-        "form",
-        "object",
-        "embed",
-        "svg",
-        "meta",
-        "link",
-        "base",
-    ):
-        # Remove the subtree while preserving the following text.
+    if tag in DROPPED_WITH_CONTENT:
         element.drop_tree()
         return
-
     if tag not in ALLOWED_TAGS:
-        # Unwrap element (keep children, remove tag)
         element.drop_tag()
         return
 
-    # Sanitize attributes
-    _sanitize_attributes(
-        element,
-        tag,
-        base_url,
-        allow_reader_apparatus_attrs=allow_reader_apparatus_attrs,
-        allow_document_embed_attrs=allow_document_embed_attrs,
-    )
-
-
-def _sanitize_attributes(
-    element: HtmlElement,
-    tag: str,
-    base_url: str,
-    *,
-    allow_reader_apparatus_attrs: bool,
-    allow_document_embed_attrs: bool,
-) -> None:
-    """Sanitize attributes on an element."""
     allowed = ALLOWED_ATTRS.get(tag, set())
+    for attr in list(element.attrib):
+        name = attr.lower()
+        if name in READER_APPARATUS_ATTRS:
+            keep = allow_reader_apparatus_attrs
+        elif name in DOCUMENT_EMBED_ATTRS:
+            keep = allow_document_embed_attrs and tag in {"figure", "figcaption"}
+        else:
+            keep = (
+                not EVENT_HANDLER_RE.match(name)
+                and name not in {"style", "class", "id"}
+                and not (name == "name" and tag == "a")
+                and name in allowed
+            )
+        if not keep:
+            del element.attrib[attr]
 
-    # Get all attributes and filter
-    attrs_to_remove = []
-    for attr in element.attrib:
-        attr_lower = attr.lower()
-
-        # Always remove event handlers
-        if EVENT_HANDLER_RE.match(attr_lower):
-            attrs_to_remove.append(attr)
-            continue
-
-        # Always remove style and class
-        if attr_lower in ("style", "class"):
-            attrs_to_remove.append(attr)
-            continue
-
-        if attr_lower == "id" or (attr_lower == "name" and tag == "a"):
-            attrs_to_remove.append(attr)
-            continue
-
-        # Remove disallowed attributes
-        if attr_lower in READER_APPARATUS_ATTRS:
-            if allow_reader_apparatus_attrs:
-                continue
-            attrs_to_remove.append(attr)
-            continue
-
-        if attr_lower in DOCUMENT_EMBED_ATTRS:
-            if allow_document_embed_attrs and tag in {"figure", "figcaption"}:
-                continue
-            attrs_to_remove.append(attr)
-            continue
-
-        if attr_lower not in allowed:
-            attrs_to_remove.append(attr)
-            continue
-
-    # Remove collected attributes
-    for attr in attrs_to_remove:
-        del element.attrib[attr]
-
-    # Special handling for specific tags
     if tag == "a":
         _sanitize_link(element, base_url)
     elif tag == "img":
@@ -280,63 +115,26 @@ def _sanitize_attributes(
 
 
 def _sanitize_link(element: HtmlElement, base_url: str) -> None:
-    """Sanitize an anchor element."""
     href = element.get("href", "")
-
     if not href:
         return
-
-    # Resolve relative URLs
     absolute_url = urljoin(base_url, href)
-
-    # Check scheme
-    parsed = urlparse(absolute_url)
-    scheme = parsed.scheme.lower()
-
-    if scheme in FORBIDDEN_SCHEMES:
-        # Remove href for forbidden schemes
+    if urlparse(absolute_url).scheme.lower() in FORBIDDEN_SCHEMES:
         del element.attrib["href"]
         return
-
-    # Update href to absolute URL
     element.set("href", absolute_url)
-
-    # Add security attributes (merge with existing rel if present)
-    existing_rel = element.get("rel", "")
-    rel_values = set(existing_rel.split()) if existing_rel else set()
-    rel_values.add("noopener")
-    rel_values.add("noreferrer")
+    rel_values = set(element.get("rel", "").split()) | {"noopener", "noreferrer"}
     element.set("rel", " ".join(sorted(rel_values)))
-
     element.set("target", "_blank")
     element.set("referrerpolicy", "no-referrer")
 
 
 def _sanitize_image(element: HtmlElement, base_url: str) -> None:
-    """Sanitize an image element by routing through proxy."""
     src = element.get("src", "")
-
     if not src:
         return
-
-    # Resolve relative URL
     absolute_url = urljoin(base_url, src)
-
-    # Check scheme
-    parsed = urlparse(absolute_url)
-    scheme = parsed.scheme.lower()
-
-    if scheme in FORBIDDEN_SCHEMES:
-        # Remove src for forbidden schemes
+    if urlparse(absolute_url).scheme.lower() not in {"http", "https"}:
         del element.attrib["src"]
         return
-
-    # Only allow http/https
-    if scheme not in ("http", "https"):
-        del element.attrib["src"]
-        return
-
-    # Rewrite to image proxy
-    encoded_url = quote(absolute_url, safe="")
-    proxy_url = web_paths.media_image_url(encoded_url)
-    element.set("src", proxy_url)
+    element.set("src", web_paths.media_image_url(quote(absolute_url, safe="")))

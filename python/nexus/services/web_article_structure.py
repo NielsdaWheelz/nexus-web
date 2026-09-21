@@ -1,4 +1,4 @@
-"""Web article structure extraction owned by the ingestion boundary."""
+"""Web article structure: embeds, sanitized HTML, canonical text, index blocks."""
 
 from __future__ import annotations
 
@@ -18,7 +18,11 @@ from nexus.services.canonicalize import (
     canonicalize_structure,
     generate_canonical_text,
 )
-from nexus.services.document_embed_extraction import DetectedDocumentEmbed, extract_document_embeds
+from nexus.services.document_embed_extraction import (
+    DetectedDocumentEmbed,
+    extract_document_embeds,
+    occurrence_key,
+)
 from nexus.services.document_embeds import (
     DocumentEmbedArtifactOccurrence,
     DocumentEmbedTargetAcceptSource,
@@ -84,6 +88,78 @@ class _Heading:
     parent_section_id: Presence[str]
 
 
+def prepare_web_article_fragment(
+    *,
+    html: str,
+    base_url: str,
+    fragment_idx: int,
+    extract_embeds: bool = False,
+    embed_source_html: str | None = None,
+) -> WebArticlePreparedFragment:
+    """Embeds, then apparatus, then sanitize, anchor, canonicalize and index."""
+    detected_embeds: list[DetectedDocumentEmbed] = []
+    extraction_failed = False
+    if extract_embeds:
+        try:
+            extracted = extract_document_embeds(html, base_url)
+            detected_embeds = extracted.embeds
+            if embed_source_html is not None and embed_source_html != html:
+                detected_embeds = _merge_source_only_embeds(
+                    detected_embeds, extract_document_embeds(embed_source_html, base_url).embeds
+                )
+            html = extracted.html
+        except Exception:
+            logger.warning("document_embed_extraction_failed", exc_info=True)
+            extraction_failed = True
+    html, apparatus_items, apparatus_edges = extract_html_apparatus(
+        html,
+        source_kind=f"web:{fragment_idx}",
+        source_ref={"format": "html", "fragment_idx": fragment_idx},
+    )
+    html_sanitized = add_heading_anchors(
+        sanitize_html(
+            html,
+            base_url,
+            allow_reader_apparatus_attrs=True,
+            allow_document_embed_attrs=extract_embeds,
+        ),
+        fragment_idx=fragment_idx,
+    )
+    canonical_text = generate_canonical_text(html_sanitized)
+    document_embeds = _bind_document_embeds(canonical_text, detected_embeds)
+    if not canonical_text.strip():
+        return WebArticlePreparedFragment(
+            html_sanitized=html_sanitized,
+            canonical_text=canonical_text,
+            fragment_blocks=[FragmentBlockSpec(0, 0, 0)],
+            index_blocks=[],
+            apparatus_items=[],
+            apparatus_edges=[],
+            document_embeds=document_embeds,
+            document_embed_extraction_failed=extraction_failed,
+        )
+    return WebArticlePreparedFragment(
+        html_sanitized=html_sanitized,
+        canonical_text=canonical_text,
+        fragment_blocks=[
+            FragmentBlockSpec(block_idx=index, start_offset=start, end_offset=end)
+            for index, (start, end, _text) in enumerate(
+                _line_ranges(canonical_text, all_lines=True)
+            )
+        ]
+        or [FragmentBlockSpec(0, 0, 0)],
+        index_blocks=build_web_article_index_blocks(
+            html_sanitized=html_sanitized,
+            canonical_text=canonical_text,
+            fragment_idx=fragment_idx,
+        ),
+        apparatus_items=apparatus_items,
+        apparatus_edges=apparatus_edges,
+        document_embeds=document_embeds,
+        document_embed_extraction_failed=extraction_failed,
+    )
+
+
 def document_embed_artifact_occurrences(
     *,
     fragment_id: UUID,
@@ -114,11 +190,9 @@ def document_embed_artifact_occurrences(
 def _document_embed_target(detected: DetectedDocumentEmbed) -> DocumentEmbedTargetOutcome:
     match detected.resolution_status:
         case "pending":
-            if detected.canonical_source_url is None:
-                # justify-defect: pending extraction is the accepted-source branch
-                # and the extraction boundary always supplies its canonical URL.
-                raise AssertionError("pending document embed has no canonical source URL")
-            return DocumentEmbedTargetAcceptSource(detected.canonical_source_url)
+            # Pending extraction is the accepted-source branch; the extraction
+            # boundary always supplies its canonical URL.
+            return DocumentEmbedTargetAcceptSource(detected.canonical_source_url or "")
         case "unsupported" | "failed" as status:
             return DocumentEmbedTargetTerminal(
                 status=status,
@@ -129,78 +203,10 @@ def _document_embed_target(detected: DetectedDocumentEmbed) -> DocumentEmbedTarg
             assert_never(unreachable)
 
 
-def prepare_web_article_fragment(
-    *,
-    html: str,
-    base_url: str,
-    fragment_idx: int,
-    extract_embeds: bool = False,
-    embed_source_html: str | None = None,
-) -> WebArticlePreparedFragment:
-    detected_embeds: list[DetectedDocumentEmbed] = []
-    document_embed_extraction_failed = False
-    if extract_embeds:
-        try:
-            extracted = extract_document_embeds(html, base_url)
-            next_html = extracted.html
-            next_detected_embeds = extracted.embeds
-            if embed_source_html is not None and embed_source_html != html:
-                source_extracted = extract_document_embeds(embed_source_html, base_url)
-                next_html, next_detected_embeds = _merge_source_only_embeds(
-                    next_html, next_detected_embeds, source_extracted.embeds
-                )
-            html = next_html
-            detected_embeds = next_detected_embeds
-        except Exception:
-            logger.warning("document_embed_extraction_failed", exc_info=True)
-            document_embed_extraction_failed = True
-    html, apparatus_items, apparatus_edges = extract_html_apparatus(
-        html,
-        source_kind=f"web:{fragment_idx}",
-        source_ref={"format": "html", "fragment_idx": fragment_idx},
-    )
-    html_sanitized = add_heading_anchors(
-        sanitize_html(
-            html,
-            base_url,
-            allow_reader_apparatus_attrs=True,
-            allow_document_embed_attrs=extract_embeds,
-        ),
-        fragment_idx=fragment_idx,
-    )
-    canonical_text = generate_canonical_text(html_sanitized)
-    document_embeds = _bind_document_embeds(canonical_text, detected_embeds)
-    if not canonical_text.strip():
-        return WebArticlePreparedFragment(
-            html_sanitized=html_sanitized,
-            canonical_text=canonical_text,
-            fragment_blocks=[FragmentBlockSpec(0, 0, 0)],
-            index_blocks=[],
-            apparatus_items=[],
-            apparatus_edges=[],
-            document_embeds=document_embeds,
-            document_embed_extraction_failed=document_embed_extraction_failed,
-        )
-    index_blocks = build_web_article_index_blocks(
-        html_sanitized=html_sanitized,
-        canonical_text=canonical_text,
-        fragment_idx=fragment_idx,
-    )
-    return WebArticlePreparedFragment(
-        html_sanitized=html_sanitized,
-        canonical_text=canonical_text,
-        fragment_blocks=_fragment_blocks(canonical_text),
-        index_blocks=index_blocks,
-        apparatus_items=apparatus_items,
-        apparatus_edges=apparatus_edges,
-        document_embeds=document_embeds,
-        document_embed_extraction_failed=document_embed_extraction_failed,
-    )
-
-
 def _bind_document_embeds(
     canonical_text: str, detected_embeds: list[DetectedDocumentEmbed]
 ) -> list[WebArticleDocumentEmbed]:
+    """Locate each placeholder's text in canonical order, once."""
     bound: list[WebArticleDocumentEmbed] = []
     cursor = 0
     for detected in detected_embeds:
@@ -208,17 +214,16 @@ def _bind_document_embeds(
         if start < 0:
             bound.append(WebArticleDocumentEmbed(detected, None, None))
             continue
-        end = start + len(detected.placeholder_text)
-        bound.append(WebArticleDocumentEmbed(detected, start, end))
-        cursor = end
+        cursor = start + len(detected.placeholder_text)
+        bound.append(WebArticleDocumentEmbed(detected, start, cursor))
     return bound
 
 
 def _merge_source_only_embeds(
-    html: str,
     detected: list[DetectedDocumentEmbed],
     source_detected: list[DetectedDocumentEmbed],
-) -> tuple[str, list[DetectedDocumentEmbed]]:
+) -> list[DetectedDocumentEmbed]:
+    """Keep embeds the readable HTML dropped, renumbered after the kept ones."""
     seen = {_embed_identity(embed) for embed in detected}
     missing: list[DetectedDocumentEmbed] = []
     for embed in source_detected:
@@ -226,15 +231,15 @@ def _merge_source_only_embeds(
         if identity in seen:
             continue
         seen.add(identity)
+        ordinal = len(detected) + len(missing)
         missing.append(
             dataclass_replace(
                 embed,
-                ordinal=len(detected) + len(missing),
-                occurrence_key=f"embed:{len(detected) + len(missing):06d}:"
-                f"{embed.provider}:{embed.provider_target_ref or 'none'}",
+                ordinal=ordinal,
+                occurrence_key=occurrence_key(ordinal, embed.provider, embed.provider_target_ref),
             )
         )
-    return html, [*detected, *missing] if missing else detected
+    return [*detected, *missing] if missing else detected
 
 
 def _embed_identity(embed: DetectedDocumentEmbed) -> tuple[str, str, str]:
@@ -243,6 +248,7 @@ def _embed_identity(embed: DetectedDocumentEmbed) -> tuple[str, str, str]:
 
 
 def add_heading_anchors(html_sanitized: str, *, fragment_idx: int) -> str:
+    """Give every heading a stable, unique id derived from its own text."""
     if not html_sanitized.strip():
         return ""
     root = cast(HtmlElement, fragment_fromstring(html_sanitized, create_parent=True))
@@ -253,24 +259,21 @@ def add_heading_anchors(html_sanitized: str, *, fragment_idx: int) -> str:
     }
     ordinal = 0
     for element in root.iter():
-        if not isinstance(element, HtmlElement):
+        if not isinstance(element, HtmlElement) or str(element.tag).lower() not in HEADING_TAGS:
             continue
-        tag = str(element.tag).lower()
-        if tag not in HEADING_TAGS:
-            continue
-        label = _label(serialize_html(element))
+        label = normalize_whitespace(generate_canonical_text(serialize_html(element)))
         if not label:
             continue
-        existing_id = element.get("id")
         prefix = f"nexus-web-heading-{fragment_idx}-{ordinal}-"
+        existing_id = element.get("id")
         if existing_id and existing_id.startswith(prefix):
             ordinal += 1
             continue
         slug = _slug(label)
-        anchor_id = f"nexus-web-heading-{fragment_idx}-{ordinal}-{slug}"
+        anchor_id = f"{prefix}{slug}"
         suffix = 2
         while anchor_id in used:
-            anchor_id = f"nexus-web-heading-{fragment_idx}-{ordinal}-{slug}-{suffix}"
+            anchor_id = f"{prefix}{slug}-{suffix}"
             suffix += 1
         used.add(anchor_id)
         element.set("id", anchor_id)
@@ -284,43 +287,43 @@ def build_web_article_index_blocks(
     canonical_text: str,
     fragment_idx: int,
 ) -> list[WebArticleIndexBlockSpec]:
-    headings = _headings(html_sanitized, canonical_text, fragment_idx)
-    heading_by_start = {start: heading for start, heading in headings}
+    """One block per non-blank canonical line: headings carry the outline."""
+    heading_by_start = dict(_headings(html_sanitized, canonical_text, fragment_idx))
     stack: list[tuple[int, str]] = []
     blocks: list[WebArticleIndexBlockSpec] = []
     for start, end, _text_value in _line_ranges(canonical_text):
         heading = heading_by_start.get(start)
-        if heading is not None:
-            while stack and stack[-1][0] >= heading.level:
-                stack.pop()
-            stack.append((heading.level, heading.label))
+        if heading is None:
             blocks.append(
                 WebArticleIndexBlockSpec(
                     block_idx=len(blocks),
-                    block_kind="heading",
+                    block_kind="paragraph",
                     start_offset=start,
                     end_offset=end,
-                    heading_path=tuple(label for _, label in stack),
-                    heading_level=heading.level,
-                    section_id=heading.section_id,
-                    anchor_id=heading.anchor_id,
-                    depth=len(stack),
-                    ordinal=heading.ordinal,
-                    container_end_offset=heading.container_end_offset,
-                    owns_container=heading.owns_container,
-                    parent_section_id=heading.parent_section_id,
+                    heading_path=tuple(label for _level, label in stack),
+                    owns_container=False,
+                    parent_section_id=absent(),
                 )
             )
             continue
+        while stack and stack[-1][0] >= heading.level:
+            stack.pop()
+        stack.append((heading.level, heading.label))
         blocks.append(
             WebArticleIndexBlockSpec(
                 block_idx=len(blocks),
-                block_kind="paragraph",
+                block_kind="heading",
                 start_offset=start,
                 end_offset=end,
-                heading_path=tuple(label for _, label in stack),
-                owns_container=False,
-                parent_section_id=absent(),
+                heading_path=tuple(label for _level, label in stack),
+                heading_level=heading.level,
+                section_id=heading.section_id,
+                anchor_id=heading.anchor_id,
+                depth=len(stack),
+                ordinal=heading.ordinal,
+                container_end_offset=heading.container_end_offset,
+                owns_container=heading.owns_container,
+                parent_section_id=heading.parent_section_id,
             )
         )
     return blocks
@@ -331,27 +334,27 @@ def _headings(
     canonical_text: str,
     fragment_idx: int,
 ) -> list[tuple[int, _Heading]]:
+    """Headings with their section ids, source containers, and parents."""
     source = canonicalize_structure(html_sanitized)
     if source.text != canonical_text:
         raise ValueError("Web heading extraction disagrees with persisted canonical text")
     anchors_by_element = {index: anchor for anchor, index in source.anchors.items()}
     headings: list[tuple[int, _Heading]] = []
     source_indices: list[int] = []
-    ordinal = 0
     for index, element in enumerate(source.elements):
         if element.tag not in HEADING_TAGS:
             continue
         label = normalize_whitespace(source.text[element.start_offset : element.end_offset])
         if not label:
             continue
-        slug = _slug(label)
+        ordinal = len(headings)
         headings.append(
             (
                 element.start_offset,
                 _Heading(
                     label=label,
                     level=int(element.tag[1]),
-                    section_id=f"web-heading:{fragment_idx}:{ordinal}:{slug}",
+                    section_id=f"web-heading:{fragment_idx}:{ordinal}:{_slug(label)}",
                     anchor_id=anchors_by_element.get(index),
                     ordinal=ordinal,
                     container_end_offset=(
@@ -365,7 +368,7 @@ def _headings(
             )
         )
         source_indices.append(index)
-        ordinal += 1
+
     container_owners: dict[int, str] = {}
     for index, container in enumerate(source.elements):
         if container.tag not in {"section", "article"}:
@@ -375,7 +378,7 @@ def _headings(
         }
         owners = [
             heading.section_id
-            for source_index, (_, heading) in zip(source_indices, headings, strict=True)
+            for source_index, (_start, heading) in zip(source_indices, headings, strict=True)
             if source.elements[source_index].parent_container == present(index)
             and (
                 source_index in labelled
@@ -385,6 +388,7 @@ def _headings(
         ]
         if len(owners) == 1:
             container_owners[index] = owners[0]
+
     stack: list[_Heading] = []
     resolved: list[tuple[int, _Heading]] = []
     resolved_by_id: dict[str, _Heading] = {}
@@ -428,34 +432,19 @@ def _headings(
     return resolved
 
 
-def _fragment_blocks(canonical_text: str) -> list[FragmentBlockSpec]:
-    blocks: list[FragmentBlockSpec] = []
-    cursor = 0
-    for idx, part in enumerate(canonical_text.splitlines(keepends=True)):
-        start = cursor
-        end = start + len(part)
-        cursor = end
-        blocks.append(FragmentBlockSpec(block_idx=idx, start_offset=start, end_offset=end))
-    return blocks or [FragmentBlockSpec(0, 0, 0)]
-
-
-def _line_ranges(canonical_text: str) -> list[tuple[int, int, str]]:
+def _line_ranges(canonical_text: str, *, all_lines: bool = False) -> list[tuple[int, int, str]]:
+    """Canonical lines as (start, end, text); blank lines only when `all_lines`."""
     ranges: list[tuple[int, int, str]] = []
     cursor = 0
     for part in canonical_text.splitlines(keepends=True):
         start = cursor
         cursor += len(part)
         text_value = part[:-1] if part.endswith("\n") else part
-        if text_value.strip():
+        if all_lines or text_value.strip():
             ranges.append((start, cursor, text_value))
     return ranges
 
 
-def _label(html: str) -> str:
-    return normalize_whitespace(generate_canonical_text(html))
-
-
 def _slug(value: str) -> str:
     ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
-    slug = re.sub(r"[^a-z0-9]+", "-", ascii_value.lower()).strip("-")
-    return slug or "section"
+    return re.sub(r"[^a-z0-9]+", "-", ascii_value.lower()).strip("-") or "section"

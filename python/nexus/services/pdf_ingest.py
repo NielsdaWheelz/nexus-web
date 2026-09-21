@@ -1,10 +1,7 @@
-"""PDF extraction domain service.
+"""PDF extraction: page text, page spans, and native-link citation apparatus.
 
-Owns deterministic PDF artifact production: page_count, normalized plain_text,
-and pdf_page_text_spans. Parser-specific behavior (PyMuPDF) is isolated here
-behind parser-agnostic typed outcomes.
-
-Does NOT own lifecycle transitions or background-job dispatch.
+Parser-specific behaviour (PyMuPDF) is isolated behind typed outcomes. Owns no
+lifecycle transition and no job dispatch.
 """
 
 import re
@@ -18,11 +15,8 @@ from uuid import UUID
 from sqlalchemy import delete, text
 from sqlalchemy.orm import Session
 
-from nexus.db.models import (
-    Media,
-    PdfPageTextSpan,
-)
-from nexus.errors import ApiErrorCode, ResourceFailureDimension
+from nexus.db.models import Media, PdfPageTextSpan
+from nexus.errors import ApiErrorCode, NotFoundError, ResourceFailureDimension
 from nexus.logging import get_logger
 from nexus.services.parser_temp import (
     StorageObjectIntegrityError,
@@ -52,10 +46,6 @@ _PDF_REFERENCE_LINK_Y_TOLERANCE_PT = 5.0
 _PDF_REFERENCE_LINK_X_TOLERANCE_PT = 2.0
 _PDF_REFERENCE_LINK_AMBIGUOUS_DELTA_PT = 0.25
 
-# ---------------------------------------------------------------------------
-# Parser-agnostic typed outcomes
-# ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class PdfPageSpan:
@@ -70,8 +60,6 @@ class PdfPageSpan:
 
 @dataclass(frozen=True)
 class PdfExtractionResult:
-    """Successful PDF extraction outcome."""
-
     page_count: int = 0
     plain_text: str = ""
     page_spans: list[PdfPageSpan] = field(default_factory=list)
@@ -82,19 +70,8 @@ class PdfExtractionResult:
     pdf_subject: str | None = None
 
 
-@dataclass
-class _PdfPageTextSnapshot:
-    """The sole page-local PyMuPDF text representation for one extraction pass."""
-
-    plain_text: str
-    blocks: list[tuple[float, float, float, float, str]]
-    lines: list[dict[str, Any]]
-
-
 @dataclass(frozen=True)
 class PdfExtractionError:
-    """Deterministic PDF extraction failure."""
-
     error_code: str = ""
     error_message: str = ""
     terminal: bool = False
@@ -118,18 +95,27 @@ class PdfExtractionPlan:
 
 
 @dataclass(frozen=True)
+class _PdfParsedSource:
+    result: PdfExtractionResult
+    apparatus: PdfApparatusResult
+
+
+@dataclass
+class _PdfPageTextSnapshot:
+    """The sole page-local PyMuPDF text representation for one extraction pass."""
+
+    plain_text: str
+    blocks: list[tuple[float, float, float, float, str]]
+    lines: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
 class PdfReferenceBlock:
     page_index: int
     label: str
     label_number: int
     body_text: str
     rect_coords: tuple[float, float, float, float]
-
-
-@dataclass(frozen=True)
-class _PdfParsedSource:
-    result: PdfExtractionResult
-    apparatus: PdfApparatusResult
 
 
 @dataclass(frozen=True)
@@ -144,16 +130,6 @@ class _PdfNativeCitationLink:
     link_xref: int | None
 
 
-class _PdfResourceLimitExceeded(Exception):
-    """A declared PDF parser budget breach, named by the site that detects it."""
-
-    dimension: ResourceFailureDimension
-
-    def __init__(self, message: str, *, dimension: ResourceFailureDimension) -> None:
-        super().__init__(message)
-        self.dimension = dimension
-
-
 @dataclass
 class _PdfApparatusScan:
     in_references: bool = False
@@ -164,36 +140,86 @@ class _PdfApparatusScan:
     retained_utf8_bytes: int = 0
 
 
-# ---------------------------------------------------------------------------
-# Plain-text normalization
-# ---------------------------------------------------------------------------
+class _PdfResourceLimitExceeded(Exception):
+    """A declared PDF parser budget breach, named by the site that detects it."""
+
+    def __init__(self, message: str, *, dimension: ResourceFailureDimension) -> None:
+        super().__init__(message)
+        self.dimension: ResourceFailureDimension = dimension
+
+
+def _pdf_resource_limit_error(
+    message: str, *, dimension: ResourceFailureDimension
+) -> PdfExtractionError:
+    return PdfExtractionError(
+        error_code=ApiErrorCode.E_RESOURCE_LIMIT.value,
+        error_message=message,
+        terminal=True,
+        resource_limit_dimension=dimension,
+    )
 
 
 def normalize_pdf_text(raw_text: str) -> str:
-    """Apply the PDF text normalization contract to raw PDF text.
-
-    1. \\r\\n and \\r -> \\n
-    2. form-feed (\\f) -> \\n\\n (page separator)
-    3. NBSP (\\u00A0) -> space
-    4. NUL byte (\\x00) -> removed (PostgreSQL text cannot store NUL)
-    5. collapse runs of spaces/tabs within a line to single space
-    6. collapse 3+ consecutive newlines to \\n\\n
-    7. trim leading/trailing whitespace
-    """
-    s = raw_text
-    s = s.replace("\r\n", "\n").replace("\r", "\n")
-    s = s.replace("\f", "\n\n")
-    s = s.replace("\u00a0", " ")
-    s = s.replace("\x00", "")
-    s = re.sub(r"[^\S\n]+", " ", s)
-    s = re.sub(r"\n{3,}", "\n\n", s)
-    s = s.strip()
-    return s
+    """CRLF and CR to LF, form feed to a blank line, NBSP to space, NUL dropped,
+    intra-line whitespace collapsed, three or more newlines to two, then trimmed."""
+    normalized = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = normalized.replace("\f", "\n\n").replace(" ", " ").replace("\x00", "")
+    normalized = re.sub(r"[^\S\n]+", " ", normalized)
+    return re.sub(r"\n{3,}", "\n\n", normalized).strip()
 
 
-# ---------------------------------------------------------------------------
-# PyMuPDF parser adapter
-# ---------------------------------------------------------------------------
+def build_pdf_extraction_plan(
+    *,
+    media_id: UUID,
+    attempt_id: UUID,
+    storage_path: str,
+    source_size_bytes: int,
+    expected_source_sha256: str,
+    storage_client,
+    record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
+) -> PdfExtractionPlan | PdfExtractionError:
+    """Acquire and parse immutable PDF input without opening a DB transaction."""
+    started = time.monotonic()
+    with parser_attempt_directory(attempt_id) as attempt_directory:
+        pdf_path = attempt_directory / "source.pdf"
+        try:
+            source_sha256_hex = stream_storage_object_to_file(
+                storage_client,
+                storage_path=storage_path,
+                destination=pdf_path,
+                expected_size_bytes=source_size_bytes,
+                expected_source_sha256=expected_source_sha256,
+            )
+        except StorageObjectIntegrityError:
+            return PdfExtractionError(
+                error_code=ApiErrorCode.E_SOURCE_INTEGRITY.value,
+                error_message="Stored PDF bytes do not match the immutable source identity",
+                terminal=True,
+            )
+        parsed = _extract_with_pymupdf(
+            pdf_path,
+            media_id=media_id,
+            source_byte_length=source_size_bytes,
+            record_progress=record_progress,
+        )
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        if isinstance(parsed, PdfExtractionError):
+            logger.warning(
+                "pdf_extraction_failed",
+                media_id=str(media_id),
+                error_code=parsed.error_code,
+                parser="pymupdf",
+                elapsed_ms=elapsed_ms,
+                file_size=source_size_bytes,
+            )
+            return parsed
+        return PdfExtractionPlan(
+            result=parsed.result,
+            apparatus=parsed.apparatus,
+            storage_path=storage_path,
+            source_size_bytes=source_size_bytes,
+            source_sha256_hex=source_sha256_hex,
+        )
 
 
 def _extract_with_pymupdf(
@@ -203,25 +229,14 @@ def _extract_with_pymupdf(
     source_byte_length: int,
     record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
 ) -> _PdfParsedSource | PdfExtractionError:
-    """Extract bounded text from a file-backed PDF using PyMuPDF.
-
-    Returns parser-agnostic typed outcome. All PyMuPDF-specific exceptions
-    are caught and mapped here.
-    """
-    try:
-        import fitz  # PyMuPDF
-    except ImportError:
-        return PdfExtractionError(
-            error_code=ApiErrorCode.E_INTERNAL.value,
-            error_message="PyMuPDF not installed",
-            terminal=False,
-        )
+    """Decode one `rawdict` snapshot per page into text, spans, and apparatus."""
+    import fitz  # PyMuPDF
 
     try:
         doc = fitz.open(pdf_path)
     except RuntimeError as exc:
-        err_str = str(exc).lower()
-        if "password" in err_str or "encrypted" in err_str:
+        message = str(exc).lower()
+        if "password" in message or "encrypted" in message:
             return PdfExtractionError(
                 error_code=ApiErrorCode.E_PDF_PASSWORD_REQUIRED.value,
                 error_message="PDF is password-protected or encrypted",
@@ -230,7 +245,6 @@ def _extract_with_pymupdf(
         return PdfExtractionError(
             error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
             error_message=f"Failed to open PDF: {exc}",
-            terminal=False,
         )
 
     if doc.needs_pass:
@@ -241,24 +255,17 @@ def _extract_with_pymupdf(
             terminal=True,
         )
 
-    # Read document metadata
     raw_meta = doc.metadata or {}
-    pdf_title = (raw_meta.get("title") or "").strip() or None
-    pdf_author = (raw_meta.get("author") or "").strip() or None
-    pdf_subject = (raw_meta.get("subject") or "").strip() or None
-
     try:
         page_count = len(doc)
         if page_count < 1:
             return PdfExtractionError(
                 error_code=ApiErrorCode.E_INVALID_FILE_TYPE.value,
                 error_message="PDF has zero pages",
-                terminal=False,
             )
         if page_count > PDF_MAX_PAGES:
             return _pdf_resource_limit_error(
-                f"PDF has {page_count} pages; limit is {PDF_MAX_PAGES}",
-                dimension="Structure",
+                f"PDF has {page_count} pages; limit is {PDF_MAX_PAGES}", dimension="Structure"
             )
 
         normalized_pages: list[str] = []
@@ -267,10 +274,9 @@ def _extract_with_pymupdf(
         page_rotations: list[int | None] = []
         normalized_text_bytes = 0
         nonempty_page_count = 0
-        apparatus_scan = _PdfApparatusScan()
+        scan = _PdfApparatusScan()
         record_progress(0, page_count, "Page")
         for page_num in range(page_count):
-            page = None
             try:
                 page = doc[page_num]
             except (RuntimeError, AttributeError, ValueError):
@@ -280,15 +286,15 @@ def _extract_with_pymupdf(
                 page_label = None
                 page_size = None
                 page_rotation = None
-                apparatus_scan.page_heights.append(None)
+                scan.page_heights.append(None)
             else:
                 # One recorded height per page, before any page-local scan can
                 # fail: `page_heights` is addressed by page index.
-                apparatus_scan.page_heights.append(_pdf_page_height(page))
+                scan.page_heights.append(_pdf_page_height(page))
                 snapshot: _PdfPageTextSnapshot | None = None
                 try:
                     snapshot = _pdf_page_text_snapshot(page)
-                    _scan_pdf_page_apparatus(apparatus_scan, page, page_num, snapshot)
+                    _scan_pdf_page_apparatus(scan, page, page_num, snapshot)
                     page_text = snapshot.plain_text
                     try:
                         raw_page_label = page.get_label()
@@ -299,8 +305,7 @@ def _extract_with_pymupdf(
                         if isinstance(raw_page_label, str) and raw_page_label.strip()
                         else None
                     )
-                    page_rect = page.rect
-                    page_size = (float(page_rect.width), float(page_rect.height))
+                    page_size = (float(page.rect.width), float(page.rect.height))
                     page_rotation = int(page.rotation or 0)
                 except _PdfResourceLimitExceeded as exc:
                     return _pdf_resource_limit_error(str(exc), dimension=exc.dimension)
@@ -310,10 +315,9 @@ def _extract_with_pymupdf(
                     page_size = None
                     page_rotation = None
                 finally:
-                    # PyMuPDF pages may retain substantial decoded state. Do
-                    # not let a document-wide loop retain page-local snapshots.
-                    if snapshot is not None:
-                        del snapshot
+                    # PyMuPDF pages retain substantial decoded state; a
+                    # document-wide loop must not hold page-local snapshots.
+                    del snapshot
                     del page
             normalized_page = normalize_pdf_text(page_text)
             if normalized_page:
@@ -323,8 +327,7 @@ def _extract_with_pymupdf(
                 nonempty_page_count += 1
             if normalized_text_bytes > PDF_EXTRACTED_TEXT_MAX_BYTES:
                 return _pdf_resource_limit_error(
-                    "PDF extracted text exceeds the 32 MiB limit",
-                    dimension="Output",
+                    "PDF extracted text exceeds the 32 MiB limit", dimension="Output"
                 )
             normalized_pages.append(normalized_page)
             page_labels.append(page_label)
@@ -335,52 +338,117 @@ def _extract_with_pymupdf(
                 record_progress(completed, page_count, "Page")
 
         normalized = "\n\n".join(page for page in normalized_pages if page)
-
-        if not normalized:
-            result = PdfExtractionResult(
-                page_count=page_count,
-                plain_text="",
-                page_spans=_build_page_spans(
-                    normalized_pages,
-                    normalized,
-                    page_count,
-                    page_labels,
-                    page_sizes,
-                    page_rotations,
-                ),
-                has_text=False,
-                source_byte_length=source_byte_length,
-                pdf_title=pdf_title,
-                pdf_author=pdf_author,
-                pdf_subject=pdf_subject,
-            )
-
-        else:
-            result = PdfExtractionResult(
-                page_count=page_count,
-                plain_text=normalized,
-                page_spans=_build_page_spans(
-                    normalized_pages,
-                    normalized,
-                    page_count,
-                    page_labels,
-                    page_sizes,
-                    page_rotations,
-                ),
-                has_text=True,
-                source_byte_length=source_byte_length,
-                pdf_title=pdf_title,
-                pdf_author=pdf_author,
-                pdf_subject=pdf_subject,
-            )
+        result = PdfExtractionResult(
+            page_count=page_count,
+            plain_text=normalized,
+            page_spans=_build_page_spans(
+                normalized_pages,
+                normalized,
+                page_count,
+                page_labels,
+                page_sizes,
+                page_rotations,
+            ),
+            has_text=bool(normalized),
+            source_byte_length=source_byte_length,
+            pdf_title=(raw_meta.get("title") or "").strip() or None,
+            pdf_author=(raw_meta.get("author") or "").strip() or None,
+            pdf_subject=(raw_meta.get("subject") or "").strip() or None,
+        )
         try:
-            apparatus = _materialize_pdf_native_link_apparatus(apparatus_scan, media_id=media_id)
+            apparatus = _materialize_pdf_native_link_apparatus(scan, media_id=media_id)
             _validate_pdf_apparatus_budget(apparatus)
         except _PdfResourceLimitExceeded as exc:
             return _pdf_resource_limit_error(str(exc), dimension=exc.dimension)
         return _PdfParsedSource(result=result, apparatus=apparatus)
     finally:
         doc.close()
+
+
+def _build_page_spans(
+    normalized_pages: list[str],
+    full_normalized: str,
+    page_count: int,
+    page_labels: list[str | None],
+    page_sizes: list[tuple[float, float] | None],
+    page_rotations: list[int | None],
+) -> list[PdfPageSpan]:
+    """One span per page over `plain_text`; a page with no text gets a zero-width one."""
+    spans: list[PdfPageSpan] = []
+    offset = 0
+    for index in range(page_count):
+        page_text = normalized_pages[index] if index < len(normalized_pages) else ""
+        page_size = page_sizes[index] if index < len(page_sizes) else None
+        spans.append(
+            PdfPageSpan(
+                page_number=index + 1,
+                start_offset=offset,
+                end_offset=offset + len(page_text),
+                page_label=page_labels[index] if index < len(page_labels) else None,
+                page_width=page_size[0] if page_size else None,
+                page_height=page_size[1] if page_size else None,
+                page_rotation_degrees=(
+                    page_rotations[index] if index < len(page_rotations) else None
+                ),
+            )
+        )
+        offset += len(page_text)
+        if page_text and index < len(normalized_pages) - 1:
+            # Skip exactly the separator newlines the join actually wrote.
+            while offset < len(full_normalized) and full_normalized[offset] == "\n":
+                offset += 1
+    return spans
+
+
+def publish_pdf_extraction_plan(
+    db: Session,
+    *,
+    media_id: UUID,
+    plan: PdfExtractionPlan,
+) -> PdfExtractionResult:
+    """Replace the complete PDF artifact set in the caller's fenced transaction."""
+    result = plan.result
+    # Serialize publication of the complete PDF artifact set against anonymous
+    # readers, which hold Media FOR SHARE while resolving a projection.
+    db.execute(
+        text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"), {"media_id": media_id}
+    ).scalar()
+    media = db.get(Media, media_id)
+    if media is None:
+        raise NotFoundError(ApiErrorCode.E_MEDIA_NOT_FOUND, "Media not found")
+
+    media.page_count = result.page_count
+    media.plain_text = result.plain_text if result.has_text else None
+    db.execute(delete(PdfPageTextSpan).where(PdfPageTextSpan.media_id == media_id))
+    if result.has_text:
+        for span in result.page_spans:
+            db.add(
+                PdfPageTextSpan(
+                    media_id=media_id,
+                    page_number=span.page_number,
+                    start_offset=span.start_offset,
+                    end_offset=span.end_offset,
+                    page_label=span.page_label,
+                    page_width=span.page_width,
+                    page_height=span.page_height,
+                    page_rotation_degrees=span.page_rotation_degrees,
+                )
+            )
+    db.flush()
+
+    replace_media_apparatus(
+        db,
+        media_id=media_id,
+        items=plan.apparatus.items,
+        edges=plan.apparatus.edges,
+        status=plan.apparatus.status,
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Native-link citation apparatus (stable keys and dict shapes frozen under #364)
+# ---------------------------------------------------------------------------
 
 
 def _pdf_page_height(page: Any) -> float | None:
@@ -396,14 +464,12 @@ def _scan_pdf_page_apparatus(
     page_index: int,
     snapshot: _PdfPageTextSnapshot,
 ) -> None:
-    page_blocks = snapshot.blocks
-    if len(page_blocks) > PDF_APPARATUS_MAX_ITEMS:
+    if len(snapshot.blocks) > PDF_APPARATUS_MAX_ITEMS:
         raise _PdfResourceLimitExceeded(
-            "PDF page block count exceeds apparatus limit",
-            dimension="Structure",
+            "PDF page block count exceeds apparatus limit", dimension="Structure"
         )
-    for block in page_blocks:
-        text_value = _normalize_pdf_block_text(str(block[4] or ""))
+    for block in snapshot.blocks:
+        text_value = re.sub(r"\s+", " ", str(block[4] or "")).strip()
         if not text_value:
             continue
         if text_value == "References":
@@ -431,8 +497,7 @@ def _scan_pdf_page_apparatus(
         links = []
     if len(links) > PDF_APPARATUS_MAX_ITEMS:
         raise _PdfResourceLimitExceeded(
-            "PDF page link count exceeds apparatus limit",
-            dimension="Structure",
+            "PDF page link count exceeds apparatus limit", dimension="Structure"
         )
     for link_index, link in enumerate(links):
         name = str(link.get("nameddest") or "")
@@ -450,13 +515,12 @@ def _scan_pdf_page_apparatus(
             destination_page_index = int(link["page"])
         except (GeometryValidationError, TypeError, ValueError):
             continue
-        destination_point = _pdf_point_coords(link.get("to"))
         citation_link = _PdfNativeCitationLink(
             page_index=page_index,
             link_index=link_index,
             name=name,
             destination_page_index=destination_page_index,
-            destination_point=destination_point,
+            destination_point=_pdf_point_coords(link.get("to")),
             source_rect=source_rect,
             exact=exact,
             link_xref=(int(link["xref"]) if isinstance(link.get("xref"), int) else None),
@@ -466,8 +530,7 @@ def _scan_pdf_page_apparatus(
 
     if len(snapshot.lines) > PDF_APPARATUS_MAX_ITEMS:
         raise _PdfResourceLimitExceeded(
-            "PDF page line count exceeds apparatus limit",
-            dimension="Structure",
+            "PDF page line count exceeds apparatus limit", dimension="Structure"
         )
 
 
@@ -475,14 +538,12 @@ def _retain_pdf_scan_item(scan: _PdfApparatusScan, *text_values: str) -> None:
     next_count = scan.retained_item_count + 1
     if next_count > PDF_APPARATUS_MAX_ITEMS:
         raise _PdfResourceLimitExceeded(
-            "PDF apparatus retained item count exceeds limit",
-            dimension="Output",
+            "PDF apparatus retained item count exceeds limit", dimension="Output"
         )
     next_bytes = scan.retained_utf8_bytes + sum(utf8_byte_length(value) for value in text_values)
     if next_bytes > PDF_APPARATUS_MAX_RETAINED_UTF8_BYTES:
         raise _PdfResourceLimitExceeded(
-            "PDF apparatus retained text exceeds 8 MiB limit",
-            dimension="Output",
+            "PDF apparatus retained text exceeds 8 MiB limit", dimension="Output"
         )
     scan.retained_item_count = next_count
     scan.retained_utf8_bytes = next_bytes
@@ -503,8 +564,7 @@ def _materialize_pdf_native_link_apparatus(
             f"{link.page_index + 1:04d}:{link.link_index:04d}:{stable_token(link.name)}"
         )
         geometry = canonicalize_geometry(
-            link.page_index + 1,
-            [_quad_from_rect_coords(link.source_rect)],
+            link.page_index + 1, [_quad_from_rect_coords(link.source_rect)]
         )
         marker_source_ref = {
             "format": "pdf",
@@ -585,7 +645,10 @@ def _pdf_target_key_for_link(
     )
     if target is None:
         return None
-    block_key = _pdf_reference_block_key(target)
+    left, top, right, bottom = target.rect_coords
+    block_key = (
+        f"{target.page_index}:{target.label_number}:{left:.3f}:{top:.3f}:{right:.3f}:{bottom:.3f}"
+    )
     target_key = keys_by_block.get(block_key)
     if target_key is not None:
         return target_key
@@ -603,37 +666,114 @@ def _pdf_target_key_for_link(
     return target_key
 
 
+def _pdf_native_link_target_item(
+    *,
+    media_id: UUID,
+    destination_name: str,
+    destination_point: tuple[float, float] | None,
+    target: PdfReferenceBlock,
+) -> dict[str, Any] | None:
+    try:
+        validate_exact_length(target.body_text)
+        geometry = canonicalize_geometry(
+            target.page_index + 1, [_quad_from_rect_coords(target.rect_coords)]
+        )
+    except GeometryValidationError:
+        return None
+    return {
+        "stable_key": (
+            "pdf:native-citation-target:"
+            f"{target.page_index + 1:04d}:{target.label_number:04d}:"
+            f"{stable_token(destination_name)}"
+        ),
+        "kind": "bibliography_entry",
+        "label": target.label,
+        "body_text": target.body_text,
+        "locator": {
+            "type": "pdf_page_geometry",
+            "media_id": str(media_id),
+            "page_number": target.page_index + 1,
+            "quads": [_quad_json(quad) for quad in geometry.quads],
+            "exact": target.body_text,
+            "text_quote_selector": {"exact": target.body_text},
+        },
+        "locator_status": "exact",
+        "confidence": "exact",
+        "extraction_method": "pdf_native_link_target",
+        "source_ref": {
+            "format": "pdf",
+            "named_destination": destination_name,
+            "target_label": target.label,
+            "target_page_number": target.page_index + 1,
+            "destination_point": _pdf_point_json(destination_point),
+            "reference_block": _pdf_rect_json(target.rect_coords),
+        },
+        "sort_key": (
+            f"{target.page_index + 1:04d}."
+            f"{target.rect_coords[1]:09.3f}.{target.label_number:04d}.target"
+        ),
+    }
+
+
+def _pdf_reference_block_for_destination(
+    *,
+    destination_page_index: int,
+    destination_point: tuple[float, float] | None,
+    reference_blocks: list[PdfReferenceBlock],
+    page_heights: list[float | None],
+) -> PdfReferenceBlock | None:
+    """Resolve a named destination onto one reference block, or nothing if ambiguous."""
+    if destination_point is None or not 0 <= destination_page_index < len(page_heights):
+        return None
+    page_height = page_heights[destination_page_index]
+    if page_height is None:
+        return None
+    destination_x, destination_y = destination_point
+    destination_top = page_height - destination_y
+    candidates = [block for block in reference_blocks if block.page_index == destination_page_index]
+    if not candidates:
+        return None
+    ranked = sorted(candidates, key=lambda block: abs(block.rect_coords[1] - destination_top))
+    target = ranked[0]
+    best_delta = abs(target.rect_coords[1] - destination_top)
+    if best_delta > _PDF_REFERENCE_LINK_Y_TOLERANCE_PT:
+        return None
+    if (
+        len(ranked) > 1
+        and abs(ranked[1].rect_coords[1] - destination_top) <= _PDF_REFERENCE_LINK_Y_TOLERANCE_PT
+        and abs(ranked[1].rect_coords[1] - destination_top) - best_delta
+        < _PDF_REFERENCE_LINK_AMBIGUOUS_DELTA_PT
+    ):
+        return None
+    left, _, right, _ = target.rect_coords
+    if (
+        destination_x < left - _PDF_REFERENCE_LINK_X_TOLERANCE_PT
+        or destination_x > right + _PDF_REFERENCE_LINK_X_TOLERANCE_PT
+    ):
+        return None
+    return target
+
+
 def _validate_pdf_apparatus_budget(result: PdfApparatusResult) -> None:
     if len(result.items) > PDF_APPARATUS_MAX_ITEMS:
         raise _PdfResourceLimitExceeded(
-            "PDF apparatus item count exceeds limit",
-            dimension="Output",
+            "PDF apparatus item count exceeds limit", dimension="Output"
         )
     if len(result.edges) > PDF_APPARATUS_MAX_EDGES:
         raise _PdfResourceLimitExceeded(
-            "PDF apparatus edge count exceeds limit",
-            dimension="Output",
+            "PDF apparatus edge count exceeds limit", dimension="Output"
         )
     retained_bytes = sum(nested_utf8_byte_length(item) for item in result.items)
     retained_bytes += sum(nested_utf8_byte_length(edge) for edge in result.edges)
     if retained_bytes > PDF_APPARATUS_MAX_RETAINED_UTF8_BYTES:
         raise _PdfResourceLimitExceeded(
-            "PDF apparatus output exceeds 8 MiB retained-text limit",
-            dimension="Output",
+            "PDF apparatus output exceeds 8 MiB retained-text limit", dimension="Output"
         )
 
 
-def _pdf_resource_limit_error(
-    message: str,
-    *,
-    dimension: ResourceFailureDimension,
-) -> PdfExtractionError:
-    return PdfExtractionError(
-        error_code=ApiErrorCode.E_RESOURCE_LIMIT.value,
-        error_message=message,
-        terminal=True,
-        resource_limit_dimension=dimension,
-    )
+# ---------------------------------------------------------------------------
+# PyMuPDF page decoding
+# ---------------------------------------------------------------------------
 
 
 def _pdf_page_text_snapshot(page: Any) -> _PdfPageTextSnapshot:
@@ -656,10 +796,9 @@ def _pdf_page_text_snapshot(page: Any) -> _PdfPageTextSnapshot:
         for line in raw_lines if isinstance(raw_lines, list) else []:
             if not isinstance(line, dict):
                 continue
-            raw_spans = line.get("spans", [])
             text_value = "".join(
                 _pdf_span_text(_pdf_span_chars(span))
-                for span in raw_spans
+                for span in line.get("spans", [])
                 if isinstance(span, dict)
             )
             if text_value:
@@ -670,13 +809,7 @@ def _pdf_page_text_snapshot(page: Any) -> _PdfPageTextSnapshot:
         bbox = block.get("bbox") or (0, 0, 0, 0)
         try:
             blocks.append(
-                (
-                    float(bbox[0]),
-                    float(bbox[1]),
-                    float(bbox[2]),
-                    float(bbox[3]),
-                    block_text,
-                )
+                (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]), block_text)
             )
         except (TypeError, ValueError, IndexError):
             continue
@@ -718,9 +851,8 @@ def _pdf_text_lines(text_dict: dict[str, Any]) -> list[dict[str, Any]]:
     lines: list[dict[str, Any]] = []
     for block in text_dict.get("blocks", []):
         for line in block.get("lines", []):
-            raw_spans = line.get("spans", [])
             spans: list[dict[str, Any]] = []
-            for span in raw_spans:
+            for span in line.get("spans", []):
                 span_chars = _pdf_span_chars(span)
                 text_value = _pdf_span_text(span_chars)
                 bbox = span.get("bbox") or (0, 0, 0, 0)
@@ -752,163 +884,87 @@ def _pdf_text_lines(text_dict: dict[str, Any]) -> list[dict[str, Any]]:
             text_value = normalize_whitespace("".join(str(span["text"]) for span in spans))
             if not text_value:
                 continue
-            left = min(float(span["left"]) for span in spans)
-            top = min(float(span["top"]) for span in spans)
-            right = max(float(span["right"]) for span in spans)
-            bottom = max(float(span["bottom"]) for span in spans)
             lines.append(
                 {
                     "text": text_value,
-                    "left": left,
-                    "top": top,
-                    "right": right,
-                    "bottom": bottom,
+                    "left": min(float(span["left"]) for span in spans),
+                    "top": min(float(span["top"]) for span in spans),
+                    "right": max(float(span["right"]) for span in spans),
+                    "bottom": max(float(span["bottom"]) for span in spans),
                     "spans": spans,
                 }
             )
     return lines
 
 
-def _pdf_rect_json(coords: tuple[float, float, float, float]) -> dict[str, float]:
-    return {
-        "left": coords[0],
-        "top": coords[1],
-        "right": coords[2],
-        "bottom": coords[3],
-    }
+def _pdf_link_text_from_snapshot(
+    snapshot: _PdfPageTextSnapshot,
+    source_rect: tuple[float, float, float, float],
+) -> str:
+    """Clip the sole page text representation to one link rectangle.
 
-
-def _pdf_native_link_target_item(
-    *,
-    media_id: UUID,
-    destination_name: str,
-    destination_point: tuple[float, float] | None,
-    target: PdfReferenceBlock,
-) -> dict[str, Any] | None:
-    try:
-        validate_exact_length(target.body_text)
-        geometry = canonicalize_geometry(
-            target.page_index + 1,
-            [_quad_from_rect_coords(target.rect_coords)],
-        )
-    except GeometryValidationError:
-        return None
-
-    target_key = (
-        "pdf:native-citation-target:"
-        f"{target.page_index + 1:04d}:{target.label_number:04d}:{stable_token(destination_name)}"
-    )
-    locator = {
-        "type": "pdf_page_geometry",
-        "media_id": str(media_id),
-        "page_number": target.page_index + 1,
-        "quads": [_quad_json(quad) for quad in geometry.quads],
-        "exact": target.body_text,
-        "text_quote_selector": {"exact": target.body_text},
-    }
-    return {
-        "stable_key": target_key,
-        "kind": "bibliography_entry",
-        "label": target.label,
-        "body_text": target.body_text,
-        "locator": locator,
-        "locator_status": "exact",
-        "confidence": "exact",
-        "extraction_method": "pdf_native_link_target",
-        "source_ref": {
-            "format": "pdf",
-            "named_destination": destination_name,
-            "target_label": target.label,
-            "target_page_number": target.page_index + 1,
-            "destination_point": _pdf_point_json(destination_point),
-            "reference_block": {
-                "left": target.rect_coords[0],
-                "top": target.rect_coords[1],
-                "right": target.rect_coords[2],
-                "bottom": target.rect_coords[3],
-            },
-        },
-        "sort_key": (
-            f"{target.page_index + 1:04d}."
-            f"{target.rect_coords[1]:09.3f}.{target.label_number:04d}.target"
-        ),
-    }
-
-
-def _pdf_reference_block_for_destination(
-    *,
-    destination_page_index: int,
-    destination_point: tuple[float, float] | None,
-    reference_blocks: list[PdfReferenceBlock],
-    page_heights: list[float | None],
-) -> PdfReferenceBlock | None:
-    if destination_point is None or not 0 <= destination_page_index < len(page_heights):
-        return None
-    page_height = page_heights[destination_page_index]
-    if page_height is None:
-        return None
-    destination_x, destination_y = destination_point
-    destination_top = page_height - destination_y
-    candidates = [block for block in reference_blocks if block.page_index == destination_page_index]
-    if not candidates:
-        return None
-    ranked = sorted(
-        candidates,
-        key=lambda block: abs(block.rect_coords[1] - destination_top),
-    )
-    target = ranked[0]
-    best_delta = abs(target.rect_coords[1] - destination_top)
-    if best_delta > _PDF_REFERENCE_LINK_Y_TOLERANCE_PT:
-        return None
-    if (
-        len(ranked) > 1
-        and abs(ranked[1].rect_coords[1] - destination_top) <= _PDF_REFERENCE_LINK_Y_TOLERANCE_PT
-        and abs(ranked[1].rect_coords[1] - destination_top) - best_delta
-        < _PDF_REFERENCE_LINK_AMBIGUOUS_DELTA_PT
-    ):
-        return None
-    left, _, right, _ = target.rect_coords
-    if (
-        destination_x < left - _PDF_REFERENCE_LINK_X_TOLERANCE_PT
-        or destination_x > right + _PDF_REFERENCE_LINK_X_TOLERANCE_PT
-    ):
-        return None
-    return target
-
-
-def _pdf_reference_block_key(block: PdfReferenceBlock) -> str:
-    left, top, right, bottom = block.rect_coords
-    return f"{block.page_index}:{block.label_number}:{left:.3f}:{top:.3f}:{right:.3f}:{bottom:.3f}"
+    The marker text anchors the same rectangle that is persisted as geometry, so
+    it is the characters inside that rectangle, not every span it touches.
+    """
+    left, top, right, bottom = source_rect
+    line_texts: list[str] = []
+    text_codepoints = 0
+    for line in snapshot.lines:
+        clipped: list[str] = []
+        for span in line["spans"]:
+            for char_left, char_top, char_right, char_bottom, char in span["chars"]:
+                if (
+                    char_right <= left
+                    or char_left >= right
+                    or char_bottom <= top
+                    or char_top >= bottom
+                ):
+                    continue
+                text_codepoints += 1
+                if text_codepoints > MAX_EXACT_CODEPOINTS:
+                    return ""
+                clipped.append(char)
+        if clipped:
+            line_texts.append("".join(clipped))
+    return normalize_whitespace("\n".join(line_texts))
 
 
 def _pdf_block_rect_coords(block: Any) -> tuple[float, float, float, float] | None:
     try:
-        left = float(block[0])
-        top = float(block[1])
-        right = float(block[2])
-        bottom = float(block[3])
+        left, top, right, bottom = (
+            float(block[0]),
+            float(block[1]),
+            float(block[2]),
+            float(block[3]),
+        )
     except (TypeError, ValueError, IndexError):
         return None
-    if right <= left or bottom <= top:
-        return None
-    return left, top, right, bottom
-
-
-def _normalize_pdf_block_text(value: str) -> str:
-    return re.sub(r"\s+", " ", value).strip()
+    return None if right <= left or bottom <= top else (left, top, right, bottom)
 
 
 def _pdf_rect_coords(rect: Any) -> tuple[float, float, float, float] | None:
     try:
-        left = float(rect.x0)
-        top = float(rect.y0)
-        right = float(rect.x1)
-        bottom = float(rect.y1)
+        left, top, right, bottom = float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)
     except (TypeError, ValueError, AttributeError):
         return None
-    if right <= left or bottom <= top:
+    return None if right <= left or bottom <= top else (left, top, right, bottom)
+
+
+def _pdf_point_coords(point: Any) -> tuple[float, float] | None:
+    if point is None:
         return None
-    return left, top, right, bottom
+    try:
+        return float(point.x), float(point.y)
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _pdf_rect_json(coords: tuple[float, float, float, float]) -> dict[str, float]:
+    return {"left": coords[0], "top": coords[1], "right": coords[2], "bottom": coords[3]}
+
+
+def _pdf_point_json(point: tuple[float, float] | None) -> dict[str, float] | None:
+    return None if point is None else {"x": float(point[0]), "y": float(point[1])}
 
 
 def _quad_from_rect_coords(coords: tuple[float, float, float, float]) -> dict[str, float]:
@@ -936,304 +992,3 @@ def _quad_json(quad: Any) -> dict[str, float]:
         "x4": float(quad.x4),
         "y4": float(quad.y4),
     }
-
-
-def _pdf_link_text_from_snapshot(
-    snapshot: _PdfPageTextSnapshot,
-    source_rect: tuple[float, float, float, float],
-) -> str:
-    """Clip the sole page text representation to one link rectangle.
-
-    The marker text anchors the same rectangle that is persisted as geometry,
-    so it is the characters inside that rectangle, not every span the
-    rectangle happens to touch.
-    """
-    left, top, right, bottom = source_rect
-    line_texts: list[str] = []
-    text_codepoints = 0
-    for line in snapshot.lines:
-        clipped: list[str] = []
-        for span in line["spans"]:
-            for char_left, char_top, char_right, char_bottom, char in span["chars"]:
-                if (
-                    char_right <= left
-                    or char_left >= right
-                    or char_bottom <= top
-                    or char_top >= bottom
-                ):
-                    continue
-                text_codepoints += 1
-                if text_codepoints > MAX_EXACT_CODEPOINTS:
-                    return ""
-                clipped.append(char)
-        if clipped:
-            line_texts.append("".join(clipped))
-    return normalize_whitespace("\n".join(line_texts))
-
-
-def _pdf_point_json(point: tuple[float, float] | None) -> dict[str, float] | None:
-    if point is None:
-        return None
-    return {"x": float(point[0]), "y": float(point[1])}
-
-
-def _pdf_point_coords(point: Any) -> tuple[float, float] | None:
-    if point is None:
-        return None
-    try:
-        return float(point.x), float(point.y)
-    except (TypeError, ValueError, AttributeError):
-        return None
-
-
-def _build_page_spans(
-    normalized_pages: list[str],
-    full_normalized: str,
-    page_count: int,
-    page_labels: list[str | None] | None = None,
-    page_sizes: list[tuple[float, float] | None] | None = None,
-    page_rotations: list[int | None] | None = None,
-) -> list[PdfPageSpan]:
-    """Build page-indexed spans over the post-normalization plain_text.
-
-    Reconstructs the full text from normalized pages joined by \\n\\n separators
-    (same as normalize_pdf_text produces from \\f joins) and maps offsets.
-    """
-    spans: list[PdfPageSpan] = []
-    offset = 0
-
-    for i, page_text in enumerate(normalized_pages):
-        page_len = len(page_text)
-        page_size = page_sizes[i] if page_sizes and i < len(page_sizes) else None
-        spans.append(
-            PdfPageSpan(
-                page_number=i + 1,
-                start_offset=offset,
-                end_offset=offset + page_len,
-                page_label=page_labels[i] if page_labels and i < len(page_labels) else None,
-                page_width=page_size[0] if page_size else None,
-                page_height=page_size[1] if page_size else None,
-                page_rotation_degrees=(
-                    page_rotations[i] if page_rotations and i < len(page_rotations) else None
-                ),
-            )
-        )
-        offset += page_len
-        if i < len(normalized_pages) - 1 and page_text:
-            sep_len = _separator_len_at(full_normalized, offset)
-            offset += sep_len
-        elif i < len(normalized_pages) - 1 and not page_text:
-            pass
-
-    while len(spans) < page_count:
-        page_index = len(spans)
-        page_size = page_sizes[page_index] if page_sizes and page_index < len(page_sizes) else None
-        spans.append(
-            PdfPageSpan(
-                page_number=page_index + 1,
-                start_offset=offset,
-                end_offset=offset,
-                page_label=(
-                    page_labels[page_index]
-                    if page_labels and page_index < len(page_labels)
-                    else None
-                ),
-                page_width=page_size[0] if page_size else None,
-                page_height=page_size[1] if page_size else None,
-                page_rotation_degrees=(
-                    page_rotations[page_index]
-                    if page_rotations and page_index < len(page_rotations)
-                    else None
-                ),
-            )
-        )
-
-    return spans
-
-
-def _separator_len_at(text: str, offset: int) -> int:
-    """Determine how many separator chars exist at offset in normalized text."""
-    count = 0
-    while offset + count < len(text) and text[offset + count] == "\n":
-        count += 1
-    return count
-
-
-# ---------------------------------------------------------------------------
-# Lifecycle-level span validation
-# ---------------------------------------------------------------------------
-
-
-def validate_page_spans(
-    page_spans: list[PdfPageSpan],
-    page_count: int,
-    plain_text_len: int,
-) -> str | None:
-    """Validate page-span lifecycle invariants.
-
-    Returns None if valid, or an error description string if invalid.
-    """
-    if len(page_spans) != page_count:
-        return f"Expected {page_count} spans, got {len(page_spans)}"
-
-    for i, span in enumerate(page_spans):
-        expected_page = i + 1
-        if span.page_number != expected_page:
-            return f"Span {i} has page_number={span.page_number}, expected {expected_page}"
-        if span.start_offset < 0:
-            return f"Page {expected_page}: negative start_offset"
-        if span.end_offset < span.start_offset:
-            return f"Page {expected_page}: end_offset < start_offset"
-        if span.end_offset > plain_text_len:
-            return (
-                f"Page {expected_page}: end_offset {span.end_offset} > text length {plain_text_len}"
-            )
-
-    for i in range(1, len(page_spans)):
-        prev = page_spans[i - 1]
-        curr = page_spans[i]
-        if curr.start_offset < prev.end_offset:
-            return f"Pages {prev.page_number}-{curr.page_number}: overlapping spans"
-
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Public extraction API (parser-agnostic)
-# ---------------------------------------------------------------------------
-
-
-def build_pdf_extraction_plan(
-    *,
-    media_id: UUID,
-    attempt_id: UUID,
-    storage_path: str,
-    source_size_bytes: int,
-    expected_source_sha256: str,
-    storage_client,
-    record_progress: Callable[[int, int, Literal["Page", "Chapter"]], None],
-) -> PdfExtractionPlan | PdfExtractionError:
-    """Acquire and parse immutable PDF input without opening a DB transaction."""
-    t0 = time.monotonic()
-    with parser_attempt_directory(attempt_id) as attempt_directory:
-        pdf_path = attempt_directory / "source.pdf"
-        try:
-            source_sha256_hex = stream_storage_object_to_file(
-                storage_client,
-                storage_path=storage_path,
-                destination=pdf_path,
-                expected_size_bytes=source_size_bytes,
-                expected_source_sha256=expected_source_sha256,
-            )
-        except StorageObjectIntegrityError:
-            return PdfExtractionError(
-                error_code=ApiErrorCode.E_SOURCE_INTEGRITY.value,
-                error_message="Stored PDF bytes do not match the immutable source identity",
-                terminal=True,
-            )
-        parsed = _extract_with_pymupdf(
-            pdf_path,
-            media_id=media_id,
-            source_byte_length=source_size_bytes,
-            record_progress=record_progress,
-        )
-        elapsed_ms = int((time.monotonic() - t0) * 1000)
-
-        if isinstance(parsed, PdfExtractionError):
-            logger.warning(
-                "pdf_extraction_failed",
-                media_id=str(media_id),
-                error_code=parsed.error_code,
-                parser="pymupdf",
-                elapsed_ms=elapsed_ms,
-                file_size=source_size_bytes,
-            )
-            return parsed
-
-        result = parsed.result
-        logger.info(
-            "pdf_extraction_completed",
-            media_id=str(media_id),
-            page_count=result.page_count,
-            has_text=result.has_text,
-            plain_text_len=len(result.plain_text),
-            parser="pymupdf",
-            elapsed_ms=elapsed_ms,
-            file_size=source_size_bytes,
-        )
-        return PdfExtractionPlan(
-            result=result,
-            apparatus=parsed.apparatus,
-            storage_path=storage_path,
-            source_size_bytes=source_size_bytes,
-            source_sha256_hex=source_sha256_hex,
-        )
-
-
-def publish_pdf_extraction_plan(
-    db: Session,
-    *,
-    media_id: UUID,
-    plan: PdfExtractionPlan,
-) -> PdfExtractionResult:
-    """Replace the complete PDF artifact set in the caller's fenced transaction."""
-    result = plan.result
-    # Serialize publication of the complete PDF artifact set against anonymous
-    # readers, which hold Media FOR SHARE while resolving a projection.
-    locked_media_id = db.execute(
-        text("SELECT id FROM media WHERE id = :media_id FOR UPDATE"),
-        {"media_id": media_id},
-    ).scalar()
-    if locked_media_id is None:
-        raise AssertionError("PDF media disappeared inside its publication fence")
-    media = db.get(Media, media_id)
-    if media is None:
-        raise AssertionError("PDF media disappeared inside its publication fence")
-
-    if result.has_text:
-        validation_err = validate_page_spans(
-            result.page_spans,
-            result.page_count,
-            len(result.plain_text),
-        )
-        if validation_err:
-            logger.error(
-                "pdf_page_span_invariant_failure",
-                media_id=str(media_id),
-                reason=validation_err,
-            )
-            raise AssertionError(f"PDF page span invariant failure: {validation_err}")
-
-        media.page_count = result.page_count
-        media.plain_text = result.plain_text
-
-        db.execute(delete(PdfPageTextSpan).where(PdfPageTextSpan.media_id == media_id))
-
-        for span in result.page_spans:
-            db.add(
-                PdfPageTextSpan(
-                    media_id=media_id,
-                    page_number=span.page_number,
-                    start_offset=span.start_offset,
-                    end_offset=span.end_offset,
-                    page_label=span.page_label,
-                    page_width=span.page_width,
-                    page_height=span.page_height,
-                    page_rotation_degrees=span.page_rotation_degrees,
-                )
-            )
-        db.flush()
-    else:
-        media.page_count = result.page_count
-        media.plain_text = None
-        db.execute(delete(PdfPageTextSpan).where(PdfPageTextSpan.media_id == media_id))
-        db.flush()
-
-    replace_media_apparatus(
-        db,
-        media_id=media_id,
-        items=plan.apparatus.items,
-        edges=plan.apparatus.edges,
-        status=plan.apparatus.status,
-    )
-    return result

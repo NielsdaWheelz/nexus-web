@@ -69,8 +69,8 @@ and the newest highlight on top.
 
 PDF anchors use page-space coordinates and text-layer match metadata. Geometry
 is canonical; rendered viewport coordinates are derived presentation state.
-PDF writes serialize through the PDF highlight geometry owner so duplicate and
-match-state decisions are made against current anchor rows.
+PDF writes take a transaction advisory lock on the viewer's exact selection, so
+duplicate and match-state decisions are made against current anchor rows.
 
 Reader projection is not persisted. The reader may derive visible row anchors
 from rendered DOM segments or PDF viewport transforms, but that state belongs to

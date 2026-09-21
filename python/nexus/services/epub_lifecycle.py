@@ -1,4 +1,4 @@
-"""EPUB source lifecycle boundary and extraction artifact cleanup."""
+"""EPUB source lifecycle boundary: prepare one plan, publish it under the fence."""
 
 from collections.abc import Callable
 from typing import Literal
@@ -6,10 +6,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.db.models import (
-    Media,
-    ProcessingStatus,
-)
+from nexus.db.models import Media, ProcessingStatus
 from nexus.errors import (
     ApiError,
     ApiErrorCode,
@@ -18,10 +15,9 @@ from nexus.errors import (
     ResourceLimitError,
 )
 from nexus.logging import get_logger
-from nexus.services.collection_revisions import (
-    CollectionFamily,
-    bump_all_collection_families,
-)
+from nexus.schemas.presence import Present
+from nexus.services.collection_revisions import CollectionFamily, bump_all_collection_families
+from nexus.services.contributor_taxonomy import RawCreditEntry, build_observation
 from nexus.services.epub_ingest import (
     EpubExtractionError,
     EpubExtractionPlan,
@@ -29,7 +25,6 @@ from nexus.services.epub_ingest import (
     build_epub_extraction_plan,
     publish_epub_extraction_plan,
 )
-from nexus.services.epub_metadata import build_epub_author_observation, persist_epub_metadata
 from nexus.services.media_author_observation_seam import attach_author_observation
 from nexus.services.reader_publication import (
     ReaderPublicationSourceFile,
@@ -40,24 +35,6 @@ from nexus.services.reader_publication import (
 from nexus.storage.client import get_storage_client
 
 logger = get_logger(__name__)
-
-_MAX_ERROR_MSG_LEN = 1000
-_EPUB_AUTHOR_SOURCE = "epub_opf"
-
-
-def _extraction_api_error(plan: EpubExtractionError) -> ApiError:
-    message = (plan.error_message or "EPUB extraction failed")[:_MAX_ERROR_MSG_LEN]
-    code = _source_api_error_code(plan.error_code)
-    if plan.resource_limit_dimension is None:
-        return ApiError(code, message)
-    # justify-service-invariant-check: the parser result pairs a free-form code
-    # string with an optional dimension, so only this projection can state that
-    # a dimension means the declared resource-limit code.
-    assert code is ApiErrorCode.E_RESOURCE_LIMIT, (
-        f"EPUB extraction reported dimension {plan.resource_limit_dimension} "
-        f"with error code {code.value}"
-    )
-    return ResourceLimitError(message, dimension=plan.resource_limit_dimension)
 
 
 def prepare_epub_source(
@@ -81,9 +58,16 @@ def prepare_epub_source(
         storage_client=get_storage_client(),
         record_progress=record_progress,
     )
-    if isinstance(plan, EpubExtractionError):
-        raise _extraction_api_error(plan)
-    return plan
+    if not isinstance(plan, EpubExtractionError):
+        return plan
+    message = (plan.error_message or "EPUB extraction failed")[:1000]
+    if plan.resource_limit_dimension is not None:
+        raise ResourceLimitError(message, dimension=plan.resource_limit_dimension)
+    try:
+        code = ApiErrorCode(plan.error_code or "")
+    except ValueError:
+        code = ApiErrorCode.E_INGEST_FAILED
+    raise ApiError(code, message)
 
 
 def publish_epub_source(
@@ -114,25 +98,14 @@ def publish_epub_source(
             "reason": "not_extracting",
         }, unpublished_reader_source_paths(db, media_id=media_id, source_file=source_file)
     superseded_source_paths = superseded_reader_source_paths(
-        db,
-        media_id=media_id,
-        source_file=source_file,
+        db, media_id=media_id, source_file=source_file
     )
 
     def replace_projection(locked_media: Media) -> tuple[dict[str, object], list[str]]:
-        result, old_storage_paths = publish_epub_extraction_plan(
-            db,
-            media_id=media_id,
-            plan=plan,
-        )
-        assert isinstance(result, EpubExtractionResult)
-        persist_epub_metadata(locked_media, result)
+        result, old_storage_paths = publish_epub_extraction_plan(db, media_id=media_id, plan=plan)
+        _persist_epub_metadata(locked_media, result)
         bump_all_collection_families(
-            db,
-            families=(
-                CollectionFamily.AuthorWorks,
-                CollectionFamily.LibraryEntries,
-            ),
+            db, families=(CollectionFamily.AuthorWorks, CollectionFamily.LibraryEntries)
         )
         db.flush()
         response: dict[str, object] = {
@@ -143,10 +116,17 @@ def publish_epub_source(
             "title": result.title,
             "metadata_enrichment": True,
         }
-        observation, truncated = build_epub_author_observation(result)
+        # Each OPF creator is one credited name; only semicolons split a single
+        # creator string into several people (D-31: ``Last, First`` stays one name).
+        names: list[str] = []
+        for creator in result.creators:
+            names.extend(part.strip() for part in creator.split(";") if part.strip())
+        observation, truncated = build_observation(
+            {"author": [RawCreditEntry(credited_name=name) for name in names]}
+        )
         if truncated:
             logger.info("epub_author_truncation", media_id=str(media_id), truncated=truncated)
-        attach_author_observation(response, observation=observation, source=_EPUB_AUTHOR_SOURCE)
+        attach_author_observation(response, observation=observation, source="epub_opf")
         return response, old_storage_paths
 
     response, old_storage_paths = replace_reader_publication(
@@ -159,8 +139,17 @@ def publish_epub_source(
     return response, superseded_source_paths + old_storage_paths
 
 
-def _source_api_error_code(error_code: str | None) -> ApiErrorCode:
-    try:
-        return ApiErrorCode(str(error_code or ""))
-    except ValueError:
-        return ApiErrorCode.E_INGEST_FAILED
+def _persist_epub_metadata(media: Media, result: EpubExtractionResult) -> None:
+    """Fill the media row from OPF metadata; credits travel as an observation."""
+    if result.title:
+        media.title = result.title
+    if result.publisher and not media.publisher:
+        media.publisher = result.publisher[:255]
+    if result.language and not media.language:
+        media.language = result.language[:32]
+    if result.description and not media.description:
+        media.description = result.description[:2000]
+    if isinstance(result.edition_published_date, Present):
+        media.edition_published_date = result.edition_published_date.value
+    if isinstance(result.edition_isbn, Present):
+        media.edition_isbn = result.edition_isbn.value

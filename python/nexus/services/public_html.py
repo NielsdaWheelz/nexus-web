@@ -1,4 +1,4 @@
-"""Dedicated closed sanitizer for anonymous article and EPUB HTML."""
+"""The closed sanitizer for anonymously shared article and EPUB HTML."""
 
 from __future__ import annotations
 
@@ -11,85 +11,13 @@ from lxml.html import HtmlElement, fragment_fromstring
 from nexus.services.html_tree import inner_html
 
 _DROP_WITH_CONTENT = frozenset(
-    {
-        "script",
-        "style",
-        "iframe",
-        "object",
-        "embed",
-        "form",
-        "input",
-        "button",
-        "select",
-        "option",
-        "textarea",
-        "video",
-        "audio",
-        "source",
-        "track",
-        "canvas",
-        "svg",
-        "math",
-        "link",
-        "meta",
-        "base",
-        "template",
-    }
+    "script style iframe object embed form input button select option textarea video audio"
+    " source track canvas svg math link meta base template".split()
 )
 _ALLOWED_TAGS = frozenset(
-    {
-        "a",
-        "abbr",
-        "b",
-        "blockquote",
-        "br",
-        "cite",
-        "code",
-        "dd",
-        "del",
-        "details",
-        "dfn",
-        "div",
-        "dl",
-        "dt",
-        "em",
-        "figcaption",
-        "figure",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "hr",
-        "i",
-        "img",
-        "kbd",
-        "li",
-        "mark",
-        "ol",
-        "p",
-        "pre",
-        "q",
-        "s",
-        "samp",
-        "small",
-        "span",
-        "strong",
-        "sub",
-        "summary",
-        "sup",
-        "table",
-        "tbody",
-        "td",
-        "tfoot",
-        "th",
-        "thead",
-        "tr",
-        "u",
-        "ul",
-        "var",
-    }
+    "a abbr b blockquote br cite code dd del details dfn div dl dt em figcaption figure"
+    " h1 h2 h3 h4 h5 h6 hr i img kbd li mark ol p pre q s samp small span strong sub"
+    " summary sup table tbody td tfoot th thead tr u ul var".split()
 )
 _GLOBAL_ATTRIBUTES = frozenset({"id", "title", "lang", "dir", "role"})
 _TAG_ATTRIBUTES = {
@@ -163,21 +91,21 @@ def _sanitize_link(element: HtmlElement) -> None:
         element.attrib.pop("href", None)
         return
     parsed = urlparse(href)
-    if parsed.scheme:
-        if (
-            parsed.scheme.lower() not in {"http", "https"}
-            or parsed.username is not None
-            or parsed.password is not None
-            or not parsed.hostname
-        ):
+    if not parsed.scheme:
+        if href:
             element.attrib.pop("href", None)
-            return
-        element.set("target", "_blank")
-        element.set("rel", "noopener noreferrer")
-        element.set("referrerpolicy", "no-referrer")
         return
-    if href.startswith("//") or href:
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or not parsed.hostname
+    ):
         element.attrib.pop("href", None)
+        return
+    element.set("target", "_blank")
+    element.set("rel", "noopener noreferrer")
+    element.set("referrerpolicy", "no-referrer")
 
 
 def _sanitize_image(

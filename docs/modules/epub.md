@@ -66,12 +66,11 @@ manifest, not this module doc.
 
 ## Bounded Parse
 
-`epub_ingest.py` scans every XML or XHTML entry in one streaming structural pass
-before it builds a DOM or rewrites a chapter. Content documents (spine items)
-are scanned with the same tolerant HTML grammar that renders them, so markup
-that is not well-formed XML stays exactly as readable as the recovering parser
-makes it; `container.xml`, the OPF, the NCX, the EPUB 3 navigation document, and
-referenced SVG assets are scanned strictly, because each is then parsed as XML.
+`epub_ingest.py` parses each entry once. `container.xml`, the OPF, the NCX, the
+EPUB 3 navigation document, and referenced SVG assets are parsed as XML with
+entity expansion and external resolution disabled; content documents (spine
+items) are parsed by the same recovering HTML parser that renders them, so
+markup that is not well-formed XML stays exactly as readable as it was.
 
 A doctype that names public or system identifiers is inert: nothing declares or
 resolves it, and the parser never reaches the network. The XHTML named entities
@@ -84,9 +83,11 @@ An absent or unparseable optional entry is absence: the book imports with a
 smaller table of contents. Only a required entry (`container.xml`, the OPF)
 turns an unparseable entry into a terminal `E_INVALID_FILE_TYPE`.
 
-A breach of a declared budget — XML depth, elements, attributes, the 16 MiB
-decoded bytes each XHTML entry may produce, rendered text, parse time, or the
-bounded apparatus index — is terminal `E_RESOURCE_LIMIT` carrying a safe
-dimension. `E_ARCHIVE_UNSAFE` remains reserved for archive path safety. A
-stored object that does not match the media source's persisted digest is
-terminal `E_SOURCE_INTEGRITY`, refused before the archive is opened.
+The declared budgets are the archive ones (entry count, per-entry and total
+uncompressed size, compression ratio, parse time), the 16 MiB an XHTML or
+navigation entry may declare in its ZIP header, the 64 MiB of rendered text one
+book may produce, and the bounded apparatus index. A breach is terminal
+`E_RESOURCE_LIMIT` carrying a safe dimension. `E_ARCHIVE_UNSAFE` remains
+reserved for archive path safety. A stored object that does not match the media
+source's persisted digest is terminal `E_SOURCE_INTEGRITY`, refused before the
+archive is opened.
